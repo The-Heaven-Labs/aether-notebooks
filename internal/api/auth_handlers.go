@@ -1,0 +1,220 @@
+package api
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+
+	"github.com/heavenlabs/hnb/internal/audit"
+	"github.com/heavenlabs/hnb/internal/auth"
+	"github.com/jackc/pgx/v5"
+)
+
+type registerRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	Name     string `json:"name"`
+	OrgName  string `json:"org_name"`
+}
+
+type loginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	OrgID    string `json:"org_id,omitempty"` // optional, uses first org if empty
+}
+
+type authResponse struct {
+	Token string `json:"token"`
+	User  struct {
+		ID    string `json:"id"`
+		Email string `json:"email"`
+		Name  string `json:"name"`
+	} `json:"user"`
+	Org struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+		Role string `json:"role"`
+	} `json:"org"`
+}
+
+func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	var req registerRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Email == "" || req.Password == "" || req.Name == "" || req.OrgName == "" {
+		writeError(w, http.StatusBadRequest, "email, password, name, and org_name are required")
+		return
+	}
+
+	hash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to hash password")
+		return
+	}
+
+	ctx := r.Context()
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	// Create user
+	var userID string
+	err = tx.QueryRow(ctx,
+		`INSERT INTO users (email, password_hash, name, email_verified) VALUES ($1, $2, $3, FALSE) RETURNING id`,
+		req.Email, hash, req.Name,
+	).Scan(&userID)
+	if err != nil {
+		writeError(w, http.StatusConflict, "email already registered")
+		return
+	}
+
+	// Create org
+	var orgID string
+	slug := slugify(req.OrgName)
+	err = tx.QueryRow(ctx,
+		`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
+		req.OrgName, slug,
+	).Scan(&orgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create organization")
+		return
+	}
+
+	// Add user as admin
+	_, err = tx.Exec(ctx,
+		`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin')`,
+		orgID, userID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to add member")
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit")
+		return
+	}
+
+	token, err := s.jwt.Issue(userID, orgID, "admin")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to issue token")
+		return
+	}
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: orgID, UserID: userID,
+		Action: "user.register", ResourceType: "user", ResourceID: userID,
+	})
+
+	resp := authResponse{}
+	resp.Token = token
+	resp.User.ID = userID
+	resp.User.Email = req.Email
+	resp.User.Name = req.Name
+	resp.Org.ID = orgID
+	resp.Org.Name = req.OrgName
+	resp.Org.Role = "admin"
+
+	writeJSON(w, http.StatusCreated, resp)
+}
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	var req loginRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	ctx := r.Context()
+
+	var userID, passwordHash, name string
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT id, password_hash, name FROM users WHERE email = $1`,
+		req.Email,
+	).Scan(&userID, &passwordHash, &name)
+	if err == pgx.ErrNoRows {
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+
+	if !auth.VerifyPassword(req.Password, passwordHash) {
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+
+	// Get org membership
+	orgID, orgName, role, err := s.getUserOrg(ctx, userID, req.OrgID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "no organization membership found")
+		return
+	}
+
+	token, err := s.jwt.Issue(userID, orgID, role)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to issue token")
+		return
+	}
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: orgID, UserID: userID,
+		Action: "user.login", ResourceType: "user", ResourceID: userID,
+	})
+
+	resp := authResponse{}
+	resp.Token = token
+	resp.User.ID = userID
+	resp.User.Email = req.Email
+	resp.User.Name = name
+	resp.Org.ID = orgID
+	resp.Org.Name = orgName
+	resp.Org.Role = role
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) getUserOrg(ctx context.Context, userID, preferredOrgID string) (orgID, orgName, role string, err error) {
+	if preferredOrgID != "" {
+		err = s.db.Pool.QueryRow(ctx,
+			`SELECT o.id, o.name, om.role FROM orgs o
+			 JOIN org_members om ON om.org_id = o.id
+			 WHERE om.user_id = $1 AND o.id = $2`,
+			userID, preferredOrgID,
+		).Scan(&orgID, &orgName, &role)
+	} else {
+		err = s.db.Pool.QueryRow(ctx,
+			`SELECT o.id, o.name, om.role FROM orgs o
+			 JOIN org_members om ON om.org_id = o.id
+			 WHERE om.user_id = $1
+			 ORDER BY om.created_at ASC LIMIT 1`,
+			userID,
+		).Scan(&orgID, &orgName, &role)
+	}
+	if err != nil {
+		return "", "", "", fmt.Errorf("no membership: %w", err)
+	}
+	return
+}
+
+func slugify(name string) string {
+	slug := ""
+	for _, c := range name {
+		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' {
+			slug += string(c)
+		} else if c >= 'A' && c <= 'Z' {
+			slug += string(c + 32)
+		} else if c == ' ' {
+			slug += "-"
+		}
+	}
+	return slug
+}
