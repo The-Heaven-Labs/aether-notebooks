@@ -13,6 +13,7 @@ type Server struct {
 	jwt       *auth.JWTIssuer
 	audit     *audit.Logger
 	masterKey []byte
+	hub       *Hub
 	mux       *http.ServeMux
 }
 
@@ -22,6 +23,7 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 		jwt:       jwt,
 		audit:     auditLogger,
 		masterKey: masterKey,
+		hub:       NewHub(),
 		mux:       http.NewServeMux(),
 	}
 	s.routes()
@@ -57,6 +59,19 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/notebooks/{notebook_id}/schedules", authMW(http.HandlerFunc(s.handleListSchedules)))
 	s.mux.Handle("GET /api/v1/schedules/{id}", authMW(http.HandlerFunc(s.handleGetSchedule)))
 	s.mux.Handle("DELETE /api/v1/schedules/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDeleteSchedule))))
+
+	// Dashboard routes
+	s.mux.Handle("POST /api/v1/dashboards", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateDashboard))))
+	s.mux.Handle("GET /api/v1/dashboards", authMW(http.HandlerFunc(s.handleListDashboards)))
+	s.mux.Handle("GET /api/v1/dashboards/{id}", authMW(http.HandlerFunc(s.handleGetDashboard)))
+	s.mux.Handle("DELETE /api/v1/dashboards/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDeleteDashboard))))
+	s.mux.Handle("POST /api/v1/dashboards/{id}/widgets", authMW(RequireRole("editor")(http.HandlerFunc(s.handleAddWidget))))
+	s.mux.Handle("DELETE /api/v1/dashboards/{id}/widgets/{widget_id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDeleteWidget))))
+	s.mux.Handle("POST /api/v1/dashboards/{id}/share", authMW(RequireRole("editor")(http.HandlerFunc(s.handleShareDashboard))))
+	s.mux.HandleFunc("GET /api/v1/public/dashboards/{token}", s.handlePublicDashboard)
+
+	// WebSocket routes
+	s.mux.Handle("GET /api/v1/ws/notebooks/{id}", authMW(http.HandlerFunc(s.handleNotebookWS)))
 
 	// Connector routes
 	s.mux.Handle("POST /api/v1/connectors", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateConnector))))
