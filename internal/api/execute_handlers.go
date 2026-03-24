@@ -111,6 +111,8 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	switch connType {
 	case models.ConnectorPostgres:
 		exec, err = executor.NewPostgresExecutor(cfg)
+	case models.ConnectorClickHouse:
+		exec, err = executor.NewClickHouseExecutor(cfg)
 	default:
 		writeError(w, http.StatusBadRequest, "unsupported connector type")
 		return
