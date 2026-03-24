@@ -73,6 +73,11 @@ func (s *Server) routes() {
 	// WebSocket routes
 	s.mux.Handle("GET /api/v1/ws/notebooks/{id}", authMW(http.HandlerFunc(s.handleNotebookWS)))
 
+	// Internal routes (called by Hocuspocus relay only)
+	s.mux.HandleFunc("GET /internal/yjs/{notebook_id}", s.handleInternalYjsGet)
+	s.mux.HandleFunc("PUT /internal/yjs/{notebook_id}", s.handleInternalYjsPut)
+	s.mux.HandleFunc("GET /internal/auth/validate", s.handleInternalAuthValidate)
+
 	// Connector routes
 	s.mux.Handle("POST /api/v1/connectors", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateConnector))))
 	s.mux.Handle("GET /api/v1/connectors", authMW(http.HandlerFunc(s.handleListConnectors)))

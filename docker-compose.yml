@@ -25,5 +25,15 @@ services:
         soft: 262144
         hard: 262144
 
+  relay:
+    build: ./relay
+    ports:
+      - "3001:3001"
+    environment:
+      HNB_API_URL: http://api:8080
+      HNB_RELAY_PORT: "3001"
+    depends_on:
+      - postgres
+
 volumes:
   pgdata:
