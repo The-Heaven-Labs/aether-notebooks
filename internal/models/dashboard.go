@@ -7,7 +7,7 @@ type Dashboard struct {
 	OrgID       string            `json:"org_id"`
 	Title       string            `json:"title"`
 	Settings    DashboardSettings `json:"settings"`
-	PublicToken string            `json:"public_token,omitempty"`
+	PublicToken *string           `json:"public_token,omitempty"`
 	CreatedBy   string            `json:"created_by"`
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
