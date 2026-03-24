@@ -25,6 +25,19 @@ services:
         soft: 262144
         hard: 262144
 
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      HNB_DATABASE_URL: postgres://hnb:hnb_dev@postgres:5432/hnb?sslmode=disable
+      HNB_REDIS_URL: redis://redis:6379
+      HNB_MASTER_KEY: ${HNB_MASTER_KEY}
+      HNB_JWT_SECRET: ${HNB_JWT_SECRET}
+    depends_on:
+      - postgres
+      - redis
+
   relay:
     build: ./relay
     ports:
