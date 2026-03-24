@@ -1,0 +1,6 @@
+bin/
+*.exe
+.env
+node_modules/
+web/dist/
+relay/node_modules/
