@@ -1,0 +1,140 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"github.com/heavenlabs/hnb/internal/audit"
+	"github.com/heavenlabs/hnb/internal/crypto"
+	"github.com/heavenlabs/hnb/internal/models"
+)
+
+type createConnectorRequest struct {
+	Name   string                 `json:"name"`
+	Type   models.ConnectorType   `json:"type"`
+	Config models.ConnectorConfig `json:"config"`
+}
+
+func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	var req createConnectorRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Name == "" || req.Type == "" {
+		writeError(w, http.StatusBadRequest, "name and type are required")
+		return
+	}
+	if req.Type != models.ConnectorPostgres && req.Type != models.ConnectorClickHouse {
+		writeError(w, http.StatusBadRequest, "type must be 'postgres' or 'clickhouse'")
+		return
+	}
+
+	configJSON, err := json.Marshal(req.Config)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid config")
+		return
+	}
+
+	encrypted, err := crypto.Encrypt(configJSON, s.masterKey)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encrypt config")
+		return
+	}
+
+	ctx := r.Context()
+	var id, orgID, name string
+	var connType models.ConnectorType
+	var maxRows, timeout int
+	err = s.db.Pool.QueryRow(ctx,
+		`INSERT INTO connectors (org_id, name, type, config_encrypted)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id, org_id, name, type, max_rows, timeout_seconds`,
+		claims.OrgID, req.Name, req.Type, encrypted,
+	).Scan(&id, &orgID, &name, &connType, &maxRows, &timeout)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create connector")
+		return
+	}
+
+	// Mask password in response
+	req.Config.Password = "***"
+	conn := models.Connector{
+		ID: id, OrgID: orgID, Name: name, Type: connType,
+		Config: req.Config, MaxRows: maxRows, TimeoutSeconds: timeout,
+	}
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "connector.create", ResourceType: "connector", ResourceID: id,
+	})
+
+	writeJSON(w, http.StatusCreated, conn)
+}
+
+func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	ctx := r.Context()
+
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, created_at, updated_at
+		 FROM connectors WHERE org_id = $1 ORDER BY name ASC`,
+		claims.OrgID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	defer rows.Close()
+
+	var connectors []models.Connector
+	for rows.Next() {
+		var c models.Connector
+		var encryptedConfig []byte
+		if err := rows.Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
+			&c.MaxRows, &c.TimeoutSeconds, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			writeError(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		// Decrypt and mask password
+		if plain, err := crypto.Decrypt(encryptedConfig, s.masterKey); err == nil {
+			json.Unmarshal(plain, &c.Config)
+			c.Config.Password = "***"
+		}
+		connectors = append(connectors, c)
+	}
+
+	if connectors == nil {
+		connectors = []models.Connector{}
+	}
+
+	writeJSON(w, http.StatusOK, connectors)
+}
+
+func (s *Server) handleDeleteConnector(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	connID := r.PathValue("id")
+	ctx := r.Context()
+
+	result, err := s.db.Pool.Exec(ctx,
+		`DELETE FROM connectors WHERE id = $1 AND org_id = $2`,
+		connID, claims.OrgID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+	if result.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "connector not found")
+		return
+	}
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "connector.delete", ResourceType: "connector", ResourceID: connID,
+	})
+
+	w.WriteHeader(http.StatusNoContent)
+}
