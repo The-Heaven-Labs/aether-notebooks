@@ -1,0 +1,256 @@
+version: '3'
+
+vars:
+  BIN_DIR: bin
+  SERVER_BIN: "{{.BIN_DIR}}/hnb-server"
+  CLI_BIN: "{{.BIN_DIR}}/hnb"
+  DB_URL: "postgres://hnb:hnb_dev@localhost:5432/hnb?sslmode=disable"
+
+env:
+  HNB_DATABASE_URL: "{{.DB_URL}}"
+  HNB_MASTER_KEY: dev-master-key-change-in-production
+  HNB_JWT_SECRET: dev-jwt-secret-change-in-production
+
+tasks:
+
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+
+  infra:up:
+    desc: Start Postgres, Redis, and ClickHouse in the background
+    cmds:
+      - docker compose up -d postgres redis clickhouse
+    status:
+      - docker compose ps postgres | grep -q running
+
+  infra:down:
+    desc: Stop all Docker services
+    cmds:
+      - docker compose down
+
+  infra:reset:
+    desc: Tear down and recreate infrastructure (destroys data)
+    cmds:
+      - docker compose down -v
+      - docker compose up -d postgres redis clickhouse
+
+  infra:logs:
+    desc: Tail logs from all running services
+    cmds:
+      - docker compose logs -f
+
+  infra:ps:
+    desc: Show status of all Docker services
+    cmds:
+      - docker compose ps
+
+  # ── Build ────────────────────────────────────────────────────────────────────
+
+  build:
+    desc: Build both server and CLI binaries into ./bin
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - go build -o {{.SERVER_BIN}} ./cmd/hnb-server
+      - go build -o {{.CLI_BIN}} ./cmd/hnb
+    sources:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.SERVER_BIN}}"
+      - "{{.CLI_BIN}}"
+
+  build:server:
+    desc: Build only the API server
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - go build -o {{.SERVER_BIN}} ./cmd/hnb-server
+
+  build:cli:
+    desc: Build only the CLI
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - go build -o {{.CLI_BIN}} ./cmd/hnb
+
+  build:web:
+    desc: Build the React frontend
+    dir: web
+    cmds:
+      - npm run build
+
+  build:relay:
+    desc: Build the Hocuspocus relay (TypeScript → JS)
+    dir: relay
+    cmds:
+      - npm run build
+
+  build:all:
+    desc: Build everything (Go binaries + web + relay)
+    deps: [build, build:web, build:relay]
+
+  # ── Development servers ──────────────────────────────────────────────────────
+
+  dev:
+    desc: Run the API server with hot-reload (requires infra:up)
+    deps: [infra:up]
+    cmds:
+      - go run ./cmd/hnb-server
+
+  dev:web:
+    desc: Start the Vite dev server (proxies /api to localhost:8080)
+    dir: web
+    cmds:
+      - npm run dev
+
+  dev:relay:
+    desc: Start the Hocuspocus relay in dev mode
+    dir: relay
+    cmds:
+      - npm run dev
+
+  # ── Testing ──────────────────────────────────────────────────────────────────
+
+  test:
+    desc: Run all Go tests
+    deps: [infra:up]
+    cmds:
+      - go test ./... -count=1
+
+  test:v:
+    desc: Run all Go tests with verbose output
+    deps: [infra:up]
+    cmds:
+      - go test ./... -v -count=1
+
+  test:watch:
+    desc: Re-run tests on file change (requires entr)
+    cmds:
+      - find . -name '*.go' | entr -c go test ./... -count=1
+
+  test:api:
+    desc: Run only the API package tests
+    deps: [infra:up]
+    cmds:
+      - go test ./internal/api/... -v -count=1
+
+  test:race:
+    desc: Run tests with the race detector
+    deps: [infra:up]
+    cmds:
+      - go test -race ./... -count=1
+
+  test:e2e:
+    desc: Run the end-to-end smoke test against a live server
+    vars:
+      TARGET: '{{default "http://localhost:8080" .HNB_API_URL}}'
+    cmds:
+      - HNB_API_URL={{.TARGET}} bash e2e/smoke_test.sh
+
+  # ── Code quality ─────────────────────────────────────────────────────────────
+
+  lint:
+    desc: Run golangci-lint (install if missing)
+    cmds:
+      - |
+        if ! command -v golangci-lint &>/dev/null; then
+          echo "golangci-lint not found — install via: brew install golangci-lint"
+          exit 1
+        fi
+        golangci-lint run ./...
+
+  fmt:
+    desc: Format all Go code
+    cmds:
+      - gofmt -w $(find . -name '*.go' -not -path './vendor/*')
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  tidy:
+    desc: Tidy and verify Go modules
+    cmds:
+      - go mod tidy
+      - go mod verify
+
+  check:
+    desc: Run fmt + vet + tidy + test
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: tidy
+      - task: test
+
+  # ── Database ─────────────────────────────────────────────────────────────────
+
+  db:migrate:
+    desc: Apply pending schema migrations
+    cmds:
+      - go run ./cmd/hnb-server
+
+  db:psql:
+    desc: Open a psql shell against the dev database
+    cmds:
+      - docker exec -it hnb-claude-postgres-1 psql -U hnb -d hnb
+
+  db:reset:
+    desc: Drop and recreate the dev database (destroys all data)
+    cmds:
+      - docker exec hnb-claude-postgres-1 psql -U hnb -c "DROP DATABASE IF EXISTS hnb;"
+      - docker exec hnb-claude-postgres-1 psql -U hnb -c "CREATE DATABASE hnb;"
+
+  # ── Docker ───────────────────────────────────────────────────────────────────
+
+  docker:build:
+    desc: Build the production Docker image
+    cmds:
+      - docker build -t hnb:latest .
+
+  docker:up:
+    desc: Start the full stack (api + relay + infra) via docker compose
+    cmds:
+      - docker compose up -d
+
+  docker:down:
+    desc: Stop the full stack
+    cmds:
+      - docker compose down
+
+  # ── Web / Node ───────────────────────────────────────────────────────────────
+
+  web:install:
+    desc: Install web dependencies
+    dir: web
+    cmds:
+      - npm install
+
+  web:lint:
+    desc: Lint the React/TypeScript frontend
+    dir: web
+    cmds:
+      - npm run lint
+
+  relay:install:
+    desc: Install relay dependencies
+    dir: relay
+    cmds:
+      - npm install
+
+  # ── Install ──────────────────────────────────────────────────────────────────
+
+  install:
+    desc: Install CLI binary to $GOPATH/bin
+    cmds:
+      - go install ./cmd/hnb
+
+  # ── Utility ──────────────────────────────────────────────────────────────────
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -rf {{.BIN_DIR}} web/dist relay/dist
+
+  deps:
+    desc: Download Go module dependencies
+    cmds:
+      - go mod download
