@@ -1,6 +1,8 @@
 bin/
 *.exe
 .env
+/hnb
+/hnb-server
 node_modules/
 web/dist/
 relay/node_modules/

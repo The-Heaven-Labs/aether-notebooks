@@ -3,9 +3,27 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/heavenlabs/hnb/internal/cli"
+	"github.com/spf13/cobra"
 )
 
 func main() {
-	fmt.Fprintln(os.Stderr, "hnb CLI — not yet implemented")
-	os.Exit(1)
+	root := &cobra.Command{
+		Use:   "hnb",
+		Short: "Heaven's Notebooks CLI",
+	}
+
+	root.AddCommand(
+		cli.LoginCmd(),
+		cli.LogoutCmd(),
+		cli.NotebooksCmd(),
+		cli.CellsCmd(),
+		cli.ConnectorsCmd(),
+	)
+
+	if err := root.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }
