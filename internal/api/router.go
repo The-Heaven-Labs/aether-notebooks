@@ -52,6 +52,12 @@ func (s *Server) routes() {
 	s.mux.Handle("DELETE /api/v1/notebooks/{notebook_id}/cells/{cell_id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDeleteCell))))
 	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/cells/{cell_id}/execute", authMW(http.HandlerFunc(s.handleExecuteCell)))
 
+	// Schedule routes
+	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/schedules", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateSchedule))))
+	s.mux.Handle("GET /api/v1/notebooks/{notebook_id}/schedules", authMW(http.HandlerFunc(s.handleListSchedules)))
+	s.mux.Handle("GET /api/v1/schedules/{id}", authMW(http.HandlerFunc(s.handleGetSchedule)))
+	s.mux.Handle("DELETE /api/v1/schedules/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDeleteSchedule))))
+
 	// Connector routes
 	s.mux.Handle("POST /api/v1/connectors", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateConnector))))
 	s.mux.Handle("GET /api/v1/connectors", authMW(http.HandlerFunc(s.handleListConnectors)))
