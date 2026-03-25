@@ -60,6 +60,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/notebooks/{notebook_id}/schedules", authMW(http.HandlerFunc(s.handleListSchedules)))
 	s.mux.Handle("GET /api/v1/schedules/{id}", authMW(http.HandlerFunc(s.handleGetSchedule)))
 	s.mux.Handle("DELETE /api/v1/schedules/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDeleteSchedule))))
+	s.mux.Handle("PUT /api/v1/schedules/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleUpdateSchedule))))
 
 	// Dashboard routes
 	s.mux.Handle("POST /api/v1/dashboards", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateDashboard))))
@@ -85,6 +86,9 @@ func (s *Server) routes() {
 	s.mux.Handle("DELETE /api/v1/connectors/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleDeleteConnector))))
 	s.mux.Handle("POST /api/v1/connectors/{id}/test", authMW(http.HandlerFunc(s.handleTestConnector)))
 	s.mux.Handle("GET /api/v1/connectors/{id}/schema", authMW(http.HandlerFunc(s.handleConnectorSchema)))
+
+	// Audit routes
+	s.mux.Handle("GET /api/v1/audit", authMW(RequireRole("admin")(http.HandlerFunc(s.handleListAuditLogs))))
 
 	// Member routes
 	s.mux.Handle("GET /api/v1/members", authMW(http.HandlerFunc(s.handleListMembers)))
