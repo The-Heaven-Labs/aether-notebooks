@@ -94,6 +94,10 @@ export function NotebookPage() {
     setLocalCells((prev) => prev.map((c) => (c.id === cellId ? { ...c, source } : c)))
   }, [])
 
+  const saveCellSource = useCallback(async (cellId: string, source: string) => {
+    await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { source })
+  }, [id])
+
   const assignConnector = useCallback(async (cellId: string, connectorId: string) => {
     await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, {
       connector_id: connectorId,
@@ -280,6 +284,7 @@ export function NotebookPage() {
                       cell={cell}
                       onDelete={(cid) => deleteCell.mutate(cid)}
                       onSourceChange={updateSource}
+                      onSave={saveCellSource}
                       onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
                       onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
                       onSwitchType={() => switchCellType(cell.id)}
