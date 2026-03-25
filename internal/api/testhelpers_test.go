@@ -54,7 +54,7 @@ func registerAndGetToken(t *testing.T, srv *api.Server, email, orgName string) s
 	if rec.Code != 201 {
 		t.Fatalf("register failed: %d %s", rec.Code, rec.Body.String())
 	}
-	var resp map[string]interface{}
+	var resp map[string]any
 	json.NewDecoder(rec.Body).Decode(&resp)
 	return resp["token"].(string)
 }
@@ -70,17 +70,17 @@ func createNotebook(t *testing.T, srv *api.Server, token, title string) string {
 	if rec.Code != 201 {
 		t.Fatalf("createNotebook failed: %d %s", rec.Code, rec.Body.String())
 	}
-	var resp map[string]interface{}
+	var resp map[string]any
 	json.NewDecoder(rec.Body).Decode(&resp)
 	return resp["id"].(string)
 }
 
 func createConnector(t *testing.T, srv *api.Server, token string) string {
 	t.Helper()
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"name": "Test DB",
 		"type": "postgres",
-		"config": map[string]interface{}{
+		"config": map[string]any{
 			"host": "localhost", "port": 5432,
 			"user": "hnb", "password": "hnb_dev", "database": "hnb",
 		},
@@ -93,14 +93,14 @@ func createConnector(t *testing.T, srv *api.Server, token string) string {
 	if rec.Code != 201 {
 		t.Fatalf("createConnector failed: %d %s", rec.Code, rec.Body.String())
 	}
-	var resp map[string]interface{}
+	var resp map[string]any
 	json.NewDecoder(rec.Body).Decode(&resp)
 	return resp["id"].(string)
 }
 
 func createCell(t *testing.T, srv *api.Server, token, nbID, lang, source, connID string) string {
 	t.Helper()
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"type":         "code",
 		"language":     lang,
 		"source":       source,
@@ -114,7 +114,7 @@ func createCell(t *testing.T, srv *api.Server, token, nbID, lang, source, connID
 	if rec.Code != 201 {
 		t.Fatalf("createCell failed: %d %s", rec.Code, rec.Body.String())
 	}
-	var resp map[string]interface{}
+	var resp map[string]any
 	json.NewDecoder(rec.Body).Decode(&resp)
 	return resp["id"].(string)
 }
