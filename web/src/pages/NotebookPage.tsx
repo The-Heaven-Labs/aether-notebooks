@@ -7,6 +7,7 @@ import { CodeCell } from '../components/CodeCell'
 import { TextCell } from '../components/TextCell'
 import { ParametersBar } from '../components/ParametersBar'
 import { SchemaBrowser } from '../components/SchemaBrowser'
+import { SchedulesPanel } from '../components/SchedulesPanel'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -21,6 +22,7 @@ export function NotebookPage() {
   const [titleDraft, setTitleDraft] = useState('')
   const [paramValues, setParamValues] = useState<Record<string, string>>({})
   const [showSchema, setShowSchema] = useState(false)
+  const [showSchedules, setShowSchedules] = useState(false)
 
   const { data: notebook, isLoading } = useQuery({
     queryKey: ['notebook', id],
@@ -206,12 +208,20 @@ export function NotebookPage() {
             </span>
           )}
           <button
+            type="button"
             style={{ ...styles.schemaBtn, ...(showSchema ? styles.schemaBtnActive : {}) }}
             onClick={() => setShowSchema((v) => !v)}
           >
             Schema
           </button>
-          <button style={styles.runAllBtn} onClick={runAll} disabled={runningCount > 0}>
+          <button
+            type="button"
+            style={{ ...styles.schemaBtn, ...(showSchedules ? styles.schemaBtnActive : {}) }}
+            onClick={() => setShowSchedules((v) => !v)}
+          >
+            Schedules
+          </button>
+          <button type="button" style={styles.runAllBtn} onClick={runAll} disabled={runningCount > 0}>
             ▶▶ Run All
           </button>
         </div>
@@ -224,7 +234,7 @@ export function NotebookPage() {
         onSaveDefinitions={(params) => saveParameters.mutate(params)}
       />
 
-      {/* Body: optional schema sidebar + cells */}
+      {/* Body: optional schema sidebar + cells + optional schedules panel */}
       <div style={styles.body}>
         {showSchema && (
           <SchemaBrowser
@@ -232,47 +242,55 @@ export function NotebookPage() {
             onClose={() => setShowSchema(false)}
           />
         )}
-        <div style={styles.cellsArea}>
-          <div style={styles.bodyInner}>
-            <div style={styles.cells}>
-              {localCells.map((cell, i) =>
-                cell.type === 'code' ? (
-                  <CodeCell
-                    key={cell.id}
-                    cell={cell}
-                    connectors={connectors}
-                    onRun={saveAndRun}
-                    onDelete={(cid) => deleteCell.mutate(cid)}
-                    onSourceChange={updateSource}
-                    onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
-                    onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
-                    onSwitchType={() => switchCellType(cell.id)}
-                    onAssignConnector={assignConnector}
-                    running={runningCells.has(cell.id)}
-                  />
-                ) : (
-                  <TextCell
-                    key={cell.id}
-                    cell={cell}
-                    onDelete={(cid) => deleteCell.mutate(cid)}
-                    onSourceChange={updateSource}
-                    onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
-                    onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
-                    onSwitchType={() => switchCellType(cell.id)}
-                  />
-                ),
-              )}
+        <div style={styles.mainColumn}>
+          <div style={styles.cellsArea}>
+            <div style={styles.bodyInner}>
+              <div style={styles.cells}>
+                {localCells.map((cell, i) =>
+                  cell.type === 'code' ? (
+                    <CodeCell
+                      key={cell.id}
+                      cell={cell}
+                      connectors={connectors}
+                      onRun={saveAndRun}
+                      onDelete={(cid) => deleteCell.mutate(cid)}
+                      onSourceChange={updateSource}
+                      onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
+                      onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
+                      onSwitchType={() => switchCellType(cell.id)}
+                      onAssignConnector={assignConnector}
+                      running={runningCells.has(cell.id)}
+                    />
+                  ) : (
+                    <TextCell
+                      key={cell.id}
+                      cell={cell}
+                      onDelete={(cid) => deleteCell.mutate(cid)}
+                      onSourceChange={updateSource}
+                      onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
+                      onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
+                      onSwitchType={() => switchCellType(cell.id)}
+                    />
+                  ),
+                )}
 
-              <div style={styles.addRow}>
-                <button style={styles.addBtn} onClick={() => createCell.mutate('code')}>
-                  + Code Cell
-                </button>
-                <button style={styles.addBtn} onClick={() => createCell.mutate('text')}>
-                  + Text Cell
-                </button>
+                <div style={styles.addRow}>
+                  <button type="button" style={styles.addBtn} onClick={() => createCell.mutate('code')}>
+                    + Code Cell
+                  </button>
+                  <button type="button" style={styles.addBtn} onClick={() => createCell.mutate('text')}>
+                    + Text Cell
+                  </button>
+                </div>
               </div>
             </div>
           </div>
+          {showSchedules && (
+            <SchedulesPanel
+              notebookId={id!}
+              parameters={notebook.parameters ?? []}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -391,6 +409,13 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'row',
     overflow: 'hidden',
     minHeight: 0,
+  },
+  mainColumn: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    minWidth: 0,
   },
   cellsArea: {
     flex: 1,
