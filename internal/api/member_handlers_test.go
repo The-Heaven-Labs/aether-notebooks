@@ -32,7 +32,7 @@ func TestMemberManagement(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list members: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	var members []map[string]interface{}
+	var members []map[string]any
 	json.NewDecoder(rec.Body).Decode(&members)
 	if len(members) < 1 {
 		t.Fatalf("list members: expected at least 1 member, got %d", len(members))
@@ -59,7 +59,7 @@ func TestMemberManagement(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list members after invite: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	var membersAfterInvite []map[string]interface{}
+	var membersAfterInvite []map[string]any
 	json.NewDecoder(rec.Body).Decode(&membersAfterInvite)
 	if len(membersAfterInvite) != 2 {
 		t.Fatalf("list members after invite: expected 2 members, got %d", len(membersAfterInvite))
