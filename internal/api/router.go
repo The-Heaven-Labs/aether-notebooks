@@ -83,6 +83,12 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/connectors", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateConnector))))
 	s.mux.Handle("GET /api/v1/connectors", authMW(http.HandlerFunc(s.handleListConnectors)))
 	s.mux.Handle("DELETE /api/v1/connectors/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleDeleteConnector))))
+
+	// Member routes
+	s.mux.Handle("GET /api/v1/members", authMW(http.HandlerFunc(s.handleListMembers)))
+	s.mux.Handle("POST /api/v1/members", authMW(RequireRole("admin")(http.HandlerFunc(s.handleInviteMember))))
+	s.mux.Handle("PUT /api/v1/members/{user_id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateMemberRole))))
+	s.mux.Handle("DELETE /api/v1/members/{user_id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleRemoveMember))))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
