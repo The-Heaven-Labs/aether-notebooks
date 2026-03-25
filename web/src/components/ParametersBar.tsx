@@ -46,7 +46,7 @@ export function ParametersBar({ parameters, values, onChange, onSaveDefinitions 
         <div style={styles.managePanel}>
           <span style={styles.manageTitle}>Parameters</span>
           {draftParams.map((p, i) => (
-            <div key={i} style={styles.draftRow}>
+            <div key={p.name || i} style={styles.draftRow}>
               <input
                 style={styles.draftInput}
                 placeholder="name"
@@ -68,6 +68,7 @@ export function ParametersBar({ parameters, values, onChange, onSaveDefinitions 
               >
                 <option value="string">string</option>
                 <option value="number">number</option>
+                <option value="boolean">boolean</option>
                 <option value="date">date</option>
                 <option value="daterange">daterange</option>
               </select>

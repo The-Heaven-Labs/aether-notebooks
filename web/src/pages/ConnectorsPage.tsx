@@ -27,6 +27,8 @@ export function ConnectorsPage() {
   const [creating, setCreating] = useState(false)
   const [form, setForm] = useState<ConnectorForm>(defaultForm())
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error?: string }>>({})
+  const [createError, setCreateError] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const { data: connectors = [] } = useQuery({
     queryKey: ['connectors'],
@@ -50,12 +52,15 @@ export function ConnectorsPage() {
       qc.invalidateQueries({ queryKey: ['connectors'] })
       setCreating(false)
       setForm(defaultForm())
+      setCreateError(null)
     },
+    onError: (err: Error) => setCreateError(err.message),
   })
 
   const deleteConnector = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/connectors/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['connectors'] }),
+    onError: (err: Error) => setDeleteError(err.message),
   })
 
   const testConnector = async (id: string) => {
@@ -102,7 +107,7 @@ export function ConnectorsPage() {
                 <input style={styles.input} value={form.host} onChange={setField('host')} />
               </label>
               <label style={styles.label}>Port
-                <input style={styles.input} value={form.port} onChange={setField('port')} />
+                <input style={styles.input} type="number" min={1} max={65535} value={form.port} onChange={setField('port')} />
               </label>
               <label style={styles.label}>Database
                 <input style={styles.input} value={form.database} onChange={setField('database')} />
@@ -131,9 +136,11 @@ export function ConnectorsPage() {
                 {createConnector.isPending ? 'Creating…' : 'Create'}
               </button>
             </div>
+            {createError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{createError}</p>}
           </div>
         )}
 
+        {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
         <div style={styles.tableWrap}>
           <table style={styles.table}>
             <thead>
@@ -151,10 +158,10 @@ export function ConnectorsPage() {
                     <td style={styles.td}><strong>{c.name}</strong></td>
                     <td style={styles.td}><code style={styles.badge}>{c.type}</code></td>
                     <td style={{ ...styles.td, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                      {(c as any).config?.host ?? '—'}
+                      {c.config?.host ?? '—'}
                     </td>
                     <td style={{ ...styles.td, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                      {(c as any).config?.database ?? '—'}
+                      {c.config?.database ?? '—'}
                     </td>
                     <td style={styles.td}>
                       {test ? (
