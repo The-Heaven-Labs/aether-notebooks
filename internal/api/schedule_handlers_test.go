@@ -21,7 +21,7 @@ func createSchedule(t *testing.T, srv interface{ ServeHTTP(http.ResponseWriter, 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("createSchedule failed: %d %s", rec.Code, rec.Body.String())
 	}
-	var resp map[string]interface{}
+	var resp map[string]any
 	json.NewDecoder(rec.Body).Decode(&resp)
 	return resp["id"].(string)
 }
@@ -37,7 +37,7 @@ func TestScheduleUpdate(t *testing.T) {
 	// Test 1: disable the schedule (enabled=false) → 200, enabled=false
 	t.Run("disable schedule", func(t *testing.T) {
 		enabled := false
-		body, _ := json.Marshal(map[string]interface{}{"enabled": enabled})
+		body, _ := json.Marshal(map[string]any{"enabled": enabled})
 		req := httptest.NewRequest("PUT", "/api/v1/schedules/"+schedID, bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -46,7 +46,7 @@ func TestScheduleUpdate(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("disable: expected 200, got %d: %s", rec.Code, rec.Body.String())
 		}
-		var resp map[string]interface{}
+		var resp map[string]any
 		json.NewDecoder(rec.Body).Decode(&resp)
 		if resp["enabled"] != false {
 			t.Errorf("expected enabled=false, got %v", resp["enabled"])
@@ -56,7 +56,7 @@ func TestScheduleUpdate(t *testing.T) {
 	// Test 2: change cron expression → 200, cron updated
 	t.Run("update cron expression", func(t *testing.T) {
 		newCron := "30 6 * * 1"
-		body, _ := json.Marshal(map[string]interface{}{"cron_expression": newCron})
+		body, _ := json.Marshal(map[string]any{"cron_expression": newCron})
 		req := httptest.NewRequest("PUT", "/api/v1/schedules/"+schedID, bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -65,7 +65,7 @@ func TestScheduleUpdate(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("update cron: expected 200, got %d: %s", rec.Code, rec.Body.String())
 		}
-		var resp map[string]interface{}
+		var resp map[string]any
 		json.NewDecoder(rec.Body).Decode(&resp)
 		if resp["cron_expression"] != newCron {
 			t.Errorf("expected cron_expression=%q, got %v", newCron, resp["cron_expression"])
@@ -86,7 +86,7 @@ func TestScheduleUpdate(t *testing.T) {
 
 	// Test 4: invalid cron → 400
 	t.Run("invalid cron expression", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]interface{}{"cron_expression": "not-a-cron"})
+		body, _ := json.Marshal(map[string]any{"cron_expression": "not-a-cron"})
 		req := httptest.NewRequest("PUT", "/api/v1/schedules/"+schedID, bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -100,7 +100,7 @@ func TestScheduleUpdate(t *testing.T) {
 	// Test 5: not-found ID → 404
 	t.Run("not found", func(t *testing.T) {
 		enabled := true
-		body, _ := json.Marshal(map[string]interface{}{"enabled": enabled})
+		body, _ := json.Marshal(map[string]any{"enabled": enabled})
 		req := httptest.NewRequest("PUT", "/api/v1/schedules/00000000-0000-0000-0000-000000000000", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+token)
