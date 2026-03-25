@@ -57,84 +57,112 @@ func TestAuditLogs(t *testing.T) {
 		}
 	}
 
-	// 5. Non-admin (editor) gets 403
+	// Extract admin's org_id from the audit response for role-testing below.
+	adminOrgID, _ := entries[0]["org_id"].(string)
+	if adminOrgID == "" {
+		t.Fatal("could not determine admin org_id from audit entries")
+	}
+
+	// 5. Non-admin (viewer) gets 403.
+	// Register a viewer user, invite them into admin's org as "viewer",
+	// then login with admin's org_id to get a viewer-scoped token.
+	viewerEmail := fmt.Sprintf("audit-viewer-%d@example.com", ts)
+	regBody, _ := json.Marshal(map[string]string{
+		"email": viewerEmail, "password": "pass123", "name": "Viewer",
+		"org_name": fmt.Sprintf("Viewer Own Org %d", ts),
+	})
+	req = httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(regBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register viewer: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Invite viewer into admin's org as "viewer"
+	inviteBody, _ := json.Marshal(map[string]string{"email": viewerEmail, "role": "viewer"})
+	req = httptest.NewRequest("POST", "/api/v1/members", bytes.NewReader(inviteBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("invite viewer: expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Login as viewer scoped to admin's org to get a viewer-role token
+	loginBody, _ := json.Marshal(map[string]string{
+		"email": viewerEmail, "password": "pass123", "org_id": adminOrgID,
+	})
+	req = httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewReader(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login viewer: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var loginResp map[string]any
+	json.NewDecoder(rec.Body).Decode(&loginResp)
+	viewerToken, _ := loginResp["token"].(string)
+	if viewerToken == "" {
+		t.Fatal("login viewer: expected token in response")
+	}
+
+	// Viewer should get 403 on GET /api/v1/audit
+	req = httptest.NewRequest("GET", "/api/v1/audit", nil)
+	req.Header.Set("Authorization", "Bearer "+viewerToken)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("viewer audit: expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Also test editor (non-admin) gets 403
 	editorEmail := fmt.Sprintf("audit-editor-%d@example.com", ts)
-	editorToken := registerAndGetToken(t, srv, editorEmail, "Audit Editor Org")
+	regBody, _ = json.Marshal(map[string]string{
+		"email": editorEmail, "password": "pass123", "name": "Editor",
+		"org_name": fmt.Sprintf("Editor Own Org %d", ts),
+	})
+	req = httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(regBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register editor: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	inviteBody, _ = json.Marshal(map[string]string{"email": editorEmail, "role": "editor"})
+	req = httptest.NewRequest("POST", "/api/v1/members", bytes.NewReader(inviteBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("invite editor: expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	loginBody, _ = json.Marshal(map[string]string{
+		"email": editorEmail, "password": "pass123", "org_id": adminOrgID,
+	})
+	req = httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewReader(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login editor: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var editorLoginResp map[string]any
+	json.NewDecoder(rec.Body).Decode(&editorLoginResp)
+	editorToken, _ := editorLoginResp["token"].(string)
+	if editorToken == "" {
+		t.Fatal("login editor: expected token in response")
+	}
 
 	req = httptest.NewRequest("GET", "/api/v1/audit", nil)
 	req.Header.Set("Authorization", "Bearer "+editorToken)
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
-
-	// editorToken user is an admin of their own org — we need a non-admin user
-	// Register second user and invite them as editor to admin's org
-	secondEmail := fmt.Sprintf("audit-viewer-%d@example.com", ts)
-	registerAndGetToken(t, srv, secondEmail, "Audit Viewer Own Org")
-
-	// Find second user's ID and invite them as viewer to admin's org
-	// Use member invite to add them as viewer
-	import_body, _ := json.Marshal(map[string]string{"email": secondEmail, "role": "viewer"})
-	inviteReq := httptest.NewRequest("POST", "/api/v1/members", bytes.NewReader(import_body))
-	inviteReq.Header.Set("Content-Type", "application/json")
-	inviteReq.Header.Set("Authorization", "Bearer "+adminToken)
-	inviteRec := httptest.NewRecorder()
-	srv.ServeHTTP(inviteRec, inviteReq)
-	if inviteRec.Code != http.StatusNoContent {
-		t.Fatalf("invite viewer: expected 204, got %d: %s", inviteRec.Code, inviteRec.Body.String())
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("editor audit: expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
-
-	// Login as the viewer to get a token scoped to admin's org
-	// The viewer's token is for their own org, not admin's org — so it won't be an admin
-	// Actually registerAndGetToken creates them in their own org as admin.
-	// To test non-admin 403: the editor token from "Audit Editor Org" is admin of that org.
-	// We need to use a token where the user is not admin.
-	// The simplest approach: use the second user's token which is admin of their own org,
-	// but test against a fresh org where they are viewer.
-	// Instead: just verify the viewer token (from their own org as admin) —
-	// since they are admin of their own org, we can't test 403 that way.
-	//
-	// Better approach: register a third user, get admin to invite them as viewer,
-	// then have them login. But we only have registerAndGetToken which creates new orgs.
-	//
-	// The correct test: The editorToken user IS admin of "Audit Editor Org".
-	// We need a token for a user who is viewer/editor (not admin) in some org.
-	//
-	// Use the member invite flow: invite secondEmail as viewer in adminToken's org.
-	// Then login as secondEmail — but loginAndGetToken for existing org isn't easy here.
-	//
-	// Simplest valid test: confirm the editor route itself is role-guarded by checking
-	// that a request without auth returns 401, and that a valid non-admin token returns 403.
-	// We'll test with a freshly created user who is editor (not admin) by using
-	// the invite mechanism and a separate login endpoint.
-	_ = editorToken // suppress unused warning
-
-	// Test 401 for unauthenticated request
-	req = httptest.NewRequest("GET", "/api/v1/audit", nil)
-	rec = httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated: expected 401, got %d", rec.Code)
-	}
-
-	// Test 403 for viewer: login as secondEmail (they registered their own org as admin,
-	// but we can test 403 using a login endpoint with a non-admin user in admin's org).
-	// Login as secondEmail to get a token for their own org (they're admin there — won't work).
-	// So instead we'll do a direct login call to get a token for the second user's own org
-	// and verify that when they try to access audit on admin's org perspective it...
-	// Actually since JWT contains org_id, secondEmail's token will have their own org_id.
-	// That org will have no audit entries with action=notebook.create (unless they created one).
-	// But they ARE admin of their own org so they won't get 403.
-	//
-	// To properly test 403: get secondEmail invited as non-admin, then get a token with that org.
-	// The login endpoint returns a token; we need to call it.
-	loginBody, _ := json.Marshal(map[string]string{"email": secondEmail, "password": "pass123"})
-	loginReq := httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewReader(loginBody))
-	loginReq.Header.Set("Content-Type", "application/json")
-	loginRec := httptest.NewRecorder()
-	srv.ServeHTTP(loginRec, loginReq)
-	// The login returns a token for the user's primary org where they may be admin.
-	// We cannot easily get a token scoped to a specific org via login here.
-	// For 403 testing, accept that this is architecture-constrained.
-	// Instead, we test the role guard is present by confirming the route exists (200 for admin).
-	_ = loginRec
 }
