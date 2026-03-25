@@ -4,6 +4,12 @@ export interface User {
   role: string
 }
 
+export interface Parameter {
+  name: string
+  type: 'string' | 'number' | 'date' | 'daterange'
+  default: string
+}
+
 export interface Notebook {
   id: string
   org_id: string
@@ -12,6 +18,7 @@ export interface Notebook {
   created_by: string
   created_at: string
   updated_at: string
+  parameters?: Parameter[]
 }
 
 export interface Cell {
