@@ -40,6 +40,10 @@ export function HomePage() {
             <span style={styles.brandName}>Heaven's Notebooks</span>
           </div>
           <div style={styles.headerRight}>
+            <span style={styles.navActive}>Notebooks</span>
+            <span style={styles.navSep}>·</span>
+            <Link to="/dashboards" style={styles.navLink}>Dashboards</Link>
+            <span style={styles.navSep}>·</span>
             <Link to="/connectors" style={styles.navLink}>Connectors</Link>
             <button style={styles.logoutBtn} onClick={logout}>Sign Out</button>
           </div>
@@ -189,8 +193,17 @@ const styles: Record<string, React.CSSProperties> = {
   navLink: {
     fontSize: 13,
     fontWeight: 500,
-    color: '#8a8278',
+    color: '#6a6260',
     textDecoration: 'none',
+  },
+  navActive: {
+    fontSize: 13,
+    fontWeight: 600,
+    color: 'var(--nav-text)',
+  },
+  navSep: {
+    fontSize: 12,
+    color: '#3a3630',
   },
   logoutBtn: {
     padding: '6px 14px',

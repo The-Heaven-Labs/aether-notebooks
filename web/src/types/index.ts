@@ -60,15 +60,12 @@ export interface Dashboard {
   id: string
   org_id: string
   title: string
-  settings: DashboardSettings
+  settings: { refresh_interval?: number }
   public_token?: string
+  created_by: string
   created_at: string
   updated_at: string
-  widgets: Widget[]
-}
-
-export interface DashboardSettings {
-  auto_refresh_seconds?: number
+  widgets?: Widget[]
 }
 
 export interface Widget {
@@ -77,15 +74,9 @@ export interface Widget {
   notebook_id: string
   cell_id: string
   type: 'chart' | 'table' | 'text' | 'metric'
-  layout: WidgetLayout
+  layout: { row: number; col: number; width: number; height: number }
   config: Record<string, unknown>
-}
-
-export interface WidgetLayout {
-  row: number
-  col: number
-  width: number
-  height: number
+  created_at: string
 }
 
 export interface Schedule {
