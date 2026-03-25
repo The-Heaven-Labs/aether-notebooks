@@ -94,3 +94,21 @@ export interface Schedule {
   next_run_at?: string
   last_run_at?: string
 }
+
+export interface AuditEntry {
+  id: string
+  org_id: string
+  user_id: string
+  action: string
+  resource_type: string
+  resource_id: string
+  created_at: string
+}
+
+export interface Member {
+  user_id: string
+  email: string
+  name: string
+  role: string
+  joined_at: string
+}

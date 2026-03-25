@@ -6,6 +6,8 @@ import { HomePage } from './pages/HomePage'
 import { NotebookPage } from './pages/NotebookPage'
 import { ConnectorsPage } from './pages/ConnectorsPage'
 import { DashboardsPage } from './pages/DashboardsPage'
+import { AuditPage } from './pages/AuditPage'
+import { MembersPage } from './pages/MembersPage'
 import './styles/theme.css'
 
 const queryClient = new QueryClient({
@@ -52,6 +54,22 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <DashboardsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/audit"
+        element={
+          <ProtectedRoute>
+            <AuditPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/members"
+        element={
+          <ProtectedRoute>
+            <MembersPage />
           </ProtectedRoute>
         }
       />
