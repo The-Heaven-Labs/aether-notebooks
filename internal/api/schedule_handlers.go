@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/heavenlabs/hnb/internal/audit"
@@ -140,6 +141,84 @@ func (s *Server) handleDeleteSchedule(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type updateScheduleRequest struct {
+	Enabled            *bool             `json:"enabled,omitempty"`
+	CronExpression     *string           `json:"cron_expression,omitempty"`
+	ParameterOverrides map[string]string `json:"parameter_overrides,omitempty"`
+}
+
+func (s *Server) handleUpdateSchedule(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	schedID := r.PathValue("id")
+
+	var req updateScheduleRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Enabled == nil && req.CronExpression == nil && req.ParameterOverrides == nil {
+		writeError(w, http.StatusBadRequest, "at least one field must be provided")
+		return
+	}
+
+	ctx := r.Context()
+	query := "UPDATE schedules SET updated_at = NOW()"
+	args := []any{}
+	argN := 1
+
+	if req.Enabled != nil {
+		query += fmt.Sprintf(", enabled = $%d", argN)
+		args = append(args, *req.Enabled)
+		argN++
+	}
+	if req.CronExpression != nil {
+		next, err := scheduler.NextRun(*req.CronExpression)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid cron expression")
+			return
+		}
+		query += fmt.Sprintf(", cron_expression = $%d, next_run_at = $%d", argN, argN+1)
+		args = append(args, *req.CronExpression, next)
+		argN += 2
+	}
+	if req.ParameterOverrides != nil {
+		overridesJSON, _ := json.Marshal(req.ParameterOverrides)
+		query += fmt.Sprintf(", parameter_overrides = $%d", argN)
+		args = append(args, overridesJSON)
+		argN++
+	}
+
+	query += fmt.Sprintf(
+		` WHERE id = $%d AND notebook_id IN (SELECT id FROM notebooks WHERE org_id = $%d)`,
+		argN, argN+1,
+	)
+	args = append(args, schedID, claims.OrgID)
+	query += " RETURNING id, notebook_id, cron_expression, parameter_overrides, enabled, last_run_at, next_run_at, created_at, updated_at"
+
+	var sched models.Schedule
+	var overridesOut []byte
+	err := s.db.Pool.QueryRow(ctx, query, args...).Scan(
+		&sched.ID, &sched.NotebookID, &sched.CronExpression, &overridesOut,
+		&sched.Enabled, &sched.LastRunAt, &sched.NextRunAt, &sched.CreatedAt, &sched.UpdatedAt,
+	)
+	if err == pgx.ErrNoRows {
+		writeError(w, http.StatusNotFound, "schedule not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "update failed")
+		return
+	}
+	json.Unmarshal(overridesOut, &sched.ParameterOverrides)
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "schedule.update", ResourceType: "schedule", ResourceID: sched.ID,
+	})
+	writeJSON(w, http.StatusOK, sched)
 }
 
 func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
