@@ -47,6 +47,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/notebooks", authMW(http.HandlerFunc(s.handleListNotebooks)))
 	s.mux.Handle("GET /api/v1/notebooks/{id}", authMW(http.HandlerFunc(s.handleGetNotebook)))
 	s.mux.Handle("DELETE /api/v1/notebooks/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDeleteNotebook))))
+	s.mux.Handle("PUT /api/v1/notebooks/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleUpdateNotebook))))
 
 	// Cell routes
 	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/cells", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateCell))))

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/heavenlabs/hnb/internal/audit"
@@ -178,4 +179,57 @@ func (s *Server) handleDeleteNotebook(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type updateNotebookRequest struct {
+	Title      *string            `json:"title,omitempty"`
+	Parameters []models.Parameter `json:"parameters,omitempty"`
+}
+
+func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	nbID := r.PathValue("id")
+
+	var req updateNotebookRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	ctx := r.Context()
+	query := "UPDATE notebooks SET updated_at = NOW()"
+	args := []interface{}{}
+	argN := 1
+
+	if req.Title != nil {
+		query += fmt.Sprintf(", title = $%d", argN)
+		args = append(args, *req.Title)
+		argN++
+	}
+	if req.Parameters != nil {
+		paramsJSON, _ := json.Marshal(req.Parameters)
+		query += fmt.Sprintf(", parameters = $%d", argN)
+		args = append(args, paramsJSON)
+		argN++
+	}
+
+	query += fmt.Sprintf(" WHERE id = $%d AND org_id = $%d", argN, argN+1)
+	args = append(args, nbID, claims.OrgID)
+	query += " RETURNING id, org_id, title, parameters, created_by, created_at, updated_at"
+
+	var nb models.Notebook
+	var paramsOut []byte
+	err := s.db.Pool.QueryRow(ctx, query, args...).Scan(
+		&nb.ID, &nb.OrgID, &nb.Title, &paramsOut, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt,
+	)
+	if err == pgx.ErrNoRows {
+		writeError(w, http.StatusNotFound, "notebook not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "update failed")
+		return
+	}
+	json.Unmarshal(paramsOut, &nb.Parameters)
+	writeJSON(w, http.StatusOK, nb)
 }
