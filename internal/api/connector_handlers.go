@@ -1,11 +1,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/crypto"
+	"github.com/heavenlabs/hnb/internal/executor"
 	"github.com/heavenlabs/hnb/internal/models"
 )
 
@@ -137,4 +140,70 @@ func (s *Server) handleDeleteConnector(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) loadAndBuildExecutor(ctx context.Context, connID, orgID string) (executor.Executor, error) {
+	var configEnc []byte
+	var connType models.ConnectorType
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT type, config_encrypted FROM connectors WHERE id = $1 AND org_id = $2`,
+		connID, orgID,
+	).Scan(&connType, &configEnc)
+	if err != nil {
+		return nil, err
+	}
+	plain, err := crypto.Decrypt(configEnc, s.masterKey)
+	if err != nil {
+		return nil, err
+	}
+	var cfg models.ConnectorConfig
+	json.Unmarshal(plain, &cfg)
+
+	switch connType {
+	case models.ConnectorPostgres:
+		return executor.NewPostgresExecutor(cfg)
+	case models.ConnectorClickHouse:
+		return executor.NewClickHouseExecutor(cfg)
+	default:
+		return nil, fmt.Errorf("unsupported connector type: %s", connType)
+	}
+}
+
+func (s *Server) handleTestConnector(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	connID := r.PathValue("id")
+	ctx := r.Context()
+
+	exec, err := s.loadAndBuildExecutor(ctx, connID, claims.OrgID)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	defer exec.Close()
+
+	if err := exec.TestConnection(ctx); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	connID := r.PathValue("id")
+	ctx := r.Context()
+
+	exec, err := s.loadAndBuildExecutor(ctx, connID, claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "connector not found or cannot connect")
+		return
+	}
+	defer exec.Close()
+
+	schema, err := exec.Schema(ctx)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "schema fetch failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, schema)
 }
