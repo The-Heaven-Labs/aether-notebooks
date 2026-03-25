@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import { Notebook, Cell, Output } from '../types'
+import type { Notebook, Cell, Output, Connector } from '../types'
 import { CodeCell } from '../components/CodeCell'
 import { TextCell } from '../components/TextCell'
 
@@ -15,11 +15,18 @@ export function NotebookPage() {
   const qc = useQueryClient()
   const [runningCells, setRunningCells] = useState<Set<string>>(new Set())
   const [localCells, setLocalCells] = useState<Cell[]>([])
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
 
   const { data: notebook, isLoading } = useQuery({
     queryKey: ['notebook', id],
     queryFn: () => api.get<NotebookWithCells>(`/api/v1/notebooks/${id}`),
     enabled: !!id,
+  })
+
+  const { data: connectors = [] } = useQuery({
+    queryKey: ['connectors'],
+    queryFn: () => api.get<Connector[]>('/api/v1/connectors'),
   })
 
   useEffect(() => {
@@ -46,16 +53,44 @@ export function NotebookPage() {
     },
   })
 
+  const renameNotebook = useMutation({
+    mutationFn: (title: string) =>
+      api.put(`/api/v1/notebooks/${id}`, { title }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notebook', id] }),
+  })
+
+  const switchCellType = useCallback(async (cellId: string) => {
+    const cell = localCells.find((c) => c.id === cellId)
+    if (!cell) return
+    const newType = cell.type === 'code' ? 'text' : 'code'
+    const newLanguage = newType === 'code' ? 'sql' : 'markdown'
+    await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, {
+      type: newType,
+      language: newLanguage,
+    })
+    setLocalCells((prev) =>
+      prev.map((c) => c.id === cellId ? { ...c, type: newType, language: newLanguage, outputs: [] } : c)
+    )
+  }, [id, localCells])
+
   const updateSource = useCallback((cellId: string, source: string) => {
     setLocalCells((prev) => prev.map((c) => (c.id === cellId ? { ...c, source } : c)))
   }, [])
+
+  const assignConnector = useCallback(async (cellId: string, connectorId: string) => {
+    await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, {
+      connector_id: connectorId,
+    })
+    setLocalCells((prev) =>
+      prev.map((c) => (c.id === cellId ? { ...c, connector_id: connectorId } : c))
+    )
+  }, [id])
 
   const saveAndRun = useCallback(
     async (cellId: string) => {
       const cell = localCells.find((c) => c.id === cellId)
       if (!cell) return
 
-      // Save source
       await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { source: cell.source })
 
       setRunningCells((s) => new Set(s).add(cellId))
@@ -103,80 +138,249 @@ export function NotebookPage() {
     })
   }, [])
 
-  if (isLoading) return <div style={styles.loading}>Loading…</div>
-  if (!notebook) return <div style={styles.loading}>Notebook not found</div>
+  const runningCount = runningCells.size
+
+  if (isLoading) return (
+    <div style={styles.loadingPage}>
+      <div style={styles.loadingDot} />
+    </div>
+  )
+  if (!notebook) return (
+    <div style={styles.loadingPage}>
+      <p style={{ color: 'var(--text-secondary)' }}>Notebook not found</p>
+    </div>
+  )
 
   return (
     <div style={styles.page}>
-      <div style={styles.header}>
-        <h1 style={styles.title}>{notebook.title}</h1>
-        <div style={styles.actions}>
-          <button style={styles.btn} onClick={runAll}>▶▶ Run All</button>
-        </div>
-      </div>
-
-      <div style={styles.cells}>
-        {localCells.map((cell, i) =>
-          cell.type === 'code' ? (
-            <CodeCell
-              key={cell.id}
-              cell={cell}
-              onRun={saveAndRun}
-              onDelete={(cid) => deleteCell.mutate(cid)}
-              onSourceChange={updateSource}
-              onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
-              onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
-              running={runningCells.has(cell.id)}
+      {/* Top navigation bar */}
+      <header style={styles.header}>
+        <div style={styles.headerLeft}>
+          <Link to="/" style={styles.backLink}>
+            <span style={styles.backArrow}>←</span>
+            <span style={styles.backLabel}>Notebooks</span>
+          </Link>
+          <span style={styles.breadcrumbSep}>/</span>
+          {editingTitle ? (
+            <input
+              style={styles.titleInput}
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onBlur={() => {
+                setEditingTitle(false)
+                if (titleDraft.trim() && titleDraft.trim() !== notebook.title) {
+                  renameNotebook.mutate(titleDraft.trim())
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                if (e.key === 'Escape') setEditingTitle(false)
+              }}
+              autoFocus
             />
           ) : (
-            <TextCell
-              key={cell.id}
-              cell={cell}
-              onDelete={(cid) => deleteCell.mutate(cid)}
-              onSourceChange={updateSource}
-              onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
-              onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
-            />
-          ),
-        )}
-      </div>
+            <span
+              style={styles.notebookTitle}
+              onClick={() => { setTitleDraft(notebook.title); setEditingTitle(true) }}
+              title="Click to rename"
+            >
+              {notebook.title}
+            </span>
+          )}
+        </div>
+        <div style={styles.headerRight}>
+          {runningCount > 0 && (
+            <span style={styles.runningBadge}>
+              ⏳ Running {runningCount} cell{runningCount > 1 ? 's' : ''}…
+            </span>
+          )}
+          <button style={styles.runAllBtn} onClick={runAll} disabled={runningCount > 0}>
+            ▶▶ Run All
+          </button>
+        </div>
+      </header>
 
-      <div style={styles.addButtons}>
-        <button style={styles.addBtn} onClick={() => createCell.mutate('code')}>
-          + Code Cell
-        </button>
-        <button style={styles.addBtn} onClick={() => createCell.mutate('text')}>
-          + Text Cell
-        </button>
+      {/* Cells area */}
+      <div style={styles.body}>
+        <div style={styles.bodyInner}>
+        <div style={styles.cells}>
+          {localCells.map((cell, i) =>
+            cell.type === 'code' ? (
+              <CodeCell
+                key={cell.id}
+                cell={cell}
+                connectors={connectors}
+                onRun={saveAndRun}
+                onDelete={(cid) => deleteCell.mutate(cid)}
+                onSourceChange={updateSource}
+                onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
+                onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
+                onSwitchType={() => switchCellType(cell.id)}
+                onAssignConnector={assignConnector}
+                running={runningCells.has(cell.id)}
+              />
+            ) : (
+              <TextCell
+                key={cell.id}
+                cell={cell}
+                onDelete={(cid) => deleteCell.mutate(cid)}
+                onSourceChange={updateSource}
+                onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
+                onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
+                onSwitchType={() => switchCellType(cell.id)}
+              />
+            ),
+          )}
+
+          <div style={styles.addRow}>
+            <button style={styles.addBtn} onClick={() => createCell.mutate('code')}>
+              + Code Cell
+            </button>
+            <button style={styles.addBtn} onClick={() => createCell.mutate('text')}>
+              + Text Cell
+            </button>
+          </div>
+        </div>
+        </div>
       </div>
     </div>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  page: { maxWidth: 900, margin: '0 auto', padding: '32px 24px' },
-  loading: { padding: 40, textAlign: 'center', color: 'var(--text-secondary)' },
-  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 },
-  title: { fontSize: 22, fontWeight: 700 },
-  actions: { display: 'flex', gap: 8 },
-  btn: {
-    padding: '6px 14px',
+  page: {
+    minHeight: '100vh',
+    background: 'var(--bg-primary)',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  loadingPage: {
+    minHeight: '100vh',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: '50%',
+    background: 'var(--accent)',
+    opacity: 0.5,
+  },
+  header: {
+    background: 'var(--nav-bg)',
+    borderBottom: '1px solid var(--nav-border)',
+    height: 52,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '0 24px',
+    flexShrink: 0,
+    position: 'sticky',
+    top: 0,
+    zIndex: 100,
+  },
+  headerLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    minWidth: 0,
+  },
+  backLink: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 5,
+    color: '#6a6260',
+    textDecoration: 'none',
+    fontSize: 13,
+    fontWeight: 500,
+    flexShrink: 0,
+    transition: 'color 0.15s',
+  },
+  backArrow: {
+    fontSize: 16,
+    lineHeight: 1,
+  },
+  backLabel: {
+    fontSize: 13,
+  },
+  breadcrumbSep: {
+    color: '#3a3630',
+    fontSize: 14,
+    flexShrink: 0,
+  },
+  notebookTitle: {
+    fontSize: 14,
+    fontWeight: 600,
+    color: 'var(--nav-text)',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    maxWidth: 400,
+    cursor: 'pointer',
+  },
+  titleInput: {
+    fontSize: 14,
+    fontWeight: 600,
+    color: 'var(--nav-text)',
+    background: 'transparent',
+    border: 'none',
+    borderBottom: '1px solid var(--accent)',
+    outline: 'none',
+    maxWidth: 400,
+    fontFamily: 'var(--font-sans)',
+    padding: '1px 2px',
+  },
+  headerRight: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    flexShrink: 0,
+  },
+  runningBadge: {
+    fontSize: 12,
+    color: '#8a8278',
+    fontFamily: 'var(--font-mono)',
+  },
+  runAllBtn: {
+    padding: '6px 16px',
     background: 'var(--accent)',
     color: 'white',
     border: 'none',
     borderRadius: 6,
     fontSize: 13,
+    fontWeight: 600,
     cursor: 'pointer',
+    letterSpacing: '0.01em',
   },
-  cells: { display: 'flex', flexDirection: 'column', gap: 16 },
-  addButtons: { display: 'flex', gap: 12, marginTop: 20 },
+  body: {
+    flex: 1,
+    padding: '32px 0 64px',
+  },
+  bodyInner: {
+    maxWidth: 1200,
+    margin: '0 auto',
+    padding: '0 40px',
+  },
+  cells: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
+  },
+  addRow: {
+    display: 'flex',
+    gap: 10,
+    paddingTop: 8,
+  },
   addBtn: {
-    padding: '8px 18px',
-    border: '1px dashed var(--border)',
-    borderRadius: 6,
+    padding: '8px 20px',
+    border: '1.5px dashed var(--border)',
+    borderRadius: 7,
     background: 'transparent',
-    color: 'var(--text-secondary)',
+    color: 'var(--text-muted)',
     fontSize: 13,
+    fontWeight: 500,
     cursor: 'pointer',
+    transition: 'border-color 0.15s, color 0.15s',
   },
 }
