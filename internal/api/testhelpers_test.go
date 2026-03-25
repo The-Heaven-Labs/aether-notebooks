@@ -37,7 +37,7 @@ func setupTestServer(t *testing.T) *api.Server {
 	jwt := auth.NewJWTIssuer("test-secret", 15*time.Minute)
 	auditLogger := audit.NewLogger(db)
 	key := crypto.DeriveKey("test-master-key-for-tests-only!")
-	return api.NewServer(db, jwt, auditLogger, key)
+	return api.NewServer(db, jwt, auditLogger, key, nil)
 }
 
 func registerAndGetToken(t *testing.T, srv *api.Server, email, orgName string) string {

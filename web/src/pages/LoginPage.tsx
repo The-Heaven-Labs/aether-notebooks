@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import { ApiError } from '../api/client'
+import { ApiError, setToken } from '../api/client'
 
 export function LoginPage() {
   const { login, register } = useAuth()
@@ -14,6 +14,18 @@ export function LoginPage() {
   const [orgName, setOrgName] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  // Handle OIDC callback: pick up ?token= from the URL query string
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const token = params.get('token')
+    if (token) {
+      setToken(token)
+      // Clean up the URL and navigate to home
+      window.history.replaceState({}, '', window.location.pathname)
+      navigate('/')
+    }
+  }, [navigate])
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -31,6 +43,10 @@ export function LoginPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  function handleSSOLogin() {
+    window.location.href = '/api/v1/auth/oidc/default'
   }
 
   return (
@@ -138,6 +154,14 @@ export function LoginPage() {
               {loading ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Create Account'}
             </button>
           </form>
+
+          <div style={styles.divider}>
+            <span style={styles.dividerText}>or</span>
+          </div>
+
+          <button type="button" style={styles.ssoButton} onClick={handleSSOLogin}>
+            Sign in with SSO
+          </button>
         </div>
       </div>
     </div>
@@ -297,5 +321,31 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 6,
     letterSpacing: '0.01em',
     transition: 'background 0.15s',
+  },
+  divider: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    margin: '20px 0',
+  },
+  dividerText: {
+    flex: 1,
+    textAlign: 'center' as const,
+    fontSize: 12,
+    color: 'var(--text-secondary)',
+    position: 'relative' as const,
+  },
+  ssoButton: {
+    width: '100%',
+    padding: '11px',
+    background: 'transparent',
+    color: 'var(--text-primary)',
+    border: '1.5px solid var(--border)',
+    borderRadius: 7,
+    fontSize: 14,
+    fontWeight: 600,
+    cursor: 'pointer',
+    letterSpacing: '0.01em',
+    transition: 'border-color 0.15s, background 0.15s',
   },
 }

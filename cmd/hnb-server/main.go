@@ -53,7 +53,7 @@ func main() {
 	defer sched.Stop()
 
 	// Build HTTP server
-	srv := api.NewServer(db, jwtIssuer, auditLogger, masterKey)
+	srv := api.NewServer(db, jwtIssuer, auditLogger, masterKey, nil)
 	httpSrv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      srv,
