@@ -9,22 +9,24 @@ import (
 )
 
 type Server struct {
-	db        *database.DB
-	jwt       *auth.JWTIssuer
-	audit     *audit.Logger
-	masterKey []byte
-	hub       *Hub
-	mux       *http.ServeMux
+	db            *database.DB
+	jwt           *auth.JWTIssuer
+	audit         *audit.Logger
+	masterKey     []byte
+	hub           *Hub
+	mux           *http.ServeMux
+	oidcProviders map[string]auth.OIDCProvider
 }
 
-func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte) *Server {
+func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, oidcProviders map[string]auth.OIDCProvider) *Server {
 	s := &Server{
-		db:        db,
-		jwt:       jwt,
-		audit:     auditLogger,
-		masterKey: masterKey,
-		hub:       NewHub(),
-		mux:       http.NewServeMux(),
+		db:            db,
+		jwt:           jwt,
+		audit:         auditLogger,
+		masterKey:     masterKey,
+		hub:           NewHub(),
+		mux:           http.NewServeMux(),
+		oidcProviders: oidcProviders,
 	}
 	s.routes()
 	return s
@@ -41,6 +43,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	s.mux.HandleFunc("POST /api/v1/auth/register", s.handleRegister)
+	s.mux.HandleFunc("GET /api/v1/auth/oidc/{provider}", s.handleOIDCLogin)
+	s.mux.HandleFunc("GET /api/v1/auth/oidc/{provider}/callback", s.handleOIDCCallback)
 
 	// Notebook routes
 	s.mux.Handle("POST /api/v1/notebooks", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateNotebook))))
