@@ -6,6 +6,7 @@ import { HomePage } from './pages/HomePage'
 import { NotebookPage } from './pages/NotebookPage'
 import { ConnectorsPage } from './pages/ConnectorsPage'
 import { DashboardsPage } from './pages/DashboardsPage'
+import { DashboardEditorPage } from './pages/DashboardEditorPage'
 import { AuditPage } from './pages/AuditPage'
 import { MembersPage } from './pages/MembersPage'
 import './styles/theme.css'
@@ -54,6 +55,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <DashboardsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/dashboards/:id"
+        element={
+          <ProtectedRoute>
+            <DashboardEditorPage />
           </ProtectedRoute>
         }
       />
