@@ -91,8 +91,10 @@ export interface Schedule {
   notebook_id: string
   cron_expression: string
   enabled: boolean
-  next_run_at?: string
-  last_run_at?: string
+  parameter_overrides: Record<string, string>
+  next_run_at: string | null
+  created_at: string
+  updated_at: string
 }
 
 export interface AuditEntry {
