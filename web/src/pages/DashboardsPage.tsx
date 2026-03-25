@@ -35,9 +35,12 @@ export function DashboardsPage() {
     onError: (err: Error) => setCreateError(err.message),
   })
 
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
   const deleteDashboard = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/dashboards/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboards'] }),
+    onError: (err: Error) => setDeleteError(err.message),
   })
 
   return (
@@ -66,6 +69,7 @@ export function DashboardsPage() {
           </form>
         )}
         {createError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{createError}</p>}
+        {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
 
         {isLoading ? (
           <div style={styles.loading} />

@@ -15,6 +15,8 @@ export function HomePage() {
     queryFn: () => api.get<Notebook[]>('/api/v1/notebooks'),
   })
 
+  const [createError, setCreateError] = useState<string | null>(null)
+
   const createNotebook = useMutation({
     mutationFn: (title: string) =>
       api.post<Notebook>('/api/v1/notebooks', { title }),
@@ -22,12 +24,15 @@ export function HomePage() {
       qc.invalidateQueries({ queryKey: ['notebooks'] })
       setNewTitle('')
       setCreating(false)
+      setCreateError(null)
     },
+    onError: (err: Error) => setCreateError(err.message),
   })
 
   const deleteNotebook = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/notebooks/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['notebooks'] }),
+    onError: (err: Error) => setCreateError(err.message),
   })
 
   return (
@@ -70,6 +75,7 @@ export function HomePage() {
               <button type="button" style={styles.cancelBtn} onClick={() => setCreating(false)}>Cancel</button>
             </div>
           )}
+          {createError && <p style={{ color: '#c0392b', fontSize: 12, margin: '0 0 12px' }}>{createError}</p>}
 
           {notebooks.length === 0 && !creating ? (
             <div style={styles.empty}>
