@@ -196,6 +196,11 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Title == nil && req.Parameters == nil {
+		writeError(w, http.StatusBadRequest, "at least one field must be provided")
+		return
+	}
+
 	ctx := r.Context()
 	query := "UPDATE notebooks SET updated_at = NOW()"
 	args := []any{}
@@ -231,5 +236,11 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.Unmarshal(paramsOut, &nb.Parameters)
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "notebook.update", ResourceType: "notebook", ResourceID: nb.ID,
+	})
+
 	writeJSON(w, http.StatusOK, nb)
 }
