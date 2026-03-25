@@ -198,7 +198,7 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	query := "UPDATE notebooks SET updated_at = NOW()"
-	args := []interface{}{}
+	args := []any{}
 	argN := 1
 
 	if req.Title != nil {
