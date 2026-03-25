@@ -264,6 +264,7 @@ export function NotebookPage() {
                       key={cell.id}
                       cell={cell}
                       connectors={connectors}
+                      notebookId={id!}
                       onRun={saveAndRun}
                       onDelete={(cid) => deleteCell.mutate(cid)}
                       onSourceChange={updateSource}
