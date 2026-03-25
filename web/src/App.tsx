@@ -4,6 +4,7 @@ import { useAuth } from './hooks/useAuth'
 import { LoginPage } from './pages/LoginPage'
 import { HomePage } from './pages/HomePage'
 import { NotebookPage } from './pages/NotebookPage'
+import { ConnectorsPage } from './pages/ConnectorsPage'
 import './styles/theme.css'
 
 const queryClient = new QueryClient({
@@ -34,6 +35,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <NotebookPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/connectors"
+        element={
+          <ProtectedRoute>
+            <ConnectorsPage />
           </ProtectedRoute>
         }
       />
