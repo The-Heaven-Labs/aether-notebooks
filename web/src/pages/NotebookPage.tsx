@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { Notebook, Cell, Output, Connector } from '../types'
+import type { Notebook, Cell, Output, Connector, Parameter } from '../types'
 import { CodeCell } from '../components/CodeCell'
 import { TextCell } from '../components/TextCell'
+import { ParametersBar } from '../components/ParametersBar'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -17,6 +18,7 @@ export function NotebookPage() {
   const [localCells, setLocalCells] = useState<Cell[]>([])
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
+  const [paramValues, setParamValues] = useState<Record<string, string>>({})
 
   const { data: notebook, isLoading } = useQuery({
     queryKey: ['notebook', id],
@@ -59,6 +61,12 @@ export function NotebookPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['notebook', id] }),
   })
 
+  const saveParameters = useMutation({
+    mutationFn: (params: Parameter[]) =>
+      api.put(`/api/v1/notebooks/${id}`, { parameters: params }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notebook', id] }),
+  })
+
   const switchCellType = useCallback(async (cellId: string) => {
     const cell = localCells.find((c) => c.id === cellId)
     if (!cell) return
@@ -97,7 +105,7 @@ export function NotebookPage() {
       try {
         const result = await api.post<{ outputs: Output[] }>(
           `/api/v1/notebooks/${id}/cells/${cellId}/execute`,
-          {},
+          { parameters: paramValues },
         )
         setLocalCells((prev) =>
           prev.map((c) => (c.id === cellId ? { ...c, outputs: result.outputs } : c)),
@@ -117,7 +125,7 @@ export function NotebookPage() {
         })
       }
     },
-    [id, localCells],
+    [id, localCells, paramValues],
   )
 
   const runAll = useCallback(async () => {
@@ -199,6 +207,13 @@ export function NotebookPage() {
           </button>
         </div>
       </header>
+
+      <ParametersBar
+        parameters={notebook.parameters ?? []}
+        values={paramValues}
+        onChange={setParamValues}
+        onSaveDefinitions={(params) => saveParameters.mutate(params)}
+      />
 
       {/* Cells area */}
       <div style={styles.body}>
