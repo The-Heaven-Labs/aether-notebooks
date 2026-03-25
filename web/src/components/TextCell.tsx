@@ -8,12 +8,13 @@ interface Props {
   cell: Cell
   onDelete: (cellId: string) => void
   onSourceChange: (cellId: string, source: string) => void
+  onSave?: (cellId: string, source: string) => void
   onMoveUp?: () => void
   onMoveDown?: () => void
   onSwitchType?: () => void
 }
 
-export function TextCell({ cell, onDelete, onSourceChange, onMoveUp, onMoveDown, onSwitchType }: Props) {
+export function TextCell({ cell, onDelete, onSourceChange, onSave, onMoveUp, onMoveDown, onSwitchType }: Props) {
   const [editing, setEditing] = useState(!cell.source)
 
   return (
@@ -32,7 +33,7 @@ export function TextCell({ cell, onDelete, onSourceChange, onMoveUp, onMoveDown,
           style={styles.textarea}
           value={cell.source}
           onChange={(e) => onSourceChange(cell.id, e.target.value)}
-          onBlur={() => setEditing(false)}
+          onBlur={() => { setEditing(false); onSave?.(cell.id, cell.source) }}
           autoFocus
           placeholder="Write markdown here…"
         />
