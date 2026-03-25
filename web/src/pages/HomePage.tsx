@@ -3,10 +3,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../api/client'
 import type { Notebook } from '../types'
-import { useAuth } from '../hooks/useAuth'
+import { NavBar } from '../components/NavBar'
 
 export function HomePage() {
-  const { logout } = useAuth()
   const qc = useQueryClient()
   const [newTitle, setNewTitle] = useState('')
   const [creating, setCreating] = useState(false)
@@ -33,26 +32,7 @@ export function HomePage() {
 
   return (
     <div style={styles.page}>
-      <header style={styles.header}>
-        <div style={styles.headerInner}>
-          <div style={styles.brand}>
-            <div style={styles.logoMark}>▦</div>
-            <span style={styles.brandName}>Heaven's Notebooks</span>
-          </div>
-          <div style={styles.headerRight}>
-            <span style={styles.navActive}>Notebooks</span>
-            <span style={styles.navSep}>·</span>
-            <Link to="/dashboards" style={styles.navLink}>Dashboards</Link>
-            <span style={styles.navSep}>·</span>
-            <Link to="/connectors" style={styles.navLink}>Connectors</Link>
-            <span style={styles.navSep}>·</span>
-            <Link to="/audit" style={styles.navLink}>Audit</Link>
-            <span style={styles.navSep}>·</span>
-            <Link to="/members" style={styles.navLink}>Members</Link>
-            <button style={styles.logoutBtn} onClick={logout}>Sign Out</button>
-          </div>
-        </div>
-      </header>
+      <NavBar activePage="notebooks" />
 
       <main style={styles.main}>
         <div style={styles.content}>
@@ -61,7 +41,7 @@ export function HomePage() {
               <h2 style={styles.sectionTitle}>Notebooks</h2>
               <p style={styles.sectionSub}>{notebooks.length} notebook{notebooks.length !== 1 ? 's' : ''}</p>
             </div>
-            <button style={styles.newBtn} onClick={() => setCreating(true)}>
+            <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>
               + New Notebook
             </button>
           </div>
@@ -80,13 +60,14 @@ export function HomePage() {
                 }}
               />
               <button
+                type="button"
                 style={styles.createBtn}
                 disabled={!newTitle.trim()}
                 onClick={() => createNotebook.mutate(newTitle.trim())}
               >
                 Create
               </button>
-              <button style={styles.cancelBtn} onClick={() => setCreating(false)}>Cancel</button>
+              <button type="button" style={styles.cancelBtn} onClick={() => setCreating(false)}>Cancel</button>
             </div>
           )}
 
@@ -95,7 +76,7 @@ export function HomePage() {
               <div style={styles.emptyIcon}>▦</div>
               <p style={styles.emptyTitle}>No notebooks yet</p>
               <p style={styles.emptyText}>Create your first notebook to start querying data.</p>
-              <button style={styles.newBtn} onClick={() => setCreating(true)}>
+              <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>
                 Create your first notebook
               </button>
             </div>
@@ -136,6 +117,7 @@ function NotebookCard({ notebook, onDelete }: { notebook: Notebook; onDelete: ()
       </Link>
       <div style={styles.cardFooter}>
         <button
+          type="button"
           style={styles.deleteBtn}
           onClick={(e) => { e.preventDefault(); onDelete() }}
         >
@@ -152,73 +134,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--bg-primary)',
     display: 'flex',
     flexDirection: 'column',
-  },
-  header: {
-    background: 'var(--nav-bg)',
-    borderBottom: '1px solid var(--nav-border)',
-    flexShrink: 0,
-  },
-  headerInner: {
-    maxWidth: 1280,
-    margin: '0 auto',
-    padding: '0 32px',
-    height: 56,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  brand: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-  },
-  logoMark: {
-    width: 30,
-    height: 30,
-    background: 'var(--accent)',
-    borderRadius: 7,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: 16,
-    color: 'white',
-  },
-  brandName: {
-    fontSize: 15,
-    fontWeight: 700,
-    color: 'var(--nav-text)',
-    letterSpacing: '-0.1px',
-  },
-  headerRight: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 12,
-  },
-  navLink: {
-    fontSize: 13,
-    fontWeight: 500,
-    color: '#6a6260',
-    textDecoration: 'none',
-  },
-  navActive: {
-    fontSize: 13,
-    fontWeight: 600,
-    color: 'var(--nav-text)',
-  },
-  navSep: {
-    fontSize: 12,
-    color: '#3a3630',
-  },
-  logoutBtn: {
-    padding: '6px 14px',
-    border: '1px solid #3a3630',
-    borderRadius: 6,
-    background: 'transparent',
-    fontSize: 13,
-    color: '#8a8278',
-    cursor: 'pointer',
-    fontWeight: 500,
-    transition: 'all 0.15s',
   },
   main: {
     flex: 1,

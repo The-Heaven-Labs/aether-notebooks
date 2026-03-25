@@ -21,6 +21,7 @@ type updateCellRequest struct {
 	Source      *string `json:"source,omitempty"`
 	Language    *string `json:"language,omitempty"`
 	ConnectorID *string `json:"connector_id,omitempty"`
+	Type        *string `json:"type,omitempty"`
 }
 
 func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
@@ -114,6 +115,11 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 	args := []interface{}{}
 	argN := 1
 
+	if req.Type != nil {
+		query += fmt.Sprintf(", type = $%d", argN)
+		args = append(args, *req.Type)
+		argN++
+	}
 	if req.Source != nil {
 		query += fmt.Sprintf(", source = $%d", argN)
 		args = append(args, *req.Source)

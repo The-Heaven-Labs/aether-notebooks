@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Cell } from '../types'
+import type { Cell } from '../types'
 import { CellToolbar } from './CellToolbar'
 
 interface Props {
@@ -10,9 +10,10 @@ interface Props {
   onSourceChange: (cellId: string, source: string) => void
   onMoveUp?: () => void
   onMoveDown?: () => void
+  onSwitchType?: () => void
 }
 
-export function TextCell({ cell, onDelete, onSourceChange, onMoveUp, onMoveDown }: Props) {
+export function TextCell({ cell, onDelete, onSourceChange, onMoveUp, onMoveDown, onSwitchType }: Props) {
   const [editing, setEditing] = useState(!cell.source)
 
   return (
@@ -23,6 +24,7 @@ export function TextCell({ cell, onDelete, onSourceChange, onMoveUp, onMoveDown 
         onDelete={() => onDelete(cell.id)}
         onMoveUp={onMoveUp}
         onMoveDown={onMoveDown}
+        onSwitchType={onSwitchType}
         running={false}
       />
       {editing ? (
@@ -37,7 +39,9 @@ export function TextCell({ cell, onDelete, onSourceChange, onMoveUp, onMoveDown 
       ) : (
         <div style={styles.preview} onClick={() => setEditing(true)}>
           {cell.source ? (
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{cell.source}</ReactMarkdown>
+            <div style={styles.markdownBody}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{cell.source}</ReactMarkdown>
+            </div>
           ) : (
             <p style={styles.placeholder}>Click to edit…</p>
           )}
@@ -50,30 +54,37 @@ export function TextCell({ cell, onDelete, onSourceChange, onMoveUp, onMoveDown 
 const styles: Record<string, React.CSSProperties> = {
   cell: {
     border: '1px solid var(--border)',
-    borderRadius: 8,
-    background: 'var(--bg-cell-text)',
+    borderRadius: 10,
+    background: 'white',
     overflow: 'hidden',
+    boxShadow: 'var(--shadow-sm)',
   },
   textarea: {
     width: '100%',
     minHeight: 120,
-    padding: '12px 16px',
+    padding: '14px 16px',
     border: 'none',
     outline: 'none',
     fontFamily: 'var(--font-mono)',
     fontSize: 13,
-    background: 'transparent',
+    background: '#fefdf9',
     resize: 'vertical',
+    lineHeight: 1.65,
+    color: 'var(--text-primary)',
   },
   preview: {
-    padding: '12px 16px',
+    padding: '16px 20px',
     cursor: 'text',
-    minHeight: 48,
-    lineHeight: 1.7,
+    minHeight: 52,
+  },
+  markdownBody: {
     fontSize: 14,
+    lineHeight: 1.75,
+    color: 'var(--text-primary)',
   },
   placeholder: {
-    color: 'var(--text-secondary)',
+    color: 'var(--text-muted)',
     fontStyle: 'italic',
+    fontSize: 14,
   },
 }
