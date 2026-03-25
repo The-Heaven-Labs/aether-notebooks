@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -14,22 +14,20 @@ export function AuditPage() {
   const [actionFilter, setActionFilter] = useState('')
   const [hasMore, setHasMore] = useState(true)
 
-  const { isFetching, isLoading } = useQuery({
+  const { data: page, isFetching, isLoading, error } = useQuery({
     queryKey: ['audit', offset],
-    queryFn: async () => {
-      const result = await api.get<AuditEntry[]>(
-        `/api/v1/audit?limit=${PAGE_SIZE}&offset=${offset}`
-      )
-      const page = result ?? []
-      if (offset === 0) {
-        setEntries(page)
-      } else {
-        setEntries((prev) => [...prev, ...page])
-      }
-      setHasMore(page.length === PAGE_SIZE)
-      return page
-    },
+    queryFn: () => api.get<AuditEntry[]>(`/api/v1/audit?limit=${PAGE_SIZE}&offset=${offset}`),
   })
+
+  useEffect(() => {
+    if (!page) return
+    if (offset === 0) {
+      setEntries(page)
+    } else {
+      setEntries((prev) => [...prev, ...page])
+    }
+    setHasMore(page.length === PAGE_SIZE)
+  }, [page, offset])
 
   const filtered = actionFilter.trim()
     ? entries.filter((e) =>
@@ -77,6 +75,11 @@ export function AuditPage() {
             />
           </div>
 
+          {error && (
+            <div style={styles.state}>
+              <p style={{ ...styles.stateText, color: '#c0392b' }}>Failed to load audit log: {(error as Error).message}</p>
+            </div>
+          )}
           {isLoading ? (
             <div style={styles.state}>
               <p style={styles.stateText}>Loading audit log…</p>
@@ -113,6 +116,7 @@ export function AuditPage() {
           {!isLoading && hasMore && !actionFilter && (
             <div style={styles.loadMoreWrap}>
               <button
+                type="button"
                 style={styles.loadMoreBtn}
                 onClick={handleLoadMore}
                 disabled={isFetching}
