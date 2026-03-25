@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Connector } from '../types'
+import { NavBar } from '../components/NavBar'
 
 type ConnectorType = 'postgres' | 'clickhouse'
 
@@ -77,16 +77,14 @@ export function ConnectorsPage() {
 
   return (
     <div style={styles.page}>
-      <header style={styles.header}>
-        <div style={styles.headerLeft}>
-          <Link to="/" style={styles.backLink}>← Home</Link>
-          <span style={styles.sep}>/</span>
-          <span style={styles.pageTitle}>Connectors</span>
-        </div>
-        <button style={styles.newBtn} onClick={() => setCreating(true)}>+ New Connector</button>
-      </header>
+      <NavBar activePage="connectors" />
 
       <div style={styles.body}>
+        {!creating && (
+          <div style={styles.bodyHeader}>
+            <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Connector</button>
+          </div>
+        )}
         {creating && (
           <div style={styles.formCard}>
             <h3 style={styles.formTitle}>New Connector</h3>
@@ -127,8 +125,9 @@ export function ConnectorsPage() {
               </label>
             </div>
             <div style={styles.formActions}>
-              <button style={styles.cancelBtn} onClick={() => { setCreating(false); setForm(defaultForm()) }}>Cancel</button>
+              <button type="button" style={styles.cancelBtn} onClick={() => { setCreating(false); setForm(defaultForm()) }}>Cancel</button>
               <button
+                type="button"
                 style={styles.saveBtn}
                 onClick={() => createConnector.mutate()}
                 disabled={!form.name || !form.host || !form.database || createConnector.isPending}
@@ -173,8 +172,9 @@ export function ConnectorsPage() {
                       )}
                     </td>
                     <td style={styles.tdActions}>
-                      <button style={styles.actionBtn} onClick={() => testConnector(c.id)}>Test</button>
+                      <button type="button" style={styles.actionBtn} onClick={() => testConnector(c.id)}>Test</button>
                       <button
+                        type="button"
                         style={styles.deleteBtn}
                         onClick={() => { if (confirm(`Delete "${c.name}"?`)) deleteConnector.mutate(c.id) }}
                       >
@@ -201,24 +201,8 @@ export function ConnectorsPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   page: { minHeight: '100vh', background: 'var(--bg-primary)', display: 'flex', flexDirection: 'column' },
-  header: {
-    background: 'var(--nav-bg)',
-    borderBottom: '1px solid var(--nav-border)',
-    height: 52,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '0 32px',
-    position: 'sticky',
-    top: 0,
-    zIndex: 100,
-    flexShrink: 0,
-  },
-  headerLeft: { display: 'flex', alignItems: 'center', gap: 10 },
-  backLink: { color: '#6a6260', textDecoration: 'none', fontSize: 13, fontWeight: 500 },
-  sep: { color: '#3a3630', fontSize: 14 },
-  pageTitle: { fontSize: 14, fontWeight: 600, color: 'var(--nav-text)' },
   newBtn: { padding: '6px 16px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  bodyHeader: { display: 'flex', justifyContent: 'flex-end', marginBottom: 16 },
   body: { maxWidth: 1100, margin: '0 auto', padding: '32px 40px', width: '100%' },
   formCard: {
     background: 'white',

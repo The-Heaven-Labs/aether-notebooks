@@ -1,18 +1,28 @@
 :root {
-  --bg-primary: #faf9f7;
-  --bg-secondary: #f3f0eb;
-  --bg-cell-code: #f8f7ff;
-  --bg-cell-text: #f7faf8;
-  --border: #e2ddd5;
-  --text-primary: #2d2a24;
-  --text-secondary: #6b6560;
+  --bg-primary: #f8f7f4;
+  --bg-secondary: #f0ede7;
+  --bg-cell-code: #ffffff;
+  --bg-cell-text: #fefefe;
+  --border: #e3ddd5;
+  --border-light: #ece8e1;
+  --text-primary: #1a1814;
+  --text-secondary: #6b6258;
+  --text-muted: #9b9289;
   --accent: #7c6faa;
-  --accent-light: #e8e4f3;
-  --success: #6a9e7f;
-  --error: #c47a7a;
-  --warning: #c4a96a;
-  --font-sans: 'Inter', -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --accent-hover: #6a5e96;
+  --accent-light: #ede9f8;
+  --success: #5a9970;
+  --error: #b85c5c;
+  --warning: #b89a4a;
+  --nav-bg: #1a1814;
+  --nav-text: #e8e4dc;
+  --nav-border: #2e2a24;
+  --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  --radius: 8px;
+  --radius-sm: 5px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.04);
 }
 
 * {
@@ -26,6 +36,7 @@ body {
   background: var(--bg-primary);
   color: var(--text-primary);
   line-height: 1.5;
+  font-size: 14px;
 }
 
 a {
@@ -44,46 +55,4 @@ button {
 
 input, textarea, select {
   font-family: var(--font-sans);
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: white;
-  color: var(--text-primary);
-  font-size: 14px;
-  transition: background 0.15s, border-color 0.15s;
-}
-
-.btn:hover {
-  background: var(--bg-secondary);
-}
-
-.btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: white;
-}
-
-.btn-primary:hover {
-  background: #6a5e96;
-  border-color: #6a5e96;
-}
-
-.btn-sm {
-  padding: 4px 10px;
-  font-size: 13px;
-}
-
-.btn-danger {
-  color: var(--error);
-  border-color: var(--error);
-}
-
-.btn-danger:hover {
-  background: #fdf0f0;
 }

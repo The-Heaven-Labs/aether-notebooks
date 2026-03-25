@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import { useAuth } from '../hooks/useAuth'
 import type { Dashboard } from '../types'
+import { NavBar } from '../components/NavBar'
 
 const fmtDate = (d: string) => {
   const date = new Date(d)
@@ -15,7 +15,6 @@ const fmtDate = (d: string) => {
 
 export function DashboardsPage() {
   const qc = useQueryClient()
-  const { logout } = useAuth()
   const [newTitle, setNewTitle] = useState('')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
@@ -43,19 +42,7 @@ export function DashboardsPage() {
 
   return (
     <div style={styles.page}>
-      <header style={styles.header}>
-        <div style={styles.headerLeft}>
-          <Link to="/" style={styles.navLink}>Notebooks</Link>
-          <span style={styles.navSep}>·</span>
-          <span style={styles.navActive}>Dashboards</span>
-          <span style={styles.navSep}>·</span>
-          <Link to="/connectors" style={styles.navLink}>Connectors</Link>
-        </div>
-        <div style={styles.headerRight}>
-          <button style={styles.newBtn} onClick={() => setCreating(true)}>+ New Dashboard</button>
-          <button style={styles.signOutBtn} onClick={logout}>Sign out</button>
-        </div>
-      </header>
+      <NavBar activePage="dashboards" />
 
       <div style={styles.body}>
         {creating && (
@@ -86,7 +73,7 @@ export function DashboardsPage() {
           <div style={styles.empty}>
             <p style={styles.emptyText}>No dashboards yet</p>
             <p style={styles.emptySubtext}>Create a dashboard to display notebook cell outputs in a shared view.</p>
-            <button style={styles.newBtn} onClick={() => setCreating(true)}>+ New Dashboard</button>
+            <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Dashboard</button>
           </div>
         ) : (
           <div style={styles.grid}>
@@ -101,6 +88,7 @@ export function DashboardsPage() {
                   )}
                 </Link>
                 <button
+                  type="button"
                   style={styles.deleteBtn}
                   onClick={() => { if (confirm(`Delete "${d.title}"?`)) deleteDashboard.mutate(d.id) }}
                   title="Delete dashboard"
@@ -118,26 +106,7 @@ export function DashboardsPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   page: { minHeight: '100vh', background: 'var(--bg-primary)', display: 'flex', flexDirection: 'column' },
-  header: {
-    background: 'var(--nav-bg)',
-    borderBottom: '1px solid var(--nav-border)',
-    height: 52,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '0 32px',
-    position: 'sticky',
-    top: 0,
-    zIndex: 100,
-    flexShrink: 0,
-  },
-  headerLeft: { display: 'flex', alignItems: 'center', gap: 12 },
-  navLink: { color: '#6a6260', textDecoration: 'none', fontSize: 13, fontWeight: 500 },
-  navActive: { color: 'var(--nav-text)', fontSize: 13, fontWeight: 600 },
-  navSep: { color: '#3a3630', fontSize: 12 },
-  headerRight: { display: 'flex', alignItems: 'center', gap: 10 },
   newBtn: { padding: '6px 16px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  signOutBtn: { padding: '6px 14px', background: 'transparent', border: '1px solid #3a3630', borderRadius: 6, fontSize: 13, color: '#8a8278', cursor: 'pointer' },
   body: { flex: 1, maxWidth: 1280, margin: '0 auto', padding: '40px 40px', width: '100%' },
   createForm: { display: 'flex', gap: 8, marginBottom: 24, alignItems: 'center' },
   createInput: { flex: 1, maxWidth: 360, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 7, fontSize: 14, fontFamily: 'var(--font-sans)', background: 'white' },
