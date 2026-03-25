@@ -23,6 +23,7 @@ export function NotebookPage() {
   const [paramValues, setParamValues] = useState<Record<string, string>>({})
   const [showSchema, setShowSchema] = useState(false)
   const [showSchedules, setShowSchedules] = useState(false)
+  const [mutationError, setMutationError] = useState<string | null>(null)
 
   const { data: notebook, isLoading } = useQuery({
     queryKey: ['notebook', id],
@@ -49,6 +50,7 @@ export function NotebookPage() {
     onSuccess: (cell) => {
       setLocalCells((prev) => [...prev, cell])
     },
+    onError: (err: Error) => setMutationError(err.message),
   })
 
   const deleteCell = useMutation({
@@ -57,18 +59,21 @@ export function NotebookPage() {
     onSuccess: (_, cellId) => {
       setLocalCells((prev) => prev.filter((c) => c.id !== cellId))
     },
+    onError: (err: Error) => setMutationError(err.message),
   })
 
   const renameNotebook = useMutation({
     mutationFn: (title: string) =>
       api.put(`/api/v1/notebooks/${id}`, { title }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['notebook', id] }),
+    onError: (err: Error) => setMutationError(err.message),
   })
 
   const saveParameters = useMutation({
     mutationFn: (params: Parameter[]) =>
       api.put(`/api/v1/notebooks/${id}`, { parameters: params }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['notebook', id] }),
+    onError: (err: Error) => setMutationError(err.message),
   })
 
   const switchCellType = useCallback(async (cellId: string) => {
@@ -226,6 +231,13 @@ export function NotebookPage() {
           </button>
         </div>
       </header>
+
+      {mutationError && (
+        <div style={{ background: '#fff0f0', borderBottom: '1px solid #fcd0d0', padding: '6px 24px', fontSize: 12, color: '#c0392b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          {mutationError}
+          <button type="button" onClick={() => setMutationError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c0392b', fontSize: 14, padding: 0 }}>✕</button>
+        </div>
+      )}
 
       <ParametersBar
         parameters={notebook.parameters ?? []}
