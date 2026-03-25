@@ -96,6 +96,7 @@ export function MembersPage() {
               ))}
             </select>
             <button
+              type="button"
               style={styles.inviteBtn}
               disabled={!inviteEmail.trim() || inviteMember.isPending}
               onClick={handleInvite}
@@ -115,8 +116,8 @@ export function MembersPage() {
           <table style={styles.table}>
             <thead>
               <tr>
-                {['Name', 'Email', 'Role', 'Joined', ''].map((h) => (
-                  <th key={h} style={styles.th}>{h}</th>
+                {['Name', 'Email', 'Role', 'Joined', 'Actions'].map((h) => (
+                  <th key={h} style={styles.th}>{h !== 'Actions' ? h : ''}</th>
                 ))}
               </tr>
             </thead>
@@ -158,6 +159,7 @@ export function MembersPage() {
                     <td style={{ ...styles.td, color: 'var(--text-muted)', fontSize: 12 }}>{joinedDate}</td>
                     <td style={styles.tdActions}>
                       <button
+                        type="button"
                         style={isSelf ? styles.removeBtnDisabled : styles.removeBtn}
                         disabled={isSelf || removeMember.isPending}
                         onClick={() => handleRemove(m)}
