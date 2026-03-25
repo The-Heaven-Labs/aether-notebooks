@@ -5,11 +5,20 @@ import { api } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import type { Dashboard } from '../types'
 
+const fmtDate = (d: string) => {
+  const date = new Date(d)
+  const today = new Date()
+  return date.toDateString() === today.toDateString()
+    ? `Today ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+    : date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 export function DashboardsPage() {
   const qc = useQueryClient()
-  const { logout: signOut } = useAuth()
+  const { logout } = useAuth()
   const [newTitle, setNewTitle] = useState('')
   const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
 
   const { data: dashboards = [], isLoading } = useQuery({
     queryKey: ['dashboards'],
@@ -22,21 +31,15 @@ export function DashboardsPage() {
       qc.invalidateQueries({ queryKey: ['dashboards'] })
       setNewTitle('')
       setCreating(false)
+      setCreateError(null)
     },
+    onError: (err: Error) => setCreateError(err.message),
   })
 
   const deleteDashboard = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/dashboards/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboards'] }),
   })
-
-  const fmtDate = (d: string) => {
-    const date = new Date(d)
-    const today = new Date()
-    return date.toDateString() === today.toDateString()
-      ? `Today ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-      : date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
-  }
 
   return (
     <div style={styles.page}>
@@ -50,7 +53,7 @@ export function DashboardsPage() {
         </div>
         <div style={styles.headerRight}>
           <button style={styles.newBtn} onClick={() => setCreating(true)}>+ New Dashboard</button>
-          <button style={styles.signOutBtn} onClick={signOut}>Sign out</button>
+          <button style={styles.signOutBtn} onClick={logout}>Sign out</button>
         </div>
       </header>
 
@@ -75,6 +78,7 @@ export function DashboardsPage() {
             </button>
           </form>
         )}
+        {createError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{createError}</p>}
 
         {isLoading ? (
           <div style={styles.loading} />

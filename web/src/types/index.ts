@@ -6,7 +6,7 @@ export interface User {
 
 export interface Parameter {
   name: string
-  type: 'string' | 'number' | 'date' | 'daterange'
+  type: 'string' | 'number' | 'boolean' | 'date' | 'daterange'
   default: string
 }
 
@@ -54,6 +54,13 @@ export interface Connector {
   name: string
   type: string
   created_at: string
+  config?: {
+    host?: string
+    port?: number
+    database?: string
+    user?: string
+    ssl_mode?: string
+  }
 }
 
 export interface Dashboard {
