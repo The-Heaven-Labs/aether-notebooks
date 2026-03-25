@@ -9,6 +9,7 @@ import { DashboardsPage } from './pages/DashboardsPage'
 import { DashboardEditorPage } from './pages/DashboardEditorPage'
 import { AuditPage } from './pages/AuditPage'
 import { MembersPage } from './pages/MembersPage'
+import { PublicDashboardPage } from './pages/PublicDashboardPage'
 import './styles/theme.css'
 
 const queryClient = new QueryClient({
@@ -82,6 +83,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route path="/public/dashboards/:token" element={<PublicDashboardPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
