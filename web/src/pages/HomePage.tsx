@@ -45,6 +45,10 @@ export function HomePage() {
             <Link to="/dashboards" style={styles.navLink}>Dashboards</Link>
             <span style={styles.navSep}>·</span>
             <Link to="/connectors" style={styles.navLink}>Connectors</Link>
+            <span style={styles.navSep}>·</span>
+            <Link to="/audit" style={styles.navLink}>Audit</Link>
+            <span style={styles.navSep}>·</span>
+            <Link to="/members" style={styles.navLink}>Members</Link>
             <button style={styles.logoutBtn} onClick={logout}>Sign Out</button>
           </div>
         </div>
