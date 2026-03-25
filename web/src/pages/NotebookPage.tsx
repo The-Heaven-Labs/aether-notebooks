@@ -6,6 +6,7 @@ import type { Notebook, Cell, Output, Connector, Parameter } from '../types'
 import { CodeCell } from '../components/CodeCell'
 import { TextCell } from '../components/TextCell'
 import { ParametersBar } from '../components/ParametersBar'
+import { SchemaBrowser } from '../components/SchemaBrowser'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -19,6 +20,7 @@ export function NotebookPage() {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [paramValues, setParamValues] = useState<Record<string, string>>({})
+  const [showSchema, setShowSchema] = useState(false)
 
   const { data: notebook, isLoading } = useQuery({
     queryKey: ['notebook', id],
@@ -147,6 +149,7 @@ export function NotebookPage() {
   }, [])
 
   const runningCount = runningCells.size
+  const schemaConnectorId = localCells.find((c) => c.type === 'code' && c.connector_id)?.connector_id ?? null
 
   if (isLoading) return (
     <div style={styles.loadingPage}>
@@ -202,6 +205,12 @@ export function NotebookPage() {
               ⏳ Running {runningCount} cell{runningCount > 1 ? 's' : ''}…
             </span>
           )}
+          <button
+            style={{ ...styles.schemaBtn, ...(showSchema ? styles.schemaBtnActive : {}) }}
+            onClick={() => setShowSchema((v) => !v)}
+          >
+            Schema
+          </button>
           <button style={styles.runAllBtn} onClick={runAll} disabled={runningCount > 0}>
             ▶▶ Run All
           </button>
@@ -215,47 +224,55 @@ export function NotebookPage() {
         onSaveDefinitions={(params) => saveParameters.mutate(params)}
       />
 
-      {/* Cells area */}
+      {/* Body: optional schema sidebar + cells */}
       <div style={styles.body}>
-        <div style={styles.bodyInner}>
-        <div style={styles.cells}>
-          {localCells.map((cell, i) =>
-            cell.type === 'code' ? (
-              <CodeCell
-                key={cell.id}
-                cell={cell}
-                connectors={connectors}
-                onRun={saveAndRun}
-                onDelete={(cid) => deleteCell.mutate(cid)}
-                onSourceChange={updateSource}
-                onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
-                onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
-                onSwitchType={() => switchCellType(cell.id)}
-                onAssignConnector={assignConnector}
-                running={runningCells.has(cell.id)}
-              />
-            ) : (
-              <TextCell
-                key={cell.id}
-                cell={cell}
-                onDelete={(cid) => deleteCell.mutate(cid)}
-                onSourceChange={updateSource}
-                onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
-                onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
-                onSwitchType={() => switchCellType(cell.id)}
-              />
-            ),
-          )}
+        {showSchema && (
+          <SchemaBrowser
+            connectorId={schemaConnectorId}
+            onClose={() => setShowSchema(false)}
+          />
+        )}
+        <div style={styles.cellsArea}>
+          <div style={styles.bodyInner}>
+            <div style={styles.cells}>
+              {localCells.map((cell, i) =>
+                cell.type === 'code' ? (
+                  <CodeCell
+                    key={cell.id}
+                    cell={cell}
+                    connectors={connectors}
+                    onRun={saveAndRun}
+                    onDelete={(cid) => deleteCell.mutate(cid)}
+                    onSourceChange={updateSource}
+                    onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
+                    onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
+                    onSwitchType={() => switchCellType(cell.id)}
+                    onAssignConnector={assignConnector}
+                    running={runningCells.has(cell.id)}
+                  />
+                ) : (
+                  <TextCell
+                    key={cell.id}
+                    cell={cell}
+                    onDelete={(cid) => deleteCell.mutate(cid)}
+                    onSourceChange={updateSource}
+                    onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
+                    onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
+                    onSwitchType={() => switchCellType(cell.id)}
+                  />
+                ),
+              )}
 
-          <div style={styles.addRow}>
-            <button style={styles.addBtn} onClick={() => createCell.mutate('code')}>
-              + Code Cell
-            </button>
-            <button style={styles.addBtn} onClick={() => createCell.mutate('text')}>
-              + Text Cell
-            </button>
+              <div style={styles.addRow}>
+                <button style={styles.addBtn} onClick={() => createCell.mutate('code')}>
+                  + Code Cell
+                </button>
+                <button style={styles.addBtn} onClick={() => createCell.mutate('text')}>
+                  + Text Cell
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
         </div>
       </div>
     </div>
@@ -370,12 +387,36 @@ const styles: Record<string, React.CSSProperties> = {
   },
   body: {
     flex: 1,
+    display: 'flex',
+    flexDirection: 'row',
+    overflow: 'hidden',
+    minHeight: 0,
+  },
+  cellsArea: {
+    flex: 1,
+    overflowY: 'auto',
     padding: '32px 0 64px',
   },
   bodyInner: {
     maxWidth: 1200,
     margin: '0 auto',
     padding: '0 40px',
+  },
+  schemaBtn: {
+    padding: '6px 14px',
+    background: 'transparent',
+    color: 'var(--text-secondary)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    fontSize: 13,
+    fontWeight: 500,
+    cursor: 'pointer',
+    letterSpacing: '0.01em',
+  },
+  schemaBtnActive: {
+    background: 'var(--bg-secondary)',
+    borderColor: 'var(--accent)',
+    color: 'var(--accent)',
   },
   cells: {
     display: 'flex',
