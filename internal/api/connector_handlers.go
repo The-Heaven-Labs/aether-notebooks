@@ -142,23 +142,28 @@ func (s *Server) handleDeleteConnector(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) loadAndBuildExecutor(ctx context.Context, connID, orgID string) (executor.Executor, error) {
+// loadConnectorRow fetches the connector type and encrypted config, scoped to orgID.
+// Returns pgx.ErrNoRows if not found, so callers can distinguish 404 from 500.
+func (s *Server) loadConnectorRow(ctx context.Context, connID, orgID string) (models.ConnectorType, []byte, error) {
 	var configEnc []byte
 	var connType models.ConnectorType
 	err := s.db.Pool.QueryRow(ctx,
 		`SELECT type, config_encrypted FROM connectors WHERE id = $1 AND org_id = $2`,
 		connID, orgID,
 	).Scan(&connType, &configEnc)
-	if err != nil {
-		return nil, err
-	}
+	return connType, configEnc, err
+}
+
+// buildExecutor decrypts connector config and constructs the appropriate executor.
+func (s *Server) buildExecutor(connType models.ConnectorType, configEnc []byte) (executor.Executor, error) {
 	plain, err := crypto.Decrypt(configEnc, s.masterKey)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decrypt: %w", err)
 	}
 	var cfg models.ConnectorConfig
-	json.Unmarshal(plain, &cfg)
-
+	if err := json.Unmarshal(plain, &cfg); err != nil {
+		return nil, fmt.Errorf("unmarshal config: %w", err)
+	}
 	switch connType {
 	case models.ConnectorPostgres:
 		return executor.NewPostgresExecutor(cfg)
@@ -174,15 +179,20 @@ func (s *Server) handleTestConnector(w http.ResponseWriter, r *http.Request) {
 	connID := r.PathValue("id")
 	ctx := r.Context()
 
-	exec, err := s.loadAndBuildExecutor(ctx, connID, claims.OrgID)
+	connType, configEnc, err := s.loadConnectorRow(ctx, connID, claims.OrgID)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "connector not found"})
+		return
+	}
+	exec, err := s.buildExecutor(connType, configEnc)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "failed to connect"})
 		return
 	}
 	defer exec.Close()
 
 	if err := exec.TestConnection(ctx); err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "connection failed"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -193,16 +203,21 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 	connID := r.PathValue("id")
 	ctx := r.Context()
 
-	exec, err := s.loadAndBuildExecutor(ctx, connID, claims.OrgID)
+	connType, configEnc, err := s.loadConnectorRow(ctx, connID, claims.OrgID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "connector not found or cannot connect")
+		writeError(w, http.StatusNotFound, "connector not found")
+		return
+	}
+	exec, err := s.buildExecutor(connType, configEnc)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to build connector")
 		return
 	}
 	defer exec.Close()
 
 	schema, err := exec.Schema(ctx)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "schema fetch failed: "+err.Error())
+		writeError(w, http.StatusBadGateway, "schema fetch failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, schema)
