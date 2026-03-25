@@ -5,6 +5,7 @@ import { LoginPage } from './pages/LoginPage'
 import { HomePage } from './pages/HomePage'
 import { NotebookPage } from './pages/NotebookPage'
 import { ConnectorsPage } from './pages/ConnectorsPage'
+import { DashboardsPage } from './pages/DashboardsPage'
 import './styles/theme.css'
 
 const queryClient = new QueryClient({
@@ -43,6 +44,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <ConnectorsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/dashboards"
+        element={
+          <ProtectedRoute>
+            <DashboardsPage />
           </ProtectedRoute>
         }
       />
