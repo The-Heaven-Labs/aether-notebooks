@@ -340,9 +340,134 @@ After account creation, the server checks `org_allowed_domains` for the user's e
 Each phase introduces migrations. All are additive (new columns with defaults, new tables) except the Phase 4 sign-up refactor, which changes existing handler behaviour without altering existing rows.
 
 ### Testing
+
+#### Backend (existing pattern, extended)
 - All new Go handlers follow the existing `internal/api/*_test.go` pattern using `setupTestServer` with a real DB.
-- New executor methods (`Databases`) need unit tests per executor type.
-- Frontend changes do not currently have automated tests — this is an existing gap, not introduced by this work.
+- New executor methods (`Databases`) need unit tests per executor type (`internal/executor/*_test.go`).
+- Cell history versioning logic (merge vs. create decision) gets its own unit test in a new `internal/api/cell_history_test.go` covering: first save, same-session merge (< 50 chars + < 60s), large-diff new version (≥ 50 chars), time-gap new version (> 60s), restore triggering a new version.
+- `{{slug}}` substitution and cycle detection get unit tests in `internal/api/execute_handlers_test.go`.
+
+#### Frontend — Component Tests (Vitest + React Testing Library)
+
+Install: `vitest`, `@testing-library/react`, `@testing-library/user-event`, `@testing-library/jest-dom`, `msw` (Mock Service Worker for API mocking). Configure via `vite.config.ts` (`test: { environment: 'jsdom' }`). Run with `npm run test` in `web/`.
+
+Add to `Taskfile.yml`:
+```yaml
+test:web:
+  desc: Run frontend component tests
+  dir: web
+  cmds:
+    - npm run test -- --run
+
+test:web:watch:
+  desc: Run frontend tests in watch mode
+  dir: web
+  cmds:
+    - npm run test
+```
+
+**What to test with RTL (representative, not exhaustive):**
+
+| Component | Tests |
+|---|---|
+| `OutputRenderer` | Renders correct icon + tooltip for each of the 12 type mappings; renders "Unknown" for unmapped types; array/JSON cells show expandable preview |
+| `CellToolbar` | "Hide source" toggle calls `onUpdateCell` with `source_visible: false`; "Collapse" toggle calls with `cell_collapsed: true`; both buttons reflect current prop state |
+| `Sidebar` | Renders all 5 nav items; clicking toggle persists expanded state to localStorage; active route item is highlighted |
+| `TextCell` (markdown) | Paste event with image data inserts base64 `![...]` at cursor; paste without image data falls through normally |
+| `ParametersBar` | Notebook-level params render inputs; changing a value calls the update callback |
+| `NotebookPage` (cell slug) | Slug badge renders; editing slug calls `PUT /cells/:id` with new slug; duplicate slug within notebook shows inline error |
+| `useNotebookKeyboardShortcuts` | `Shift+Enter` fires `onRun`; `B` fires `onAddBelow`; `D D` fires `onDelete`; `?` opens the shortcuts modal |
+| History panel | Versions list renders; "Restore" button calls the restore mutation; diff preview shows changed lines highlighted |
+
+API calls are mocked with MSW handlers in `web/src/test/handlers.ts`. No real server needed for component tests.
+
+#### Frontend — E2E + Visual Regression (Playwright)
+
+Replace `e2e/smoke_test.sh` with a Playwright test suite in `e2e/` using TypeScript. Playwright drives a real browser against a running stack (`task infra:up && task dev` or the Docker compose stack).
+
+Install: `@playwright/test`. Config: `e2e/playwright.config.ts` targeting `http://localhost:5173`. Add to Taskfile:
+```yaml
+test:e2e:
+  desc: Run Playwright E2E tests (requires running dev stack)
+  cmds:
+    - npx playwright test --config=e2e/playwright.config.ts
+
+test:e2e:ui:
+  desc: Open Playwright UI mode for interactive debugging
+  cmds:
+    - npx playwright test --ui --config=e2e/playwright.config.ts
+```
+
+**E2E test files and coverage:**
+
+| File | Covers |
+|---|---|
+| `e2e/auth.spec.ts` | Register → org wizard → land on home; login with existing account; OIDC button visible |
+| `e2e/navigation.spec.ts` | Sidebar collapses/expands; all 5 nav items route correctly; profile dropdown opens and signs out |
+| `e2e/notebook.spec.ts` | Create notebook; edit title + description; add code cell + markdown cell; run cell; see output |
+| `e2e/cell-editor.spec.ts` | Collapse/hide source; keyboard shortcuts (Shift+Enter runs); cell title/slug edit |
+| `e2e/history.spec.ts` | Save cell → open history panel → versions appear → restore a version |
+| `e2e/connectors.spec.ts` | Create connector (with + without database field); schema browser loads tables |
+| `e2e/slug-refs.spec.ts` | Cell A given slug; Cell B uses `{{slug}}`; execution substitutes correctly |
+| `e2e/dashboard.spec.ts` | Create dashboard; add chart widget; input widget controls a cell param |
+| `e2e/admin.spec.ts` | Platform admin can create org; invite by email flow; invite link flow |
+
+**Visual regression with Playwright screenshots:**
+
+`toHaveScreenshot()` creates baseline PNGs on first run (`e2e/snapshots/`). Subsequent runs diff pixel-by-pixel (1% threshold). Checked into git as part of the PR that introduces the visual change.
+
+| Snapshot | When to update baseline |
+|---|---|
+| `sidebar-collapsed.png` | Sidebar layout changes |
+| `sidebar-expanded.png` | Sidebar layout changes |
+| `output-type-icons.png` | OutputRenderer icon set changes |
+| `notebook-header.png` | Notebook title/description layout changes |
+| `cell-with-title-slug.png` | Cell header UI changes |
+| `markdown-live-preview.png` | Markdown rendering changes |
+| `chart-bar.png`, `chart-pie.png` | Chart type rendering changes |
+| `presentation-mode.png` | Presentation page layout changes |
+| `platform-admin-panel.png` | Admin panel layout changes |
+
+Playwright's `--update-snapshots` flag regenerates baselines when a visual change is intentional.
+
+#### Per-Phase Visual Validation Checklists
+
+These are human review steps run before merging each phase. They catch things automated tests miss (spacing feel, color contrast, overall polish).
+
+**Phase 1 checklist:**
+- [ ] Sidebar icons are visually distinct and recognisable at 48px
+- [ ] Sidebar expanded state aligns labels cleanly with icons
+- [ ] Top bar is slim and unobtrusive — does not dominate the page
+- [ ] Profile dropdown is keyboard-accessible (Tab + Enter)
+- [ ] Notebook list view rows are scannable — title, description, date all visible without truncation on 1280px viewport
+- [ ] Output type icons are distinct from each other — no two look alike at a glance
+- [ ] Collaboration cursors show name, not "Anonymous", with no layout jump when a second user connects
+- [ ] Audit log names read naturally — "Alice edited Sales Report" not just UUIDs
+
+**Phase 2 checklist:**
+- [ ] Collapsed cell takes up minimal vertical space — single title bar height only
+- [ ] "Source hidden" state clearly communicates that there is hidden content (not confused with empty cell)
+- [ ] Cell title and slug are visually secondary to the cell content — do not compete for attention
+- [ ] Markdown live preview feels seamless — no flicker when switching lines
+- [ ] Pasted image renders at a sensible default width, not overflowing the cell
+- [ ] History panel diff is readable — added/removed lines clearly distinguished
+- [ ] Keyboard shortcuts do not fire when user is typing in an input (title field, parameter name, etc.)
+
+**Phase 3 checklist:**
+- [ ] Notebook-level connector selector is clearly labelled as a default (cells show "inherited" state visually)
+- [ ] Cell-level connector override icon is subtle when set to default, prominent when overridden
+- [ ] Database picker in schema browser is intuitive — clear which database is currently active
+- [ ] `{{slug}}` references in cell source are visually highlighted (syntax highlight token) in the CodeMirror editor
+- [ ] "Referenced by N cells" badge does not clutter cells that have no references
+
+**Phase 4 checklist:**
+- [ ] Chart config panel is compact and does not push the chart off screen on small viewports
+- [ ] Dashboard input widgets visually match the dashboard's overall style
+- [ ] Template picker is searchable and shows a useful preview before inserting
+- [ ] Presentation mode is full-screen, with no app chrome visible
+- [ ] Presentation navigation arrows are visible but not distracting from content
+- [ ] Platform admin panel is clearly separated from the org-level UI — distinct visual treatment
+- [ ] Sign-up "create or join" fork is unambiguous — new users do not accidentally create duplicate orgs
 
 ### Environment variables added
 | Variable | Phase | Purpose |
