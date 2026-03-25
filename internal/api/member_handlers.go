@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 	"time"
+
+	"github.com/heavenlabs/hnb/internal/audit"
 )
 
 type memberResponse struct {
@@ -74,10 +76,19 @@ func (s *Server) handleUpdateMemberRole(w http.ResponseWriter, r *http.Request) 
 		`UPDATE org_members SET role = $1 WHERE org_id = $2 AND user_id = $3`,
 		req.Role, claims.OrgID, targetUserID,
 	)
-	if err != nil || result.RowsAffected() == 0 {
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "update failed")
+		return
+	}
+	if result.RowsAffected() == 0 {
 		writeError(w, http.StatusNotFound, "member not found")
 		return
 	}
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "member.update_role", ResourceType: "member", ResourceID: targetUserID,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -95,10 +106,19 @@ func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 		`DELETE FROM org_members WHERE org_id = $1 AND user_id = $2`,
 		claims.OrgID, targetUserID,
 	)
-	if err != nil || result.RowsAffected() == 0 {
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+	if result.RowsAffected() == 0 {
 		writeError(w, http.StatusNotFound, "member not found")
 		return
 	}
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "member.remove", ResourceType: "member", ResourceID: targetUserID,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -120,7 +140,8 @@ func (s *Server) handleInviteMember(w http.ResponseWriter, r *http.Request) {
 	}
 	validRoles := map[string]bool{"admin": true, "editor": true, "viewer": true}
 	if !validRoles[req.Role] {
-		req.Role = "viewer"
+		writeError(w, http.StatusBadRequest, "role must be admin, editor, or viewer")
+		return
 	}
 
 	ctx := r.Context()
@@ -131,6 +152,7 @@ func (s *Server) handleInviteMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ON CONFLICT upserts role if member already exists (re-invite = role update).
 	_, err = s.db.Pool.Exec(ctx,
 		`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, $3)
 		 ON CONFLICT (org_id, user_id) DO UPDATE SET role = EXCLUDED.role`,
@@ -140,5 +162,10 @@ func (s *Server) handleInviteMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to add member")
 		return
 	}
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "member.invite", ResourceType: "member", ResourceID: userID,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
