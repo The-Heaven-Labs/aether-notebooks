@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../api/client'
-import { Notebook } from '../types'
+import type { Notebook } from '../types'
 import { useAuth } from '../hooks/useAuth'
 
 export function HomePage() {
@@ -33,121 +33,239 @@ export function HomePage() {
 
   return (
     <div style={styles.page}>
-      <div style={styles.header}>
-        <div style={styles.brand}>
-          <span style={styles.logo}>📓</span>
-          <span style={styles.brandName}>Heaven's Notebooks</span>
+      <header style={styles.header}>
+        <div style={styles.headerInner}>
+          <div style={styles.brand}>
+            <div style={styles.logoMark}>▦</div>
+            <span style={styles.brandName}>Heaven's Notebooks</span>
+          </div>
+          <div style={styles.headerRight}>
+            <Link to="/connectors" style={styles.navLink}>Connectors</Link>
+            <button style={styles.logoutBtn} onClick={logout}>Sign Out</button>
+          </div>
         </div>
-        <button style={styles.logoutBtn} onClick={logout}>Sign Out</button>
-      </div>
+      </header>
 
-      <div style={styles.content}>
-        <div style={styles.sectionHeader}>
-          <h2 style={styles.sectionTitle}>Notebooks</h2>
-          <button style={styles.newBtn} onClick={() => setCreating(true)}>+ New Notebook</button>
-        </div>
-
-        {creating && (
-          <div style={styles.createForm}>
-            <input
-              style={styles.input}
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              placeholder="Notebook title…"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && newTitle.trim()) createNotebook.mutate(newTitle.trim())
-                if (e.key === 'Escape') setCreating(false)
-              }}
-            />
-            <button
-              style={styles.createBtn}
-              disabled={!newTitle.trim()}
-              onClick={() => createNotebook.mutate(newTitle.trim())}
-            >
-              Create
+      <main style={styles.main}>
+        <div style={styles.content}>
+          <div style={styles.sectionHeader}>
+            <div>
+              <h2 style={styles.sectionTitle}>Notebooks</h2>
+              <p style={styles.sectionSub}>{notebooks.length} notebook{notebooks.length !== 1 ? 's' : ''}</p>
+            </div>
+            <button style={styles.newBtn} onClick={() => setCreating(true)}>
+              + New Notebook
             </button>
-            <button style={styles.cancelBtn} onClick={() => setCreating(false)}>Cancel</button>
           </div>
-        )}
 
-        {notebooks.length === 0 && !creating ? (
-          <div style={styles.empty}>
-            <p>No notebooks yet.</p>
-            <button style={styles.newBtn} onClick={() => setCreating(true)}>Create your first notebook</button>
-          </div>
-        ) : (
-          <div style={styles.grid}>
-            {notebooks.map((nb) => (
-              <div key={nb.id} style={styles.card}>
-                <Link to={`/notebooks/${nb.id}`} style={styles.cardTitle}>{nb.title}</Link>
-                <p style={styles.cardMeta}>
-                  Updated {new Date(nb.updated_at).toLocaleDateString()}
-                </p>
-                <button
-                  style={styles.deleteBtn}
-                  onClick={() => deleteNotebook.mutate(nb.id)}
-                >
-                  Delete
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+          {creating && (
+            <div style={styles.createForm}>
+              <input
+                style={styles.createInput}
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                placeholder="Notebook title…"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && newTitle.trim()) createNotebook.mutate(newTitle.trim())
+                  if (e.key === 'Escape') setCreating(false)
+                }}
+              />
+              <button
+                style={styles.createBtn}
+                disabled={!newTitle.trim()}
+                onClick={() => createNotebook.mutate(newTitle.trim())}
+              >
+                Create
+              </button>
+              <button style={styles.cancelBtn} onClick={() => setCreating(false)}>Cancel</button>
+            </div>
+          )}
+
+          {notebooks.length === 0 && !creating ? (
+            <div style={styles.empty}>
+              <div style={styles.emptyIcon}>▦</div>
+              <p style={styles.emptyTitle}>No notebooks yet</p>
+              <p style={styles.emptyText}>Create your first notebook to start querying data.</p>
+              <button style={styles.newBtn} onClick={() => setCreating(true)}>
+                Create your first notebook
+              </button>
+            </div>
+          ) : (
+            <div style={styles.grid}>
+              {notebooks.map((nb) => (
+                <NotebookCard
+                  key={nb.id}
+                  notebook={nb}
+                  onDelete={() => deleteNotebook.mutate(nb.id)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </main>
+    </div>
+  )
+}
+
+function NotebookCard({ notebook, onDelete }: { notebook: Notebook; onDelete: () => void }) {
+  const updated = new Date(notebook.updated_at)
+  const isToday = new Date().toDateString() === updated.toDateString()
+  const dateStr = isToday
+    ? `Today at ${updated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+    : updated.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+
+  return (
+    <div style={styles.card}>
+      <Link to={`/notebooks/${notebook.id}`} style={styles.cardLink}>
+        <div style={styles.cardThumb}>
+          <span style={styles.cardThumbIcon}>▦</span>
+        </div>
+        <div style={styles.cardBody}>
+          <div style={styles.cardTitle}>{notebook.title}</div>
+          <div style={styles.cardMeta}>Updated {dateStr}</div>
+        </div>
+      </Link>
+      <div style={styles.cardFooter}>
+        <button
+          style={styles.deleteBtn}
+          onClick={(e) => { e.preventDefault(); onDelete() }}
+        >
+          Delete
+        </button>
       </div>
     </div>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  page: { minHeight: '100vh', background: 'var(--bg-primary)' },
+  page: {
+    minHeight: '100vh',
+    background: 'var(--bg-primary)',
+    display: 'flex',
+    flexDirection: 'column',
+  },
   header: {
+    background: 'var(--nav-bg)',
+    borderBottom: '1px solid var(--nav-border)',
+    flexShrink: 0,
+  },
+  headerInner: {
+    maxWidth: 1280,
+    margin: '0 auto',
+    padding: '0 32px',
+    height: 56,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '16px 32px',
-    borderBottom: '1px solid var(--border)',
-    background: 'white',
   },
-  brand: { display: 'flex', alignItems: 'center', gap: 10 },
-  logo: { fontSize: 22 },
-  brandName: { fontSize: 18, fontWeight: 700, color: 'var(--accent)' },
+  brand: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+  },
+  logoMark: {
+    width: 30,
+    height: 30,
+    background: 'var(--accent)',
+    borderRadius: 7,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 16,
+    color: 'white',
+  },
+  brandName: {
+    fontSize: 15,
+    fontWeight: 700,
+    color: 'var(--nav-text)',
+    letterSpacing: '-0.1px',
+  },
+  headerRight: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+  },
+  navLink: {
+    fontSize: 13,
+    fontWeight: 500,
+    color: '#8a8278',
+    textDecoration: 'none',
+  },
   logoutBtn: {
     padding: '6px 14px',
-    border: '1px solid var(--border)',
+    border: '1px solid #3a3630',
     borderRadius: 6,
-    background: 'none',
+    background: 'transparent',
     fontSize: 13,
+    color: '#8a8278',
     cursor: 'pointer',
+    fontWeight: 500,
+    transition: 'all 0.15s',
   },
-  content: { maxWidth: 1100, margin: '0 auto', padding: '40px 24px' },
-  sectionHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
-  sectionTitle: { fontSize: 20, fontWeight: 700 },
+  main: {
+    flex: 1,
+    padding: '40px 32px',
+  },
+  content: {
+    maxWidth: 1280,
+    margin: '0 auto',
+  },
+  sectionHeader: {
+    display: 'flex',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    marginBottom: 24,
+  },
+  sectionTitle: {
+    fontSize: 22,
+    fontWeight: 700,
+    letterSpacing: '-0.3px',
+    color: 'var(--text-primary)',
+  },
+  sectionSub: {
+    fontSize: 13,
+    color: 'var(--text-muted)',
+    marginTop: 2,
+  },
   newBtn: {
-    padding: '7px 16px',
+    padding: '8px 18px',
     background: 'var(--accent)',
     color: 'white',
     border: 'none',
-    borderRadius: 6,
+    borderRadius: 7,
     fontSize: 13,
+    fontWeight: 600,
     cursor: 'pointer',
+    letterSpacing: '0.01em',
   },
-  createForm: { display: 'flex', gap: 10, marginBottom: 20 },
-  input: {
+  createForm: {
+    display: 'flex',
+    gap: 10,
+    marginBottom: 24,
+    padding: 16,
+    background: 'white',
+    borderRadius: 10,
+    border: '1.5px solid var(--accent-light)',
+    boxShadow: 'var(--shadow-sm)',
+  },
+  createInput: {
     flex: 1,
     padding: '8px 12px',
-    border: '1px solid var(--border)',
+    border: '1.5px solid var(--border)',
     borderRadius: 6,
     fontSize: 14,
     outline: 'none',
+    background: 'var(--bg-primary)',
   },
   createBtn: {
-    padding: '8px 16px',
+    padding: '8px 18px',
     background: 'var(--accent)',
     color: 'white',
     border: 'none',
     borderRadius: 6,
     fontSize: 13,
+    fontWeight: 600,
     cursor: 'pointer',
   },
   cancelBtn: {
@@ -157,29 +275,110 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'none',
     fontSize: 13,
     cursor: 'pointer',
+    color: 'var(--text-secondary)',
   },
-  empty: { textAlign: 'center', padding: '60px 0', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 },
+  empty: {
+    textAlign: 'center',
+    padding: '80px 0',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 12,
+  },
+  emptyIcon: {
+    width: 56,
+    height: 56,
+    background: 'var(--bg-secondary)',
+    borderRadius: 14,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 28,
+    color: 'var(--text-muted)',
+    marginBottom: 4,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: 700,
+    color: 'var(--text-primary)',
+    letterSpacing: '-0.2px',
+  },
+  emptyText: {
+    fontSize: 14,
+    color: 'var(--text-secondary)',
+    marginBottom: 8,
+  },
+  grid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+    gap: 16,
+  },
   card: {
-    padding: '20px',
     background: 'white',
     borderRadius: 10,
     border: '1px solid var(--border)',
+    overflow: 'hidden',
+    boxShadow: 'var(--shadow-sm)',
     display: 'flex',
     flexDirection: 'column',
-    gap: 8,
+    transition: 'box-shadow 0.15s, border-color 0.15s',
   },
-  cardTitle: { fontSize: 16, fontWeight: 600, color: 'var(--accent)' },
-  cardMeta: { fontSize: 12, color: 'var(--text-secondary)' },
-  deleteBtn: {
-    alignSelf: 'flex-start',
-    padding: '4px 10px',
-    border: '1px solid var(--border)',
-    borderRadius: 4,
-    background: 'none',
+  cardLink: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 14,
+    padding: '18px 18px 14px',
+    textDecoration: 'none',
+    flex: 1,
+  },
+  cardThumb: {
+    width: 42,
+    height: 42,
+    background: 'var(--accent-light)',
+    borderRadius: 10,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  cardThumbIcon: {
+    fontSize: 20,
+    color: 'var(--accent)',
+  },
+  cardBody: {
+    flex: 1,
+    minWidth: 0,
+  },
+  cardTitle: {
+    fontSize: 15,
+    fontWeight: 600,
+    color: 'var(--text-primary)',
+    letterSpacing: '-0.1px',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  cardMeta: {
     fontSize: 12,
+    color: 'var(--text-muted)',
+    marginTop: 3,
+  },
+  cardFooter: {
+    padding: '10px 18px',
+    borderTop: '1px solid var(--border-light)',
+    background: 'var(--bg-primary)',
+    display: 'flex',
+    justifyContent: 'flex-end',
+  },
+  deleteBtn: {
+    padding: '4px 10px',
+    border: 'none',
+    borderRadius: 5,
+    background: 'transparent',
+    fontSize: 12,
+    fontWeight: 500,
     cursor: 'pointer',
     color: 'var(--error)',
-    marginTop: 4,
+    transition: 'background 0.15s',
   },
 }
