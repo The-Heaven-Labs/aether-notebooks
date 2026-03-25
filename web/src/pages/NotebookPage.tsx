@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -90,13 +90,19 @@ export function NotebookPage() {
     )
   }, [id, localCells])
 
-  const updateSource = useCallback((cellId: string, source: string) => {
-    setLocalCells((prev) => prev.map((c) => (c.id === cellId ? { ...c, source } : c)))
-  }, [])
+  const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
   const saveCellSource = useCallback(async (cellId: string, source: string) => {
     await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { source })
   }, [id])
+
+  const updateSource = useCallback((cellId: string, source: string) => {
+    setLocalCells((prev) => prev.map((c) => (c.id === cellId ? { ...c, source } : c)))
+    clearTimeout(saveTimers.current[cellId])
+    saveTimers.current[cellId] = setTimeout(() => {
+      saveCellSource(cellId, source)
+    }, 1500)
+  }, [saveCellSource])
 
   const assignConnector = useCallback(async (cellId: string, connectorId: string) => {
     await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, {
