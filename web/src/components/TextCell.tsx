@@ -4,6 +4,22 @@ import remarkGfm from 'remark-gfm'
 import type { Cell } from '../types'
 import { CellToolbar } from './CellToolbar'
 
+interface SaveState {
+  saving: boolean
+  savedAt: Date | null
+  error: string | null
+}
+
+function fmtTime(date: Date): string {
+  const now = Date.now()
+  const diffSec = Math.floor((now - date.getTime()) / 1000)
+  if (diffSec < 5) return 'just now'
+  if (diffSec < 60) return `${diffSec}s ago`
+  const diffMin = Math.floor(diffSec / 60)
+  if (diffMin < 60) return `${diffMin}m ago`
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
 interface Props {
   cell: Cell
   onDelete: (cellId: string) => void
@@ -12,9 +28,10 @@ interface Props {
   onMoveUp?: () => void
   onMoveDown?: () => void
   onSwitchType?: () => void
+  saveState?: SaveState
 }
 
-export function TextCell({ cell, onDelete, onSourceChange, onSave, onMoveUp, onMoveDown, onSwitchType }: Props) {
+export function TextCell({ cell, onDelete, onSourceChange, onSave, onMoveUp, onMoveDown, onSwitchType, saveState }: Props) {
   const [editing, setEditing] = useState(!cell.source)
 
   return (
@@ -46,6 +63,19 @@ export function TextCell({ cell, onDelete, onSourceChange, onSave, onMoveUp, onM
           ) : (
             <p style={styles.placeholder}>Click to edit…</p>
           )}
+        </div>
+      )}
+      {saveState && (
+        <div style={styles.statusBar}>
+          <span style={saveState.error ? styles.statusError : styles.statusSave}>
+            {saveState.saving
+              ? 'Saving…'
+              : saveState.error
+                ? `Save failed: ${saveState.error}`
+                : saveState.savedAt
+                  ? `Saved ${fmtTime(saveState.savedAt)}`
+                  : ''}
+          </span>
         </div>
       )}
     </div>
@@ -87,5 +117,22 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-muted)',
     fontStyle: 'italic',
     fontSize: 14,
+  },
+  statusBar: {
+    padding: '4px 16px',
+    fontSize: 11,
+    minHeight: 24,
+    background: '#faf9f7',
+    borderTop: '1px solid var(--border-light)',
+    display: 'flex',
+    alignItems: 'center',
+  },
+  statusSave: {
+    color: 'var(--text-muted)',
+    fontFamily: 'var(--font-mono)',
+  },
+  statusError: {
+    color: 'var(--error)',
+    fontFamily: 'var(--font-mono)',
   },
 }

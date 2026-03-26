@@ -1,0 +1,1 @@
+ALTER TABLE notebooks ADD COLUMN IF NOT EXISTS description TEXT;

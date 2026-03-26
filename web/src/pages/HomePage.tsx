@@ -3,12 +3,20 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../api/client'
 import type { Notebook } from '../types'
-import { NavBar } from '../components/NavBar'
+import { AppShell } from '../components/AppShell'
 
 export function HomePage() {
   const qc = useQueryClient()
   const [newTitle, setNewTitle] = useState('')
   const [creating, setCreating] = useState(false)
+  const [layout, setLayout] = useState<'grid' | 'list'>(() =>
+    (localStorage.getItem('hnb_notebooks_layout') as 'grid' | 'list') ?? 'list'
+  )
+  const toggleLayout = () => {
+    const next = layout === 'list' ? 'grid' : 'list'
+    setLayout(next)
+    localStorage.setItem('hnb_notebooks_layout', next)
+  }
 
   const { data: notebooks = [] } = useQuery({
     queryKey: ['notebooks'],
@@ -36,19 +44,21 @@ export function HomePage() {
   })
 
   return (
-    <div style={styles.page}>
-      <NavBar activePage="notebooks" />
-
-      <main style={styles.main}>
+    <AppShell>
         <div style={styles.content}>
           <div style={styles.sectionHeader}>
             <div>
               <h2 style={styles.sectionTitle}>Notebooks</h2>
               <p style={styles.sectionSub}>{notebooks.length} notebook{notebooks.length !== 1 ? 's' : ''}</p>
             </div>
-            <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>
-              + New Notebook
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" style={styles.layoutBtn} onClick={toggleLayout} title={layout === 'list' ? 'Switch to grid' : 'Switch to list'}>
+                {layout === 'list' ? '⊞' : '≡'}
+              </button>
+              <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>
+                + New Notebook
+              </button>
+            </div>
           </div>
 
           {creating && (
@@ -87,19 +97,16 @@ export function HomePage() {
               </button>
             </div>
           ) : (
-            <div style={styles.grid}>
-              {notebooks.map((nb) => (
-                <NotebookCard
-                  key={nb.id}
-                  notebook={nb}
-                  onDelete={() => deleteNotebook.mutate(nb.id)}
-                />
-              ))}
+            <div style={layout === 'grid' ? styles.grid : styles.list}>
+              {notebooks.map((nb) =>
+                layout === 'grid'
+                  ? <NotebookCard key={nb.id} notebook={nb} onDelete={() => deleteNotebook.mutate(nb.id)} />
+                  : <NotebookRow key={nb.id} notebook={nb} onDelete={() => deleteNotebook.mutate(nb.id)} />
+              )}
             </div>
           )}
         </div>
-      </main>
-    </div>
+    </AppShell>
   )
 }
 
@@ -134,17 +141,37 @@ function NotebookCard({ notebook, onDelete }: { notebook: Notebook; onDelete: ()
   )
 }
 
+function NotebookRow({ notebook, onDelete }: { notebook: Notebook; onDelete: () => void }) {
+  const updated = new Date(notebook.updated_at)
+  const dateStr = updated.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+
+  return (
+    <div style={rowStyles.row}>
+      <Link to={`/notebooks/${notebook.id}`} style={rowStyles.link}>
+        <span style={rowStyles.icon}>▦</span>
+        <div style={rowStyles.info}>
+          <span style={rowStyles.title}>{notebook.title}</span>
+          {notebook.description && <span style={rowStyles.desc}>{notebook.description}</span>}
+        </div>
+        <span style={rowStyles.date}>{dateStr}</span>
+      </Link>
+      <button type="button" style={rowStyles.del} onClick={(e) => { e.preventDefault(); onDelete() }}>Delete</button>
+    </div>
+  )
+}
+
+const rowStyles: Record<string, React.CSSProperties> = {
+  row: { display: 'flex', alignItems: 'center', background: 'white', borderRadius: 8, border: '1px solid var(--border)', padding: '10px 16px', gap: 12 },
+  link: { flex: 1, display: 'flex', alignItems: 'center', gap: 12, textDecoration: 'none' },
+  icon: { fontSize: 18, color: 'var(--accent)', flexShrink: 0 },
+  info: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 },
+  title: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  desc: { fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  date: { fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 },
+  del: { padding: '3px 8px', border: 'none', background: 'transparent', color: 'var(--error)', fontSize: 12, cursor: 'pointer', flexShrink: 0 },
+}
+
 const styles: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: '100vh',
-    background: 'var(--bg-primary)',
-    display: 'flex',
-    flexDirection: 'column',
-  },
-  main: {
-    flex: 1,
-    padding: '40px 32px',
-  },
   content: {
     maxWidth: 1280,
     margin: '0 auto',
@@ -246,6 +273,8 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-secondary)',
     marginBottom: 8,
   },
+  layoutBtn: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'none', cursor: 'pointer', fontSize: 14 },
+  list: { display: 'flex', flexDirection: 'column', gap: 8 },
   grid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',

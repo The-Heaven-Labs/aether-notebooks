@@ -6,7 +6,7 @@ import { sql } from '@codemirror/lang-sql'
 import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
 import { format } from 'sql-formatter'
 import * as Y from 'yjs'
-import { WebsocketProvider } from 'y-websocket'
+import { HocuspocusProvider } from '@hocuspocus/provider'
 import { yCollab } from 'y-codemirror.next'
 import type { Cell, Connector } from '../types'
 import { CellToolbar } from './CellToolbar'
@@ -15,10 +15,10 @@ import { OutputRenderer } from './OutputRenderer'
 const RELAY_URL = import.meta.env.VITE_RELAY_URL || 'ws://localhost:3001'
 
 // Module-level cache: notebookId -> { doc, provider }
-// This ensures a single Y.Doc + WebsocketProvider per notebook across all cells.
+// One Y.Doc + HocuspocusProvider shared across all cells in the same notebook.
 interface NotebookCollab {
   doc: Y.Doc
-  provider: WebsocketProvider
+  provider: HocuspocusProvider
   refCount: number
 }
 const collabCache = new Map<string, NotebookCollab>()
@@ -32,26 +32,38 @@ function getOrCreateCollab(notebookId: string): NotebookCollab {
 
   const doc = new Y.Doc()
   const token = localStorage.getItem('hnb_token') ?? ''
+  const userName = localStorage.getItem('hnb_user_name') ?? ''
+  const userEmail = localStorage.getItem('hnb_user_email') ?? ''
 
-  let provider: WebsocketProvider
-  try {
-    provider = new WebsocketProvider(RELAY_URL, notebookId, doc, {
-      params: { token },
-    })
-  } catch (err) {
-    // If provider construction fails (e.g., invalid URL in test env), create a
-    // disconnected stub so the editor still works without collaboration.
-    console.warn('[yjs] Failed to create WebsocketProvider:', err)
-    // Create provider but immediately disconnect
-    provider = new WebsocketProvider(RELAY_URL, notebookId, doc, {
-      connect: false,
-      params: { token },
-    })
-  }
+  // HocuspocusProvider speaks the Hocuspocus v2 protocol:
+  // it sends an auth message (containing the JWT) before any Yjs sync frames,
+  // which is what @hocuspocus/server's onAuthenticate hook expects.
+  // Construction is synchronous (the WebSocket connects on the next tick),
+  // so no try/catch is needed here.
+  const provider = new HocuspocusProvider({
+    url: RELAY_URL,
+    name: notebookId,
+    document: doc,
+    token,
+    onAuthenticationFailed: () => console.warn('[yjs] Relay auth failed — collaborative editing disabled'),
+  })
+
+  // Set user identity so remote cursors show the real name
+  provider.awareness?.setLocalStateField('user', {
+    name: userName || userEmail || 'Anonymous',
+    email: userEmail,
+    color: `hsl(${Math.abs(hashStr(userEmail || userName)) % 360}, 70%, 55%)`,
+  })
 
   const entry: NotebookCollab = { doc, provider, refCount: 1 }
   collabCache.set(notebookId, entry)
   return entry
+}
+
+function hashStr(s: string): number {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
+  return h
 }
 
 function releaseCollab(notebookId: string): void {
@@ -69,6 +81,23 @@ function releaseCollab(notebookId: string): void {
   }
 }
 
+interface SaveState {
+  saving: boolean
+  savedAt: Date | null
+  error: string | null
+}
+
+function fmtTime(date: Date): string {
+  const now = Date.now()
+  const diffMs = now - date.getTime()
+  const diffSec = Math.floor(diffMs / 1000)
+  if (diffSec < 5) return 'just now'
+  if (diffSec < 60) return `${diffSec}s ago`
+  const diffMin = Math.floor(diffSec / 60)
+  if (diffMin < 60) return `${diffMin}m ago`
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
 interface Props {
   cell: Cell
   connectors: Connector[]
@@ -81,9 +110,11 @@ interface Props {
   onMoveDown?: () => void
   onSwitchType?: () => void
   running: boolean
+  saveState?: SaveState
+  runAt?: Date
 }
 
-export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSourceChange, onAssignConnector, onMoveUp, onMoveDown, onSwitchType, running }: Props) {
+export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSourceChange, onAssignConnector, onMoveUp, onMoveDown, onSwitchType, running, saveState, runAt }: Props) {
   const editorRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onRunRef = useRef(onRun)
@@ -188,6 +219,20 @@ export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSour
       />
       <div style={styles.editor} ref={editorRef} />
       <OutputRenderer outputs={cell.outputs} />
+      <div style={styles.statusBar}>
+        <span style={saveState?.error ? styles.statusError : styles.statusSave}>
+          {saveState?.saving
+            ? 'Saving…'
+            : saveState?.error
+              ? `Save failed: ${saveState.error}`
+              : saveState?.savedAt
+                ? `Saved ${fmtTime(saveState.savedAt)}`
+                : ''}
+        </span>
+        {runAt && (
+          <span style={styles.statusRun}>Last run: {runAt.toLocaleTimeString()}</span>
+        )}
+      </div>
     </div>
   )
 }
@@ -203,5 +248,27 @@ const styles: Record<string, React.CSSProperties> = {
   editor: {
     borderBottom: '1px solid var(--border-light)',
     background: '#fdfcfb',
+  },
+  statusBar: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '4px 16px',
+    fontSize: 11,
+    minHeight: 24,
+    background: '#faf9f7',
+    borderTop: '1px solid var(--border-light)',
+  },
+  statusSave: {
+    color: 'var(--text-muted)',
+    fontFamily: 'var(--font-mono)',
+  },
+  statusError: {
+    color: 'var(--error)',
+    fontFamily: 'var(--font-mono)',
+  },
+  statusRun: {
+    color: 'var(--text-muted)',
+    fontFamily: 'var(--font-mono)',
   },
 }

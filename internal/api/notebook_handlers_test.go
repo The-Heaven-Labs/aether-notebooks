@@ -67,6 +67,29 @@ func TestNotebookUpdate(t *testing.T) {
 	}
 }
 
+func TestNotebookDescription(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("desc-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "DescOrg")
+
+	// Create notebook with description
+	body, _ := json.Marshal(map[string]string{"title": "My NB", "description": "A test notebook"})
+	req := httptest.NewRequest("POST", "/api/v1/notebooks", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != 201 {
+		t.Fatalf("create notebook: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var nb map[string]any
+	json.NewDecoder(rec.Body).Decode(&nb)
+	if nb["description"] != "A test notebook" {
+		t.Fatalf("expected description 'A test notebook', got %v", nb["description"])
+	}
+}
+
 func TestNotebookCRUD(t *testing.T) {
 	srv := setupTestServer(t)
 

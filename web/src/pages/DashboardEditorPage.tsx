@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
-import { NavBar } from '../components/NavBar'
+import { AppShell } from '../components/AppShell'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -101,9 +101,7 @@ export function DashboardEditorPage() {
   const pickerCells = pickerNotebook?.cells ?? []
 
   return (
-    <div style={styles.page}>
-      <NavBar />
-
+    <AppShell>
       {/* Sub-header */}
       <header style={styles.subHeader}>
         <div style={styles.headerLeft}>
@@ -296,17 +294,11 @@ export function DashboardEditorPage() {
           </div>
         )}
       </div>
-    </div>
+    </AppShell>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: '100vh',
-    background: 'var(--bg-primary)',
-    display: 'flex',
-    flexDirection: 'column',
-  },
   loadingPage: {
     minHeight: '100vh',
     display: 'flex',

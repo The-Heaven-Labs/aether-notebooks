@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { AppShell } from '../components/AppShell'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -64,7 +65,7 @@ export function MembersPage() {
   }
 
   return (
-    <div style={styles.page}>
+    <AppShell>
       <header style={styles.header}>
         <div style={styles.headerLeft}>
           <Link to="/" style={styles.backLink}>← Home</Link>
@@ -174,17 +175,11 @@ export function MembersPage() {
           </table>
         </div>
       </div>
-    </div>
+    </AppShell>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: '100vh',
-    background: 'var(--bg-primary)',
-    display: 'flex',
-    flexDirection: 'column',
-  },
   header: {
     background: 'var(--nav-bg)',
     borderBottom: '1px solid var(--nav-border)',

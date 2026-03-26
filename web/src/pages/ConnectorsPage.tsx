@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Connector } from '../types'
-import { NavBar } from '../components/NavBar'
+import { AppShell } from '../components/AppShell'
 
 type ConnectorType = 'postgres' | 'clickhouse'
 
@@ -76,9 +76,7 @@ export function ConnectorsPage() {
     setForm((f) => ({ ...f, [field]: e.target.value }))
 
   return (
-    <div style={styles.page}>
-      <NavBar activePage="connectors" />
-
+    <AppShell>
       <div style={styles.body}>
         {!creating && (
           <div style={styles.bodyHeader}>
@@ -195,12 +193,11 @@ export function ConnectorsPage() {
           </table>
         </div>
       </div>
-    </div>
+    </AppShell>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  page: { minHeight: '100vh', background: 'var(--bg-primary)', display: 'flex', flexDirection: 'column' },
   newBtn: { padding: '6px 16px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   bodyHeader: { display: 'flex', justifyContent: 'flex-end', marginBottom: 16 },
   body: { maxWidth: 1100, margin: '0 auto', padding: '32px 40px', width: '100%' },

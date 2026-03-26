@@ -3,13 +3,14 @@ package models
 import "time"
 
 type Notebook struct {
-	ID         string      `json:"id"`
-	OrgID      string      `json:"org_id"`
-	Title      string      `json:"title"`
-	Parameters []Parameter `json:"parameters"`
-	CreatedBy  string      `json:"created_by"`
-	CreatedAt  time.Time   `json:"created_at"`
-	UpdatedAt  time.Time   `json:"updated_at"`
+	ID          string      `json:"id"`
+	OrgID       string      `json:"org_id"`
+	Title       string      `json:"title"`
+	Description string      `json:"description"`
+	Parameters  []Parameter `json:"parameters"`
+	CreatedBy   string      `json:"created_by"`
+	CreatedAt   time.Time   `json:"created_at"`
+	UpdatedAt   time.Time   `json:"updated_at"`
 }
 
 type Parameter struct {
