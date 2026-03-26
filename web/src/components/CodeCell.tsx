@@ -10,6 +10,7 @@ import { HocuspocusProvider } from '@hocuspocus/provider'
 import { yCollab } from 'y-codemirror.next'
 import type { Cell, Connector } from '../types'
 import { CellToolbar } from './CellToolbar'
+import { CellHeader } from './CellHeader'
 import { OutputRenderer } from './OutputRenderer'
 
 const RELAY_URL = import.meta.env.VITE_RELAY_URL || 'ws://localhost:3001'
@@ -112,9 +113,12 @@ interface Props {
   running: boolean
   saveState?: SaveState
   runAt?: Date
+  onUpdateCellMeta?: (updates: Partial<Pick<Cell, 'source_visible' | 'cell_collapsed' | 'title' | 'description' | 'slug'>>) => void
+  onShowHistory?: () => void
+  onFocus?: (cellId: string) => void
 }
 
-export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSourceChange, onAssignConnector, onMoveUp, onMoveDown, onSwitchType, running, saveState, runAt }: Props) {
+export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSourceChange, onAssignConnector, onMoveUp, onMoveDown, onSwitchType, running, saveState, runAt, onUpdateCellMeta, onShowHistory, onFocus }: Props) {
   const editorRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onRunRef = useRef(onRun)
@@ -203,8 +207,17 @@ export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSour
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cell.id, notebookId])
 
+  if (cell.cell_collapsed) {
+    return (
+      <div style={styles.cellCollapsed}>
+        <span style={styles.collapsedLabel}>{cell.title || 'Code cell'}</span>
+        <button style={styles.expandBtn} onClick={() => onUpdateCellMeta?.({ cell_collapsed: false })}>▷ Expand</button>
+      </div>
+    )
+  }
+
   return (
-    <div style={styles.cell}>
+    <div style={styles.cell} onClick={() => onFocus?.(cell.id)}>
       <CellToolbar
         cellType="code"
         onRun={() => onRun(cell.id)}
@@ -218,11 +231,15 @@ export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSour
         onAssignConnector={(cid) => onAssignConnector(cell.id, cid)}
         sourceVisible={cell.source_visible ?? true}
         cellCollapsed={cell.cell_collapsed ?? false}
-        onToggleSourceVisible={() => {}}
-        onToggleCellCollapsed={() => {}}
-        onShowHistory={() => {}}
+        onToggleSourceVisible={(v) => onUpdateCellMeta?.({ source_visible: v })}
+        onToggleCellCollapsed={(v) => onUpdateCellMeta?.({ cell_collapsed: v })}
+        onShowHistory={() => onShowHistory?.()}
       />
-      <div style={styles.editor} ref={editorRef} />
+      <CellHeader
+        cell={cell}
+        onUpdateCell={(updates) => onUpdateCellMeta?.(updates)}
+      />
+      <div style={{ ...styles.editor, ...(!(cell.source_visible ?? true) ? { display: 'none' } : {}) }} ref={editorRef} />
       <OutputRenderer outputs={cell.outputs} />
       <div style={styles.statusBar}>
         <span style={saveState?.error ? styles.statusError : styles.statusSave}>
@@ -276,4 +293,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-muted)',
     fontFamily: 'var(--font-mono)',
   },
+  cellCollapsed: { border: '1px solid var(--border)', borderRadius: 10, background: 'var(--bg-secondary)', padding: '6px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: 'var(--shadow-sm)' },
+  collapsedLabel: { fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' },
+  expandBtn: { fontSize: 12, background: 'transparent', border: 'none', color: 'var(--accent)', cursor: 'pointer' },
 }
