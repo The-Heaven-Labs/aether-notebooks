@@ -11,8 +11,9 @@ import (
 )
 
 type createNotebookRequest struct {
-	Title      string             `json:"title"`
-	Parameters []models.Parameter `json:"parameters"`
+	Title       string             `json:"title"`
+	Description string             `json:"description"`
+	Parameters  []models.Parameter `json:"parameters"`
 }
 
 func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
@@ -37,11 +38,11 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 	var nb models.Notebook
 	var paramsOut []byte
 	err := s.db.Pool.QueryRow(ctx,
-		`INSERT INTO notebooks (org_id, title, parameters, created_by)
-		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, org_id, title, parameters, created_by, created_at, updated_at`,
-		claims.OrgID, req.Title, params, claims.UserID,
-	).Scan(&nb.ID, &nb.OrgID, &nb.Title, &paramsOut, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt)
+		`INSERT INTO notebooks (org_id, title, description, parameters, created_by)
+		 VALUES ($1, $2, $3, $4, $5)
+		 RETURNING id, org_id, title, COALESCE(description,''), parameters, created_by, created_at, updated_at`,
+		claims.OrgID, req.Title, req.Description, params, claims.UserID,
+	).Scan(&nb.ID, &nb.OrgID, &nb.Title, &nb.Description, &paramsOut, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create notebook")
 		return
@@ -61,7 +62,7 @@ func (s *Server) handleListNotebooks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, title, parameters, created_by, created_at, updated_at
+		`SELECT id, org_id, title, COALESCE(description,''), parameters, created_by, created_at, updated_at
 		 FROM notebooks WHERE org_id = $1 ORDER BY updated_at DESC`,
 		claims.OrgID,
 	)
@@ -75,7 +76,7 @@ func (s *Server) handleListNotebooks(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var nb models.Notebook
 		var params []byte
-		if err := rows.Scan(&nb.ID, &nb.OrgID, &nb.Title, &params, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt); err != nil {
+		if err := rows.Scan(&nb.ID, &nb.OrgID, &nb.Title, &nb.Description, &params, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
@@ -98,10 +99,10 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 	var nb models.Notebook
 	var params []byte
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, org_id, title, parameters, created_by, created_at, updated_at
+		`SELECT id, org_id, title, COALESCE(description,''), parameters, created_by, created_at, updated_at
 		 FROM notebooks WHERE id = $1 AND org_id = $2`,
 		nbID, claims.OrgID,
-	).Scan(&nb.ID, &nb.OrgID, &nb.Title, &params, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt)
+	).Scan(&nb.ID, &nb.OrgID, &nb.Title, &nb.Description, &params, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "notebook not found")
 		return
@@ -182,8 +183,9 @@ func (s *Server) handleDeleteNotebook(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateNotebookRequest struct {
-	Title      *string            `json:"title,omitempty"`
-	Parameters []models.Parameter `json:"parameters,omitempty"`
+	Title       *string            `json:"title,omitempty"`
+	Description *string            `json:"description,omitempty"`
+	Parameters  []models.Parameter `json:"parameters,omitempty"`
 }
 
 func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
@@ -196,7 +198,7 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Title == nil && req.Parameters == nil {
+	if req.Title == nil && req.Description == nil && req.Parameters == nil {
 		writeError(w, http.StatusBadRequest, "at least one field must be provided")
 		return
 	}
@@ -211,6 +213,11 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 		args = append(args, *req.Title)
 		argN++
 	}
+	if req.Description != nil {
+		query += fmt.Sprintf(", description = $%d", argN)
+		args = append(args, *req.Description)
+		argN++
+	}
 	if req.Parameters != nil {
 		paramsJSON, _ := json.Marshal(req.Parameters)
 		query += fmt.Sprintf(", parameters = $%d", argN)
@@ -220,12 +227,12 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 
 	query += fmt.Sprintf(" WHERE id = $%d AND org_id = $%d", argN, argN+1)
 	args = append(args, nbID, claims.OrgID)
-	query += " RETURNING id, org_id, title, parameters, created_by, created_at, updated_at"
+	query += " RETURNING id, org_id, title, COALESCE(description,''), parameters, created_by, created_at, updated_at"
 
 	var nb models.Notebook
 	var paramsOut []byte
 	err := s.db.Pool.QueryRow(ctx, query, args...).Scan(
-		&nb.ID, &nb.OrgID, &nb.Title, &paramsOut, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt,
+		&nb.ID, &nb.OrgID, &nb.Title, &nb.Description, &paramsOut, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "notebook not found")

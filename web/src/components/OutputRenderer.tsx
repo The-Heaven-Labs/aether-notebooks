@@ -41,6 +41,71 @@ function OutputItem({ output }: { output: Output }) {
   return null
 }
 
+const TYPE_MAP: Record<string, { icon: string; label: string }> = {
+  string: { icon: 'Aa', label: 'String' },
+  varchar: { icon: 'Aa', label: 'String' },
+  text: { icon: 'Aa', label: 'String' },
+  char: { icon: 'Aa', label: 'String' },
+  integer: { icon: '#', label: 'Integer' },
+  int: { icon: '#', label: 'Integer' },
+  int2: { icon: '#', label: 'Integer' },
+  int4: { icon: '#', label: 'Integer' },
+  int8: { icon: '#', label: 'Integer' },
+  bigint: { icon: '#', label: 'Integer' },
+  smallint: { icon: '#', label: 'Integer' },
+  float: { icon: '0.1', label: 'Float' },
+  float4: { icon: '0.1', label: 'Float' },
+  float8: { icon: '0.1', label: 'Float' },
+  double: { icon: '0.1', label: 'Float' },
+  decimal: { icon: '0.1', label: 'Float' },
+  numeric: { icon: '0.1', label: 'Float' },
+  real: { icon: '0.1', label: 'Float' },
+  boolean: { icon: '⊙', label: 'Boolean' },
+  bool: { icon: '⊙', label: 'Boolean' },
+  date: { icon: '📅', label: 'Date' },
+  datetime: { icon: '🕐', label: 'Datetime' },
+  timestamp: { icon: '🕐', label: 'Datetime' },
+  timestamptz: { icon: '🕐', label: 'Datetime' },
+  'timestamp with time zone': { icon: '🕐', label: 'Datetime' },
+  array: { icon: '[]', label: 'Array' },
+  json: { icon: '{}', label: 'JSON' },
+  jsonb: { icon: '{}', label: 'JSON' },
+  uuid: { icon: '⌗', label: 'UUID' },
+  null: { icon: '∅', label: 'Null' },
+  bytes: { icon: '⬡', label: 'Bytes' },
+  bytea: { icon: '⬡', label: 'Bytes' },
+  unknown: { icon: '?', label: 'Unknown' },
+}
+
+function TypeIcon({ type }: { type: string }) {
+  const normalized = type.toLowerCase()
+  const info = TYPE_MAP[normalized] ?? { icon: '?', label: 'Unknown' }
+  return (
+    <span title={info.label} style={typeIconStyles.badge}>
+      {info.icon}
+    </span>
+  )
+}
+
+const typeIconStyles: Record<string, React.CSSProperties> = {
+  badge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: 10,
+    fontFamily: 'var(--font-mono)',
+    fontWeight: 700,
+    color: 'var(--text-muted)',
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--border-light)',
+    borderRadius: 4,
+    padding: '1px 5px',
+    marginLeft: 6,
+    cursor: 'default',
+    userSelect: 'none',
+  },
+}
+
 function TableOutput({ rs }: { rs: ResultSet }) {
   const [view, setView] = useState<'table' | 'chart'>('table')
 
@@ -74,7 +139,7 @@ function TableOutput({ rs }: { rs: ResultSet }) {
                 {rs.columns.map((col) => (
                   <th key={col.name} style={styles.th}>
                     <span style={styles.colName}>{col.name}</span>
-                    <span style={styles.colType}>{col.type}</span>
+                    <TypeIcon type={col.type} />
                   </th>
                 ))}
               </tr>
@@ -202,12 +267,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-primary)',
     fontFamily: 'var(--font-mono)',
     fontSize: 12,
-  },
-  colType: {
-    marginLeft: 8,
-    fontSize: 11,
-    color: 'var(--text-muted)',
-    fontWeight: 400,
   },
   td: {
     padding: '7px 16px',

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { AuditEntry } from '../types'
-import { NavBar } from '../components/NavBar'
+import { AppShell } from '../components/AppShell'
 
 const PAGE_SIZE = 50
 
@@ -38,10 +38,7 @@ export function AuditPage() {
   }
 
   return (
-    <div style={styles.page}>
-      <NavBar activePage="audit" />
-
-      <main style={styles.main}>
+    <AppShell>
         <div style={styles.content}>
           <div style={styles.sectionHeader}>
             <div>
@@ -81,8 +78,8 @@ export function AuditPage() {
                     <th style={styles.th}>Timestamp</th>
                     <th style={styles.th}>Action</th>
                     <th style={styles.th}>Resource Type</th>
-                    <th style={styles.th}>Resource ID</th>
-                    <th style={styles.th}>User ID</th>
+                    <th style={styles.th}>Resource</th>
+                    <th style={styles.th}>User</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -107,8 +104,7 @@ export function AuditPage() {
             </div>
           )}
         </div>
-      </main>
-    </div>
+    </AppShell>
   )
 }
 
@@ -129,27 +125,13 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
       <td style={styles.td}>
         <span style={styles.mono}>{entry.resource_type || '—'}</span>
       </td>
-      <td style={styles.td}>
-        <span style={styles.mono}>{entry.resource_id || '—'}</span>
-      </td>
-      <td style={styles.td}>
-        <span style={styles.mono}>{entry.user_id || '—'}</span>
-      </td>
+      <td style={styles.td} title={entry.resource_id}>{entry.resource_name || entry.resource_id || '—'}</td>
+      <td style={styles.td} title={entry.user_id}>{entry.user_email || entry.user_id || '—'}</td>
     </tr>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: '100vh',
-    background: 'var(--bg-primary)',
-    display: 'flex',
-    flexDirection: 'column',
-  },
-  main: {
-    flex: 1,
-    padding: '40px 32px',
-  },
   content: {
     maxWidth: 1280,
     margin: '0 auto',

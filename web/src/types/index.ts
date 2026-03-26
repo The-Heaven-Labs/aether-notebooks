@@ -101,9 +101,11 @@ export interface AuditEntry {
   id: string
   org_id: string
   user_id: string
+  user_email: string
   action: string
   resource_type: string
   resource_id: string
+  resource_name: string
   created_at: string
 }
 

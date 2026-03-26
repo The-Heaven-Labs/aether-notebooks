@@ -13,10 +13,12 @@ type Entry struct {
 	ID           int64                  `json:"id"`
 	OrgID        string                 `json:"org_id"`
 	UserID       string                 `json:"user_id,omitempty"`
+	UserEmail    string                 `json:"user_email,omitempty"`
 	Action       string                 `json:"action"`
 	ResourceType string                 `json:"resource_type"`
 	ResourceID   string                 `json:"resource_id,omitempty"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	ResourceName string                 `json:"resource_name,omitempty"`
+	Metadata     map[string]any         `json:"metadata,omitempty"`
 	CreatedAt    time.Time              `json:"created_at"`
 }
 
@@ -40,7 +42,7 @@ func NewLogger(db *database.DB) *Logger {
 func (l *Logger) Log(ctx context.Context, e Entry) error {
 	metadata := e.Metadata
 	if metadata == nil {
-		metadata = map[string]interface{}{}
+		metadata = map[string]any{}
 	}
 	metaJSON, err := json.Marshal(metadata)
 	if err != nil {
@@ -60,29 +62,46 @@ func (l *Logger) Query(ctx context.Context, p QueryParams) ([]Entry, error) {
 		p.Limit = 50
 	}
 
-	query := `SELECT id, org_id, COALESCE(user_id::text, ''), action, resource_type,
-	          COALESCE(resource_id::text, ''), metadata, created_at
-	          FROM audit_logs WHERE org_id = $1`
-	args := []interface{}{p.OrgID}
+	query := `
+		SELECT
+			al.id, al.org_id,
+			COALESCE(al.user_id::text, ''),
+			COALESCE(u.email, ''),
+			al.action, al.resource_type,
+			COALESCE(al.resource_id::text, ''),
+			COALESCE(
+				CASE al.resource_type
+					WHEN 'notebook'  THEN (SELECT title FROM notebooks WHERE id = al.resource_id)
+					WHEN 'dashboard' THEN (SELECT title FROM dashboards WHERE id = al.resource_id)
+					WHEN 'connector' THEN (SELECT name  FROM connectors WHERE id = al.resource_id)
+					WHEN 'user'      THEN (SELECT name  FROM users     WHERE id = al.resource_id)
+					ELSE ''
+				END, ''
+			),
+			al.metadata, al.created_at
+		FROM audit_logs al
+		LEFT JOIN users u ON u.id = al.user_id
+		WHERE al.org_id = $1`
+	args := []any{p.OrgID}
 	argN := 2
 
 	if p.UserID != "" {
-		query += fmt.Sprintf(" AND user_id = $%d", argN)
+		query += fmt.Sprintf(" AND al.user_id = $%d", argN)
 		args = append(args, p.UserID)
 		argN++
 	}
 	if p.Action != "" {
-		query += fmt.Sprintf(" AND action = $%d", argN)
+		query += fmt.Sprintf(" AND al.action = $%d", argN)
 		args = append(args, p.Action)
 		argN++
 	}
 	if p.ResourceType != "" {
-		query += fmt.Sprintf(" AND resource_type = $%d", argN)
+		query += fmt.Sprintf(" AND al.resource_type = $%d", argN)
 		args = append(args, p.ResourceType)
 		argN++
 	}
 
-	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", argN, argN+1)
+	query += fmt.Sprintf(" ORDER BY al.created_at DESC LIMIT $%d OFFSET $%d", argN, argN+1)
 	args = append(args, p.Limit, p.Offset)
 
 	rows, err := l.db.Pool.Query(ctx, query, args...)
@@ -95,8 +114,8 @@ func (l *Logger) Query(ctx context.Context, p QueryParams) ([]Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var metaJSON []byte
-		if err := rows.Scan(&e.ID, &e.OrgID, &e.UserID, &e.Action, &e.ResourceType,
-			&e.ResourceID, &metaJSON, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.OrgID, &e.UserID, &e.UserEmail, &e.Action,
+			&e.ResourceType, &e.ResourceID, &e.ResourceName, &metaJSON, &e.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		if len(metaJSON) > 0 {
@@ -104,10 +123,13 @@ func (l *Logger) Query(ctx context.Context, p QueryParams) ([]Entry, error) {
 		}
 		entries = append(entries, e)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
 	return entries, nil
 }
 
-func nilIfEmpty(s string) interface{} {
+func nilIfEmpty(s string) any {
 	if s == "" {
 		return nil
 	}

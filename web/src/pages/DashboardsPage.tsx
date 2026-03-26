@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard } from '../types'
-import { NavBar } from '../components/NavBar'
+import { AppShell } from '../components/AppShell'
 
 const fmtDate = (d: string) => {
   const date = new Date(d)
@@ -18,6 +18,14 @@ export function DashboardsPage() {
   const [newTitle, setNewTitle] = useState('')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  const [layout, setLayout] = useState<'grid' | 'list'>(() =>
+    (localStorage.getItem('hnb_dashboards_layout') as 'grid' | 'list') ?? 'list'
+  )
+  const toggleLayout = () => {
+    const next = layout === 'list' ? 'grid' : 'list'
+    setLayout(next)
+    localStorage.setItem('hnb_dashboards_layout', next)
+  }
 
   const { data: dashboards = [], isLoading } = useQuery({
     queryKey: ['dashboards'],
@@ -44,10 +52,21 @@ export function DashboardsPage() {
   })
 
   return (
-    <div style={styles.page}>
-      <NavBar activePage="dashboards" />
-
+    <AppShell>
       <div style={styles.body}>
+        <div style={styles.sectionHeader}>
+          <div>
+            <h2 style={styles.sectionTitle}>Dashboards</h2>
+            <p style={styles.sectionSub}>{dashboards.length} dashboard{dashboards.length !== 1 ? 's' : ''}</p>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" style={styles.layoutBtn} onClick={toggleLayout} title={layout === 'list' ? 'Switch to grid' : 'Switch to list'}>
+              {layout === 'list' ? '⊞' : '≡'}
+            </button>
+            <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Dashboard</button>
+          </div>
+        </div>
+
         {creating && (
           <form
             style={styles.createForm}
@@ -80,38 +99,64 @@ export function DashboardsPage() {
             <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Dashboard</button>
           </div>
         ) : (
-          <div style={styles.grid}>
-            {dashboards.map((d) => (
-              <div key={d.id} style={styles.card}>
-                <Link to={`/dashboards/${d.id}`} style={styles.cardLink}>
-                  <div style={styles.cardIcon}>⊟</div>
-                  <div style={styles.cardTitle}>{d.title}</div>
-                  <div style={styles.cardMeta}>Updated {fmtDate(d.updated_at)}</div>
-                  {d.public_token && (
-                    <div style={styles.publicBadge}>Public</div>
-                  )}
-                </Link>
-                <button
-                  type="button"
-                  style={styles.deleteBtn}
-                  onClick={() => { if (confirm(`Delete "${d.title}"?`)) deleteDashboard.mutate(d.id) }}
-                  title="Delete dashboard"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
+          <div style={layout === 'grid' ? styles.grid : styles.list}>
+            {dashboards.map((d) =>
+              layout === 'grid'
+                ? (
+                  <div key={d.id} style={styles.card}>
+                    <Link to={`/dashboards/${d.id}`} style={styles.cardLink}>
+                      <div style={styles.cardIcon}>⊟</div>
+                      <div style={styles.cardTitle}>{d.title}</div>
+                      <div style={styles.cardMeta}>Updated {fmtDate(d.updated_at)}</div>
+                      {d.public_token && <div style={styles.publicBadge}>Public</div>}
+                    </Link>
+                    <button type="button" style={styles.deleteBtn} onClick={() => { if (confirm(`Delete "${d.title}"?`)) deleteDashboard.mutate(d.id) }} title="Delete dashboard">✕</button>
+                  </div>
+                )
+                : <DashboardRow key={d.id} dashboard={d} onDelete={() => deleteDashboard.mutate(d.id)} />
+            )}
           </div>
         )}
       </div>
+    </AppShell>
+  )
+}
+
+function DashboardRow({ dashboard, onDelete }: { dashboard: Dashboard; onDelete: () => void }) {
+  return (
+    <div style={rowStyles.row}>
+      <Link to={`/dashboards/${dashboard.id}`} style={rowStyles.link}>
+        <span style={rowStyles.icon}>⊟</span>
+        <div style={rowStyles.info}>
+          <span style={rowStyles.title}>{dashboard.title}</span>
+          {dashboard.public_token && <span style={rowStyles.badge}>Public</span>}
+        </div>
+        <span style={rowStyles.date}>{fmtDate(dashboard.updated_at)}</span>
+      </Link>
+      <button type="button" style={rowStyles.del} onClick={(e) => { e.preventDefault(); if (confirm(`Delete "${dashboard.title}"?`)) onDelete() }}>Delete</button>
     </div>
   )
 }
 
+const rowStyles: Record<string, React.CSSProperties> = {
+  row: { display: 'flex', alignItems: 'center', background: 'white', borderRadius: 8, border: '1px solid var(--border)', padding: '10px 16px', gap: 12 },
+  link: { flex: 1, display: 'flex', alignItems: 'center', gap: 12, textDecoration: 'none' },
+  icon: { fontSize: 18, color: 'var(--accent)', flexShrink: 0 },
+  info: { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 },
+  title: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  badge: { fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: '#f0edff', padding: '2px 6px', borderRadius: 3, flexShrink: 0 },
+  date: { fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 },
+  del: { padding: '3px 8px', border: 'none', background: 'transparent', color: 'var(--error)', fontSize: 12, cursor: 'pointer', flexShrink: 0 },
+}
+
 const styles: Record<string, React.CSSProperties> = {
-  page: { minHeight: '100vh', background: 'var(--bg-primary)', display: 'flex', flexDirection: 'column' },
+  sectionHeader: { display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 24 },
+  sectionTitle: { fontSize: 22, fontWeight: 700, letterSpacing: '-0.3px', color: 'var(--text-primary)' },
+  sectionSub: { fontSize: 13, color: 'var(--text-muted)', marginTop: 2 },
+  layoutBtn: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'none', cursor: 'pointer', fontSize: 14 },
   newBtn: { padding: '6px 16px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  body: { flex: 1, maxWidth: 1280, margin: '0 auto', padding: '40px 40px', width: '100%' },
+  body: { maxWidth: 1280, margin: '0 auto', padding: '40px 40px', width: '100%' },
+  list: { display: 'flex', flexDirection: 'column', gap: 8 },
   createForm: { display: 'flex', gap: 8, marginBottom: 24, alignItems: 'center' },
   createInput: { flex: 1, maxWidth: 360, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 7, fontSize: 14, fontFamily: 'var(--font-sans)', background: 'white' },
   createBtn: { padding: '8px 20px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer' },

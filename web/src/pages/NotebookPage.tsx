@@ -20,10 +20,13 @@ export function NotebookPage() {
   const [localCells, setLocalCells] = useState<Cell[]>([])
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
+  const [descDraft, setDescDraft] = useState('')
   const [paramValues, setParamValues] = useState<Record<string, string>>({})
   const [showSchema, setShowSchema] = useState(false)
   const [showSchedules, setShowSchedules] = useState(false)
   const [mutationError, setMutationError] = useState<string | null>(null)
+  const [cellSaveState, setCellSaveState] = useState<Record<string, { saving: boolean; savedAt: Date | null; error: string | null }>>({})
+  const [cellRunAt, setCellRunAt] = useState<Record<string, Date>>({})
 
   const { data: notebook, isLoading } = useQuery({
     queryKey: ['notebook', id],
@@ -37,7 +40,11 @@ export function NotebookPage() {
   })
 
   useEffect(() => {
-    if (notebook?.cells) setLocalCells(notebook.cells)
+    if (notebook) {
+      setLocalCells(notebook.cells)
+      setTitleDraft(notebook.title)
+      setDescDraft(notebook.description ?? '')
+    }
   }, [notebook])
 
   const createCell = useMutation({
@@ -49,6 +56,9 @@ export function NotebookPage() {
       }),
     onSuccess: (cell) => {
       setLocalCells((prev) => [...prev, cell])
+      qc.setQueryData<NotebookWithCells>(['notebook', id], (old) =>
+        old ? { ...old, cells: [...(old.cells ?? []), cell] } : old
+      )
     },
     onError: (err: Error) => setMutationError(err.message),
   })
@@ -58,6 +68,9 @@ export function NotebookPage() {
       api.delete(`/api/v1/notebooks/${id}/cells/${cellId}`),
     onSuccess: (_, cellId) => {
       setLocalCells((prev) => prev.filter((c) => c.id !== cellId))
+      qc.setQueryData<NotebookWithCells>(['notebook', id], (old) =>
+        old ? { ...old, cells: (old.cells ?? []).filter((c) => c.id !== cellId) } : old
+      )
     },
     onError: (err: Error) => setMutationError(err.message),
   })
@@ -65,6 +78,13 @@ export function NotebookPage() {
   const renameNotebook = useMutation({
     mutationFn: (title: string) =>
       api.put(`/api/v1/notebooks/${id}`, { title }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notebook', id] }),
+    onError: (err: Error) => setMutationError(err.message),
+  })
+
+  const updateNotebook = useMutation({
+    mutationFn: (data: { title?: string; description?: string }) =>
+      api.put<Notebook>(`/api/v1/notebooks/${id}`, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['notebook', id] }),
     onError: (err: Error) => setMutationError(err.message),
   })
@@ -85,15 +105,24 @@ export function NotebookPage() {
       type: newType,
       language: newLanguage,
     })
-    setLocalCells((prev) =>
-      prev.map((c) => c.id === cellId ? { ...c, type: newType, language: newLanguage, outputs: [] } : c)
+    const updater = (c: Cell): Cell => c.id === cellId ? { ...c, type: newType as Cell['type'], language: newLanguage, outputs: [] } : c
+    setLocalCells((prev) => prev.map(updater))
+    qc.setQueryData<NotebookWithCells>(['notebook', id], (old) =>
+      old ? { ...old, cells: (old.cells ?? []).map(updater) } : old
     )
-  }, [id, localCells])
+  }, [id, localCells, qc])
 
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
   const saveCellSource = useCallback(async (cellId: string, source: string) => {
-    await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { source })
+    setCellSaveState((prev) => ({ ...prev, [cellId]: { saving: true, savedAt: prev[cellId]?.savedAt ?? null, error: null } }))
+    try {
+      await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { source })
+      setCellSaveState((prev) => ({ ...prev, [cellId]: { saving: false, savedAt: new Date(), error: null } }))
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Save failed'
+      setCellSaveState((prev) => ({ ...prev, [cellId]: { saving: false, savedAt: prev[cellId]?.savedAt ?? null, error: msg } }))
+    }
   }, [id])
 
   const updateSource = useCallback((cellId: string, source: string) => {
@@ -129,6 +158,7 @@ export function NotebookPage() {
         setLocalCells((prev) =>
           prev.map((c) => (c.id === cellId ? { ...c, outputs: result.outputs } : c)),
         )
+        setCellRunAt((prev) => ({ ...prev, [cellId]: new Date() }))
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Execution failed'
         setLocalCells((prev) =>
@@ -189,32 +219,47 @@ export function NotebookPage() {
             <span style={styles.backLabel}>Notebooks</span>
           </Link>
           <span style={styles.breadcrumbSep}>/</span>
-          {editingTitle ? (
-            <input
-              style={styles.titleInput}
-              value={titleDraft}
-              onChange={(e) => setTitleDraft(e.target.value)}
-              onBlur={() => {
-                setEditingTitle(false)
-                if (titleDraft.trim() && titleDraft.trim() !== notebook.title) {
-                  renameNotebook.mutate(titleDraft.trim())
-                }
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                if (e.key === 'Escape') setEditingTitle(false)
-              }}
-              autoFocus
-            />
-          ) : (
-            <span
-              style={styles.notebookTitle}
-              onClick={() => { setTitleDraft(notebook.title); setEditingTitle(true) }}
-              title="Click to rename"
-            >
-              {notebook.title}
-            </span>
-          )}
+          <div style={styles.titleBlock}>
+            {editingTitle ? (
+              <input
+                style={styles.titleInput}
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onBlur={() => {
+                  setEditingTitle(false)
+                  if (titleDraft.trim() && titleDraft.trim() !== notebook.title) {
+                    renameNotebook.mutate(titleDraft.trim())
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                  if (e.key === 'Escape') setEditingTitle(false)
+                }}
+                autoFocus
+              />
+            ) : (
+              <span
+                style={styles.notebookTitle}
+                onClick={() => { setTitleDraft(notebook.title); setEditingTitle(true) }}
+                title="Click to rename"
+              >
+                {notebook.title}
+              </span>
+            )}
+            <div style={styles.notebookDesc}>
+              <input
+                style={styles.descInput}
+                value={descDraft}
+                onChange={(e) => setDescDraft(e.target.value)}
+                onBlur={() => {
+                  if (descDraft !== (notebook?.description ?? '')) {
+                    updateNotebook.mutate({ description: descDraft })
+                  }
+                }}
+                placeholder="Add a description…"
+              />
+            </div>
+          </div>
         </div>
         <div style={styles.headerRight}>
           {runningCount > 0 && (
@@ -283,6 +328,8 @@ export function NotebookPage() {
                       onSwitchType={() => switchCellType(cell.id)}
                       onAssignConnector={assignConnector}
                       running={runningCells.has(cell.id)}
+                      saveState={cellSaveState[cell.id]}
+                      runAt={cellRunAt[cell.id]}
                     />
                   ) : (
                     <TextCell
@@ -294,6 +341,7 @@ export function NotebookPage() {
                       onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
                       onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
                       onSwitchType={() => switchCellType(cell.id)}
+                      saveState={cellSaveState[cell.id]}
                     />
                   ),
                 )}
@@ -404,6 +452,22 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: 400,
     fontFamily: 'var(--font-sans)',
     padding: '1px 2px',
+  },
+  titleBlock: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+  },
+  notebookDesc: { marginBottom: 2 },
+  descInput: {
+    width: '100%',
+    border: 'none',
+    outline: 'none',
+    fontSize: 12,
+    color: 'var(--text-secondary)',
+    background: 'transparent',
+    fontFamily: 'var(--font-sans)',
+    padding: '1px 0',
   },
   headerRight: {
     display: 'flex',

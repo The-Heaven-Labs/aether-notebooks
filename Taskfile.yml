@@ -156,12 +156,27 @@ tasks:
     cmds:
       - go test -race ./... -count=1
 
-  test:e2e:
-    desc: Run the end-to-end smoke test against a live server
-    vars:
-      TARGET: '{{default "http://localhost:8080" .HNB_API_URL}}'
+  test:web:
+    desc: Run frontend component tests (Vitest)
+    dir: web
     cmds:
-      - HNB_API_URL={{.TARGET}} bash e2e/smoke_test.sh
+      - npm run test:run
+
+  test:web:watch:
+    desc: Run frontend component tests in watch mode
+    dir: web
+    cmds:
+      - npm run test
+
+  test:e2e:
+    desc: Run Playwright E2E tests (requires running dev stack on :5173)
+    cmds:
+      - npx playwright test --config=e2e/playwright.config.ts
+
+  test:e2e:ui:
+    desc: Open Playwright UI mode
+    cmds:
+      - npx playwright test --ui --config=e2e/playwright.config.ts
 
   # ── Code quality ─────────────────────────────────────────────────────────────
 
