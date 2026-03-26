@@ -216,6 +216,11 @@ export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSour
         connectors={connectors}
         connectorId={cell.connector_id}
         onAssignConnector={(cid) => onAssignConnector(cell.id, cid)}
+        sourceVisible={cell.source_visible ?? true}
+        cellCollapsed={cell.cell_collapsed ?? false}
+        onToggleSourceVisible={() => {}}
+        onToggleCellCollapsed={() => {}}
+        onShowHistory={() => {}}
       />
       <div style={styles.editor} ref={editorRef} />
       <OutputRenderer outputs={cell.outputs} />

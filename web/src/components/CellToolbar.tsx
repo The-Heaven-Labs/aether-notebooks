@@ -11,9 +11,14 @@ interface Props {
   connectors?: Connector[]
   connectorId?: string
   onAssignConnector?: (connectorId: string) => void
+  sourceVisible: boolean
+  cellCollapsed: boolean
+  onToggleSourceVisible: (val: boolean) => void
+  onToggleCellCollapsed: (val: boolean) => void
+  onShowHistory: () => void
 }
 
-export function CellToolbar({ onRun, onDelete, onMoveUp, onMoveDown, onSwitchType, running, cellType, connectors, connectorId, onAssignConnector }: Props) {
+export function CellToolbar({ onRun, onDelete, onMoveUp, onMoveDown, onSwitchType, running, cellType, connectors, connectorId, onAssignConnector, sourceVisible, cellCollapsed, onToggleSourceVisible, onToggleCellCollapsed, onShowHistory }: Props) {
   return (
     <div style={styles.toolbar}>
       <div style={styles.left}>
@@ -54,6 +59,27 @@ export function CellToolbar({ onRun, onDelete, onMoveUp, onMoveDown, onSwitchTyp
         {onMoveDown && (
           <button style={styles.iconBtn} onClick={onMoveDown} title="Move down">↓</button>
         )}
+        <button
+          style={styles.iconBtn}
+          onClick={() => onToggleSourceVisible(!sourceVisible)}
+          title={sourceVisible ? 'Hide source' : 'Show source'}
+        >
+          {sourceVisible ? '⊟' : '⊞'}
+        </button>
+        <button
+          style={styles.iconBtn}
+          onClick={() => onToggleCellCollapsed(!cellCollapsed)}
+          title={cellCollapsed ? 'Expand cell' : 'Collapse cell'}
+        >
+          {cellCollapsed ? '▷' : '▽'}
+        </button>
+        <button
+          style={styles.iconBtn}
+          onClick={onShowHistory}
+          title="Cell history"
+        >
+          ⏱
+        </button>
         <button style={styles.deleteBtn} onClick={onDelete} title="Delete cell">✕</button>
       </div>
     </div>
