@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
 import { AppShell } from '../components/AppShell'
+import { OutputRenderer } from '../components/OutputRenderer'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -11,6 +12,27 @@ interface NotebookWithCells extends Notebook {
 
 interface DashboardWithWidgets extends Dashboard {
   widgets: Widget[]
+}
+
+function WidgetContent({ widget }: { widget: Widget }) {
+  const { data: notebook, isLoading } = useQuery({
+    queryKey: ['notebook', widget.notebook_id],
+    queryFn: () => api.get<NotebookWithCells>(`/api/v1/notebooks/${widget.notebook_id}`),
+  })
+
+  if (isLoading) return <div style={widgetContentStyles.loading}>Loading…</div>
+
+  const cell = notebook?.cells?.find((c: Cell) => c.id === widget.cell_id)
+  if (!cell) return <div style={widgetContentStyles.empty}>Cell not found</div>
+  if (!cell.outputs?.length) {
+    return <div style={widgetContentStyles.empty}>No results yet — run the notebook first</div>
+  }
+  return <OutputRenderer outputs={cell.outputs} />
+}
+
+const widgetContentStyles: Record<string, React.CSSProperties> = {
+  loading: { padding: '16px', fontSize: 13, color: 'var(--text-muted)' },
+  empty: { padding: '16px', fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' },
 }
 
 export function DashboardEditorPage() {
@@ -258,10 +280,7 @@ export function DashboardEditorPage() {
           </div>
         ) : (
           <div style={styles.grid}>
-            {widgets.map((widget) => {
-              const notebookLabel = widget.notebook_id.slice(0, 8)
-              const cellLabel = widget.cell_id.slice(0, 8)
-              return (
+            {widgets.map((widget) => (
                 <div key={widget.id} style={styles.widgetCard}>
                   <div style={styles.widgetHeader}>
                     <span style={styles.widgetTypeBadge}>{widget.type}</span>
@@ -278,19 +297,9 @@ export function DashboardEditorPage() {
                       ✕
                     </button>
                   </div>
-                  <div style={styles.widgetBody}>
-                    <div style={styles.widgetRef}>
-                      <span style={styles.widgetRefLabel}>Notebook</span>
-                      <code style={styles.widgetRefValue}>{notebookLabel}…</code>
-                    </div>
-                    <div style={styles.widgetRef}>
-                      <span style={styles.widgetRefLabel}>Cell</span>
-                      <code style={styles.widgetRefValue}>{cellLabel}…</code>
-                    </div>
-                  </div>
+                  <WidgetContent widget={widget} />
                 </div>
-              )
-            })}
+              ))}
           </div>
         )}
       </div>
