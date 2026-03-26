@@ -13,7 +13,9 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@codemirror/lang-markdown": "^6.5.0",
     "@codemirror/lang-sql": "^6.10.0",
+    "@codemirror/language-data": "^6.5.2",
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.40.0",
     "@hocuspocus/provider": "^3.4.4",
