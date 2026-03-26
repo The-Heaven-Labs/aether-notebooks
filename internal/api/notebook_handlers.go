@@ -114,7 +114,9 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(params, &nb.Parameters)
 
 	cellRows, err := s.db.Pool.Query(ctx,
-		`SELECT id, notebook_id, position, type, language, connector_id, source, outputs, created_at, updated_at
+		`SELECT id, notebook_id, position, type, language, connector_id, source, outputs,
+		        source_visible, cell_collapsed, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''),
+		        created_at, updated_at
 		 FROM cells WHERE notebook_id = $1 ORDER BY position ASC`,
 		nbID,
 	)
@@ -129,7 +131,9 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 		var c models.Cell
 		var lang, connID *string
 		var outputs []byte
-		if err := cellRows.Scan(&c.ID, &c.NotebookID, &c.Position, &c.Type, &lang, &connID, &c.Source, &outputs, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := cellRows.Scan(&c.ID, &c.NotebookID, &c.Position, &c.Type, &lang, &connID, &c.Source, &outputs,
+			&c.SourceVisible, &c.CellCollapsed, &c.Title, &c.Description, &c.Slug,
+			&c.CreatedAt, &c.UpdatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan cell failed")
 			return
 		}

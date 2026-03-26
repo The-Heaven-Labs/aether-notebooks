@@ -18,10 +18,15 @@ type createCellRequest struct {
 }
 
 type updateCellRequest struct {
-	Source      *string `json:"source,omitempty"`
-	Language    *string `json:"language,omitempty"`
-	ConnectorID *string `json:"connector_id,omitempty"`
-	Type        *string `json:"type,omitempty"`
+	Source        *string `json:"source,omitempty"`
+	Language      *string `json:"language,omitempty"`
+	ConnectorID   *string `json:"connector_id,omitempty"`
+	Type          *string `json:"type,omitempty"`
+	SourceVisible *bool   `json:"source_visible,omitempty"`
+	CellCollapsed *bool   `json:"cell_collapsed,omitempty"`
+	Title         *string `json:"title,omitempty"`
+	Description   *string `json:"description,omitempty"`
+	Slug          *string `json:"slug,omitempty"`
 }
 
 func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
@@ -68,9 +73,13 @@ func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
 	err := s.db.Pool.QueryRow(ctx,
 		`INSERT INTO cells (notebook_id, position, type, language, connector_id, source, outputs)
 		 VALUES ($1, $2, $3, $4, $5, $6, '[]')
-		 RETURNING id, notebook_id, position, type, language, connector_id, source, outputs, created_at, updated_at`,
+		 RETURNING id, notebook_id, position, type, language, connector_id, source, outputs,
+		           source_visible, cell_collapsed, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''),
+		           created_at, updated_at`,
 		nbID, nextPos, req.Type, lang, connID, req.Source,
-	).Scan(&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &lang, &connID, &cell.Source, &outputs, &cell.CreatedAt, &cell.UpdatedAt)
+	).Scan(&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &lang, &connID, &cell.Source, &outputs,
+		&cell.SourceVisible, &cell.CellCollapsed, &cell.Title, &cell.Description, &cell.Slug,
+		&cell.CreatedAt, &cell.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create cell")
 		return
@@ -135,17 +144,44 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 		args = append(args, *req.ConnectorID)
 		argN++
 	}
+	if req.SourceVisible != nil {
+		query += fmt.Sprintf(", source_visible = $%d", argN)
+		args = append(args, *req.SourceVisible)
+		argN++
+	}
+	if req.CellCollapsed != nil {
+		query += fmt.Sprintf(", cell_collapsed = $%d", argN)
+		args = append(args, *req.CellCollapsed)
+		argN++
+	}
+	if req.Title != nil {
+		query += fmt.Sprintf(", title = $%d", argN)
+		args = append(args, *req.Title)
+		argN++
+	}
+	if req.Description != nil {
+		query += fmt.Sprintf(", description = $%d", argN)
+		args = append(args, *req.Description)
+		argN++
+	}
+	if req.Slug != nil {
+		query += fmt.Sprintf(", slug = $%d", argN)
+		args = append(args, nilIfEmptyStr(*req.Slug))
+		argN++
+	}
 
 	query += fmt.Sprintf(" WHERE id = $%d AND notebook_id = $%d", argN, argN+1)
 	args = append(args, cellID, nbID)
-	query += " RETURNING id, notebook_id, position, type, language, connector_id, source, outputs, created_at, updated_at"
+	query += " RETURNING id, notebook_id, position, type, language, connector_id, source, outputs, source_visible, cell_collapsed, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), created_at, updated_at"
 
 	var cell models.Cell
 	var lang, connID *string
 	var outputs []byte
 	err := s.db.Pool.QueryRow(ctx, query, args...).Scan(
 		&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &lang, &connID,
-		&cell.Source, &outputs, &cell.CreatedAt, &cell.UpdatedAt,
+		&cell.Source, &outputs, &cell.SourceVisible, &cell.CellCollapsed,
+		&cell.Title, &cell.Description, &cell.Slug,
+		&cell.CreatedAt, &cell.UpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "cell not found")
@@ -162,6 +198,10 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 		cell.ConnectorID = *connID
 	}
 	json.Unmarshal(outputs, &cell.Outputs)
+
+	if req.Source != nil {
+		s.upsertCellVersion(ctx, cellID, *req.Source)
+	}
 
 	writeJSON(w, http.StatusOK, cell)
 }
@@ -193,4 +233,11 @@ func (s *Server) handleDeleteCell(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func nilIfEmptyStr(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
 }
