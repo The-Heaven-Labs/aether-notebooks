@@ -1,6 +1,7 @@
+import React from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { useAuth } from './hooks/useAuth'
+import { useAuth, useAuthProvider, AuthContext } from './hooks/useAuth'
 import { LoginPage } from './pages/LoginPage'
 import { HomePage } from './pages/HomePage'
 import { NotebookPage } from './pages/NotebookPage'
@@ -89,11 +90,18 @@ function AppRoutes() {
   )
 }
 
+function AuthProvider({ children }: { children: React.ReactNode }) {
+  const auth = useAuthProvider()
+  return <AuthContext.Provider value={auth}>{children}</AuthContext.Provider>
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <AppRoutes />
+        <AuthProvider>
+          <AppRoutes />
+        </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>
   )

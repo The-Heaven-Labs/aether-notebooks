@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useContext, createContext } from 'react'
 import { login as apiLogin, logout as apiLogout, register as apiRegister } from '../api/auth'
 
 function parseJwt(token: string): Record<string, unknown> | null {
@@ -27,8 +27,20 @@ function getStoredUser() {
   }
 }
 
-export function useAuth() {
-  const [user, setUser] = useState(getStoredUser)
+type User = { user_id: string; org_id: string; role: string } | null
+
+interface AuthContextValue {
+  user: User
+  login: (email: string, password: string) => Promise<void>
+  register: (email: string, password: string, name: string, orgName: string) => Promise<void>
+  logout: () => void
+  isAuthenticated: boolean
+}
+
+export const AuthContext = createContext<AuthContextValue | null>(null)
+
+export function useAuthProvider(): AuthContextValue {
+  const [user, setUser] = useState<User>(getStoredUser)
 
   const login = useCallback(async (email: string, password: string) => {
     const resp = await apiLogin(email, password)
@@ -61,4 +73,10 @@ export function useAuth() {
   }, [])
 
   return { user, login, register, logout, isAuthenticated: !!user }
+}
+
+export function useAuth(): AuthContextValue {
+  const ctx = useContext(AuthContext)
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider')
+  return ctx
 }
