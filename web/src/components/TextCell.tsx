@@ -16,17 +16,22 @@ import { CellToolbar } from './CellToolbar'
 
 class MarkdownLineWidget extends WidgetType {
   content: string
+  private root: ReturnType<typeof ReactDOM.createRoot> | null = null
   constructor(content: string) { super(); this.content = content }
   eq(other: MarkdownLineWidget) { return other.content === this.content }
   toDOM() {
     const div = document.createElement('div')
     div.className = 'cm-md-preview'
     div.style.cssText = 'padding:0 16px;font-size:14px;line-height:1.75;min-height:22px'
-    const root = ReactDOM.createRoot(div)
-    root.render(
+    this.root = ReactDOM.createRoot(div)
+    this.root.render(
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{this.content}</ReactMarkdown>
     )
     return div
+  }
+  destroy() {
+    this.root?.unmount()
+    this.root = null
   }
 }
 
@@ -53,10 +58,21 @@ function buildMarkdownDecorations(view: EditorView): DecorationSet {
 const markdownPreviewPlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet
-    constructor(view: EditorView) { this.decorations = buildMarkdownDecorations(view) }
+    lastActiveLine: number
+    constructor(view: EditorView) {
+      this.lastActiveLine = view.state.doc.lineAt(view.state.selection.main.head).number
+      this.decorations = buildMarkdownDecorations(view)
+    }
     update(update: import('@codemirror/view').ViewUpdate) {
-      if (update.docChanged || update.selectionSet) {
+      if (update.docChanged) {
+        this.lastActiveLine = update.view.state.doc.lineAt(update.view.state.selection.main.head).number
         this.decorations = buildMarkdownDecorations(update.view)
+      } else if (update.selectionSet) {
+        const newActiveLine = update.view.state.doc.lineAt(update.view.state.selection.main.head).number
+        if (newActiveLine !== this.lastActiveLine) {
+          this.lastActiveLine = newActiveLine
+          this.decorations = buildMarkdownDecorations(update.view)
+        }
       }
     }
   },
@@ -123,6 +139,8 @@ export function TextCell({ cell, onDelete, onSourceChange, onSave, onMoveUp, onM
   const viewRef = useRef<EditorView | null>(null)
   const onSourceChangeRef = useRef(onSourceChange)
   onSourceChangeRef.current = onSourceChange
+  const onSaveRef = useRef(onSave)
+  onSaveRef.current = onSave
 
   useEffect(() => {
     if (!editorRef.current) return
@@ -148,7 +166,7 @@ export function TextCell({ cell, onDelete, onSourceChange, onSave, onMoveUp, onM
           }),
           EditorView.domEventHandlers({
             blur: (_, view) => {
-              onSave?.(cell.id, view.state.doc.toString())
+              onSaveRef.current?.(cell.id, view.state.doc.toString())
               return false
             },
           }),
@@ -186,7 +204,7 @@ export function TextCell({ cell, onDelete, onSourceChange, onSave, onMoveUp, onM
         onToggleCellCollapsed={(v) => onUpdateCellMeta?.({ cell_collapsed: v })}
         onShowHistory={() => onShowHistory?.()}
       />
-      {(cell.source_visible ?? true) && <div ref={editorRef} />}
+      <div ref={editorRef} style={(cell.source_visible ?? true) ? undefined : { display: 'none' }} />
       {saveState && (
         <div style={styles.statusBar}>
           <span style={saveState.error ? styles.statusError : styles.statusSave}>
