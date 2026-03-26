@@ -191,8 +191,8 @@ func (s *Server) handleRestoreCellVersion(w http.ResponseWriter, r *http.Request
 	}
 	json.Unmarshal(outputs, &cell.Outputs)
 
-	// Version the restored source
-	s.upsertCellVersion(ctx, cellID, source)
+	// Version the restored source (best-effort — cell is already updated)
+	_ = s.upsertCellVersion(ctx, cellID, source)
 
 	writeJSON(w, http.StatusOK, cell)
 }
@@ -314,7 +314,10 @@ func (s *Server) handleRestoreSnapshot(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(sourcesJSON, &cellSources)
 
 	for cellID, src := range cellSources {
-		s.db.Pool.Exec(ctx, `UPDATE cells SET source=$1, updated_at=NOW() WHERE id=$2 AND notebook_id=$3`, src, cellID, nbID)
+		if _, err := s.db.Pool.Exec(ctx, `UPDATE cells SET source=$1, updated_at=NOW() WHERE id=$2 AND notebook_id=$3`, src, cellID, nbID); err != nil {
+			writeError(w, http.StatusInternalServerError, "restore failed")
+			return
+		}
 		s.upsertCellVersion(ctx, cellID, src)
 	}
 
