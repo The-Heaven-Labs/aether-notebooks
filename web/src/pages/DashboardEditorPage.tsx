@@ -322,8 +322,10 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '0 24px',
     flexShrink: 0,
     position: 'sticky',
-    top: 56,
+    top: -32,        // negate AppShell main's 32px padding so bar sticks at top edge
     zIndex: 99,
+    // escape AppShell's 32px padding on all three sides
+    margin: '-32px -32px 0',
   },
   headerLeft: {
     display: 'flex',
