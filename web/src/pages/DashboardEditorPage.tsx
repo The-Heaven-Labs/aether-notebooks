@@ -27,7 +27,8 @@ function WidgetContent({ widget }: { widget: Widget }) {
   if (!cell.outputs?.length) {
     return <div style={widgetContentStyles.empty}>No results yet — run the notebook first</div>
   }
-  return <OutputRenderer outputs={cell.outputs} />
+  const fixedView = widget.type === 'chart' ? 'chart' : 'table'
+  return <OutputRenderer outputs={cell.outputs} fixedView={fixedView} />
 }
 
 const widgetContentStyles: Record<string, React.CSSProperties> = {
@@ -282,21 +283,18 @@ export function DashboardEditorPage() {
           <div style={styles.grid}>
             {widgets.map((widget) => (
                 <div key={widget.id} style={styles.widgetCard}>
-                  <div style={styles.widgetHeader}>
-                    <span style={styles.widgetTypeBadge}>{widget.type}</span>
-                    <button
-                      type="button"
-                      style={styles.deleteWidgetBtn}
-                      title="Remove widget"
-                      onClick={() => {
-                        if (confirm('Remove this widget?')) {
-                          deleteWidget.mutate(widget.id)
-                        }
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    style={styles.deleteWidgetBtn}
+                    title="Remove widget"
+                    onClick={() => {
+                      if (confirm('Remove this widget?')) {
+                        deleteWidget.mutate(widget.id)
+                      }
+                    }}
+                  >
+                    ✕
+                  </button>
                   <WidgetContent widget={widget} />
                 </div>
               ))}
@@ -530,60 +528,21 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 10,
     boxShadow: 'var(--shadow-sm)',
     overflow: 'hidden',
-  },
-  widgetHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '10px 14px',
-    borderBottom: '1px solid var(--border)',
-    background: 'var(--bg-secondary)',
-  },
-  widgetTypeBadge: {
-    fontSize: 11,
-    fontWeight: 700,
-    textTransform: 'uppercase',
-    letterSpacing: '0.06em',
-    color: 'var(--accent)',
-    background: '#f0edff',
-    padding: '2px 8px',
-    borderRadius: 4,
+    position: 'relative',
   },
   deleteWidgetBtn: {
-    background: 'transparent',
-    border: 'none',
-    fontSize: 13,
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    background: 'white',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    fontSize: 12,
     cursor: 'pointer',
     color: 'var(--text-muted)',
-    padding: '3px 6px',
-    borderRadius: 4,
-  },
-  widgetBody: {
-    padding: '14px 16px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-  },
-  widgetRef: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-  },
-  widgetRefLabel: {
-    fontSize: 11,
-    fontWeight: 600,
-    color: 'var(--text-muted)',
-    textTransform: 'uppercase',
-    letterSpacing: '0.04em',
-    width: 60,
-    flexShrink: 0,
-  },
-  widgetRefValue: {
-    fontSize: 12,
-    color: 'var(--text-secondary)',
-    fontFamily: 'var(--font-mono)',
-    background: 'var(--bg-secondary)',
     padding: '2px 6px',
-    borderRadius: 4,
+    lineHeight: 1,
+    zIndex: 1,
+    opacity: 0.7,
   },
 }
