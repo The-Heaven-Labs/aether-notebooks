@@ -4,21 +4,22 @@ import { ChartView } from './ChartView'
 
 interface Props {
   outputs: Output[]
+  fixedView?: 'table' | 'chart'
 }
 
-export function OutputRenderer({ outputs }: Props) {
+export function OutputRenderer({ outputs, fixedView }: Props) {
   if (!outputs || outputs.length === 0) return null
 
   return (
     <div style={styles.container}>
       {outputs.map((out, i) => (
-        <OutputItem key={i} output={out} />
+        <OutputItem key={i} output={out} fixedView={fixedView} />
       ))}
     </div>
   )
 }
 
-function OutputItem({ output }: { output: Output }) {
+function OutputItem({ output, fixedView }: { output: Output; fixedView?: 'table' | 'chart' }) {
   if (output.type === 'error') {
     return (
       <div style={styles.errorWrap}>
@@ -35,7 +36,7 @@ function OutputItem({ output }: { output: Output }) {
   if (output.type === 'table') {
     const rs = output.data as ResultSet
     if (!rs?.columns?.length) return <p style={styles.empty}>No results returned</p>
-    return <TableOutput rs={rs} />
+    return <TableOutput rs={rs} fixedView={fixedView} />
   }
 
   return null
@@ -106,8 +107,8 @@ const typeIconStyles: Record<string, React.CSSProperties> = {
   },
 }
 
-function TableOutput({ rs }: { rs: ResultSet }) {
-  const [view, setView] = useState<'table' | 'chart'>('table')
+function TableOutput({ rs, fixedView }: { rs: ResultSet; fixedView?: 'table' | 'chart' }) {
+  const [view, setView] = useState<'table' | 'chart'>(fixedView ?? 'table')
 
   return (
     <div style={styles.tableSection}>
@@ -115,20 +116,22 @@ function TableOutput({ rs }: { rs: ResultSet }) {
         <span style={styles.rowCount}>
           {rs.rows.length} row{rs.rows.length !== 1 ? 's' : ''} · {rs.columns.length} columns
         </span>
-        <div style={styles.viewToggle}>
-          <button
-            style={{ ...styles.viewBtn, ...(view === 'table' ? styles.viewBtnActive : {}) }}
-            onClick={() => setView('table')}
-          >
-            ⊞ Table
-          </button>
-          <button
-            style={{ ...styles.viewBtn, ...(view === 'chart' ? styles.viewBtnActive : {}) }}
-            onClick={() => setView('chart')}
-          >
-            ▦ Chart
-          </button>
-        </div>
+        {!fixedView && (
+          <div style={styles.viewToggle}>
+            <button
+              style={{ ...styles.viewBtn, ...(view === 'table' ? styles.viewBtnActive : {}) }}
+              onClick={() => setView('table')}
+            >
+              ⊞ Table
+            </button>
+            <button
+              style={{ ...styles.viewBtn, ...(view === 'chart' ? styles.viewBtnActive : {}) }}
+              onClick={() => setView('chart')}
+            >
+              ▦ Chart
+            </button>
+          </div>
+        )}
       </div>
 
       {view === 'table' ? (
