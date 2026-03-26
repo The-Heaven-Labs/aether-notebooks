@@ -2,12 +2,15 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { Notebook, Cell, Output, Connector, Parameter } from '../types'
+import type { Notebook, Cell, Output, Connector, Parameter, CellVersion } from '../types'
 import { CodeCell } from '../components/CodeCell'
 import { TextCell } from '../components/TextCell'
 import { ParametersBar } from '../components/ParametersBar'
 import { SchemaBrowser } from '../components/SchemaBrowser'
 import { SchedulesPanel } from '../components/SchedulesPanel'
+import { useNotebookKeyboardShortcuts } from '../hooks/useNotebookKeyboardShortcuts'
+import { HistoryPanel } from '../components/HistoryPanel'
+import { ShortcutsModal } from '../components/ShortcutsModal'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -27,6 +30,11 @@ export function NotebookPage() {
   const [mutationError, setMutationError] = useState<string | null>(null)
   const [cellSaveState, setCellSaveState] = useState<Record<string, { saving: boolean; savedAt: Date | null; error: string | null }>>({})
   const [cellRunAt, setCellRunAt] = useState<Record<string, Date>>({})
+  const [focusedCellId, setFocusedCellId] = useState<string | null>(null)
+  const [isEditingCell] = useState(false)
+  const [historyCell, setHistoryCell] = useState<string | null>(null)
+  const [historyVersions, setHistoryVersions] = useState<CellVersion[]>([])
+  const [showShortcuts, setShowShortcuts] = useState(false)
 
   const { data: notebook, isLoading } = useQuery({
     queryKey: ['notebook', id],
@@ -112,6 +120,23 @@ export function NotebookPage() {
     )
   }, [id, localCells, qc])
 
+  const updateCellMeta = useCallback(async (cellId: string, updates: Partial<Pick<Cell, 'source_visible' | 'cell_collapsed' | 'title' | 'description' | 'slug'>>) => {
+    await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, updates)
+    setLocalCells((prev) => prev.map((c) => c.id === cellId ? { ...c, ...updates } : c))
+  }, [id])
+
+  const fetchHistory = useCallback(async (cellId: string) => {
+    const versions = await api.get<CellVersion[]>(`/api/v1/notebooks/${id}/cells/${cellId}/versions`)
+    setHistoryVersions(versions)
+    setHistoryCell(cellId)
+  }, [id])
+
+  const restoreVersion = useCallback(async (cellId: string, versionId: string) => {
+    const cell = await api.post<Cell>(`/api/v1/notebooks/${id}/cells/${cellId}/versions/${versionId}/restore`, {})
+    setLocalCells((prev) => prev.map((c) => c.id === cell.id ? cell : c))
+    setHistoryCell(null)
+  }, [id])
+
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
   const saveCellSource = useCallback(async (cellId: string, source: string) => {
@@ -182,6 +207,33 @@ export function NotebookPage() {
       if (cell.type === 'code') await saveAndRun(cell.id)
     }
   }, [localCells, saveAndRun])
+
+  useNotebookKeyboardShortcuts(
+    {
+      runFocusedCell: () => { if (focusedCellId) saveAndRun(focusedCellId) },
+      addCellBelow: () => createCell.mutate('code'),
+      addCellAbove: () => createCell.mutate('code'),
+      deleteFocusedCell: () => { if (focusedCellId) deleteCell.mutate(focusedCellId) },
+      moveFocusDown: () => {
+        if (!focusedCellId) return
+        const idx = localCells.findIndex((c) => c.id === focusedCellId)
+        if (idx < localCells.length - 1) setFocusedCellId(localCells[idx + 1].id)
+      },
+      moveFocusUp: () => {
+        if (!focusedCellId) return
+        const idx = localCells.findIndex((c) => c.id === focusedCellId)
+        if (idx > 0) setFocusedCellId(localCells[idx - 1].id)
+      },
+      convertToMarkdown: () => {
+        if (focusedCellId) switchCellType(focusedCellId)
+      },
+      convertToCode: () => {
+        if (focusedCellId) switchCellType(focusedCellId)
+      },
+      openShortcutsModal: () => setShowShortcuts(true),
+    },
+    isEditingCell
+  )
 
   const moveCell = useCallback((cellId: string, dir: -1 | 1) => {
     setLocalCells((prev) => {
@@ -330,6 +382,9 @@ export function NotebookPage() {
                       running={runningCells.has(cell.id)}
                       saveState={cellSaveState[cell.id]}
                       runAt={cellRunAt[cell.id]}
+                      onUpdateCellMeta={(updates) => updateCellMeta(cell.id, updates)}
+                      onShowHistory={() => fetchHistory(cell.id)}
+                      onFocus={(cid) => setFocusedCellId(cid)}
                     />
                   ) : (
                     <TextCell
@@ -342,6 +397,8 @@ export function NotebookPage() {
                       onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
                       onSwitchType={() => switchCellType(cell.id)}
                       saveState={cellSaveState[cell.id]}
+                      onUpdateCellMeta={(updates) => updateCellMeta(cell.id, updates)}
+                      onShowHistory={() => fetchHistory(cell.id)}
                     />
                   ),
                 )}
@@ -365,6 +422,17 @@ export function NotebookPage() {
           )}
         </div>
       </div>
+      {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
+      {historyCell && (
+        <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, zIndex: 200 }}>
+          <HistoryPanel
+            versions={historyVersions}
+            currentSource={localCells.find((c) => c.id === historyCell)?.source ?? ''}
+            onRestore={(vId) => restoreVersion(historyCell, vId)}
+            onClose={() => setHistoryCell(null)}
+          />
+        </div>
+      )}
     </div>
   )
 }
