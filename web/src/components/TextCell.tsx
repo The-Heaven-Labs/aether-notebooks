@@ -44,6 +44,11 @@ export function TextCell({ cell, onDelete, onSourceChange, onSave, onMoveUp, onM
         onMoveDown={onMoveDown}
         onSwitchType={onSwitchType}
         running={false}
+        sourceVisible={cell.source_visible ?? true}
+        cellCollapsed={cell.cell_collapsed ?? false}
+        onToggleSourceVisible={() => {}}
+        onToggleCellCollapsed={() => {}}
+        onShowHistory={() => {}}
       />
       {editing ? (
         <textarea

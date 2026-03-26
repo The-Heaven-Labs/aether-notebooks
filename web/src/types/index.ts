@@ -32,6 +32,18 @@ export interface Cell {
   connector_id?: string
   created_at: string
   updated_at: string
+  source_visible: boolean
+  cell_collapsed: boolean
+  title?: string
+  description?: string
+  slug?: string
+}
+
+export interface CellVersion {
+  id: string
+  cell_id: string
+  source: string
+  created_at: string
 }
 
 export interface Output {
