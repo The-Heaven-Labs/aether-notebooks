@@ -20,16 +20,21 @@ type Parameter struct {
 }
 
 type Cell struct {
-	ID          string    `json:"id"`
-	NotebookID  string    `json:"notebook_id"`
-	Position    int       `json:"position"`
-	Type        CellType  `json:"type"`
-	Language    string    `json:"language,omitempty"`
-	ConnectorID string    `json:"connector_id,omitempty"`
-	Source      string    `json:"source"`
-	Outputs     []Output  `json:"outputs"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID            string    `json:"id"`
+	NotebookID    string    `json:"notebook_id"`
+	Position      int       `json:"position"`
+	Type          CellType  `json:"type"`
+	Language      string    `json:"language,omitempty"`
+	ConnectorID   string    `json:"connector_id,omitempty"`
+	Source        string    `json:"source"`
+	Outputs       []Output  `json:"outputs"`
+	SourceVisible bool      `json:"source_visible"`
+	CellCollapsed bool      `json:"cell_collapsed"`
+	Title         string    `json:"title,omitempty"`
+	Description   string    `json:"description,omitempty"`
+	Slug          string    `json:"slug,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type CellType string
@@ -43,6 +48,22 @@ type Output struct {
 	Type   string      `json:"type"` // "table", "chart", "error"
 	Data   interface{} `json:"data,omitempty"`
 	Config interface{} `json:"config,omitempty"`
+}
+
+type CellVersion struct {
+	ID        string    `json:"id"`
+	CellID    string    `json:"cell_id"`
+	Source    string    `json:"source"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type NotebookSnapshot struct {
+	ID          string            `json:"id"`
+	NotebookID  string            `json:"notebook_id"`
+	Name        string            `json:"name"`
+	CellSources map[string]string `json:"cell_sources"`
+	CreatedBy   string            `json:"created_by"`
+	CreatedAt   time.Time         `json:"created_at"`
 }
 
 type Schedule struct {
