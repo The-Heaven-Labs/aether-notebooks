@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Parameter } from '../types'
+import { Settings, X } from 'lucide-react'
 
 interface Props {
   parameters: Parameter[]
@@ -15,8 +16,8 @@ export function ParametersBar({ parameters, values, onChange, onSaveDefinitions 
   if (parameters.length === 0 && !managing) {
     return (
       <div style={styles.bar}>
-        <button style={styles.manageBtn} onClick={() => { setDraftParams([]); setManaging(true) }}>
-          ⚙ Add Parameters
+        <button style={{ ...styles.manageBtn, display: 'flex', alignItems: 'center', gap: 4 }} onClick={() => { setDraftParams([]); setManaging(true) }}>
+          <Settings size={13} /> Add Parameters
         </button>
       </div>
     )
@@ -37,8 +38,8 @@ export function ParametersBar({ parameters, values, onChange, onSaveDefinitions 
               />
             </label>
           ))}
-          <button style={styles.manageBtn} onClick={() => { setDraftParams(parameters); setManaging(true) }}>
-            ⚙
+          <button style={{ ...styles.manageBtn, display: 'flex', alignItems: 'center' }} onClick={() => { setDraftParams(parameters); setManaging(true) }}>
+            <Settings size={13} />
           </button>
         </div>
       )}
@@ -83,9 +84,9 @@ export function ParametersBar({ parameters, values, onChange, onSaveDefinitions 
                 }}
               />
               <button
-                style={styles.removeBtn}
+                style={{ ...styles.removeBtn, display: 'flex', alignItems: 'center' }}
                 onClick={() => setDraftParams(draftParams.filter((_, j) => j !== i))}
-              >✕</button>
+              ><X size={13} /></button>
             </div>
           ))}
           <div style={styles.manageActions}>

@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
+import { BookOpen, LayoutDashboard, Database, Users, ClipboardList, ChevronLeft, ChevronRight } from 'lucide-react'
 
 const NAV_ITEMS = [
-  { to: '/',           title: 'Notebooks',   icon: '▦' },
-  { to: '/dashboards', title: 'Dashboards',  icon: '⊞' },
-  { to: '/connectors', title: 'Connectors',  icon: '⚡' },
-  { to: '/members',    title: 'Members',     icon: '👥' },
-  { to: '/audit',      title: 'Audit',       icon: '📋' },
+  { to: '/',           title: 'Notebooks',   icon: <BookOpen size={16} /> },
+  { to: '/dashboards', title: 'Dashboards',  icon: <LayoutDashboard size={16} /> },
+  { to: '/connectors', title: 'Connectors',  icon: <Database size={16} /> },
+  { to: '/members',    title: 'Members',     icon: <Users size={16} /> },
+  { to: '/audit',      title: 'Audit',       icon: <ClipboardList size={16} /> },
 ]
 
 export function Sidebar() {
@@ -43,7 +44,7 @@ export function Sidebar() {
         ))}
       </div>
       <button style={styles.toggle} onClick={toggle} title={expanded ? 'Collapse sidebar' : 'Expand sidebar'}>
-        {expanded ? '◀' : '▶'}
+        {expanded ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
       </button>
     </nav>
   )

@@ -1,4 +1,5 @@
 import type React from 'react'
+import { X } from 'lucide-react'
 
 interface Props { onClose: () => void }
 
@@ -23,7 +24,7 @@ export function ShortcutsModal({ onClose }: Props) {
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div style={styles.header}>
           <span style={styles.title}>Keyboard Shortcuts</span>
-          <button style={styles.close} onClick={onClose}>✕</button>
+          <button style={{ ...styles.close, display: 'flex', alignItems: 'center' }} onClick={onClose}><X size={14} /></button>
         </div>
         <table style={styles.table}>
           <tbody>

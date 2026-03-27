@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { api } from '../api/client'
 import type { Notebook } from '../types'
 import { AppShell } from '../components/AppShell'
+import { LayoutGrid, List, BookOpen } from 'lucide-react'
 
 export function HomePage() {
   const qc = useQueryClient()
@@ -53,7 +54,7 @@ export function HomePage() {
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button type="button" style={styles.layoutBtn} onClick={toggleLayout} title={layout === 'list' ? 'Switch to grid' : 'Switch to list'}>
-                {layout === 'list' ? '⊞' : '≡'}
+                {layout === 'list' ? <LayoutGrid size={14} /> : <List size={14} />}
               </button>
               <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>
                 + New Notebook
@@ -89,7 +90,7 @@ export function HomePage() {
 
           {notebooks.length === 0 && !creating ? (
             <div style={styles.empty}>
-              <div style={styles.emptyIcon}>▦</div>
+              <div style={styles.emptyIcon}><BookOpen size={32} /></div>
               <p style={styles.emptyTitle}>No notebooks yet</p>
               <p style={styles.emptyText}>Create your first notebook to start querying data.</p>
               <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>
@@ -121,7 +122,7 @@ function NotebookCard({ notebook, onDelete }: { notebook: Notebook; onDelete: ()
     <div style={styles.card}>
       <Link to={`/notebooks/${notebook.id}`} style={styles.cardLink}>
         <div style={styles.cardThumb}>
-          <span style={styles.cardThumbIcon}>▦</span>
+          <BookOpen size={20} style={{ color: 'var(--accent)' }} />
         </div>
         <div style={styles.cardBody}>
           <div style={styles.cardTitle}>{notebook.title}</div>
@@ -148,7 +149,7 @@ function NotebookRow({ notebook, onDelete }: { notebook: Notebook; onDelete: () 
   return (
     <div style={rowStyles.row}>
       <Link to={`/notebooks/${notebook.id}`} style={rowStyles.link}>
-        <span style={rowStyles.icon}>▦</span>
+        <BookOpen size={18} style={{ color: 'var(--accent)', flexShrink: 0 }} />
         <div style={rowStyles.info}>
           <span style={rowStyles.title}>{notebook.title}</span>
           {notebook.description && <span style={rowStyles.desc}>{notebook.description}</span>}

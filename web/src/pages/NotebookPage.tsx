@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
+import { ArrowLeft, ChevronsRight, X, Loader2 } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Notebook, Cell, Output, Connector, Parameter, CellVersion } from '../types'
@@ -280,7 +281,7 @@ export function NotebookPage() {
       <header style={styles.header}>
         <div style={styles.headerLeft}>
           <Link to="/" style={styles.backLink}>
-            <span style={styles.backArrow}>←</span>
+            <ArrowLeft size={14} style={{ flexShrink: 0 }} />
             <span style={styles.backLabel}>Notebooks</span>
           </Link>
           <span style={styles.breadcrumbSep}>/</span>
@@ -329,7 +330,8 @@ export function NotebookPage() {
         <div style={styles.headerRight}>
           {runningCount > 0 && (
             <span style={styles.runningBadge}>
-              ⏳ Running {runningCount} cell{runningCount > 1 ? 's' : ''}…
+              <Loader2 size={12} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />
+              Running {runningCount} cell{runningCount > 1 ? 's' : ''}…
             </span>
           )}
           <button
@@ -347,7 +349,7 @@ export function NotebookPage() {
             Schedules
           </button>
           <button type="button" style={styles.runAllBtn} onClick={runAll} disabled={runningCount > 0}>
-            ▶▶ Run All
+            <ChevronsRight size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} /> Run All
           </button>
         </div>
       </header>
@@ -355,7 +357,7 @@ export function NotebookPage() {
       {mutationError && (
         <div style={{ background: '#fff0f0', borderBottom: '1px solid #fcd0d0', padding: '6px 24px', fontSize: 12, color: '#c0392b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           {mutationError}
-          <button type="button" onClick={() => setMutationError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c0392b', fontSize: 14, padding: 0 }}>✕</button>
+          <button type="button" onClick={() => setMutationError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c0392b', fontSize: 14, padding: 0, display: 'flex', alignItems: 'center' }}><X size={14} /></button>
         </div>
       )}
 

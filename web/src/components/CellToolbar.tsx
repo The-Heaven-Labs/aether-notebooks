@@ -1,4 +1,5 @@
 import type { Connector } from '../types'
+import { Play, Loader2, ChevronUp, ChevronDown, ChevronRight, Eye, EyeOff, Clock, X } from 'lucide-react'
 
 interface Props {
   onRun: () => void
@@ -24,7 +25,10 @@ export function CellToolbar({ onRun, onDelete, onMoveUp, onMoveDown, onSwitchTyp
       <div style={styles.left}>
         {cellType === 'code' ? (
           <button style={styles.runBtn} onClick={onRun} disabled={running} title="Run cell (Ctrl+Enter)">
-            {running ? '⏳' : '▶ Run'}
+            {running
+              ? <><Loader2 size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} /> Running</>
+              : <><Play size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} /> Run</>
+            }
           </button>
         ) : null}
         <button
@@ -54,33 +58,33 @@ export function CellToolbar({ onRun, onDelete, onMoveUp, onMoveDown, onSwitchTyp
       </div>
       <div style={styles.right}>
         {onMoveUp && (
-          <button style={styles.iconBtn} onClick={onMoveUp} title="Move up">↑</button>
+          <button style={styles.iconBtn} onClick={onMoveUp} title="Move up"><ChevronUp size={13} /></button>
         )}
         {onMoveDown && (
-          <button style={styles.iconBtn} onClick={onMoveDown} title="Move down">↓</button>
+          <button style={styles.iconBtn} onClick={onMoveDown} title="Move down"><ChevronDown size={13} /></button>
         )}
         <button
           style={styles.iconBtn}
           onClick={() => onToggleSourceVisible(!sourceVisible)}
           title={sourceVisible ? 'Hide source' : 'Show source'}
         >
-          {sourceVisible ? '⊟' : '⊞'}
+          {sourceVisible ? <EyeOff size={13} /> : <Eye size={13} />}
         </button>
         <button
           style={styles.iconBtn}
           onClick={() => onToggleCellCollapsed(!cellCollapsed)}
           title={cellCollapsed ? 'Expand cell' : 'Collapse cell'}
         >
-          {cellCollapsed ? '▷' : '▽'}
+          {cellCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
         </button>
         <button
           style={styles.iconBtn}
           onClick={onShowHistory}
           title="Cell history"
         >
-          ⏱
+          <Clock size={13} />
         </button>
-        <button style={styles.deleteBtn} onClick={onDelete} title="Delete cell">✕</button>
+        <button style={styles.deleteBtn} onClick={onDelete} title="Delete cell"><X size={13} /></button>
       </div>
     </div>
   )
