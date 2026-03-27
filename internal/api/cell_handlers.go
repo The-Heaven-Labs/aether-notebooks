@@ -70,16 +70,16 @@ func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
 		connID = &req.ConnectorID
 	}
 
-	var outputs []byte
+	var outputs, cellParams []byte
 	err := s.db.Pool.QueryRow(ctx,
 		`INSERT INTO cells (notebook_id, position, type, language, connector_id, source, outputs)
 		 VALUES ($1, $2, $3, $4, $5, $6, '[]')
 		 RETURNING id, notebook_id, position, type, language, connector_id, source, outputs,
-		           source_visible, cell_collapsed, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''),
+		           source_visible, cell_collapsed, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''),
 		           created_at, updated_at`,
 		nbID, nextPos, req.Type, lang, connID, req.Source,
 	).Scan(&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &lang, &connID, &cell.Source, &outputs,
-		&cell.SourceVisible, &cell.CellCollapsed, &cell.Title, &cell.Description, &cell.Slug,
+		&cell.SourceVisible, &cell.CellCollapsed, &cellParams, &cell.Title, &cell.Description, &cell.Slug,
 		&cell.CreatedAt, &cell.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create cell")
@@ -92,6 +92,7 @@ func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
 		cell.ConnectorID = *connID
 	}
 	json.Unmarshal(outputs, &cell.Outputs)
+	json.Unmarshal(cellParams, &cell.Parameters)
 
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
