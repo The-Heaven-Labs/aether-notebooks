@@ -32,15 +32,15 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	// Load cell
 	var cell models.Cell
 	var lang, connID *string
-	var outputs []byte
+	var outputs, cellParamsJSON []byte
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT c.id, c.notebook_id, c.position, c.type, c.language, c.connector_id, c.source, c.outputs, c.created_at, c.updated_at
+		`SELECT c.id, c.notebook_id, c.position, c.type, c.language, c.connector_id, c.source, c.outputs, c.parameters, c.created_at, c.updated_at
 		 FROM cells c
 		 JOIN notebooks n ON n.id = c.notebook_id
 		 WHERE c.id = $1 AND c.notebook_id = $2 AND n.org_id = $3`,
 		cellID, nbID, claims.OrgID,
 	).Scan(&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &lang, &connID,
-		&cell.Source, &outputs, &cell.CreatedAt, &cell.UpdatedAt)
+		&cell.Source, &outputs, &cellParamsJSON, &cell.CreatedAt, &cell.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "cell not found")
 		return
@@ -60,8 +60,40 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "only SQL code cells can be executed")
 		return
 	}
+
+	// Notebook connector fallback: if cell has no connector, try the notebook's connector
+	if cell.ConnectorID == "" {
+		var nbConnID *string
+		s.db.Pool.QueryRow(ctx, "SELECT connector_id FROM notebooks WHERE id = $1", nbID).Scan(&nbConnID)
+		if nbConnID != nil {
+			cell.ConnectorID = *nbConnID
+		}
+	}
 	if cell.ConnectorID == "" {
 		writeError(w, http.StatusBadRequest, "cell has no connector assigned")
+		return
+	}
+
+	// Build slug map from all sibling cells in the notebook that have a slug
+	slugMap := map[string]string{}
+	slugRows, slugErr := s.db.Pool.Query(ctx,
+		`SELECT slug, source FROM cells WHERE notebook_id = $1 AND slug IS NOT NULL AND slug != ''`,
+		nbID,
+	)
+	if slugErr == nil {
+		defer slugRows.Close()
+		for slugRows.Next() {
+			var slug, source string
+			if scanErr := slugRows.Scan(&slug, &source); scanErr == nil {
+				slugMap[slug] = source
+			}
+		}
+	}
+
+	// Resolve slug references in cell source
+	resolvedSource, err := resolveSlugRefs(cell.Source, slugMap)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -106,6 +138,15 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Apply cell parameter defaults for any keys not already set at runtime
+	var cellParams []models.Parameter
+	json.Unmarshal(cellParamsJSON, &cellParams)
+	for _, p := range cellParams {
+		if _, ok := req.Parameters[p.Name]; !ok {
+			req.Parameters[p.Name] = p.Default
+		}
+	}
+
 	// Build executor
 	var exec executor.Executor
 	switch connType {
@@ -124,7 +165,7 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	defer exec.Close()
 
 	// Execute
-	result, err := exec.Execute(ctx, cell.Source, req.Parameters, maxRows)
+	result, err := exec.Execute(ctx, resolvedSource, req.Parameters, maxRows)
 	if err != nil {
 		// Store error output
 		errOutput := models.Output{Type: "error", Data: map[string]string{"message": err.Error()}}
