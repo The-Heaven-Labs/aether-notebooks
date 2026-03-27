@@ -17,6 +17,10 @@ func NewJSExecutor(timeout time.Duration) *JSExecutor {
 	return &JSExecutor{timeout: timeout}
 }
 
+func (j *JSExecutor) Databases(ctx context.Context) ([]string, error) {
+	return nil, nil
+}
+
 func (j *JSExecutor) Execute(ctx context.Context, source string, inputData interface{}) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, j.timeout)
 	defer cancel()

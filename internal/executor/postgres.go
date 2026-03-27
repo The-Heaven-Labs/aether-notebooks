@@ -104,6 +104,23 @@ func (p *PostgresExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
 	return &SchemaInfo{Tables: tables}, nil
 }
 
+func (p *PostgresExecutor) Databases(ctx context.Context) ([]string, error) {
+	rows, err := p.pool.Query(ctx, "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
+	if err != nil {
+		return nil, fmt.Errorf("list databases: %w", err)
+	}
+	defer rows.Close()
+	var dbs []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		dbs = append(dbs, name)
+	}
+	return dbs, rows.Err()
+}
+
 func (p *PostgresExecutor) Close() error {
 	p.pool.Close()
 	return nil

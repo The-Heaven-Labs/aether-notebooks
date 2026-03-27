@@ -113,6 +113,23 @@ func (c *ClickHouseExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
 	return &SchemaInfo{Tables: tables}, nil
 }
 
+func (c *ClickHouseExecutor) Databases(ctx context.Context) ([]string, error) {
+	rows, err := c.conn.Query(ctx, "SHOW DATABASES")
+	if err != nil {
+		return nil, fmt.Errorf("list databases: %w", err)
+	}
+	defer rows.Close()
+	var dbs []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		dbs = append(dbs, name)
+	}
+	return dbs, rows.Err()
+}
+
 func (c *ClickHouseExecutor) Close() error {
 	return c.conn.Close()
 }
