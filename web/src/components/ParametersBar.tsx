@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Parameter } from '../types'
-import { Settings, X } from 'lucide-react'
+import { Settings, X, Info } from 'lucide-react'
 
 interface Props {
   parameters: Parameter[]
@@ -10,23 +10,19 @@ interface Props {
 }
 
 export function ParametersBar({ parameters, values, onChange, onSaveDefinitions }: Props) {
-  const [managing, setManaging] = useState(false)
+  const [managing, setManaging] = useState(parameters.length === 0)
   const [draftParams, setDraftParams] = useState<Parameter[]>(parameters)
-
-  if (parameters.length === 0 && !managing) {
-    return (
-      <div style={styles.bar}>
-        <button style={{ ...styles.manageBtn, display: 'flex', alignItems: 'center', gap: 4 }} onClick={() => { setDraftParams([]); setManaging(true) }}>
-          <Settings size={13} /> Add Parameters
-        </button>
-      </div>
-    )
-  }
 
   return (
     <div style={styles.bar}>
       {!managing && (
         <div style={styles.paramsList}>
+          <span
+            style={styles.infoIcon}
+            title={'Reference parameters in SQL using {{param_name}}\nExample: WHERE date >= {{start_date}}'}
+          >
+            <Info size={13} />
+          </span>
           {parameters.map((p) => (
             <label key={p.name} style={styles.paramField}>
               <span style={styles.paramName}>{p.name}</span>
@@ -46,8 +42,14 @@ export function ParametersBar({ parameters, values, onChange, onSaveDefinitions 
       {managing && (
         <div style={styles.managePanel}>
           <span style={styles.manageTitle}>Parameters</span>
+          <span
+            style={styles.infoIcon}
+            title={'Reference parameters in SQL using {{param_name}}\nExample: WHERE date >= {{start_date}}'}
+          >
+            <Info size={13} />
+          </span>
           {draftParams.map((p, i) => (
-            <div key={p.name || i} style={styles.draftRow}>
+            <div key={i} style={styles.draftRow}>
               <input
                 style={styles.draftInput}
                 placeholder="name"
@@ -145,6 +147,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   managePanel: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', width: '100%' },
   manageTitle: { fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.05em', textTransform: 'uppercase' },
+  infoIcon: { display: 'flex', alignItems: 'center', color: 'var(--text-muted)', cursor: 'default', opacity: 0.7 },
   draftRow: { display: 'flex', gap: 5, alignItems: 'center' },
   draftInput: {
     padding: '3px 7px',

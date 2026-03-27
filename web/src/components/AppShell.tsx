@@ -3,15 +3,16 @@ import { Sidebar } from './Sidebar'
 
 interface Props {
   children: React.ReactNode
+  noPadding?: boolean
 }
 
-export function AppShell({ children }: Props) {
+export function AppShell({ children, noPadding }: Props) {
   return (
     <div style={styles.root}>
       <TopBar />
       <div style={styles.body}>
         <Sidebar />
-        <main style={styles.main}>{children}</main>
+        <main style={{ ...styles.main, ...(noPadding ? { padding: 0, overflow: 'hidden' } : {}) }}>{children}</main>
       </div>
     </div>
   )
