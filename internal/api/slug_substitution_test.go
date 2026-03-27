@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -38,7 +39,7 @@ func TestResolveSlugRefs_DirectCycle(t *testing.T) {
 		"cell_a": "SELECT * FROM ({{cell_a}}) t",
 	}
 	_, err := resolveSlugRefs("SELECT * FROM ({{cell_a}}) t", slugMap)
-	if err == nil || !containsString(err.Error(), "cycle") {
+	if err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("expected cycle error, got %v", err)
 	}
 }
@@ -49,7 +50,7 @@ func TestResolveSlugRefs_IndirectCycle(t *testing.T) {
 		"cell_b": "SELECT * FROM ({{cell_a}}) t",
 	}
 	_, err := resolveSlugRefs("SELECT * FROM ({{cell_a}}) t", slugMap)
-	if err == nil || !containsString(err.Error(), "cycle") {
+	if err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("expected cycle error, got %v", err)
 	}
 }
@@ -69,15 +70,3 @@ func TestResolveSlugRefs_NestedResolution(t *testing.T) {
 	}
 }
 
-func containsString(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(sub) == 0 || containsAt(s, sub))
-}
-
-func containsAt(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}
