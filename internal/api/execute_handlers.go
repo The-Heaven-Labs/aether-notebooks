@@ -64,7 +64,10 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	// Notebook connector fallback: if cell has no connector, try the notebook's connector
 	if cell.ConnectorID == "" {
 		var nbConnID *string
-		s.db.Pool.QueryRow(ctx, "SELECT connector_id FROM notebooks WHERE id = $1", nbID).Scan(&nbConnID)
+		if err := s.db.Pool.QueryRow(ctx, "SELECT connector_id FROM notebooks WHERE id = $1", nbID).Scan(&nbConnID); err != nil && err != pgx.ErrNoRows {
+			writeError(w, http.StatusInternalServerError, "failed to load notebook connector")
+			return
+		}
 		if nbConnID != nil {
 			cell.ConnectorID = *nbConnID
 		}
