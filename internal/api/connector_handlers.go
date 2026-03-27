@@ -206,6 +206,34 @@ func (s *Server) handleTestConnectorConfig(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+func (s *Server) handleListConnectorDatabases(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	connID := r.PathValue("id")
+	ctx := r.Context()
+
+	connType, configEnc, err := s.loadConnectorRow(ctx, connID, claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "connector not found")
+		return
+	}
+	exec, err := s.buildExecutor(connType, configEnc)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to connect")
+		return
+	}
+	defer exec.Close()
+
+	dbs, err := exec.Databases(ctx)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if dbs == nil {
+		dbs = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string][]string{"databases": dbs})
+}
+
 func (s *Server) handleTestConnector(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	connID := r.PathValue("id")
