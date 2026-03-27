@@ -232,9 +232,13 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 		argN++
 	}
 	if req.ConnectorID != nil {
-		query += fmt.Sprintf(", connector_id = $%d", argN)
-		args = append(args, *req.ConnectorID)
-		argN++
+		if *req.ConnectorID == "" {
+			query += ", connector_id = NULL"
+		} else {
+			query += fmt.Sprintf(", connector_id = $%d", argN)
+			args = append(args, *req.ConnectorID)
+			argN++
+		}
 	}
 	if req.Parameters != nil {
 		paramsJSON, _ := json.Marshal(req.Parameters)
