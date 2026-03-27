@@ -16,6 +16,7 @@ type Executor interface {
 	Execute(ctx context.Context, query string, params map[string]string, maxRows int) (*ResultSet, error)
 	TestConnection(ctx context.Context) error
 	Schema(ctx context.Context) (*SchemaInfo, error)
+	Databases(ctx context.Context) ([]string, error)
 	Close() error
 }
 
