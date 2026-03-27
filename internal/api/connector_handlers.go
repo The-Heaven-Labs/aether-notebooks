@@ -225,7 +225,7 @@ func (s *Server) handleListConnectorDatabases(w http.ResponseWriter, r *http.Req
 
 	dbs, err := exec.Databases(ctx)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, http.StatusBadGateway, "failed to list databases")
 		return
 	}
 	if dbs == nil {
