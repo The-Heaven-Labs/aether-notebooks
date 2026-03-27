@@ -7,6 +7,7 @@ type Notebook struct {
 	OrgID       string      `json:"org_id"`
 	Title       string      `json:"title"`
 	Description string      `json:"description"`
+	ConnectorID string      `json:"connector_id,omitempty"`
 	Parameters  []Parameter `json:"parameters"`
 	CreatedBy   string      `json:"created_by"`
 	CreatedAt   time.Time   `json:"created_at"`

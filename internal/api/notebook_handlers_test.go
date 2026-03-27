@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -87,6 +88,65 @@ func TestNotebookDescription(t *testing.T) {
 	json.NewDecoder(rec.Body).Decode(&nb)
 	if nb["description"] != "A test notebook" {
 		t.Fatalf("expected description 'A test notebook', got %v", nb["description"])
+	}
+}
+
+func TestNotebookConnectorID(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("nb-conn-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "ConnNB Org")
+	connID := createConnector(t, srv, token)
+	nbID := createNotebook(t, srv, token, "ConnTest NB")
+
+	// Update notebook with connector
+	body := fmt.Sprintf(`{"title":"Test","connector_id":"%s"}`, connID)
+	req := httptest.NewRequest("PUT", "/api/v1/notebooks/"+nbID, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT notebook: got %d, body: %s", w.Code, w.Body.String())
+	}
+
+	// GET notebook — connector_id should be returned
+	req2 := httptest.NewRequest("GET", "/api/v1/notebooks/"+nbID, nil)
+	req2.Header.Set("Authorization", "Bearer "+token)
+	w2 := httptest.NewRecorder()
+	srv.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("GET notebook: got %d, body: %s", w2.Code, w2.Body.String())
+	}
+	var nb map[string]interface{}
+	json.NewDecoder(w2.Body).Decode(&nb)
+	if nb["connector_id"] != connID {
+		t.Fatalf("expected connector_id %q, got %v", connID, nb["connector_id"])
+	}
+
+	// LIST notebooks — connector_id should be present
+	req3 := httptest.NewRequest("GET", "/api/v1/notebooks", nil)
+	req3.Header.Set("Authorization", "Bearer "+token)
+	w3 := httptest.NewRecorder()
+	srv.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusOK {
+		t.Fatalf("LIST notebooks: got %d, body: %s", w3.Code, w3.Body.String())
+	}
+	var notebooks []map[string]interface{}
+	json.NewDecoder(w3.Body).Decode(&notebooks)
+	if len(notebooks) == 0 {
+		t.Fatal("expected at least one notebook in list")
+	}
+	found := false
+	for _, n := range notebooks {
+		if n["id"] == nbID {
+			found = true
+			if n["connector_id"] != connID {
+				t.Fatalf("LIST: expected connector_id %q, got %v", connID, n["connector_id"])
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("notebook %q not found in list", nbID)
 	}
 }
 
