@@ -1,6 +1,51 @@
 import { useState, useRef, useEffect } from 'react'
 import { useAuth } from '../hooks/useAuth'
 
+// ── Logo options — swap LOGO_VARIANT (1–5) to preview each one ──────────────
+const LOGO_VARIANT = 1
+
+function LogoMark() {
+  const s: React.CSSProperties = { display: 'block' }
+  if (LOGO_VARIANT === 1) return ( // Stacked data rows — "query results"
+    <svg style={s} width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <rect x="1" y="2" width="16" height="3" rx="1.5" fill="white"/>
+      <rect x="1" y="7.5" width="11" height="3" rx="1.5" fill="white" fillOpacity="0.7"/>
+      <rect x="1" y="13" width="7" height="3" rx="1.5" fill="white" fillOpacity="0.45"/>
+    </svg>
+  )
+  if (LOGO_VARIANT === 2) return ( // Notebook cell with run dot — "cell execution"
+    <svg style={s} width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <rect x="1.5" y="1.5" width="15" height="15" rx="3" stroke="white" strokeWidth="1.5"/>
+      <path d="M6 6h6M6 9h4" stroke="white" strokeWidth="1.5" strokeLinecap="round"/>
+      <circle cx="13" cy="13" r="2.5" fill="white"/>
+    </svg>
+  )
+  if (LOGO_VARIANT === 3) return ( // Diamond data node — "data relationships"
+    <svg style={s} width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <circle cx="9" cy="9" r="2.5" fill="white"/>
+      <circle cx="9" cy="2" r="1.5" fill="white" fillOpacity="0.6"/>
+      <circle cx="9" cy="16" r="1.5" fill="white" fillOpacity="0.6"/>
+      <circle cx="2" cy="9" r="1.5" fill="white" fillOpacity="0.6"/>
+      <circle cx="16" cy="9" r="1.5" fill="white" fillOpacity="0.6"/>
+      <path d="M9 4v3M9 11v3M4 9h3M11 9h3" stroke="white" strokeWidth="1" strokeOpacity="0.5"/>
+    </svg>
+  )
+  if (LOGO_VARIANT === 4) return ( // Stylised "N" lettermark — minimal wordmark
+    <svg style={s} width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M3 14V4L9 13V4M9 13V4l6 10V4" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  )
+  // LOGO_VARIANT === 5: Stacked layers — "notebook pages / sheets"
+  return (
+    <svg style={s} width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <rect x="4" y="11" width="12" height="5" rx="1.5" fill="white" fillOpacity="0.35"/>
+      <rect x="2" y="7" width="12" height="5" rx="1.5" fill="white" fillOpacity="0.6"/>
+      <rect x="1" y="3" width="12" height="5" rx="1.5" fill="white"/>
+      <path d="M4 5h5M4 7h3" stroke="var(--accent)" strokeWidth="1" strokeLinecap="round"/>
+    </svg>
+  )
+}
+
 export function TopBar() {
   const { user, logout } = useAuth()
   const [open, setOpen] = useState(false)
@@ -24,7 +69,7 @@ export function TopBar() {
   return (
     <header style={styles.bar}>
       <div style={styles.brand}>
-        <div style={styles.logo}>▦</div>
+        <div style={styles.logo}><LogoMark /></div>
         <span style={styles.appName}>hnb</span>
       </div>
       <span style={styles.orgName}>{orgName}</span>
