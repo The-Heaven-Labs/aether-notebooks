@@ -34,6 +34,8 @@ export function Sidebar() {
             title={title}
             style={({ isActive }) => ({
               ...styles.item,
+              justifyContent: expanded ? 'flex-start' : 'center',
+              padding: expanded ? '8px 12px' : '8px 0',
               background: isActive ? 'var(--accent-light)' : 'transparent',
               color: isActive ? 'var(--accent)' : 'var(--text-muted)',
             })}
@@ -70,6 +72,7 @@ const styles: Record<string, React.CSSProperties> = {
   item: {
     display: 'flex',
     alignItems: 'center',
+    justifyContent: 'flex-start',
     gap: 10,
     padding: '8px 12px',
     textDecoration: 'none',
@@ -81,22 +84,26 @@ const styles: Record<string, React.CSSProperties> = {
     transition: 'background 0.15s, color 0.15s',
   },
   icon: {
-    fontSize: 16,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
     flexShrink: 0,
     width: 24,
-    textAlign: 'center',
+    height: 24,
   },
   label: {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
   },
   toggle: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
     background: 'transparent',
     border: 'none',
     padding: '12px',
     cursor: 'pointer',
     color: 'var(--text-muted)',
-    fontSize: 11,
     borderTop: '1px solid var(--nav-border)',
   },
 }
