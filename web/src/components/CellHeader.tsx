@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Cell } from '../types'
+import { Link2 } from 'lucide-react'
 
 interface Props {
   cell: Cell
@@ -52,8 +53,8 @@ export function CellHeader({ cell, onUpdateCell, referencedByCount = 0 }: Props)
           )}
           {slugError && <span style={styles.slugError}>{slugError}</span>}
           {referencedByCount > 0 && (
-            <span style={styles.refBadge} title={`Referenced by ${referencedByCount} cell(s)`}>
-              ↑{referencedByCount}
+            <span style={{ ...styles.refBadge, display: 'inline-flex', alignItems: 'center', gap: 2 }} title={`Referenced by ${referencedByCount} cell(s)`}>
+              <Link2 size={11} />{referencedByCount}
             </span>
           )}
         </div>

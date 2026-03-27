@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import type React from 'react'
 import type { Output, ResultSet } from '../types'
 import { ChartView } from './ChartView'
+import { ToggleLeft, Calendar, Clock, Hash, Ban, Binary, Table, BarChart2 } from 'lucide-react'
 
 interface Props {
   outputs: Output[]
@@ -42,7 +44,7 @@ function OutputItem({ output, fixedView }: { output: Output; fixedView?: 'table'
   return null
 }
 
-const TYPE_MAP: Record<string, { icon: string; label: string }> = {
+const TYPE_MAP: Record<string, { icon: React.ReactNode; label: string }> = {
   string: { icon: 'Aa', label: 'String' },
   varchar: { icon: 'Aa', label: 'String' },
   text: { icon: 'Aa', label: 'String' },
@@ -61,20 +63,20 @@ const TYPE_MAP: Record<string, { icon: string; label: string }> = {
   decimal: { icon: '0.1', label: 'Float' },
   numeric: { icon: '0.1', label: 'Float' },
   real: { icon: '0.1', label: 'Float' },
-  boolean: { icon: '⊙', label: 'Boolean' },
-  bool: { icon: '⊙', label: 'Boolean' },
-  date: { icon: '📅', label: 'Date' },
-  datetime: { icon: '🕐', label: 'Datetime' },
-  timestamp: { icon: '🕐', label: 'Datetime' },
-  timestamptz: { icon: '🕐', label: 'Datetime' },
-  'timestamp with time zone': { icon: '🕐', label: 'Datetime' },
+  boolean: { icon: <ToggleLeft size={12} />, label: 'Boolean' },
+  bool: { icon: <ToggleLeft size={12} />, label: 'Boolean' },
+  date: { icon: <Calendar size={12} />, label: 'Date' },
+  datetime: { icon: <Clock size={12} />, label: 'Datetime' },
+  timestamp: { icon: <Clock size={12} />, label: 'Datetime' },
+  timestamptz: { icon: <Clock size={12} />, label: 'Datetime' },
+  'timestamp with time zone': { icon: <Clock size={12} />, label: 'Datetime' },
   array: { icon: '[]', label: 'Array' },
   json: { icon: '{}', label: 'JSON' },
   jsonb: { icon: '{}', label: 'JSON' },
-  uuid: { icon: '⌗', label: 'UUID' },
-  null: { icon: '∅', label: 'Null' },
-  bytes: { icon: '⬡', label: 'Bytes' },
-  bytea: { icon: '⬡', label: 'Bytes' },
+  uuid: { icon: <Hash size={12} />, label: 'UUID' },
+  null: { icon: <Ban size={12} />, label: 'Null' },
+  bytes: { icon: <Binary size={12} />, label: 'Bytes' },
+  bytea: { icon: <Binary size={12} />, label: 'Bytes' },
   unknown: { icon: '?', label: 'Unknown' },
 }
 
@@ -119,16 +121,16 @@ function TableOutput({ rs, fixedView }: { rs: ResultSet; fixedView?: 'table' | '
         {!fixedView && (
           <div style={styles.viewToggle}>
             <button
-              style={{ ...styles.viewBtn, ...(view === 'table' ? styles.viewBtnActive : {}) }}
+              style={{ ...styles.viewBtn, ...(view === 'table' ? styles.viewBtnActive : {}), display: 'flex', alignItems: 'center', gap: 4 }}
               onClick={() => setView('table')}
             >
-              ⊞ Table
+              <Table size={12} /> Table
             </button>
             <button
-              style={{ ...styles.viewBtn, ...(view === 'chart' ? styles.viewBtnActive : {}) }}
+              style={{ ...styles.viewBtn, ...(view === 'chart' ? styles.viewBtnActive : {}), display: 'flex', alignItems: 'center', gap: 4 }}
               onClick={() => setView('chart')}
             >
-              ▦ Chart
+              <BarChart2 size={12} /> Chart
             </button>
           </div>
         )}

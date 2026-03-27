@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { ChevronRight } from 'lucide-react'
 import { EditorState } from '@codemirror/state'
 import { EditorView, ViewPlugin, Decoration, keymap, WidgetType } from '@codemirror/view'
 import type { DecorationSet } from '@codemirror/view'
@@ -183,7 +184,7 @@ export function TextCell({ cell, onDelete, onSourceChange, onSave, onMoveUp, onM
     return (
       <div style={styles.collapsed}>
         <span style={styles.collapsedLabel}>{cell.title || 'Markdown cell'}</span>
-        <button style={styles.expandBtn} onClick={() => onUpdateCellMeta?.({ cell_collapsed: false })}>▷ Expand</button>
+        <button style={styles.expandBtn} onClick={() => onUpdateCellMeta?.({ cell_collapsed: false })}><ChevronRight size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} /> Expand</button>
       </div>
     )
   }

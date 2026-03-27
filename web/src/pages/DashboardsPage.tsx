@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard } from '../types'
 import { AppShell } from '../components/AppShell'
+import { LayoutGrid, List, LayoutDashboard, X } from 'lucide-react'
 
 const fmtDate = (d: string) => {
   const date = new Date(d)
@@ -61,7 +62,7 @@ export function DashboardsPage() {
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button type="button" style={styles.layoutBtn} onClick={toggleLayout} title={layout === 'list' ? 'Switch to grid' : 'Switch to list'}>
-              {layout === 'list' ? '⊞' : '≡'}
+              {layout === 'list' ? <LayoutGrid size={14} /> : <List size={14} />}
             </button>
             <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Dashboard</button>
           </div>
@@ -105,12 +106,12 @@ export function DashboardsPage() {
                 ? (
                   <div key={d.id} style={styles.card}>
                     <Link to={`/dashboards/${d.id}`} style={styles.cardLink}>
-                      <div style={styles.cardIcon}>⊟</div>
+                      <div style={styles.cardIcon}><LayoutDashboard size={24} style={{ opacity: 0.4 }} /></div>
                       <div style={styles.cardTitle}>{d.title}</div>
                       <div style={styles.cardMeta}>Updated {fmtDate(d.updated_at)}</div>
                       {d.public_token && <div style={styles.publicBadge}>Public</div>}
                     </Link>
-                    <button type="button" style={styles.deleteBtn} onClick={() => { if (confirm(`Delete "${d.title}"?`)) deleteDashboard.mutate(d.id) }} title="Delete dashboard">✕</button>
+                    <button type="button" style={styles.deleteBtn} onClick={() => { if (confirm(`Delete "${d.title}"?`)) deleteDashboard.mutate(d.id) }} title="Delete dashboard"><X size={13} /></button>
                   </div>
                 )
                 : <DashboardRow key={d.id} dashboard={d} onDelete={() => deleteDashboard.mutate(d.id)} />
@@ -126,7 +127,7 @@ function DashboardRow({ dashboard, onDelete }: { dashboard: Dashboard; onDelete:
   return (
     <div style={rowStyles.row}>
       <Link to={`/dashboards/${dashboard.id}`} style={rowStyles.link}>
-        <span style={rowStyles.icon}>⊟</span>
+        <LayoutDashboard size={18} style={{ color: 'var(--accent)', flexShrink: 0 }} />
         <div style={rowStyles.info}>
           <span style={rowStyles.title}>{dashboard.title}</span>
           {dashboard.public_token && <span style={rowStyles.badge}>Public</span>}

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { ChevronRight } from 'lucide-react'
 import { EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap } from '@codemirror/commands'
@@ -211,7 +212,7 @@ export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSour
     return (
       <div style={styles.cellCollapsed}>
         <span style={styles.collapsedLabel}>{cell.title || 'Code cell'}</span>
-        <button style={styles.expandBtn} onClick={() => onUpdateCellMeta?.({ cell_collapsed: false })}>▷ Expand</button>
+        <button style={styles.expandBtn} onClick={() => onUpdateCellMeta?.({ cell_collapsed: false })}><ChevronRight size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} /> Expand</button>
       </div>
     )
   }

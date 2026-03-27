@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { X, ChevronDown, ChevronRight, Table2, Columns } from 'lucide-react'
 
 interface SchemaColumn {
   name: string
@@ -46,8 +47,8 @@ export function SchemaBrowser({ connectorId, onClose }: Props) {
     <div style={styles.sidebar}>
       <div style={styles.header}>
         <span style={styles.headerTitle}>Schema Browser</span>
-        <button style={styles.closeBtn} onClick={onClose} title="Close schema browser">
-          ✕
+        <button style={{ ...styles.closeBtn, display: 'flex', alignItems: 'center' }} onClick={onClose} title="Close schema browser">
+          <X size={13} />
         </button>
       </div>
 
@@ -81,8 +82,8 @@ export function SchemaBrowser({ connectorId, onClose }: Props) {
                     onClick={() => toggleTable(table.name)}
                     title={table.name}
                   >
-                    <span style={styles.tableChevron}>{isExpanded ? '▾' : '▸'}</span>
-                    <span style={styles.tableIcon}>▦</span>
+                    <span style={styles.tableChevron}>{isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</span>
+                    <span style={styles.tableIcon}><Table2 size={12} /></span>
                     <span style={styles.tableName}>{table.name}</span>
                     <span style={styles.columnCount}>{table.columns.length}</span>
                   </button>
@@ -90,7 +91,7 @@ export function SchemaBrowser({ connectorId, onClose }: Props) {
                     <div style={styles.columnList}>
                       {table.columns.map((col) => (
                         <div key={col.name} style={styles.columnRow}>
-                          <span style={styles.columnIcon}>◈</span>
+                          <span style={{ ...styles.columnIcon, display: 'flex', alignItems: 'center' }}><Columns size={12} /></span>
                           <span style={styles.columnName}>{col.name}</span>
                           <span style={styles.columnType}>{col.type}</span>
                         </div>

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { AppShell } from '../components/AppShell'
 import { Link } from 'react-router-dom'
+import { ArrowLeft } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Member } from '../types'
@@ -68,7 +69,7 @@ export function MembersPage() {
     <AppShell>
       <header style={styles.header}>
         <div style={styles.headerLeft}>
-          <Link to="/" style={styles.backLink}>← Home</Link>
+          <Link to="/" style={{ ...styles.backLink, display: 'flex', alignItems: 'center', gap: 5 }}><ArrowLeft size={14} /> Home</Link>
           <span style={styles.sep}>/</span>
           <span style={styles.pageTitle}>Members</span>
         </div>

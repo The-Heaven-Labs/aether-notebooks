@@ -1,4 +1,5 @@
 import type { CellVersion } from '../types'
+import { X } from 'lucide-react'
 
 interface Props {
   versions: CellVersion[]
@@ -17,7 +18,7 @@ export function HistoryPanel({ versions, currentSource, onRestore, onClose }: Pr
     <div style={styles.panel}>
       <div style={styles.header}>
         <span style={styles.title}>Cell History</span>
-        <button style={styles.closeBtn} onClick={onClose} title="Close history">✕</button>
+        <button style={{ ...styles.closeBtn, display: 'flex', alignItems: 'center' }} onClick={onClose} title="Close history"><X size={13} /></button>
       </div>
       {versions.length === 0 && <p style={styles.empty}>No history yet</p>}
       {versions.map((v, i) => {

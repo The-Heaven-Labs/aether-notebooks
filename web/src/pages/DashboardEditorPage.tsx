@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
+import { ArrowLeft, X } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
@@ -129,7 +130,7 @@ export function DashboardEditorPage() {
       <header style={styles.subHeader}>
         <div style={styles.headerLeft}>
           <Link to="/dashboards" style={styles.backLink}>
-            <span style={styles.backArrow}>←</span>
+            <ArrowLeft size={14} style={{ flexShrink: 0 }} />
             <span>Dashboards</span>
           </Link>
           <span style={styles.breadcrumbSep}>/</span>
@@ -177,9 +178,9 @@ export function DashboardEditorPage() {
           <button
             type="button"
             onClick={() => setMutationError(null)}
-            style={styles.errorClose}
+            style={{ ...styles.errorClose, display: 'flex', alignItems: 'center' }}
           >
-            ✕
+            <X size={14} />
           </button>
         </div>
       )}
@@ -192,7 +193,7 @@ export function DashboardEditorPage() {
               <span style={styles.pickerTitle}>Add Widget</span>
               <button
                 type="button"
-                style={styles.pickerClose}
+                style={{ ...styles.pickerClose, display: 'flex', alignItems: 'center' }}
                 onClick={() => {
                   setShowPicker(false)
                   setPickerNotebookId('')
@@ -201,7 +202,7 @@ export function DashboardEditorPage() {
                   setPickerError(null)
                 }}
               >
-                ✕
+                <X size={15} />
               </button>
             </div>
 
@@ -285,7 +286,7 @@ export function DashboardEditorPage() {
                 <div key={widget.id} style={styles.widgetCard}>
                   <button
                     type="button"
-                    style={styles.deleteWidgetBtn}
+                    style={{ ...styles.deleteWidgetBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                     title="Remove widget"
                     onClick={() => {
                       if (confirm('Remove this widget?')) {
@@ -293,7 +294,7 @@ export function DashboardEditorPage() {
                       }
                     }}
                   >
-                    ✕
+                    <X size={12} />
                   </button>
                   <WidgetContent widget={widget} />
                 </div>
