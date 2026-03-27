@@ -4,8 +4,8 @@ interface Props { onClose: () => void }
 
 const SHORTCUTS = [
   { key: 'Shift+Enter', action: 'Run focused cell' },
-  { key: 'B', action: 'Add cell below' },
-  { key: 'A', action: 'Add cell above' },
+  { key: 'B', action: 'Add code cell' },
+  { key: 'A', action: 'Add code cell' },
   { key: 'D D', action: 'Delete cell' },
   { key: 'J / ↓', action: 'Move focus down' },
   { key: 'K / ↑', action: 'Move focus up' },

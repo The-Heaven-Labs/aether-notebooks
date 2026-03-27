@@ -31,7 +31,10 @@ export function NotebookPage() {
   const [cellSaveState, setCellSaveState] = useState<Record<string, { saving: boolean; savedAt: Date | null; error: string | null }>>({})
   const [cellRunAt, setCellRunAt] = useState<Record<string, Date>>({})
   const [focusedCellId, setFocusedCellId] = useState<string | null>(null)
-  const [isEditingCell] = useState(false)
+  // isEditingCell is intentionally a plain boolean (not useState) — the
+  // useNotebookKeyboardShortcuts hook already guards against CodeMirror editors
+  // via isContentEditable checks, so no reactive state is needed here.
+  const isEditingCell = false
   const [historyCell, setHistoryCell] = useState<string | null>(null)
   const [historyVersions, setHistoryVersions] = useState<CellVersion[]>([])
   const [showShortcuts, setShowShortcuts] = useState(false)
@@ -121,8 +124,12 @@ export function NotebookPage() {
   }, [id, localCells, qc])
 
   const updateCellMeta = useCallback(async (cellId: string, updates: Partial<Pick<Cell, 'source_visible' | 'cell_collapsed' | 'title' | 'description' | 'slug'>>) => {
-    await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, updates)
-    setLocalCells((prev) => prev.map((c) => c.id === cellId ? { ...c, ...updates } : c))
+    try {
+      await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, updates)
+      setLocalCells((prev) => prev.map((c) => c.id === cellId ? { ...c, ...updates } : c))
+    } catch (err) {
+      setMutationError(err instanceof Error ? err.message : 'Failed to update cell')
+    }
   }, [id])
 
   const fetchHistory = useCallback(async (cellId: string) => {
@@ -132,9 +139,13 @@ export function NotebookPage() {
   }, [id])
 
   const restoreVersion = useCallback(async (cellId: string, versionId: string) => {
-    const cell = await api.post<Cell>(`/api/v1/notebooks/${id}/cells/${cellId}/versions/${versionId}/restore`, {})
-    setLocalCells((prev) => prev.map((c) => c.id === cell.id ? cell : c))
-    setHistoryCell(null)
+    try {
+      const cell = await api.post<Cell>(`/api/v1/notebooks/${id}/cells/${cellId}/versions/${versionId}/restore`, {})
+      setLocalCells((prev) => prev.map((c) => c.id === cell.id ? cell : c))
+      setHistoryCell(null)
+    } catch (err) {
+      setMutationError(err instanceof Error ? err.message : 'Failed to restore version')
+    }
   }, [id])
 
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
@@ -225,10 +236,12 @@ export function NotebookPage() {
         if (idx > 0) setFocusedCellId(localCells[idx - 1].id)
       },
       convertToMarkdown: () => {
-        if (focusedCellId) switchCellType(focusedCellId)
+        const cell = localCells.find((c) => c.id === focusedCellId)
+        if (focusedCellId && cell?.type !== 'text') switchCellType(focusedCellId)
       },
       convertToCode: () => {
-        if (focusedCellId) switchCellType(focusedCellId)
+        const cell = localCells.find((c) => c.id === focusedCellId)
+        if (focusedCellId && cell?.type !== 'code') switchCellType(focusedCellId)
       },
       openShortcutsModal: () => setShowShortcuts(true),
     },
