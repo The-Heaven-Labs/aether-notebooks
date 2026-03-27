@@ -177,7 +177,7 @@ export function TextCell({ cell, onDelete, onSourceChange, onSave, onMoveUp, onM
     viewRef.current = view
     return () => view.destroy()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cell.id])
+  }, [cell.id, cell.cell_collapsed])
 
   if (cell.cell_collapsed) {
     return (

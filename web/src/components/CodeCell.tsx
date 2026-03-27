@@ -205,7 +205,7 @@ export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSour
       releaseCollab(notebookId)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cell.id, notebookId])
+  }, [cell.id, notebookId, cell.cell_collapsed])
 
   if (cell.cell_collapsed) {
     return (
