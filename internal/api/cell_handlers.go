@@ -18,15 +18,16 @@ type createCellRequest struct {
 }
 
 type updateCellRequest struct {
-	Source        *string `json:"source,omitempty"`
-	Language      *string `json:"language,omitempty"`
-	ConnectorID   *string `json:"connector_id,omitempty"`
-	Type          *string `json:"type,omitempty"`
-	SourceVisible *bool   `json:"source_visible,omitempty"`
-	CellCollapsed *bool   `json:"cell_collapsed,omitempty"`
-	Title         *string `json:"title,omitempty"`
-	Description   *string `json:"description,omitempty"`
-	Slug          *string `json:"slug,omitempty"`
+	Source        *string            `json:"source,omitempty"`
+	Language      *string            `json:"language,omitempty"`
+	ConnectorID   *string            `json:"connector_id,omitempty"`
+	Type          *string            `json:"type,omitempty"`
+	SourceVisible *bool              `json:"source_visible,omitempty"`
+	CellCollapsed *bool              `json:"cell_collapsed,omitempty"`
+	Parameters    []models.Parameter `json:"parameters,omitempty"`
+	Title         *string            `json:"title,omitempty"`
+	Description   *string            `json:"description,omitempty"`
+	Slug          *string            `json:"slug,omitempty"`
 }
 
 func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
@@ -169,17 +170,23 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 		args = append(args, nilIfEmptyStr(*req.Slug))
 		argN++
 	}
+	if req.Parameters != nil {
+		paramsJSON, _ := json.Marshal(req.Parameters)
+		query += fmt.Sprintf(", parameters = $%d", argN)
+		args = append(args, paramsJSON)
+		argN++
+	}
 
 	query += fmt.Sprintf(" WHERE id = $%d AND notebook_id = $%d", argN, argN+1)
 	args = append(args, cellID, nbID)
-	query += " RETURNING id, notebook_id, position, type, language, connector_id, source, outputs, source_visible, cell_collapsed, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), created_at, updated_at"
+	query += " RETURNING id, notebook_id, position, type, language, connector_id, source, outputs, source_visible, cell_collapsed, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), created_at, updated_at"
 
 	var cell models.Cell
 	var lang, connID *string
-	var outputs []byte
+	var outputs, cellParams []byte
 	err := s.db.Pool.QueryRow(ctx, query, args...).Scan(
 		&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &lang, &connID,
-		&cell.Source, &outputs, &cell.SourceVisible, &cell.CellCollapsed,
+		&cell.Source, &outputs, &cell.SourceVisible, &cell.CellCollapsed, &cellParams,
 		&cell.Title, &cell.Description, &cell.Slug,
 		&cell.CreatedAt, &cell.UpdatedAt,
 	)
@@ -198,6 +205,7 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 		cell.ConnectorID = *connID
 	}
 	json.Unmarshal(outputs, &cell.Outputs)
+	json.Unmarshal(cellParams, &cell.Parameters)
 
 	if req.Source != nil {
 		s.upsertCellVersion(ctx, cellID, *req.Source)

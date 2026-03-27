@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -60,5 +61,36 @@ func TestCellCRUD(t *testing.T) {
 
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete cell: expected 204, got %d", rec.Code)
+	}
+}
+
+func TestCellParameters(t *testing.T) {
+	s := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("cell-params-%d@example.com", ts)
+	token := registerAndGetToken(t, s, email, "Cell Params Org")
+	nbID := createNotebook(t, s, token, "Param Test NB")
+	cellID := createCell(t, s, token, nbID, "sql", "SELECT 1", "")
+
+	params := `[{"name":"start_date","type":"string","default":"2024-01-01"}]`
+	body := fmt.Sprintf(`{"source":"SELECT 1","parameters":%s}`, params)
+	req := httptest.NewRequest("PUT", "/api/v1/notebooks/"+nbID+"/cells/"+cellID, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT cell: got %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var cell map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&cell)
+	params_resp, ok := cell["parameters"].([]interface{})
+	if !ok || len(params_resp) != 1 {
+		t.Fatalf("expected 1 parameter, got %v", cell["parameters"])
+	}
+	p := params_resp[0].(map[string]interface{})
+	if p["name"] != "start_date" {
+		t.Fatalf("expected name=start_date, got %v", p["name"])
 	}
 }
