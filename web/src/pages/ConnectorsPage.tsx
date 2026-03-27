@@ -29,6 +29,8 @@ export function ConnectorsPage() {
   const [form, setForm] = useState<ConnectorForm>(defaultForm())
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error?: string }>>({})
   const [createError, setCreateError] = useState<string | null>(null)
+  const [formTest, setFormTest] = useState<{ ok: boolean; error?: string } | null>(null)
+  const [formTesting, setFormTesting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const { data: connectors = [] } = useQuery({
@@ -49,10 +51,12 @@ export function ConnectorsPage() {
         ssl_mode: form.ssl_mode,
       },
     }),
-    onSuccess: () => {
+    onSuccess: (connector) => {
       qc.invalidateQueries({ queryKey: ['connectors'] })
+      if (formTest) setTestResults((prev) => ({ ...prev, [connector.id]: formTest }))
       setCreating(false)
       setForm(defaultForm())
+      setFormTest(null)
       setCreateError(null)
     },
     onError: (err: Error) => setCreateError(err.message),
@@ -70,6 +74,29 @@ export function ConnectorsPage() {
       setTestResults((prev) => ({ ...prev, [id]: result }))
     } catch {
       setTestResults((prev) => ({ ...prev, [id]: { ok: false, error: 'Request failed' } }))
+    }
+  }
+
+  const testFormConnection = async () => {
+    setFormTesting(true)
+    setFormTest(null)
+    try {
+      const result = await api.post<{ ok: boolean; error?: string }>('/api/v1/connectors/test', {
+        type: form.type,
+        config: {
+          host: form.host,
+          port: parseInt(form.port),
+          database: form.database,
+          user: form.user,
+          password: form.password,
+          ssl_mode: form.ssl_mode,
+        },
+      })
+      setFormTest(result)
+    } catch {
+      setFormTest({ ok: false, error: 'Request failed' })
+    } finally {
+      setFormTesting(false)
     }
   }
 
@@ -124,7 +151,21 @@ export function ConnectorsPage() {
               </label>
             </div>
             <div style={styles.formActions}>
-              <button type="button" style={styles.cancelBtn} onClick={() => { setCreating(false); setForm(defaultForm()) }}>Cancel</button>
+              <button
+                type="button"
+                style={styles.testBtn}
+                onClick={testFormConnection}
+                disabled={!form.host || !form.database || formTesting}
+              >
+                {formTesting ? 'Testing…' : 'Test Connection'}
+              </button>
+              {formTest && (
+                <span style={{ fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4, color: formTest.ok ? '#2d7d46' : '#c0392b' }}>
+                  {formTest.ok ? <><Check size={12} /> Connected</> : <><X size={12} /> {formTest.error ?? 'Failed'}</>}
+                </span>
+              )}
+              <span style={{ flex: 1 }} />
+              <button type="button" style={styles.cancelBtn} onClick={() => { setCreating(false); setForm(defaultForm()); setFormTest(null) }}>Cancel</button>
               <button
                 type="button"
                 style={styles.saveBtn}
@@ -215,6 +256,7 @@ const styles: Record<string, React.CSSProperties> = {
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
   input: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 5, fontSize: 13, fontFamily: 'var(--font-mono)', background: 'white', marginTop: 2 },
   formActions: { display: 'flex', gap: 8, justifyContent: 'flex-end' },
+  testBtn: { padding: '6px 16px', background: 'transparent', border: '1px solid var(--accent)', borderRadius: 5, fontSize: 13, cursor: 'pointer', color: 'var(--accent)', fontWeight: 600 },
   cancelBtn: { padding: '6px 16px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 5, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   saveBtn: { padding: '6px 16px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: 5, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   tableWrap: { borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)' },

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, ChevronsRight, X, Loader2 } from 'lucide-react'
+import { useParams } from 'react-router-dom'
+import { ChevronsRight, X, Loader2 } from 'lucide-react'
+import { AppShell } from '../components/AppShell'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Notebook, Cell, Output, Connector, Parameter, CellVersion } from '../types'
@@ -25,9 +26,14 @@ export function NotebookPage() {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [descDraft, setDescDraft] = useState('')
-  const [paramValues, setParamValues] = useState<Record<string, string>>({})
+  const paramStorageKey = `hnb_params_${id}`
+  const [paramValues, setParamValues] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(localStorage.getItem(paramStorageKey) ?? '{}') } catch { return {} }
+  })
   const [showSchema, setShowSchema] = useState(false)
   const [showSchedules, setShowSchedules] = useState(false)
+  const [showParameters, setShowParameters] = useState(false)
+  const [notebookConnectorId, setNotebookConnectorId] = useState<string>('')
   const [mutationError, setMutationError] = useState<string | null>(null)
   const [cellSaveState, setCellSaveState] = useState<Record<string, { saving: boolean; savedAt: Date | null; error: string | null }>>({})
   const [cellRunAt, setCellRunAt] = useState<Record<string, Date>>({})
@@ -52,10 +58,17 @@ export function NotebookPage() {
   })
 
   useEffect(() => {
+    localStorage.setItem(paramStorageKey, JSON.stringify(paramValues))
+  }, [paramValues, paramStorageKey])
+
+  useEffect(() => {
     if (notebook) {
       setLocalCells(notebook.cells)
       setTitleDraft(notebook.title)
       setDescDraft(notebook.description ?? '')
+      // Pre-populate notebook-wide connector from the first code cell that has one
+      const firstConnector = notebook.cells.find((c) => c.type === 'code' && c.connector_id)?.connector_id
+      if (firstConnector) setNotebookConnectorId(firstConnector)
     }
   }, [notebook])
 
@@ -67,9 +80,15 @@ export function NotebookPage() {
         source: '',
       }),
     onSuccess: (cell) => {
-      setLocalCells((prev) => [...prev, cell])
+      const withConnector = cell.type === 'code' && notebookConnectorId
+        ? { ...cell, connector_id: notebookConnectorId }
+        : cell
+      if (withConnector.connector_id) {
+        assignConnector(cell.id, withConnector.connector_id)
+      }
+      setLocalCells((prev) => [...prev, withConnector])
       qc.setQueryData<NotebookWithCells>(['notebook', id], (old) =>
-        old ? { ...old, cells: [...(old.cells ?? []), cell] } : old
+        old ? { ...old, cells: [...(old.cells ?? []), withConnector] } : old
       )
     },
     onError: (err: Error) => setMutationError(err.message),
@@ -179,6 +198,12 @@ export function NotebookPage() {
     )
   }, [id])
 
+  const applyNotebookConnector = useCallback(async (connectorId: string) => {
+    setNotebookConnectorId(connectorId)
+    const codeCells = localCells.filter((c) => c.type === 'code')
+    await Promise.all(codeCells.map((c) => assignConnector(c.id, connectorId)))
+  }, [localCells, assignConnector])
+
   const saveAndRun = useCallback(
     async (cellId: string) => {
       const cell = localCells.find((c) => c.id === cellId)
@@ -265,75 +290,49 @@ export function NotebookPage() {
   const schemaConnectorId = localCells.find((c) => c.type === 'code' && c.connector_id)?.connector_id ?? null
 
   if (isLoading) return (
-    <div style={styles.loadingPage}>
-      <div style={styles.loadingDot} />
-    </div>
+    <AppShell noPadding>
+      <div style={styles.loadingPage}><div style={styles.loadingDot} /></div>
+    </AppShell>
   )
   if (!notebook) return (
-    <div style={styles.loadingPage}>
-      <p style={{ color: 'var(--text-secondary)' }}>Notebook not found</p>
-    </div>
+    <AppShell noPadding>
+      <div style={styles.loadingPage}><p style={{ color: 'var(--text-secondary)' }}>Notebook not found</p></div>
+    </AppShell>
   )
 
   return (
+    <AppShell noPadding>
     <div style={styles.page}>
-      {/* Top navigation bar */}
-      <header style={styles.header}>
-        <div style={styles.headerLeft}>
-          <Link to="/" style={styles.backLink}>
-            <ArrowLeft size={14} style={{ flexShrink: 0 }} />
-            <span style={styles.backLabel}>Notebooks</span>
-          </Link>
-          <span style={styles.breadcrumbSep}>/</span>
-          <div style={styles.titleBlock}>
-            {editingTitle ? (
-              <input
-                style={styles.titleInput}
-                value={titleDraft}
-                onChange={(e) => setTitleDraft(e.target.value)}
-                onBlur={() => {
-                  setEditingTitle(false)
-                  if (titleDraft.trim() && titleDraft.trim() !== notebook.title) {
-                    renameNotebook.mutate(titleDraft.trim())
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                  if (e.key === 'Escape') setEditingTitle(false)
-                }}
-                autoFocus
-              />
-            ) : (
-              <span
-                style={styles.notebookTitle}
-                onClick={() => { setTitleDraft(notebook.title); setEditingTitle(true) }}
-                title="Click to rename"
-              >
-                {notebook.title}
-              </span>
-            )}
-            <div style={styles.notebookDesc}>
-              <input
-                style={styles.descInput}
-                value={descDraft}
-                onChange={(e) => setDescDraft(e.target.value)}
-                onBlur={() => {
-                  if (descDraft !== (notebook?.description ?? '')) {
-                    updateNotebook.mutate({ description: descDraft })
-                  }
-                }}
-                placeholder="Add a description…"
-              />
-            </div>
-          </div>
-        </div>
-        <div style={styles.headerRight}>
+      {/* Slim notebook toolbar */}
+      <div style={styles.toolbar}>
+        <div style={styles.toolbarLeft}>
+          {connectors.length > 0 && (
+            <select
+              style={styles.connectorSelect}
+              value={notebookConnectorId}
+              onChange={(e) => applyNotebookConnector(e.target.value)}
+            >
+              <option value="" disabled>Connection…</option>
+              {connectors.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          )}
           {runningCount > 0 && (
             <span style={styles.runningBadge}>
               <Loader2 size={12} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />
               Running {runningCount} cell{runningCount > 1 ? 's' : ''}…
             </span>
           )}
+        </div>
+        <div style={styles.toolbarRight}>
+          <button
+            type="button"
+            style={{ ...styles.schemaBtn, ...(showParameters ? styles.schemaBtnActive : {}) }}
+            onClick={() => setShowParameters((v) => !v)}
+          >
+            Parameters
+          </button>
           <button
             type="button"
             style={{ ...styles.schemaBtn, ...(showSchema ? styles.schemaBtnActive : {}) }}
@@ -352,7 +351,7 @@ export function NotebookPage() {
             <ChevronsRight size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} /> Run All
           </button>
         </div>
-      </header>
+      </div>
 
       {mutationError && (
         <div style={{ background: '#fff0f0', borderBottom: '1px solid #fcd0d0', padding: '6px 24px', fontSize: 12, color: '#c0392b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -361,12 +360,14 @@ export function NotebookPage() {
         </div>
       )}
 
-      <ParametersBar
-        parameters={notebook.parameters ?? []}
-        values={paramValues}
-        onChange={setParamValues}
-        onSaveDefinitions={(params) => saveParameters.mutate(params)}
-      />
+      {showParameters && (
+        <ParametersBar
+          parameters={notebook.parameters ?? []}
+          values={paramValues}
+          onChange={setParamValues}
+          onSaveDefinitions={(params) => saveParameters.mutate(params)}
+        />
+      )}
 
       {/* Body: optional schema sidebar + cells + optional schedules panel */}
       <div style={styles.body}>
@@ -379,6 +380,46 @@ export function NotebookPage() {
         <div style={styles.mainColumn}>
           <div style={styles.cellsArea}>
             <div style={styles.bodyInner}>
+              <div style={styles.notebookHeading}>
+                {editingTitle ? (
+                  <input
+                    style={styles.titleInput}
+                    value={titleDraft}
+                    onChange={(e) => setTitleDraft(e.target.value)}
+                    onBlur={() => {
+                      setEditingTitle(false)
+                      if (titleDraft.trim() && titleDraft.trim() !== notebook.title) {
+                        renameNotebook.mutate(titleDraft.trim())
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                      if (e.key === 'Escape') setEditingTitle(false)
+                    }}
+                    autoFocus
+                  />
+                ) : (
+                  <h1
+                    style={styles.notebookTitle}
+                    onClick={() => { setTitleDraft(notebook.title); setEditingTitle(true) }}
+                    title="Click to rename"
+                  >
+                    {notebook.title}
+                  </h1>
+                )}
+                <input
+                  style={styles.descInput}
+                  value={descDraft}
+                  onChange={(e) => setDescDraft(e.target.value)}
+                  onBlur={() => {
+                    if (descDraft !== (notebook?.description ?? '')) {
+                      updateNotebook.mutate({ description: descDraft })
+                    }
+                  }}
+                  placeholder="Add a description…"
+                />
+              </div>
+
               <div style={styles.cells}>
                 {localCells.map((cell, i) =>
                   cell.type === 'code' ? (
@@ -449,18 +490,19 @@ export function NotebookPage() {
         </div>
       )}
     </div>
+    </AppShell>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
   page: {
-    minHeight: '100vh',
+    flex: 1,
     background: 'var(--bg-primary)',
     display: 'flex',
     flexDirection: 'column',
   },
   loadingPage: {
-    minHeight: '100vh',
+    flex: 1,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -472,91 +514,68 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--accent)',
     opacity: 0.5,
   },
-  header: {
-    background: 'var(--nav-bg)',
-    borderBottom: '1px solid var(--nav-border)',
-    height: 52,
+  toolbar: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '0 24px',
+    padding: '8px 40px',
+    borderBottom: '1px solid var(--border-light)',
     flexShrink: 0,
-    position: 'sticky',
-    top: 0,
-    zIndex: 100,
   },
-  headerLeft: {
+  connectorSelect: {
+    fontSize: 12,
+    fontFamily: 'var(--font-mono)',
+    padding: '4px 8px',
+    border: '1px solid var(--border)',
+    borderRadius: 5,
+    background: 'var(--bg-primary)',
+    color: 'var(--text-primary)',
+    cursor: 'pointer',
+  },
+  toolbarLeft: {
     display: 'flex',
     alignItems: 'center',
     gap: 10,
-    minWidth: 0,
   },
-  backLink: {
+  toolbarRight: {
     display: 'flex',
     alignItems: 'center',
-    gap: 5,
-    color: '#6a6260',
-    textDecoration: 'none',
-    fontSize: 13,
-    fontWeight: 500,
-    flexShrink: 0,
-    transition: 'color 0.15s',
+    gap: 12,
   },
-  backArrow: {
-    fontSize: 16,
-    lineHeight: 1,
-  },
-  backLabel: {
-    fontSize: 13,
-  },
-  breadcrumbSep: {
-    color: '#3a3630',
-    fontSize: 14,
-    flexShrink: 0,
+  notebookHeading: {
+    marginBottom: 32,
   },
   notebookTitle: {
-    fontSize: 14,
-    fontWeight: 600,
-    color: 'var(--nav-text)',
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    maxWidth: 400,
+    fontSize: 28,
+    fontWeight: 700,
+    color: 'var(--text-primary)',
+    margin: '0 0 6px',
     cursor: 'pointer',
+    lineHeight: 1.2,
   },
   titleInput: {
-    fontSize: 14,
-    fontWeight: 600,
-    color: 'var(--nav-text)',
+    fontSize: 28,
+    fontWeight: 700,
+    color: 'var(--text-primary)',
     background: 'transparent',
     border: 'none',
-    borderBottom: '1px solid var(--accent)',
+    borderBottom: '2px solid var(--accent)',
     outline: 'none',
-    maxWidth: 400,
+    width: '100%',
     fontFamily: 'var(--font-sans)',
-    padding: '1px 2px',
+    lineHeight: 1.2,
+    padding: '2px 0',
+    marginBottom: 6,
   },
-  titleBlock: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 2,
-  },
-  notebookDesc: { marginBottom: 2 },
   descInput: {
     width: '100%',
     border: 'none',
     outline: 'none',
-    fontSize: 12,
-    color: 'var(--text-secondary)',
+    fontSize: 15,
+    color: 'var(--text-muted)',
     background: 'transparent',
     fontFamily: 'var(--font-sans)',
     padding: '1px 0',
-  },
-  headerRight: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 12,
-    flexShrink: 0,
   },
   runningBadge: {
     fontSize: 12,

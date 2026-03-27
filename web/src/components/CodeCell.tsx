@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { ChevronRight } from 'lucide-react'
-import { EditorState } from '@codemirror/state'
+import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap } from '@codemirror/commands'
 import { sql } from '@codemirror/lang-sql'
@@ -22,6 +22,7 @@ interface NotebookCollab {
   doc: Y.Doc
   provider: HocuspocusProvider
   refCount: number
+  synced: boolean  // true once the provider has completed its first sync with the relay
 }
 const collabCache = new Map<string, NotebookCollab>()
 
@@ -37,11 +38,6 @@ function getOrCreateCollab(notebookId: string): NotebookCollab {
   const userName = localStorage.getItem('hnb_user_name') ?? ''
   const userEmail = localStorage.getItem('hnb_user_email') ?? ''
 
-  // HocuspocusProvider speaks the Hocuspocus v2 protocol:
-  // it sends an auth message (containing the JWT) before any Yjs sync frames,
-  // which is what @hocuspocus/server's onAuthenticate hook expects.
-  // Construction is synchronous (the WebSocket connects on the next tick),
-  // so no try/catch is needed here.
   const provider = new HocuspocusProvider({
     url: RELAY_URL,
     name: notebookId,
@@ -57,7 +53,10 @@ function getOrCreateCollab(notebookId: string): NotebookCollab {
     color: `hsl(${Math.abs(hashStr(userEmail || userName)) % 360}, 70%, 55%)`,
   })
 
-  const entry: NotebookCollab = { doc, provider, refCount: 1 }
+  const entry: NotebookCollab = { doc, provider, refCount: 1, synced: false }
+  provider.on('synced', ({ state }: { state: boolean }) => {
+    if (state) entry.synced = true
+  })
   collabCache.set(notebookId, entry)
   return entry
 }
@@ -126,6 +125,7 @@ export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSour
   const onSourceChangeRef = useRef(onSourceChange)
   onRunRef.current = onRun
   onSourceChangeRef.current = onSourceChange
+  const collabCompartment = useRef(new Compartment())
 
   useEffect(() => {
     if (!editorRef.current) return
@@ -134,15 +134,7 @@ export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSour
     const collab = getOrCreateCollab(notebookId)
     const ytext = collab.doc.getText(`cell:${cell.id}`)
 
-    // Seed the Y.Text with the cell's initial source only when it is empty
-    // (i.e., first time this cell is opened or the doc is freshly synced).
-    // We do this once synchronously before the editor is created so that the
-    // editor's initial content matches what is in the shared doc.
-    if (ytext.length === 0 && cell.source) {
-      collab.doc.transact(() => {
-        ytext.insert(0, cell.source)
-      })
-    }
+    const compartment = collabCompartment.current
 
     const cellKeymap = keymap.of([
       {
@@ -158,25 +150,24 @@ export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSour
           const raw = view.state.doc.toString()
           try {
             const formatted = format(raw, { language: 'sql', tabWidth: 2 })
-            // Apply the formatted text through the Y.Text to keep Yjs in sync
             collab.doc.transact(() => {
               ytext.delete(0, ytext.length)
               ytext.insert(0, formatted)
             })
             onSourceChangeRef.current(cell.id, formatted)
-          } catch {
-            // leave as-is if formatting fails
-          }
+          } catch { /* leave as-is if formatting fails */ }
           return true
         },
       },
       ...defaultKeymap,
     ])
 
+    // Create the editor immediately with cell.source — no flash, no shift.
+    // yCollab is NOT attached yet; it is added via the compartment after sync
+    // to avoid duplication (local seed + relay seed = two Yjs inserts → doubled content).
     const view = new EditorView({
       state: EditorState.create({
-        // doc is managed by yCollab — pass empty string; Y.Text is the source of truth
-        doc: ytext.toString(),
+        doc: cell.source,
         extensions: [
           cellKeymap,
           sql(),
@@ -187,9 +178,7 @@ export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSour
             '.cm-line': { lineHeight: '1.65' },
             '.cm-focused': { outline: 'none' },
           }),
-          // yCollab wires Y.Text <-> CodeMirror document bidirectionally
-          yCollab(ytext, collab.provider.awareness),
-          // Also fire the local state callback so NotebookPage stays in sync
+          compartment.of([]),  // yCollab slot — empty until sync
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
               onSourceChangeRef.current(cell.id, update.state.doc.toString())
@@ -201,7 +190,30 @@ export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSour
     })
     viewRef.current = view
 
+    // After sync: seed Y.Text if relay had nothing, reconcile if it had different content,
+    // then attach yCollab. The compartment reconfigure is safe because at this point
+    // ytext and the editor doc are identical → yCollab sees a zero-length diff.
+    const attachCollab = () => {
+      if (ytext.length === 0) {
+        // Brand-new cell: seed Y.Text from the editor's current content
+        collab.doc.transact(() => ytext.insert(0, view.state.doc.toString()))
+      } else if (ytext.toString() !== view.state.doc.toString()) {
+        // Relay had different content (e.g. collaborative edit while offline): apply it
+        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: ytext.toString() } })
+      }
+      view.dispatch({ effects: compartment.reconfigure(yCollab(ytext, collab.provider.awareness)) })
+    }
+
+    let onSynced: (({ state }: { state: boolean }) => void) | null = null
+    if (collab.synced) {
+      attachCollab()
+    } else {
+      onSynced = ({ state }: { state: boolean }) => { if (state) attachCollab() }
+      collab.provider.on('synced', onSynced)
+    }
+
     return () => {
+      if (onSynced) collab.provider.off('synced', onSynced)
       view.destroy()
       releaseCollab(notebookId)
     }

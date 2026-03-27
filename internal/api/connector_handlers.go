@@ -174,6 +174,38 @@ func (s *Server) buildExecutor(connType models.ConnectorType, configEnc []byte) 
 	}
 }
 
+// handleTestConnectorConfig tests a connection using raw config (before saving).
+func (s *Server) handleTestConnectorConfig(w http.ResponseWriter, r *http.Request) {
+	var req createConnectorRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "invalid request body"})
+		return
+	}
+
+	var exec executor.Executor
+	var err error
+	switch req.Type {
+	case models.ConnectorPostgres:
+		exec, err = executor.NewPostgresExecutor(req.Config)
+	case models.ConnectorClickHouse:
+		exec, err = executor.NewClickHouseExecutor(req.Config)
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "unsupported connector type"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	defer exec.Close()
+
+	if err := exec.TestConnection(r.Context()); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (s *Server) handleTestConnector(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	connID := r.PathValue("id")
