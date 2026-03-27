@@ -10,6 +10,30 @@ import (
 	"time"
 )
 
+func TestHandleListConnectorDatabases(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("conn-db-test-%d@example.com", ts)
+	token := registerAndGetToken(t, srv, email, "Conn DB Org")
+	connID := createConnector(t, srv, token)
+
+	req := httptest.NewRequest("GET", "/api/v1/connectors/"+connID+"/databases", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string][]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["databases"] == nil {
+		t.Fatal("expected databases key in response")
+	}
+}
+
 func TestConnectorCRUD(t *testing.T) {
 	srv := setupTestServer(t)
 
