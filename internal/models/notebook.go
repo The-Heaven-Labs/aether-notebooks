@@ -30,8 +30,9 @@ type Cell struct {
 	Source        string    `json:"source"`
 	Outputs       []Output  `json:"outputs"`
 	SourceVisible bool      `json:"source_visible"`
-	CellCollapsed bool      `json:"cell_collapsed"`
-	Title         string    `json:"title,omitempty"`
+	CellCollapsed bool        `json:"cell_collapsed"`
+	Parameters    []Parameter `json:"parameters"`
+	Title         string      `json:"title,omitempty"`
 	Description   string    `json:"description,omitempty"`
 	Slug          string    `json:"slug,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
