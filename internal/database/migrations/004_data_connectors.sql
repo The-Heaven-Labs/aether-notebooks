@@ -1,0 +1,3 @@
+ALTER TABLE notebooks ADD COLUMN connector_id UUID REFERENCES connectors(id) ON DELETE SET NULL;
+
+ALTER TABLE cells ADD COLUMN parameters JSONB NOT NULL DEFAULT '[]';
