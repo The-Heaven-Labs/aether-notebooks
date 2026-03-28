@@ -183,8 +183,8 @@ export function MembersPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   header: {
-    background: 'var(--nav-bg)',
-    borderBottom: '1px solid var(--nav-border)',
+    background: 'var(--bg-primary)',
+    borderBottom: '1px solid var(--border)',
     height: 52,
     display: 'flex',
     alignItems: 'center',
@@ -196,9 +196,9 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   headerLeft: { display: 'flex', alignItems: 'center', gap: 10 },
-  backLink: { color: '#6a6260', textDecoration: 'none', fontSize: 13, fontWeight: 500 },
-  sep: { color: '#3a3630', fontSize: 14 },
-  pageTitle: { fontSize: 14, fontWeight: 600, color: 'var(--nav-text)' },
+  backLink: { color: 'var(--text-muted)', textDecoration: 'none', fontSize: 13, fontWeight: 500 },
+  sep: { color: 'var(--text-muted)', fontSize: 14 },
+  pageTitle: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' },
   body: { maxWidth: 1100, margin: '0 auto', padding: '32px 40px', width: '100%' },
   formCard: {
     background: 'white',
