@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/auth"
@@ -44,8 +45,8 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Email == "" || req.Password == "" || req.Name == "" || req.OrgName == "" {
-		writeError(w, http.StatusBadRequest, "email, password, name, and org_name are required")
+	if req.Email == "" || req.Password == "" || req.Name == "" {
+		writeError(w, http.StatusBadRequest, "email, password, and name are required")
 		return
 	}
 
@@ -56,16 +57,78 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	tx, err := s.db.Pool.Begin(ctx)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "database error")
+
+	// Legacy / backcompat flow: org_name provided → create user + org atomically
+	if req.OrgName != "" {
+		tx, err := s.db.Pool.Begin(ctx)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		defer tx.Rollback(ctx)
+
+		var userID string
+		err = tx.QueryRow(ctx,
+			`INSERT INTO users (email, password_hash, name, email_verified) VALUES ($1, $2, $3, FALSE) RETURNING id`,
+			req.Email, hash, req.Name,
+		).Scan(&userID)
+		if err != nil {
+			writeError(w, http.StatusConflict, "email already registered")
+			return
+		}
+
+		var orgID string
+		slug := slugify(req.OrgName)
+		err = tx.QueryRow(ctx,
+			`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
+			req.OrgName, slug,
+		).Scan(&orgID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create organization")
+			return
+		}
+
+		_, err = tx.Exec(ctx,
+			`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin')`,
+			orgID, userID,
+		)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to add member")
+			return
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to commit")
+			return
+		}
+
+		token, err := s.jwt.Issue(userID, orgID, "admin")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to issue token")
+			return
+		}
+
+		s.audit.Log(ctx, audit.Entry{
+			OrgID: orgID, UserID: userID,
+			Action: "user.register", ResourceType: "user", ResourceID: userID,
+		})
+
+		resp := authResponse{}
+		resp.Token = token
+		resp.User.ID = userID
+		resp.User.Email = req.Email
+		resp.User.Name = req.Name
+		resp.Org.ID = orgID
+		resp.Org.Name = req.OrgName
+		resp.Org.Role = "admin"
+
+		writeJSON(w, http.StatusCreated, resp)
 		return
 	}
-	defer tx.Rollback(ctx)
 
-	// Create user
+	// New account-only flow: create user, no org yet
 	var userID string
-	err = tx.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`INSERT INTO users (email, password_hash, name, email_verified) VALUES ($1, $2, $3, FALSE) RETURNING id`,
 		req.Email, hash, req.Name,
 	).Scan(&userID)
@@ -74,54 +137,76 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create org
-	var orgID string
-	slug := slugify(req.OrgName)
-	err = tx.QueryRow(ctx,
-		`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
-		req.OrgName, slug,
-	).Scan(&orgID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create organization")
+	// Check for domain-based auto-join
+	domain := emailDomain(req.Email)
+	var autoJoinOrgID, autoJoinRole string
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT org_id, 'viewer' FROM org_allowed_domains WHERE domain = $1 AND auto_join = true LIMIT 1`,
+		domain,
+	).Scan(&autoJoinOrgID, &autoJoinRole)
+	if err != nil && err != pgx.ErrNoRows {
+		writeError(w, http.StatusInternalServerError, "database error")
 		return
 	}
 
-	// Add user as admin
-	_, err = tx.Exec(ctx,
-		`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin')`,
-		orgID, userID,
-	)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to add member")
+	if autoJoinOrgID != "" {
+		if _, execErr := s.db.Pool.Exec(ctx,
+			`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'viewer') ON CONFLICT DO NOTHING`,
+			autoJoinOrgID, userID,
+		); execErr != nil {
+			// Log the error but fall through to issue an onboarding token instead
+			fmt.Printf("auto-join org_members insert failed: %v\n", execErr)
+			autoJoinOrgID = ""
+		}
+	}
+
+	if autoJoinOrgID != "" {
+		token, err := s.jwt.Issue(userID, autoJoinOrgID, "viewer")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to issue token")
+			return
+		}
+		var orgName string
+		s.db.Pool.QueryRow(ctx, `SELECT name FROM orgs WHERE id = $1`, autoJoinOrgID).Scan(&orgName)
+
+		s.audit.Log(ctx, audit.Entry{
+			OrgID: autoJoinOrgID, UserID: userID,
+			Action: "user.register", ResourceType: "user", ResourceID: userID,
+		})
+
+		resp := authResponse{}
+		resp.Token = token
+		resp.User.ID = userID
+		resp.User.Email = req.Email
+		resp.User.Name = req.Name
+		resp.Org.ID = autoJoinOrgID
+		resp.Org.Name = orgName
+		resp.Org.Role = "viewer"
+
+		writeJSON(w, http.StatusCreated, resp)
 		return
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to commit")
-		return
-	}
-
-	token, err := s.jwt.Issue(userID, orgID, "admin")
+	onboardingToken, err := s.jwt.IssueOnboarding(userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to issue token")
 		return
 	}
 
 	s.audit.Log(ctx, audit.Entry{
-		OrgID: orgID, UserID: userID,
+		UserID: userID,
 		Action: "user.register", ResourceType: "user", ResourceID: userID,
 	})
 
-	resp := authResponse{}
-	resp.Token = token
-	resp.User.ID = userID
-	resp.User.Email = req.Email
-	resp.User.Name = req.Name
-	resp.Org.ID = orgID
-	resp.Org.Name = req.OrgName
-	resp.Org.Role = "admin"
+	writeJSON(w, http.StatusCreated, map[string]string{"onboarding_token": onboardingToken})
+}
 
-	writeJSON(w, http.StatusCreated, resp)
+func emailDomain(email string) string {
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) == 2 {
+		return parts[1]
+	}
+	return ""
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -134,10 +219,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	var userID, passwordHash, name string
+	var isPlatformAdmin bool
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, password_hash, name FROM users WHERE email = $1`,
+		`SELECT id, password_hash, name, is_platform_admin FROM users WHERE email = $1`,
 		req.Email,
-	).Scan(&userID, &passwordHash, &name)
+	).Scan(&userID, &passwordHash, &name, &isPlatformAdmin)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
@@ -159,7 +245,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := s.jwt.Issue(userID, orgID, role)
+	token, err := s.jwt.IssueFull(userID, orgID, role, isPlatformAdmin)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to issue token")
 		return

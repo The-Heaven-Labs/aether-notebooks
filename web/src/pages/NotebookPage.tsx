@@ -359,6 +359,13 @@ export function NotebookPage() {
           >
             Schedules
           </button>
+          <button
+            type="button"
+            style={styles.schemaBtn}
+            onClick={() => window.open(`/notebooks/${id}/present`, '_blank')}
+          >
+            Present
+          </button>
           <button type="button" style={styles.runAllBtn} onClick={runAll} disabled={runningCount > 0}>
             <ChevronsRight size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} /> Run All
           </button>

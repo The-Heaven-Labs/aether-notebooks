@@ -54,6 +54,7 @@ func main() {
 
 	// Build HTTP server
 	srv := api.NewServer(db, jwtIssuer, auditLogger, masterKey, nil)
+	srv.SetAttachmentDir(cfg.AttachmentDir)
 	httpSrv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      srv,
