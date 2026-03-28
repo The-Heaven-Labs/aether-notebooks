@@ -12,6 +12,7 @@ interface Props {
   connectors?: Connector[]
   connectorId?: string
   onAssignConnector?: (connectorId: string) => void
+  onClearConnector?: () => void
   sourceVisible: boolean
   cellCollapsed: boolean
   onToggleSourceVisible: (val: boolean) => void
@@ -19,7 +20,7 @@ interface Props {
   onShowHistory: () => void
 }
 
-export function CellToolbar({ onRun, onDelete, onMoveUp, onMoveDown, onSwitchType, running, cellType, connectors, connectorId, onAssignConnector, sourceVisible, cellCollapsed, onToggleSourceVisible, onToggleCellCollapsed, onShowHistory }: Props) {
+export function CellToolbar({ onRun, onDelete, onMoveUp, onMoveDown, onSwitchType, running, cellType, connectors, connectorId, onAssignConnector, onClearConnector, sourceVisible, cellCollapsed, onToggleSourceVisible, onToggleCellCollapsed, onShowHistory }: Props) {
   return (
     <div style={styles.toolbar}>
       <div style={styles.left}>
@@ -46,10 +47,13 @@ export function CellToolbar({ onRun, onDelete, onMoveUp, onMoveDown, onSwitchTyp
               color: connectorId ? 'var(--text-primary)' : 'var(--text-muted)',
             }}
             value={connectorId ?? ''}
-            onChange={(e) => onAssignConnector?.(e.target.value)}
-            title="Assign connector"
+            onChange={(e) => {
+              if (e.target.value === '') onClearConnector?.()
+              else onAssignConnector?.(e.target.value)
+            }}
+            title="Assign connector (leave blank to inherit from notebook)"
           >
-            <option value="" disabled>No connector</option>
+            <option value="">— Inherit from notebook —</option>
             {connectors.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}

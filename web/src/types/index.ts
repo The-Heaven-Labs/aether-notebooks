@@ -15,6 +15,7 @@ export interface Notebook {
   org_id: string
   title: string
   description: string
+  connector_id?: string
   created_by: string
   created_at: string
   updated_at: string

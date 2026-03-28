@@ -107,6 +107,7 @@ interface Props {
   onDelete: (cellId: string) => void
   onSourceChange: (cellId: string, source: string) => void
   onAssignConnector: (cellId: string, connectorId: string) => void
+  onClearConnector?: (cellId: string) => void
   onMoveUp?: () => void
   onMoveDown?: () => void
   onSwitchType?: () => void
@@ -118,7 +119,7 @@ interface Props {
   onFocus?: (cellId: string) => void
 }
 
-export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSourceChange, onAssignConnector, onMoveUp, onMoveDown, onSwitchType, running, saveState, runAt, onUpdateCellMeta, onShowHistory, onFocus }: Props) {
+export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSourceChange, onAssignConnector, onClearConnector, onMoveUp, onMoveDown, onSwitchType, running, saveState, runAt, onUpdateCellMeta, onShowHistory, onFocus }: Props) {
   const editorRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onRunRef = useRef(onRun)
@@ -242,6 +243,7 @@ export function CodeCell({ cell, connectors, notebookId, onRun, onDelete, onSour
         connectors={connectors}
         connectorId={cell.connector_id}
         onAssignConnector={(cid) => onAssignConnector(cell.id, cid)}
+        onClearConnector={() => onClearConnector?.(cell.id)}
         sourceVisible={cell.source_visible ?? true}
         cellCollapsed={cell.cell_collapsed ?? false}
         onToggleSourceVisible={(v) => onUpdateCellMeta?.({ source_visible: v })}
