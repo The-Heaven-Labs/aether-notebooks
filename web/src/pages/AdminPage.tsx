@@ -14,7 +14,7 @@ export function AdminPage() {
   const [users, setUsers] = useState<User[]>([])
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
+    const token = localStorage.getItem('hnb_token')
     const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
     fetch('/api/v1/admin/orgs', { headers }).then(r => r.json()).then(d => setOrgs(d.orgs ?? []))
     fetch('/api/v1/admin/users', { headers }).then(r => r.json()).then(d => setUsers(d.users ?? []))

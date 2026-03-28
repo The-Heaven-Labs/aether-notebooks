@@ -27,9 +27,10 @@ type loginRequest struct {
 type authResponse struct {
 	Token string `json:"token"`
 	User  struct {
-		ID    string `json:"id"`
-		Email string `json:"email"`
-		Name  string `json:"name"`
+		ID              string `json:"id"`
+		Email           string `json:"email"`
+		Name            string `json:"name"`
+		IsPlatformAdmin bool   `json:"is_platform_admin,omitempty"`
 	} `json:"user"`
 	Org struct {
 		ID   string `json:"id"`
@@ -261,6 +262,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	resp.User.ID = userID
 	resp.User.Email = req.Email
 	resp.User.Name = name
+	resp.User.IsPlatformAdmin = isPlatformAdmin
 	resp.Org.ID = orgID
 	resp.Org.Name = orgName
 	resp.Org.Role = role
