@@ -13,6 +13,7 @@ import { SchedulesPanel } from '../components/SchedulesPanel'
 import { useNotebookKeyboardShortcuts } from '../hooks/useNotebookKeyboardShortcuts'
 import { HistoryPanel } from '../components/HistoryPanel'
 import { ShortcutsModal } from '../components/ShortcutsModal'
+import { ConnectorSelector } from '../components/ConnectorSelector'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -66,9 +67,8 @@ export function NotebookPage() {
       setLocalCells(notebook.cells)
       setTitleDraft(notebook.title)
       setDescDraft(notebook.description ?? '')
-      // Pre-populate notebook-wide connector from the first code cell that has one
-      const firstConnector = notebook.cells.find((c) => c.type === 'code' && c.connector_id)?.connector_id
-      if (firstConnector) setNotebookConnectorId(firstConnector)
+      // Init notebook-level connector from persisted value
+      if (notebook.connector_id) setNotebookConnectorId(notebook.connector_id)
     }
   }, [notebook])
 
@@ -114,7 +114,7 @@ export function NotebookPage() {
   })
 
   const updateNotebook = useMutation({
-    mutationFn: (data: { title?: string; description?: string }) =>
+    mutationFn: (data: { title?: string; description?: string; connector_id?: string }) =>
       api.put<Notebook>(`/api/v1/notebooks/${id}`, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['notebook', id] }),
     onError: (err: Error) => setMutationError(err.message),
@@ -198,11 +198,18 @@ export function NotebookPage() {
     )
   }, [id])
 
-  const applyNotebookConnector = useCallback(async (connectorId: string) => {
-    setNotebookConnectorId(connectorId)
-    const codeCells = localCells.filter((c) => c.type === 'code')
-    await Promise.all(codeCells.map((c) => assignConnector(c.id, connectorId)))
-  }, [localCells, assignConnector])
+  const clearCellConnector = useCallback(async (cellId: string) => {
+    await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { connector_id: '' })
+    setLocalCells((prev) =>
+      prev.map((c) => (c.id === cellId ? { ...c, connector_id: undefined } : c))
+    )
+  }, [id])
+
+  const applyNotebookConnector = useCallback((connectorId: string | null) => {
+    const val = connectorId ?? ''
+    setNotebookConnectorId(val)
+    updateNotebook.mutate({ connector_id: val })
+  }, [updateNotebook])
 
   const saveAndRun = useCallback(
     async (cellId: string) => {
@@ -306,18 +313,13 @@ export function NotebookPage() {
       {/* Slim notebook toolbar */}
       <div style={styles.toolbar}>
         <div style={styles.toolbarLeft}>
-          {connectors.length > 0 && (
-            <select
-              style={styles.connectorSelect}
-              value={notebookConnectorId}
-              onChange={(e) => applyNotebookConnector(e.target.value)}
-            >
-              <option value="" disabled>Connection…</option>
-              {connectors.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          )}
+          <ConnectorSelector
+            style={styles.connectorSelect}
+            value={notebookConnectorId || null}
+            onChange={applyNotebookConnector}
+            placeholder="Connection…"
+            allowClear
+          />
           {runningCount > 0 && (
             <span style={styles.runningBadge}>
               <Loader2 size={12} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />
@@ -435,6 +437,7 @@ export function NotebookPage() {
                       onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
                       onSwitchType={() => switchCellType(cell.id)}
                       onAssignConnector={assignConnector}
+                      onClearConnector={clearCellConnector}
                       running={runningCells.has(cell.id)}
                       saveState={cellSaveState[cell.id]}
                       runAt={cellRunAt[cell.id]}
