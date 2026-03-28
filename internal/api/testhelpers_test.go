@@ -55,6 +55,9 @@ func setupTestDB(t *testing.T) *database.DB {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	t.Cleanup(func() { db.Close() })
 	return db
 }
