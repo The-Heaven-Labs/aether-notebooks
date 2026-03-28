@@ -205,6 +205,14 @@ export function NotebookPage() {
     )
   }, [id])
 
+  const updateCellParam = useCallback(async (cellId: string, paramName: string, value: string) => {
+    const cell = localCells.find(c => c.id === cellId)
+    if (!cell || !cell.parameters) return
+    const updated = cell.parameters.map(p => p.name === paramName ? { ...p, default: value } : p)
+    setLocalCells(prev => prev.map(c => c.id === cellId ? { ...c, parameters: updated } : c))
+    await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { parameters: updated })
+  }, [id, localCells])
+
   const applyNotebookConnector = useCallback((connectorId: string | null) => {
     const val = connectorId ?? ''
     setNotebookConnectorId(val)
@@ -426,26 +434,62 @@ export function NotebookPage() {
               <div style={styles.cells}>
                 {localCells.map((cell, i) =>
                   cell.type === 'code' ? (
-                    <CodeCell
-                      key={cell.id}
-                      cell={cell}
-                      connectors={connectors}
-                      notebookId={id!}
-                      onRun={saveAndRun}
-                      onDelete={(cid) => deleteCell.mutate(cid)}
-                      onSourceChange={updateSource}
-                      onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
-                      onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
-                      onSwitchType={() => switchCellType(cell.id)}
-                      onAssignConnector={assignConnector}
-                      onClearConnector={clearCellConnector}
-                      running={runningCells.has(cell.id)}
-                      saveState={cellSaveState[cell.id]}
-                      runAt={cellRunAt[cell.id]}
-                      onUpdateCellMeta={(updates) => updateCellMeta(cell.id, updates)}
-                      onShowHistory={() => fetchHistory(cell.id)}
-                      onFocus={(cid) => setFocusedCellId(cid)}
-                    />
+                    <div key={cell.id}>
+                      {cell.parameters && cell.parameters.length > 0 && (
+                        <div style={{
+                          borderBottom: '1px solid var(--border)',
+                          padding: '4px 12px',
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          gap: 6,
+                          alignItems: 'center',
+                          background: 'var(--bg-secondary)',
+                          fontSize: 11,
+                        }}>
+                          <span style={{ color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', fontSize: 10 }}>Cell params:</span>
+                          {cell.parameters.map(p => (
+                            <div key={p.name} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent)', fontSize: 11 }}>{p.name}</span>
+                              <span style={{ color: 'var(--text-muted)' }}>=</span>
+                              <input
+                                style={{
+                                  fontSize: 11,
+                                  fontFamily: 'var(--font-mono)',
+                                  background: 'var(--bg-primary)',
+                                  border: '1px solid var(--border)',
+                                  borderRadius: 3,
+                                  padding: '1px 5px',
+                                  color: 'var(--text-primary)',
+                                  width: 90,
+                                  outline: 'none',
+                                }}
+                                value={p.default}
+                                onChange={e => updateCellParam(cell.id, p.name, e.target.value)}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <CodeCell
+                        cell={cell}
+                        connectors={connectors}
+                        notebookId={id!}
+                        onRun={saveAndRun}
+                        onDelete={(cid) => deleteCell.mutate(cid)}
+                        onSourceChange={updateSource}
+                        onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
+                        onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
+                        onSwitchType={() => switchCellType(cell.id)}
+                        onAssignConnector={assignConnector}
+                        onClearConnector={clearCellConnector}
+                        running={runningCells.has(cell.id)}
+                        saveState={cellSaveState[cell.id]}
+                        runAt={cellRunAt[cell.id]}
+                        onUpdateCellMeta={(updates) => updateCellMeta(cell.id, updates)}
+                        onShowHistory={() => fetchHistory(cell.id)}
+                        onFocus={(cid) => setFocusedCellId(cid)}
+                      />
+                    </div>
                   ) : (
                     <TextCell
                       key={cell.id}

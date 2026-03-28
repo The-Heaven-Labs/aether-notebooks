@@ -38,6 +38,7 @@ export interface Cell {
   title?: string
   description?: string
   slug?: string
+  parameters?: Parameter[]
 }
 
 export interface CellVersion {
