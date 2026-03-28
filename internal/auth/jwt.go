@@ -25,35 +25,12 @@ func NewJWTIssuer(secret string, ttl time.Duration) *JWTIssuer {
 }
 
 func (j *JWTIssuer) Issue(userID, orgID, role string) (string, error) {
-	now := time.Now()
-	claims := &Claims{
-		UserID: userID,
-		OrgID:  orgID,
-		Role:   role,
-		RegisteredClaims: jwt.RegisteredClaims{
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(j.ttl)),
-		},
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(j.secret)
+	return j.IssueFull(userID, orgID, role, false)
 }
 
 // IssuePlatformAdmin issues a token with IsPlatformAdmin set to true.
 func (j *JWTIssuer) IssuePlatformAdmin(userID, orgID, role string) (string, error) {
-	now := time.Now()
-	claims := &Claims{
-		UserID:          userID,
-		OrgID:           orgID,
-		Role:            role,
-		IsPlatformAdmin: true,
-		RegisteredClaims: jwt.RegisteredClaims{
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(j.ttl)),
-		},
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(j.secret)
+	return j.IssueFull(userID, orgID, role, true)
 }
 
 // IssueFull issues a token with explicit control over the isPlatformAdmin flag.

@@ -35,6 +35,10 @@ func (s *Server) handleAdminListOrgs(w http.ResponseWriter, r *http.Request) {
 		}
 		orgs = append(orgs, o)
 	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "query iteration failed")
+		return
+	}
 	if orgs == nil {
 		orgs = []orgSummary{}
 	}
@@ -76,6 +80,10 @@ func (s *Server) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 			u.Orgs = []string{}
 		}
 		users = append(users, u)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "query iteration failed")
+		return
 	}
 	if users == nil {
 		users = []userSummary{}
