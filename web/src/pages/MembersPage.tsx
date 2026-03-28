@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react'
 import { AppShell } from '../components/AppShell'
-import { Link } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Member } from '../types'
@@ -68,14 +66,6 @@ export function MembersPage() {
 
   return (
     <AppShell>
-      <header style={styles.header}>
-        <div style={styles.headerLeft}>
-          <Link to="/" style={{ ...styles.backLink, display: 'flex', alignItems: 'center', gap: 5 }}><ArrowLeft size={14} /> Home</Link>
-          <span style={styles.sep}>/</span>
-          <span style={styles.pageTitle}>Members</span>
-        </div>
-      </header>
-
       <div style={styles.body}>
         {/* Invite form */}
         <div style={styles.formCard}>
@@ -182,23 +172,6 @@ export function MembersPage() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  header: {
-    background: 'var(--bg-primary)',
-    borderBottom: '1px solid var(--border)',
-    height: 52,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '0 32px',
-    position: 'sticky',
-    top: 0,
-    zIndex: 100,
-    flexShrink: 0,
-  },
-  headerLeft: { display: 'flex', alignItems: 'center', gap: 10 },
-  backLink: { color: 'var(--text-muted)', textDecoration: 'none', fontSize: 13, fontWeight: 500 },
-  sep: { color: 'var(--text-muted)', fontSize: 14 },
-  pageTitle: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' },
   body: { maxWidth: 1100, margin: '0 auto', padding: '32px 40px', width: '100%' },
   formCard: {
     background: 'white',
