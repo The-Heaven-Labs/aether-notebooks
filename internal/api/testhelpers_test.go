@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
@@ -16,6 +17,31 @@ import (
 	"github.com/heavenlabs/hnb/internal/crypto"
 	"github.com/heavenlabs/hnb/internal/database"
 )
+
+const testOrgID = "00000000-0000-0000-0000-000000000001"
+const testUserID = "00000000-0000-0000-0000-000000000002"
+
+var testJWT = auth.NewJWTIssuer("test-secret", 15*time.Minute)
+
+// withAdminClaims attaches an admin JWT token to the request Authorization header.
+func withAdminClaims(r *http.Request, orgID string) *http.Request {
+	token, err := testJWT.Issue(testUserID, orgID, "admin")
+	if err != nil {
+		panic("withAdminClaims: " + err.Error())
+	}
+	r.Header.Set("Authorization", "Bearer "+token)
+	return r
+}
+
+// withPlatformAdminClaims attaches a platform-admin JWT token to the request Authorization header.
+func withPlatformAdminClaims(r *http.Request) *http.Request {
+	token, err := testJWT.IssuePlatformAdmin(testUserID, testOrgID, "admin")
+	if err != nil {
+		panic("withPlatformAdminClaims: " + err.Error())
+	}
+	r.Header.Set("Authorization", "Bearer "+token)
+	return r
+}
 
 func setupTestDB(t *testing.T) *database.DB {
 	t.Helper()
