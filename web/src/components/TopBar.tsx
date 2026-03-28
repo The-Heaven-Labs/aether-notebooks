@@ -34,6 +34,7 @@ export function TopBar() {
     <header style={styles.bar}>
       <Link to="/" style={styles.brand}>
         <div style={styles.logo}><LogoMark /></div>
+        <div style={styles.brandDivider} />
         <span style={styles.appName}>Heaven's Notebooks</span>
       </Link>
       <div style={styles.spacer} />
@@ -70,7 +71,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     zIndex: 10,
   },
-  brand: { display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none' },
+  brand: { display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' },
   logo: {
     width: 36, height: 36,
     background: 'var(--accent)',
@@ -78,7 +79,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     fontSize: 14, color: 'white',
   },
-  appName: { fontSize: 14, fontWeight: 700, color: 'var(--nav-text)' },
+  brandDivider: { width: 1, height: 20, background: 'var(--nav-border)', flexShrink: 0 },
+  appName: { fontSize: 13, fontWeight: 500, color: 'var(--text-muted)', letterSpacing: '0.01em' },
   spacer: { flex: 1 },
   orgName: { fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 },
   right: { position: 'relative', display: 'flex', alignItems: 'center', gap: 10 },

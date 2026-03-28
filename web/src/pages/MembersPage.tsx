@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { AppShell } from '../components/AppShell'
 import { Link } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
@@ -10,6 +10,7 @@ import { useAuth } from '../hooks/useAuth'
 const ROLES = ['admin', 'editor', 'viewer'] as const
 
 export function MembersPage() {
+  useEffect(() => { document.title = "Members — Heaven's Notebooks" }, [])
   const { user } = useAuth()
   const qc = useQueryClient()
 

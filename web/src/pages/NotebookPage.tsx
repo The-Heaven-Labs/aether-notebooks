@@ -69,7 +69,9 @@ export function NotebookPage() {
       setDescDraft(notebook.description ?? '')
       // Init notebook-level connector from persisted value
       if (notebook.connector_id) setNotebookConnectorId(notebook.connector_id)
+      document.title = `${notebook.title} — Heaven's Notebooks`
     }
+    return () => { document.title = "Heaven's Notebooks" }
   }, [notebook])
 
   const createCell = useMutation({

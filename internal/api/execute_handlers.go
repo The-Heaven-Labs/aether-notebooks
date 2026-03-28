@@ -93,8 +93,25 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Resolve slug references in cell source
-	resolvedSource, err := resolveSlugRefs(cell.Source, slugMap)
+	// Load notebook parameters as defaults (before slug resolution so params are known)
+	var paramsJSON2 []byte
+	s.db.Pool.QueryRow(ctx, "SELECT parameters FROM notebooks WHERE id = $1", nbID).Scan(&paramsJSON2)
+	var notebookParams []models.Parameter
+	json.Unmarshal(paramsJSON2, &notebookParams)
+	for _, p := range notebookParams {
+		if _, ok := req.Parameters[p.Name]; !ok {
+			req.Parameters[p.Name] = p.Default
+		}
+	}
+
+	// Build set of known parameter names so slug resolver leaves them untouched
+	knownParams := make(map[string]bool, len(req.Parameters))
+	for k := range req.Parameters {
+		knownParams[k] = true
+	}
+
+	// Resolve slug references in cell source (parameter refs pass through unchanged)
+	resolvedSource, err := resolveSlugRefs(cell.Source, slugMap, knownParams)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -128,17 +145,6 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(plain, &cfg); err != nil {
 		writeError(w, http.StatusInternalServerError, "invalid connector config")
 		return
-	}
-
-	// Load notebook parameters as defaults
-	var paramsJSON []byte
-	s.db.Pool.QueryRow(ctx, "SELECT parameters FROM notebooks WHERE id = $1", nbID).Scan(&paramsJSON)
-	var notebookParams []models.Parameter
-	json.Unmarshal(paramsJSON, &notebookParams)
-	for _, p := range notebookParams {
-		if _, ok := req.Parameters[p.Name]; !ok {
-			req.Parameters[p.Name] = p.Default
-		}
 	}
 
 	// Apply cell parameter defaults for any keys not already set at runtime

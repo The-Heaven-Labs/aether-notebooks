@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -15,6 +15,7 @@ const fmtDate = (d: string) => {
 }
 
 export function DashboardsPage() {
+  useEffect(() => { document.title = "Dashboards — Heaven's Notebooks" }, [])
   const qc = useQueryClient()
   const [newTitle, setNewTitle] = useState('')
   const [creating, setCreating] = useState(false)

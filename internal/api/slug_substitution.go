@@ -8,11 +8,11 @@ import (
 
 var slugRefRe = regexp.MustCompile(`\{\{([a-zA-Z0-9_-]+)\}\}`)
 
-func resolveSlugRefs(source string, slugMap map[string]string) (string, error) {
-	return resolveWithVisited(source, slugMap, []string{})
+func resolveSlugRefs(source string, slugMap map[string]string, knownParams map[string]bool) (string, error) {
+	return resolveWithVisited(source, slugMap, knownParams, []string{})
 }
 
-func resolveWithVisited(source string, slugMap map[string]string, visiting []string) (string, error) {
+func resolveWithVisited(source string, slugMap map[string]string, knownParams map[string]bool, visiting []string) (string, error) {
 	matches := slugRefRe.FindAllStringSubmatch(source, -1)
 	if len(matches) == 0 {
 		return source, nil
@@ -22,6 +22,11 @@ func resolveWithVisited(source string, slugMap map[string]string, visiting []str
 	for _, m := range matches {
 		token := m[0]
 		slug := m[1]
+
+		// Parameter references pass through unchanged — the executor handles them.
+		if knownParams[slug] {
+			continue
+		}
 
 		refSource, ok := slugMap[slug]
 		if !ok {
@@ -35,7 +40,7 @@ func resolveWithVisited(source string, slugMap map[string]string, visiting []str
 			}
 		}
 
-		resolved, err := resolveWithVisited(refSource, slugMap, append(visiting, slug))
+		resolved, err := resolveWithVisited(refSource, slugMap, knownParams, append(visiting, slug))
 		if err != nil {
 			return "", err
 		}
