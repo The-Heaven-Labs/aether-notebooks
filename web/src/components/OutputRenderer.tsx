@@ -154,7 +154,11 @@ function TableOutput({ rs, fixedView }: { rs: ResultSet; fixedView?: 'table' | '
                 <tr key={i} style={i % 2 === 1 ? styles.rowAlt : undefined}>
                   {(row as unknown[]).map((cell, j) => (
                     <td key={j} style={styles.td}>
-                      {cell === null ? <span style={styles.null}>null</span> : String(cell)}
+                      {cell === null
+                        ? <span style={styles.null}>null</span>
+                        : typeof cell === 'object'
+                          ? <span style={styles.json}>{JSON.stringify(cell)}</span>
+                          : String(cell)}
                     </td>
                   ))}
                 </tr>
@@ -287,5 +291,10 @@ const styles: Record<string, React.CSSProperties> = {
   null: {
     color: 'var(--text-muted)',
     fontStyle: 'italic',
+  },
+  json: {
+    fontFamily: 'var(--font-mono)',
+    fontSize: 11,
+    color: 'var(--text-muted)',
   },
 }
