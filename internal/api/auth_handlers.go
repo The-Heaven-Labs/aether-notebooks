@@ -219,10 +219,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	var userID, passwordHash, name string
+	var isPlatformAdmin bool
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, password_hash, name FROM users WHERE email = $1`,
+		`SELECT id, password_hash, name, is_platform_admin FROM users WHERE email = $1`,
 		req.Email,
-	).Scan(&userID, &passwordHash, &name)
+	).Scan(&userID, &passwordHash, &name, &isPlatformAdmin)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
@@ -244,7 +245,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := s.jwt.Issue(userID, orgID, role)
+	token, err := s.jwt.IssueFull(userID, orgID, role, isPlatformAdmin)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to issue token")
 		return
