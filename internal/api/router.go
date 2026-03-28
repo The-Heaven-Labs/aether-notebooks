@@ -16,6 +16,7 @@ type Server struct {
 	hub           *Hub
 	mux           *http.ServeMux
 	oidcProviders map[string]auth.OIDCProvider
+	attachmentDir string
 }
 
 func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, oidcProviders map[string]auth.OIDCProvider) *Server {
@@ -34,6 +35,11 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
+}
+
+// SetAttachmentDir sets the directory where uploaded attachments are stored.
+func (s *Server) SetAttachmentDir(dir string) {
+	s.attachmentDir = dir
 }
 
 func (s *Server) routes() {
@@ -99,6 +105,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /internal/yjs/{notebook_id}", s.handleInternalYjsGet)
 	s.mux.HandleFunc("PUT /internal/yjs/{notebook_id}", s.handleInternalYjsPut)
 	s.mux.HandleFunc("GET /internal/auth/validate", s.handleInternalAuthValidate)
+
+	// Attachment routes
+	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/attachments", authMW(RequireRole("editor")(http.HandlerFunc(s.handleUploadAttachment))))
+	s.mux.Handle("GET /api/v1/notebooks/{notebook_id}/attachments", authMW(http.HandlerFunc(s.handleListAttachments)))
+	s.mux.Handle("GET /api/v1/attachments/{id}", authMW(http.HandlerFunc(s.handleGetAttachment)))
+	s.mux.Handle("DELETE /api/v1/attachments/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDeleteAttachment))))
 
 	// Connector routes
 	s.mux.Handle("POST /api/v1/connectors", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateConnector))))

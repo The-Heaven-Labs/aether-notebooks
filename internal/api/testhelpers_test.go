@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -118,6 +120,78 @@ func createConnector(t *testing.T, srv *api.Server, token string) string {
 	srv.ServeHTTP(rec, req)
 	if rec.Code != 201 {
 		t.Fatalf("createConnector failed: %d %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(rec.Body).Decode(&resp)
+	return resp["id"].(string)
+}
+
+// withEditorClaims attaches an editor JWT token to the request Authorization header.
+func withEditorClaims(r *http.Request, orgID string) *http.Request {
+	token, err := testJWT.Issue(testUserID, orgID, "editor")
+	if err != nil {
+		panic("withEditorClaims: " + err.Error())
+	}
+	r.Header.Set("Authorization", "Bearer "+token)
+	return r
+}
+
+// setupTestServerWithAttachDir creates a test server with a temporary attachment directory.
+func setupTestServerWithAttachDir(t *testing.T) *api.Server {
+	t.Helper()
+	s := setupTestServer(t)
+	s.SetAttachmentDir(t.TempDir())
+	return s
+}
+
+// attachTestContext holds server + auth token for attachment tests.
+type attachTestContext struct {
+	srv   *api.Server
+	token string
+}
+
+// setupAttachTestContext creates a server with attach dir + a registered user and returns both.
+func setupAttachTestContext(t *testing.T) attachTestContext {
+	t.Helper()
+	s := setupTestServerWithAttachDir(t)
+	email := fmt.Sprintf("attach-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, s, email, "Attach Org")
+	return attachTestContext{srv: s, token: token}
+}
+
+// createTestNotebook creates a notebook via the API using the given bearer token and returns its ID.
+func createTestNotebook(t *testing.T, s http.Handler, token string) string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"title": "Test Notebook"})
+	req := httptest.NewRequest("POST", "/api/v1/notebooks", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("createTestNotebook failed: %d %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(rec.Body).Decode(&resp)
+	return resp["id"].(string)
+}
+
+// uploadTestAttachment uploads a small test file to a notebook and returns the attachment ID.
+func uploadTestAttachment(t *testing.T, s http.Handler, token, nbID string) string {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("file", "test.txt")
+	io.WriteString(fw, "test-content")
+	mw.Close()
+
+	req := httptest.NewRequest("POST", "/api/v1/notebooks/"+nbID+"/attachments", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("uploadTestAttachment failed: %d %s", rec.Code, rec.Body.String())
 	}
 	var resp map[string]any
 	json.NewDecoder(rec.Body).Decode(&resp)
