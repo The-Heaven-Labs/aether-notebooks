@@ -48,6 +48,10 @@ func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
 	typeFilter := r.URL.Query().Get("type")
+	if typeFilter != "" && typeFilter != "notebook" && typeFilter != "cell" {
+		writeError(w, http.StatusBadRequest, "type must be 'notebook' or 'cell'")
+		return
+	}
 
 	type tmpl struct {
 		ID          string          `json:"id"`
