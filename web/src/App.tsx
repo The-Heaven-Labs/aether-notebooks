@@ -10,7 +10,9 @@ import { DashboardsPage } from './pages/DashboardsPage'
 import { DashboardEditorPage } from './pages/DashboardEditorPage'
 import { AuditPage } from './pages/AuditPage'
 import { MembersPage } from './pages/MembersPage'
+import { AdminPage } from './pages/AdminPage'
 import { PublicDashboardPage } from './pages/PublicDashboardPage'
+import { PresentationPage } from './pages/PresentationPage'
 import './styles/theme.css'
 
 const queryClient = new QueryClient({
@@ -84,7 +86,16 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route
+        path="/admin"
+        element={
+          <ProtectedRoute>
+            <AdminPage />
+          </ProtectedRoute>
+        }
+      />
       <Route path="/public/dashboards/:token" element={<PublicDashboardPage />} />
+      <Route path="/notebooks/:id/present" element={<PresentationPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
