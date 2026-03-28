@@ -1,12 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -45,14 +45,13 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Let the DB generate the UUID; we'll use a temp file and rename after we get the ID
-	mimeType := header.Header.Get("Content-Type")
-	if mimeType == "" {
-		mimeType = "application/octet-stream"
-	}
-	if idx := strings.Index(mimeType, ";"); idx >= 0 {
-		mimeType = strings.TrimSpace(mimeType[:idx])
-	}
+	// Detect MIME from first 512 bytes
+	sniff := make([]byte, 512)
+	n, _ := file.Read(sniff)
+	sniff = sniff[:n]
+	mimeType := http.DetectContentType(sniff)
+	// Prepend sniffed bytes back for the full copy
+	reader := io.MultiReader(bytes.NewReader(sniff), file)
 
 	// Write to a temp file first so we can get the size
 	tmpFile, err := os.CreateTemp(attachDir, "upload-*")
@@ -62,7 +61,7 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 	}
 	tmpPath := tmpFile.Name()
 
-	size, err := io.Copy(tmpFile, file)
+	size, err := io.Copy(tmpFile, reader)
 	tmpFile.Close()
 	if err != nil {
 		os.Remove(tmpPath)
@@ -86,9 +85,9 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 	// Rename temp file to the final path using the attachment ID
 	finalPath := filepath.Join(attachDir, attID)
 	if err := os.Rename(tmpPath, finalPath); err != nil {
-		// If rename fails, update storage_path to keep tmpPath
-		// (cross-device rename fallback)
-		finalPath = tmpPath
+		os.Remove(tmpPath)
+		writeError(w, http.StatusInternalServerError, "storage error")
+		return
 	}
 
 	// Update storage_path to the final location
@@ -136,7 +135,7 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, filename))
-	io.Copy(w, f)
+	_, _ = io.Copy(w, f)
 }
 
 func (s *Server) handleListAttachments(w http.ResponseWriter, r *http.Request) {
