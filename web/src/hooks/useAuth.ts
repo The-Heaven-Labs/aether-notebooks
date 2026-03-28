@@ -48,6 +48,11 @@ export function useAuthProvider(): AuthContextValue {
     localStorage.setItem('hnb_user_name', resp.user.name)
     localStorage.setItem('hnb_user_email', resp.user.email)
     localStorage.setItem('hnb_org_name', resp.org.name)
+    if (resp.user.is_platform_admin) {
+      localStorage.setItem('hnb_is_platform_admin', 'true')
+    } else {
+      localStorage.removeItem('hnb_is_platform_admin')
+    }
     const claims = parseJwt(resp.token)
     if (claims) {
       setUser({ user_id: claims.sub as string, org_id: claims.org_id as string, role: claims.role as string })
@@ -78,6 +83,7 @@ export function useAuthProvider(): AuthContextValue {
     localStorage.removeItem('hnb_user_name')
     localStorage.removeItem('hnb_user_email')
     localStorage.removeItem('hnb_org_name')
+    localStorage.removeItem('hnb_is_platform_admin')
     setUser(null)
   }, [])
 

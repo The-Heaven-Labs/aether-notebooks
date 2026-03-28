@@ -18,8 +18,8 @@ type createDashboardRequest struct {
 }
 
 type addWidgetRequest struct {
-	NotebookID string                 `json:"notebook_id"`
-	CellID     string                 `json:"cell_id"`
+	NotebookID *string                `json:"notebook_id"`
+	CellID     *string                `json:"cell_id"`
 	Type       models.WidgetType      `json:"type"`
 	Layout     models.WidgetLayout    `json:"layout"`
 	Config     map[string]interface{} `json:"config,omitempty"`

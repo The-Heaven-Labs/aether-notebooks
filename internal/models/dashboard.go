@@ -21,8 +21,8 @@ type DashboardSettings struct {
 type Widget struct {
 	ID          string                 `json:"id"`
 	DashboardID string                 `json:"dashboard_id"`
-	NotebookID  string                 `json:"notebook_id"`
-	CellID      string                 `json:"cell_id"`
+	NotebookID  *string                `json:"notebook_id,omitempty"`
+	CellID      *string                `json:"cell_id,omitempty"`
 	Type        WidgetType             `json:"type"`
 	Layout      WidgetLayout           `json:"layout"`
 	Config      map[string]interface{} `json:"config"`
@@ -33,10 +33,15 @@ type Widget struct {
 type WidgetType string
 
 const (
-	WidgetChart  WidgetType = "chart"
-	WidgetTable  WidgetType = "table"
-	WidgetText   WidgetType = "text"
-	WidgetMetric WidgetType = "metric"
+	WidgetChart       WidgetType = "chart"
+	WidgetTable       WidgetType = "table"
+	WidgetText        WidgetType = "text"
+	WidgetMetric      WidgetType = "metric"
+	WidgetDatePicker  WidgetType = "date_picker"
+	WidgetDateRange   WidgetType = "date_range"
+	WidgetFreetext    WidgetType = "freetext"
+	WidgetNumber      WidgetType = "number"
+	WidgetMultiSelect WidgetType = "multi_select"
 )
 
 type WidgetLayout struct {

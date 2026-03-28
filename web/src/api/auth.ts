@@ -2,7 +2,7 @@ import { api, setToken, clearToken } from './client'
 
 interface AuthResponse {
   token: string
-  user: { name: string; email: string }
+  user: { name: string; email: string; is_platform_admin?: boolean }
   org: { name: string }
 }
 

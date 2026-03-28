@@ -1,3 +1,11 @@
+-- Expand widget type constraint to include input widget types
+ALTER TABLE widgets DROP CONSTRAINT IF EXISTS widgets_type_check;
+ALTER TABLE widgets ADD CONSTRAINT widgets_type_check CHECK (type = ANY (ARRAY['chart','table','text','metric','date_picker','date_range','freetext','number','multi_select']));
+
+-- Relax NOT NULL on notebook_id/cell_id for input-only widgets
+ALTER TABLE widgets ALTER COLUMN notebook_id DROP NOT NULL;
+ALTER TABLE widgets ALTER COLUMN cell_id DROP NOT NULL;
+
 -- Platform admin flag
 ALTER TABLE users ADD COLUMN is_platform_admin BOOLEAN NOT NULL DEFAULT false;
 
