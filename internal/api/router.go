@@ -121,6 +121,11 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/connectors/{id}/schema", authMW(http.HandlerFunc(s.handleConnectorSchema)))
 	s.mux.Handle("GET /api/v1/connectors/{id}/databases", authMW(http.HandlerFunc(s.handleListConnectorDatabases)))
 
+	// Template routes
+	s.mux.Handle("POST /api/v1/templates", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateTemplate))))
+	s.mux.Handle("GET /api/v1/templates", authMW(http.HandlerFunc(s.handleListTemplates)))
+	s.mux.Handle("DELETE /api/v1/templates/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleDeleteTemplate))))
+
 	// Platform admin routes
 	s.mux.Handle("GET /api/v1/admin/orgs", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminListOrgs))))
 	s.mux.Handle("GET /api/v1/admin/users", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminListUsers))))
