@@ -147,16 +147,28 @@ func pgTypeToString(oid uint32) string {
 		return "boolean"
 	case 20, 21, 23:
 		return "integer"
-	case 25, 1043:
+	case 25, 19, 1042, 1043:
 		return "text"
 	case 700, 701:
 		return "float"
+	case 1700:
+		return "numeric"
 	case 1082:
 		return "date"
+	case 1083, 1266:
+		return "time"
 	case 1114, 1184:
 		return "timestamp"
+	case 1186:
+		return "interval"
+	case 114:
+		return "json"
 	case 3802:
 		return "jsonb"
+	case 2950:
+		return "uuid"
+	case 17:
+		return "bytea"
 	default:
 		return "unknown"
 	}

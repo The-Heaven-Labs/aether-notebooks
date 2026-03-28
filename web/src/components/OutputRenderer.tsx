@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type React from 'react'
 import type { Output, ResultSet } from '../types'
 import { ChartView } from './ChartView'
-import { ToggleLeft, Calendar, Clock, Hash, Ban, Binary, Table, BarChart2 } from 'lucide-react'
+import { ToggleLeft, Calendar, Clock, Fingerprint, Ban, Binary, Table, BarChart2, Timer, Sigma } from 'lucide-react'
 
 interface Props {
   outputs: Output[]
@@ -70,10 +70,12 @@ const TYPE_MAP: Record<string, { icon: React.ReactNode; label: string }> = {
   timestamp: { icon: <Clock size={12} />, label: 'Datetime' },
   timestamptz: { icon: <Clock size={12} />, label: 'Datetime' },
   'timestamp with time zone': { icon: <Clock size={12} />, label: 'Datetime' },
+  time: { icon: <Timer size={12} />, label: 'Time' },
+  interval: { icon: <Sigma size={12} />, label: 'Interval' },
   array: { icon: '[]', label: 'Array' },
   json: { icon: '{}', label: 'JSON' },
   jsonb: { icon: '{}', label: 'JSON' },
-  uuid: { icon: <Hash size={12} />, label: 'UUID' },
+  uuid: { icon: <Fingerprint size={12} />, label: 'UUID' },
   null: { icon: <Ban size={12} />, label: 'Null' },
   bytes: { icon: <Binary size={12} />, label: 'Bytes' },
   bytea: { icon: <Binary size={12} />, label: 'Bytes' },
