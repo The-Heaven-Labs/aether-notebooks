@@ -39,6 +39,23 @@ func (j *JWTIssuer) Issue(userID, orgID, role string) (string, error) {
 	return token.SignedString(j.secret)
 }
 
+// IssuePlatformAdmin issues a token with IsPlatformAdmin set to true.
+func (j *JWTIssuer) IssuePlatformAdmin(userID, orgID, role string) (string, error) {
+	now := time.Now()
+	claims := &Claims{
+		UserID:          userID,
+		OrgID:           orgID,
+		Role:            role,
+		IsPlatformAdmin: true,
+		RegisteredClaims: jwt.RegisteredClaims{
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(j.ttl)),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(j.secret)
+}
+
 // IssueOnboarding issues a 15-minute token for the post-registration wizard.
 // Role="onboarding", no org_id.
 func (j *JWTIssuer) IssueOnboarding(userID string) (string, error) {
