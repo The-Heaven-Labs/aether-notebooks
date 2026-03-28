@@ -1,16 +1,10 @@
 import { test, expect } from '@playwright/test'
+import { registerAndOnboard } from './helpers'
 
-// Helper: register + login to get a session
+// Helper: register + onboard to get a session
 async function loginAsNewUser(page: import('@playwright/test').Page) {
-  const ts = Date.now()
-  await page.goto('/login')
-  await page.getByRole('link', { name: /register/i }).click()
-  await page.getByPlaceholder(/email/i).fill(`nav-test-${ts}@example.com`)
-  await page.getByPlaceholder(/password/i).fill('testpass123')
-  await page.getByPlaceholder(/name/i).fill('Nav Tester')
-  await page.getByPlaceholder(/org/i).fill(`NavOrg-${ts}`)
-  await page.getByRole('button', { name: /register/i }).click()
-  await page.waitForURL('/')
+  const ts = Date.now().toString()
+  await registerAndOnboard(page, ts)
 }
 
 test.describe('Navigation', () => {
