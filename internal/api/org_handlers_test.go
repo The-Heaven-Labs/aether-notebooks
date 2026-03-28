@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/api"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,7 +47,7 @@ func TestRegisterOldFlowBackcompat(t *testing.T) {
 }
 
 // createTestOrgAndAdmin registers a user with org_name (backcompat flow) and returns (orgID, token).
-func createTestOrgAndAdmin(t *testing.T, s *api.Server) (string, string) {
+func createTestOrgAndAdmin(t *testing.T, s http.Handler) (string, string) {
 	t.Helper()
 	email := fmt.Sprintf("admin-%d@test.com", time.Now().UnixNano())
 	orgName := fmt.Sprintf("Test Org %d", time.Now().UnixNano())
@@ -68,7 +67,7 @@ func createTestOrgAndAdmin(t *testing.T, s *api.Server) (string, string) {
 }
 
 // createTestInvite POSTs to /api/v1/members/invite and returns the invite token string.
-func createTestInvite(t *testing.T, s *api.Server, orgID, adminToken, email, role string) string {
+func createTestInvite(t *testing.T, s http.Handler, orgID, adminToken, email, role string) string {
 	t.Helper()
 	body := fmt.Sprintf(`{"email":%q,"role":%q}`, email, role)
 	req := httptest.NewRequest("POST", "/api/v1/members/invite", bytes.NewBufferString(body))
