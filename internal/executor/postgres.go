@@ -8,6 +8,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// normalizeValue converts pgx native types that JSON-marshal poorly into
+// friendlier representations (e.g. [16]byte UUID → "xxxxxxxx-xxxx-…").
+func normalizeValue(v interface{}) interface{} {
+	switch t := v.(type) {
+	case [16]byte:
+		return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+			t[0:4], t[4:6], t[6:8], t[8:10], t[10:16])
+	default:
+		return v
+	}
+}
+
 type PostgresExecutor struct {
 	pool *pgxpool.Pool
 }
@@ -53,6 +65,9 @@ func (p *PostgresExecutor) Execute(ctx context.Context, query string, params map
 		values, err := rows.Values()
 		if err != nil {
 			return nil, fmt.Errorf("scan row: %w", err)
+		}
+		for i, v := range values {
+			values[i] = normalizeValue(v)
 		}
 		resultRows = append(resultRows, values)
 		count++
