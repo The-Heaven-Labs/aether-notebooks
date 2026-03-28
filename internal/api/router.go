@@ -16,6 +16,7 @@ type Server struct {
 	hub           *Hub
 	mux           *http.ServeMux
 	oidcProviders map[string]auth.OIDCProvider
+	attachmentDir string
 }
 
 func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, oidcProviders map[string]auth.OIDCProvider) *Server {
@@ -36,6 +37,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }
 
+// SetAttachmentDir sets the directory where uploaded attachments are stored.
+func (s *Server) SetAttachmentDir(dir string) {
+	s.attachmentDir = dir
+}
+
 func (s *Server) routes() {
 	authMW := AuthMiddleware(s.jwt)
 
@@ -45,6 +51,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/auth/register", s.handleRegister)
 	s.mux.HandleFunc("GET /api/v1/auth/oidc/{provider}", s.handleOIDCLogin)
 	s.mux.HandleFunc("GET /api/v1/auth/oidc/{provider}/callback", s.handleOIDCCallback)
+
+	// Onboarding routes (require auth but allow onboarding role)
+	s.mux.Handle("POST /api/v1/auth/org/create", authMW(http.HandlerFunc(s.handleOrgCreate)))
+	s.mux.Handle("POST /api/v1/auth/org/join", authMW(http.HandlerFunc(s.handleOrgJoin)))
+	// Invite routes (org admin)
+	s.mux.Handle("POST /api/v1/members/invite", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateInvite))))
+	s.mux.Handle("POST /api/v1/members/invite-link", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateInviteLink))))
 
 	// Notebook routes
 	s.mux.Handle("POST /api/v1/notebooks", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateNotebook))))
@@ -93,6 +106,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PUT /internal/yjs/{notebook_id}", s.handleInternalYjsPut)
 	s.mux.HandleFunc("GET /internal/auth/validate", s.handleInternalAuthValidate)
 
+	// Attachment routes
+	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/attachments", authMW(RequireRole("editor")(http.HandlerFunc(s.handleUploadAttachment))))
+	s.mux.Handle("GET /api/v1/notebooks/{notebook_id}/attachments", authMW(http.HandlerFunc(s.handleListAttachments)))
+	s.mux.Handle("GET /api/v1/attachments/{id}", authMW(http.HandlerFunc(s.handleGetAttachment)))
+	s.mux.Handle("DELETE /api/v1/attachments/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDeleteAttachment))))
+
 	// Connector routes
 	s.mux.Handle("POST /api/v1/connectors", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateConnector))))
 	s.mux.Handle("POST /api/v1/connectors/test", authMW(http.HandlerFunc(s.handleTestConnectorConfig)))
@@ -101,6 +120,15 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/connectors/{id}/test", authMW(http.HandlerFunc(s.handleTestConnector)))
 	s.mux.Handle("GET /api/v1/connectors/{id}/schema", authMW(http.HandlerFunc(s.handleConnectorSchema)))
 	s.mux.Handle("GET /api/v1/connectors/{id}/databases", authMW(http.HandlerFunc(s.handleListConnectorDatabases)))
+
+	// Template routes
+	s.mux.Handle("POST /api/v1/templates", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateTemplate))))
+	s.mux.Handle("GET /api/v1/templates", authMW(http.HandlerFunc(s.handleListTemplates)))
+	s.mux.Handle("DELETE /api/v1/templates/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleDeleteTemplate))))
+
+	// Platform admin routes
+	s.mux.Handle("GET /api/v1/admin/orgs", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminListOrgs))))
+	s.mux.Handle("GET /api/v1/admin/users", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminListUsers))))
 
 	// Audit routes
 	s.mux.Handle("GET /api/v1/audit", authMW(RequireRole("admin")(http.HandlerFunc(s.handleListAuditLogs))))
