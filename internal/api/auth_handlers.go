@@ -140,16 +140,27 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// Check for domain-based auto-join
 	domain := emailDomain(req.Email)
 	var autoJoinOrgID, autoJoinRole string
-	s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT org_id, 'viewer' FROM org_allowed_domains WHERE domain = $1 AND auto_join = true LIMIT 1`,
 		domain,
 	).Scan(&autoJoinOrgID, &autoJoinRole)
+	if err != nil && err != pgx.ErrNoRows {
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
 
 	if autoJoinOrgID != "" {
-		s.db.Pool.Exec(ctx,
+		if _, execErr := s.db.Pool.Exec(ctx,
 			`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'viewer') ON CONFLICT DO NOTHING`,
 			autoJoinOrgID, userID,
-		)
+		); execErr != nil {
+			// Log the error but fall through to issue an onboarding token instead
+			fmt.Printf("auto-join org_members insert failed: %v\n", execErr)
+			autoJoinOrgID = ""
+		}
+	}
+
+	if autoJoinOrgID != "" {
 		token, err := s.jwt.Issue(userID, autoJoinOrgID, "viewer")
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to issue token")

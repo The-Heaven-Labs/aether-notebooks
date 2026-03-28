@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/heavenlabs/hnb/internal/audit"
+	"github.com/jackc/pgx/v5"
 )
 
 type orgCreateRequest struct {
@@ -124,34 +125,44 @@ func (s *Server) handleOrgJoin(w http.ResponseWriter, r *http.Request) {
 	var orgID, role string
 
 	if req.InviteToken != "" {
-		// Validate invite from org_invites
-		var inviteID string
-		var expiresAt time.Time
-		var acceptedAt *time.Time
+		// Validate invite from org_invites (Fix 3: also fetch email column)
+		var inviteEmail string
 		err := s.db.Pool.QueryRow(ctx,
-			`SELECT id, org_id, role, expires_at, accepted_at FROM org_invites WHERE token = $1`,
+			`SELECT org_id, role, email FROM org_invites WHERE token = $1 AND accepted_at IS NULL AND expires_at > now()`,
 			req.InviteToken,
-		).Scan(&inviteID, &orgID, &role, &expiresAt, &acceptedAt)
+		).Scan(&orgID, &role, &inviteEmail)
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusBadRequest, "invalid, expired, or already used invite token")
+			return
+		}
 		if err != nil {
-			writeError(w, http.StatusNotFound, "invalid invite token")
-			return
-		}
-		if acceptedAt != nil {
-			writeError(w, http.StatusConflict, "invite already used")
-			return
-		}
-		if time.Now().After(expiresAt) {
-			writeError(w, http.StatusGone, "invite expired")
+			writeError(w, http.StatusInternalServerError, "database error")
 			return
 		}
 
-		// Mark invite as accepted
-		_, err = s.db.Pool.Exec(ctx,
-			`UPDATE org_invites SET accepted_at = now() WHERE id = $1`,
-			inviteID,
+		// Fix 3: Look up the user's email and compare to the invite's email
+		var userEmail string
+		err = s.db.Pool.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, claims.UserID).Scan(&userEmail)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		if userEmail != inviteEmail {
+			writeError(w, http.StatusForbidden, "this invite was issued to a different email address")
+			return
+		}
+
+		// Fix 4: Atomically mark invite as accepted; detect TOCTOU race via RowsAffected
+		tag, err := s.db.Pool.Exec(ctx,
+			`UPDATE org_invites SET accepted_at = now() WHERE token = $1 AND accepted_at IS NULL`,
+			req.InviteToken,
 		)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to accept invite")
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			writeError(w, http.StatusConflict, "invite already used")
 			return
 		}
 	} else if req.InviteLinkToken != "" {
@@ -227,6 +238,11 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 	if req.Role == "" {
 		req.Role = "viewer"
 	}
+	validRoles := map[string]bool{"viewer": true, "editor": true, "admin": true}
+	if !validRoles[req.Role] {
+		writeError(w, http.StatusBadRequest, "role must be viewer, editor, or admin")
+		return
+	}
 
 	token, err := generateSecureToken(32)
 	if err != nil {
@@ -274,6 +290,11 @@ func (s *Server) handleCreateInviteLink(w http.ResponseWriter, r *http.Request) 
 	}
 	if req.Role == "" {
 		req.Role = "viewer"
+	}
+	validRolesLink := map[string]bool{"viewer": true, "editor": true, "admin": true}
+	if !validRolesLink[req.Role] {
+		writeError(w, http.StatusBadRequest, "role must be viewer, editor, or admin")
+		return
 	}
 
 	token, err := generateSecureToken(32)

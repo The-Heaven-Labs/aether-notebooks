@@ -41,7 +41,7 @@ func ClaimsFromContext(ctx context.Context) *auth.Claims {
 
 // RequireRole returns middleware that enforces a minimum role level.
 func RequireRole(minRole string) func(http.Handler) http.Handler {
-	roleLevel := map[string]int{"viewer": 0, "editor": 1, "admin": 2}
+	roleLevel := map[string]int{"onboarding": -1, "viewer": 0, "editor": 1, "admin": 2}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			claims := ClaimsFromContext(r.Context())
