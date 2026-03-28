@@ -18,6 +18,7 @@ export function TopBar() {
   const name = localStorage.getItem('hnb_user_name') ?? ''
   const email = localStorage.getItem('hnb_user_email') ?? ''
   const orgName = localStorage.getItem('hnb_org_name') ?? ''
+  const isPlatformAdmin = localStorage.getItem('hnb_is_platform_admin') === 'true'
   const initials = name ? name[0].toUpperCase() : email ? email[0].toUpperCase() : '?'
 
   useEffect(() => {
@@ -38,6 +39,9 @@ export function TopBar() {
         <span style={styles.appName}>Heaven's Notebooks</span>
       </Link>
       <div style={styles.spacer} />
+      {isPlatformAdmin && (
+        <Link to="/admin" style={styles.adminLink}>Admin</Link>
+      )}
       <div style={styles.right} ref={ref}>
         <span style={styles.orgName}>{orgName}</span>
         <button style={styles.avatar} onClick={() => setOpen(o => !o)} aria-label="Profile menu">
@@ -107,6 +111,15 @@ const styles: Record<string, React.CSSProperties> = {
   dropdownHeader: { padding: '12px 14px', borderBottom: '1px solid var(--border-light)' },
   dropdownName: { fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' },
   dropdownEmail: { fontSize: 12, color: 'var(--text-muted)', marginTop: 2 },
+  adminLink: {
+    fontSize: 12,
+    fontWeight: 500,
+    color: 'var(--text-muted)',
+    textDecoration: 'none',
+    padding: '4px 8px',
+    borderRadius: 4,
+    border: '1px solid var(--border)',
+  },
   signOut: {
     width: '100%', padding: '10px 14px',
     background: 'transparent', border: 'none',
