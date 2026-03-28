@@ -1,12 +1,13 @@
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { api } from '../api/client'
 import type { Notebook } from '../types'
 import { AppShell } from '../components/AppShell'
 import { LayoutGrid, List, BookOpen } from 'lucide-react'
 
 export function HomePage() {
+  useEffect(() => { document.title = "Notebooks — Heaven's Notebooks" }, [])
   const qc = useQueryClient()
   const [newTitle, setNewTitle] = useState('')
   const [creating, setCreating] = useState(false)

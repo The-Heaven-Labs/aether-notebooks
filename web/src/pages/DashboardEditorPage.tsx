@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ArrowLeft, X } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -56,6 +56,11 @@ export function DashboardEditorPage() {
     queryFn: () => api.get<DashboardWithWidgets>(`/api/v1/dashboards/${id}`),
     enabled: !!id,
   })
+
+  useEffect(() => {
+    if (dashboard) document.title = `${dashboard.title} — Heaven's Notebooks`
+    return () => { document.title = "Heaven's Notebooks" }
+  }, [dashboard])
 
   const { data: notebooks = [] } = useQuery({
     queryKey: ['notebooks'],

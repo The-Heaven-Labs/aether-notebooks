@@ -7,6 +7,7 @@ import { AppShell } from '../components/AppShell'
 const PAGE_SIZE = 50
 
 export function AuditPage() {
+  useEffect(() => { document.title = "Audit — Heaven's Notebooks" }, [])
   const [offset, setOffset] = useState(0)
   const [entries, setEntries] = useState<AuditEntry[]>([])
   const [actionFilter, setActionFilter] = useState('')

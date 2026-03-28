@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Connector } from '../types'
@@ -24,6 +24,7 @@ const defaultForm = (): ConnectorForm => ({
 })
 
 export function ConnectorsPage() {
+  useEffect(() => { document.title = "Connectors — Heaven's Notebooks" }, [])
   const qc = useQueryClient()
   const [creating, setCreating] = useState(false)
   const [form, setForm] = useState<ConnectorForm>(defaultForm())
