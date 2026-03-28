@@ -376,6 +376,7 @@ export function NotebookPage() {
         {showSchema && (
           <SchemaBrowser
             connectorId={schemaConnectorId}
+            connector={connectors.find(c => c.id === schemaConnectorId) ?? null}
             onClose={() => setShowSchema(false)}
           />
         )}

@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { X, ChevronDown, ChevronRight, Table2, Columns } from 'lucide-react'
+import { DatabasePicker } from './DatabasePicker'
+import type { Connector } from '../types'
 
 interface SchemaColumn {
   name: string
@@ -19,15 +21,24 @@ interface SchemaResponse {
 
 interface Props {
   connectorId: string | null
+  connector?: Connector | null
   onClose: () => void
 }
 
-export function SchemaBrowser({ connectorId, onClose }: Props) {
+export function SchemaBrowser({ connectorId, connector, onClose }: Props) {
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set())
+  const [activeDatabase, setActiveDatabase] = useState<string | null>(null)
+
+  const hasFixedDatabase = !!connector?.config?.database
+  const schemaUrl = connectorId
+    ? activeDatabase && !hasFixedDatabase
+      ? `/api/v1/connectors/${connectorId}/schema?database=${encodeURIComponent(activeDatabase)}`
+      : `/api/v1/connectors/${connectorId}/schema`
+    : ''
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['connector-schema', connectorId],
-    queryFn: () => api.get<SchemaResponse>(`/api/v1/connectors/${connectorId}/schema`),
+    queryKey: ['connector-schema', connectorId, activeDatabase],
+    queryFn: () => api.get<SchemaResponse>(schemaUrl),
     enabled: !!connectorId,
   })
 
@@ -51,6 +62,14 @@ export function SchemaBrowser({ connectorId, onClose }: Props) {
           <X size={13} />
         </button>
       </div>
+
+      {connectorId && !hasFixedDatabase && (
+        <DatabasePicker
+          connectorId={connectorId}
+          value={activeDatabase}
+          onChange={setActiveDatabase}
+        />
+      )}
 
       <div style={styles.content}>
         {!connectorId ? (
