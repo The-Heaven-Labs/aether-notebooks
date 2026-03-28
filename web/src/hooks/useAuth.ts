@@ -32,7 +32,8 @@ type User = { user_id: string; org_id: string; role: string } | null
 interface AuthContextValue {
   user: User
   login: (email: string, password: string) => Promise<void>
-  register: (email: string, password: string, name: string, orgName: string) => Promise<void>
+  /** Returns onboarding_token if account was created without an org, null otherwise */
+  register: (email: string, password: string, name: string) => Promise<string | null>
   logout: () => void
   isAuthenticated: boolean
 }
@@ -53,15 +54,23 @@ export function useAuthProvider(): AuthContextValue {
     }
   }, [])
 
-  const register = useCallback(async (email: string, password: string, name: string, orgName: string) => {
-    const resp = await apiRegister(email, password, name, orgName)
-    localStorage.setItem('hnb_user_name', resp.user.name)
-    localStorage.setItem('hnb_user_email', resp.user.email)
-    localStorage.setItem('hnb_org_name', resp.org.name)
-    const claims = parseJwt(resp.token)
-    if (claims) {
-      setUser({ user_id: claims.sub as string, org_id: claims.org_id as string, role: claims.role as string })
+  const register = useCallback(async (email: string, password: string, name: string): Promise<string | null> => {
+    const resp = await apiRegister(email, password, name)
+    if (resp.onboarding_token) {
+      localStorage.setItem('hnb_onboarding_token', resp.onboarding_token)
+      return resp.onboarding_token
     }
+    if (resp.token && resp.user && resp.org) {
+      const { token, user, org } = resp as Required<typeof resp>
+      localStorage.setItem('hnb_user_name', user.name)
+      localStorage.setItem('hnb_user_email', user.email)
+      localStorage.setItem('hnb_org_name', org.name)
+      const claims = parseJwt(token)
+      if (claims) {
+        setUser({ user_id: claims.sub as string, org_id: claims.org_id as string, role: claims.role as string })
+      }
+    }
+    return null
   }, [])
 
   const logout = useCallback(() => {
