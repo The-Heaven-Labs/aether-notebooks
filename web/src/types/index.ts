@@ -94,7 +94,7 @@ export interface Widget {
   dashboard_id: string
   notebook_id: string
   cell_id: string
-  type: 'chart' | 'table' | 'text' | 'metric'
+  type: 'chart' | 'table' | 'text' | 'metric' | 'date_picker' | 'date_range' | 'freetext' | 'number' | 'multi_select'
   layout: { row: number; col: number; width: number; height: number }
   config: Record<string, unknown>
   created_at: string

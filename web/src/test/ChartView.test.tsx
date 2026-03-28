@@ -2,7 +2,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { ChartView } from '../components/ChartView'
 
 // Recharts uses ResizeObserver — mock it for jsdom
-global.ResizeObserver = class {
+globalThis.ResizeObserver = class {
   observe() {}
   unobserve() {}
   disconnect() {}
