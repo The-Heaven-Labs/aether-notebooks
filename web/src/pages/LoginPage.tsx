@@ -11,7 +11,6 @@ export function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
-  const [orgName, setOrgName] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -34,10 +33,15 @@ export function LoginPage() {
     try {
       if (mode === 'login') {
         await login(email, password)
+        navigate('/')
       } else {
-        await register(email, password, name, orgName)
+        const onboardingToken = await register(email, password, name)
+        if (onboardingToken) {
+          navigate('/onboarding')
+        } else {
+          navigate('/')
+        }
       }
-      navigate('/')
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Something went wrong')
     } finally {
@@ -112,17 +116,6 @@ export function LoginPage() {
                     onChange={(e) => setName(e.target.value)}
                     required
                     placeholder="Jane Doe"
-                  />
-                </div>
-                <div style={styles.field}>
-                  <label style={styles.label}>Organization</label>
-                  <input
-                    style={styles.input}
-                    type="text"
-                    value={orgName}
-                    onChange={(e) => setOrgName(e.target.value)}
-                    required
-                    placeholder="Acme Analytics"
                   />
                 </div>
               </>

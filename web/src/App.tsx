@@ -13,6 +13,7 @@ import { MembersPage } from './pages/MembersPage'
 import { AdminPage } from './pages/AdminPage'
 import { PublicDashboardPage } from './pages/PublicDashboardPage'
 import { PresentationPage } from './pages/PresentationPage'
+import { OrgOnboardingPage } from './pages/OrgOnboardingPage'
 import './styles/theme.css'
 
 const queryClient = new QueryClient({
@@ -94,6 +95,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route path="/onboarding" element={<OrgOnboardingPage />} />
       <Route path="/public/dashboards/:token" element={<PublicDashboardPage />} />
       <Route path="/notebooks/:id/present" element={<PresentationPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
