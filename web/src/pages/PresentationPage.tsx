@@ -15,7 +15,7 @@ export function PresentationPage() {
   const [index, setIndex] = useState(0)
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
+    const token = localStorage.getItem('hnb_token')
     fetch(`/api/v1/notebooks/${id}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {}
     })
