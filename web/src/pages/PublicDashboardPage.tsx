@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import type { Dashboard, Widget } from '../types'
+import { EmptyState } from '../components/EmptyState'
 
 interface DashboardWithWidgets extends Dashboard {
   widgets: Widget[]
@@ -68,12 +69,10 @@ export function PublicDashboardPage() {
 
       <main style={styles.body}>
         {widgets.length === 0 ? (
-          <div style={styles.empty}>
-            <p style={styles.emptyText}>No widgets in this dashboard</p>
-            <p style={styles.emptySubtext}>
-              The dashboard owner hasn't added any widgets yet.
-            </p>
-          </div>
+          <EmptyState
+            title="No widgets in this dashboard"
+            text="The dashboard owner hasn't added any widgets yet."
+          />
         ) : (
           <div style={styles.grid}>
             {widgets.map((widget) => (
@@ -197,25 +196,6 @@ const styles: Record<string, React.CSSProperties> = {
     margin: '0 auto',
     padding: '40px 40px',
     width: '100%',
-  },
-  empty: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 300,
-    gap: 8,
-  },
-  emptyText: {
-    fontSize: 16,
-    fontWeight: 600,
-    color: 'var(--text-secondary)',
-    margin: 0,
-  },
-  emptySubtext: {
-    fontSize: 13,
-    color: 'var(--text-muted)',
-    margin: 0,
   },
   grid: {
     display: 'grid',

@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
 import { AppShell } from '../components/AppShell'
+import { EmptyState } from '../components/EmptyState'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { DashboardParamsProvider, useDashboardParams } from '../contexts/DashboardParamsContext'
 
@@ -284,12 +285,10 @@ function DashboardContent({ id }: { id: string }) {
 
         {/* Data widgets grid */}
         {dataWidgets.length === 0 && inputWidgets.length === 0 ? (
-          <div style={styles.empty}>
-            <p style={styles.emptyText}>No widgets yet</p>
-            <p style={styles.emptySubtext}>
-              Add widgets in the dashboard editor to display notebook cell outputs.
-            </p>
-          </div>
+          <EmptyState
+            title="No widgets yet"
+            text="Add widgets in the dashboard editor to display notebook cell outputs."
+          />
         ) : dataWidgets.length === 0 ? null : (
           <div style={styles.grid}>
             {dataWidgets.map((widget) => (
@@ -391,25 +390,6 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: 'var(--shadow-sm)',
     minWidth: 200,
     flex: '0 1 auto',
-  },
-  empty: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 300,
-    gap: 8,
-  },
-  emptyText: {
-    fontSize: 16,
-    fontWeight: 600,
-    color: 'var(--text-secondary)',
-    margin: 0,
-  },
-  emptySubtext: {
-    fontSize: 13,
-    color: 'var(--text-muted)',
-    margin: '0 0 16px',
   },
   grid: {
     display: 'grid',
