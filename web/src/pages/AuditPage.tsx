@@ -5,6 +5,7 @@ import type { AuditEntry } from '../types'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { SectionHeader } from '../components/SectionHeader'
+import { StyledTable } from '../components/StyledTable'
 
 const PAGE_SIZE = 50
 
@@ -68,24 +69,14 @@ export function AuditPage() {
               text={actionFilter ? 'No entries match that action filter.' : 'The audit log is empty.'}
             />
           ) : (
-            <div style={styles.tableWrap}>
-              <table style={styles.table}>
-                <thead>
-                  <tr>
-                    <th style={styles.th}>Timestamp</th>
-                    <th style={styles.th}>Action</th>
-                    <th style={styles.th}>Resource Type</th>
-                    <th style={styles.th}>Resource</th>
-                    <th style={styles.th}>User</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((entry) => (
-                    <AuditRow key={entry.id} entry={entry} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <StyledTable
+              headers={['Timestamp', 'Action', 'Resource Type', 'Resource', 'User']}
+              thStyle={{ fontSize: 12, background: 'var(--bg-primary)', letterSpacing: 'normal', borderBottom: '1px solid var(--border)' }}
+            >
+              {filtered.map((entry) => (
+                <AuditRow key={entry.id} entry={entry} />
+              ))}
+            </StyledTable>
           )}
 
           {!isLoading && hasMore && !actionFilter && (
@@ -153,28 +144,6 @@ const styles: Record<string, React.CSSProperties> = {
   stateText: {
     fontSize: 14,
     color: 'var(--text-secondary)',
-  },
-  tableWrap: {
-    background: 'white',
-    borderRadius: 10,
-    border: '1px solid var(--border)',
-    boxShadow: 'var(--shadow-sm)',
-    overflow: 'hidden',
-  },
-  table: {
-    width: '100%',
-    borderCollapse: 'collapse',
-  },
-  th: {
-    padding: '11px 16px',
-    textAlign: 'left',
-    fontSize: 12,
-    fontWeight: 600,
-    color: 'var(--text-muted)',
-    background: 'var(--bg-primary)',
-    borderBottom: '1px solid var(--border)',
-    letterSpacing: '0.04em',
-    textTransform: 'uppercase',
   },
   tr: {
     borderBottom: '1px solid var(--border-light)',

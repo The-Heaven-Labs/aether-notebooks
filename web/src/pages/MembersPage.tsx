@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Member } from '../types'
 import { useAuth } from '../hooks/useAuth'
+import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
 
 const ROLES = ['admin', 'editor', 'viewer'] as const
 
@@ -105,67 +106,56 @@ export function MembersPage() {
         {removeError && <p style={styles.errorBanner}>{removeError}</p>}
 
         {/* Members table */}
-        <div style={styles.tableWrap}>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                {['Name', 'Email', 'Role', 'Joined', 'Actions'].map((h) => (
-                  <th key={h} style={styles.th}>{h !== 'Actions' ? h : ''}</th>
-                ))}
+        <StyledTable headers={['Name', 'Email', 'Role', 'Joined', 'Actions']}>
+          {isLoading && (
+            <tr>
+              <td colSpan={5} style={styles.emptyCell}>Loading members…</td>
+            </tr>
+          )}
+          {!isLoading && members.length === 0 && (
+            <tr>
+              <td colSpan={5} style={styles.emptyCell}>No members found.</td>
+            </tr>
+          )}
+          {members.map((m) => {
+            const isSelf = user?.user_id === m.user_id
+            const joinedDate = new Date(m.joined_at).toLocaleDateString([], {
+              month: 'short', day: 'numeric', year: 'numeric',
+            })
+            return (
+              <tr key={m.user_id} style={rowStyle}>
+                <td style={cellStyle}>
+                  <strong>{m.name || '—'}</strong>
+                  {isSelf && <span style={styles.selfBadge}>you</span>}
+                </td>
+                <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{m.email}</td>
+                <td style={cellStyle}>
+                  <select
+                    style={isSelf ? styles.roleSelectDisabled : styles.roleSelectInline}
+                    value={m.role}
+                    disabled={isSelf}
+                    onChange={(e) => updateRole.mutate({ userId: m.user_id, role: e.target.value })}
+                  >
+                    {ROLES.map((r) => (
+                      <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
+                    ))}
+                  </select>
+                </td>
+                <td style={{ ...cellStyle, color: 'var(--text-muted)', fontSize: 12 }}>{joinedDate}</td>
+                <td style={styles.tdActions}>
+                  <button
+                    type="button"
+                    style={isSelf ? styles.removeBtnDisabled : styles.removeBtn}
+                    disabled={isSelf || removeMember.isPending}
+                    onClick={() => handleRemove(m)}
+                  >
+                    Remove
+                  </button>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {isLoading && (
-                <tr>
-                  <td colSpan={5} style={styles.emptyCell}>Loading members…</td>
-                </tr>
-              )}
-              {!isLoading && members.length === 0 && (
-                <tr>
-                  <td colSpan={5} style={styles.emptyCell}>No members found.</td>
-                </tr>
-              )}
-              {members.map((m) => {
-                const isSelf = user?.user_id === m.user_id
-                const joinedDate = new Date(m.joined_at).toLocaleDateString([], {
-                  month: 'short', day: 'numeric', year: 'numeric',
-                })
-                return (
-                  <tr key={m.user_id} style={styles.tr}>
-                    <td style={styles.td}>
-                      <strong>{m.name || '—'}</strong>
-                      {isSelf && <span style={styles.selfBadge}>you</span>}
-                    </td>
-                    <td style={{ ...styles.td, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{m.email}</td>
-                    <td style={styles.td}>
-                      <select
-                        style={isSelf ? styles.roleSelectDisabled : styles.roleSelectInline}
-                        value={m.role}
-                        disabled={isSelf}
-                        onChange={(e) => updateRole.mutate({ userId: m.user_id, role: e.target.value })}
-                      >
-                        {ROLES.map((r) => (
-                          <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td style={{ ...styles.td, color: 'var(--text-muted)', fontSize: 12 }}>{joinedDate}</td>
-                    <td style={styles.tdActions}>
-                      <button
-                        type="button"
-                        style={isSelf ? styles.removeBtnDisabled : styles.removeBtn}
-                        disabled={isSelf || removeMember.isPending}
-                        onClick={() => handleRemove(m)}
-                      >
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+            )
+          })}
+        </StyledTable>
       </div>
     </AppShell>
   )
@@ -220,26 +210,6 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid #fcd0d0',
     borderRadius: 6,
   },
-  tableWrap: {
-    borderRadius: 10,
-    overflow: 'hidden',
-    border: '1px solid var(--border)',
-    boxShadow: 'var(--shadow-sm)',
-  },
-  table: { width: '100%', borderCollapse: 'collapse', background: 'white' },
-  th: {
-    padding: '10px 16px',
-    textAlign: 'left',
-    fontSize: 11,
-    fontWeight: 700,
-    color: 'var(--text-muted)',
-    letterSpacing: '0.06em',
-    borderBottom: '1px solid var(--border-light)',
-    background: 'var(--bg-secondary)',
-    textTransform: 'uppercase',
-  },
-  tr: { borderBottom: '1px solid var(--border-light)' },
-  td: { padding: '12px 16px', fontSize: 13, color: 'var(--text-primary)' },
   tdActions: { padding: '8px 16px', textAlign: 'right' as const },
   emptyCell: {
     padding: '40px 16px',
