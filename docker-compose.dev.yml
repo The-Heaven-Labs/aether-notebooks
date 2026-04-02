@@ -1,0 +1,120 @@
+name: hnb-dev
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Development stack — a single `docker compose -f docker-compose.dev.yml up`
+# starts every service with live-reload:
+#
+#   • api    — Go server via Air; rebuilds on any *.go change
+#   • relay  — Hocuspocus TypeScript server via tsx --watch
+#   • web    — Vite dev server with HMR
+#   • postgres, redis — infrastructure (data persists in named volumes)
+#
+# Browser entry point: http://localhost:5173
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Infrastructure ───────────────────────────────────────────────────────
+
+  hnb-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hnb
+      POSTGRES_PASSWORD: hnb_dev
+      POSTGRES_DB: hnb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hnb -d hnb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  hnb-redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  # ── API server (Go + Air hot-reload) ─────────────────────────────────────
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8080:8080"
+    environment:
+      HNB_DATABASE_URL: postgres://hnb:hnb_dev@hnb-postgres:5432/hnb?sslmode=disable
+      HNB_REDIS_URL: redis://hnb-redis:6379
+      HNB_MASTER_KEY: dev-master-key-change-in-production
+      HNB_JWT_SECRET: dev-jwt-secret-change-in-production
+    volumes:
+      # Mount entire repo so Air can watch and rebuild on Go file changes.
+      # Named volumes for the Go caches survive container restarts, making
+      # incremental rebuilds fast.
+      - .:/app
+      - go-build-cache:/root/.cache/go-build
+      - go-mod-cache:/go/pkg/mod
+    # alpine's busybox includes nc — check that the Go server is actually
+    # accepting connections before dependants try to proxy through it.
+    # start_period gives Air time to compile on the first run (~20-40s).
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 8080"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 60s
+    depends_on:
+      hnb-postgres:
+        condition: service_healthy
+      hnb-redis:
+        condition: service_started
+
+  # ── Hocuspocus relay (TypeScript + tsx --watch) ───────────────────────────
+
+  relay:
+    build:
+      context: ./relay
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3001:3001"
+    environment:
+      HNB_API_URL: http://api:8080
+      HNB_RELAY_PORT: "3001"
+    volumes:
+      # Mount the whole relay directory; keep node_modules in a named volume
+      # so the container-built binaries aren't overwritten by the host.
+      - ./relay:/app
+      - relay-node-modules:/app/node_modules
+    depends_on:
+      - api
+
+  # ── Web dev server (Vite HMR) ────────────────────────────────────────────
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173"
+    environment:
+      # Vite (running inside this container) proxies /api and /internal to the
+      # API service on the internal Docker network.
+      API_URL: http://api:8080
+    volumes:
+      - ./web:/app
+      - web-node-modules:/app/node_modules
+    depends_on:
+      api:
+        condition: service_healthy
+      relay:
+        condition: service_started
+
+volumes:
+  pgdata:
+  go-build-cache:
+  go-mod-cache:
+  relay-node-modules:
+  web-node-modules:

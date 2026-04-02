@@ -1,0 +1,78 @@
+<h2>30 improvements → 8 feature areas</h2>
+<p class="subtitle">These are the natural groupings from IMPROVEMENTS.md. Select any areas you want to deprioritize or defer — the rest will become the plan.</p>
+
+<div class="options" data-multiselect>
+  <div class="option" data-choice="nav" onclick="toggleSelect(this)">
+    <div class="letter">1</div>
+    <div class="content">
+      <h3>Navigation &amp; Shell UI</h3>
+      <p>Sidebar with icons, notebook title/description header, list view (vs grid), profile menu, members page layout fix</p>
+      <p><span class="label">5 items · frontend only</span></p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="celleditor" onclick="toggleSelect(this)">
+    <div class="letter">2</div>
+    <div class="content">
+      <h3>Cell Editor &amp; UX</h3>
+      <p>Collapse/hide code, cell title &amp; description, markdown syntax highlighting, live markdown preview, paste images (Ctrl+V), cell history / rewind, unique cell slug/ID</p>
+      <p><span class="label">7 items · frontend + minor backend</span></p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="connectors" onclick="toggleSelect(this)">
+    <div class="letter">3</div>
+    <div class="content">
+      <h3>Connectors &amp; Execution</h3>
+      <p>Notebook-level default connector (cells inherit), connector creation without mandatory DB field, discover databases/tables in UI, fix output type rendering (Float, icons)</p>
+      <p><span class="label">4 items · backend + frontend</span></p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="collab" onclick="toggleSelect(this)">
+    <div class="letter">4</div>
+    <div class="content">
+      <h3>Real-time Collaboration</h3>
+      <p>Show real name/email on collaboration cursors instead of "Anonymous"</p>
+      <p><span class="label">1 item · relay + frontend</span></p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="charts" onclick="toggleSelect(this)">
+    <div class="letter">5</div>
+    <div class="content">
+      <h3>Charts &amp; Dashboard Widgets</h3>
+      <p>More chart types (bar, scatter, pie…), full chart config control, dashboard input widgets (date picker, multiselect, freetext, number)</p>
+      <p><span class="label">2 items · frontend heavy</span></p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="content" onclick="toggleSelect(this)">
+    <div class="letter">6</div>
+    <div class="content">
+      <h3>Content &amp; Knowledge Features</h3>
+      <p>Named query variables across cells, templates &amp; snippets, attachments (local → object storage), parameters at cell level, presentation mode, markdown image sizing/positioning, header anchors</p>
+      <p><span class="label">7 items · backend + frontend</span></p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="admin" onclick="toggleSelect(this)">
+    <div class="letter">7</div>
+    <div class="content">
+      <h3>Admin &amp; Audit</h3>
+      <p>Audit log shows resource/user names (not IDs), org/tenant model with global admin + org admins</p>
+      <p><span class="label">2 items · backend + frontend</span></p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="keyboard" onclick="toggleSelect(this)">
+    <div class="letter">8</div>
+    <div class="content">
+      <h3>Keyboard &amp; Accessibility</h3>
+      <p>Full keyboard navigation in dashboards &amp; notebooks (JupyterLab-style shortcuts)</p>
+      <p><span class="label">1 item · frontend only</span></p>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:1.5rem">Click to mark any groups you want to <strong>exclude or defer</strong>. Leave all unselected to include everything.</p>

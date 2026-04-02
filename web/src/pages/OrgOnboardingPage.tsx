@@ -133,7 +133,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   card: {
     background: 'var(--bg-primary)',
-    borderRadius: 14,
+    borderRadius: 12,
     border: '1px solid var(--border)',
     padding: '40px 36px',
     width: '100%',
@@ -213,7 +213,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   input: {
     padding: '9px 12px',
-    borderRadius: 7,
+    borderRadius: 6,
     border: '1.5px solid var(--border)',
     fontSize: 14,
     outline: 'none',
@@ -234,7 +234,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--accent)',
     color: 'white',
     border: 'none',
-    borderRadius: 7,
+    borderRadius: 6,
     fontSize: 14,
     fontWeight: 600,
     cursor: 'pointer',

@@ -139,7 +139,7 @@ const inputStyles: Record<string, React.CSSProperties> = {
   input: {
     padding: '7px 10px',
     border: '1px solid var(--border)',
-    borderRadius: 7,
+    borderRadius: 6,
     fontSize: 13,
     fontFamily: 'var(--font-sans)',
     background: 'white',
