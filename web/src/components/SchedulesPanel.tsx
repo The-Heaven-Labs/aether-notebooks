@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { PanelHeader } from './PanelHeader'
 import type { Schedule, Parameter } from '../types'
 
 interface Props {
@@ -102,9 +103,7 @@ export function SchedulesPanel({ notebookId, parameters: _parameters }: Props) {
 
   return (
     <div style={styles.panel}>
-      <div style={styles.header}>
-        <span style={styles.headerTitle}>Schedules</span>
-      </div>
+      <PanelHeader title="Schedules" style={{ padding: '10px 24px' }} />
 
       <div style={styles.content}>
         {/* Create form */}
@@ -200,21 +199,6 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     flexShrink: 0,
     maxHeight: 360,
-  },
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '10px 24px',
-    borderBottom: '1px solid var(--border)',
-    flexShrink: 0,
-  },
-  headerTitle: {
-    fontSize: 12,
-    fontWeight: 600,
-    color: 'var(--text-secondary)',
-    textTransform: 'uppercase',
-    letterSpacing: '0.06em',
   },
   content: {
     flex: 1,

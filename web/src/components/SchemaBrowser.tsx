@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
-import { X, ChevronDown, ChevronRight, Table2, Columns } from 'lucide-react'
+import { ChevronDown, ChevronRight, Table2, Columns } from 'lucide-react'
 import { DatabasePicker } from './DatabasePicker'
+import { PanelHeader } from './PanelHeader'
 import type { Connector } from '../types'
 
 interface SchemaColumn {
@@ -56,12 +57,7 @@ export function SchemaBrowser({ connectorId, connector, onClose }: Props) {
 
   return (
     <div style={styles.sidebar}>
-      <div style={styles.header}>
-        <span style={styles.headerTitle}>Schema Browser</span>
-        <button style={{ ...styles.closeBtn, display: 'flex', alignItems: 'center' }} onClick={onClose} title="Close schema browser">
-          <X size={13} />
-        </button>
-      </div>
+      <PanelHeader title="Schema Browser" onClose={onClose} closeTitle="Close schema browser" />
 
       {connectorId && !hasFixedDatabase && (
         <DatabasePicker
@@ -136,31 +132,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
-  },
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '10px 14px',
-    borderBottom: '1px solid var(--border)',
-    flexShrink: 0,
-  },
-  headerTitle: {
-    fontSize: 12,
-    fontWeight: 600,
-    color: 'var(--text-secondary)',
-    textTransform: 'uppercase',
-    letterSpacing: '0.06em',
-  },
-  closeBtn: {
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    color: 'var(--text-muted)',
-    fontSize: 12,
-    padding: '2px 4px',
-    borderRadius: 4,
-    lineHeight: 1,
   },
   content: {
     flex: 1,

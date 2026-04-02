@@ -1,5 +1,5 @@
 import type { CellVersion } from '../types'
-import { X } from 'lucide-react'
+import { PanelHeader } from './PanelHeader'
 
 interface Props {
   versions: CellVersion[]
@@ -16,10 +16,7 @@ export function HistoryPanel({ versions, currentSource, onRestore, onClose }: Pr
 
   return (
     <div style={styles.panel}>
-      <div style={styles.header}>
-        <span style={styles.title}>Cell History</span>
-        <button style={{ ...styles.closeBtn, display: 'flex', alignItems: 'center' }} onClick={onClose} title="Close history"><X size={13} /></button>
-      </div>
+      <PanelHeader title="Cell History" onClose={onClose} closeTitle="Close history" style={{ borderBottom: '1px solid var(--border-light)', position: 'sticky', top: 0, background: 'white' }} />
       {versions.length === 0 && <p style={styles.empty}>No history yet</p>}
       {versions.map((v, i) => {
         const isCurrent = v.source === currentSource && i === 0
@@ -40,9 +37,6 @@ export function HistoryPanel({ versions, currentSource, onRestore, onClose }: Pr
 
 const styles: Record<string, React.CSSProperties> = {
   panel: { width: 300, borderLeft: '1px solid var(--border)', background: 'white', display: 'flex', flexDirection: 'column', flexShrink: 0, overflowY: 'auto' },
-  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--border-light)', position: 'sticky', top: 0, background: 'white' },
-  title: { fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' },
-  closeBtn: { background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)' },
   empty: { padding: 16, fontSize: 13, color: 'var(--text-muted)', textAlign: 'center' },
   item: { padding: '10px 14px', borderBottom: '1px solid var(--border-light)' },
   itemHeader: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 },
