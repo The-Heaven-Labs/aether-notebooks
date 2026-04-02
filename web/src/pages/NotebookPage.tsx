@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ChevronsRight, ChevronLeft, X, Loader2 } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
+import { LoadingPage } from '../components/LoadingPage'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Notebook, Cell, Output, Connector, Parameter, CellVersion } from '../types'
@@ -324,12 +325,12 @@ export function NotebookPage() {
 
   if (isLoading) return (
     <AppShell noPadding>
-      <div style={styles.loadingPage}><div style={styles.loadingDot} /></div>
+      <LoadingPage />
     </AppShell>
   )
   if (!notebook) return (
     <AppShell noPadding>
-      <div style={styles.loadingPage}><p style={{ color: 'var(--text-secondary)' }}>Notebook not found</p></div>
+      <LoadingPage message="Notebook not found" />
     </AppShell>
   )
 
@@ -585,19 +586,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--bg-primary)',
     display: 'flex',
     flexDirection: 'column',
-  },
-  loadingPage: {
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  loadingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: '50%',
-    background: 'var(--accent)',
-    opacity: 0.5,
   },
   header: {
     display: 'flex',
