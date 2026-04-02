@@ -6,6 +6,7 @@ import { AppShell } from '../components/AppShell'
 import { Check, X } from 'lucide-react'
 import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
 import { FormCard } from '../components/FormCard'
+import { StatusBadge } from '../components/StatusBadge'
 
 type ConnectorType = 'postgres' | 'clickhouse'
 
@@ -162,9 +163,11 @@ export function ConnectorsPage() {
                 {formTesting ? 'Testing…' : 'Test Connection'}
               </button>
               {formTest && (
-                <span style={{ fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4, color: formTest.ok ? '#2d7d46' : '#c0392b' }}>
-                  {formTest.ok ? <><Check size={12} /> Connected</> : <><X size={12} /> {formTest.error ?? 'Failed'}</>}
-                </span>
+                <StatusBadge
+                  status={formTest.ok ? 'success' : 'error'}
+                  label={formTest.ok ? 'Connected' : (formTest.error ?? 'Failed')}
+                  icon={formTest.ok ? <Check size={12} /> : <X size={12} />}
+                />
               )}
               <span style={{ flex: 1 }} />
               <button type="button" style={styles.cancelBtn} onClick={() => { setCreating(false); setForm(defaultForm()); setFormTest(null) }}>Cancel</button>
@@ -197,11 +200,13 @@ export function ConnectorsPage() {
                 </td>
                 <td style={cellStyle}>
                   {test ? (
-                    <span style={{ color: test.ok ? '#2d7d46' : '#c0392b', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                      {test.ok ? <><Check size={12} /> Connected</> : <><X size={12} /> {test.error ?? 'Failed'}</>}
-                    </span>
+                    <StatusBadge
+                      status={test.ok ? 'success' : 'error'}
+                      label={test.ok ? 'Connected' : (test.error ?? 'Failed')}
+                      icon={test.ok ? <Check size={12} /> : <X size={12} />}
+                    />
                   ) : (
-                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>
+                    <StatusBadge status="neutral" label="—" />
                   )}
                 </td>
                 <td style={styles.tdActions}>
