@@ -6,6 +6,7 @@ import type { Member } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
 import { FormCard } from '../components/FormCard'
+import { ErrorBanner } from '../components/ErrorBanner'
 
 const ROLES = ['admin', 'editor', 'viewer'] as const
 
@@ -98,15 +99,16 @@ export function MembersPage() {
               {inviteMember.isPending ? 'Inviting…' : 'Invite'}
             </button>
           </div>
-          {inviteError && <p style={styles.errorText}>{inviteError}</p>}
+          {inviteError && <ErrorBanner message={inviteError} onDismiss={() => setInviteError(null)} />}
         </FormCard>
 
         {/* Error banners for role/remove */}
-        {roleError && <p style={styles.errorBanner}>{roleError}</p>}
-        {removeError && <p style={styles.errorBanner}>{removeError}</p>}
+        {roleError && <ErrorBanner message={roleError} onDismiss={() => setRoleError(null)} />}
+        {removeError && <ErrorBanner message={removeError} onDismiss={() => setRemoveError(null)} />}
 
         {/* Members table */}
-        <StyledTable headers={['Name', 'Email', 'Role', 'Joined', 'Actions']}>
+        <div style={{ marginTop: 24 }}>
+          <StyledTable headers={['Name', 'Email', 'Role', 'Joined', 'Actions']}>
           {isLoading && (
             <tr>
               <td colSpan={5} style={styles.emptyCell}>Loading members…</td>
@@ -155,7 +157,8 @@ export function MembersPage() {
               </tr>
             )
           })}
-        </StyledTable>
+          </StyledTable>
+        </div>
       </div>
     </AppShell>
   )
@@ -190,16 +193,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     fontWeight: 600,
     cursor: 'pointer',
-  },
-  errorText: { color: 'var(--error)', fontSize: 12, margin: '10px 0 0' },
-  errorBanner: {
-    color: 'var(--error)',
-    fontSize: 12,
-    marginBottom: 12,
-    padding: '8px 12px',
-    background: 'var(--error-light)',
-    border: '1px solid var(--error-border)',
-    borderRadius: 6,
   },
   tdActions: { padding: '8px 16px', textAlign: 'right' as const },
   emptyCell: {
