@@ -83,7 +83,7 @@ export function HomePage() {
               <button type="button" style={styles.cancelBtn} onClick={() => setCreating(false)}>Cancel</button>
             </div>
           )}
-          {createError && <p style={{ color: '#c0392b', fontSize: 12, margin: '0 0 12px' }}>{createError}</p>}
+          {createError && <p style={{ color: 'var(--error-full)', fontSize: 12, margin: '0 0 12px' }}>{createError}</p>}
 
           {notebooks.length === 0 && !creating ? (
             <EmptyState

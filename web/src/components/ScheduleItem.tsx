@@ -112,7 +112,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 5,
     fontSize: 12,
     fontWeight: 500,
-    color: '#c0392b',
+    color: 'var(--error-full)',
     cursor: 'pointer',
     flexShrink: 0,
   },
@@ -132,7 +132,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   errorText: {
     fontSize: 12,
-    color: '#c0392b',
+    color: 'var(--error-full)',
     marginTop: 2,
   },
 }

@@ -71,60 +71,73 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
   const showLegend = effectiveConfig.showLegend ?? true
   const showGrid = effectiveConfig.showGrid ?? true
 
+  const tooltipStyle: React.CSSProperties = {
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    fontSize: 12,
+    color: 'var(--text-primary)',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+  }
+  const legendStyle: React.CSSProperties = {
+    fontSize: 12,
+    color: 'var(--text-muted)',
+  }
+
   const renderChart = () => {
     const commonProps = { data: chartData, margin: { top: 8, right: 16, bottom: 8, left: 0 } }
     switch (effectiveConfig.chartType ?? 'bar') {
       case 'bar':
         return (
           <BarChart {...commonProps}>
-            {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="#333" />}
-            <XAxis dataKey={effectiveXAxis} tick={{ fontSize: 11, fill: '#888' }} />
-            <YAxis tick={{ fontSize: 11, fill: '#888' }} />
-            <Tooltip />
-            {showLegend && <Legend />}
-            {effectiveYAxes.map((y, i) => <Bar key={y} dataKey={y} fill={COLORS[i % COLORS.length]} />)}
+            {showGrid && <CartesianGrid strokeDasharray="0" stroke="var(--border)" vertical={false} />}
+            <XAxis dataKey={effectiveXAxis} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} width={40} />
+            <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'var(--border)', opacity: 0.4 }} />
+            {showLegend && <Legend wrapperStyle={legendStyle} />}
+            {effectiveYAxes.map((y, i) => <Bar key={y} dataKey={y} fill={COLORS[i % COLORS.length]} radius={[3, 3, 0, 0]} />)}
           </BarChart>
         )
       case 'stacked_bar':
         return (
           <BarChart {...commonProps}>
-            {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="#333" />}
-            <XAxis dataKey={effectiveXAxis} tick={{ fontSize: 11, fill: '#888' }} />
-            <YAxis tick={{ fontSize: 11, fill: '#888' }} />
-            <Tooltip />
-            {showLegend && <Legend />}
-            {effectiveYAxes.map((y, i) => <Bar key={y} dataKey={y} stackId="a" fill={COLORS[i % COLORS.length]} />)}
+            {showGrid && <CartesianGrid strokeDasharray="0" stroke="var(--border)" vertical={false} />}
+            <XAxis dataKey={effectiveXAxis} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} width={40} />
+            <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'var(--border)', opacity: 0.4 }} />
+            {showLegend && <Legend wrapperStyle={legendStyle} />}
+            {effectiveYAxes.map((y, i) => <Bar key={y} dataKey={y} stackId="a" fill={COLORS[i % COLORS.length]} radius={i === effectiveYAxes.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]} />)}
           </BarChart>
         )
       case 'line':
         return (
           <LineChart {...commonProps}>
-            {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="#333" />}
-            <XAxis dataKey={effectiveXAxis} tick={{ fontSize: 11, fill: '#888' }} />
-            <YAxis tick={{ fontSize: 11, fill: '#888' }} />
-            <Tooltip />
-            {showLegend && <Legend />}
+            {showGrid && <CartesianGrid strokeDasharray="0" stroke="var(--border)" vertical={false} />}
+            <XAxis dataKey={effectiveXAxis} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} width={40} />
+            <Tooltip contentStyle={tooltipStyle} />
+            {showLegend && <Legend wrapperStyle={legendStyle} />}
             {effectiveYAxes.map((y, i) => (
-              <Line key={y} type="monotone" dataKey={y} stroke={COLORS[i % COLORS.length]} dot={false} />
+              <Line key={y} type="monotone" dataKey={y} stroke={COLORS[i % COLORS.length]} strokeWidth={2} dot={{ r: 3, strokeWidth: 0 }} activeDot={{ r: 5 }} />
             ))}
           </LineChart>
         )
       case 'area':
         return (
           <AreaChart {...commonProps}>
-            {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="#333" />}
-            <XAxis dataKey={effectiveXAxis} tick={{ fontSize: 11, fill: '#888' }} />
-            <YAxis tick={{ fontSize: 11, fill: '#888' }} />
-            <Tooltip />
-            {showLegend && <Legend />}
+            {showGrid && <CartesianGrid strokeDasharray="0" stroke="var(--border)" vertical={false} />}
+            <XAxis dataKey={effectiveXAxis} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} width={40} />
+            <Tooltip contentStyle={tooltipStyle} />
+            {showLegend && <Legend wrapperStyle={legendStyle} />}
             {effectiveYAxes.map((y, i) => (
-              <Area key={y} type="monotone" dataKey={y} stroke={COLORS[i % COLORS.length]} fill={COLORS[i % COLORS.length]} fillOpacity={0.3} />
+              <Area key={y} type="monotone" dataKey={y} stroke={COLORS[i % COLORS.length]} strokeWidth={2} fill={COLORS[i % COLORS.length]} fillOpacity={0.15} dot={false} activeDot={{ r: 5 }} />
             ))}
           </AreaChart>
         )
       case 'pie':
       case 'donut': {
-        const innerRadius = effectiveConfig.chartType === 'donut' ? '60%' : 0
+        const innerRadius = effectiveConfig.chartType === 'donut' ? '55%' : 0
         return (
           <PieChart>
             <Pie
@@ -133,28 +146,29 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
               nameKey={effectiveXAxis}
               cx="50%"
               cy="50%"
-              outerRadius="80%"
+              outerRadius="75%"
               innerRadius={innerRadius}
+              paddingAngle={2}
             >
-              {chartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+              {chartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} stroke="none" />)}
             </Pie>
-            <Tooltip />
-            {showLegend && <Legend />}
+            <Tooltip contentStyle={tooltipStyle} />
+            {showLegend && <Legend wrapperStyle={legendStyle} />}
           </PieChart>
         )
       }
       case 'scatter':
         return (
           <ScatterChart {...commonProps}>
-            {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="#333" />}
-            <XAxis dataKey={effectiveXAxis} name={effectiveXAxis} tick={{ fontSize: 11, fill: '#888' }} />
-            <YAxis dataKey={effectiveYAxes[0]} name={effectiveYAxes[0]} tick={{ fontSize: 11, fill: '#888' }} />
-            <Tooltip />
+            {showGrid && <CartesianGrid strokeDasharray="0" stroke="var(--border)" />}
+            <XAxis dataKey={effectiveXAxis} name={effectiveXAxis} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
+            <YAxis dataKey={effectiveYAxes[0]} name={effectiveYAxes[0]} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} width={40} />
+            <Tooltip contentStyle={tooltipStyle} cursor={{ strokeDasharray: '3 3', stroke: 'var(--border)' }} />
             <Scatter data={chartData} fill={COLORS[0]} />
           </ScatterChart>
         )
       default:
-        return <div style={{ color: '#888', padding: 16 }}>Unknown chart type</div>
+        return <div style={{ color: 'var(--text-muted)', padding: 16 }}>Unknown chart type</div>
     }
   }
 
@@ -189,8 +203,8 @@ const styles: Record<string, React.CSSProperties> = {
   wrap: {
     width: '100%',
     padding: '12px 16px 4px',
-    borderTop: '1px solid var(--border-light)',
-    background: 'white',
+    borderTop: '1px solid var(--border)',
+    background: 'var(--bg-primary)',
   },
   configBtn: {
     fontSize: 11,

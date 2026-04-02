@@ -55,7 +55,7 @@ export function AuditPage() {
 
           {error && (
             <div style={styles.state}>
-              <p style={{ ...styles.stateText, color: '#c0392b' }}>Failed to load audit log: {(error as Error).message}</p>
+              <p style={{ ...styles.stateText, color: 'var(--error-full)' }}>Failed to load audit log: {(error as Error).message}</p>
             </div>
           )}
           {isLoading ? (

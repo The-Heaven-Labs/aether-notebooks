@@ -125,6 +125,12 @@ tasks:
     cmds:
       - npm run dev
 
+  dev:storybook:
+    desc: Start Storybook component explorer (port 6006)
+    dir: web
+    cmds:
+      - npm run storybook
+
   # ── Testing ──────────────────────────────────────────────────────────────────
 
   test:
