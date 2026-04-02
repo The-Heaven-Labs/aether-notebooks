@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, X } from 'lucide-react'
+import { useParams } from 'react-router-dom'
+import { AppShell } from '../components/AppShell'
+import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
@@ -264,19 +265,11 @@ export function DashboardEditorPage() {
       {/* Main body */}
       <div style={styles.body}>
         {widgets.length === 0 ? (
-          <div style={styles.empty}>
-            <p style={styles.emptyText}>No widgets yet</p>
-            <p style={styles.emptySubtext}>
-              Add widgets to display notebook cell outputs in this dashboard.
-            </p>
-            <button
-              type="button"
-              style={styles.addWidgetBtn}
-              onClick={() => setShowPicker(true)}
-            >
-              + Add Widget
-            </button>
-          </div>
+          <EmptyState
+            title="No widgets yet"
+            text="Add widgets to display notebook cell outputs in this dashboard."
+            action={{ label: '+ Add Widget', onClick: () => setShowPicker(true) }}
+          />
         ) : (
           <div style={styles.grid}>
             {widgets.map((widget) => (
@@ -495,25 +488,6 @@ const styles: Record<string, React.CSSProperties> = {
     margin: '0 auto',
     padding: '40px 40px',
     width: '100%',
-  },
-  empty: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 300,
-    gap: 8,
-  },
-  emptyText: {
-    fontSize: 16,
-    fontWeight: 600,
-    color: 'var(--text-secondary)',
-    margin: 0,
-  },
-  emptySubtext: {
-    fontSize: 13,
-    color: 'var(--text-muted)',
-    margin: '0 0 16px',
   },
   grid: {
     display: 'grid',
