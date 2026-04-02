@@ -14,17 +14,30 @@ export function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  // Handle OIDC callback: pick up ?token= from the URL query string
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const token = params.get('token')
-    if (token) {
-      setToken(token)
-      // Clean up the URL and navigate to home
-      window.history.replaceState({}, '', window.location.pathname)
-      navigate('/')
-    }
-  }, [navigate])
+// Handle OIDC callback: pick up ?token= from the URL query string
+useEffect(() => {
+  const params = new URLSearchParams(window.location.search)
+  const token = params.get('token')
+  if (token) {
+    setToken(token)
+    // Fetch user info after OIDC login
+    fetch('/api/v1/users/me', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(res => res.json())
+      .then(user => {
+        if (user.name) localStorage.setItem('hnb_user_name', user.name)
+        if (user.email) localStorage.setItem('hnb_user_email', user.email)
+        if (user.is_platform_admin) localStorage.setItem('hnb_is_platform_admin', 'true')
+      })
+      .catch(err => console.warn('[OIDC] Failed to fetch user info:', err))
+      .finally(() => {
+        // Clean up the URL and navigate to home
+        window.history.replaceState({}, '', window.location.pathname)
+        navigate('/')
+      })
+  }
+}, [navigate])
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
