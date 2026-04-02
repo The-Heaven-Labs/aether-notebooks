@@ -134,3 +134,13 @@ a:hover {
 .nav-item:hover:not(.nav-item-active) {
   background: rgba(255, 255, 255, 0.05);
 }
+
+/* Skeleton loading animation */
+@keyframes skeleton-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}

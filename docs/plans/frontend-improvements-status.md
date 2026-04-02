@@ -59,7 +59,7 @@
 
 ---
 
-## 🟡 Phase 2: UX Improvements (IN PROGRESS - 3/5 tasks)
+## 🟡 Phase 2: UX Improvements (COMPLETE - 5/5 tasks)
 
 ### Task 5: Fix Collaboration Cursor Names ✅
 
@@ -106,7 +106,7 @@
   - AuditPage.tsx
 - Removed unused error styles fromMembersPage
 
-**Commit**: Ready to commit
+**Commit**: `Progress: Task 7 complete - ErrorBanner component created and applied`
 
 ---
 
@@ -120,17 +120,22 @@
 - Removed duplicated empty state styles from DashboardEditorPage, DashboardPage, PublicDashboardPage
 - Table inline empty states left as-is (appropriate for table context)
 
-**Effort**: 30 minutes
+**Commit**: `Progress: Task 8 complete - consolidate empty state styling using EmptyState component`
 
 ---
 
-### Task 9: Add Loading Skeletons ⏳
+### Task 9: Add Loading Skeletons ✅
 
-**Status**: 🟡 Not Started
+**Status**: ✅ Complete
 
-**File**: Create `web/src/components/Skeleton.tsx`
-
-**Why needed**: Better perceived performance during loading
+**What was done**:
+- Created `web/src/components/LoadingSpinner.tsx` - Simple loading dot component
+- Created `web/src/components/LoadingPage.tsx` - Full-page loading component with optional message
+- Created `web/src/components/Skeleton.tsx` - Skeleton loading components (Skeleton, SkeletonRow, SkeletonCard)
+- Added skeleton pulse animation to theme.css
+- Updated NotebookPage to use LoadingPage component
+- Updated DashboardsPage to use LoadingSpinner component
+- Removed duplicate loading styles from pages
 
 **Effort**: 2 hours
 
@@ -180,8 +185,8 @@
 | 2 | 5. Collab Cursors | 🟡 Medium | 30m | ✅ Complete |
 | 2 | 6. Notebook Header | 🟡 Medium | 2-3h | ✅ Complete |
 | 2 | 7. ErrorBanner | 🟡 Medium | 1h | ✅ Complete |
-| 2 | 8. Empty States | 🟡 Medium | 30m | ⏳ Next |
-| 2 | 9. Skeletons | 🟡 Medium | 2h | 🟡 Not started |
+| 2 | 8. Empty States | 🟡 Medium | 30m | ✅ Complete |
+| 2 | 9. Skeletons | 🟡 Medium | 2h | ✅ Complete |
 | 3 | 10-14. Features | 🟢 Low | Varies | 🟢 Not started |
 | 4 | 15-17. Components | 🟢 Low | Varies | 🟢 Not started |
 
@@ -189,18 +194,23 @@
 
 ## Next Actions
 
-1. **Commit Task 7**: ErrorBanner complete
-   ```bash
-   git add web/src/pages web/src/components/ErrorBanner.tsx
-   git commit -m "refactor: create ErrorBanner component, replace inline error styles"
-   ```
+**Phase1 ✅ COMPLETE** - Visual Quality
+**Phase 2 ✅ COMPLETE** - UX Improvements
 
-2. **Task 8**: Verify EmptyState usage (30m)
-   - Search for inline "no data" displays
-   - Ensure consistent usage
+**Phase 3: Features (Next)**
 
-3. **Task 9**: Create loading skeletons (2h)
-   - Build reusable Skeleton component
-   - Add to pages with loading states
+1. **Task 10**: Markdown Anchor Links (#5) - 2 hours
+   - Add auto-generated anchor IDs to markdown headings
+   - Enable deep linking to sections in markdown cells
 
-4. **Continue to Phase 3**: Features when Phase 2 complete
+2. **Task 11**: Named Query Variables (#13) - 4-6 hours
+   - Requires backend support for named parameters
+
+3. **Task 12**: Image Customization (#17) - 3 hours
+   - Allow users to customize image sizing/alignment
+
+4. **Task 13**: Audit Log UX - Show Names (#26) - 2 hours
+   - Requires backend join to show user names
+
+5. **Task 14**: Profile Menu Enhancement (#28) - 3 hours
+   - Add user preferences menu
