@@ -201,7 +201,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   errorText: {
     fontSize: 12,
-    color: '#c0392b',
+    color: 'var(--error-full)',
     marginTop: 2,
   },
   statusRow: {

@@ -12,7 +12,12 @@
   --accent-hover: #6a5e96;
   --accent-light: #ede9f8;
   --success: #5a9970;
+  --success-full: #27ae60;
+  --success-light: #e8f5e9;
   --error: #b85c5c;
+  --error-full: #c0392b;
+  --error-light: #fdf3f3;
+  --error-border: #fcd0d0;
   --warning: #b89a4a;
   --nav-bg: #1a1814;
   --nav-text: #e8e4dc;

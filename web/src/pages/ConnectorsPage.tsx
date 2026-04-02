@@ -249,5 +249,5 @@ const styles: Record<string, React.CSSProperties> = {
   tdActions: { padding: '8px 16px', textAlign: 'right' as const },
   badge: { fontSize: 11, fontFamily: 'var(--font-mono)', background: 'var(--bg-secondary)', padding: '2px 7px', borderRadius: 3, border: '1px solid var(--border-light)' },
   actionBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 },
-  deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid transparent', borderRadius: 4, background: 'transparent', cursor: 'pointer', color: '#c0392b' },
+  deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid transparent', borderRadius: 4, background: 'transparent', cursor: 'pointer', color: 'var(--error-full)' },
 }

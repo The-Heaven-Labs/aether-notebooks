@@ -373,9 +373,9 @@ export function NotebookPage() {
       </div>
 
       {mutationError && (
-        <div style={{ background: '#fff0f0', borderBottom: '1px solid #fcd0d0', padding: '6px 24px', fontSize: 12, color: '#c0392b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ background: 'var(--error-light)', borderBottom: '1px solid var(--error-border)', padding: '6px 24px', fontSize: 12, color: 'var(--error-full)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           {mutationError}
-          <button type="button" onClick={() => setMutationError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c0392b', fontSize: 14, padding: 0, display: 'flex', alignItems: 'center' }}><X size={14} /></button>
+          <button type="button" onClick={() => setMutationError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error-full)', fontSize: 14, padding: 0, display: 'flex', alignItems: 'center' }}><X size={14} /></button>
         </div>
       )}
 

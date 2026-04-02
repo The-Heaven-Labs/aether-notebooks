@@ -298,9 +298,9 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--error)',
     fontSize: 13,
     padding: '8px 12px',
-    background: '#fdf3f3',
+    background: 'var(--error-light)',
     borderRadius: 6,
-    border: '1px solid #f5d0d0',
+    border: '1px solid var(--error-border)',
   },
   submit: {
     padding: '11px',
