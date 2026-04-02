@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import type { Connector } from '../types'
 import { AppShell } from '../components/AppShell'
 import { Check, X } from 'lucide-react'
+import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
 
 type ConnectorType = 'postgres' | 'clickhouse'
 
@@ -181,60 +182,49 @@ export function ConnectorsPage() {
         )}
 
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
-        <div style={styles.tableWrap}>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                {['Name', 'Type', 'Host', 'Database', 'Status', ''].map((h) => (
-                  <th key={h} style={styles.th}>{h}</th>
-                ))}
+        <StyledTable headers={['Name', 'Type', 'Host', 'Database', 'Status', '']}>
+          {connectors.map((c) => {
+            const test = testResults[c.id]
+            return (
+              <tr key={c.id} style={rowStyle}>
+                <td style={cellStyle}><strong>{c.name}</strong></td>
+                <td style={cellStyle}><code style={styles.badge}>{c.type}</code></td>
+                <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                  {c.config?.host ?? '—'}
+                </td>
+                <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                  {c.config?.database ?? '—'}
+                </td>
+                <td style={cellStyle}>
+                  {test ? (
+                    <span style={{ color: test.ok ? '#2d7d46' : '#c0392b', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                      {test.ok ? <><Check size={12} /> Connected</> : <><X size={12} /> {test.error ?? 'Failed'}</>}
+                    </span>
+                  ) : (
+                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>
+                  )}
+                </td>
+                <td style={styles.tdActions}>
+                  <button type="button" style={styles.actionBtn} onClick={() => testConnector(c.id)}>Test</button>
+                  <button
+                    type="button"
+                    style={styles.deleteBtn}
+                    onClick={() => { if (confirm(`Delete "${c.name}"?`)) deleteConnector.mutate(c.id) }}
+                  >
+                    Delete
+                  </button>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {connectors.map((c) => {
-                const test = testResults[c.id]
-                return (
-                  <tr key={c.id} style={styles.tr}>
-                    <td style={styles.td}><strong>{c.name}</strong></td>
-                    <td style={styles.td}><code style={styles.badge}>{c.type}</code></td>
-                    <td style={{ ...styles.td, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                      {c.config?.host ?? '—'}
-                    </td>
-                    <td style={{ ...styles.td, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                      {c.config?.database ?? '—'}
-                    </td>
-                    <td style={styles.td}>
-                      {test ? (
-                        <span style={{ color: test.ok ? '#2d7d46' : '#c0392b', fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                          {test.ok ? <><Check size={12} /> Connected</> : <><X size={12} /> {test.error ?? 'Failed'}</>}
-                        </span>
-                      ) : (
-                        <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>
-                      )}
-                    </td>
-                    <td style={styles.tdActions}>
-                      <button type="button" style={styles.actionBtn} onClick={() => testConnector(c.id)}>Test</button>
-                      <button
-                        type="button"
-                        style={styles.deleteBtn}
-                        onClick={() => { if (confirm(`Delete "${c.name}"?`)) deleteConnector.mutate(c.id) }}
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })}
-              {connectors.length === 0 && (
-                <tr>
-                  <td colSpan={6} style={{ ...styles.td, textAlign: 'center', color: 'var(--text-muted)', padding: 40 }}>
-                    No connectors yet. Add one to connect to your databases.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+            )
+          })}
+          {connectors.length === 0 && (
+            <tr>
+              <td colSpan={6} style={{ ...cellStyle, textAlign: 'center', color: 'var(--text-muted)', padding: 40 }}>
+                No connectors yet. Add one to connect to your databases.
+              </td>
+            </tr>
+          )}
+        </StyledTable>
       </div>
     </AppShell>
   )
@@ -260,11 +250,6 @@ const styles: Record<string, React.CSSProperties> = {
   testBtn: { padding: '6px 16px', background: 'transparent', border: '1px solid var(--accent)', borderRadius: 5, fontSize: 13, cursor: 'pointer', color: 'var(--accent)', fontWeight: 600 },
   cancelBtn: { padding: '6px 16px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 5, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   saveBtn: { padding: '6px 16px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: 5, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  tableWrap: { borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)' },
-  table: { width: '100%', borderCollapse: 'collapse', background: 'white' },
-  th: { padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.06em', borderBottom: '1px solid var(--border-light)', background: 'var(--bg-secondary)', textTransform: 'uppercase' },
-  tr: { borderBottom: '1px solid var(--border-light)' },
-  td: { padding: '12px 16px', fontSize: 13, color: 'var(--text-primary)' },
   tdActions: { padding: '8px 16px', textAlign: 'right' as const },
   badge: { fontSize: 11, fontFamily: 'var(--font-mono)', background: 'var(--bg-secondary)', padding: '2px 7px', borderRadius: 3, border: '1px solid var(--border-light)' },
   actionBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 },
