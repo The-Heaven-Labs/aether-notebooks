@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { api } from '../api/client'
 import type { Notebook } from '../types'
 import { AppShell } from '../components/AppShell'
+import { EmptyState } from '../components/EmptyState'
 import { LayoutGrid, List, BookOpen } from 'lucide-react'
 
 export function HomePage() {
@@ -90,14 +91,12 @@ export function HomePage() {
           {createError && <p style={{ color: '#c0392b', fontSize: 12, margin: '0 0 12px' }}>{createError}</p>}
 
           {notebooks.length === 0 && !creating ? (
-            <div style={styles.empty}>
-              <div style={styles.emptyIcon}><BookOpen size={32} /></div>
-              <p style={styles.emptyTitle}>No notebooks yet</p>
-              <p style={styles.emptyText}>Create your first notebook to start querying data.</p>
-              <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>
-                Create your first notebook
-              </button>
-            </div>
+            <EmptyState
+              icon={<BookOpen size={32} />}
+              title="No notebooks yet"
+              text="Create your first notebook to start querying data."
+              action={{ label: 'Create your first notebook', onClick: () => setCreating(true) }}
+            />
           ) : (
             <div style={layout === 'grid' ? styles.grid : styles.list}>
               {notebooks.map((nb) =>
@@ -243,37 +242,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     cursor: 'pointer',
     color: 'var(--text-secondary)',
-  },
-  empty: {
-    textAlign: 'center',
-    padding: '80px 0',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: 12,
-  },
-  emptyIcon: {
-    width: 56,
-    height: 56,
-    background: 'var(--bg-secondary)',
-    borderRadius: 14,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: 28,
-    color: 'var(--text-muted)',
-    marginBottom: 4,
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: 700,
-    color: 'var(--text-primary)',
-    letterSpacing: '-0.2px',
-  },
-  emptyText: {
-    fontSize: 14,
-    color: 'var(--text-secondary)',
-    marginBottom: 8,
   },
   layoutBtn: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'none', cursor: 'pointer', fontSize: 14 },
   list: { display: 'flex', flexDirection: 'column', gap: 8 },
