@@ -1,0 +1,26 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -buildvcs=false -o ./tmp/main ./cmd/hnb-server"
+  bin = "./tmp/main"
+  delay = 1000
+  exclude_dir = ["tmp", "bin", "web", "relay", "docs", "e2e", "migrations"]
+  include_ext = ["go"]
+  exclude_regex = ["_test\\.go$"]
+  log = "build-errors.log"
+  kill_delay = "0s"
+  send_interrupt = true
+
+[log]
+  time = true
+
+[color]
+  build   = "yellow"
+  runner  = "green"
+  watcher = "cyan"
+  app     = ""
+
+[screen]
+  clear_on_rebuild = false
+  keep_scroll      = true

@@ -177,7 +177,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--accent)',
     color: 'white',
     border: 'none',
-    borderRadius: 7,
+    borderRadius: 6,
     fontSize: 13,
     fontWeight: 600,
     cursor: 'pointer',
@@ -288,7 +288,7 @@ const styles: Record<string, React.CSSProperties> = {
   deleteBtn: {
     padding: '4px 10px',
     border: 'none',
-    borderRadius: 5,
+    borderRadius: 6,
     background: 'transparent',
     fontSize: 12,
     fontWeight: 500,

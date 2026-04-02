@@ -1,0 +1,30 @@
+- Instead of in the notebook view having only a small title on the side of the back button, add proper title and description on top of the page for each notebook
+- Add a lateral bar with icons (when hover, appear name, or expand to show icon + name). This bar should have the schema/catalog instead of the top bar
+- It should be possible to hide the code and show only the outputs of a cell, and also collapse the cell input + output if necessary
+- It should be possible to interact with a dashboard only with the keyboard. Mimic the shortcuts that are available in jupyterlab notebooks.
+- Inside markdown cells rendered, headers should have anchors that alter the page link for easier sharing. Also each cell should also have an anchor.
+- Connections should be made at notebook level, and cells would inherit it, but could be changed at cell level aswell. Make it a smaller icon in the cell that when clicked expands to the expected visualization
+- Lists (of notebooks or dashboards in the initial pages) should show the contents as rows/lines instead of grid layout (maybe keep the grid, but as an option, not the default)
+- The members page works differently to other pages, it will hide the top bar menu and show only the name and a button to go back
+- A few connectors neeed a database on creation time (like postgres, right?), but others should accept no database at creation time, and then at query time database would be selected.
+- There should be a history for cell input contents. A previous notebook/cell state should be rewindable
+- It should be possible to paste images inline into markdown cells with Ctrl + V from clipboard directly.
+- There should be a system to add attachments inside a notebook. Initially very simple, but later an object storage integration should be added
+- It should be possible to create queries as named "variables", and these variables should be usable across different cells in a notebook level
+- Have templates (for whole notebooks) and snippets (for cells) available for insert/creation based on it
+- It should be possible to have some kind of unique name/id for cells to, for instance, in an automation scenario with templated notebooks, automate the gathering of specific cell inputs and outputs, e.g. a conclusion. This should be independent of the type.
+- There should be more types of charts available. There should be a greater level of control in the configuration of these charts. It could be 2 ways: 1- Some presets and specific configurations available for the user; 2- Something more code-oriented where the user has full control over the chart. This flirts with the idea of executing custom code however, it needs to be analyzed what approach would make more sense here. 
+- Image support in the markdown should be more customizable, e.g. size of the image, position relative to the text etc.
+- Parameters should be supported both in a cell level and notebook level
+- Cells should have a title and description visible in the UI
+- Markdown editor should have syntax highlighting
+- Markdown cell should, while editing, render the line as the final product as you go to a new line. Only the line being edited should be in plain text mode
+- There should be a presentation mode right on the notebook. With markdown and the potential custom charts (maybe custom html + javascript altogether?), there should be a way to create presentations right from it (full page display with the content and navigation as "pages")
+- Connectors should have a way to discover available databases and tables. e.g., a simple show databases/tables + describe? It should be baked into the interface in Go
+- Output parts of code cells should support all major types. I can see that the current implementation doesnt support Float for example, which appears as unknown. Also, I think icons/svgs instead of the full text would work better (but showing text when hovering the icon)
+- Dashboards should have a few widgets available. These widgets would display data (output) or act as input for code, e.g., a date/datetime picker, date range, multi-select, freetext, number etc 
+- In audit log page, resource and user appear as IDs, which is not very good for users to understand clearly. Make it appear the name of the resources. (the actual log should also contain ID for disambiguation)
+- The collaboration cursors appear with "Anonymous" as names instead of the person name or email
+- There is no profile button/config in the menus
+- The whole org/account creation still feels weird as of now. Research what would be the optimal path to have different tenants, but have security for e.g., people not be able to enter arbitrary orgs. Something like a global admin and then org admins would likely make sense
+- I still cannot understand what is the logo you chose for the software. It does not look good.

@@ -189,7 +189,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '9px 28px',
     background: 'white',
     border: '1.5px solid var(--border)',
-    borderRadius: 7,
+    borderRadius: 6,
     fontSize: 13,
     fontWeight: 600,
     cursor: 'pointer',
