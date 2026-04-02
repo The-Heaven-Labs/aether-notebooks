@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import type { Dashboard } from '../types'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
+import { LoadingSpinner } from '../components/LoadingSpinner'
 import { SectionHeader } from '../components/SectionHeader'
 import { LayoutGrid, List, LayoutDashboard, X } from 'lucide-react'
 
@@ -89,7 +90,9 @@ export function DashboardsPage() {
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
 
         {isLoading ? (
-          <div style={styles.loading} />
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 0' }}>
+            <LoadingSpinner />
+          </div>
         ) : dashboards.length === 0 ? (
           <EmptyState
             title="No dashboards yet"
@@ -156,7 +159,6 @@ const styles: Record<string, React.CSSProperties> = {
   createInput: { flex: 1, maxWidth: 360, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 14, fontFamily: 'var(--font-sans)', background: 'white' },
   createBtn: { padding: '8px 20px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   cancelBtn: { padding: '8px 16px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
-  loading: { width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)', opacity: 0.5, margin: '80px auto' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 },
   card: {
     background: 'white',
