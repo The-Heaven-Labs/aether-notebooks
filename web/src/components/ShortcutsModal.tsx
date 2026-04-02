@@ -1,5 +1,5 @@
 import type React from 'react'
-import { X } from 'lucide-react'
+import { Modal } from './Modal'
 
 interface Props { onClose: () => void }
 
@@ -20,33 +20,22 @@ const SHORTCUTS = [
 
 export function ShortcutsModal({ onClose }: Props) {
   return (
-    <div style={styles.overlay} onClick={onClose}>
-      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
-        <div style={styles.header}>
-          <span style={styles.title}>Keyboard Shortcuts</span>
-          <button style={{ ...styles.close, display: 'flex', alignItems: 'center' }} onClick={onClose}><X size={14} /></button>
-        </div>
-        <table style={styles.table}>
-          <tbody>
-            {SHORTCUTS.map(({ key, action }) => (
-              <tr key={key}>
-                <td style={styles.key}><kbd style={styles.kbd}>{key}</kbd></td>
-                <td style={styles.action}>{action}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <Modal title="Keyboard Shortcuts" onClose={onClose}>
+      <table style={styles.table}>
+        <tbody>
+          {SHORTCUTS.map(({ key, action }) => (
+            <tr key={key}>
+              <td style={styles.key}><kbd style={styles.kbd}>{key}</kbd></td>
+              <td style={styles.action}>{action}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Modal>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
-  modal: { background: 'white', borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.2)', minWidth: 400, maxHeight: '80vh', overflow: 'auto' },
-  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border-light)' },
-  title: { fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' },
-  close: { background: 'transparent', border: 'none', fontSize: 14, cursor: 'pointer', color: 'var(--text-muted)' },
   table: { width: '100%', borderCollapse: 'collapse', padding: '8px 20px' },
   key: { padding: '8px 20px 8px', width: 160 },
   kbd: { fontFamily: 'var(--font-mono)', fontSize: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px' },
