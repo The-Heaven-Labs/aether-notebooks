@@ -59,6 +59,9 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/members/invite", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateInvite))))
 	s.mux.Handle("POST /api/v1/members/invite-link", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateInviteLink))))
 
+	// User routes
+	s.mux.Handle("GET /api/v1/users/me", authMW(http.HandlerFunc(s.handleGetCurrentUser)))
+
 	// Notebook routes
 	s.mux.Handle("POST /api/v1/notebooks", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateNotebook))))
 	s.mux.Handle("GET /api/v1/notebooks", authMW(http.HandlerFunc(s.handleListNotebooks)))

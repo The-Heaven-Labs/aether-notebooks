@@ -306,3 +306,26 @@ func slugify(name string) string {
 	}
 	return slug
 }
+
+func (s *Server) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	ctx := r.Context()
+
+	var user struct {
+		ID              string `json:"id"`
+		Email           string `json:"email"`
+		Name            string `json:"name"`
+		IsPlatformAdmin bool   `json:"is_platform_admin,omitempty"`
+	}
+
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT id, email, name, is_platform_admin FROM users WHERE id = $1`,
+		claims.UserID,
+	).Scan(&user.ID, &user.Email, &user.Name, &user.IsPlatformAdmin)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fetch user")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, user)
+}
