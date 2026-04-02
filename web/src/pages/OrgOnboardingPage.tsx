@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type React from 'react'
+import { ErrorBanner } from '../components/ErrorBanner'
 
 function finishOnboarding(data: { token: string; user: { name: string; email: string }; org: { name: string } }) {
   localStorage.setItem('hnb_token', data.token)
@@ -87,7 +88,7 @@ export function OrgOnboardingPage() {
               placeholder="Acme Analytics"
               autoFocus
             />
-            {error && <p style={styles.error}>{error}</p>}
+            {error && <ErrorBanner message={error} onDismiss={() => setError('')} />}
             <button style={styles.primaryBtn} onClick={createOrg} disabled={loading}>
               {loading ? 'Creating…' : 'Create organization'}
             </button>
@@ -108,7 +109,7 @@ export function OrgOnboardingPage() {
               placeholder="Paste your invite token here"
               autoFocus
             />
-            {error && <p style={styles.error}>{error}</p>}
+            {error && <ErrorBanner message={error} onDismiss={() => setError('')} />}
             <button style={styles.primaryBtn} onClick={joinOrg} disabled={loading}>
               {loading ? 'Joining…' : 'Join organization'}
             </button>

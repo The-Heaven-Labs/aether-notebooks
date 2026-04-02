@@ -6,6 +6,7 @@ import type { Notebook } from '../types'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { SectionHeader } from '../components/SectionHeader'
+import { ErrorBanner } from '../components/ErrorBanner'
 import { LayoutGrid, List, BookOpen } from 'lucide-react'
 
 export function HomePage() {
@@ -83,7 +84,7 @@ export function HomePage() {
               <button type="button" style={styles.cancelBtn} onClick={() => setCreating(false)}>Cancel</button>
             </div>
           )}
-          {createError && <p style={{ color: 'var(--error-full)', fontSize: 12, margin: '0 0 12px' }}>{createError}</p>}
+          {createError && <ErrorBanner message={createError} onDismiss={() => setCreateError(null)} />}
 
           {notebooks.length === 0 && !creating ? (
             <EmptyState

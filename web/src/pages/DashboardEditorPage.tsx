@@ -6,6 +6,7 @@ import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
 import { AppShell } from '../components/AppShell'
 import { OutputRenderer } from '../components/OutputRenderer'
+import { ErrorBanner } from '../components/ErrorBanner'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -178,16 +179,7 @@ export function DashboardEditorPage() {
       </header>
 
       {mutationError && (
-        <div style={styles.errorBanner}>
-          {mutationError}
-          <button
-            type="button"
-            onClick={() => setMutationError(null)}
-            style={{ ...styles.errorClose, display: 'flex', alignItems: 'center' }}
-          >
-            <X size={14} />
-          </button>
-        </div>
+        <ErrorBanner message={mutationError} onDismiss={() => setMutationError(null)} />
       )}
 
       {/* Widget picker panel */}
