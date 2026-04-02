@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useParams } from 'react-router-dom'
-import { ChevronsRight, X, Loader2 } from 'lucide-react'
+import { useParams, Link } from 'react-router-dom'
+import { ChevronsRight, ChevronLeft, X, Loader2 } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -17,6 +17,21 @@ import { ConnectorSelector } from '../components/ConnectorSelector'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
+}
+
+function fmtTime(date: Date): string {
+  const now = Date.now()
+  const diffMs = now - date.getTime()
+  const diffSec = Math.floor(diffMs / 1000)
+  const diffMin = Math.floor(diffSec / 60)
+  const diffHour = Math.floor(diffMin / 60)
+  const diffDay = Math.floor(diffHour / 24)
+
+  if (diffSec < 60) return 'Just now'
+  if (diffMin < 60) return `${diffMin} minute${diffMin !== 1 ? 's' : ''} ago`
+  if (diffHour < 24) return `${diffHour} hour${diffHour !== 1 ? 's' : ''} ago`
+  if (diffDay < 7) return `${diffDay} day${diffDay !== 1 ? 's' : ''} ago`
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 export function NotebookPage() {
@@ -320,7 +335,62 @@ export function NotebookPage() {
   return (
     <AppShell noPadding>
     <div style={styles.page}>
-      {/* Slim notebook toolbar */}
+      {/* Notebook Header */}
+      <div style={styles.header}>
+        <div style={styles.headerLeft}>
+          <Link to="/" style={styles.backBtn} title="Back to notebooks">
+            <ChevronLeft size={18} />
+          </Link>
+          <div style={styles.titleSection}>
+            {editingTitle ? (
+              <input
+                style={styles.titleInput}
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onBlur={() => {
+                  setEditingTitle(false)
+                  if (titleDraft.trim() && titleDraft.trim() !== notebook.title) {
+                    renameNotebook.mutate(titleDraft.trim())
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                  if (e.key === 'Escape') setEditingTitle(false)
+                }}
+                autoFocus
+              />
+            ) : (
+              <h1
+                style={styles.notebookTitle}
+                onClick={() => { setTitleDraft(notebook.title); setEditingTitle(true) }}
+                title="Click to rename"
+              >
+                {notebook.title}
+              </h1>
+            )}
+            <input
+              style={styles.descInput}
+              value={descDraft}
+              onChange={(e) => setDescDraft(e.target.value)}
+              onBlur={() => {
+                if (descDraft !== (notebook?.description ?? '')) {
+                  updateNotebook.mutate({ description: descDraft })
+                }
+              }}
+              placeholder="Add a description…"
+            />
+          </div>
+        </div>
+        <div style={styles.headerRight}>
+          <div style={styles.metaInfo}>
+            <span style={styles.metaText}>
+              Last updated {fmtTime(new Date(notebook.updated_at))}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Toolbar */}
       <div style={styles.toolbar}>
         <div style={styles.toolbarLeft}>
           <ConnectorSelector
@@ -400,46 +470,6 @@ export function NotebookPage() {
         <div style={styles.mainColumn}>
           <div style={styles.cellsArea}>
             <div style={styles.bodyInner}>
-              <div style={styles.notebookHeading}>
-                {editingTitle ? (
-                  <input
-                    style={styles.titleInput}
-                    value={titleDraft}
-                    onChange={(e) => setTitleDraft(e.target.value)}
-                    onBlur={() => {
-                      setEditingTitle(false)
-                      if (titleDraft.trim() && titleDraft.trim() !== notebook.title) {
-                        renameNotebook.mutate(titleDraft.trim())
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                      if (e.key === 'Escape') setEditingTitle(false)
-                    }}
-                    autoFocus
-                  />
-                ) : (
-                  <h1
-                    style={styles.notebookTitle}
-                    onClick={() => { setTitleDraft(notebook.title); setEditingTitle(true) }}
-                    title="Click to rename"
-                  >
-                    {notebook.title}
-                  </h1>
-                )}
-                <input
-                  style={styles.descInput}
-                  value={descDraft}
-                  onChange={(e) => setDescDraft(e.target.value)}
-                  onBlur={() => {
-                    if (descDraft !== (notebook?.description ?? '')) {
-                      updateNotebook.mutate({ description: descDraft })
-                    }
-                  }}
-                  placeholder="Add a description…"
-                />
-              </div>
-
               <div style={styles.cells}>
                 {localCells.map((cell, i) =>
                   cell.type === 'code' ? (
@@ -571,6 +601,84 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--accent)',
     opacity: 0.5,
   },
+  header: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    padding: '24px 40px 20px',
+    borderBottom: '1px solid var(--border-light)',
+    background: 'var(--bg-primary)',
+  },
+  headerLeft: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: 16,
+    flex: 1,
+  },
+  backBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 32,
+    height: 32,
+    borderRadius: 6,
+    background: 'var(--bg-secondary)',
+    color: 'var(--text-muted)',
+    textDecoration: 'none',
+    transition: 'background 0.15s',
+  },
+  titleSection: {
+    flex: 1,
+    minWidth: 0,
+  },
+  notebookTitle: {
+    fontSize: 28,
+    fontWeight: 700,
+    color: 'var(--text-primary)',
+    margin: '0 0 6px',
+    cursor: 'pointer',
+    lineHeight: 1.2,
+    letterSpacing: '-0.5px',
+  },
+  titleInput: {
+    fontSize: 28,
+    fontWeight: 700,
+    color: 'var(--text-primary)',
+    background: 'transparent',
+    border: 'none',
+    borderBottom: '2px solid var(--accent)',
+    outline: 'none',
+    width: '100%',
+    fontFamily: 'var(--font-sans)',
+    lineHeight: 1.2,
+    padding: '2px 0',
+    marginBottom: 6,
+    letterSpacing: '-0.5px',
+  },
+  descInput: {
+    width: '100%',
+    border: 'none',
+    outline: 'none',
+    fontSize: 15,
+    color: 'var(--text-muted)',
+    background: 'transparent',
+    fontFamily: 'var(--font-sans)',
+    padding: '1px 0',
+  },
+  headerRight: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 16,
+  },
+  metaInfo: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  },
+  metaText: {
+    fontSize: 13,
+    color: 'var(--text-muted)',
+  },
   toolbar: {
     display: 'flex',
     alignItems: 'center',
@@ -594,10 +702,15 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 10,
   },
-  toolbarRight: {
+toolbarRight: {
     display: 'flex',
     alignItems: 'center',
     gap: 12,
+  },
+  cells: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 24,
   },
   notebookHeading: {
     marginBottom: 32,
@@ -650,7 +763,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     letterSpacing: '0.01em',
   },
-  body: {
+body: {
     flex: 1,
     display: 'flex',
     flexDirection: 'row',
@@ -667,12 +780,17 @@ const styles: Record<string, React.CSSProperties> = {
   cellsArea: {
     flex: 1,
     overflowY: 'auto',
-    padding: '32px 0 64px',
+    padding: '0px 0px 32px',
   },
   bodyInner: {
     maxWidth: 1200,
     margin: '0 auto',
-    padding: '0 40px',
+    padding: '0 40px 32px',
+  },
+  cells: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 24,
   },
   schemaBtn: {
     padding: '6px 14px',
