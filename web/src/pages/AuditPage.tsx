@@ -6,6 +6,7 @@ import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { SectionHeader } from '../components/SectionHeader'
 import { StyledTable } from '../components/StyledTable'
+import { ErrorBanner } from '../components/ErrorBanner'
 
 const PAGE_SIZE = 50
 
@@ -53,11 +54,7 @@ export function AuditPage() {
             />
           </SectionHeader>
 
-          {error && (
-            <div style={styles.state}>
-              <p style={{ ...styles.stateText, color: 'var(--error-full)' }}>Failed to load audit log: {(error as Error).message}</p>
-            </div>
-          )}
+          {error && <ErrorBanner message={`Failed to load audit log: ${(error as Error).message}`} />}
           {isLoading ? (
             <div style={styles.state}>
               <p style={styles.stateText}>Loading audit log…</p>
