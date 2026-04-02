@@ -5,7 +5,6 @@ import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
-import { AppShell } from '../components/AppShell'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { ErrorBanner } from '../components/ErrorBanner'
 
