@@ -114,7 +114,7 @@ function NotebookCard({ notebook, onDelete }: { notebook: Notebook; onDelete: ()
     : updated.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
 
   return (
-    <div style={styles.card}>
+    <div style={styles.card} className="card-hover">
       <Link to={`/notebooks/${notebook.id}`} style={styles.cardLink}>
         <div style={styles.cardThumb}>
           <BookOpen size={20} style={{ color: 'var(--accent)' }} />
@@ -142,7 +142,7 @@ function NotebookRow({ notebook, onDelete }: { notebook: Notebook; onDelete: () 
   const dateStr = updated.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
 
   return (
-    <div style={rowStyles.row}>
+    <div style={rowStyles.row} className="card-hover">
       <Link to={`/notebooks/${notebook.id}`} style={rowStyles.link}>
         <BookOpen size={18} style={{ color: 'var(--accent)', flexShrink: 0 }} />
         <div style={rowStyles.info}>
@@ -157,7 +157,7 @@ function NotebookRow({ notebook, onDelete }: { notebook: Notebook; onDelete: () 
 }
 
 const rowStyles: Record<string, React.CSSProperties> = {
-  row: { display: 'flex', alignItems: 'center', background: 'white', borderRadius: 8, border: '1px solid var(--border)', padding: '10px 16px', gap: 12 },
+  row: { display: 'flex', alignItems: 'center', background: 'white', borderRadius: 8, border: '1px solid var(--border)', padding: '10px 16px', gap: 12, transition: 'box-shadow 0.15s, border-color 0.15s' },
   link: { flex: 1, display: 'flex', alignItems: 'center', gap: 12, textDecoration: 'none' },
   icon: { fontSize: 18, color: 'var(--accent)', flexShrink: 0 },
   info: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 },
