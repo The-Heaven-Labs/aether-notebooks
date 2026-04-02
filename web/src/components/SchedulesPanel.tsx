@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { PanelHeader } from './PanelHeader'
+import { ScheduleItem } from './ScheduleItem'
 import type { Schedule, Parameter } from '../types'
 
 interface Props {
@@ -92,15 +93,6 @@ export function SchedulesPanel({ notebookId, parameters: _parameters }: Props) {
     toggleSchedule.mutate({ id: schedule.id, enabled: !schedule.enabled })
   }
 
-  const formatDate = (val: string | null) => {
-    if (!val) return 'N/A'
-    try {
-      return new Date(val).toLocaleString()
-    } catch {
-      return val
-    }
-  }
-
   return (
     <div style={styles.panel}>
       <PanelHeader title="Schedules" style={{ padding: '10px 24px' }} />
@@ -145,44 +137,15 @@ export function SchedulesPanel({ notebookId, parameters: _parameters }: Props) {
         ) : (
           <div style={styles.list}>
             {schedules.map((schedule) => (
-              <div key={schedule.id} style={styles.scheduleItem}>
-                <div style={styles.scheduleTop}>
-                  <span style={styles.cronText}>{schedule.cron_expression}</span>
-                  <span style={{ ...styles.enabledBadge, ...(schedule.enabled ? styles.badgeOn : styles.badgeOff) }}>
-                    {schedule.enabled ? 'enabled' : 'disabled'}
-                  </span>
-                  <button
-                    type="button"
-                    style={styles.toggleBtn}
-                    onClick={() => handleToggle(schedule)}
-                    disabled={toggleSchedule.isPending}
-                    title={schedule.enabled ? 'Disable schedule' : 'Enable schedule'}
-                  >
-                    {schedule.enabled ? 'Disable' : 'Enable'}
-                  </button>
-                  <button
-                    type="button"
-                    style={styles.deleteBtn}
-                    onClick={() => handleDelete(schedule.id)}
-                    disabled={deleteSchedule.isPending}
-                    title="Delete schedule"
-                  >
-                    Delete
-                  </button>
-                </div>
-                <div style={styles.scheduleBottom}>
-                  <span style={styles.metaText}>
-                    Next run: {formatDate(schedule.next_run_at)}
-                  </span>
-                  <span style={styles.metaSep}>·</span>
-                  <span style={styles.metaText}>
-                    Created: {formatDate(schedule.created_at)}
-                  </span>
-                </div>
-                {mutationErrors[schedule.id] && (
-                  <div style={styles.errorText}>{mutationErrors[schedule.id]}</div>
-                )}
-              </div>
+              <ScheduleItem
+                key={schedule.id}
+                schedule={schedule}
+                onToggle={handleToggle}
+                onDelete={handleDelete}
+                togglePending={toggleSchedule.isPending}
+                deletePending={deleteSchedule.isPending}
+                error={mutationErrors[schedule.id]}
+              />
             ))}
           </div>
         )}
@@ -268,81 +231,5 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     gap: 8,
-  },
-  scheduleItem: {
-    background: 'var(--bg-primary)',
-    border: '1px solid var(--border)',
-    borderRadius: 8,
-    padding: '10px 14px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 6,
-  },
-  scheduleTop: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    flexWrap: 'wrap',
-  },
-  cronText: {
-    fontFamily: 'var(--font-mono)',
-    fontSize: 13,
-    color: 'var(--text-primary)',
-    fontWeight: 500,
-    flex: 1,
-    minWidth: 0,
-  },
-  enabledBadge: {
-    fontSize: 11,
-    fontWeight: 600,
-    borderRadius: 10,
-    padding: '2px 8px',
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em',
-    flexShrink: 0,
-  },
-  badgeOn: {
-    background: 'rgba(39, 174, 96, 0.15)',
-    color: '#27ae60',
-  },
-  badgeOff: {
-    background: 'var(--border)',
-    color: 'var(--text-muted)',
-  },
-  toggleBtn: {
-    padding: '4px 10px',
-    background: 'transparent',
-    border: '1px solid var(--border)',
-    borderRadius: 5,
-    fontSize: 12,
-    fontWeight: 500,
-    color: 'var(--text-secondary)',
-    cursor: 'pointer',
-    flexShrink: 0,
-  },
-  deleteBtn: {
-    padding: '4px 10px',
-    background: 'transparent',
-    border: '1px solid rgba(192, 57, 43, 0.4)',
-    borderRadius: 5,
-    fontSize: 12,
-    fontWeight: 500,
-    color: '#c0392b',
-    cursor: 'pointer',
-    flexShrink: 0,
-  },
-  scheduleBottom: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-  },
-  metaText: {
-    fontSize: 11,
-    color: 'var(--text-muted)',
-    fontFamily: 'var(--font-mono)',
-  },
-  metaSep: {
-    fontSize: 11,
-    color: 'var(--text-muted)',
   },
 }
