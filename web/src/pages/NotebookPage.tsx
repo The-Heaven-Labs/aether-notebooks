@@ -14,6 +14,7 @@ import { useNotebookKeyboardShortcuts } from '../hooks/useNotebookKeyboardShortc
 import { HistoryPanel } from '../components/HistoryPanel'
 import { ShortcutsModal } from '../components/ShortcutsModal'
 import { ConnectorSelector } from '../components/ConnectorSelector'
+import { ErrorBanner } from '../components/ErrorBanner'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -443,10 +444,7 @@ export function NotebookPage() {
       </div>
 
       {mutationError && (
-        <div style={{ background: 'var(--error-light)', borderBottom: '1px solid var(--error-border)', padding: '6px 24px', fontSize: 12, color: 'var(--error-full)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          {mutationError}
-          <button type="button" onClick={() => setMutationError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error-full)', fontSize: 14, padding: 0, display: 'flex', alignItems: 'center' }}><X size={14} /></button>
-        </div>
+        <ErrorBanner message={mutationError} onDismiss={() => setMutationError(null)} />
       )}
 
       {showParameters && (
