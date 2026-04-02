@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { ApiError, setToken } from '../api/client'
+import { ErrorBanner } from '../components/ErrorBanner'
 
 export function LoginPage() {
   const { login, register } = useAuth()
@@ -155,7 +156,7 @@ useEffect(() => {
                 placeholder="••••••••"
               />
             </div>
-            {error && <p style={styles.error}>{error}</p>}
+            {error && <ErrorBanner message={error} onDismiss={() => setError('')} />}
             <button type="submit" style={styles.submit} disabled={loading}>
               {loading ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Create Account'}
             </button>
