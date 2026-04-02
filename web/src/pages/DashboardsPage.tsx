@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import type { Dashboard } from '../types'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
+import { SectionHeader } from '../components/SectionHeader'
 import { LayoutGrid, List, LayoutDashboard, X } from 'lucide-react'
 
 const fmtDate = (d: string) => {
@@ -57,18 +58,12 @@ export function DashboardsPage() {
   return (
     <AppShell>
       <div style={styles.body}>
-        <div style={styles.sectionHeader}>
-          <div>
-            <h2 style={styles.sectionTitle}>Dashboards</h2>
-            <p style={styles.sectionSub}>{dashboards.length} dashboard{dashboards.length !== 1 ? 's' : ''}</p>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" style={styles.layoutBtn} onClick={toggleLayout} title={layout === 'list' ? 'Switch to grid' : 'Switch to list'}>
-              {layout === 'list' ? <LayoutGrid size={14} /> : <List size={14} />}
-            </button>
-            <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Dashboard</button>
-          </div>
-        </div>
+        <SectionHeader title="Dashboards" subtitle={`${dashboards.length} dashboard${dashboards.length !== 1 ? 's' : ''}`}>
+          <button type="button" style={styles.layoutBtn} onClick={toggleLayout} title={layout === 'list' ? 'Switch to grid' : 'Switch to list'}>
+            {layout === 'list' ? <LayoutGrid size={14} /> : <List size={14} />}
+          </button>
+          <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Dashboard</button>
+        </SectionHeader>
 
         {creating && (
           <form
@@ -153,9 +148,6 @@ const rowStyles: Record<string, React.CSSProperties> = {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  sectionHeader: { display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 24 },
-  sectionTitle: { fontSize: 22, fontWeight: 700, letterSpacing: '-0.3px', color: 'var(--text-primary)' },
-  sectionSub: { fontSize: 13, color: 'var(--text-muted)', marginTop: 2 },
   layoutBtn: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'none', cursor: 'pointer', fontSize: 14 },
   newBtn: { padding: '6px 16px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   body: { maxWidth: 1280, margin: '0 auto', padding: '40px 40px', width: '100%' },

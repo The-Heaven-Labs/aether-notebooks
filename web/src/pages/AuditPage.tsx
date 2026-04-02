@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import type { AuditEntry } from '../types'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
+import { SectionHeader } from '../components/SectionHeader'
 
 const PAGE_SIZE = 50
 
@@ -42,18 +43,14 @@ export function AuditPage() {
   return (
     <AppShell>
         <div style={styles.content}>
-          <div style={styles.sectionHeader}>
-            <div>
-              <h2 style={styles.sectionTitle}>Audit Log</h2>
-              <p style={styles.sectionSub}>{filtered.length} entr{filtered.length !== 1 ? 'ies' : 'y'} loaded</p>
-            </div>
+          <SectionHeader title="Audit Log" subtitle={`${filtered.length} entr${filtered.length !== 1 ? 'ies' : 'y'} loaded`}>
             <input
               style={styles.filterInput}
               value={actionFilter}
               onChange={(e) => setActionFilter(e.target.value)}
               placeholder="Filter by action…"
             />
-          </div>
+          </SectionHeader>
 
           {error && (
             <div style={styles.state}>
@@ -135,23 +132,6 @@ const styles: Record<string, React.CSSProperties> = {
   content: {
     maxWidth: 1280,
     margin: '0 auto',
-  },
-  sectionHeader: {
-    display: 'flex',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 22,
-    fontWeight: 700,
-    letterSpacing: '-0.3px',
-    color: 'var(--text-primary)',
-  },
-  sectionSub: {
-    fontSize: 13,
-    color: 'var(--text-muted)',
-    marginTop: 2,
   },
   filterInput: {
     padding: '8px 12px',
