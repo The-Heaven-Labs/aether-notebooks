@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import type { Member } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
+import { FormCard } from '../components/FormCard'
 
 const ROLES = ['admin', 'editor', 'viewer'] as const
 
@@ -69,8 +70,7 @@ export function MembersPage() {
     <AppShell>
       <div style={styles.body}>
         {/* Invite form */}
-        <div style={styles.formCard}>
-          <h3 style={styles.formTitle}>Invite Member</h3>
+        <FormCard title="Invite Member">
           <div style={styles.inviteRow}>
             <input
               style={styles.emailInput}
@@ -99,7 +99,7 @@ export function MembersPage() {
             </button>
           </div>
           {inviteError && <p style={styles.errorText}>{inviteError}</p>}
-        </div>
+        </FormCard>
 
         {/* Error banners for role/remove */}
         {roleError && <p style={styles.errorBanner}>{roleError}</p>}
@@ -163,15 +163,6 @@ export function MembersPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   body: { maxWidth: 1100, margin: '0 auto', padding: '32px 40px', width: '100%' },
-  formCard: {
-    background: 'white',
-    border: '1px solid var(--border)',
-    borderRadius: 10,
-    padding: 24,
-    marginBottom: 24,
-    boxShadow: 'var(--shadow-sm)',
-  },
-  formTitle: { margin: '0 0 14px', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' },
   inviteRow: { display: 'flex', gap: 10, alignItems: 'center' },
   emailInput: {
     flex: 1,

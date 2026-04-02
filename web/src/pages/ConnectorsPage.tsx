@@ -5,6 +5,7 @@ import type { Connector } from '../types'
 import { AppShell } from '../components/AppShell'
 import { Check, X } from 'lucide-react'
 import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
+import { FormCard } from '../components/FormCard'
 
 type ConnectorType = 'postgres' | 'clickhouse'
 
@@ -114,8 +115,7 @@ export function ConnectorsPage() {
           </div>
         )}
         {creating && (
-          <div style={styles.formCard}>
-            <h3 style={styles.formTitle}>New Connector</h3>
+          <FormCard title="New Connector">
             <div style={styles.formGrid}>
               <label style={styles.label}>Name
                 <input style={styles.input} value={form.name} onChange={setField('name')} placeholder="My Postgres" />
@@ -178,7 +178,7 @@ export function ConnectorsPage() {
               </button>
             </div>
             {createError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{createError}</p>}
-          </div>
+          </FormCard>
         )}
 
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
@@ -234,15 +234,6 @@ const styles: Record<string, React.CSSProperties> = {
   newBtn: { padding: '6px 16px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   bodyHeader: { display: 'flex', justifyContent: 'flex-end', marginBottom: 16 },
   body: { maxWidth: 1100, margin: '0 auto', padding: '32px 40px', width: '100%' },
-  formCard: {
-    background: 'white',
-    border: '1px solid var(--border)',
-    borderRadius: 10,
-    padding: 24,
-    marginBottom: 24,
-    boxShadow: 'var(--shadow-sm)',
-  },
-  formTitle: { margin: '0 0 16px', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' },
   formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 },
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
   input: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 5, fontSize: 13, fontFamily: 'var(--font-mono)', background: 'white', marginTop: 2 },
