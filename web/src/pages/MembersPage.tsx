@@ -222,7 +222,7 @@ const styles: Record<string, React.CSSProperties> = {
   roleSelectInline: {
     padding: '4px 8px',
     border: '1px solid var(--border)',
-    borderRadius: 5,
+    borderRadius: 6,
     fontSize: 12,
     background: 'white',
     cursor: 'pointer',
@@ -230,7 +230,7 @@ const styles: Record<string, React.CSSProperties> = {
   roleSelectDisabled: {
     padding: '4px 8px',
     border: '1px solid var(--border-light)',
-    borderRadius: 5,
+    borderRadius: 6,
     fontSize: 12,
     background: 'var(--bg-secondary)',
     color: 'var(--text-muted)',

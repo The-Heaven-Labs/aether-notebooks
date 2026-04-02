@@ -79,7 +79,7 @@ const styles: Record<string, React.CSSProperties> = {
   logo: {
     width: 36, height: 36,
     background: 'var(--accent)',
-    borderRadius: 9,
+    borderRadius: 10,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     fontSize: 14, color: 'white',
   },

@@ -1,0 +1,12 @@
+FROM node:20-alpine
+
+# tsx provides fast TypeScript execution with --watch support
+RUN npm install -g tsx
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+# Source is mounted at runtime
+CMD ["tsx", "watch", "src/index.ts"]

@@ -462,12 +462,12 @@ export function NotebookPage() {
                               <span style={{ color: 'var(--text-muted)' }}>=</span>
                               <input
                                 style={{
-                                  fontSize: 11,
-                                  fontFamily: 'var(--font-mono)',
-                                  background: 'var(--bg-primary)',
-                                  border: '1px solid var(--border)',
-                                  borderRadius: 3,
-                                  padding: '1px 5px',
+fontSize: 11,
+                                   fontFamily: 'var(--font-mono)',
+                                   background: 'var(--bg-primary)',
+                                   border: '1px solid var(--border)',
+                                   borderRadius: 4,
+                                   padding: '1px 5px',
                                   color: 'var(--text-primary)',
                                   width: 90,
                                   outline: 'none',
@@ -584,7 +584,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-mono)',
     padding: '4px 8px',
     border: '1px solid var(--border)',
-    borderRadius: 5,
+    borderRadius: 6,
     background: 'var(--bg-primary)',
     color: 'var(--text-primary)',
     cursor: 'pointer',
@@ -703,7 +703,7 @@ const styles: Record<string, React.CSSProperties> = {
   addBtn: {
     padding: '8px 20px',
     border: '1.5px dashed var(--border)',
-    borderRadius: 7,
+    borderRadius: 6,
     background: 'transparent',
     color: 'var(--text-muted)',
     fontSize: 13,

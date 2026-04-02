@@ -142,7 +142,7 @@ const rowStyles: Record<string, React.CSSProperties> = {
   icon: { fontSize: 18, color: 'var(--accent)', flexShrink: 0 },
   info: { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 },
   title: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  badge: { fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: '#f0edff', padding: '2px 6px', borderRadius: 3, flexShrink: 0 },
+  badge: { fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: '#f0edff', padding: '2px 6px', borderRadius: 4, flexShrink: 0 },
   date: { fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 },
   del: { padding: '3px 8px', border: 'none', background: 'transparent', color: 'var(--error)', fontSize: 12, cursor: 'pointer', flexShrink: 0 },
 }
@@ -153,9 +153,9 @@ const styles: Record<string, React.CSSProperties> = {
   body: { maxWidth: 1280, margin: '0 auto', padding: '40px 40px', width: '100%' },
   list: { display: 'flex', flexDirection: 'column', gap: 8 },
   createForm: { display: 'flex', gap: 8, marginBottom: 24, alignItems: 'center' },
-  createInput: { flex: 1, maxWidth: 360, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 7, fontSize: 14, fontFamily: 'var(--font-sans)', background: 'white' },
-  createBtn: { padding: '8px 20px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  cancelBtn: { padding: '8px 16px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
+  createInput: { flex: 1, maxWidth: 360, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 14, fontFamily: 'var(--font-sans)', background: 'white' },
+  createBtn: { padding: '8px 20px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  cancelBtn: { padding: '8px 16px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   loading: { width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)', opacity: 0.5, margin: '80px auto' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 },
   card: {
@@ -171,7 +171,7 @@ const styles: Record<string, React.CSSProperties> = {
   cardIcon: { fontSize: 24, marginBottom: 10, opacity: 0.4 },
   cardTitle: { fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 },
   cardMeta: { fontSize: 12, color: 'var(--text-muted)' },
-  publicBadge: { marginTop: 8, display: 'inline-block', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--accent)', background: '#f0edff', padding: '2px 7px', borderRadius: 3 },
+  publicBadge: { marginTop: 8, display: 'inline-block', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--accent)', background: '#f0edff', padding: '2px 7px', borderRadius: 4 },
   deleteBtn: {
     position: 'absolute',
     top: 10,

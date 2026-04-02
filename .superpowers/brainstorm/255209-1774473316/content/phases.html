@@ -1,0 +1,40 @@
+<h2>Proposed implementation phases</h2>
+<p class="subtitle">Ordered by impact, dependency, and risk. Select the phase breakdown you prefer.</p>
+
+<div class="options">
+  <div class="option" data-choice="A" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>4 Phases — by complexity layer</h3>
+      <p><strong>Phase 1 — Shell &amp; Quick wins</strong> (no schema changes): Navigation sidebar, notebook header, list view, profile menu, collaboration cursor names, audit log names, output type icons, members page fix</p>
+      <p><strong>Phase 2 — Cell editor</strong>: Collapse/hide code, cell title &amp; description, markdown syntax highlighting, live preview, image paste, cell history, unique cell slug, keyboard shortcuts</p>
+      <p><strong>Phase 3 — Data &amp; connectors</strong>: Notebook-level connector default, optional DB field on creation, DB/table discovery, named query variables, parameters at cell level</p>
+      <p><strong>Phase 4 — Advanced features</strong>: Charts expansion, dashboard input widgets, templates &amp; snippets, attachments, presentation mode, org/admin model</p>
+      <p><span class="label">Recommended · cleanest dependency order</span></p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="B" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>5 Phases — separate admin track</h3>
+      <p><strong>Phase 1 — Shell &amp; Quick wins</strong>: same as A·1</p>
+      <p><strong>Phase 2 — Cell editor</strong>: same as A·2</p>
+      <p><strong>Phase 3 — Data &amp; connectors</strong>: same as A·3</p>
+      <p><strong>Phase 4 — Advanced features</strong>: Charts, widgets, templates, attachments, presentation mode</p>
+      <p><strong>Phase 5 — Admin &amp; org model</strong>: Global admin, org admin roles, tenant isolation — done last as it may require migrations affecting all other features</p>
+      <p><span class="label">Safer for org model · isolates risky migrations</span></p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="C" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>3 Phases — broad strokes</h3>
+      <p><strong>Phase 1 — UX polish</strong>: All frontend-only changes (navigation, cell editor, markdown, keyboard, cursor names, output icons)</p>
+      <p><strong>Phase 2 — Data model expansion</strong>: Connectors, variables, parameters, cell metadata, admin model</p>
+      <p><strong>Phase 3 — Power features</strong>: Charts, widgets, templates, attachments, presentation mode</p>
+      <p><span class="label">Fewer phases · less granular milestones</span></p>
+    </div>
+  </div>
+</div>
