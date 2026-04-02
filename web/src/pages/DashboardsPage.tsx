@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard } from '../types'
 import { AppShell } from '../components/AppShell'
+import { EmptyState } from '../components/EmptyState'
 import { LayoutGrid, List, LayoutDashboard, X } from 'lucide-react'
 
 const fmtDate = (d: string) => {
@@ -95,11 +96,11 @@ export function DashboardsPage() {
         {isLoading ? (
           <div style={styles.loading} />
         ) : dashboards.length === 0 ? (
-          <div style={styles.empty}>
-            <p style={styles.emptyText}>No dashboards yet</p>
-            <p style={styles.emptySubtext}>Create a dashboard to display notebook cell outputs in a shared view.</p>
-            <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Dashboard</button>
-          </div>
+          <EmptyState
+            title="No dashboards yet"
+            text="Create a dashboard to display notebook cell outputs in a shared view."
+            action={{ label: '+ New Dashboard', onClick: () => setCreating(true) }}
+          />
         ) : (
           <div style={layout === 'grid' ? styles.grid : styles.list}>
             {dashboards.map((d) =>
@@ -164,9 +165,6 @@ const styles: Record<string, React.CSSProperties> = {
   createBtn: { padding: '8px 20px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   cancelBtn: { padding: '8px 16px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   loading: { width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)', opacity: 0.5, margin: '80px auto' },
-  empty: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300, gap: 8 },
-  emptyText: { fontSize: 16, fontWeight: 600, color: 'var(--text-secondary)', margin: 0 },
-  emptySubtext: { fontSize: 13, color: 'var(--text-muted)', margin: '0 0 16px' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 },
   card: {
     background: 'white',

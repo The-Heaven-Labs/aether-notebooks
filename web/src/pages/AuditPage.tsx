@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { AuditEntry } from '../types'
 import { AppShell } from '../components/AppShell'
+import { EmptyState } from '../components/EmptyState'
 
 const PAGE_SIZE = 50
 
@@ -64,13 +65,11 @@ export function AuditPage() {
               <p style={styles.stateText}>Loading audit log…</p>
             </div>
           ) : filtered.length === 0 ? (
-            <div style={styles.state}>
-              <div style={styles.stateIcon}>▦</div>
-              <p style={styles.stateTitle}>No entries found</p>
-              <p style={styles.stateText}>
-                {actionFilter ? 'No entries match that action filter.' : 'The audit log is empty.'}
-              </p>
-            </div>
+            <EmptyState
+              icon={<span>▦</span>}
+              title="No entries found"
+              text={actionFilter ? 'No entries match that action filter.' : 'The audit log is empty.'}
+            />
           ) : (
             <div style={styles.tableWrap}>
               <table style={styles.table}>
@@ -170,24 +169,6 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     alignItems: 'center',
     gap: 12,
-  },
-  stateIcon: {
-    width: 56,
-    height: 56,
-    background: 'var(--bg-secondary)',
-    borderRadius: 14,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: 28,
-    color: 'var(--text-muted)',
-    marginBottom: 4,
-  },
-  stateTitle: {
-    fontSize: 18,
-    fontWeight: 700,
-    color: 'var(--text-primary)',
-    letterSpacing: '-0.2px',
   },
   stateText: {
     fontSize: 14,
