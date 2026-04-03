@@ -36,12 +36,12 @@ export function HistoryPanel({ versions, currentSource, onRestore, onClose }: Pr
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  panel: { width: 300, borderLeft: '1px solid var(--border)', background: 'white', display: 'flex', flexDirection: 'column', flexShrink: 0, overflowY: 'auto' },
+  panel: { width: 300, borderLeft: '1px solid #e8e8e8', background: '#fff', display: 'flex', flexDirection: 'column', flexShrink: 0, overflowY: 'auto' },
   empty: { padding: 16, fontSize: 13, color: 'var(--text-muted)', textAlign: 'center' },
   item: { padding: '10px 14px', borderBottom: '1px solid var(--border-light)' },
   itemHeader: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 },
   ts: { fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' },
-  currentBadge: { fontSize: 10, background: 'var(--accent-light)', color: 'var(--accent)', borderRadius: 4, padding: '1px 5px', fontWeight: 600 },
+  currentBadge: { fontSize: 10, background: '#f5f5f5', color: '#666', border: '1px solid #e8e8e8', borderRadius: 4, padding: '1px 5px', fontWeight: 600 },
   preview: { fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', background: 'var(--bg-secondary)', padding: '6px 8px', borderRadius: 4, whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: '0 0 6px' },
-  restoreBtn: { fontSize: 11, padding: '3px 8px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text-secondary)', fontWeight: 500 },
+  restoreBtn: { fontSize: 11, padding: '3px 8px', background: 'none', border: '1px solid #ddd', borderRadius: 4, cursor: 'pointer', color: '#555', fontWeight: 500 },
 }
