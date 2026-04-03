@@ -90,10 +90,10 @@ export function AdminPage() {
 const styles: Record<string, React.CSSProperties> = {
   page: { padding: 24 },
   title: { fontSize: 20, fontWeight: 600, marginBottom: 16, color: 'var(--text-primary)' },
-  tabs: { display: 'flex', gap: 2, marginBottom: 16, borderBottom: '1px solid var(--border)' },
+  tabs: { display: 'flex', gap: 2, marginBottom: 16, borderBottom: '1px solid #e8e8e8' },
   tab: { padding: '8px 16px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14 },
   tabActive: { padding: '8px 16px', background: 'none', border: 'none', borderBottom: '2px solid var(--accent)', cursor: 'pointer', color: 'var(--text-primary)', fontSize: 14, fontWeight: 600 },
   table: { width: '100%', borderCollapse: 'collapse' },
-  th: { textAlign: 'left', padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' },
-  td: { padding: '10px 12px', fontSize: 13, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-light)' },
+  th: { textAlign: 'left', padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)', borderBottom: '1px solid #e8e8e8', background: '#fff' },
+  td: { padding: '10px 12px', fontSize: 13, color: 'var(--text-primary)', borderBottom: '1px solid #e8e8e8' },
 }
