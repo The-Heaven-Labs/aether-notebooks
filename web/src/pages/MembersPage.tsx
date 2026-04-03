@@ -223,11 +223,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   roleSelectDisabled: {
     padding: '4px 8px',
-    border: '1px solid var(--border-light)',
-    borderRadius: 6,
+    border: '1px solid #ddd',
+    borderRadius: 4,
     fontSize: 12,
-    background: 'var(--bg-secondary)',
-    color: 'var(--text-muted)',
+    background: '#f5f5f5',
+    color: '#aaa',
     cursor: 'not-allowed',
   },
   removeBtn: {
