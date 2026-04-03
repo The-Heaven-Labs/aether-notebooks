@@ -7,10 +7,9 @@ interface Props {
 }
 
 const tableWrapStyle: React.CSSProperties = {
-  borderRadius: 10,
+  borderRadius: 4,
   overflow: 'hidden',
-  border: '1px solid var(--border)',
-  boxShadow: 'var(--shadow-sm)',
+  border: '1px solid #e8e8e8',
 }
 
 const tableStyle: React.CSSProperties = {
@@ -23,16 +22,17 @@ const thBase: React.CSSProperties = {
   padding: '10px 16px',
   textAlign: 'left',
   fontSize: 11,
-  fontWeight: 700,
-  color: 'var(--text-muted)',
+  fontWeight: 600,
+  color: '#888',
   letterSpacing: '0.06em',
-  borderBottom: '1px solid var(--border-light)',
-  background: 'var(--bg-secondary)',
+  borderBottom: '1px solid #e8e8e8',
+  background: '#fff',
+  fontFamily: 'var(--font-mono)',
   textTransform: 'uppercase',
 }
 
-export const rowStyle: React.CSSProperties = { borderBottom: '1px solid var(--border-light)' }
-export const cellStyle: React.CSSProperties = { padding: '12px 16px', fontSize: 13, color: 'var(--text-primary)' }
+export const rowStyle: React.CSSProperties = { borderBottom: '1px solid #e8e8e8' }
+export const cellStyle: React.CSSProperties = { padding: '12px 16px', fontSize: 13, color: '#333' }
 
 export function StyledTable({ headers, children, thStyle }: Props) {
   return (
