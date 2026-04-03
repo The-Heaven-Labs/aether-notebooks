@@ -78,7 +78,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     color: 'var(--text-muted)',
     background: 'var(--border)',
-    borderRadius: 10,
+    borderRadius: 4,
     padding: '1px 6px',
     flexShrink: 0,
   },

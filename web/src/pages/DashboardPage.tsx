@@ -140,7 +140,7 @@ const inputStyles: Record<string, React.CSSProperties> = {
   input: {
     padding: '7px 10px',
     border: '1px solid var(--border)',
-    borderRadius: 6,
+    borderRadius: 4,
     fontSize: 13,
     fontFamily: 'var(--font-sans)',
     background: 'white',
@@ -386,8 +386,7 @@ const styles: Record<string, React.CSSProperties> = {
   inputWidgetCard: {
     background: 'white',
     border: '1px solid var(--border)',
-    borderRadius: 10,
-    boxShadow: 'var(--shadow-sm)',
+    borderRadius: 4,
     minWidth: 200,
     flex: '0 1 auto',
   },
@@ -399,8 +398,7 @@ const styles: Record<string, React.CSSProperties> = {
   widgetCard: {
     background: 'white',
     border: '1px solid var(--border)',
-    borderRadius: 10,
-    boxShadow: 'var(--shadow-sm)',
+    borderRadius: 4,
     overflow: 'hidden',
     position: 'relative',
   },

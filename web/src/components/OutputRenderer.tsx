@@ -238,7 +238,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 2,
     background: 'var(--border-light)',
     padding: 2,
-    borderRadius: 6,
+    borderRadius: 4,
   },
   viewBtn: {
     padding: '3px 10px',
