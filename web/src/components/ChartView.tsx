@@ -208,10 +208,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   configBtn: {
     fontSize: 11,
-    color: 'var(--text-muted)',
+    color: '#aaa',
     padding: '4px 12px',
     background: 'none',
-    border: 'none',
+    border: '1px solid #ddd',
+    borderRadius: 4,
     cursor: 'pointer',
   },
   empty: {
