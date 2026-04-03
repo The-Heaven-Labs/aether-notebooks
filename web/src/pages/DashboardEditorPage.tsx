@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
+import { ArrowLeft, X } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
