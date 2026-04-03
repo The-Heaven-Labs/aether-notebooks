@@ -249,14 +249,19 @@ const styles: Record<string, React.CSSProperties> = {
   formInner: {
     width: '100%',
     maxWidth: 360,
+    background: '#fff',
+    border: '1px solid #e8e8e8',
+    borderRadius: 4,
+    padding: '28px 32px',
+    boxSizing: 'border-box',
   },
   tabs: {
     display: 'flex',
     gap: 4,
     marginBottom: 28,
     padding: 4,
-    background: 'var(--bg-secondary)',
-    borderRadius: 8,
+    background: '#f5f5f5',
+    borderRadius: 4,
   },
   tab: {
     flex: 1,
@@ -267,13 +272,13 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 500,
     color: 'var(--text-secondary)',
     cursor: 'pointer',
-    borderRadius: 6,
+    borderRadius: 4,
     transition: 'all 0.15s',
   },
   tabActive: {
     background: 'white',
     color: 'var(--text-primary)',
-    boxShadow: 'var(--shadow-sm)',
+    boxShadow: 'none',
   },
   formHeading: {
     fontSize: 22,
@@ -313,7 +318,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     padding: '8px 12px',
     background: 'var(--error-light)',
-    borderRadius: 6,
+    borderRadius: 4,
     border: '1px solid var(--error-border)',
   },
   submit: {
