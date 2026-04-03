@@ -15,12 +15,11 @@ export function FormCard({ title, children }: Props) {
 }
 
 const cardStyle: React.CSSProperties = {
-  background: 'white',
-  border: '1px solid var(--border)',
-  borderRadius: 10,
+  background: '#fff',
+  border: '1px solid #e8e8e8',
+  borderRadius: 4,
   padding: 24,
   marginBottom: 24,
-  boxShadow: 'var(--shadow-sm)',
 }
 
 const titleStyle: React.CSSProperties = {

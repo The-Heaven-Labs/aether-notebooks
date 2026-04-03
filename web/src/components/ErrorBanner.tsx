@@ -45,7 +45,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: '8px 12px',
-    borderRadius: 6,
+    borderRadius: 4,
     fontSize: 13,
     fontFamily: 'var(--font-sans)',
   },

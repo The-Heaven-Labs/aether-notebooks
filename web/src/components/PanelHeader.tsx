@@ -31,7 +31,8 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: '10px 14px',
-    borderBottom: '1px solid var(--border)',
+    borderBottom: '1px solid #e8e8e8',
+    background: '#fff',
     flexShrink: 0,
   },
   title: {
