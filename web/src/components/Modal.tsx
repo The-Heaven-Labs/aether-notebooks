@@ -24,8 +24,8 @@ export function Modal({ title, onClose, children, minWidth }: Props) {
 
 const styles: Record<string, React.CSSProperties> = {
   overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
-  modal: { background: 'white', borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.2)', maxHeight: '80vh', overflow: 'auto' },
-  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border-light)' },
+  modal: { background: '#fff', borderRadius: 4, border: '1px solid #e8e8e8', boxShadow: '0 2px 16px rgba(0,0,0,0.12)', maxHeight: '80vh', overflow: 'auto' },
+  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid #e8e8e8' },
   title: { fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' },
   close: { background: 'transparent', border: 'none', fontSize: 14, cursor: 'pointer', color: 'var(--text-muted)' },
 }
