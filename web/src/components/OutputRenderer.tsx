@@ -153,7 +153,7 @@ function TableOutput({ rs, fixedView }: { rs: ResultSet; fixedView?: 'table' | '
             </thead>
             <tbody>
               {rs.rows.map((row, i) => (
-                <tr key={i} style={i % 2 === 1 ? styles.rowAlt : undefined}>
+                <tr key={i}>
                   {(row as unknown[]).map((cell, j) => (
                     <td key={j} style={styles.td}>
                       {cell === null
@@ -181,8 +181,9 @@ const styles: Record<string, React.CSSProperties> = {
   container: {},
   errorWrap: {
     padding: '12px 16px',
-    background: '#fff5f5',
-    borderTop: '1px solid var(--border-light)',
+    background: '#fdf5f5',
+    border: '1px solid #f5d0d0',
+    borderRadius: 4,
     display: 'flex',
     flexDirection: 'column',
     gap: 6,
@@ -228,8 +229,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: '1px solid var(--border-light)',
   },
   rowCount: {
-    fontSize: 11,
-    color: 'var(--text-muted)',
+    fontSize: 10,
+    color: '#bbb',
     fontFamily: 'var(--font-mono)',
   },
   viewToggle: {
@@ -241,8 +242,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   viewBtn: {
     padding: '3px 10px',
-    border: 'none',
-    background: 'transparent',
+    border: '1px solid transparent',
+    background: 'none',
     borderRadius: 4,
     fontSize: 12,
     fontWeight: 500,
@@ -251,9 +252,10 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-sans)',
   },
   viewBtnActive: {
-    background: 'white',
+    background: '#f5f5f5',
+    border: '1px solid #ddd',
+    borderRadius: 4,
     color: 'var(--text-primary)',
-    boxShadow: '0 1px 2px rgba(0,0,0,0.08)',
   },
   tableWrap: {
     overflowX: 'auto',
@@ -269,8 +271,8 @@ const styles: Record<string, React.CSSProperties> = {
   th: {
     padding: '9px 16px',
     textAlign: 'left',
-    background: 'var(--bg-secondary)',
-    borderBottom: '1px solid var(--border)',
+    background: '#fff',
+    borderBottom: '1px solid #e8e8e8',
     whiteSpace: 'nowrap',
     position: 'sticky',
     top: 0,
@@ -283,12 +285,9 @@ const styles: Record<string, React.CSSProperties> = {
   },
   td: {
     padding: '7px 16px',
-    borderBottom: '1px solid var(--border-light)',
-    color: 'var(--text-primary)',
+    borderBottom: '1px solid #f0f0f0',
+    color: '#333',
     fontSize: 13,
-  },
-  rowAlt: {
-    background: '#faf9f7',
   },
   null: {
     color: 'var(--text-muted)',
