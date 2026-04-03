@@ -124,7 +124,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   codeSlide: {
     background: '#1a1a1a',
-    borderRadius: 8,
+    borderRadius: 4,
     overflow: 'hidden',
   },
   codePre: {
@@ -150,7 +150,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#2a2a2a',
     color: '#f0f0f0',
     border: '1px solid #3a3a3a',
-    borderRadius: 6,
+    borderRadius: 4,
     fontSize: 14,
     fontWeight: 500,
     cursor: 'pointer',
