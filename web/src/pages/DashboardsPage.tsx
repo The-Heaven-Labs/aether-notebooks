@@ -155,7 +155,7 @@ const styles: Record<string, React.CSSProperties> = {
   newBtn: { padding: '7px 16px', background: '#111', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   body: { maxWidth: 1280, margin: '0 auto', padding: '40px 40px', width: '100%' },
   list: { display: 'flex', flexDirection: 'column', gap: 8 },
-  createForm: { display: 'flex', gap: 8, marginBottom: 24, alignItems: 'center' },
+  createForm: { display: 'flex', gap: 8, marginBottom: 24, alignItems: 'center', background: '#fff', border: '1px solid #e8e8e8', borderRadius: 4, padding: '12px 16px' },
   createInput: { flex: 1, maxWidth: 360, padding: '8px 12px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14, fontFamily: 'var(--font-sans)', background: '#fff' },
   createBtn: { padding: '7px 16px', background: '#111', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   cancelBtn: { padding: '7px 16px', background: 'none', border: '1px solid #ddd', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: '#555' },
