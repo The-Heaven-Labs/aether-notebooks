@@ -72,12 +72,12 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
   const showGrid = effectiveConfig.showGrid ?? true
 
   const tooltipStyle: React.CSSProperties = {
-    background: 'var(--bg-secondary)',
-    border: '1px solid var(--border)',
-    borderRadius: 6,
+    background: '#fff',
+    border: '1px solid #e8e8e8',
+    borderRadius: 4,
     fontSize: 12,
-    color: 'var(--text-primary)',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+    color: '#111',
+    boxShadow: '0 2px 16px rgba(0,0,0,0.12)',
   }
   const legendStyle: React.CSSProperties = {
     fontSize: 12,
@@ -203,8 +203,9 @@ const styles: Record<string, React.CSSProperties> = {
   wrap: {
     width: '100%',
     padding: '12px 16px 4px',
-    borderTop: '1px solid var(--border)',
-    background: 'var(--bg-primary)',
+    border: '1px solid #e8e8e8',
+    borderRadius: 4,
+    background: '#fff',
   },
   configBtn: {
     fontSize: 11,
