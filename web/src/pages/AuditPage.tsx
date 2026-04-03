@@ -124,7 +124,7 @@ const styles: Record<string, React.CSSProperties> = {
   filterInput: {
     padding: '8px 12px',
     border: '1.5px solid var(--border)',
-    borderRadius: 6,
+    borderRadius: 4,
     fontSize: 13,
     outline: 'none',
     background: 'var(--bg-primary)',
@@ -186,7 +186,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '9px 28px',
     background: 'white',
     border: '1.5px solid var(--border)',
-    borderRadius: 6,
+    borderRadius: 4,
     fontSize: 13,
     fontWeight: 600,
     cursor: 'pointer',

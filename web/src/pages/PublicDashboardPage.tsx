@@ -122,8 +122,7 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center',
     padding: '32px 40px',
     background: 'white',
-    borderRadius: 12,
-    boxShadow: 'var(--shadow-sm)',
+    borderRadius: 4,
     border: '1px solid var(--border)',
   },
   errorTitle: {
@@ -205,8 +204,7 @@ const styles: Record<string, React.CSSProperties> = {
   widgetCard: {
     background: 'white',
     border: '1px solid var(--border)',
-    borderRadius: 10,
-    boxShadow: 'var(--shadow-sm)',
+    borderRadius: 4,
     overflow: 'hidden',
   },
   widgetHeader: {

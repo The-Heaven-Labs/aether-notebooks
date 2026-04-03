@@ -52,7 +52,7 @@ const styles: Record<string, React.CSSProperties> = {
   card: {
     background: 'white',
     border: '1px solid var(--border)',
-    borderRadius: 10,
+    borderRadius: 4,
     padding: 16,
   },
 }
