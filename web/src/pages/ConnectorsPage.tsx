@@ -236,18 +236,18 @@ export function ConnectorsPage() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  newBtn: { padding: '6px 16px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  newBtn: { padding: '7px 16px', background: '#111', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   bodyHeader: { display: 'flex', justifyContent: 'flex-end', marginBottom: 16 },
   body: { maxWidth: 1100, margin: '0 auto', padding: '32px 40px', width: '100%' },
   formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 },
-  label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
-  input: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, fontFamily: 'var(--font-mono)', background: 'white', marginTop: 2 },
+  label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: '#555' },
+  input: { padding: '6px 10px', border: '1px solid #ddd', borderRadius: 4, fontSize: 13, fontFamily: 'var(--font-mono)', background: '#fff', marginTop: 2 },
   formActions: { display: 'flex', gap: 8, justifyContent: 'flex-end' },
-  testBtn: { padding: '6px 16px', background: 'transparent', border: '1px solid var(--accent)', borderRadius: 6, fontSize: 13, cursor: 'pointer', color: 'var(--accent)', fontWeight: 600 },
-  cancelBtn: { padding: '6px 16px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
-  saveBtn: { padding: '6px 16px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  testBtn: { padding: '6px 16px', background: 'none', border: '1px solid #ddd', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: '#555', fontWeight: 600 },
+  cancelBtn: { padding: '6px 16px', background: 'none', border: '1px solid #ddd', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: '#555' },
+  saveBtn: { padding: '7px 16px', background: '#111', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   tdActions: { padding: '8px 16px', textAlign: 'right' as const },
-  badge: { fontSize: 11, fontFamily: 'var(--font-mono)', background: 'var(--bg-secondary)', padding: '2px 7px', borderRadius: 4, border: '1px solid var(--border-light)' },
-  actionBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 },
-  deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid transparent', borderRadius: 4, background: 'transparent', cursor: 'pointer', color: 'var(--error-full)' },
+  badge: { fontSize: 11, fontFamily: 'var(--font-mono)', background: '#f5f5f5', color: '#666', padding: '2px 7px', borderRadius: 3 },
+  actionBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid #ddd', borderRadius: 4, background: 'none', cursor: 'pointer', color: '#555', marginRight: 6 },
+  deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid #ddd', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--error-full)' },
 }
