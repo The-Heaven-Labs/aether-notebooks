@@ -307,8 +307,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: 8,
     height: 8,
     borderRadius: '50%',
-    background: 'var(--accent)',
-    opacity: 0.5,
+    background: '#ddd',
   },
   subHeader: {
     background: 'var(--bg-primary)',
@@ -340,10 +339,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     fontWeight: 500,
     flexShrink: 0,
-  },
-  backArrow: {
-    fontSize: 16,
-    lineHeight: 1,
   },
   breadcrumbSep: {
     color: 'var(--text-muted)',
@@ -387,24 +382,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     fontWeight: 600,
     cursor: 'pointer',
-  },
-  errorBanner: {
-    background: 'var(--error-light)',
-    borderBottom: '1px solid var(--error-border)',
-    padding: '6px 24px',
-    fontSize: 12,
-    color: 'var(--error-full)',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  errorClose: {
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    color: 'var(--error-full)',
-    fontSize: 14,
-    padding: 0,
   },
   pickerOverlay: {
     position: 'fixed',
