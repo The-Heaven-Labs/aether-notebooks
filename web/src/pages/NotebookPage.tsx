@@ -1,13 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ChevronsRight, ChevronLeft, X, Loader2 } from 'lucide-react'
+import { ChevronsRight, ChevronLeft, Loader2 } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { LoadingPage } from '../components/LoadingPage'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Notebook, Cell, Output, Connector, Parameter, CellVersion } from '../types'
-import { CodeCell } from '../components/CodeCell'
-import { TextCell } from '../components/TextCell'
+import { Cell as NotebookCell } from '../components/Cell'
 import { ParametersBar } from '../components/ParametersBar'
 import { SchemaBrowser } from '../components/SchemaBrowser'
 import { SchedulesPanel } from '../components/SchedulesPanel'
@@ -470,80 +469,46 @@ export function NotebookPage() {
           <div style={styles.cellsArea}>
             <div style={styles.bodyInner}>
               <div style={styles.cells}>
-                {localCells.map((cell, i) =>
-                  cell.type === 'code' ? (
-                    <div key={cell.id}>
-                      {cell.parameters && cell.parameters.length > 0 && (
-                        <div style={{
-                          borderBottom: '1px solid var(--border)',
-                          padding: '4px 12px',
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          gap: 6,
-                          alignItems: 'center',
-                          background: 'var(--bg-secondary)',
-                          fontSize: 11,
-                        }}>
-                          <span style={{ color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', fontSize: 10 }}>Cell params:</span>
-                          {cell.parameters.map(p => (
-                            <div key={p.name} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                              <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent)', fontSize: 11 }}>{p.name}</span>
-                              <span style={{ color: 'var(--text-muted)' }}>=</span>
-                              <input
-                                style={{
-fontSize: 11,
-                                   fontFamily: 'var(--font-mono)',
-                                   background: 'var(--bg-primary)',
-                                   border: '1px solid var(--border)',
-                                   borderRadius: 4,
-                                   padding: '1px 5px',
-                                  color: 'var(--text-primary)',
-                                  width: 90,
-                                  outline: 'none',
-                                }}
-                                value={p.default}
-                                onChange={e => updateCellParam(cell.id, p.name, e.target.value)}
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      <CodeCell
-                        cell={cell}
-                        connectors={connectors}
-                        notebookId={id!}
-                        onRun={saveAndRun}
-                        onDelete={(cid) => deleteCell.mutate(cid)}
-                        onSourceChange={updateSource}
-                        onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
-                        onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
-                        onSwitchType={() => switchCellType(cell.id)}
-                        onAssignConnector={assignConnector}
-                        onClearConnector={clearCellConnector}
-                        running={runningCells.has(cell.id)}
-                        saveState={cellSaveState[cell.id]}
-                        runAt={cellRunAt[cell.id]}
-                        onUpdateCellMeta={(updates) => updateCellMeta(cell.id, updates)}
-                        onShowHistory={() => fetchHistory(cell.id)}
-                        onFocus={(cid) => setFocusedCellId(cid)}
-                      />
-                    </div>
-                  ) : (
-                    <TextCell
-                      key={cell.id}
+                {localCells.map((cell, i) => (
+                  <div key={cell.id}>
+                    {cell.type === 'code' && cell.parameters && cell.parameters.length > 0 && (
+                      <div style={styles.cellParams}>
+                        <span style={styles.cellParamsLabel}>Cell params:</span>
+                        {cell.parameters.map((p) => (
+                          <div key={p.name} style={styles.cellParam}>
+                            <span style={styles.cellParamName}>{p.name}</span>
+                            <span style={styles.cellParamEq}>=</span>
+                            <input
+                              style={styles.cellParamInput}
+                              value={p.default}
+                              onChange={(e) => updateCellParam(cell.id, p.name, e.target.value)}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <NotebookCell
                       cell={cell}
+                      connectors={connectors}
+                      notebookId={id!}
+                      onRun={saveAndRun}
                       onDelete={(cid) => deleteCell.mutate(cid)}
                       onSourceChange={updateSource}
                       onSave={saveCellSource}
+                      onAssignConnector={assignConnector}
+                      onClearConnector={clearCellConnector}
                       onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
                       onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
                       onSwitchType={() => switchCellType(cell.id)}
+                      running={runningCells.has(cell.id)}
                       saveState={cellSaveState[cell.id]}
+                      runAt={cellRunAt[cell.id]}
                       onUpdateCellMeta={(updates) => updateCellMeta(cell.id, updates)}
                       onShowHistory={() => fetchHistory(cell.id)}
+                      onFocus={(cid) => setFocusedCellId(cid)}
                     />
-                  ),
-                )}
+                  </div>
+                ))}
 
                 <div style={styles.addRow}>
                   <button type="button" style={styles.addBtn} onClick={() => createCell.mutate('code')}>
@@ -587,6 +552,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
   },
+
+  // ── Header ──
   header: {
     display: 'flex',
     alignItems: 'flex-start',
@@ -607,7 +574,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
     width: 32,
     height: 32,
-    borderRadius: 6,
+    borderRadius: 4,
     background: 'var(--bg-secondary)',
     color: 'var(--text-muted)',
     textDecoration: 'none',
@@ -620,11 +587,10 @@ const styles: Record<string, React.CSSProperties> = {
   notebookTitle: {
     fontSize: 28,
     fontWeight: 700,
-    color: 'var(--text-primary)',
+    color: '#111',
     margin: '0 0 6px',
     cursor: 'pointer',
     lineHeight: 1.2,
-    letterSpacing: '-0.5px',
   },
   titleInput: {
     fontSize: 28,
@@ -632,21 +598,20 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-primary)',
     background: 'transparent',
     border: 'none',
-    borderBottom: '2px solid var(--accent)',
+    borderBottom: '1px solid #ccc',
     outline: 'none',
     width: '100%',
     fontFamily: 'var(--font-sans)',
     lineHeight: 1.2,
     padding: '2px 0',
     marginBottom: 6,
-    letterSpacing: '-0.5px',
   },
   descInput: {
     width: '100%',
     border: 'none',
     outline: 'none',
-    fontSize: 15,
-    color: 'var(--text-muted)',
+    fontSize: 14,
+    color: '#aaa',
     background: 'transparent',
     fontFamily: 'var(--font-sans)',
     padding: '1px 0',
@@ -665,6 +630,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     color: 'var(--text-muted)',
   },
+
+  // ── Toolbar ──
   toolbar: {
     display: 'flex',
     alignItems: 'center',
@@ -677,8 +644,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     fontFamily: 'var(--font-mono)',
     padding: '4px 8px',
-    border: '1px solid var(--border)',
-    borderRadius: 6,
+    border: '1px solid #ddd',
+    borderRadius: 4,
     background: 'var(--bg-primary)',
     color: 'var(--text-primary)',
     cursor: 'pointer',
@@ -688,50 +655,10 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 10,
   },
-toolbarRight: {
+  toolbarRight: {
     display: 'flex',
     alignItems: 'center',
     gap: 12,
-  },
-  cells: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 24,
-  },
-  notebookHeading: {
-    marginBottom: 32,
-  },
-  notebookTitle: {
-    fontSize: 28,
-    fontWeight: 700,
-    color: 'var(--text-primary)',
-    margin: '0 0 6px',
-    cursor: 'pointer',
-    lineHeight: 1.2,
-  },
-  titleInput: {
-    fontSize: 28,
-    fontWeight: 700,
-    color: 'var(--text-primary)',
-    background: 'transparent',
-    border: 'none',
-    borderBottom: '2px solid var(--accent)',
-    outline: 'none',
-    width: '100%',
-    fontFamily: 'var(--font-sans)',
-    lineHeight: 1.2,
-    padding: '2px 0',
-    marginBottom: 6,
-  },
-  descInput: {
-    width: '100%',
-    border: 'none',
-    outline: 'none',
-    fontSize: 15,
-    color: 'var(--text-muted)',
-    background: 'transparent',
-    fontFamily: 'var(--font-sans)',
-    padding: '1px 0',
   },
   runningBadge: {
     fontSize: 12,
@@ -740,16 +667,31 @@ toolbarRight: {
   },
   runAllBtn: {
     padding: '6px 16px',
-    background: 'var(--accent)',
-    color: 'white',
+    background: '#111',
+    color: '#fff',
     border: 'none',
-    borderRadius: 6,
+    borderRadius: 4,
     fontSize: 13,
     fontWeight: 600,
     cursor: 'pointer',
-    letterSpacing: '0.01em',
   },
-body: {
+  schemaBtn: {
+    padding: '5px 12px',
+    background: 'none',
+    color: '#555',
+    border: '1px solid #ddd',
+    borderRadius: 4,
+    fontSize: 12,
+    cursor: 'pointer',
+  },
+  schemaBtnActive: {
+    background: '#f5f5f5',
+    border: '1px solid #ccc',
+    color: '#111',
+  },
+
+  // ── Body / cells area ──
+  body: {
     flex: 1,
     display: 'flex',
     flexDirection: 'row',
@@ -766,52 +708,80 @@ body: {
   cellsArea: {
     flex: 1,
     overflowY: 'auto',
-    padding: '0px 0px 32px',
+    padding: '32px 0 64px',
   },
   bodyInner: {
-    maxWidth: 1200,
+    maxWidth: 860,
     margin: '0 auto',
-    padding: '0 40px 32px',
+    padding: '0 32px',
   },
+
+  // Cells: white card, cells separated by hairlines (no gap)
   cells: {
+    background: '#fff',
+    border: '1px solid #e8e8e8',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+
+  // Cell params bar (above a code cell)
+  cellParams: {
+    borderBottom: '1px solid #e8e8e8',
+    padding: '4px 16px',
     display: 'flex',
-    flexDirection: 'column',
-    gap: 24,
+    flexWrap: 'wrap' as const,
+    gap: 8,
+    alignItems: 'center',
+    background: '#fafafa',
   },
-  schemaBtn: {
-    padding: '6px 14px',
-    background: 'transparent',
-    color: 'var(--text-secondary)',
-    border: '1px solid var(--border)',
-    borderRadius: 6,
-    fontSize: 13,
-    fontWeight: 500,
-    cursor: 'pointer',
-    letterSpacing: '0.01em',
+  cellParamsLabel: {
+    fontSize: 9,
+    fontFamily: 'var(--font-mono)',
+    fontWeight: 700,
+    letterSpacing: '0.1em',
+    color: '#bbb',
+    textTransform: 'uppercase' as const,
   },
-  schemaBtnActive: {
-    background: 'var(--bg-secondary)',
-    borderColor: 'var(--accent)',
+  cellParam: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+  },
+  cellParamName: {
+    fontFamily: 'var(--font-mono)',
+    fontSize: 11,
     color: 'var(--accent)',
   },
-  cells: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 12,
+  cellParamEq: {
+    color: '#bbb',
+    fontSize: 11,
   },
+  cellParamInput: {
+    fontSize: 11,
+    fontFamily: 'var(--font-mono)',
+    background: '#fff',
+    border: '1px solid #e0e0e0',
+    borderRadius: 3,
+    padding: '1px 5px',
+    color: '#333',
+    width: 90,
+    outline: 'none',
+  },
+
+  // Add cell row
   addRow: {
     display: 'flex',
-    gap: 10,
-    paddingTop: 8,
+    gap: 8,
+    paddingTop: 12,
   },
   addBtn: {
-    padding: '8px 20px',
-    border: '1.5px dashed var(--border)',
-    borderRadius: 6,
+    padding: '6px 14px',
+    border: '1px dashed #ddd',
+    borderRadius: 4,
     background: 'transparent',
-    color: 'var(--text-muted)',
-    fontSize: 13,
-    fontWeight: 500,
+    color: '#bbb',
+    fontSize: 12,
+    fontFamily: 'var(--font-mono)',
     cursor: 'pointer',
     transition: 'border-color 0.15s, color 0.15s',
   },
