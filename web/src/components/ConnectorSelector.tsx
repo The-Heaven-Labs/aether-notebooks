@@ -32,7 +32,17 @@ export function ConnectorSelector({
 
   return (
     <select
-      style={style}
+      style={{
+        border: '1px solid #ddd',
+        borderRadius: 4,
+        padding: '4px 8px',
+        fontSize: 12,
+        fontFamily: 'var(--font-mono)',
+        background: '#fff',
+        color: '#333',
+        outline: 'none',
+        ...style,
+      }}
       value={value ?? ''}
       onChange={e => onChange(e.target.value || null)}
     >
