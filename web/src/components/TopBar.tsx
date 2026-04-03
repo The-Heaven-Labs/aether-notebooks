@@ -101,9 +101,9 @@ const styles: Record<string, React.CSSProperties> = {
   dropdown: {
     position: 'absolute', right: 0, top: 38,
     background: 'white',
-    border: '1px solid var(--border)',
-    borderRadius: 8,
-    boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+    border: '1px solid #e8e8e8',
+    borderRadius: 4,
+    boxShadow: '0 2px 16px rgba(0,0,0,0.12)',
     minWidth: 200,
     zIndex: 100,
     overflow: 'hidden',
