@@ -313,14 +313,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-primary)',
     transition: 'border-color 0.15s',
   },
-  error: {
-    color: 'var(--error)',
-    fontSize: 13,
-    padding: '8px 12px',
-    background: 'var(--error-light)',
-    borderRadius: 4,
-    border: '1px solid var(--error-border)',
-  },
   submit: {
     padding: '11px',
     background: '#111',
