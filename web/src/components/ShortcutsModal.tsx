@@ -38,6 +38,6 @@ export function ShortcutsModal({ onClose }: Props) {
 const styles: Record<string, React.CSSProperties> = {
   table: { width: '100%', borderCollapse: 'collapse', padding: '8px 20px' },
   key: { padding: '8px 20px 8px', width: 160 },
-  kbd: { fontFamily: 'var(--font-mono)', fontSize: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px' },
+  kbd: { fontFamily: 'var(--font-mono)', fontSize: 11, background: '#f5f5f5', border: '1px solid #e8e8e8', borderRadius: 3, padding: '2px 6px' },
   action: { padding: '8px 20px 8px 0', fontSize: 13, color: 'var(--text-secondary)' },
 }
