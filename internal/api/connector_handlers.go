@@ -13,9 +13,10 @@ import (
 )
 
 type createConnectorRequest struct {
-	Name   string                 `json:"name"`
-	Type   models.ConnectorType   `json:"type"`
-	Config models.ConnectorConfig `json:"config"`
+	Name      string                 `json:"name"`
+	Type      models.ConnectorType   `json:"type"`
+	Config    models.ConnectorConfig `json:"config"`
+	IsDefault bool                   `json:"is_default"`
 }
 
 func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
@@ -51,22 +52,54 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 	var id, orgID, name string
 	var connType models.ConnectorType
 	var maxRows, timeout int
-	err = s.db.Pool.QueryRow(ctx,
-		`INSERT INTO connectors (org_id, name, type, config_encrypted)
-		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, org_id, name, type, max_rows, timeout_seconds`,
-		claims.OrgID, req.Name, req.Type, encrypted,
-	).Scan(&id, &orgID, &name, &connType, &maxRows, &timeout)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create connector")
-		return
+	var isDefault bool
+
+	if req.IsDefault {
+		tx, err := s.db.Pool.Begin(ctx)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+		defer tx.Rollback(ctx)
+
+		if _, err := tx.Exec(ctx,
+			`UPDATE connectors SET is_default=false WHERE org_id=$1`, claims.OrgID,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+		err = tx.QueryRow(ctx,
+			`INSERT INTO connectors (org_id, name, type, config_encrypted, is_default)
+			 VALUES ($1, $2, $3, $4, $5)
+			 RETURNING id, org_id, name, type, max_rows, timeout_seconds, is_default`,
+			claims.OrgID, req.Name, req.Type, encrypted, true,
+		).Scan(&id, &orgID, &name, &connType, &maxRows, &timeout, &isDefault)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create connector")
+			return
+		}
+		if err := tx.Commit(ctx); err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+	} else {
+		err = s.db.Pool.QueryRow(ctx,
+			`INSERT INTO connectors (org_id, name, type, config_encrypted)
+			 VALUES ($1, $2, $3, $4)
+			 RETURNING id, org_id, name, type, max_rows, timeout_seconds, is_default`,
+			claims.OrgID, req.Name, req.Type, encrypted,
+		).Scan(&id, &orgID, &name, &connType, &maxRows, &timeout, &isDefault)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create connector")
+			return
+		}
 	}
 
 	// Mask password in response
 	req.Config.Password = "***"
 	conn := models.Connector{
 		ID: id, OrgID: orgID, Name: name, Type: connType,
-		Config: req.Config, MaxRows: maxRows, TimeoutSeconds: timeout,
+		Config: req.Config, MaxRows: maxRows, TimeoutSeconds: timeout, IsDefault: isDefault,
 	}
 
 	s.audit.Log(ctx, audit.Entry{
@@ -82,7 +115,7 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, created_at, updated_at
+		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at
 		 FROM connectors WHERE org_id = $1 ORDER BY name ASC`,
 		claims.OrgID,
 	)
@@ -97,7 +130,7 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 		var c models.Connector
 		var encryptedConfig []byte
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
-			&c.MaxRows, &c.TimeoutSeconds, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
@@ -114,6 +147,41 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, connectors)
+}
+
+func (s *Server) handleSetDefaultConnector(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	id := r.PathValue("id")
+
+	tx, err := s.db.Pool.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	// Clear existing default for this org
+	if _, err := tx.Exec(r.Context(),
+		`UPDATE connectors SET is_default=false WHERE org_id=$1`, claims.OrgID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	// Set this connector as default (also verifies org ownership)
+	var connID string
+	err = tx.QueryRow(r.Context(),
+		`UPDATE connectors SET is_default=true WHERE id=$1 AND org_id=$2 RETURNING id`,
+		id, claims.OrgID,
+	).Scan(&connID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "connector not found")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleDeleteConnector(w http.ResponseWriter, r *http.Request) {

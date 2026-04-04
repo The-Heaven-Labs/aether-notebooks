@@ -67,6 +67,7 @@ export interface Connector {
   id: string
   name: string
   type: string
+  is_default?: boolean
   created_at: string
   config?: {
     host?: string
