@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import type React from 'react'
 import { useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
@@ -23,8 +23,17 @@ export function PresentationPage() {
       .then(setNotebook)
   }, [id])
 
-  const total = notebook?.cells.length ?? 0
-  const cell = notebook?.cells[index]
+  const slides = useMemo(() => {
+    const cells = notebook?.cells ?? []
+    return cells.reduce<Cell[][]>((acc, cell) => {
+      if (cell.slide_break || acc.length === 0) acc.push([cell])
+      else acc[acc.length - 1].push(cell)
+      return acc
+    }, [])
+  }, [notebook?.cells])
+
+  const total = slides.length
+  const currentSlide = slides[index] ?? []
 
   const prev = useCallback(() => setIndex(i => Math.max(0, i - 1)), [])
   const next = useCallback(() => setIndex(i => Math.min(total - 1, i + 1)), [total])
@@ -38,7 +47,7 @@ export function PresentationPage() {
     return () => window.removeEventListener('keydown', handler)
   }, [next, prev])
 
-  if (!notebook || !cell) {
+  if (!notebook || slides.length === 0) {
     return <div style={styles.loading}>Loading…</div>
   }
 
@@ -46,19 +55,21 @@ export function PresentationPage() {
     <div style={styles.page}>
       <div style={styles.content}>
         <div style={styles.slideContainer}>
-          {cell.type === 'text' ? (
-            <div style={styles.markdownSlide}>
-              <ReactMarkdown>{cell.source}</ReactMarkdown>
-            </div>
-          ) : (
-            <div style={styles.codeSlide}>
-              {(cell.outputs ?? []).length > 0 ? (
-                <OutputRenderer outputs={cell.outputs as Output[]} />
-              ) : (
-                <pre style={styles.codePre}>{cell.source}</pre>
-              )}
-            </div>
-          )}
+          {currentSlide.map((cell) => (
+            cell.type === 'text' ? (
+              <div key={cell.id} style={styles.markdownSlide}>
+                <ReactMarkdown>{cell.source}</ReactMarkdown>
+              </div>
+            ) : (
+              <div key={cell.id} style={styles.codeSlide}>
+                {(cell.outputs ?? []).length > 0 ? (
+                  <OutputRenderer outputs={cell.outputs as Output[]} />
+                ) : (
+                  <pre style={styles.codePre}>{cell.source}</pre>
+                )}
+              </div>
+            )
+          ))}
         </div>
       </div>
       <div style={styles.nav}>
