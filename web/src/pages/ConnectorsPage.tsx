@@ -20,11 +20,12 @@ interface ConnectorForm {
   user: string
   password: string
   ssl_mode: string
+  is_default: boolean
 }
 
 const defaultForm = (): ConnectorForm => ({
   name: '', type: 'postgres', host: 'localhost', port: '5432',
-  database: '', user: '', password: '', ssl_mode: 'disable',
+  database: '', user: '', password: '', ssl_mode: 'disable', is_default: false,
 })
 
 export function ConnectorsPage() {
@@ -47,6 +48,7 @@ export function ConnectorsPage() {
     mutationFn: () => api.post<Connector>('/api/v1/connectors', {
       name: form.name,
       type: form.type,
+      is_default: form.is_default,
       config: {
         host: form.host,
         port: parseInt(form.port),
@@ -71,6 +73,11 @@ export function ConnectorsPage() {
     mutationFn: (id: string) => api.delete(`/api/v1/connectors/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['connectors'] }),
     onError: (err: Error) => setDeleteError(err.message),
+  })
+
+  const setDefault = useMutation({
+    mutationFn: (id: string) => api.put(`/api/v1/connectors/${id}/default`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['connectors'] }),
   })
 
   const testConnector = async (id: string) => {
@@ -153,6 +160,11 @@ export function ConnectorsPage() {
                   <option value="verify-full">verify-full</option>
                 </select>
               </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#555', gridColumn: '1 / -1' }}>
+                <input type="checkbox" checked={form.is_default ?? false}
+                  onChange={e => setForm(f => ({ ...f, is_default: e.target.checked }))} />
+                Set as default connector for new notebooks
+              </label>
             </div>
             <div style={styles.formActions}>
               <button
@@ -191,7 +203,16 @@ export function ConnectorsPage() {
             const test = testResults[c.id]
             return (
               <tr key={c.id} style={rowStyle}>
-                <td style={cellStyle}><strong>{c.name}</strong></td>
+                <td style={cellStyle}>
+                  <strong>{c.name}</strong>
+                  {c.is_default && (
+                    <span style={{ fontSize: 11, background: '#f5f5f5', border: '1px solid #e8e8e8',
+                      borderRadius: 3, padding: '1px 6px', color: '#555', fontFamily: 'var(--font-mono)',
+                      marginLeft: 8 }}>
+                      default
+                    </span>
+                  )}
+                </td>
                 <td style={cellStyle}><code style={styles.badge}>{c.type}</code></td>
                 <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                   {c.config?.host ?? '—'}
@@ -212,6 +233,14 @@ export function ConnectorsPage() {
                 </td>
                 <td style={styles.tdActions}>
                   <button type="button" style={styles.actionBtn} onClick={() => testConnector(c.id)}>Test</button>
+                  {!c.is_default && (
+                    <button type="button"
+                      style={{ background: 'none', border: '1px solid #ddd', borderRadius: 4,
+                        fontSize: 12, padding: '3px 10px', cursor: 'pointer', color: '#555', marginRight: 6 }}
+                      onClick={() => setDefault.mutate(c.id)}>
+                      Set default
+                    </button>
+                  )}
                   <button
                     type="button"
                     style={styles.deleteBtn}

@@ -10,6 +10,7 @@ type Connector struct {
 	Config         ConnectorConfig `json:"config"`
 	MaxRows        int             `json:"max_rows"`
 	TimeoutSeconds int             `json:"timeout_seconds"`
+	IsDefault      bool            `json:"is_default"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
 }
