@@ -1,7 +1,7 @@
 # Frontend Improvements Plan - Status
 
-> **Last Updated**: After Task 7 completion
-> **Status**: Phase1 complete, Phase 2 in progress (3/5 tasks done)
+> **Last Updated**: After Task 10 completion
+> **Status**: Phase 1-2 complete, Phase 3 in progress (1/5 tasks done)
 
 ---
 
@@ -59,7 +59,7 @@
 
 ---
 
-## 🟡 Phase 2: UX Improvements (COMPLETE - 5/5 tasks)
+## ✅ Phase 2: UX Improvements (COMPLETE - 5/5 tasks)
 
 ### Task 5: Fix Collaboration Cursor Names ✅
 
@@ -104,7 +104,7 @@
   - LoginPage.tsx
   - OrgOnboardingPage.tsx
   - AuditPage.tsx
-- Removed unused error styles fromMembersPage
+- Removed unused error styles from MembersPage
 
 **Commit**: `Progress: Task 7 complete - ErrorBanner component created and applied`
 
@@ -141,21 +141,55 @@
 
 ---
 
-## 🟢 Phase 3: Features (NOT STARTED - 0/5 tasks)
+## 🟡 Phase 3: Features (IN PROGRESS - 1/5 tasks)
 
-### Task 10: Markdown Anchor Links (#5)
+### Task 10: Markdown Anchor Links (#5) ✅
+
+**Status**: ✅ Complete
+
+**What was done**:
+- Added `slugify` function to generate anchor IDs from heading text
+- Created `markdownComponents` object with custom h1-h6 components
+- Each heading now gets an auto-generated ID and shows `#` anchor link on hover
+- Updated files:
+  - `web/src/components/Cell.tsx` - Main markdown cell component
+  - `web/src/components/CellVariantWireframe.tsx` - Storybook wireframe component
+  - `web/src/pages/PresentationPage.tsx` - Presentation mode
+  - `web/src/styles/theme.css` - Added hover CSS rule for header anchors
+- Anchor links are hidden by default, appear on header hover
+
 **Effort**: 2 hours
 
+---
+
 ### Task 11: Named Query Variables (#13)
+
+**Status**: 🟡 Not started
+
 **Effort**: 4-6 hours (needs backend)
 
+---
+
 ### Task 12: Image Customization (#17)
+
+**Status**: 🟡 Not started
+
 **Effort**: 3 hours
 
+---
+
 ### Task 13: Audit Log UX - Show Names (#26)
+
+**Status**: 🟡 Not started
+
 **Effort**: 2 hours (needs backend join)
 
+---
+
 ### Task 14: Profile Menu Enhancement (#28)
+
+**Status**: 🟡 Not started
+
 **Effort**: 3 hours
 
 ---
@@ -166,8 +200,12 @@
 **File**: Create `web/src/components/Tooltip.tsx`
 **Effort**: 1 hour
 
+---
+
 ### Task 16: Dashboard Editor Polish
 **Effort**: 2 hours
+
+---
 
 ### Task 17: Loading State Improvements
 **Effort**: 1 hour
@@ -187,30 +225,33 @@
 | 2 | 7. ErrorBanner | 🟡 Medium | 1h | ✅ Complete |
 | 2 | 8. Empty States | 🟡 Medium | 30m | ✅ Complete |
 | 2 | 9. Skeletons | 🟡 Medium | 2h | ✅ Complete |
-| 3 | 10-14. Features | 🟢 Low | Varies | 🟢 Not started |
-| 4 | 15-17. Components | 🟢 Low | Varies | 🟢 Not started |
+| 3 | 10. Anchor Links | 🟡 Medium | 2h | ✅ Complete |
+| 3 | 11. Named Variables | 🟢 Low | 4-6h | 🟡 Not started |
+| 3 | 12. Image Custom | 🟢 Low | 3h | 🟡 Not started |
+| 3 | 13. Audit Names | 🟢 Low | 2h | 🟡 Not started |
+| 3 | 14. Profile Menu | 🟢 Low | 3h | 🟡 Not started |
+| 4 | 15. Tooltip | 🟢 Low | 1h | 🟢 Not started |
+| 4 | 16. Dashboard Polish | 🟢 Low | 2h | 🟢 Not started |
+| 4 | 17. Loading States | 🟢 Low | 1h | 🟢 Not started |
 
 ---
 
 ## Next Actions
 
-**Phase1 ✅ COMPLETE** - Visual Quality
+**Phase 1 ✅ COMPLETE** - Visual Quality
 **Phase 2 ✅ COMPLETE** - UX Improvements
+**Phase 3 🟡 IN PROGRESS** - Features
 
-**Phase 3: Features (Next)**
+**Next up (Phase 3)**:
 
-1. **Task 10**: Markdown Anchor Links (#5) - 2 hours
-   - Add auto-generated anchor IDs to markdown headings
-   - Enable deep linking to sections in markdown cells
-
-2. **Task 11**: Named Query Variables (#13) - 4-6 hours
+1. **Task 11**: Named Query Variables (#13) - 4-6 hours
    - Requires backend support for named parameters
 
-3. **Task 12**: Image Customization (#17) - 3 hours
+2. **Task 12**: Image Customization (#17) - 3 hours
    - Allow users to customize image sizing/alignment
 
-4. **Task 13**: Audit Log UX - Show Names (#26) - 2 hours
+3. **Task 13**: Audit Log UX - Show Names (#26) - 2 hours
    - Requires backend join to show user names
 
-5. **Task 14**: Profile Menu Enhancement (#28) - 3 hours
+4. **Task 14**: Profile Menu Enhancement (#28) - 3 hours
    - Add user preferences menu

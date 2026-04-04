@@ -72,6 +72,76 @@ function hashStr(s: string): number {
   return h
 }
 
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^\w-]/g, '')
+}
+
+const markdownComponents = {
+  h1: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
+    const text = children?.toString() || ''
+    const id = slugify(text)
+    return (
+      <h1 id={id} {...props}>
+        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
+        {children}
+      </h1>
+    )
+  },
+  h2: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
+    const text = children?.toString() || ''
+    const id = slugify(text)
+    return (
+      <h2 id={id} {...props}>
+        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
+        {children}
+      </h2>
+    )
+  },
+  h3: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
+    const text = children?.toString() || ''
+    const id = slugify(text)
+    return (
+      <h3 id={id} {...props}>
+        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
+        {children}
+      </h3>
+    )
+  },
+  h4: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
+    const text = children?.toString() || ''
+    const id = slugify(text)
+    return (
+      <h4 id={id} {...props}>
+        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
+        {children}
+      </h4>
+    )
+  },
+  h5: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
+    const text = children?.toString() || ''
+    const id = slugify(text)
+    return (
+      <h5 id={id} {...props}>
+        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
+        {children}
+      </h5>
+    )
+  },
+  h6: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
+    const text = children?.toString() || ''
+    const id = slugify(text)
+    return (
+      <h6 id={id} {...props}>
+        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
+        {children}
+      </h6>
+    )
+  },
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface SaveState {
@@ -245,7 +315,7 @@ function MarkdownView({ cell, onSourceChange, onSave }: MarkdownViewProps) {
   return (
     <div style={styles.mdRendered} onClick={() => setEditing(true)}>
       {cell.source
-        ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{cell.source}</ReactMarkdown>
+        ? <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{cell.source}</ReactMarkdown>
         : <span style={styles.mdPlaceholder}>Click to add content…</span>
       }
     </div>
@@ -568,6 +638,15 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#bbb',
     fontStyle: 'italic',
     fontSize: 13,
+  },
+  headerAnchor: {
+    color: '#ccc',
+    textDecoration: 'none',
+    marginRight: 8,
+    opacity: 0,
+    transition: 'opacity 0.15s',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '0.85em',
   },
 
   // Markdown edit mode
