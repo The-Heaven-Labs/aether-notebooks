@@ -202,6 +202,49 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, widget)
 }
 
+func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	dashID := r.PathValue("id")
+	widgetID := r.PathValue("widget_id")
+
+	var req struct {
+		Layout *struct {
+			Row    int `json:"row"`
+			Col    int `json:"col"`
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		} `json:"layout,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.Layout == nil {
+		writeError(w, http.StatusBadRequest, "layout required")
+		return
+	}
+
+	layout, err := json.Marshal(req.Layout)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode layout")
+		return
+	}
+
+	var id string
+	err = s.db.Pool.QueryRow(r.Context(),
+		`UPDATE widgets SET layout=$1, updated_at=NOW()
+         WHERE id=$2 AND dashboard_id=$3
+           AND dashboard_id IN (SELECT id FROM dashboards WHERE org_id=$4)
+         RETURNING id`,
+		layout, widgetID, dashID, claims.OrgID,
+	).Scan(&id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "widget not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleDeleteWidget(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	dashID := r.PathValue("id")
