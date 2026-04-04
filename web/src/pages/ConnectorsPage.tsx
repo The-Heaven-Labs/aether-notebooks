@@ -7,6 +7,7 @@ import { Check, X } from 'lucide-react'
 import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
 import { FormCard } from '../components/FormCard'
 import { StatusBadge } from '../components/StatusBadge'
+import { SectionHeader } from '../components/SectionHeader'
 
 type ConnectorType = 'postgres' | 'clickhouse'
 
@@ -111,9 +112,9 @@ export function ConnectorsPage() {
     <AppShell>
       <div style={styles.body}>
         {!creating && (
-          <div style={styles.bodyHeader}>
+          <SectionHeader title="Connectors" subtitle={connectors.length > 0 ? `${connectors.length} connector${connectors.length !== 1 ? 's' : ''}` : ''}>
             <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Connector</button>
-          </div>
+          </SectionHeader>
         )}
         {creating && (
           <FormCard title="New Connector">
@@ -237,7 +238,6 @@ export function ConnectorsPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   newBtn: { padding: '7px 16px', background: '#111', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  bodyHeader: { display: 'flex', justifyContent: 'flex-end', marginBottom: 16 },
   body: { maxWidth: 1100, margin: '0 auto', padding: '32px 40px', width: '100%' },
   formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 },
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: '#555' },

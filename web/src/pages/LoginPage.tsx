@@ -163,7 +163,9 @@ useEffect(() => {
           </form>
 
           <div style={styles.divider}>
+            <div style={styles.dividerLine} />
             <span style={styles.dividerText}>or</span>
+            <div style={styles.dividerLine} />
           </div>
 
           <button type="button" style={styles.ssoButton} onClick={handleSSOLogin}>
@@ -332,12 +334,15 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 12,
     margin: '20px 0',
   },
-  dividerText: {
+  dividerLine: {
     flex: 1,
-    textAlign: 'center' as const,
+    height: 1,
+    background: '#e8e8e8',
+  },
+  dividerText: {
     fontSize: 12,
     color: 'var(--text-secondary)',
-    position: 'relative' as const,
+    flexShrink: 0,
   },
   ssoButton: {
     width: '100%',

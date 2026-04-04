@@ -340,7 +340,8 @@ export function NotebookPage() {
       <div style={styles.header}>
         <div style={styles.headerLeft}>
           <Link to="/" style={styles.backBtn} title="Back to notebooks">
-            <ChevronLeft size={18} />
+            <ChevronLeft size={14} style={{ flexShrink: 0 }} />
+            <span>Notebooks</span>
           </Link>
           <div style={styles.titleSection}>
             {editingTitle ? (
@@ -571,14 +572,12 @@ const styles: Record<string, React.CSSProperties> = {
   backBtn: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'center',
-    width: 32,
-    height: 32,
-    borderRadius: 4,
-    background: 'var(--bg-secondary)',
+    gap: 4,
     color: 'var(--text-muted)',
     textDecoration: 'none',
-    transition: 'background 0.15s',
+    fontSize: 13,
+    fontWeight: 500,
+    flexShrink: 0,
   },
   titleSection: {
     flex: 1,
@@ -649,6 +648,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--bg-primary)',
     color: 'var(--text-primary)',
     cursor: 'pointer',
+    minWidth: 160,
   },
   toolbarLeft: {
     display: 'flex',
@@ -711,17 +711,16 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '32px 0 64px',
   },
   bodyInner: {
-    maxWidth: 860,
+    maxWidth: 1200,
     margin: '0 auto',
-    padding: '0 32px',
+    padding: '0 40px',
   },
 
-  // Cells: white card, cells separated by hairlines (no gap)
+  // Cells: each cell is its own card, separated by gap
   cells: {
-    background: '#fff',
-    border: '1px solid #e8e8e8',
-    borderRadius: 4,
-    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
   },
 
   // Cell params bar (above a code cell)
