@@ -338,57 +338,57 @@ export function NotebookPage() {
     <div style={styles.page}>
       {/* Notebook Header */}
       <div style={styles.header}>
-        <div style={styles.headerLeft}>
+        {/* Row 1: breadcrumb + meta */}
+        <div style={styles.headerTopRow}>
           <Link to="/" style={styles.backBtn} title="Back to notebooks">
             <ChevronLeft size={14} style={{ flexShrink: 0 }} />
             <span>Notebooks</span>
           </Link>
-          <div style={styles.titleSection}>
-            {editingTitle ? (
-              <input
-                style={styles.titleInput}
-                value={titleDraft}
-                onChange={(e) => setTitleDraft(e.target.value)}
-                onBlur={() => {
-                  setEditingTitle(false)
-                  if (titleDraft.trim() && titleDraft.trim() !== notebook.title) {
-                    renameNotebook.mutate(titleDraft.trim())
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                  if (e.key === 'Escape') setEditingTitle(false)
-                }}
-                autoFocus
-              />
-            ) : (
-              <h1
-                style={styles.notebookTitle}
-                onClick={() => { setTitleDraft(notebook.title); setEditingTitle(true) }}
-                title="Click to rename"
-              >
-                {notebook.title}
-              </h1>
-            )}
-            <input
-              style={styles.descInput}
-              value={descDraft}
-              onChange={(e) => setDescDraft(e.target.value)}
-              onBlur={() => {
-                if (descDraft !== (notebook?.description ?? '')) {
-                  updateNotebook.mutate({ description: descDraft })
-                }
-              }}
-              placeholder="Add a description…"
-            />
-          </div>
-        </div>
-        <div style={styles.headerRight}>
           <div style={styles.metaInfo}>
             <span style={styles.metaText}>
               Last updated {fmtTime(new Date(notebook.updated_at))}
             </span>
           </div>
+        </div>
+        {/* Row 2: title + description */}
+        <div style={styles.titleSection}>
+          {editingTitle ? (
+            <input
+              style={styles.titleInput}
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onBlur={() => {
+                setEditingTitle(false)
+                if (titleDraft.trim() && titleDraft.trim() !== notebook.title) {
+                  renameNotebook.mutate(titleDraft.trim())
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                if (e.key === 'Escape') setEditingTitle(false)
+              }}
+              autoFocus
+            />
+          ) : (
+            <h1
+              style={styles.notebookTitle}
+              onClick={() => { setTitleDraft(notebook.title); setEditingTitle(true) }}
+              title="Click to rename"
+            >
+              {notebook.title}
+            </h1>
+          )}
+          <input
+            style={styles.descInput}
+            value={descDraft}
+            onChange={(e) => setDescDraft(e.target.value)}
+            onBlur={() => {
+              if (descDraft !== (notebook?.description ?? '')) {
+                updateNotebook.mutate({ description: descDraft })
+              }
+            }}
+            placeholder="Add a description…"
+          />
         </div>
       </div>
 
@@ -556,18 +556,18 @@ const styles: Record<string, React.CSSProperties> = {
 
   // ── Header ──
   header: {
+    padding: '12px 40px 0',
     display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    padding: '24px 40px 20px',
-    borderBottom: '1px solid var(--border-light)',
-    background: 'var(--bg-primary)',
+    flexDirection: 'column' as const,
+    gap: 8,
+    borderBottom: '1px solid #e8e8e8',
+    background: '#fff',
   },
-  headerLeft: {
+  headerTopRow: {
     display: 'flex',
-    alignItems: 'flex-start',
-    gap: 16,
-    flex: 1,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
   },
   backBtn: {
     display: 'flex',
@@ -580,8 +580,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   titleSection: {
-    flex: 1,
-    minWidth: 0,
+    paddingBottom: 16,
   },
   notebookTitle: {
     fontSize: 28,
@@ -614,11 +613,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'transparent',
     fontFamily: 'var(--font-sans)',
     padding: '1px 0',
-  },
-  headerRight: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 16,
   },
   metaInfo: {
     display: 'flex',
