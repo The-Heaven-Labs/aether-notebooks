@@ -121,7 +121,7 @@ export function MembersPage() {
           )}
           {members.map((m) => {
             const isSelf = user?.user_id === m.user_id
-            const joinedDate = new Date(m.joined_at).toLocaleDateString([], {
+            const joinedDate = new Date(m.joined_at).toLocaleDateString('en-US', {
               month: 'short', day: 'numeric', year: 'numeric',
             })
             return (
