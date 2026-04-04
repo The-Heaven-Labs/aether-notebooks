@@ -61,6 +61,7 @@ func (s *Server) routes() {
 
 	// User routes
 	s.mux.Handle("GET /api/v1/users/me", authMW(http.HandlerFunc(s.handleGetCurrentUser)))
+	s.mux.Handle("PUT /api/v1/users/me", authMW(http.HandlerFunc(s.handleUpdateCurrentUser)))
 
 	// Notebook routes
 	s.mux.Handle("POST /api/v1/notebooks", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateNotebook))))
