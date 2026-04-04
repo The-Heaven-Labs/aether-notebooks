@@ -1,4 +1,4 @@
-import type { Meta, StoryObj } from '@storybook/react-vite'
+import type { StoryObj } from '@storybook/react-vite'
 import { Skeleton, SkeletonRow, SkeletonCard } from './Skeleton'
 
 const meta = {
