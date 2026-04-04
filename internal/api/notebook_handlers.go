@@ -49,6 +49,21 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 	}
 	json.Unmarshal(paramsOut, &nb.Parameters)
 
+	if nb.ConnectorID == "" {
+		var defaultID string
+		err := s.db.Pool.QueryRow(ctx,
+			`SELECT id FROM connectors WHERE org_id=$1 AND is_default=true LIMIT 1`,
+			claims.OrgID,
+		).Scan(&defaultID)
+		if err == nil {
+			_, _ = s.db.Pool.Exec(ctx,
+				`UPDATE notebooks SET connector_id=$1 WHERE id=$2`,
+				defaultID, nb.ID,
+			)
+			nb.ConnectorID = defaultID
+		}
+	}
+
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "notebook.create", ResourceType: "notebook", ResourceID: nb.ID,
