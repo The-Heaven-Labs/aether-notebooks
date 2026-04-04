@@ -33,6 +33,20 @@
   --shadow-md: 0 2px 16px rgba(0,0,0,0.10);
 }
 
+[data-theme="dark"] {
+  --bg-primary: #141414;
+  --bg-secondary: #1c1c1c;
+  --bg-cell-code: #1e1e1e;
+  --bg-cell-text: #181818;
+  --border: #2e2e2e;
+  --border-light: #242424;
+  --text-primary: #e8e8e8;
+  --text-secondary: #aaa;
+  --text-muted: #555;
+  --nav-bg: #0a0a0a;
+  --nav-border: #1a1a1a;
+}
+
 * {
   margin: 0;
   padding: 0;

@@ -2,12 +2,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/auth"
+	"github.com/heavenlabs/hnb/internal/models"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -311,21 +313,72 @@ func (s *Server) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
 
-	var user struct {
-		ID              string `json:"id"`
-		Email           string `json:"email"`
-		Name            string `json:"name"`
-		IsPlatformAdmin bool   `json:"is_platform_admin,omitempty"`
-	}
-
+	var u models.User
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, email, name, is_platform_admin FROM users WHERE id = $1`,
+		`SELECT id, email, name, is_platform_admin, status, theme, created_at, updated_at FROM users WHERE id = $1`,
 		claims.UserID,
-	).Scan(&user.ID, &user.Email, &user.Name, &user.IsPlatformAdmin)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.IsPlatformAdmin, &u.Status, &u.Theme, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to fetch user")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, user)
+	writeJSON(w, http.StatusOK, u)
+}
+
+func (s *Server) handleUpdateCurrentUser(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+
+	var req struct {
+		Name   *string `json:"name,omitempty"`
+		Status *string `json:"status,omitempty"`
+		Theme  *string `json:"theme,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Theme != nil && *req.Theme != "light" && *req.Theme != "dark" {
+		writeError(w, http.StatusBadRequest, "theme must be 'light' or 'dark'")
+		return
+	}
+
+	setClauses := []string{}
+	args := []any{}
+	i := 1
+	if req.Name != nil {
+		setClauses = append(setClauses, fmt.Sprintf("name=$%d", i))
+		args = append(args, *req.Name)
+		i++
+	}
+	if req.Status != nil {
+		setClauses = append(setClauses, fmt.Sprintf("status=$%d", i))
+		args = append(args, *req.Status)
+		i++
+	}
+	if req.Theme != nil {
+		setClauses = append(setClauses, fmt.Sprintf("theme=$%d", i))
+		args = append(args, *req.Theme)
+		i++
+	}
+	if len(setClauses) == 0 {
+		writeError(w, http.StatusBadRequest, "no fields to update")
+		return
+	}
+	setClauses = append(setClauses, "updated_at=NOW()")
+	args = append(args, claims.UserID)
+
+	query := fmt.Sprintf(
+		`UPDATE users SET %s WHERE id=$%d
+		 RETURNING id, email, name, email_verified, is_platform_admin, status, theme, created_at, updated_at`,
+		strings.Join(setClauses, ", "), i,
+	)
+	var u models.User
+	row := s.db.Pool.QueryRow(r.Context(), query, args...)
+	if err := row.Scan(&u.ID, &u.Email, &u.Name, &u.EmailVerified, &u.IsPlatformAdmin,
+		&u.Status, &u.Theme, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update profile")
+		return
+	}
+	writeJSON(w, http.StatusOK, u)
 }
