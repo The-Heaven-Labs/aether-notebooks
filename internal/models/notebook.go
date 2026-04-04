@@ -31,6 +31,7 @@ type Cell struct {
 	Outputs       []Output  `json:"outputs"`
 	SourceVisible bool      `json:"source_visible"`
 	CellCollapsed bool        `json:"cell_collapsed"`
+	SlideBreak    bool        `json:"slide_break"`
 	Parameters    []Parameter `json:"parameters"`
 	Title         string      `json:"title,omitempty"`
 	Description   string    `json:"description,omitempty"`

@@ -24,6 +24,7 @@ type updateCellRequest struct {
 	Type          *string            `json:"type,omitempty"`
 	SourceVisible *bool              `json:"source_visible,omitempty"`
 	CellCollapsed *bool              `json:"cell_collapsed,omitempty"`
+	SlideBreak    *bool              `json:"slide_break,omitempty"`
 	Parameters    []models.Parameter `json:"parameters,omitempty"`
 	Title         *string            `json:"title,omitempty"`
 	Description   *string            `json:"description,omitempty"`
@@ -75,11 +76,11 @@ func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
 		`INSERT INTO cells (notebook_id, position, type, language, connector_id, source, outputs)
 		 VALUES ($1, $2, $3, $4, $5, $6, '[]')
 		 RETURNING id, notebook_id, position, type, language, connector_id, source, outputs,
-		           source_visible, cell_collapsed, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''),
+		           source_visible, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''),
 		           created_at, updated_at`,
 		nbID, nextPos, req.Type, lang, connID, req.Source,
 	).Scan(&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &lang, &connID, &cell.Source, &outputs,
-		&cell.SourceVisible, &cell.CellCollapsed, &cellParams, &cell.Title, &cell.Description, &cell.Slug,
+		&cell.SourceVisible, &cell.CellCollapsed, &cell.SlideBreak, &cellParams, &cell.Title, &cell.Description, &cell.Slug,
 		&cell.CreatedAt, &cell.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create cell")
@@ -156,6 +157,11 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 		args = append(args, *req.CellCollapsed)
 		argN++
 	}
+	if req.SlideBreak != nil {
+		query += fmt.Sprintf(", slide_break = $%d", argN)
+		args = append(args, *req.SlideBreak)
+		argN++
+	}
 	if req.Title != nil {
 		query += fmt.Sprintf(", title = $%d", argN)
 		args = append(args, *req.Title)
@@ -180,14 +186,14 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 
 	query += fmt.Sprintf(" WHERE id = $%d AND notebook_id = $%d", argN, argN+1)
 	args = append(args, cellID, nbID)
-	query += " RETURNING id, notebook_id, position, type, language, connector_id, source, outputs, source_visible, cell_collapsed, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), created_at, updated_at"
+	query += " RETURNING id, notebook_id, position, type, language, connector_id, source, outputs, source_visible, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), created_at, updated_at"
 
 	var cell models.Cell
 	var lang, connID *string
 	var outputs, cellParams []byte
 	err := s.db.Pool.QueryRow(ctx, query, args...).Scan(
 		&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &lang, &connID,
-		&cell.Source, &outputs, &cell.SourceVisible, &cell.CellCollapsed, &cellParams,
+		&cell.Source, &outputs, &cell.SourceVisible, &cell.CellCollapsed, &cell.SlideBreak, &cellParams,
 		&cell.Title, &cell.Description, &cell.Slug,
 		&cell.CreatedAt, &cell.UpdatedAt,
 	)
