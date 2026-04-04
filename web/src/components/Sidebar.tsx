@@ -12,7 +12,7 @@ const NAV_ITEMS = [
 
 export function Sidebar() {
   const [expanded, setExpanded] = useState(() => {
-    return localStorage.getItem('hnb_sidebar_expanded') === 'true'
+    return localStorage.getItem('hnb_sidebar_expanded') !== 'false'
   })
 
   const toggle = () => {

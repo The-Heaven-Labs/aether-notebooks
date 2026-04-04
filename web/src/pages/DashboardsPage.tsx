@@ -14,7 +14,7 @@ const fmtDate = (d: string) => {
   const today = new Date()
   return date.toDateString() === today.toDateString()
     ? `Today ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-    : date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+    : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 export function DashboardsPage() {
@@ -59,7 +59,7 @@ export function DashboardsPage() {
   return (
     <AppShell>
       <div style={styles.body}>
-        <SectionHeader title="Dashboards" subtitle={`${dashboards.length} dashboard${dashboards.length !== 1 ? 's' : ''}`}>
+        <SectionHeader title="Dashboards" subtitle={dashboards.length > 0 ? `${dashboards.length} dashboard${dashboards.length !== 1 ? 's' : ''}` : ''}>
           <button type="button" style={styles.layoutBtn} onClick={toggleLayout} title={layout === 'list' ? 'Switch to grid' : 'Switch to list'}>
             {layout === 'list' ? <LayoutGrid size={14} /> : <List size={14} />}
           </button>

@@ -51,7 +51,7 @@ export function HomePage() {
   return (
     <AppShell>
         <div style={styles.content}>
-          <SectionHeader title="Notebooks" subtitle={`${notebooks.length} notebook${notebooks.length !== 1 ? 's' : ''}`}>
+          <SectionHeader title="Notebooks" subtitle={notebooks.length > 0 ? `${notebooks.length} notebook${notebooks.length !== 1 ? 's' : ''}` : ''}>
             <button type="button" style={styles.layoutBtn} onClick={toggleLayout} title={layout === 'list' ? 'Switch to grid' : 'Switch to list'}>
               {layout === 'list' ? <LayoutGrid size={14} /> : <List size={14} />}
             </button>
@@ -111,8 +111,8 @@ function NotebookCard({ notebook, onDelete }: { notebook: Notebook; onDelete: ()
   const updated = new Date(notebook.updated_at)
   const isToday = new Date().toDateString() === updated.toDateString()
   const dateStr = isToday
-    ? `Today at ${updated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-    : updated.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+    ? `Today at ${updated.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`
+    : updated.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 
   return (
     <div style={styles.card} className="card-hover">
@@ -140,7 +140,7 @@ function NotebookCard({ notebook, onDelete }: { notebook: Notebook; onDelete: ()
 
 function NotebookRow({ notebook, onDelete }: { notebook: Notebook; onDelete: () => void }) {
   const updated = new Date(notebook.updated_at)
-  const dateStr = updated.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+  const dateStr = updated.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 
   return (
     <div style={rowStyles.row} className="card-hover">
