@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import { api } from '../api/client'
@@ -11,6 +11,7 @@ import { LayoutGrid, List, BookOpen } from 'lucide-react'
 
 export function HomePage() {
   useEffect(() => { document.title = "Notebooks — Heaven's Notebooks" }, [])
+  const navigate = useNavigate()
   const qc = useQueryClient()
   const [newTitle, setNewTitle] = useState('')
   const [creating, setCreating] = useState(false)
@@ -33,11 +34,8 @@ export function HomePage() {
   const createNotebook = useMutation({
     mutationFn: (title: string) =>
       api.post<Notebook>('/api/v1/notebooks', { title }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['notebooks'] })
-      setNewTitle('')
-      setCreating(false)
-      setCreateError(null)
+    onSuccess: (notebook) => {
+      navigate(`/notebooks/${notebook.id}`)
     },
     onError: (err: Error) => setCreateError(err.message),
   })
