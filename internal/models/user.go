@@ -9,6 +9,8 @@ type User struct {
 	Name            string    `json:"name"`
 	EmailVerified   bool      `json:"email_verified"`
 	IsPlatformAdmin bool      `json:"is_platform_admin,omitempty"`
+	Status          *string   `json:"status,omitempty"`
+	Theme           string    `json:"theme"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }

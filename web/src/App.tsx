@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useAuth, useAuthProvider, AuthContext } from './hooks/useAuth'
@@ -15,6 +15,7 @@ import { AdminPage } from './pages/AdminPage'
 import { PublicDashboardPage } from './pages/PublicDashboardPage'
 import { PresentationPage } from './pages/PresentationPage'
 import { OrgOnboardingPage } from './pages/OrgOnboardingPage'
+import { ProfilePage } from './pages/ProfilePage'
 import './styles/theme.css'
 
 const queryClient = new QueryClient({
@@ -104,6 +105,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
       <Route path="/onboarding" element={<OrgOnboardingPage />} />
       <Route path="/public/dashboards/:token" element={<PublicDashboardPage />} />
       <Route path="/notebooks/:id/present" element={<PresentationPage />} />
@@ -118,6 +120,11 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  useEffect(() => {
+    const theme = localStorage.getItem('hnb_theme') ?? 'light'
+    document.documentElement.setAttribute('data-theme', theme)
+  }, [])
+
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
