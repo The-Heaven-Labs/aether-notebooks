@@ -14,15 +14,29 @@ func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
 
-	rows, err := s.db.Pool.Query(ctx,
-		`SELECT g.id, g.org_id, g.name, g.created_at, COUNT(gm.user_id) AS member_count
-		 FROM groups g
-		 LEFT JOIN group_members gm ON gm.group_id = g.id
-		 WHERE g.org_id = $1
-		 GROUP BY g.id
-		 ORDER BY g.name`,
-		claims.OrgID,
-	)
+	var query string
+	var args []any
+
+	if r.URL.Query().Get("member") == "me" {
+		query = `SELECT g.id, g.org_id, g.name, g.created_at, COUNT(gm2.user_id) AS member_count
+                 FROM groups g
+                 JOIN group_members gm ON gm.group_id = g.id AND gm.user_id = $2
+                 LEFT JOIN group_members gm2 ON gm2.group_id = g.id
+                 WHERE g.org_id = $1
+                 GROUP BY g.id
+                 ORDER BY g.name`
+		args = []any{claims.OrgID, claims.UserID}
+	} else {
+		query = `SELECT g.id, g.org_id, g.name, g.created_at, COUNT(gm.user_id) AS member_count
+                 FROM groups g
+                 LEFT JOIN group_members gm ON gm.group_id = g.id
+                 WHERE g.org_id = $1
+                 GROUP BY g.id
+                 ORDER BY g.name`
+		args = []any{claims.OrgID}
+	}
+
+	rows, err := s.db.Pool.Query(ctx, query, args...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return

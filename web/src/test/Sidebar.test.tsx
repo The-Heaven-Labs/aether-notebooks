@@ -8,26 +8,16 @@ beforeEach(() => {
 })
 
 describe('Sidebar', () => {
-  it('renders all nav items including Groups and Profile', () => {
+  it('renders nav items without Profile', () => {
     renderWithProviders(<Sidebar />)
     expect(screen.getByTitle('Notebooks')).toBeDefined()
-    expect(screen.getByTitle('Dashboards')).toBeDefined()
-    expect(screen.getByTitle('Connectors')).toBeDefined()
-    expect(screen.getByTitle('Members')).toBeDefined()
     expect(screen.getByTitle('Groups')).toBeDefined()
-    expect(screen.getByTitle('Audit')).toBeDefined()
-    expect(screen.getByTitle('Profile')).toBeDefined()
+    expect(screen.queryByTitle('Profile')).toBeNull()
   })
 
-  it('shows Admin badge on Groups link for admin users when expanded', () => {
+  it('never shows Admin badge (feature removed)', () => {
     localStorage.setItem('hnb_sidebar_expanded', 'true')
-    renderWithProviders(<Sidebar />) // default user is admin
-    expect(screen.getByText('Admin')).toBeDefined()
-  })
-
-  it('does not show Admin badge for non-admin users', () => {
-    localStorage.setItem('hnb_sidebar_expanded', 'true')
-    renderWithProviders(<Sidebar />, { user: editorUser() })
+    renderWithProviders(<Sidebar />)
     expect(screen.queryByText('Admin')).toBeNull()
   })
 
