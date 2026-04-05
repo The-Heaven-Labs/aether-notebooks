@@ -45,9 +45,9 @@ func (s *Server) handleCreateDashboard(w http.ResponseWriter, r *http.Request) {
 	err := s.db.Pool.QueryRow(ctx,
 		`INSERT INTO dashboards (org_id, title, settings, created_by)
 		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, org_id, title, settings, public_token, created_by, created_at, updated_at`,
+		 RETURNING id, org_id, title, settings, public_token, folder_id, created_by, created_at, updated_at`,
 		claims.OrgID, req.Title, settingsJSON, claims.UserID,
-	).Scan(&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.PublicToken,
+	).Scan(&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.PublicToken, &dash.FolderID,
 		&dash.CreatedBy, &dash.CreatedAt, &dash.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create dashboard")
@@ -68,7 +68,7 @@ func (s *Server) handleListDashboards(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, title, settings, public_token, created_by, created_at, updated_at
+		`SELECT id, org_id, title, settings, public_token, folder_id, created_by, created_at, updated_at
 		 FROM dashboards WHERE org_id = $1 ORDER BY updated_at DESC`,
 		claims.OrgID,
 	)
@@ -82,7 +82,7 @@ func (s *Server) handleListDashboards(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var d models.Dashboard
 		var settingsOut []byte
-		if err := rows.Scan(&d.ID, &d.OrgID, &d.Title, &settingsOut, &d.PublicToken,
+		if err := rows.Scan(&d.ID, &d.OrgID, &d.Title, &settingsOut, &d.PublicToken, &d.FolderID,
 			&d.CreatedBy, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return

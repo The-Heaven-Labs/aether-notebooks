@@ -14,6 +14,7 @@ type createNotebookRequest struct {
 	Title       string             `json:"title"`
 	Description string             `json:"description"`
 	Parameters  []models.Parameter `json:"parameters"`
+	FolderID    *string            `json:"folder_id,omitempty"`
 }
 
 func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
@@ -37,17 +38,19 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var nb models.Notebook
 	var paramsOut []byte
+	var folderID *string
 	err := s.db.Pool.QueryRow(ctx,
-		`INSERT INTO notebooks (org_id, title, description, parameters, created_by)
-		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id, org_id, title, COALESCE(description,''), parameters, created_by, created_at, updated_at`,
-		claims.OrgID, req.Title, req.Description, params, claims.UserID,
-	).Scan(&nb.ID, &nb.OrgID, &nb.Title, &nb.Description, &paramsOut, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt)
+		`INSERT INTO notebooks (org_id, title, description, parameters, created_by, folder_id)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, org_id, title, COALESCE(description,''), parameters, created_by, created_at, updated_at, folder_id`,
+		claims.OrgID, req.Title, req.Description, params, claims.UserID, req.FolderID,
+	).Scan(&nb.ID, &nb.OrgID, &nb.Title, &nb.Description, &paramsOut, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt, &folderID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create notebook")
 		return
 	}
 	json.Unmarshal(paramsOut, &nb.Parameters)
+	nb.FolderID = folderID
 
 	if nb.ConnectorID == "" {
 		var defaultID string
@@ -77,7 +80,7 @@ func (s *Server) handleListNotebooks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, title, COALESCE(description,''), connector_id, parameters, created_by, created_at, updated_at
+		`SELECT id, org_id, title, COALESCE(description,''), connector_id, parameters, created_by, created_at, updated_at, folder_id
 		 FROM notebooks WHERE org_id = $1 ORDER BY updated_at DESC`,
 		claims.OrgID,
 	)
@@ -92,13 +95,15 @@ func (s *Server) handleListNotebooks(w http.ResponseWriter, r *http.Request) {
 		var nb models.Notebook
 		var params []byte
 		var connID *string
-		if err := rows.Scan(&nb.ID, &nb.OrgID, &nb.Title, &nb.Description, &connID, &params, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt); err != nil {
+		var folderID *string
+		if err := rows.Scan(&nb.ID, &nb.OrgID, &nb.Title, &nb.Description, &connID, &params, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt, &folderID); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
 		if connID != nil {
 			nb.ConnectorID = *connID
 		}
+		nb.FolderID = folderID
 		json.Unmarshal(params, &nb.Parameters)
 		notebooks = append(notebooks, nb)
 	}
@@ -118,11 +123,12 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 	var nb models.Notebook
 	var params []byte
 	var connID *string
+	var folderID *string
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, org_id, title, COALESCE(description,''), connector_id, parameters, created_by, created_at, updated_at
+		`SELECT id, org_id, title, COALESCE(description,''), connector_id, parameters, created_by, created_at, updated_at, folder_id
 		 FROM notebooks WHERE id = $1 AND org_id = $2`,
 		nbID, claims.OrgID,
-	).Scan(&nb.ID, &nb.OrgID, &nb.Title, &nb.Description, &connID, &params, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt)
+	).Scan(&nb.ID, &nb.OrgID, &nb.Title, &nb.Description, &connID, &params, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt, &folderID)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "notebook not found")
 		return
@@ -134,6 +140,7 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 	if connID != nil {
 		nb.ConnectorID = *connID
 	}
+	nb.FolderID = folderID
 	json.Unmarshal(params, &nb.Parameters)
 
 	cellRows, err := s.db.Pool.Query(ctx,
@@ -215,6 +222,7 @@ type updateNotebookRequest struct {
 	Description *string            `json:"description,omitempty"`
 	ConnectorID *string            `json:"connector_id"`
 	Parameters  []models.Parameter `json:"parameters,omitempty"`
+	FolderID    json.RawMessage    `json:"folder_id"`
 }
 
 func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
@@ -227,7 +235,7 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Title == nil && req.Description == nil && req.ConnectorID == nil && req.Parameters == nil {
+	if req.Title == nil && req.Description == nil && req.ConnectorID == nil && req.Parameters == nil && len(req.FolderID) == 0 {
 		writeError(w, http.StatusBadRequest, "at least one field must be provided")
 		return
 	}
@@ -262,16 +270,29 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 		args = append(args, paramsJSON)
 		argN++
 	}
+	if len(req.FolderID) > 0 {
+		if string(req.FolderID) == "null" {
+			query += ", folder_id = NULL"
+		} else {
+			var fid string
+			if err := json.Unmarshal(req.FolderID, &fid); err == nil {
+				query += fmt.Sprintf(", folder_id = $%d", argN)
+				args = append(args, fid)
+				argN++
+			}
+		}
+	}
 
 	query += fmt.Sprintf(" WHERE id = $%d AND org_id = $%d", argN, argN+1)
 	args = append(args, nbID, claims.OrgID)
-	query += " RETURNING id, org_id, title, COALESCE(description,''), connector_id, parameters, created_by, created_at, updated_at"
+	query += " RETURNING id, org_id, title, COALESCE(description,''), connector_id, parameters, created_by, created_at, updated_at, folder_id"
 
 	var nb models.Notebook
 	var paramsOut []byte
 	var retConnID *string
+	var retFolderID *string
 	err := s.db.Pool.QueryRow(ctx, query, args...).Scan(
-		&nb.ID, &nb.OrgID, &nb.Title, &nb.Description, &retConnID, &paramsOut, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt,
+		&nb.ID, &nb.OrgID, &nb.Title, &nb.Description, &retConnID, &paramsOut, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt, &retFolderID,
 	)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "notebook not found")
@@ -284,6 +305,7 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 	if retConnID != nil {
 		nb.ConnectorID = *retConnID
 	}
+	nb.FolderID = retFolderID
 	json.Unmarshal(paramsOut, &nb.Parameters)
 
 	s.audit.Log(ctx, audit.Entry{
