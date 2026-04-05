@@ -6,6 +6,8 @@ import type { Folder, FolderContents } from '../types'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorBanner } from '../components/ErrorBanner'
+import { PermissionsPanel } from '../components/PermissionsPanel'
+import type { PermissionsPanelProps } from '../components/PermissionsPanel'
 import { Folder as FolderIcon, BookOpen, LayoutDashboard, Database, Home } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -607,12 +609,15 @@ export function HomePage() {
           />
         )}
 
-        {/* Permissions stub — Task 13 will wire this up */}
+        {/* Permissions panel */}
         {permissionsTarget && (
-          <div style={s.permissionsStub}>
-            Permissions panel coming in Task 13 for {permissionsTarget.name}
-            <button style={{ marginLeft: 12, cursor: 'pointer' }} onClick={() => setPermissionsTarget(null)}>×</button>
-          </div>
+          <PermissionsPanel
+            resourceType={permissionsTarget.type as PermissionsPanelProps['resourceType']}
+            resourceId={permissionsTarget.id}
+            resourceName={permissionsTarget.name}
+            parentFolderId={folderID ?? undefined}
+            onClose={() => setPermissionsTarget(null)}
+          />
         )}
       </div>
     </AppShell>
