@@ -1,296 +1,238 @@
-import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, useEffect } from 'react'
 import { api } from '../api/client'
-import type { Notebook } from '../types'
+import type { Folder, FolderContents } from '../types'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
-import { SectionHeader } from '../components/SectionHeader'
 import { ErrorBanner } from '../components/ErrorBanner'
-import { LayoutGrid, List, BookOpen } from 'lucide-react'
+import { Folder as FolderIcon, BookOpen, LayoutDashboard, Database, Home } from 'lucide-react'
 
 export function HomePage() {
-  useEffect(() => { document.title = "Notebooks — Heaven's Notebooks" }, [])
+  const [searchParams, setSearchParams] = useSearchParams()
+  const folderID = searchParams.get('folder')
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [newTitle, setNewTitle] = useState('')
-  const [creating, setCreating] = useState(false)
-  const [layout, setLayout] = useState<'grid' | 'list'>(() =>
-    (localStorage.getItem('hnb_notebooks_layout') as 'grid' | 'list') ?? 'list'
-  )
-  const toggleLayout = () => {
-    const next = layout === 'list' ? 'grid' : 'list'
-    setLayout(next)
-    localStorage.setItem('hnb_notebooks_layout', next)
-  }
 
-  const { data: notebooks = [] } = useQuery({
-    queryKey: ['notebooks'],
-    queryFn: () => api.get<Notebook[]>('/api/v1/notebooks'),
+  const [creating, setCreating] = useState<null | 'folder' | 'notebook'>(null)
+  const [newName, setNewName] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const contentsKey = ['folder-contents', folderID ?? 'root']
+  const { data, isLoading } = useQuery<FolderContents>({
+    queryKey: contentsKey,
+    queryFn: () => folderID
+      ? api.get<FolderContents>(`/api/v1/folders/${folderID}`)
+      : api.get<FolderContents>('/api/v1/folders'),
   })
 
-  const [createError, setCreateError] = useState<string | null>(null)
+  const { data: ancestors = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ['folder-ancestors', folderID],
+    queryFn: () => api.get(`/api/v1/folders/${folderID}/ancestors`),
+    enabled: !!folderID,
+  })
+
+  useEffect(() => {
+    const name = data?.folder?.name
+    document.title = name ? `${name} — hnb` : "Files — hnb"
+  }, [data?.folder?.name])
+
+  const createFolder = useMutation({
+    mutationFn: (name: string) =>
+      api.post<Folder>('/api/v1/folders', { name, ...(folderID ? { parent_id: folderID } : {}) }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: contentsKey }); setCreating(null); setNewName('') },
+    onError: (e: Error) => setError(e.message),
+  })
 
   const createNotebook = useMutation({
     mutationFn: (title: string) =>
-      api.post<Notebook>('/api/v1/notebooks', { title }),
-    onSuccess: (notebook) => {
-      navigate(`/notebooks/${notebook.id}`)
-    },
-    onError: (err: Error) => setCreateError(err.message),
+      api.post<{ id: string }>('/api/v1/notebooks', { title, ...(folderID ? { folder_id: folderID } : {}) }),
+    onSuccess: (nb) => navigate(`/notebooks/${nb.id}`),
+    onError: (e: Error) => setError(e.message),
+  })
+
+  const deleteFolder = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/folders/${id}?force=true`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: contentsKey }),
+    onError: (e: Error) => setError(e.message),
   })
 
   const deleteNotebook = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/notebooks/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['notebooks'] }),
-    onError: (err: Error) => setCreateError(err.message),
+    onSuccess: () => qc.invalidateQueries({ queryKey: contentsKey }),
+    onError: (e: Error) => setError(e.message),
   })
+
+  const isEmpty = data &&
+    data.folders.length === 0 &&
+    data.notebooks.length === 0 &&
+    data.connectors.length === 0 &&
+    data.dashboards.length === 0
+
+  const handleCreate = () => {
+    if (!newName.trim()) return
+    if (creating === 'folder') createFolder.mutate(newName.trim())
+    else if (creating === 'notebook') createNotebook.mutate(newName.trim())
+  }
 
   return (
     <AppShell>
-        <div style={styles.content}>
-          <SectionHeader title="Notebooks" subtitle={notebooks.length > 0 ? `${notebooks.length} notebook${notebooks.length !== 1 ? 's' : ''}` : ''}>
-            <button type="button" style={styles.layoutBtn} onClick={toggleLayout} title={layout === 'list' ? 'Switch to grid' : 'Switch to list'}>
-              {layout === 'list' ? <LayoutGrid size={14} /> : <List size={14} />}
-            </button>
-            <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>
-              + New Notebook
-            </button>
-          </SectionHeader>
-
-          {creating && (
-            <div style={styles.createForm}>
-              <input
-                style={styles.createInput}
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                placeholder="Notebook title…"
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && newTitle.trim()) createNotebook.mutate(newTitle.trim())
-                  if (e.key === 'Escape') setCreating(false)
-                }}
-              />
-              <button
-                type="button"
-                style={styles.createBtn}
-                disabled={!newTitle.trim()}
-                onClick={() => createNotebook.mutate(newTitle.trim())}
-              >
-                Create
+      <div style={{ maxWidth: 1280, margin: '0 auto' }}>
+        {/* Breadcrumb */}
+        <div style={s.breadcrumb}>
+          <button style={s.crumbBtn} onClick={() => setSearchParams({})}>
+            <Home size={13} style={{ marginRight: 4 }} />
+            Files
+          </button>
+          {ancestors.map((a) => (
+            <span key={a.id} style={{ display: 'flex', alignItems: 'center' }}>
+              <span style={s.sep}>/</span>
+              <button style={s.crumbBtn} onClick={() => setSearchParams({ folder: a.id })}>
+                {a.name}
               </button>
-              <button type="button" style={styles.cancelBtn} onClick={() => setCreating(false)}>Cancel</button>
-            </div>
-          )}
-          {createError && <ErrorBanner message={createError} onDismiss={() => setCreateError(null)} />}
-
-          {notebooks.length === 0 && !creating ? (
-            <EmptyState
-              icon={<BookOpen size={32} />}
-              title="No notebooks yet"
-              text="Create your first notebook to start querying data."
-              action={{ label: 'Create your first notebook', onClick: () => setCreating(true) }}
-            />
-          ) : (
-            <div style={layout === 'grid' ? styles.grid : styles.list}>
-              {notebooks.map((nb) =>
-                layout === 'grid'
-                  ? <NotebookCard key={nb.id} notebook={nb} onDelete={() => deleteNotebook.mutate(nb.id)} />
-                  : <NotebookRow key={nb.id} notebook={nb} onDelete={() => deleteNotebook.mutate(nb.id)} />
-              )}
-            </div>
-          )}
+            </span>
+          ))}
         </div>
+
+        {/* Toolbar */}
+        <div style={s.toolbar}>
+          <button style={s.newBtn} onClick={() => { setCreating('folder'); setNewName('') }}>
+            + New Folder
+          </button>
+          <button style={s.newBtn} onClick={() => { setCreating('notebook'); setNewName('') }}>
+            + New Notebook
+          </button>
+        </div>
+
+        {/* Inline create form */}
+        {creating && (
+          <div style={s.createForm}>
+            <input
+              style={s.input}
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder={creating === 'folder' ? 'Folder name…' : 'Notebook title…'}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleCreate()
+                if (e.key === 'Escape') { setCreating(null); setNewName('') }
+              }}
+            />
+            <button style={s.createBtn} disabled={!newName.trim()} onClick={handleCreate}>Create</button>
+            <button style={s.cancelBtn} onClick={() => { setCreating(null); setNewName('') }}>Cancel</button>
+          </div>
+        )}
+
+        {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
+
+        {isLoading && <div style={{ padding: 32, color: '#aaa', fontSize: 14 }}>Loading…</div>}
+
+        {!isLoading && isEmpty && !creating && (
+          <EmptyState
+            icon={<FolderIcon size={32} />}
+            title="This folder is empty"
+            text="Create a folder or notebook to get started."
+            action={{ label: '+ New Notebook', onClick: () => setCreating('notebook') }}
+          />
+        )}
+
+        {/* Folders */}
+        {data && data.folders.length > 0 && (
+          <section style={s.section}>
+            <div style={s.sectionLabel}>Folders</div>
+            <div style={s.folderGrid}>
+              {data.folders.map((f) => (
+                <div key={f.id} style={s.folderCard} className="card-hover">
+                  <button style={s.folderBtn} onClick={() => setSearchParams({ folder: f.id })}>
+                    <FolderIcon size={16} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                    <span style={s.folderName}>{f.name}</span>
+                    {f.is_home && <span style={s.badge}>home</span>}
+                  </button>
+                  <button style={s.iconBtn} title="Delete folder" onClick={() => deleteFolder.mutate(f.id)}>×</button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Notebooks */}
+        {data && data.notebooks.length > 0 && (
+          <section style={s.section}>
+            <div style={s.sectionLabel}>Notebooks</div>
+            <div style={s.list}>
+              {data.notebooks.map((nb) => (
+                <div key={nb.id} style={s.item}>
+                  <Link to={`/notebooks/${nb.id}`} style={s.itemLink}>
+                    <BookOpen size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                    <span style={s.itemName}>{nb.title}</span>
+                  </Link>
+                  <button style={s.delBtn} onClick={() => deleteNotebook.mutate(nb.id)}>Delete</button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Connectors */}
+        {data && data.connectors.length > 0 && (
+          <section style={s.section}>
+            <div style={s.sectionLabel}>Connectors</div>
+            <div style={s.list}>
+              {data.connectors.map((c) => (
+                <div key={c.id} style={s.item}>
+                  <Link to="/connectors" style={s.itemLink}>
+                    <Database size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                    <span style={s.itemName}>{c.name}</span>
+                    {c.is_default && <span style={s.badge}>default</span>}
+                  </Link>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Dashboards */}
+        {data && data.dashboards.length > 0 && (
+          <section style={s.section}>
+            <div style={s.sectionLabel}>Dashboards</div>
+            <div style={s.list}>
+              {data.dashboards.map((d) => (
+                <div key={d.id} style={s.item}>
+                  <Link to={`/dashboards/${d.id}`} style={s.itemLink}>
+                    <LayoutDashboard size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                    <span style={s.itemName}>{d.title}</span>
+                  </Link>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
     </AppShell>
   )
 }
 
-function NotebookCard({ notebook, onDelete }: { notebook: Notebook; onDelete: () => void }) {
-  const updated = new Date(notebook.updated_at)
-  const isToday = new Date().toDateString() === updated.toDateString()
-  const dateStr = isToday
-    ? `Today at ${updated.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`
-    : updated.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-
-  return (
-    <div style={styles.card} className="card-hover">
-      <Link to={`/notebooks/${notebook.id}`} style={styles.cardLink}>
-        <div style={styles.cardThumb}>
-          <BookOpen size={20} style={{ color: 'var(--accent)' }} />
-        </div>
-        <div style={styles.cardBody}>
-          <div style={styles.cardTitle}>{notebook.title}</div>
-          <div style={styles.cardMeta}>Updated {dateStr}</div>
-        </div>
-      </Link>
-      <div style={styles.cardFooter}>
-        <button
-          type="button"
-          style={styles.deleteBtn}
-          onClick={(e) => { e.preventDefault(); onDelete() }}
-        >
-          Delete
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function NotebookRow({ notebook, onDelete }: { notebook: Notebook; onDelete: () => void }) {
-  const updated = new Date(notebook.updated_at)
-  const dateStr = updated.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-
-  return (
-    <div style={rowStyles.row} className="card-hover">
-      <Link to={`/notebooks/${notebook.id}`} style={rowStyles.link}>
-        <BookOpen size={18} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-        <div style={rowStyles.info}>
-          <span style={rowStyles.title}>{notebook.title}</span>
-          {notebook.description && <span style={rowStyles.desc}>{notebook.description}</span>}
-        </div>
-        <span style={rowStyles.date}>{dateStr}</span>
-      </Link>
-      <button type="button" style={rowStyles.del} onClick={(e) => { e.preventDefault(); onDelete() }}>Delete</button>
-    </div>
-  )
-}
-
-const rowStyles: Record<string, React.CSSProperties> = {
-  row: { display: 'flex', alignItems: 'center', background: '#fff', borderRadius: 4, border: '1px solid #e8e8e8', padding: '10px 16px', gap: 12, transition: 'border-color 0.15s' },
-  link: { flex: 1, display: 'flex', alignItems: 'center', gap: 12, textDecoration: 'none' },
-  icon: { fontSize: 18, color: 'var(--accent)', flexShrink: 0 },
-  info: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 },
-  title: { fontSize: 14, fontWeight: 600, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  desc: { fontSize: 12, color: '#aaa', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  date: { fontSize: 12, color: '#aaa', flexShrink: 0 },
-  del: { padding: '3px 8px', border: 'none', background: 'transparent', color: 'var(--error)', fontSize: 12, cursor: 'pointer', flexShrink: 0 },
-}
-
-const styles: Record<string, React.CSSProperties> = {
-  content: {
-    maxWidth: 1280,
-    margin: '0 auto',
-  },
-  newBtn: {
-    padding: '7px 16px',
-    background: '#111',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 4,
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: 'pointer',
-    letterSpacing: '0.01em',
-  },
-  createForm: {
-    display: 'flex',
-    gap: 10,
-    marginBottom: 24,
-    padding: 16,
-    background: '#fff',
-    borderRadius: 4,
-    border: '1px solid #e8e8e8',
-  },
-  createInput: {
-    flex: 1,
-    padding: '8px 12px',
-    border: '1px solid #ddd',
-    borderRadius: 4,
-    fontSize: 14,
-    outline: 'none',
-    background: '#fff',
-  },
-  createBtn: {
-    padding: '7px 16px',
-    background: '#111',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 4,
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: 'pointer',
-  },
-  cancelBtn: {
-    padding: '7px 16px',
-    border: '1px solid #ddd',
-    borderRadius: 4,
-    background: 'none',
-    fontSize: 13,
-    cursor: 'pointer',
-    color: '#555',
-  },
-  layoutBtn: { padding: '6px 10px', border: '1px solid #ddd', borderRadius: 4, background: 'none', cursor: 'pointer', fontSize: 14 },
-  list: { display: 'flex', flexDirection: 'column', gap: 8 },
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-    gap: 16,
-  },
-  card: {
-    background: '#fff',
-    borderRadius: 4,
-    border: '1px solid #e8e8e8',
-    overflow: 'hidden',
-    display: 'flex',
-    flexDirection: 'column',
-    transition: 'border-color 0.15s',
-  },
-  cardLink: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 14,
-    padding: '18px 18px 14px',
-    textDecoration: 'none',
-    flex: 1,
-  },
-  cardThumb: {
-    width: 42,
-    height: 42,
-    background: '#f5f5f5',
-    borderRadius: 4,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  cardThumbIcon: {
-    fontSize: 20,
-    color: 'var(--accent)',
-  },
-  cardBody: {
-    flex: 1,
-    minWidth: 0,
-  },
-  cardTitle: {
-    fontSize: 15,
-    fontWeight: 600,
-    color: '#111',
-    letterSpacing: '-0.1px',
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  },
-  cardMeta: {
-    fontSize: 12,
-    color: '#aaa',
-    marginTop: 3,
-  },
-  cardFooter: {
-    padding: '10px 18px',
-    borderTop: '1px solid #e8e8e8',
-    background: '#fff',
-    display: 'flex',
-    justifyContent: 'flex-end',
-  },
-  deleteBtn: {
-    padding: '4px 10px',
-    border: 'none',
-    borderRadius: 4,
-    background: 'transparent',
-    fontSize: 12,
-    fontWeight: 500,
-    cursor: 'pointer',
-    color: 'var(--error)',
-    transition: 'background 0.15s',
-  },
+const s: Record<string, React.CSSProperties> = {
+  breadcrumb: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 2, marginBottom: 20 },
+  crumbBtn: { display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)', fontSize: 13, fontWeight: 500, padding: '2px 6px', borderRadius: 3 },
+  sep: { color: '#ccc', margin: '0 2px', fontSize: 13 },
+  toolbar: { display: 'flex', gap: 10, marginBottom: 20 },
+  newBtn: { padding: '7px 14px', background: '#111', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  createForm: { display: 'flex', gap: 10, marginBottom: 20, padding: 16, background: '#fff', borderRadius: 4, border: '1px solid #e8e8e8', alignItems: 'center' },
+  input: { flex: 1, padding: '8px 12px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14, outline: 'none' },
+  createBtn: { padding: '7px 14px', background: '#111', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  cancelBtn: { padding: '7px 14px', border: '1px solid #ddd', borderRadius: 4, background: 'none', fontSize: 13, cursor: 'pointer', color: '#555' },
+  section: { marginBottom: 28 },
+  sectionLabel: { fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const, color: '#aaa', marginBottom: 8 },
+  folderGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8 },
+  folderCard: { display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #e8e8e8', borderRadius: 4, overflow: 'hidden', transition: 'border-color 0.15s' },
+  folderBtn: { flex: 1, display: 'flex', alignItems: 'center', gap: 7, padding: '9px 12px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' as const, minWidth: 0 },
+  folderName: { fontSize: 13, fontWeight: 500, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, flex: 1 },
+  badge: { fontSize: 10, fontWeight: 700, background: 'var(--accent-light)', color: 'var(--accent)', borderRadius: 3, padding: '1px 5px', letterSpacing: '0.04em', flexShrink: 0 },
+  iconBtn: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error)', fontSize: 16, padding: '0 8px', flexShrink: 0, lineHeight: 1 },
+  list: { display: 'flex', flexDirection: 'column', gap: 6 },
+  item: { display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #e8e8e8', borderRadius: 4, padding: '8px 14px', gap: 10 },
+  itemLink: { flex: 1, display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', minWidth: 0 },
+  itemName: { fontSize: 14, fontWeight: 500, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, flex: 1 },
+  delBtn: { padding: '3px 8px', border: 'none', background: 'transparent', color: 'var(--error)', fontSize: 12, cursor: 'pointer', flexShrink: 0 },
 }
