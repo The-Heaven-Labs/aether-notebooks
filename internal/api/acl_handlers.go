@@ -18,6 +18,14 @@ func (s *Server) handleGetACL(w http.ResponseWriter, r *http.Request) {
 	resourceID := r.PathValue("resource_id")
 	ctx := r.Context()
 
+	if claims.Role != "admin" {
+		allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, resourceType, resourceID, "view")
+		if err != nil || !allowed {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+	}
+
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, org_id, resource_type, resource_id::text, subject_type, subject_id, actions, created_at
          FROM acl_entries
@@ -50,6 +58,19 @@ func (s *Server) handlePutACL(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	resourceType := r.PathValue("resource_type")
 	resourceID := r.PathValue("resource_id")
+
+	// Org admins always have ACL management rights; others need "manage" (folders) or "share".
+	if claims.Role != "admin" {
+		requiredAction := "share"
+		if resourceType == "folder" {
+			requiredAction = "manage"
+		}
+		allowed, err := s.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, resourceType, resourceID, requiredAction)
+		if err != nil || !allowed {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+	}
 
 	var req struct {
 		Entries []aclEntryInput `json:"entries"`

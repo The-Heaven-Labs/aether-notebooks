@@ -20,10 +20,6 @@ interface AclEntry {
   actions: string[]
 }
 
-interface AclResponse {
-  entries: AclEntry[]
-}
-
 interface Member {
   id: string
   name: string
@@ -92,9 +88,9 @@ export function PermissionsPanel({
 
   const aclKey = ['acl', resourceType, resourceId]
 
-  const { data: aclData, isLoading: aclLoading } = useQuery<AclResponse>({
+  const { data: aclData, isLoading: aclLoading } = useQuery<AclEntry[]>({
     queryKey: aclKey,
-    queryFn: () => api.get<AclResponse>(`/api/v1/acl/${resourceType}/${resourceId}`),
+    queryFn: () => api.get<AclEntry[]>(`/api/v1/acl/${resourceType}/${resourceId}`),
   })
 
   const { data: members = [] } = useQuery<Member[]>({
@@ -107,9 +103,9 @@ export function PermissionsPanel({
     queryFn: () => api.get<Group[]>('/api/v1/groups'),
   })
 
-  const { data: parentAcl } = useQuery<AclResponse>({
+  const { data: parentAcl } = useQuery<AclEntry[]>({
     queryKey: ['acl', 'folder', parentFolderId],
-    queryFn: () => api.get<AclResponse>(`/api/v1/acl/folder/${parentFolderId}`),
+    queryFn: () => api.get<AclEntry[]>(`/api/v1/acl/folder/${parentFolderId}`),
     enabled: !!parentFolderId,
   })
 
@@ -117,7 +113,7 @@ export function PermissionsPanel({
 
   const saveAcl = useMutation({
     mutationFn: (entries: Omit<AclEntry, 'id'>[]) =>
-      api.put<AclResponse>(`/api/v1/acl/${resourceType}/${resourceId}`, { entries }),
+      api.put<AclEntry[]>(`/api/v1/acl/${resourceType}/${resourceId}`, { entries }),
     onSuccess: () => {
       setSaveError(null)
       setDraft(null)
@@ -141,7 +137,7 @@ export function PermissionsPanel({
   }
 
   function handleToggleAction(entryIndex: number, action: string) {
-    const current = draft ?? aclData?.entries ?? []
+    const current = draft ?? aclData ?? []
     const updated = current.map((e, i) => {
       if (i !== entryIndex) return e
       const actions = e.actions.includes(action)
@@ -153,14 +149,14 @@ export function PermissionsPanel({
   }
 
   function handleRemoveEntry(entryIndex: number) {
-    const current = draft ?? aclData?.entries ?? []
+    const current = draft ?? aclData ?? []
     setDraft(current.filter((_, i) => i !== entryIndex))
   }
 
   function handleAddEntry() {
     if (!newSubjectKey || newActions.length === 0) return
     const [subjectType, subjectId] = newSubjectKey.split(':') as ['user' | 'group', string]
-    const current = draft ?? aclData?.entries ?? []
+    const current = draft ?? aclData ?? []
     const updated: AclEntry[] = [
       ...current,
       { id: '', subject_type: subjectType, subject_id: subjectId, actions: newActions },
@@ -178,7 +174,7 @@ export function PermissionsPanel({
 
   // ── Derived ──
 
-  const inheritedCount = parentAcl?.entries?.length ?? 0
+  const inheritedCount = parentAcl?.length ?? 0
 
   const typeBadgeColors: Record<ResourceType, string> = {
     folder: '#e8f0fe',
@@ -225,11 +221,11 @@ export function PermissionsPanel({
           ) : (
             <>
               {/* ACL entries */}
-              {(draft ?? aclData?.entries ?? []).length === 0 && (
+              {(draft ?? aclData ?? []).length === 0 && (
                 <div style={styles.emptyText}>No permissions set. Add one below.</div>
               )}
 
-              {(draft ?? aclData?.entries ?? []).map((entry, idx) => (
+              {(draft ?? aclData ?? []).map((entry, idx) => (
                 <div key={entry.id || idx} style={styles.entryRow}>
                   <Avatar name={subjectName(entry)} type={entry.subject_type} />
                   <div style={styles.entryInfo}>
