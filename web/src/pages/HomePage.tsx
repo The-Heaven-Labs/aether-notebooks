@@ -103,9 +103,13 @@ interface InlineRenameProps {
 
 function InlineRename({ initialValue, onConfirm, onCancel }: InlineRenameProps) {
   const [value, setValue] = useState(initialValue)
+  const confirmed = useRef(false)
 
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter') { if (value.trim()) onConfirm(value.trim()) }
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter' && value.trim()) {
+      confirmed.current = true
+      onConfirm(value.trim())
+    }
     if (e.key === 'Escape') onCancel()
   }
 
@@ -116,7 +120,10 @@ function InlineRename({ initialValue, onConfirm, onCancel }: InlineRenameProps) 
       autoFocus
       onChange={(e) => setValue(e.target.value)}
       onKeyDown={handleKeyDown}
-      onBlur={() => { if (value.trim()) onConfirm(value.trim()); else onCancel() }}
+      onBlur={() => {
+        if (confirmed.current) return
+        if (value.trim()) onConfirm(value.trim()); else onCancel()
+      }}
     />
   )
 }
@@ -249,7 +256,7 @@ export function HomePage() {
   const createFolder = useMutation({
     mutationFn: (name: string) =>
       api.post<Folder>('/api/v1/folders', { name, ...(folderID ? { parent_id: folderID } : {}) }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: contentsKey }); setCreating(null); setNewName('') },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['folder-contents'] }); setCreating(null); setNewName('') },
     onError: (e: Error) => setError(e.message),
   })
 
@@ -269,27 +276,27 @@ export function HomePage() {
 
   const deleteFolder = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/folders/${id}?force=true`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: contentsKey }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['folder-contents'] }),
     onError: (e: Error) => setError(e.message),
   })
 
   const deleteNotebook = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/notebooks/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: contentsKey }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['folder-contents'] }),
     onError: (e: Error) => setError(e.message),
   })
 
   const renameFolder = useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) =>
       api.put(`/api/v1/folders/${id}`, { name }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: contentsKey }); setRenaming(null) },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['folder-contents'] }); setRenaming(null) },
     onError: (e: Error) => setError(e.message),
   })
 
   const renameNotebook = useMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) =>
       api.put(`/api/v1/notebooks/${id}`, { title }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: contentsKey }); setRenaming(null) },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['folder-contents'] }); setRenaming(null) },
     onError: (e: Error) => setError(e.message),
   })
 
@@ -305,7 +312,7 @@ export function HomePage() {
         return api.put(`/api/v1/dashboards/${id}`, { folder_id: destFolderID })
       }
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: contentsKey }); setMoving(null) },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['folder-contents'] }); setMoving(null) },
     onError: (e: Error) => setError(e.message),
   })
 
@@ -327,7 +334,11 @@ export function HomePage() {
   function handleMenuOpen(e: React.MouseEvent, target: MenuTarget) {
     e.stopPropagation()
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    setMenuPos({ top: rect.bottom + 4, left: rect.left })
+    const menuHeight = 160 // approximate; menu items are ~36px each × 4 items
+    const top = rect.bottom + 4 + menuHeight > window.innerHeight
+      ? rect.top - menuHeight - 4
+      : rect.bottom + 4
+    setMenuPos({ top, left: rect.left })
     setOpenMenu(target)
   }
 
