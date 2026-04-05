@@ -127,6 +127,27 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/connectors/{id}/schema", authMW(http.HandlerFunc(s.handleConnectorSchema)))
 	s.mux.Handle("GET /api/v1/connectors/{id}/databases", authMW(http.HandlerFunc(s.handleListConnectorDatabases)))
 
+	// Folder routes
+	s.mux.Handle("GET /api/v1/folders", authMW(http.HandlerFunc(s.handleListRootContents)))
+	s.mux.Handle("GET /api/v1/folders/{id}", authMW(s.requirePermission("folder", "id", "view")(http.HandlerFunc(s.handleGetFolderContents))))
+	s.mux.Handle("GET /api/v1/folders/{id}/ancestors", authMW(http.HandlerFunc(s.handleGetFolderAncestors)))
+	s.mux.Handle("POST /api/v1/folders", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateFolder))))
+	s.mux.Handle("PUT /api/v1/folders/{id}", authMW(s.requirePermission("folder", "id", "edit")(http.HandlerFunc(s.handleUpdateFolder))))
+	s.mux.Handle("DELETE /api/v1/folders/{id}", authMW(s.requirePermission("folder", "id", "delete")(http.HandlerFunc(s.handleDeleteFolder))))
+
+	// Group routes
+	s.mux.Handle("GET /api/v1/groups", authMW(http.HandlerFunc(s.handleListGroups)))
+	s.mux.Handle("POST /api/v1/groups", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateGroup))))
+	s.mux.Handle("PUT /api/v1/groups/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateGroup))))
+	s.mux.Handle("DELETE /api/v1/groups/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleDeleteGroup))))
+	s.mux.Handle("GET /api/v1/groups/{id}/members", authMW(http.HandlerFunc(s.handleListGroupMembers)))
+	s.mux.Handle("POST /api/v1/groups/{id}/members", authMW(RequireRole("admin")(http.HandlerFunc(s.handleAddGroupMember))))
+	s.mux.Handle("DELETE /api/v1/groups/{id}/members/{user_id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleRemoveGroupMember))))
+
+	// ACL routes
+	s.mux.Handle("GET /api/v1/acl/{resource_type}/{resource_id}", authMW(http.HandlerFunc(s.handleGetACL)))
+	s.mux.Handle("PUT /api/v1/acl/{resource_type}/{resource_id}", authMW(http.HandlerFunc(s.handlePutACL)))
+
 	// Template routes
 	s.mux.Handle("POST /api/v1/templates", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateTemplate))))
 	s.mux.Handle("GET /api/v1/templates", authMW(http.HandlerFunc(s.handleListTemplates)))
