@@ -11,6 +11,7 @@ import (
 	"github.com/heavenlabs/hnb/internal/auth"
 	"github.com/heavenlabs/hnb/internal/models"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type registerRequest struct {
@@ -100,6 +101,11 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if err := createHomeFolder(ctx, tx, orgID, userID, req.Name); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create home folder")
+			return
+		}
+
 		if err := tx.Commit(ctx); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to commit")
 			return
@@ -160,6 +166,12 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 			// Log the error but fall through to issue an onboarding token instead
 			fmt.Printf("auto-join org_members insert failed: %v\n", execErr)
 			autoJoinOrgID = ""
+		} else {
+			var autoJoinUserName string
+			s.db.Pool.QueryRow(ctx, `SELECT name FROM users WHERE id = $1`, userID).Scan(&autoJoinUserName)
+			if hmErr := createHomeFolder(ctx, s.db.Pool, autoJoinOrgID, userID, autoJoinUserName); hmErr != nil {
+				fmt.Printf("auto-join createHomeFolder failed: %v\n", hmErr)
+			}
 		}
 	}
 
@@ -293,6 +305,37 @@ func (s *Server) getUserOrg(ctx context.Context, userID, preferredOrgID string) 
 		return "", "", "", fmt.Errorf("no membership: %w", err)
 	}
 	return
+}
+
+// querier is satisfied by both *pgxpool.Pool and pgx.Tx, allowing createHomeFolder
+// to be called inside or outside a transaction.
+type querier interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// createHomeFolder inserts a home folder for userID in orgID and seeds its ACL entry.
+// userName is used to generate the folder name (e.g. "Alice's Home").
+func createHomeFolder(ctx context.Context, q querier, orgID, userID, userName string) error {
+	var folderID string
+	err := q.QueryRow(ctx,
+		`INSERT INTO folders (org_id, name, is_home, owner_id, created_by)
+		 VALUES ($1, $2, true, $3, $3)
+		 RETURNING id`,
+		orgID, userName+"'s Home", userID,
+	).Scan(&folderID)
+	if err != nil {
+		return fmt.Errorf("create home folder: %w", err)
+	}
+	_, err = q.Exec(ctx,
+		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		 VALUES ($1, 'folder', $2::uuid, 'user', $3, ARRAY['view','create','edit','manage','delete'])`,
+		orgID, folderID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("seed home folder ACL: %w", err)
+	}
+	return nil
 }
 
 func slugify(name string) string {
