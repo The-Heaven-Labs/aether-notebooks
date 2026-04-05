@@ -7,7 +7,6 @@ import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { PermissionsPanel } from '../components/PermissionsPanel'
-import type { PermissionsPanelProps } from '../components/PermissionsPanel'
 import { Folder as FolderIcon, BookOpen, LayoutDashboard, Database, Home } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -33,7 +32,7 @@ interface MoveTarget {
 }
 
 interface PermissionsTarget {
-  type: string
+  type: ResourceType
   id: string
   name: string
 }
@@ -612,7 +611,7 @@ export function HomePage() {
         {/* Permissions panel */}
         {permissionsTarget && (
           <PermissionsPanel
-            resourceType={permissionsTarget.type as PermissionsPanelProps['resourceType']}
+            resourceType={permissionsTarget.type}
             resourceId={permissionsTarget.id}
             resourceName={permissionsTarget.name}
             parentFolderId={folderID ?? undefined}
@@ -649,7 +648,6 @@ const s: Record<string, React.CSSProperties> = {
   itemLink: { flex: 1, display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', minWidth: 0 },
   itemName: { fontSize: 14, fontWeight: 500, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, flex: 1 },
   renameInput: { width: '100%', padding: '5px 8px', border: '1px solid var(--accent)', borderRadius: 3, fontSize: 13, outline: 'none' },
-  permissionsStub: { marginTop: 16, padding: '10px 16px', background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 4, fontSize: 13, color: '#555', display: 'flex', alignItems: 'center' },
 }
 
 // ─── Context menu + modal styles ─────────────────────────────────────────────
