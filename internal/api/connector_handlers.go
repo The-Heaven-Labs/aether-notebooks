@@ -17,6 +17,7 @@ type createConnectorRequest struct {
 	Type      models.ConnectorType   `json:"type"`
 	Config    models.ConnectorConfig `json:"config"`
 	IsDefault bool                   `json:"is_default"`
+	FolderID  *string                `json:"folder_id,omitempty"`
 }
 
 func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
@@ -70,10 +71,10 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		err = tx.QueryRow(ctx,
-			`INSERT INTO connectors (org_id, name, type, config_encrypted, is_default)
-			 VALUES ($1, $2, $3, $4, $5)
+			`INSERT INTO connectors (org_id, name, type, config_encrypted, is_default, folder_id)
+			 VALUES ($1, $2, $3, $4, $5, $6)
 			 RETURNING id, org_id, name, type, max_rows, timeout_seconds, is_default, folder_id`,
-			claims.OrgID, req.Name, req.Type, encrypted, true,
+			claims.OrgID, req.Name, req.Type, encrypted, true, req.FolderID,
 		).Scan(&id, &orgID, &name, &connType, &maxRows, &timeout, &isDefault, &folderID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create connector")
@@ -85,10 +86,10 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		err = s.db.Pool.QueryRow(ctx,
-			`INSERT INTO connectors (org_id, name, type, config_encrypted)
-			 VALUES ($1, $2, $3, $4)
+			`INSERT INTO connectors (org_id, name, type, config_encrypted, folder_id)
+			 VALUES ($1, $2, $3, $4, $5)
 			 RETURNING id, org_id, name, type, max_rows, timeout_seconds, is_default, folder_id`,
-			claims.OrgID, req.Name, req.Type, encrypted,
+			claims.OrgID, req.Name, req.Type, encrypted, req.FolderID,
 		).Scan(&id, &orgID, &name, &connType, &maxRows, &timeout, &isDefault, &folderID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create connector")

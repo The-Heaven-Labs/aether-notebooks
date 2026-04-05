@@ -15,6 +15,7 @@ import (
 type createDashboardRequest struct {
 	Title    string                   `json:"title"`
 	Settings models.DashboardSettings `json:"settings,omitempty"`
+	FolderID *string                  `json:"folder_id,omitempty"`
 }
 
 type addWidgetRequest struct {
@@ -43,10 +44,10 @@ func (s *Server) handleCreateDashboard(w http.ResponseWriter, r *http.Request) {
 	var dash models.Dashboard
 	var settingsOut []byte
 	err := s.db.Pool.QueryRow(ctx,
-		`INSERT INTO dashboards (org_id, title, settings, created_by)
-		 VALUES ($1, $2, $3, $4)
+		`INSERT INTO dashboards (org_id, title, settings, created_by, folder_id)
+		 VALUES ($1, $2, $3, $4, $5)
 		 RETURNING id, org_id, title, settings, public_token, folder_id, created_by, created_at, updated_at`,
-		claims.OrgID, req.Title, settingsJSON, claims.UserID,
+		claims.OrgID, req.Title, settingsJSON, claims.UserID, req.FolderID,
 	).Scan(&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.PublicToken, &dash.FolderID,
 		&dash.CreatedBy, &dash.CreatedAt, &dash.UpdatedAt)
 	if err != nil {
@@ -104,10 +105,10 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 	var dash models.Dashboard
 	var settingsOut []byte
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, org_id, title, settings, public_token, created_by, created_at, updated_at
+		`SELECT id, org_id, title, settings, public_token, folder_id, created_by, created_at, updated_at
 		 FROM dashboards WHERE id = $1 AND org_id = $2`,
 		dashID, claims.OrgID,
-	).Scan(&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.PublicToken,
+	).Scan(&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.PublicToken, &dash.FolderID,
 		&dash.CreatedBy, &dash.CreatedAt, &dash.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "dashboard not found")
@@ -296,10 +297,10 @@ func (s *Server) handlePublicDashboard(w http.ResponseWriter, r *http.Request) {
 	var dash models.Dashboard
 	var settingsOut []byte
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, org_id, title, settings, public_token, created_by, created_at, updated_at
+		`SELECT id, org_id, title, settings, public_token, folder_id, created_by, created_at, updated_at
 		 FROM dashboards WHERE public_token = $1`,
 		token,
-	).Scan(&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.PublicToken,
+	).Scan(&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.PublicToken, &dash.FolderID,
 		&dash.CreatedBy, &dash.CreatedAt, &dash.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "dashboard not found")
