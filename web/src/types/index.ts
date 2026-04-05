@@ -16,6 +16,7 @@ export interface Notebook {
   title: string
   description: string
   connector_id?: string
+  folder_id?: string
   created_by: string
   created_at: string
   updated_at: string
@@ -69,6 +70,7 @@ export interface Connector {
   name: string
   type: string
   is_default?: boolean
+  folder_id?: string
   created_at: string
   config?: {
     host?: string
@@ -85,6 +87,7 @@ export interface Dashboard {
   title: string
   settings: { refresh_interval?: number }
   public_token?: string
+  folder_id?: string
   created_by: string
   created_at: string
   updated_at: string
@@ -131,4 +134,55 @@ export interface Member {
   name: string
   role: string
   joined_at: string
+}
+
+export interface Folder {
+  id: string
+  org_id: string
+  parent_id?: string
+  name: string
+  is_home: boolean
+  owner_id?: string
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export interface FolderContents {
+  folder?: Folder
+  folders: Folder[]
+  notebooks: Notebook[]
+  connectors: Array<{
+    id: string
+    name: string
+    type: string
+    is_default?: boolean
+    folder_id?: string
+  }>
+  dashboards: Dashboard[]
+}
+
+export interface Group {
+  id: string
+  org_id: string
+  name: string
+  member_count: number
+  created_at: string
+}
+
+export interface GroupMember {
+  user_id: string
+  email: string
+  name: string
+}
+
+export interface ACLEntry {
+  id: string
+  org_id: string
+  resource_type: string
+  resource_id: string
+  subject_type: 'user' | 'group' | 'org_role'
+  subject_id: string
+  actions: string[]
+  created_at: string
 }
