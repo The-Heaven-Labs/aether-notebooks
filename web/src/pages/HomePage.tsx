@@ -3,6 +3,7 @@ import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Folder, FolderContents } from '../types'
+import { useAuth } from '../hooks/useAuth'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorBanner } from '../components/ErrorBanner'
@@ -227,6 +228,11 @@ export function HomePage() {
   const folderID = searchParams.get('folder')
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const { user } = useAuth()
+  const [filter, setFilter] = useState<'all' | 'mine'>('all')
+
+  const filterItems = <T extends { created_by: string }>(items: T[]): T[] =>
+    filter === 'mine' ? items.filter(i => i.created_by === user?.user_id) : items
 
   const [creating, setCreating] = useState<null | 'folder' | 'notebook' | 'dashboard'>(null)
   const [newName, setNewName] = useState('')
@@ -389,6 +395,28 @@ export function HomePage() {
   return (
     <AppShell>
       <div style={{ maxWidth: 1280, margin: '0 auto', position: 'relative' }}>
+        {/* Filter pills */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+          {(['all', 'mine'] as const).map(f => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              style={{
+                padding: '4px 12px',
+                borderRadius: 20,
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: 'pointer',
+                border: 'none',
+                background: filter === f ? 'var(--accent)' : 'var(--accent-light)',
+                color: filter === f ? '#fff' : 'var(--accent)',
+              }}
+            >
+              {f === 'all' ? 'All' : 'Created by me'}
+            </button>
+          ))}
+        </div>
+
         {/* Breadcrumb */}
         <div style={s.breadcrumb}>
           <button style={s.crumbBtn} onClick={() => setSearchParams({})}>
@@ -455,11 +483,11 @@ export function HomePage() {
         )}
 
         {/* Folders */}
-        {data && data.folders.length > 0 && (
+        {data && filterItems(data.folders).length > 0 && (
           <section style={s.section}>
             <div style={s.sectionLabel}>Folders</div>
             <div style={s.folderGrid}>
-              {data.folders.map((f) => (
+              {filterItems(data.folders).map((f) => (
                 <div key={f.id} style={s.folderCard} className="card-hover">
                   {renaming?.id === f.id ? (
                     <div style={{ flex: 1, padding: '4px 8px' }}>
@@ -505,11 +533,11 @@ export function HomePage() {
         )}
 
         {/* Notebooks */}
-        {data && data.notebooks.length > 0 && (
+        {data && filterItems(data.notebooks).length > 0 && (
           <section style={s.section}>
             <div style={s.sectionLabel}>Notebooks</div>
             <div style={s.list}>
-              {data.notebooks.map((nb) => (
+              {filterItems(data.notebooks).map((nb) => (
                 <div key={nb.id} style={s.item}>
                   {renaming?.id === nb.id ? (
                     <div style={{ flex: 1 }}>
@@ -591,11 +619,11 @@ export function HomePage() {
         )}
 
         {/* Dashboards */}
-        {data && data.dashboards.length > 0 && (
+        {data && filterItems(data.dashboards).length > 0 && (
           <section style={s.section}>
             <div style={s.sectionLabel}>Dashboards</div>
             <div style={s.list}>
-              {data.dashboards.map((d) => (
+              {filterItems(data.dashboards).map((d) => (
                 <div key={d.id} style={s.item}>
                   <Link to={`/dashboards/${d.id}`} style={s.itemLink}>
                     <LayoutDashboard size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
