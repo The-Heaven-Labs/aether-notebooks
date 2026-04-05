@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 
@@ -75,6 +75,14 @@ export function PermissionsPanel({
   const qc = useQueryClient()
   const actions = ACTION_LABELS[resourceType]
 
+  // Draft state for unsaved ACL changes
+  const [draft, setDraft] = useState<AclEntry[] | null>(null)
+
+  // Reset draft when resource changes
+  useEffect(() => {
+    setDraft(null)
+  }, [resourceId])
+
   // Local draft for new entry
   const [newSubjectKey, setNewSubjectKey] = useState<string>('') // "{type}:{id}"
   const [newActions, setNewActions] = useState<string[]>([])
@@ -112,6 +120,7 @@ export function PermissionsPanel({
       api.put<AclResponse>(`/api/v1/acl/${resourceType}/${resourceId}`, { entries }),
     onSuccess: () => {
       setSaveError(null)
+      setDraft(null)
       qc.invalidateQueries({ queryKey: aclKey })
     },
     onError: (err: unknown) => {
@@ -132,35 +141,31 @@ export function PermissionsPanel({
   }
 
   function handleToggleAction(entryIndex: number, action: string) {
-    const entries = aclData?.entries ?? []
-    const entry = entries[entryIndex]
-    const has = entry.actions.includes(action)
-    const updatedActions = has
-      ? entry.actions.filter((a) => a !== action)
-      : [...entry.actions, action]
-
-    const updated = entries.map((e, i) =>
-      i === entryIndex ? { ...e, actions: updatedActions } : e
-    )
-
-    saveAcl.mutate(updated.map(({ id: _id, ...rest }) => rest))
+    const current = draft ?? aclData?.entries ?? []
+    const updated = current.map((e, i) => {
+      if (i !== entryIndex) return e
+      const actions = e.actions.includes(action)
+        ? e.actions.filter(a => a !== action)
+        : [...e.actions, action]
+      return { ...e, actions }
+    })
+    setDraft(updated)
   }
 
   function handleRemoveEntry(entryIndex: number) {
-    const entries = aclData?.entries ?? []
-    const updated = entries.filter((_, i) => i !== entryIndex)
-    saveAcl.mutate(updated.map(({ id: _id, ...rest }) => rest))
+    const current = draft ?? aclData?.entries ?? []
+    setDraft(current.filter((_, i) => i !== entryIndex))
   }
 
   function handleAddEntry() {
     if (!newSubjectKey || newActions.length === 0) return
     const [subjectType, subjectId] = newSubjectKey.split(':') as ['user' | 'group', string]
-    const existing = aclData?.entries ?? []
-    const updated = [
-      ...existing.map(({ id: _id, ...rest }) => rest),
-      { subject_type: subjectType, subject_id: subjectId, actions: newActions },
+    const current = draft ?? aclData?.entries ?? []
+    const updated: AclEntry[] = [
+      ...current,
+      { id: '', subject_type: subjectType, subject_id: subjectId, actions: newActions },
     ]
-    saveAcl.mutate(updated)
+    setDraft(updated)
     setNewSubjectKey('')
     setNewActions([])
   }
@@ -220,12 +225,12 @@ export function PermissionsPanel({
           ) : (
             <>
               {/* ACL entries */}
-              {(aclData?.entries ?? []).length === 0 && (
+              {(draft ?? aclData?.entries ?? []).length === 0 && (
                 <div style={styles.emptyText}>No permissions set. Add one below.</div>
               )}
 
-              {(aclData?.entries ?? []).map((entry, idx) => (
-                <div key={entry.id ?? idx} style={styles.entryRow}>
+              {(draft ?? aclData?.entries ?? []).map((entry, idx) => (
+                <div key={entry.id || idx} style={styles.entryRow}>
                   <Avatar name={subjectName(entry)} type={entry.subject_type} />
                   <div style={styles.entryInfo}>
                     <span style={styles.entryName}>{subjectName(entry)}</span>
@@ -253,6 +258,29 @@ export function PermissionsPanel({
                   </button>
                 </div>
               ))}
+
+              {/* Save / Discard */}
+              {draft !== null && (
+                <div style={styles.draftActions}>
+                  <button
+                    style={{
+                      ...styles.saveBtn,
+                      opacity: saveAcl.isPending ? 0.6 : 1,
+                    }}
+                    disabled={saveAcl.isPending}
+                    onClick={() => saveAcl.mutate(draft.map(({ id: _id, ...rest }) => rest))}
+                  >
+                    {saveAcl.isPending ? 'Saving…' : 'Save'}
+                  </button>
+                  <button
+                    style={styles.discardBtn}
+                    disabled={saveAcl.isPending}
+                    onClick={() => setDraft(null)}
+                  >
+                    Discard
+                  </button>
+                </div>
+              )}
 
               {/* Divider */}
               <div style={styles.divider} />
@@ -485,6 +513,32 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1,
     padding: '0 4px',
     flexShrink: 0,
+  },
+  draftActions: {
+    display: 'flex',
+    gap: 8,
+    alignItems: 'center',
+    padding: '8px 0',
+  },
+  saveBtn: {
+    padding: '6px 16px',
+    background: '#111',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 4,
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'opacity 0.15s',
+  },
+  discardBtn: {
+    padding: '6px 14px',
+    border: '1px solid #ddd',
+    borderRadius: 4,
+    background: 'none',
+    fontSize: 13,
+    cursor: 'pointer',
+    color: '#555',
   },
   divider: {
     borderTop: '1px solid var(--nav-border, #e8e8e8)',
