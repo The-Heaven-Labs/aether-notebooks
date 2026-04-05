@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { BookOpen, LayoutDashboard, Database, Users, ClipboardList, User, ChevronLeft, ChevronRight } from 'lucide-react'
+import { BookOpen, LayoutDashboard, Database, Users, UsersRound, ClipboardList, User, ChevronLeft, ChevronRight } from 'lucide-react'
 
 const NAV_ITEMS = [
   { to: '/',           title: 'Notebooks',   icon: <BookOpen size={16} /> },
   { to: '/dashboards', title: 'Dashboards',  icon: <LayoutDashboard size={16} /> },
   { to: '/connectors', title: 'Connectors',  icon: <Database size={16} /> },
   { to: '/members',    title: 'Members',     icon: <Users size={16} /> },
+  { to: '/groups',     title: 'Groups',      icon: <UsersRound size={16} /> },
   { to: '/audit',      title: 'Audit',       icon: <ClipboardList size={16} /> },
   { to: '/profile',    title: 'Profile',     icon: <User size={16} /> },
 ]
