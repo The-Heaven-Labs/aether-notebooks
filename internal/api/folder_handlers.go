@@ -405,19 +405,19 @@ func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !force {
-		// Check if any children exist
+		// Check if any children exist (scoped to org to avoid cross-org false positives)
 		var hasChildren bool
 		s.db.Pool.QueryRow(ctx,
 			`SELECT EXISTS(
-			   SELECT 1 FROM folders WHERE parent_id = $1
+			   SELECT 1 FROM folders WHERE parent_id = $1 AND org_id = $2
 			   UNION ALL
-			   SELECT 1 FROM notebooks WHERE folder_id = $1
+			   SELECT 1 FROM notebooks WHERE folder_id = $1 AND org_id = $2
 			   UNION ALL
-			   SELECT 1 FROM connectors WHERE folder_id = $1
+			   SELECT 1 FROM connectors WHERE folder_id = $1 AND org_id = $2
 			   UNION ALL
-			   SELECT 1 FROM dashboards WHERE folder_id = $1
+			   SELECT 1 FROM dashboards WHERE folder_id = $1 AND org_id = $2
 			 )`,
-			folderID,
+			folderID, claims.OrgID,
 		).Scan(&hasChildren)
 		if hasChildren {
 			writeError(w, http.StatusConflict, "folder is not empty; use ?force=true to delete recursively")
