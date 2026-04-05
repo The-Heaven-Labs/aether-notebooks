@@ -53,6 +53,7 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 	var connType models.ConnectorType
 	var maxRows, timeout int
 	var isDefault bool
+	var folderID *string
 
 	if req.IsDefault {
 		tx, err := s.db.Pool.Begin(ctx)
@@ -71,9 +72,9 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 		err = tx.QueryRow(ctx,
 			`INSERT INTO connectors (org_id, name, type, config_encrypted, is_default)
 			 VALUES ($1, $2, $3, $4, $5)
-			 RETURNING id, org_id, name, type, max_rows, timeout_seconds, is_default`,
+			 RETURNING id, org_id, name, type, max_rows, timeout_seconds, is_default, folder_id`,
 			claims.OrgID, req.Name, req.Type, encrypted, true,
-		).Scan(&id, &orgID, &name, &connType, &maxRows, &timeout, &isDefault)
+		).Scan(&id, &orgID, &name, &connType, &maxRows, &timeout, &isDefault, &folderID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create connector")
 			return
@@ -86,9 +87,9 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 		err = s.db.Pool.QueryRow(ctx,
 			`INSERT INTO connectors (org_id, name, type, config_encrypted)
 			 VALUES ($1, $2, $3, $4)
-			 RETURNING id, org_id, name, type, max_rows, timeout_seconds, is_default`,
+			 RETURNING id, org_id, name, type, max_rows, timeout_seconds, is_default, folder_id`,
 			claims.OrgID, req.Name, req.Type, encrypted,
-		).Scan(&id, &orgID, &name, &connType, &maxRows, &timeout, &isDefault)
+		).Scan(&id, &orgID, &name, &connType, &maxRows, &timeout, &isDefault, &folderID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create connector")
 			return
@@ -100,6 +101,7 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 	conn := models.Connector{
 		ID: id, OrgID: orgID, Name: name, Type: connType,
 		Config: req.Config, MaxRows: maxRows, TimeoutSeconds: timeout, IsDefault: isDefault,
+		FolderID: folderID,
 	}
 
 	s.audit.Log(ctx, audit.Entry{
@@ -115,7 +117,7 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at
+		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id
 		 FROM connectors WHERE org_id = $1 ORDER BY name ASC`,
 		claims.OrgID,
 	)
@@ -130,7 +132,7 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 		var c models.Connector
 		var encryptedConfig []byte
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
-			&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
