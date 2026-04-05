@@ -41,7 +41,10 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 	var groupIDs []string
 	for rows.Next() {
 		var gid string
-		rows.Scan(&gid)
+		if err := rows.Scan(&gid); err != nil {
+			rows.Close()
+			return false, fmt.Errorf("scan group_id: %w", err)
+		}
 		groupIDs = append(groupIDs, gid)
 	}
 	rows.Close()
@@ -58,7 +61,10 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 	for resRows.Next() {
 		var c aclCandidate
 		c.specificity = -1
-		resRows.Scan(&c.subjectType, &c.subjectID, &c.actions)
+		if err := resRows.Scan(&c.subjectType, &c.subjectID, &c.actions); err != nil {
+			resRows.Close()
+			return false, fmt.Errorf("scan acl_entry: %w", err)
+		}
 		c.subjectRank = subjectRank(c.subjectType)
 		candidates = append(candidates, c)
 	}
@@ -109,7 +115,10 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 		}
 		for folderRows.Next() {
 			var c aclCandidate
-			folderRows.Scan(&c.subjectType, &c.subjectID, &c.actions, &c.specificity)
+			if err := folderRows.Scan(&c.subjectType, &c.subjectID, &c.actions, &c.specificity); err != nil {
+				folderRows.Close()
+				return false, fmt.Errorf("scan folder_acl: %w", err)
+			}
 			c.subjectRank = subjectRank(c.subjectType)
 			candidates = append(candidates, c)
 			anyACLInChain = true
@@ -147,7 +156,10 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 	}
 
 	// 8. Fallback to org role defaults
-	return orgRoleActions[orgRole][action], nil
+	if actions, ok := orgRoleActions[orgRole]; ok {
+		return actions[action], nil
+	}
+	return false, nil
 }
 
 func matchesUser(c aclCandidate, userID, orgRole string, groupIDs []string) bool {
