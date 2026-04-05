@@ -79,6 +79,12 @@ task db:reset          # Drop + recreate dev DB (data loss!)
 
 **Roles**: `viewer`, `editor`, `admin`. Routes use `RequireRole("editor")` middleware. First registered user becomes org admin.
 
+**Filesystem**: Folders live in `folders` table with self-referential `parent_id` (adjacency list). All resource types (notebooks, connectors, dashboards) have a nullable `folder_id`. Each user gets a personal home folder created on registration/org-join, seeded with a full-access ACL entry.
+
+**Permissions**: `acl_entries` table stores per-resource ACL. Resolution walks the ancestor folder chain via recursive CTE, ordered by specificity (resource entry beats parent folder beats grandparent; within same depth: user beats group beats org_role). Falls back to org-role defaults only when no ACL entry exists anywhere in the chain. Use `checkPermission(ctx, pool, orgID, userID, resourceType, resourceID, action)` from `internal/api/permissions.go`. Route middleware: `requirePermission(resourceType, idParam, action)`.
+
+**Groups**: Custom groups (`groups` + `group_members` tables) are first-class permission subjects. Group management (create/rename/delete/members) requires `admin` role; viewing groups is open to all members.
+
 **Internal routes** (`/internal/*`) are unauthenticated by standard JWT middleware — they're called only by the Hocuspocus relay and validated via `handleInternalAuthValidate`. Do not add auth middleware to these.
 
 **Migrations run automatically** on server startup (not a separate migration tool).
