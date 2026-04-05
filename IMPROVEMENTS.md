@@ -1,15 +1,19 @@
-# Improvements Backlog
-
-All items from the original backlog are now shipped.
-
-## Completed
-
-- [x] When creating a new notebook, typing the name should automatically open the newly created notebook instead of being in the same page which lists them all
-- [x] When creating a new connection, it should be possible to define it as default. All notebooks created after should get this connection as default
-- [x] In the notebook page, the UI is not very good at the top with the title/description right on the site of a button to go back to the notebooks page
-- [x] It should be possible to, in present mode, add multiple cells to the same slide (`slide_break` flag per cell)
-- [x] There should be a complete "Filesystem" structure where people can create folders and notebooks inside of them (folders with arbitrary nesting, home folders per user)
-- [x] There should be a robust permission system, with roles and granular permissions for notebooks and connectors. The permissions should also span the "filesystem" pointed above (ACL entries per resource, inheritance through folder tree, custom groups)
-- [x] Dashboards should have configurable sizes via a "grid system" to help place widgets where we want
-- [x] It should be possible to move the widgets in the grid via mouse interaction for dashboards
-- [x] There should be a profile page where people can set their own status and specific configurations e.g. change theme from light to dark etc
+- In the filesystem view, there should be some part dedicated to "recent";
+- In the filesystem view, there should be some part that could search for notebooks via name or some part of the content;
+- In the filesystem view, there should be filters, like "things created by me" and similar
+- The Profile menu should appear when you click in the avatar/Name on the top right, not as a potential menu on the left sidebar;
+- The current user group appear as a label on the side of the Groups sidebar link. The list of groups someone belongs should appear in the profile instead;
+- In the chart config, there should be options to show labels, and to change colors of things 
+- There is a menu for dashboards and connectors, but there is also a menu for notebooks that shows dashboards and connectors aswell. This is confusing.
+- The new groups UI looks amazing, however, it is not the same visual style as other parts of the project. Create new components for the older parts of the project in this style within storybook so I can take a look and choose what I deem better;
+- The dark theme is just not implemented well. Do a complete quality implementation of a dark theme. Dont use colors that are too contrastant, e.g. #000000 or #FFFFFF, but some pastel easier on the eyes colors
+- When adding widgets to a dashboard, the components come in a "non-executed" state that has no data, evne markdown ones, asking to execute the notebook, but there is no option to execute anything;
+- In the filesystem views, the list should list not only the name, but who created and creation date. Optionally last update if you think it won't clutter things too much
+- There should be a default group "Everyone" or "All", for when someone wants to give permission to everyone regardless of what groups they have;
+- In the permissions menu there should be default configs for None, viewer, editor and admin which will tick different specific permissions, e.g. editor can view, use, edit, but not share and delete in the case of a connector;
+- I can't edit an already created connector via UI
+- On top of being able to run cells in a dashboard, there should be a way to create schedules so the dashboard contents will be updated from time to time. Add defaults e.g. 30s, 1m, 5m, 10m but also the option to use cron notation
+- In notebooks there should be an option to duplicate a cell
+- Changes on cell type are not saved in the history of a cell
+- There is no easy way to track cell updates from audit trail
+- When I click in one connector listed in the filesystem, it simply takes me to the /connectors pages since there is no edit for connectors
