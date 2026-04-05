@@ -205,3 +205,56 @@ func TestNotebookCRUD(t *testing.T) {
 		t.Fatalf("delete: expected 204, got %d", rec.Code)
 	}
 }
+
+func TestNotebook_FolderID(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("nb-folder-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "FolderNB Org")
+
+	// Create a folder
+	folderBody, _ := json.Marshal(map[string]string{"name": "My Folder"})
+	req := httptest.NewRequest("POST", "/api/v1/folders", bytes.NewReader(folderBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create folder: %d %s", rec.Code, rec.Body.String())
+	}
+	var folder map[string]any
+	json.NewDecoder(rec.Body).Decode(&folder)
+	folderID := folder["id"].(string)
+
+	// Create notebook inside the folder
+	body, _ := json.Marshal(map[string]any{"title": "Folder NB", "folder_id": folderID})
+	req2 := httptest.NewRequest("POST", "/api/v1/notebooks", bytes.NewReader(body))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Authorization", "Bearer "+token)
+	rec2 := httptest.NewRecorder()
+	srv.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusCreated {
+		t.Fatalf("create nb with folder: %d %s", rec2.Code, rec2.Body.String())
+	}
+	var nb map[string]any
+	json.NewDecoder(rec2.Body).Decode(&nb)
+	if nb["folder_id"] != folderID {
+		t.Errorf("expected folder_id=%s in response, got %v", folderID, nb["folder_id"])
+	}
+	nbID := nb["id"].(string)
+
+	// Move notebook to root (explicit null via update)
+	moveBody, _ := json.Marshal(map[string]any{"folder_id": nil})
+	req3 := httptest.NewRequest("PUT", "/api/v1/notebooks/"+nbID, bytes.NewReader(moveBody))
+	req3.Header.Set("Content-Type", "application/json")
+	req3.Header.Set("Authorization", "Bearer "+token)
+	rec3 := httptest.NewRecorder()
+	srv.ServeHTTP(rec3, req3)
+	if rec3.Code != http.StatusOK {
+		t.Fatalf("move to root: %d %s", rec3.Code, rec3.Body.String())
+	}
+	var updated map[string]any
+	json.NewDecoder(rec3.Body).Decode(&updated)
+	if updated["folder_id"] != nil {
+		t.Errorf("expected folder_id=nil after move to root, got %v", updated["folder_id"])
+	}
+}

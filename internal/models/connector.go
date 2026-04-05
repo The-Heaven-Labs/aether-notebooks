@@ -11,6 +11,7 @@ type Connector struct {
 	MaxRows        int             `json:"max_rows"`
 	TimeoutSeconds int             `json:"timeout_seconds"`
 	IsDefault      bool            `json:"is_default"`
+	FolderID       *string         `json:"folder_id,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
 }
