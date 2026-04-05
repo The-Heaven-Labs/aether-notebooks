@@ -75,6 +75,16 @@ func (s *Server) handleOrgCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var uName string
+	if err := tx.QueryRow(ctx, `SELECT name FROM users WHERE id = $1`, claims.UserID).Scan(&uName); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fetch user name")
+		return
+	}
+	if err := createHomeFolder(ctx, tx, orgID, claims.UserID, uName); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create home folder")
+		return
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit")
 		return
@@ -188,6 +198,12 @@ func (s *Server) handleOrgJoin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to join organization")
 		return
+	}
+
+	var joinUserName string
+	s.db.Pool.QueryRow(ctx, `SELECT name FROM users WHERE id = $1`, claims.UserID).Scan(&joinUserName)
+	if hmErr := createHomeFolder(ctx, s.db.Pool, orgID, claims.UserID, joinUserName); hmErr != nil {
+		fmt.Printf("handleOrgJoin createHomeFolder failed: %v\n", hmErr)
 	}
 
 	token, err := s.jwt.Issue(claims.UserID, orgID, role)
