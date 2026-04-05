@@ -146,11 +146,13 @@ dropdown: { position: 'absolute', right: 0, top: 38, background: 'white', border
 - Bottom: Chevron toggle button (collapse/expand)
 
 **Nav Items** (top to bottom):
-1. Notebooks (BookOpen icon)
+1. Files / Notebooks (BookOpen icon) — routes to `/` (file browser)
 2. Dashboards (LayoutDashboard icon)
 3. Connectors (Database icon)
 4. Members (Users icon)
-5. Audit (ClipboardList icon)
+5. Groups (UsersRound icon) — shows "Admin" pill badge when user is admin + sidebar is expanded
+6. Audit (ClipboardList icon)
+7. Profile (User icon)
 
 **States**:
 - Collapsed: Width 48px, icons only (centered), padding: 8px 0
@@ -492,57 +494,40 @@ manageBtn: { padding: '3px 8px', fontSize: 11, fontWeight: 600, background: 'var
 
 ## Page Components
 
-### HomePage
+### HomePage (File Browser)
 
-**Purpose**: List all notebooks + create new
+**Purpose**: Filesystem browser — navigate folders and all resource types (notebooks, connectors, dashboards)
+
+**Navigation**: Controlled by `?folder=<uuid>` query param. Absent = root level.
 
 **Visual**:
-- AppShell wrapper
-- Max-width 1280px, centered
-- Header: "Notebooks" title (22px bold) + count + actions (layout toggle + new button)
-- Empty state or notebook list (grid or list)
+- AppShell wrapper, max-width 1280px centered
+- **Breadcrumb** (top): "Files" root crumb (with Home icon) + clickable ancestor segments separated by "/"
+- **Toolbar**: "+ New Folder", "+ New Notebook", "+ New Dashboard" buttons
+- **Inline create form**: Input + Create/Cancel buttons, Enter to submit, Escape to cancel
+- **Folders section**: Auto-fill grid (`minmax(180px, 1fr)`), white cards with folder icon + name + optional "home" badge
+- **Notebooks / Connectors / Dashboards sections**: Vertical lists, white rows with type icon + name + link
+- **Empty state**: Folder icon, "This folder is empty", "New Notebook" CTA
 
-**Layouts**:
-- **List** (default): Vertical stack of rows, 8px gap
-- **Grid**: `grid-template-columns: repeat(auto-fill, minmax(300px, 1fr))`, 16px gap
+**Context menu (`⋯` button on every item)**:
+- Opens a fixed-position dropdown (z-index 1000)
+- Items: Rename (folders + notebooks only), Move to…, Permissions, Delete
+- Closes on outside click
+- Menu clamps to viewport bottom edge
 
-**Notebook Card** (grid layout):
-- White card, border, shadow-sm, border-radius 10px
-- Thumbnail: Purple square (42x42), accent-light background, BookOpen icon
-- Title: Bold 15px, ellipsis on overflow
-- Meta: "Updated {date}" in gray
-- Footer: Light border top, "Delete" button small (right-aligned)
+**Inline rename** (appears after clicking Rename):
+- Input pre-filled with current name, replaces the name display
+- Confirm on Enter or blur, cancel on Escape
+- Calls `PUT /api/v1/folders/:id { name }` or `PUT /api/v1/notebooks/:id { title }`
 
-**Notebook Row** (list layout):
-- White row, border, border-radius 8px, padding 10x16px
-- Left: BookOpen icon (18px, purple)
-- Center: Title (bold 14px) + description (gray 12px) if exists
-- Right: Date (gray 12px) + Delete button (red)
+**Move to… modal**:
+- Centered overlay with semi-transparent backdrop
+- Navigable folder tree with breadcrumb; "Move here" confirm button
+- Calls appropriate `PUT` endpoint with `parent_id` or `folder_id` (null = move to root)
 
-**Create Form**:
-- White card, purple left border accent, shadow
-- Input field (full width) + "Create" button + "Cancel" button
-- Enter to submit, Escape to cancel
-
-**Empty State**:
-- Center-aligned, 80px top padding
-- Icon circle: 56x56, gray background, BookOpen icon (32px)
-- Title: "No notebooks yet" (18px bold)
-- Description: "Create your first notebook to start querying data." (14px secondary)
-- CTA button: "Create your first notebook"
-
-**Interactions**:
-- Click layout toggle → switch between grid/list (persisted to localStorage)
-- Click "New Notebook" or "Create your first notebook" → show inline create form
-- Enter title + Enter → create notebook
-- Click Delete → confirm + delete
-
-**Styling**:
-```javascript
-sectionTitle: { fontSize: 22, fontWeight: 700, color: 'var(--text-primary)' }
-card: { background: 'white', borderRadius: 10, border: '1px solid var(--border)', overflow: 'hidden', boxShadow: 'var(--shadow-sm)' }
-emptyIcon: { width: 56, height: 56, background: 'var(--bg-secondary)', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center' }
-```
+**Permissions**:
+- Clicking "Permissions" in the `⋯` menu opens `PermissionsPanel` slide-over
+- `permissionsTarget` state `{ type, id, name }` controls which panel is open
 
 **Component**: `web/src/pages/HomePage.tsx`
 
@@ -645,6 +630,78 @@ emptyIcon: { width: 56, height: 56, background: 'var(--bg-secondary)', borderRad
 - Platform-wide audit log
 
 **Component**: `web/src/pages/AdminPage.tsx`
+
+### GroupsPage
+
+**Purpose**: Manage org groups — view all groups, expand to see members, admin-only create/rename/delete
+
+**Visual**:
+- AppShell wrapper
+- "+ New Group" button (admin only), inline create form with name input
+- Group rows: accordion-style, clicking the row header expands/collapses
+  - Collapsed: Group name + member count + (admin) Rename / Delete buttons
+  - Expanded: Member list with × remove per member + Add member `<select>` + Add button
+- Rename: inline edit input (same Enter/Escape pattern as HomePage)
+- Delete: `window.confirm` before API call
+- ErrorBanner on any mutation failure
+
+**Auth gating**:
+- Create / Rename / Delete group buttons hidden for non-admin users
+- Add member / Remove member hidden for non-admin users
+- Members query (`GET /api/v1/members`) only fires when user is admin (`enabled: isAdmin`)
+
+**Component**: `web/src/pages/GroupsPage.tsx`
+
+### ProfilePage
+
+**Purpose**: User profile — name, status, theme toggle
+
+**Visual**:
+- Edit name and status inline
+- Light/dark theme toggle (persisted to localStorage)
+
+**Component**: `web/src/pages/ProfilePage.tsx`
+
+## Overlay Components
+
+### PermissionsPanel
+
+**Purpose**: Slide-over drawer for managing per-resource ACL entries
+
+**Trigger**: "Permissions" option in the `⋯` context menu on any file-browser item
+
+**Visual**:
+- Fixed-position right drawer, width 420px, height 100vh, z-index 1501
+- Semi-transparent backdrop (rgba(0,0,0,0.3)), z-index 1500, clicking closes panel
+- **Header**: Resource name (bold) + resource-type badge (color-coded) + × close button
+- **Inheritance note**: "Inheriting N permissions from parent folder" or "No inherited permissions"
+- **ACL entries list**: Avatar circle (initials / `#` for groups) + name + per-action checkboxes + × remove
+- **Draft mode**: Checkboxes and removes update local draft; Save/Discard buttons appear when there are unsaved changes
+- **Add entry row**: `<select>` with Users/Groups optgroups + action checkboxes + Add button
+
+**Actions per resource type**:
+- `folder`: view, create, edit, manage, delete
+- `notebook`: view, run, edit, share, delete
+- `connector`: view, use, edit, share, delete
+- `dashboard`: view, edit, share, delete
+
+**API calls**:
+- `GET /api/v1/acl/:resource_type/:resource_id` — load entries
+- `PUT /api/v1/acl/:resource_type/:resource_id` — replace full ACL (requires `manage`/`share` permission)
+- `GET /api/v1/members`, `GET /api/v1/groups` — populate subject dropdown
+
+**Props**:
+```tsx
+interface PermissionsPanelProps {
+  resourceType: 'folder' | 'notebook' | 'connector' | 'dashboard'
+  resourceId: string
+  resourceName: string
+  parentFolderId?: string
+  onClose: () => void
+}
+```
+
+**Component**: `web/src/components/PermissionsPanel.tsx`
 
 ## Common Visual States
 
