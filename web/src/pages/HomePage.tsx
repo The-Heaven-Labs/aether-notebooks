@@ -208,6 +208,18 @@ function MoveModal({ target, onConfirm, onClose }: MoveModalProps) {
   )
 }
 
+// ─── MetaLine ─────────────────────────────────────────────────────────────────
+
+function MetaLine({ createdBy, createdAt }: { createdBy: string; createdAt: string }) {
+  const date = new Date(createdAt)
+  const formatted = isNaN(date.getTime()) ? '' : date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+  return (
+    <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, display: 'block', lineHeight: 1.4 }}>
+      {createdBy} · {formatted}
+    </span>
+  )
+}
+
 // ─── HomePage ────────────────────────────────────────────────────────────────
 
 export function HomePage() {
@@ -246,6 +258,13 @@ export function HomePage() {
     queryFn: () => api.get(`/api/v1/folders/${folderID}/ancestors`),
     enabled: !!folderID,
   })
+
+  const { data: members = [] } = useQuery<Array<{ user_id: string; name: string }>>({
+    queryKey: ['members'],
+    queryFn: () => api.get('/api/v1/members'),
+  })
+  const memberName = (userId: string) =>
+    members.find(m => m.user_id === userId)?.name ?? userId.slice(0, 8)
 
   useEffect(() => {
     const name = data?.folder?.name
@@ -453,8 +472,13 @@ export function HomePage() {
                   ) : (
                     <button style={s.folderBtn} onClick={() => setSearchParams({ folder: f.id })}>
                       <FolderIcon size={16} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                      <span style={s.folderName}>{f.name}</span>
-                      {f.is_home && <span style={s.badge}>home</span>}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={s.folderName}>{f.name}</span>
+                          {f.is_home && <span style={s.badge}>home</span>}
+                        </div>
+                        <MetaLine createdBy={memberName(f.created_by)} createdAt={f.created_at} />
+                      </div>
                     </button>
                   )}
                   <button
@@ -498,7 +522,10 @@ export function HomePage() {
                   ) : (
                     <Link to={`/notebooks/${nb.id}`} style={s.itemLink}>
                       <BookOpen size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                      <span style={s.itemName}>{nb.title}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <span style={s.itemName}>{nb.title}</span>
+                        <MetaLine createdBy={memberName(nb.created_by)} createdAt={nb.created_at} />
+                      </div>
                     </Link>
                   )}
                   <div style={{ position: 'relative' }}>
@@ -572,7 +599,10 @@ export function HomePage() {
                 <div key={d.id} style={s.item}>
                   <Link to={`/dashboards/${d.id}`} style={s.itemLink}>
                     <LayoutDashboard size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                    <span style={s.itemName}>{d.title}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <span style={s.itemName}>{d.title}</span>
+                      <MetaLine createdBy={memberName(d.created_by)} createdAt={d.created_at} />
+                    </div>
                   </Link>
                   <div style={{ position: 'relative' }}>
                     <button
