@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -8,15 +8,222 @@ import { EmptyState } from '../components/EmptyState'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { Folder as FolderIcon, BookOpen, LayoutDashboard, Database, Home } from 'lucide-react'
 
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+type ResourceType = 'folder' | 'notebook' | 'connector' | 'dashboard'
+
+interface MenuTarget {
+  type: ResourceType
+  id: string
+  name: string
+}
+
+interface RenameTarget {
+  type: 'folder' | 'notebook'
+  id: string
+  currentName: string
+}
+
+interface MoveTarget {
+  type: ResourceType
+  id: string
+  name: string
+}
+
+interface PermissionsTarget {
+  type: string
+  id: string
+  name: string
+}
+
+// ─── ContextMenu ─────────────────────────────────────────────────────────────
+
+interface ContextMenuProps {
+  target: MenuTarget
+  onRename: (t: RenameTarget) => void
+  onMove: (t: MoveTarget) => void
+  onPermissions: (t: PermissionsTarget) => void
+  onDelete: (type: ResourceType, id: string) => void
+  onClose: () => void
+}
+
+function ContextMenu({ target, onRename, onMove, onPermissions, onDelete, onClose }: ContextMenuProps) {
+  const ref = useRef<HTMLDivElement>(null)
+  const canRename = target.type === 'folder' || target.type === 'notebook'
+  const canDelete = target.type === 'folder' || target.type === 'notebook'
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        onClose()
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [onClose])
+
+  return (
+    <div ref={ref} style={ms.menu}>
+      {canRename && (
+        <button style={ms.item} onClick={() => {
+          onRename({ type: target.type as 'folder' | 'notebook', id: target.id, currentName: target.name })
+          onClose()
+        }}>Rename</button>
+      )}
+      <button style={ms.item} onClick={() => {
+        onMove({ type: target.type, id: target.id, name: target.name })
+        onClose()
+      }}>Move to…</button>
+      <button style={ms.item} onClick={() => {
+        onPermissions({ type: target.type, id: target.id, name: target.name })
+        onClose()
+      }}>Permissions</button>
+      {canDelete ? (
+        <button style={{ ...ms.item, color: 'var(--error)' }} onClick={() => {
+          onDelete(target.type, target.id)
+          onClose()
+        }}>Delete</button>
+      ) : (
+        <button style={{ ...ms.item, color: 'var(--error)' }} onClick={() => {
+          // TODO: connectors and dashboards have their own management pages
+          onClose()
+        }}>Delete</button>
+      )}
+    </div>
+  )
+}
+
+// ─── InlineRename ─────────────────────────────────────────────────────────────
+
+interface InlineRenameProps {
+  initialValue: string
+  onConfirm: (name: string) => void
+  onCancel: () => void
+}
+
+function InlineRename({ initialValue, onConfirm, onCancel }: InlineRenameProps) {
+  const [value, setValue] = useState(initialValue)
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter') { if (value.trim()) onConfirm(value.trim()) }
+    if (e.key === 'Escape') onCancel()
+  }
+
+  return (
+    <input
+      style={s.renameInput}
+      value={value}
+      autoFocus
+      onChange={(e) => setValue(e.target.value)}
+      onKeyDown={handleKeyDown}
+      onBlur={() => { if (value.trim()) onConfirm(value.trim()); else onCancel() }}
+    />
+  )
+}
+
+// ─── MoveModal ────────────────────────────────────────────────────────────────
+
+interface MoveModalProps {
+  target: MoveTarget
+  onConfirm: (destFolderID: string | null) => void
+  onClose: () => void
+}
+
+function MoveModal({ target, onConfirm, onClose }: MoveModalProps) {
+  const [pickerFolderID, setPickerFolderID] = useState<string | null>(null)
+  const [pickerAncestors, setPickerAncestors] = useState<Array<{ id: string; name: string }>>([])
+
+  const { data, isLoading } = useQuery<FolderContents>({
+    queryKey: ['move-picker', pickerFolderID ?? 'root'],
+    queryFn: () => pickerFolderID
+      ? api.get<FolderContents>(`/api/v1/folders/${pickerFolderID}`)
+      : api.get<FolderContents>('/api/v1/folders'),
+  })
+
+  function navigateTo(folder: { id: string; name: string }) {
+    setPickerAncestors(prev => [...prev, folder])
+    setPickerFolderID(folder.id)
+  }
+
+  function navigateToAncestor(idx: number) {
+    if (idx < 0) {
+      setPickerAncestors([])
+      setPickerFolderID(null)
+    } else {
+      const ancestor = pickerAncestors[idx]
+      setPickerAncestors(prev => prev.slice(0, idx + 1))
+      setPickerFolderID(ancestor.id)
+    }
+  }
+
+  return (
+    <div style={ms.backdrop} onClick={onClose}>
+      <div style={ms.modal} onClick={(e) => e.stopPropagation()}>
+        <div style={ms.modalHeader}>
+          <span style={ms.modalTitle}>Move "{target.name}" to folder</span>
+          <button style={ms.closeBtn} onClick={onClose}>×</button>
+        </div>
+
+        {/* Breadcrumb */}
+        <div style={ms.pickerCrumb}>
+          <button style={ms.crumbLink} onClick={() => navigateToAncestor(-1)}>Root</button>
+          {pickerAncestors.map((a, idx) => (
+            <span key={a.id} style={{ display: 'flex', alignItems: 'center' }}>
+              <span style={{ color: '#ccc', margin: '0 4px' }}>/</span>
+              <button style={ms.crumbLink} onClick={() => navigateToAncestor(idx)}>{a.name}</button>
+            </span>
+          ))}
+        </div>
+
+        <div style={ms.folderList}>
+          {isLoading && <div style={ms.loadingText}>Loading…</div>}
+          {!isLoading && data && data.folders.length === 0 && (
+            <div style={ms.emptyText}>No subfolders here.</div>
+          )}
+          {data?.folders.map((f) => (
+            <button key={f.id} style={ms.folderRow} onClick={() => navigateTo({ id: f.id, name: f.name })}>
+              <FolderIcon size={14} style={{ color: 'var(--accent)', flexShrink: 0, marginRight: 8 }} />
+              <span style={{ flex: 1, textAlign: 'left', fontSize: 13 }}>{f.name}</span>
+              <span style={ms.drillArrow}>›</span>
+            </button>
+          ))}
+        </div>
+
+        <div style={ms.modalFooter}>
+          <button style={ms.moveHereBtn} onClick={() => onConfirm(pickerFolderID)}>
+            Move here
+          </button>
+          <button style={s.cancelBtn} onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── HomePage ────────────────────────────────────────────────────────────────
+
 export function HomePage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const folderID = searchParams.get('folder')
   const navigate = useNavigate()
   const qc = useQueryClient()
 
-  const [creating, setCreating] = useState<null | 'folder' | 'notebook'>(null)
+  const [creating, setCreating] = useState<null | 'folder' | 'notebook' | 'dashboard'>(null)
   const [newName, setNewName] = useState('')
   const [error, setError] = useState<string | null>(null)
+
+  // Context menu
+  const [openMenu, setOpenMenu] = useState<MenuTarget | null>(null)
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null)
+
+  // Rename
+  const [renaming, setRenaming] = useState<RenameTarget | null>(null)
+
+  // Move modal
+  const [moving, setMoving] = useState<MoveTarget | null>(null)
+
+  // Permissions (stub — Task 13 will wire this up)
+  const [permissionsTarget, setPermissionsTarget] = useState<PermissionsTarget | null>(null)
 
   const contentsKey = ['folder-contents', folderID ?? 'root']
   const { data, isLoading } = useQuery<FolderContents>({
@@ -37,6 +244,8 @@ export function HomePage() {
     document.title = name ? `${name} — hnb` : "Files — hnb"
   }, [data?.folder?.name])
 
+  // ── Mutations ──
+
   const createFolder = useMutation({
     mutationFn: (name: string) =>
       api.post<Folder>('/api/v1/folders', { name, ...(folderID ? { parent_id: folderID } : {}) }),
@@ -48,6 +257,13 @@ export function HomePage() {
     mutationFn: (title: string) =>
       api.post<{ id: string }>('/api/v1/notebooks', { title, ...(folderID ? { folder_id: folderID } : {}) }),
     onSuccess: (nb) => navigate(`/notebooks/${nb.id}`),
+    onError: (e: Error) => setError(e.message),
+  })
+
+  const createDashboard = useMutation({
+    mutationFn: (title: string) =>
+      api.post<{ id: string }>('/api/v1/dashboards', { title, ...(folderID ? { folder_id: folderID } : {}) }),
+    onSuccess: (d) => navigate(`/dashboards/${d.id}`),
     onError: (e: Error) => setError(e.message),
   })
 
@@ -63,6 +279,38 @@ export function HomePage() {
     onError: (e: Error) => setError(e.message),
   })
 
+  const renameFolder = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) =>
+      api.put(`/api/v1/folders/${id}`, { name }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: contentsKey }); setRenaming(null) },
+    onError: (e: Error) => setError(e.message),
+  })
+
+  const renameNotebook = useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string }) =>
+      api.put(`/api/v1/notebooks/${id}`, { title }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: contentsKey }); setRenaming(null) },
+    onError: (e: Error) => setError(e.message),
+  })
+
+  const moveItem = useMutation({
+    mutationFn: ({ type, id, destFolderID }: { type: ResourceType; id: string; destFolderID: string | null }) => {
+      if (type === 'folder') {
+        return api.put(`/api/v1/folders/${id}`, { parent_id: destFolderID })
+      } else if (type === 'notebook') {
+        return api.put(`/api/v1/notebooks/${id}`, { folder_id: destFolderID })
+      } else if (type === 'connector') {
+        return api.put(`/api/v1/connectors/${id}`, { folder_id: destFolderID })
+      } else {
+        return api.put(`/api/v1/dashboards/${id}`, { folder_id: destFolderID })
+      }
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: contentsKey }); setMoving(null) },
+    onError: (e: Error) => setError(e.message),
+  })
+
+  // ── Handlers ──
+
   const isEmpty = data &&
     data.folders.length === 0 &&
     data.notebooks.length === 0 &&
@@ -73,11 +321,43 @@ export function HomePage() {
     if (!newName.trim()) return
     if (creating === 'folder') createFolder.mutate(newName.trim())
     else if (creating === 'notebook') createNotebook.mutate(newName.trim())
+    else if (creating === 'dashboard') createDashboard.mutate(newName.trim())
+  }
+
+  function handleMenuOpen(e: React.MouseEvent, target: MenuTarget) {
+    e.stopPropagation()
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    setMenuPos({ top: rect.bottom + 4, left: rect.left })
+    setOpenMenu(target)
+  }
+
+  function handleDelete(type: ResourceType, id: string) {
+    if (type === 'folder') deleteFolder.mutate(id)
+    else if (type === 'notebook') deleteNotebook.mutate(id)
+    // connectors / dashboards: no-op (TODO: implement via their own pages)
+  }
+
+  function handleRenameConfirm(newValue: string) {
+    if (!renaming) return
+    if (renaming.type === 'folder') {
+      renameFolder.mutate({ id: renaming.id, name: newValue })
+    } else {
+      renameNotebook.mutate({ id: renaming.id, title: newValue })
+    }
+  }
+
+  function handleMoveConfirm(destFolderID: string | null) {
+    if (!moving) return
+    moveItem.mutate({ type: moving.type, id: moving.id, destFolderID })
+  }
+
+  function handlePermissions(t: PermissionsTarget) {
+    setPermissionsTarget(t)
   }
 
   return (
     <AppShell>
-      <div style={{ maxWidth: 1280, margin: '0 auto' }}>
+      <div style={{ maxWidth: 1280, margin: '0 auto', position: 'relative' }}>
         {/* Breadcrumb */}
         <div style={s.breadcrumb}>
           <button style={s.crumbBtn} onClick={() => setSearchParams({})}>
@@ -102,6 +382,9 @@ export function HomePage() {
           <button style={s.newBtn} onClick={() => { setCreating('notebook'); setNewName('') }}>
             + New Notebook
           </button>
+          <button style={s.newBtn} onClick={() => { setCreating('dashboard'); setNewName('') }}>
+            + New Dashboard
+          </button>
         </div>
 
         {/* Inline create form */}
@@ -111,7 +394,11 @@ export function HomePage() {
               style={s.input}
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              placeholder={creating === 'folder' ? 'Folder name…' : 'Notebook title…'}
+              placeholder={
+                creating === 'folder' ? 'Folder name…'
+                : creating === 'notebook' ? 'Notebook title…'
+                : 'Dashboard title…'
+              }
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleCreate()
@@ -143,12 +430,38 @@ export function HomePage() {
             <div style={s.folderGrid}>
               {data.folders.map((f) => (
                 <div key={f.id} style={s.folderCard} className="card-hover">
-                  <button style={s.folderBtn} onClick={() => setSearchParams({ folder: f.id })}>
-                    <FolderIcon size={16} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                    <span style={s.folderName}>{f.name}</span>
-                    {f.is_home && <span style={s.badge}>home</span>}
-                  </button>
-                  <button style={s.iconBtn} title="Delete folder" onClick={() => deleteFolder.mutate(f.id)}>×</button>
+                  {renaming?.id === f.id ? (
+                    <div style={{ flex: 1, padding: '4px 8px' }}>
+                      <InlineRename
+                        initialValue={renaming.currentName}
+                        onConfirm={handleRenameConfirm}
+                        onCancel={() => setRenaming(null)}
+                      />
+                    </div>
+                  ) : (
+                    <button style={s.folderBtn} onClick={() => setSearchParams({ folder: f.id })}>
+                      <FolderIcon size={16} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                      <span style={s.folderName}>{f.name}</span>
+                      {f.is_home && <span style={s.badge}>home</span>}
+                    </button>
+                  )}
+                  <button
+                    style={s.menuBtn}
+                    title="More options"
+                    onClick={(e) => handleMenuOpen(e, { type: 'folder', id: f.id, name: f.name })}
+                  >⋯</button>
+                  {openMenu?.id === f.id && menuPos && (
+                    <div style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, zIndex: 1000 }}>
+                      <ContextMenu
+                        target={openMenu}
+                        onRename={setRenaming}
+                        onMove={setMoving}
+                        onPermissions={handlePermissions}
+                        onDelete={handleDelete}
+                        onClose={() => setOpenMenu(null)}
+                      />
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -162,11 +475,39 @@ export function HomePage() {
             <div style={s.list}>
               {data.notebooks.map((nb) => (
                 <div key={nb.id} style={s.item}>
-                  <Link to={`/notebooks/${nb.id}`} style={s.itemLink}>
-                    <BookOpen size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                    <span style={s.itemName}>{nb.title}</span>
-                  </Link>
-                  <button style={s.delBtn} onClick={() => deleteNotebook.mutate(nb.id)}>Delete</button>
+                  {renaming?.id === nb.id ? (
+                    <div style={{ flex: 1 }}>
+                      <InlineRename
+                        initialValue={renaming.currentName}
+                        onConfirm={handleRenameConfirm}
+                        onCancel={() => setRenaming(null)}
+                      />
+                    </div>
+                  ) : (
+                    <Link to={`/notebooks/${nb.id}`} style={s.itemLink}>
+                      <BookOpen size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                      <span style={s.itemName}>{nb.title}</span>
+                    </Link>
+                  )}
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      style={s.menuBtn}
+                      title="More options"
+                      onClick={(e) => handleMenuOpen(e, { type: 'notebook', id: nb.id, name: nb.title })}
+                    >⋯</button>
+                    {openMenu?.id === nb.id && menuPos && (
+                      <div style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, zIndex: 1000 }}>
+                        <ContextMenu
+                          target={openMenu}
+                          onRename={setRenaming}
+                          onMove={setMoving}
+                          onPermissions={handlePermissions}
+                          onDelete={handleDelete}
+                          onClose={() => setOpenMenu(null)}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -185,6 +526,25 @@ export function HomePage() {
                     <span style={s.itemName}>{c.name}</span>
                     {c.is_default && <span style={s.badge}>default</span>}
                   </Link>
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      style={s.menuBtn}
+                      title="More options"
+                      onClick={(e) => handleMenuOpen(e, { type: 'connector', id: c.id, name: c.name })}
+                    >⋯</button>
+                    {openMenu?.id === c.id && menuPos && (
+                      <div style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, zIndex: 1000 }}>
+                        <ContextMenu
+                          target={openMenu}
+                          onRename={setRenaming}
+                          onMove={setMoving}
+                          onPermissions={handlePermissions}
+                          onDelete={handleDelete}
+                          onClose={() => setOpenMenu(null)}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -202,15 +562,53 @@ export function HomePage() {
                     <LayoutDashboard size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                     <span style={s.itemName}>{d.title}</span>
                   </Link>
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      style={s.menuBtn}
+                      title="More options"
+                      onClick={(e) => handleMenuOpen(e, { type: 'dashboard', id: d.id, name: d.title })}
+                    >⋯</button>
+                    {openMenu?.id === d.id && menuPos && (
+                      <div style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, zIndex: 1000 }}>
+                        <ContextMenu
+                          target={openMenu}
+                          onRename={setRenaming}
+                          onMove={setMoving}
+                          onPermissions={handlePermissions}
+                          onDelete={handleDelete}
+                          onClose={() => setOpenMenu(null)}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
           </section>
         )}
+
+        {/* Move modal */}
+        {moving && (
+          <MoveModal
+            target={moving}
+            onConfirm={handleMoveConfirm}
+            onClose={() => setMoving(null)}
+          />
+        )}
+
+        {/* Permissions stub — Task 13 will wire this up */}
+        {permissionsTarget && (
+          <div style={s.permissionsStub}>
+            Permissions panel coming in Task 13 for {permissionsTarget.name}
+            <button style={{ marginLeft: 12, cursor: 'pointer' }} onClick={() => setPermissionsTarget(null)}>×</button>
+          </div>
+        )}
       </div>
     </AppShell>
   )
 }
+
+// ─── Styles ──────────────────────────────────────────────────────────────────
 
 const s: Record<string, React.CSSProperties> = {
   breadcrumb: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 2, marginBottom: 20 },
@@ -225,14 +623,36 @@ const s: Record<string, React.CSSProperties> = {
   section: { marginBottom: 28 },
   sectionLabel: { fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const, color: '#aaa', marginBottom: 8 },
   folderGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8 },
-  folderCard: { display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #e8e8e8', borderRadius: 4, overflow: 'hidden', transition: 'border-color 0.15s' },
+  folderCard: { display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #e8e8e8', borderRadius: 4, overflow: 'visible', transition: 'border-color 0.15s', position: 'relative' },
   folderBtn: { flex: 1, display: 'flex', alignItems: 'center', gap: 7, padding: '9px 12px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' as const, minWidth: 0 },
   folderName: { fontSize: 13, fontWeight: 500, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, flex: 1 },
   badge: { fontSize: 10, fontWeight: 700, background: 'var(--accent-light)', color: 'var(--accent)', borderRadius: 3, padding: '1px 5px', letterSpacing: '0.04em', flexShrink: 0 },
-  iconBtn: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error)', fontSize: 16, padding: '0 8px', flexShrink: 0, lineHeight: 1 },
+  menuBtn: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18, padding: '0 8px', flexShrink: 0, lineHeight: 1, letterSpacing: 1 },
   list: { display: 'flex', flexDirection: 'column', gap: 6 },
   item: { display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #e8e8e8', borderRadius: 4, padding: '8px 14px', gap: 10 },
   itemLink: { flex: 1, display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', minWidth: 0 },
   itemName: { fontSize: 14, fontWeight: 500, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, flex: 1 },
-  delBtn: { padding: '3px 8px', border: 'none', background: 'transparent', color: 'var(--error)', fontSize: 12, cursor: 'pointer', flexShrink: 0 },
+  renameInput: { width: '100%', padding: '5px 8px', border: '1px solid var(--accent)', borderRadius: 3, fontSize: 13, outline: 'none' },
+  permissionsStub: { marginTop: 16, padding: '10px 16px', background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 4, fontSize: 13, color: '#555', display: 'flex', alignItems: 'center' },
+}
+
+// ─── Context menu + modal styles ─────────────────────────────────────────────
+
+const ms: Record<string, React.CSSProperties> = {
+  menu: { background: '#fff', border: '1px solid var(--nav-border, #e8e8e8)', borderRadius: 6, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', minWidth: 160, padding: '4px 0', display: 'flex', flexDirection: 'column' },
+  item: { background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: '8px 16px', fontSize: 13, color: '#111', width: '100%' },
+  backdrop: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 },
+  modal: { background: '#fff', borderRadius: 8, boxShadow: '0 8px 32px rgba(0,0,0,0.18)', width: 400, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+  modalHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid #e8e8e8' },
+  modalTitle: { fontSize: 14, fontWeight: 600, color: '#111' },
+  closeBtn: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: '#888', lineHeight: 1, padding: '0 4px' },
+  pickerCrumb: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', padding: '8px 16px', borderBottom: '1px solid #f0f0f0', fontSize: 12, gap: 2 },
+  crumbLink: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)', fontSize: 12, fontWeight: 500, padding: '2px 4px', borderRadius: 3 },
+  folderList: { flex: 1, overflowY: 'auto', padding: '8px 0', minHeight: 120, maxHeight: 300 },
+  folderRow: { display: 'flex', alignItems: 'center', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '9px 16px', textAlign: 'left', borderBottom: '1px solid #f5f5f5' },
+  drillArrow: { color: '#bbb', fontSize: 16, marginLeft: 4 },
+  loadingText: { padding: '16px', color: '#aaa', fontSize: 13, textAlign: 'center' },
+  emptyText: { padding: '16px', color: '#aaa', fontSize: 13, textAlign: 'center' },
+  modalFooter: { display: 'flex', gap: 10, padding: '12px 16px', borderTop: '1px solid #e8e8e8', justifyContent: 'flex-end' },
+  moveHereBtn: { padding: '7px 16px', background: '#111', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
 }
