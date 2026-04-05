@@ -49,6 +49,7 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer rows.Close()
+	var allFolders []models.Folder
 	for rows.Next() {
 		var f models.Folder
 		if err := rows.Scan(&f.ID, &f.OrgID, &f.ParentID, &f.Name, &f.IsHome,
@@ -56,9 +57,15 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		contents.Folders = append(contents.Folders, f)
+		allFolders = append(allFolders, f)
 	}
 	rows.Close()
+	for _, f := range allFolders {
+		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", f.ID, "view")
+		if err == nil && ok {
+			contents.Folders = append(contents.Folders, f)
+		}
+	}
 
 	// Notebooks at root
 	nbRows, err := s.db.Pool.Query(ctx,
@@ -71,15 +78,22 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer nbRows.Close()
+	var allNotebooks []models.Notebook
 	for nbRows.Next() {
 		nb, err := scanNotebook(nbRows)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		contents.Notebooks = append(contents.Notebooks, nb)
+		allNotebooks = append(allNotebooks, nb)
 	}
 	nbRows.Close()
+	for _, nb := range allNotebooks {
+		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "view")
+		if err == nil && ok {
+			contents.Notebooks = append(contents.Notebooks, nb)
+		}
+	}
 
 	// Connectors at root
 	cRows, err := s.db.Pool.Query(ctx,
@@ -91,15 +105,22 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer cRows.Close()
+	var allConnectors []folderConnector
 	for cRows.Next() {
 		var c folderConnector
 		if err := cRows.Scan(&c.ID, &c.Name, &c.Type, &c.IsDefault, &c.FolderID); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		contents.Connectors = append(contents.Connectors, c)
+		allConnectors = append(allConnectors, c)
 	}
 	cRows.Close()
+	for _, c := range allConnectors {
+		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "view")
+		if err == nil && ok {
+			contents.Connectors = append(contents.Connectors, c)
+		}
+	}
 
 	// Dashboards at root
 	dRows, err := s.db.Pool.Query(ctx,
@@ -112,13 +133,20 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer dRows.Close()
+	var allDashboards []models.Dashboard
 	for dRows.Next() {
 		d, err := scanDashboard(dRows)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		contents.Dashboards = append(contents.Dashboards, d)
+		allDashboards = append(allDashboards, d)
+	}
+	for _, d := range allDashboards {
+		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "view")
+		if err == nil && ok {
+			contents.Dashboards = append(contents.Dashboards, d)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, contents)
@@ -164,6 +192,7 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer rows.Close()
+	var subFolders []models.Folder
 	for rows.Next() {
 		var f models.Folder
 		if err := rows.Scan(&f.ID, &f.OrgID, &f.ParentID, &f.Name, &f.IsHome,
@@ -171,9 +200,15 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		contents.Folders = append(contents.Folders, f)
+		subFolders = append(subFolders, f)
 	}
 	rows.Close()
+	for _, f := range subFolders {
+		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", f.ID, "view")
+		if err == nil && ok {
+			contents.Folders = append(contents.Folders, f)
+		}
+	}
 
 	// Notebooks in folder
 	nbRows, err := s.db.Pool.Query(ctx,
@@ -186,15 +221,22 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer nbRows.Close()
+	var subNotebooks []models.Notebook
 	for nbRows.Next() {
 		nb, err := scanNotebook(nbRows)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		contents.Notebooks = append(contents.Notebooks, nb)
+		subNotebooks = append(subNotebooks, nb)
 	}
 	nbRows.Close()
+	for _, nb := range subNotebooks {
+		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "view")
+		if err == nil && ok {
+			contents.Notebooks = append(contents.Notebooks, nb)
+		}
+	}
 
 	// Connectors in folder
 	cRows, err := s.db.Pool.Query(ctx,
@@ -206,15 +248,22 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer cRows.Close()
+	var subConnectors []folderConnector
 	for cRows.Next() {
 		var c folderConnector
 		if err := cRows.Scan(&c.ID, &c.Name, &c.Type, &c.IsDefault, &c.FolderID); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		contents.Connectors = append(contents.Connectors, c)
+		subConnectors = append(subConnectors, c)
 	}
 	cRows.Close()
+	for _, c := range subConnectors {
+		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "view")
+		if err == nil && ok {
+			contents.Connectors = append(contents.Connectors, c)
+		}
+	}
 
 	// Dashboards in folder
 	dRows, err := s.db.Pool.Query(ctx,
@@ -227,13 +276,20 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer dRows.Close()
+	var subDashboards []models.Dashboard
 	for dRows.Next() {
 		d, err := scanDashboard(dRows)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		contents.Dashboards = append(contents.Dashboards, d)
+		subDashboards = append(subDashboards, d)
+	}
+	for _, d := range subDashboards {
+		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "view")
+		if err == nil && ok {
+			contents.Dashboards = append(contents.Dashboards, d)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, contents)
@@ -345,6 +401,29 @@ func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 	if req.Name == nil && req.ParentID == nil {
 		writeError(w, http.StatusBadRequest, "name or parent_id required")
 		return
+	}
+
+	// Cycle guard: ensure the new parent is not the folder itself or a descendant.
+	if req.ParentID != nil {
+		var isCycle bool
+		err := s.db.Pool.QueryRow(ctx, `
+			WITH RECURSIVE desc AS (
+				SELECT id FROM folders WHERE id = $1
+				UNION ALL
+				SELECT f.id FROM folders f
+				JOIN desc d ON f.parent_id = d.id
+				WHERE f.org_id = $3
+			)
+			SELECT EXISTS(SELECT 1 FROM desc WHERE id = $2)
+		`, folderID, *req.ParentID, claims.OrgID).Scan(&isCycle)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "cycle check failed")
+			return
+		}
+		if isCycle {
+			writeError(w, http.StatusBadRequest, "cannot move folder under itself or a descendant")
+			return
+		}
 	}
 
 	// Build dynamic SET clause

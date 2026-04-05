@@ -159,18 +159,30 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if autoJoinOrgID != "" {
-		if _, execErr := s.db.Pool.Exec(ctx,
-			`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'viewer') ON CONFLICT DO NOTHING`,
-			autoJoinOrgID, userID,
-		); execErr != nil {
+		autoJoinTx, txErr := s.db.Pool.Begin(ctx)
+		if txErr != nil {
 			// Log the error but fall through to issue an onboarding token instead
-			fmt.Printf("auto-join org_members insert failed: %v\n", execErr)
+			fmt.Printf("auto-join begin tx failed: %v\n", txErr)
 			autoJoinOrgID = ""
 		} else {
-			var autoJoinUserName string
-			s.db.Pool.QueryRow(ctx, `SELECT name FROM users WHERE id = $1`, userID).Scan(&autoJoinUserName)
-			if hmErr := createHomeFolder(ctx, s.db.Pool, autoJoinOrgID, userID, autoJoinUserName); hmErr != nil {
-				fmt.Printf("auto-join createHomeFolder failed: %v\n", hmErr)
+			if _, execErr := autoJoinTx.Exec(ctx,
+				`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'viewer') ON CONFLICT DO NOTHING`,
+				autoJoinOrgID, userID,
+			); execErr != nil {
+				autoJoinTx.Rollback(ctx)
+				fmt.Printf("auto-join org_members insert failed: %v\n", execErr)
+				autoJoinOrgID = ""
+			} else {
+				var autoJoinUserName string
+				autoJoinTx.QueryRow(ctx, `SELECT name FROM users WHERE id = $1`, userID).Scan(&autoJoinUserName)
+				if hmErr := createHomeFolder(ctx, autoJoinTx, autoJoinOrgID, userID, autoJoinUserName); hmErr != nil {
+					autoJoinTx.Rollback(ctx)
+					fmt.Printf("auto-join createHomeFolder failed: %v\n", hmErr)
+					autoJoinOrgID = ""
+				} else if commitErr := autoJoinTx.Commit(ctx); commitErr != nil {
+					fmt.Printf("auto-join commit failed: %v\n", commitErr)
+					autoJoinOrgID = ""
+				}
 			}
 		}
 	}
