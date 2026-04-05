@@ -36,6 +36,7 @@ export function GroupsPage() {
   const { data: members = [] } = useQuery({
     queryKey: ['members'],
     queryFn: () => api.get<Member[]>('/api/v1/members'),
+    enabled: isAdmin,
   })
 
   const createGroup = useMutation({
@@ -78,7 +79,8 @@ export function GroupsPage() {
     mutationFn: ({ groupId, userId }: { groupId: string; userId: string }) =>
       api.post(`/api/v1/groups/${groupId}/members`, { user_id: userId }),
     onSuccess: (_, { groupId, userId }) => {
-      const member = members.find((m) => m.user_id === userId)
+      const cached = qc.getQueryData<Member[]>(['members']) ?? []
+      const member = cached.find((m) => m.user_id === userId)
       if (member) {
         setGroupMembers((prev) => ({
           ...prev,
@@ -118,7 +120,8 @@ export function GroupsPage() {
     try {
       const fetched = await api.get<GroupMember[]>(`/api/v1/groups/${groupId}/members`)
       setGroupMembers((prev) => ({ ...prev, [groupId]: fetched }))
-    } catch {
+    } catch (e) {
+      setMutateError(e instanceof Error ? e.message : 'Failed to load members')
       setGroupMembers((prev) => ({ ...prev, [groupId]: [] }))
     } finally {
       setLoadingMembers((prev) => ({ ...prev, [groupId]: false }))
