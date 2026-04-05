@@ -190,8 +190,15 @@ func (s *Server) handleOrgJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Add user to org
-	_, err := s.db.Pool.Exec(ctx,
+	// Add user to org and create home folder in a single transaction
+	joinTx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer joinTx.Rollback(ctx)
+
+	_, err = joinTx.Exec(ctx,
 		`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
 		orgID, claims.UserID, role,
 	)
@@ -201,9 +208,15 @@ func (s *Server) handleOrgJoin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var joinUserName string
-	s.db.Pool.QueryRow(ctx, `SELECT name FROM users WHERE id = $1`, claims.UserID).Scan(&joinUserName)
-	if hmErr := createHomeFolder(ctx, s.db.Pool, orgID, claims.UserID, joinUserName); hmErr != nil {
-		fmt.Printf("handleOrgJoin createHomeFolder failed: %v\n", hmErr)
+	joinTx.QueryRow(ctx, `SELECT name FROM users WHERE id = $1`, claims.UserID).Scan(&joinUserName)
+	if err := createHomeFolder(ctx, joinTx, orgID, claims.UserID, joinUserName); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create home folder")
+		return
+	}
+
+	if err := joinTx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit")
+		return
 	}
 
 	token, err := s.jwt.Issue(claims.UserID, orgID, role)
