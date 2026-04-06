@@ -15,12 +15,24 @@ export const Error: Story = {
   },
 }
 
+export const ErrorDark: Story = {
+  ...Error,
+  name: 'Error — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const ErrorWithDismiss: Story = {
   args: {
     message: 'An error occurred while saving your changes.',
     variant: 'error',
     onDismiss: () => {},
   },
+}
+
+export const ErrorWithDismissDark: Story = {
+  ...ErrorWithDismiss,
+  name: 'Error With Dismiss — Dark',
+  parameters: { theme: 'dark' },
 }
 
 export const Warning: Story = {
@@ -30,9 +42,21 @@ export const Warning: Story = {
   },
 }
 
+export const WarningDark: Story = {
+  ...Warning,
+  name: 'Warning — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const Info: Story = {
   args: {
     message: 'Your session will expire in 5 minutes.',
     variant: 'info',
   },
+}
+
+export const InfoDark: Story = {
+  ...Info,
+  name: 'Info — Dark',
+  parameters: { theme: 'dark' },
 }

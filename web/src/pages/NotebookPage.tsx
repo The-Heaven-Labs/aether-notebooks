@@ -525,6 +525,7 @@ export function NotebookPage() {
                       onUpdateCellMeta={(updates) => updateCellMeta(cell.id, updates)}
                       onShowHistory={() => fetchHistory(cell.id)}
                       onFocus={(cid) => setFocusedCellId(cid)}
+                      index={i}
                     />
                   </div>
                 ))}
@@ -578,8 +579,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column' as const,
     gap: 8,
-    borderBottom: '1px solid #e8e8e8',
-    background: '#fff',
+    borderBottom: '1px solid var(--border)',
+    background: 'var(--bg-card)',
   },
   headerTopRow: {
     display: 'flex',
@@ -603,7 +604,7 @@ const styles: Record<string, React.CSSProperties> = {
   notebookTitle: {
     fontSize: 28,
     fontWeight: 700,
-    color: '#111',
+    color: 'var(--text-primary)',
     margin: '0 0 6px',
     cursor: 'pointer',
     lineHeight: 1.2,
@@ -614,7 +615,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-primary)',
     background: 'transparent',
     border: 'none',
-    borderBottom: '1px solid #ccc',
+    borderBottom: '1px solid var(--text-muted)',
     outline: 'none',
     width: '100%',
     fontFamily: 'var(--font-sans)',
@@ -627,7 +628,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     outline: 'none',
     fontSize: 14,
-    color: '#aaa',
+    color: 'var(--text-muted)',
     background: 'transparent',
     fontFamily: 'var(--font-sans)',
     padding: '1px 0',
@@ -655,7 +656,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     fontFamily: 'var(--font-mono)',
     padding: '4px 8px',
-    border: '1px solid #ddd',
+    border: '1px solid var(--border)',
     borderRadius: 4,
     background: 'var(--bg-primary)',
     color: 'var(--text-primary)',
@@ -679,7 +680,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   runAllBtn: {
     padding: '6px 16px',
-    background: '#111',
+    background: 'var(--accent)',
     color: '#fff',
     border: 'none',
     borderRadius: 4,
@@ -690,16 +691,16 @@ const styles: Record<string, React.CSSProperties> = {
   schemaBtn: {
     padding: '5px 12px',
     background: 'none',
-    color: '#555',
-    border: '1px solid #ddd',
+    color: 'var(--text-secondary)',
+    border: '1px solid var(--border)',
     borderRadius: 4,
     fontSize: 12,
     cursor: 'pointer',
   },
   schemaBtnActive: {
-    background: '#f5f5f5',
-    border: '1px solid #ccc',
-    color: '#111',
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--text-muted)',
+    color: 'var(--text-primary)',
   },
 
   // ── Body / cells area ──
@@ -737,20 +738,20 @@ const styles: Record<string, React.CSSProperties> = {
 
   // Cell params bar (above a code cell)
   cellParams: {
-    borderBottom: '1px solid #e8e8e8',
+    borderBottom: '1px solid var(--border)',
     padding: '4px 16px',
     display: 'flex',
     flexWrap: 'wrap' as const,
     gap: 8,
     alignItems: 'center',
-    background: '#fafafa',
+    background: 'var(--bg-secondary)',
   },
   cellParamsLabel: {
     fontSize: 9,
     fontFamily: 'var(--font-mono)',
     fontWeight: 700,
     letterSpacing: '0.1em',
-    color: '#bbb',
+    color: 'var(--text-muted)',
     textTransform: 'uppercase' as const,
   },
   cellParam: {
@@ -764,17 +765,17 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--accent)',
   },
   cellParamEq: {
-    color: '#bbb',
+    color: 'var(--text-muted)',
     fontSize: 11,
   },
   cellParamInput: {
     fontSize: 11,
     fontFamily: 'var(--font-mono)',
-    background: '#fff',
-    border: '1px solid #e0e0e0',
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
     borderRadius: 3,
     padding: '1px 5px',
-    color: '#333',
+    color: 'var(--text-primary)',
     width: 90,
     outline: 'none',
   },
@@ -787,10 +788,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   addBtn: {
     padding: '6px 14px',
-    border: '1px dashed #ddd',
+    border: '1px dashed var(--border)',
     borderRadius: 4,
     background: 'transparent',
-    color: '#bbb',
+    color: 'var(--text-muted)',
     fontSize: 12,
     fontFamily: 'var(--font-mono)',
     cursor: 'pointer',

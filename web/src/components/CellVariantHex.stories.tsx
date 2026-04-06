@@ -101,6 +101,12 @@ export const Default: Story = {
   },
 }
 
+export const DefaultDark: Story = {
+  ...Default,
+  name: 'SQL — Idle — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const Running: Story = {
   name: 'SQL — Running',
   args: {
@@ -110,6 +116,12 @@ export const Running: Story = {
   },
 }
 
+export const RunningDark: Story = {
+  ...Running,
+  name: 'SQL — Running — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const WithOutput: Story = {
   name: 'SQL — With Results',
   args: {
@@ -117,6 +129,12 @@ export const WithOutput: Story = {
     staticOutput: outputData,
     runAt: new Date(Date.now() - 30 * 1000),
   },
+}
+
+export const WithOutputDark: Story = {
+  ...WithOutput,
+  name: 'SQL — With Results — Dark',
+  parameters: { theme: 'dark' },
 }
 
 export const SourceHidden: Story = {
@@ -129,6 +147,12 @@ export const SourceHidden: Story = {
   },
 }
 
+export const SourceHiddenDark: Story = {
+  ...SourceHidden,
+  name: 'SQL — Source Hidden — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const NoConnector: Story = {
   name: 'SQL — No Connector Assigned',
   args: {
@@ -138,12 +162,24 @@ export const NoConnector: Story = {
   },
 }
 
+export const NoConnectorDark: Story = {
+  ...NoConnector,
+  name: 'SQL — No Connector — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const SaveError: Story = {
   name: 'SQL — Save Error',
   args: {
     ...Default.args,
     saveState: { saving: false, savedAt: null, error: 'connection timeout' },
   },
+}
+
+export const SaveErrorDark: Story = {
+  ...SaveError,
+  name: 'SQL — Save Error — Dark',
+  parameters: { theme: 'dark' },
 }
 
 export const MarkdownCell: Story = {
@@ -175,6 +211,12 @@ Notable: acct-042 grew **+34%** QoQ driven by new seat expansion.
   },
 }
 
+export const MarkdownCellDark: Story = {
+  ...MarkdownCell,
+  name: 'Markdown — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const Collapsed: Story = {
   name: 'Collapsed — SQL cell',
   args: {
@@ -182,6 +224,12 @@ export const Collapsed: Story = {
     connectors: [connector],
     onToggleCellCollapsed: () => {},
   },
+}
+
+export const CollapsedDark: Story = {
+  ...Collapsed,
+  name: 'Collapsed — SQL — Dark',
+  parameters: { theme: 'dark' },
 }
 
 export const CollapsedMarkdown: Story = {
@@ -200,12 +248,24 @@ export const CollapsedMarkdown: Story = {
   },
 }
 
+export const CollapsedMarkdownDark: Story = {
+  ...CollapsedMarkdown,
+  name: 'Collapsed — Markdown — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const NoTitle: Story = {
   name: 'SQL — No title (connector badge only)',
   args: {
     ...Default.args,
     cell: { ...baseCell, title: undefined },
   },
+}
+
+export const NoTitleDark: Story = {
+  ...NoTitle,
+  name: 'SQL — No Title — Dark',
+  parameters: { theme: 'dark' },
 }
 
 export const FullNotebook: Story = {
@@ -254,4 +314,10 @@ export const FullNotebook: Story = {
       />
     </>
   ),
+}
+
+export const FullNotebookDark: Story = {
+  ...FullNotebook,
+  name: 'Full Notebook — Dark',
+  parameters: { theme: 'dark' },
 }

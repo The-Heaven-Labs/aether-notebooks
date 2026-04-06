@@ -380,7 +380,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: 8,
     height: 8,
     borderRadius: '50%',
-    background: '#ddd',
+    background: 'var(--border)',
   },
   subHeader: {
     background: 'var(--bg-primary)',
@@ -448,7 +448,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   addWidgetBtn: {
     padding: '6px 16px',
-    background: '#111',
+    background: 'var(--accent)',
     color: '#fff',
     border: 'none',
     borderRadius: 4,
@@ -459,15 +459,15 @@ const styles: Record<string, React.CSSProperties> = {
   pickerOverlay: {
     position: 'fixed',
     inset: 0,
-    background: 'rgba(0,0,0,0.35)',
+    background: 'var(--bg-overlay)',
     zIndex: 200,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
   },
   pickerPanel: {
-    background: '#fff',
-    borderLeft: '1px solid #e8e8e8',
+    background: 'var(--bg-card)',
+    borderLeft: '1px solid var(--border)',
     borderRadius: 0,
     width: 400,
     maxWidth: '90vw',
@@ -477,8 +477,8 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: '16px 20px',
-    borderBottom: '1px solid #e8e8e8',
-    background: '#fff',
+    borderBottom: '1px solid var(--border)',
+    background: 'var(--bg-card)',
   },
   pickerTitle: {
     fontSize: 15,
@@ -510,11 +510,11 @@ const styles: Record<string, React.CSSProperties> = {
   pickerSelect: {
     width: '100%',
     padding: '8px 10px',
-    border: '1px solid #ddd',
+    border: '1px solid var(--border)',
     borderRadius: 4,
     fontSize: 13,
     fontFamily: 'var(--font-sans)',
-    background: '#fff',
+    background: 'var(--bg-input)',
     color: 'var(--text-primary)',
   },
   pickerError: {
@@ -524,7 +524,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   pickerAddBtn: {
     padding: '9px 0',
-    background: '#111',
+    background: 'var(--accent)',
     color: '#fff',
     border: 'none',
     borderRadius: 4,
@@ -541,8 +541,8 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
   },
   widgetCard: {
-    background: '#fff',
-    border: '1px solid #e8e8e8',
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
     borderRadius: 4,
     overflow: 'hidden',
     position: 'relative',

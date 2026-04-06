@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy } from 'lucide-react'
+import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check } from 'lucide-react'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap } from '@codemirror/commands'
 import { sql } from '@codemirror/lang-sql'
-import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
+import { syntaxHighlighting, HighlightStyle } from '@codemirror/language'
+import { tags } from '@lezer/highlight'
 import { format } from 'sql-formatter'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
@@ -13,6 +14,14 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { OutputRenderer } from './OutputRenderer'
 import type { Cell, Connector } from '../types'
+
+const sqlHighlight = HighlightStyle.define([
+  { tag: tags.keyword, class: 'cm-keyword' },
+  { tag: tags.string, class: 'cm-string' },
+  { tag: tags.comment, class: 'cm-comment' },
+  { tag: tags.function(tags.name), class: 'cm-function' },
+  { tag: tags.number, class: 'cm-number' },
+])
 
 // ── Yjs collaboration cache (shared across all cells in a notebook) ───────────
 
@@ -72,11 +81,18 @@ function hashStr(s: string): number {
   return h
 }
 
-function slugify(text: string): string {
+function slugify(text: string): string | null {
+  if (!text?.trim()) return null
   return text
     .toLowerCase()
     .replace(/\s+/g, '-')
     .replace(/[^\w-]/g, '')
+}
+
+function getFirstHeadingSlug(source: string): string | null {
+  const match = source.match(/^#{1,6}\s+(.+)$/m)
+  if (!match) return null
+  return slugify(match[1])
 }
 
 const markdownComponents = {
@@ -84,8 +100,7 @@ const markdownComponents = {
     const text = children?.toString() || ''
     const id = slugify(text)
     return (
-      <h1 id={id} {...props}>
-        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
+      <h1 id={id} style={{ paddingRight: 0, ...props }}>
         {children}
       </h1>
     )
@@ -94,8 +109,7 @@ const markdownComponents = {
     const text = children?.toString() || ''
     const id = slugify(text)
     return (
-      <h2 id={id} {...props}>
-        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
+      <h2 id={id} style={{ paddingRight: 0, ...props }}>
         {children}
       </h2>
     )
@@ -104,8 +118,7 @@ const markdownComponents = {
     const text = children?.toString() || ''
     const id = slugify(text)
     return (
-      <h3 id={id} {...props}>
-        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
+      <h3 id={id} style={{ paddingRight: 0, ...props }}>
         {children}
       </h3>
     )
@@ -114,8 +127,7 @@ const markdownComponents = {
     const text = children?.toString() || ''
     const id = slugify(text)
     return (
-      <h4 id={id} {...props}>
-        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
+      <h4 id={id} style={{ paddingRight: 0, ...props }}>
         {children}
       </h4>
     )
@@ -124,8 +136,7 @@ const markdownComponents = {
     const text = children?.toString() || ''
     const id = slugify(text)
     return (
-      <h5 id={id} {...props}>
-        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
+      <h5 id={id} style={{ paddingRight: 0, ...props }}>
         {children}
       </h5>
     )
@@ -134,8 +145,7 @@ const markdownComponents = {
     const text = children?.toString() || ''
     const id = slugify(text)
     return (
-      <h6 id={id} {...props}>
-        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
+      <h6 id={id} style={{ paddingRight: 0, ...props }}>
         {children}
       </h6>
     )
@@ -170,6 +180,7 @@ interface Props {
   onUpdateCellMeta?: (updates: Partial<Pick<Cell, 'source_visible' | 'cell_collapsed' | 'slide_break' | 'title' | 'description' | 'slug'>>) => void
   onShowHistory?: () => void
   onFocus?: (cellId: string) => void
+  index?: number
 }
 
 // ── Helper ────────────────────────────────────────────────────────────────────
@@ -232,13 +243,13 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed }: 
         extensions: [
           cellKeymap,
           sql(),
-          syntaxHighlighting(defaultHighlightStyle),
+          syntaxHighlighting(sqlHighlight),
           EditorView.theme({
             '&': { fontFamily: 'var(--font-mono)', fontSize: '13px' },
             '.cm-content': { padding: '14px 16px', minHeight: '72px' },
             '.cm-line': { lineHeight: '1.65' },
             '.cm-focused': { outline: 'none' },
-            '.cm-editor': { background: '#f7f7f7' },
+            '.cm-editor': { background: 'var(--cm-editor-bg)' },
             '.cm-gutters': { display: 'none' },
           }),
           compartment.of([]),
@@ -307,6 +318,12 @@ function MarkdownView({ cell, onSourceChange, onSave }: MarkdownViewProps) {
           setEditing(false)
           onSave?.(cell.id, draft)
         }}
+        onKeyDown={(e) => {
+          if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+            setEditing(false)
+            onSave?.(cell.id, draft)
+          }
+        }}
         autoFocus
         placeholder="Write markdown…"
       />
@@ -338,15 +355,18 @@ export function Cell({
   onMoveUp,
   onMoveDown,
   onSwitchType,
+  onDuplicate,
   running = false,
   saveState,
   runAt,
   onUpdateCellMeta,
   onShowHistory,
   onFocus,
+  index,
 }: Props) {
   const [hovered, setHovered] = useState(false)
   const [connectorOpen, setConnectorOpen] = useState(false)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
 
   const isCode = cell.type === 'code'
   const sourceVisible = cell.source_visible ?? true
@@ -383,6 +403,7 @@ export function Cell({
       {/* ── Meta bar ── */}
       <div style={styles.metaBar}>
         <div style={styles.metaLeft}>
+          {index !== undefined && <span style={styles.cellNumber}>{index + 1}</span>}
           <span style={styles.cellTypeTag}>{isCode ? 'SQL' : 'MD'}</span>
 
           {/* Connector: badge → inline select on click */}
@@ -416,15 +437,13 @@ export function Cell({
           )}
 
           {/* Title */}
-          {cell.title !== undefined && (
-            <input
-              style={styles.titleInput}
-              value={cell.title}
-              onChange={(e) => onUpdateCellMeta?.({ title: e.target.value })}
-              onClick={(e) => e.stopPropagation()}
-              placeholder="Untitled"
-            />
-          )}
+          <input
+            style={styles.titleInput}
+            value={cell.title ?? ''}
+            onChange={(e) => onUpdateCellMeta?.({ title: e.target.value })}
+            onClick={(e) => e.stopPropagation()}
+            placeholder="Untitled"
+          />
         </div>
 
         {/* Hover toolbar */}
@@ -452,6 +471,37 @@ export function Cell({
               <Copy size={12} />
             </button>
           )}
+          {(() => {
+            if (index === undefined) return null
+            const idx = index + 1
+            const titleSlug = cell.slug ?? slugify(cell.title ?? '')
+            const mdSlug = getFirstHeadingSlug(cell.source)
+            const baseSlug = isCode ? (titleSlug ?? `cell-${idx}`) : (mdSlug ?? titleSlug ?? `cell-${idx}`)
+            const anchorSlug = `cell-${idx}-${baseSlug}`
+            if (copiedId === cell.id) {
+              return (
+                <span style={styles.copiedBadge}>
+                  <Check size={10} />
+                  Copied!
+                </span>
+              )
+            }
+            return (
+              <button
+                style={styles.actionBtn}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const url = `${window.location.origin}/notebooks/${notebookId}#${anchorSlug}`
+                  navigator.clipboard.writeText(url)
+                  setCopiedId(cell.id)
+                  setTimeout(() => setCopiedId(null), 2000)
+                }}
+                title="Copy link to cell"
+              >
+                <Link size={11} />
+              </button>
+            )
+          })()}
           <button
             style={styles.actionBtn}
             onClick={() => onUpdateCellMeta?.({ source_visible: !sourceVisible })}
@@ -531,8 +581,8 @@ export function Cell({
 const styles: Record<string, React.CSSProperties> = {
   // Cell container — full card with border
   cell: {
-    background: '#fff',
-    border: '1px solid #e8e8e8',
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
     borderRadius: 4,
     overflow: 'hidden',
   },
@@ -553,12 +603,21 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     minWidth: 0,
   },
+  cellNumber: {
+    fontSize: 10,
+    fontFamily: 'var(--font-mono)',
+    fontWeight: 700,
+    color: 'var(--text-muted)',
+    flexShrink: 0,
+    userSelect: 'none',
+    marginRight: 6,
+  },
   cellTypeTag: {
     fontSize: 9,
     fontFamily: 'var(--font-mono)',
     fontWeight: 700,
     letterSpacing: '0.1em',
-    color: '#bbb',
+    color: 'var(--text-muted)',
     textTransform: 'uppercase' as const,
     flexShrink: 0,
     userSelect: 'none',
@@ -566,7 +625,7 @@ const styles: Record<string, React.CSSProperties> = {
   connectorBadge: {
     fontSize: 11,
     fontFamily: 'var(--font-mono)',
-    color: '#aaa',
+    color: 'var(--text-muted)',
     background: 'none',
     border: 'none',
     padding: 0,
@@ -576,11 +635,11 @@ const styles: Record<string, React.CSSProperties> = {
   connectorSelect: {
     fontSize: 11,
     fontFamily: 'var(--font-mono)',
-    color: '#555',
-    border: '1px solid #ddd',
+    color: 'var(--text-secondary)',
+    border: '1px solid var(--border)',
     borderRadius: 3,
     padding: '1px 4px',
-    background: '#fff',
+    background: 'var(--bg-card)',
     outline: 'none',
   },
   titleInput: {
@@ -589,7 +648,7 @@ const styles: Record<string, React.CSSProperties> = {
     outline: 'none',
     fontSize: 12,
     fontWeight: 500,
-    color: '#222',
+    color: 'var(--text-primary)',
     background: 'transparent',
     fontFamily: 'var(--font-sans)',
     minWidth: 0,
@@ -611,7 +670,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     fontFamily: 'var(--font-mono)',
     fontWeight: 600,
-    color: '#999',
+    color: 'var(--text-muted)',
     background: 'none',
     border: 'none',
     borderRadius: 3,
@@ -619,13 +678,27 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1,
   },
   actionBtnDelete: {
-    color: '#ccc',
+    color: 'var(--text-muted)',
+  },
+  copiedBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 3,
+    padding: '3px 6px',
+    fontSize: 10,
+    fontFamily: 'var(--font-mono)',
+    fontWeight: 600,
+    color: 'var(--success)',
+    background: 'var(--success-light)',
+    border: '1px solid var(--success)',
+    borderRadius: 3,
+    whiteSpace: 'nowrap',
   },
 
   // Code editor area
   codeEditor: {
-    borderTop: '1px solid #ebebeb',
-    borderBottom: '1px solid #ebebeb',
+    borderTop: '1px solid var(--border-light)',
+    borderBottom: '1px solid var(--border-light)',
   },
 
   // Markdown view mode
@@ -633,20 +706,20 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '14px 20px',
     fontSize: 14,
     lineHeight: 1.75,
-    color: '#222',
+    color: 'var(--text-primary)',
     fontFamily: 'var(--font-sans)',
-    borderTop: '1px solid #ebebeb',
-    borderBottom: '1px solid #ebebeb',
+    borderTop: '1px solid var(--border-light)',
+    borderBottom: '1px solid var(--border-light)',
     cursor: 'text',
     minHeight: 48,
   },
   mdPlaceholder: {
-    color: '#bbb',
+    color: 'var(--text-muted)',
     fontStyle: 'italic',
     fontSize: 13,
   },
   headerAnchor: {
-    color: '#ccc',
+    color: 'var(--text-muted)',
     textDecoration: 'none',
     marginRight: 8,
     opacity: 0,
@@ -663,11 +736,11 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-mono)',
     fontSize: 13,
     lineHeight: 1.7,
-    color: '#333',
-    background: '#f7f7f7',
+    color: 'var(--text-primary)',
+    background: 'var(--bg-cell-code)',
     border: 'none',
-    borderTop: '1px solid #ebebeb',
-    borderBottom: '1px solid #ebebeb',
+    borderTop: '1px solid var(--border-light)',
+    borderBottom: '1px solid var(--border-light)',
     outline: 'none',
     resize: 'vertical',
     minHeight: 100,
@@ -676,7 +749,7 @@ const styles: Record<string, React.CSSProperties> = {
 
   // Output
   outputWrap: {
-    borderTop: '1px solid #ebebeb',
+    borderTop: '1px solid var(--border-light)',
   },
 
   // Footer
@@ -690,18 +763,18 @@ const styles: Record<string, React.CSSProperties> = {
   footerMuted: {
     fontSize: 10,
     fontFamily: 'var(--font-mono)',
-    color: '#bbb',
+    color: 'var(--text-muted)',
   },
   footerError: {
     fontSize: 10,
     fontFamily: 'var(--font-mono)',
-    color: '#c0392b',
+    color: 'var(--error-full)',
   },
 
   // Collapsed
   collapsed: {
-    background: '#fff',
-    border: '1px solid #e8e8e8',
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
     borderRadius: 4,
     padding: '4px 16px',
   },
@@ -713,12 +786,12 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     cursor: 'pointer',
     padding: '2px 0',
-    color: '#aaa',
+    color: 'var(--text-muted)',
   },
   collapsedTitle: {
     fontSize: 12,
     fontFamily: 'var(--font-sans)',
-    color: '#aaa',
+    color: 'var(--text-muted)',
     fontStyle: 'italic',
   },
 }
