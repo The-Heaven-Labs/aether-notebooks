@@ -121,6 +121,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/connectors", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateConnector))))
 	s.mux.Handle("POST /api/v1/connectors/test", authMW(http.HandlerFunc(s.handleTestConnectorConfig)))
 	s.mux.Handle("GET /api/v1/connectors", authMW(http.HandlerFunc(s.handleListConnectors)))
+	s.mux.Handle("PUT /api/v1/connectors/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateConnector))))
 	s.mux.Handle("DELETE /api/v1/connectors/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleDeleteConnector))))
 	s.mux.Handle("PUT /api/v1/connectors/{id}/default", authMW(RequireRole("admin")(http.HandlerFunc(s.handleSetDefaultConnector))))
 	s.mux.Handle("POST /api/v1/connectors/{id}/test", authMW(http.HandlerFunc(s.handleTestConnector)))

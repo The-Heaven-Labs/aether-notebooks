@@ -46,10 +46,11 @@ interface ContextMenuProps {
   onMove: (t: MoveTarget) => void
   onPermissions: (t: PermissionsTarget) => void
   onDelete: (type: ResourceType, id: string) => void
+  onEdit: (type: ResourceType, id: string) => void
   onClose: () => void
 }
 
-function ContextMenu({ target, onRename, onMove, onPermissions, onDelete, onClose }: ContextMenuProps) {
+function ContextMenu({ target, onRename, onMove, onPermissions, onDelete, onEdit, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
   const canRename = target.type === 'folder' || target.type === 'notebook'
   const canDelete = target.type === 'folder' || target.type === 'notebook'
@@ -76,10 +77,14 @@ function ContextMenu({ target, onRename, onMove, onPermissions, onDelete, onClos
         onMove({ type: target.type, id: target.id, name: target.name })
         onClose()
       }}>Move to…</button>
-      <button style={ms.item} onClick={() => {
-        onPermissions({ type: target.type, id: target.id, name: target.name })
-        onClose()
-      }}>Permissions</button>
+      {target.type === 'connector' ? (
+        <button style={ms.item} onClick={() => { onEdit(target.type, target.id); onClose() }}>Edit</button>
+      ) : (
+        <button style={ms.item} onClick={() => {
+          onPermissions({ type: target.type, id: target.id, name: target.name })
+          onClose()
+        }}>Permissions</button>
+      )}
       {canDelete ? (
         <button style={{ ...ms.item, color: 'var(--error)' }} onClick={() => {
           onDelete(target.type, target.id)
@@ -87,7 +92,7 @@ function ContextMenu({ target, onRename, onMove, onPermissions, onDelete, onClos
         }}>Delete</button>
       ) : (
         <button style={{ ...ms.item, color: 'var(--error)' }} onClick={() => {
-          // TODO: connectors and dashboards have their own management pages
+          if (target.type === 'connector') { onEdit(target.type, target.id) }
           onClose()
         }}>Delete</button>
       )}
@@ -392,6 +397,10 @@ export function HomePage() {
     setPermissionsTarget(t)
   }
 
+  function handleEdit(type: ResourceType, id: string) {
+    if (type === 'connector') navigate(`/connectors?edit=${id}`)
+  }
+
   return (
     <AppShell>
       <div style={{ maxWidth: 1280, margin: '0 auto', position: 'relative' }}>
@@ -522,6 +531,7 @@ export function HomePage() {
                         onMove={setMoving}
                         onPermissions={handlePermissions}
                         onDelete={handleDelete}
+                        onEdit={handleEdit}
                         onClose={() => setOpenMenu(null)}
                       />
                     </div>
@@ -570,6 +580,7 @@ export function HomePage() {
                           onMove={setMoving}
                           onPermissions={handlePermissions}
                           onDelete={handleDelete}
+                          onEdit={handleEdit}
                           onClose={() => setOpenMenu(null)}
                         />
                       </div>
@@ -588,7 +599,7 @@ export function HomePage() {
             <div style={s.list}>
               {data.connectors.map((c) => (
                 <div key={c.id} style={s.item}>
-                  <Link to="/connectors" style={s.itemLink}>
+                  <Link to={`/connectors?edit=${c.id}`} style={s.itemLink}>
                     <Database size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                     <span style={s.itemName}>{c.name}</span>
                     {c.is_default && <span style={s.badge}>default</span>}
@@ -607,6 +618,7 @@ export function HomePage() {
                           onMove={setMoving}
                           onPermissions={handlePermissions}
                           onDelete={handleDelete}
+                          onEdit={handleEdit}
                           onClose={() => setOpenMenu(null)}
                         />
                       </div>
@@ -646,6 +658,7 @@ export function HomePage() {
                           onMove={setMoving}
                           onPermissions={handlePermissions}
                           onDelete={handleDelete}
+                          onEdit={handleEdit}
                           onClose={() => setOpenMenu(null)}
                         />
                       </div>
