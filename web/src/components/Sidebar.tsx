@@ -38,7 +38,7 @@ export function Sidebar() {
               justifyContent: expanded ? 'flex-start' : 'center',
               padding: expanded ? '8px 12px' : '8px 0',
               background: isActive ? 'var(--accent-light)' : 'transparent',
-              color: isActive ? 'var(--accent)' : 'var(--text-muted)',
+              color: isActive ? 'var(--accent)' : 'var(--text-secondary)',
             })}
           >
             <span style={styles.icon}>{icon}</span>
@@ -106,7 +106,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     padding: '12px',
     cursor: 'pointer',
-    color: 'var(--text-muted)',
+    color: 'var(--text-secondary)',
     borderTop: '1px solid var(--nav-border)',
   },
 }

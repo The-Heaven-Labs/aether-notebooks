@@ -126,7 +126,7 @@ function NotebookShell({ children, title = 'Cluster analysis' }: { children: Rea
           padding: '28px 32px 20px',
           borderBottom: '1px solid #e8e8e8',
         }}>
-          <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: '#bbb', marginBottom: 8, letterSpacing: '0.08em' }}>
+          <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: '#666', marginBottom: 8, letterSpacing: '0.08em' }}>
             NOTEBOOK
           </div>
           <h1 style={{ fontSize: 26, fontWeight: 700, color: '#111', margin: 0, fontFamily: 'var(--font-sans)' }}>
@@ -151,6 +151,12 @@ export const Default: Story = {
   },
 }
 
+export const DefaultDark: Story = {
+  ...Default,
+  name: 'SQL — Idle — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const Running: Story = {
   name: 'SQL — Running',
   args: {
@@ -158,6 +164,12 @@ export const Running: Story = {
     running: true,
     saveState: { saving: true, savedAt: null, error: null },
   },
+}
+
+export const RunningDark: Story = {
+  ...Running,
+  name: 'SQL — Running — Dark',
+  parameters: { theme: 'dark' },
 }
 
 export const WithOutput: Story = {
@@ -169,6 +181,12 @@ export const WithOutput: Story = {
   },
 }
 
+export const WithOutputDark: Story = {
+  ...WithOutput,
+  name: 'SQL — With Results — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const SourceHidden: Story = {
   name: 'SQL — Source Hidden',
   args: {
@@ -177,6 +195,12 @@ export const SourceHidden: Story = {
     staticOutput: outputData,
     runAt: new Date(Date.now() - 4 * 60 * 1000),
   },
+}
+
+export const SourceHiddenDark: Story = {
+  ...SourceHidden,
+  name: 'SQL — Source Hidden — Dark',
+  parameters: { theme: 'dark' },
 }
 
 export const MarkdownCell: Story = {
@@ -208,6 +232,12 @@ apply it to customer data in order to find groups of users.`,
   },
 }
 
+export const MarkdownCellDark: Story = {
+  ...MarkdownCell,
+  name: 'Markdown — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const Collapsed: Story = {
   name: 'Collapsed — SQL cell',
   args: {
@@ -216,12 +246,24 @@ export const Collapsed: Story = {
   },
 }
 
+export const CollapsedDark: Story = {
+  ...Collapsed,
+  name: 'Collapsed — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const SaveError: Story = {
   name: 'SQL — Save Error',
   args: {
     ...Default.args,
     saveState: { saving: false, savedAt: null, error: 'connection timeout' },
   },
+}
+
+export const SaveErrorDark: Story = {
+  ...SaveError,
+  name: 'SQL — Save Error — Dark',
+  parameters: { theme: 'dark' },
 }
 
 export const HexNotebook: Story = {
@@ -248,7 +290,7 @@ Using the K-means clustering algorithm and dimensionality reduction, you'll see 
         />
 
         {/* Data section label */}
-        <div style={{ padding: '16px 16px 0', fontSize: 9, fontFamily: 'var(--font-mono)', color: '#bbb', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+        <div style={{ padding: '16px 16px 0', fontSize: 9, fontFamily: 'var(--font-mono)', color: '#666', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
           Data
         </div>
 

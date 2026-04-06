@@ -183,7 +183,7 @@ function MoveModal({ target, onConfirm, onClose }: MoveModalProps) {
           <button style={ms.crumbLink} onClick={() => navigateToAncestor(-1)}>Root</button>
           {pickerAncestors.map((a, idx) => (
             <span key={a.id} style={{ display: 'flex', alignItems: 'center' }}>
-              <span style={{ color: '#ccc', margin: '0 4px' }}>/</span>
+              <span style={{ color: 'var(--text-muted)', margin: '0 4px' }}>/</span>
               <button style={ms.crumbLink} onClick={() => navigateToAncestor(idx)}>{a.name}</button>
             </span>
           ))}
@@ -220,7 +220,7 @@ function MetaLine({ createdBy, createdAt }: { createdBy: string; createdAt: stri
   const date = new Date(createdAt)
   const formatted = isNaN(date.getTime()) ? '' : date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
   return (
-    <span style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, display: 'block', lineHeight: 1.4 }}>
+    <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2, display: 'block', lineHeight: 1.4 }}>
       {createdBy} · {formatted}
     </span>
   )
@@ -480,7 +480,7 @@ export function HomePage() {
 
         {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
 
-        {isLoading && <div style={{ padding: 32, color: '#aaa', fontSize: 14 }}>Loading…</div>}
+        {isLoading && <div style={{ padding: 32, color: 'var(--text-muted)', fontSize: 14 }}>Loading…</div>}
 
         {!isLoading && isEmpty && !creating && (
           <EmptyState
@@ -699,45 +699,45 @@ export function HomePage() {
 const s: Record<string, React.CSSProperties> = {
   breadcrumb: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 2, marginBottom: 20 },
   crumbBtn: { display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)', fontSize: 13, fontWeight: 500, padding: '2px 6px', borderRadius: 3 },
-  sep: { color: '#ccc', margin: '0 2px', fontSize: 13 },
+  sep: { color: 'var(--text-muted)', margin: '0 2px', fontSize: 13 },
   toolbar: { display: 'flex', gap: 10, marginBottom: 20 },
-  newBtn: { padding: '7px 14px', background: '#111', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  createForm: { display: 'flex', gap: 10, marginBottom: 20, padding: 16, background: '#fff', borderRadius: 4, border: '1px solid #e8e8e8', alignItems: 'center' },
-  input: { flex: 1, padding: '8px 12px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14, outline: 'none' },
-  createBtn: { padding: '7px 14px', background: '#111', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  cancelBtn: { padding: '7px 14px', border: '1px solid #ddd', borderRadius: 4, background: 'none', fontSize: 13, cursor: 'pointer', color: '#555' },
+  newBtn: { padding: '7px 14px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  createForm: { display: 'flex', gap: 10, marginBottom: 20, padding: 16, background: 'var(--bg-card)', borderRadius: 4, border: '1px solid var(--border)', alignItems: 'center' },
+  input: { flex: 1, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 14, outline: 'none', background: 'var(--bg-input)', color: 'var(--text-primary)' },
+  createBtn: { padding: '7px 14px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  cancelBtn: { padding: '7px 14px', border: '1px solid var(--border)', borderRadius: 4, background: 'none', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   section: { marginBottom: 28 },
-  sectionLabel: { fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const, color: '#aaa', marginBottom: 8 },
+  sectionLabel: { fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const, color: 'var(--text-muted)', marginBottom: 8 },
   folderGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8 },
-  folderCard: { display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #e8e8e8', borderRadius: 4, overflow: 'visible', transition: 'border-color 0.15s', position: 'relative' },
+  folderCard: { display: 'flex', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, overflow: 'visible', transition: 'border-color 0.15s', position: 'relative' },
   folderBtn: { flex: 1, display: 'flex', alignItems: 'center', gap: 7, padding: '9px 12px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' as const, minWidth: 0 },
-  folderName: { fontSize: 13, fontWeight: 500, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, flex: 1 },
+  folderName: { fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, flex: 1 },
   badge: { fontSize: 10, fontWeight: 700, background: 'var(--accent-light)', color: 'var(--accent)', borderRadius: 3, padding: '1px 5px', letterSpacing: '0.04em', flexShrink: 0 },
   menuBtn: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 18, padding: '0 8px', flexShrink: 0, lineHeight: 1, letterSpacing: 1 },
   list: { display: 'flex', flexDirection: 'column', gap: 6 },
-  item: { display: 'flex', alignItems: 'center', background: '#fff', border: '1px solid #e8e8e8', borderRadius: 4, padding: '8px 14px', gap: 10 },
+  item: { display: 'flex', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, padding: '8px 14px', gap: 10 },
   itemLink: { flex: 1, display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', minWidth: 0 },
-  itemName: { fontSize: 14, fontWeight: 500, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, flex: 1 },
+  itemName: { fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, flex: 1 },
   renameInput: { width: '100%', padding: '5px 8px', border: '1px solid var(--accent)', borderRadius: 3, fontSize: 13, outline: 'none' },
 }
 
 // ─── Context menu + modal styles ─────────────────────────────────────────────
 
 const ms: Record<string, React.CSSProperties> = {
-  menu: { background: '#fff', border: '1px solid var(--nav-border, #e8e8e8)', borderRadius: 6, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', minWidth: 160, padding: '4px 0', display: 'flex', flexDirection: 'column' },
-  item: { background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: '8px 16px', fontSize: 13, color: '#111', width: '100%' },
-  backdrop: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 },
-  modal: { background: '#fff', borderRadius: 8, boxShadow: '0 8px 32px rgba(0,0,0,0.18)', width: 400, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
-  modalHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid #e8e8e8' },
-  modalTitle: { fontSize: 14, fontWeight: 600, color: '#111' },
-  closeBtn: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: '#888', lineHeight: 1, padding: '0 4px' },
-  pickerCrumb: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', padding: '8px 16px', borderBottom: '1px solid #f0f0f0', fontSize: 12, gap: 2 },
+  menu: { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, boxShadow: 'var(--shadow-md)', minWidth: 160, padding: '4px 0', display: 'flex', flexDirection: 'column' },
+  item: { background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: '8px 16px', fontSize: 13, color: 'var(--text-primary)', width: '100%' },
+  backdrop: { position: 'fixed', inset: 0, background: 'var(--bg-overlay)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 },
+  modal: { background: 'var(--bg-card)', borderRadius: 8, boxShadow: 'var(--shadow-lg)', width: 400, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+  modalHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid var(--border)' },
+  modalTitle: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' },
+  closeBtn: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-muted)', lineHeight: 1, padding: '0 4px' },
+  pickerCrumb: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', padding: '8px 16px', borderBottom: '1px solid var(--border-light)', fontSize: 12, gap: 2 },
   crumbLink: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)', fontSize: 12, fontWeight: 500, padding: '2px 4px', borderRadius: 3 },
   folderList: { flex: 1, overflowY: 'auto', padding: '8px 0', minHeight: 120, maxHeight: 300 },
-  folderRow: { display: 'flex', alignItems: 'center', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '9px 16px', textAlign: 'left', borderBottom: '1px solid #f5f5f5' },
-  drillArrow: { color: '#bbb', fontSize: 16, marginLeft: 4 },
-  loadingText: { padding: '16px', color: '#aaa', fontSize: 13, textAlign: 'center' },
-  emptyText: { padding: '16px', color: '#aaa', fontSize: 13, textAlign: 'center' },
-  modalFooter: { display: 'flex', gap: 10, padding: '12px 16px', borderTop: '1px solid #e8e8e8', justifyContent: 'flex-end' },
-  moveHereBtn: { padding: '7px 16px', background: '#111', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  folderRow: { display: 'flex', alignItems: 'center', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '9px 16px', textAlign: 'left', borderBottom: '1px solid var(--border-light)' },
+  drillArrow: { color: 'var(--text-muted)', fontSize: 16, marginLeft: 4 },
+  loadingText: { padding: '16px', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center' },
+  emptyText: { padding: '16px', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center' },
+  modalFooter: { display: 'flex', gap: 10, padding: '12px 16px', borderTop: '1px solid var(--border)', justifyContent: 'flex-end' },
+  moveHereBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
 }

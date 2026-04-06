@@ -191,12 +191,12 @@ const styles: Record<string, React.CSSProperties> = {
   errorLabel: {
     fontSize: 11,
     fontWeight: 700,
-    color: 'var(--error)',
+    color: '#9a2828',
     textTransform: 'uppercase',
     letterSpacing: '0.06em',
   },
   error: {
-    color: 'var(--error)',
+    color: '#9a2828',
     fontSize: 13,
     fontFamily: 'var(--font-mono)',
     whiteSpace: 'pre-wrap',
@@ -230,7 +230,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   rowCount: {
     fontSize: 10,
-    color: '#bbb',
+    color: 'var(--text-muted)',
     fontFamily: 'var(--font-mono)',
   },
   viewToggle: {
@@ -252,8 +252,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-sans)',
   },
   viewBtnActive: {
-    background: '#f5f5f5',
-    border: '1px solid #ddd',
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
     borderRadius: 4,
     color: 'var(--text-primary)',
   },
@@ -271,8 +271,8 @@ const styles: Record<string, React.CSSProperties> = {
   th: {
     padding: '9px 16px',
     textAlign: 'left',
-    background: '#fff',
-    borderBottom: '1px solid #e8e8e8',
+    background: 'var(--bg-card)',
+    borderBottom: '1px solid var(--border)',
     whiteSpace: 'nowrap',
     position: 'sticky',
     top: 0,
@@ -285,8 +285,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   td: {
     padding: '7px 16px',
-    borderBottom: '1px solid #f0f0f0',
-    color: '#333',
+    borderBottom: '1px solid var(--border-light)',
+    color: 'var(--text-primary)',
     fontSize: 13,
   },
   null: {

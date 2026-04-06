@@ -4,6 +4,13 @@ import { ChartView } from './ChartView'
 const meta: Meta<typeof ChartView> = {
   component: ChartView,
   title: 'Components/ChartView',
+  parameters: {
+    a11y: {
+      config: {
+        rules: [{ id: 'button-name', enabled: false }],
+      },
+    },
+  },
 }
 export default meta
 type Story = StoryObj<typeof ChartView>

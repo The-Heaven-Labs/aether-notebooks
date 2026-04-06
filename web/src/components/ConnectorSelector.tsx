@@ -32,14 +32,15 @@ export function ConnectorSelector({
 
   return (
     <select
+      aria-label={placeholder}
       style={{
-        border: '1px solid #ddd',
+        border: '1px solid var(--border)',
         borderRadius: 4,
         padding: '4px 8px',
         fontSize: 12,
         fontFamily: 'var(--font-mono)',
-        background: '#fff',
-        color: '#333',
+        background: 'var(--bg-input)',
+        color: 'var(--text-primary)',
         outline: 'none',
         ...style,
       }}

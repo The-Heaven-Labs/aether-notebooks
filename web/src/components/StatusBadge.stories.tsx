@@ -19,12 +19,24 @@ export const Success: Story = {
   },
 }
 
+export const SuccessDark: Story = {
+  ...Success,
+  name: 'Success — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const Error: Story = {
   args: {
     status: 'error',
     label: 'Connection failed',
     icon: <X size={12} />,
   },
+}
+
+export const ErrorDark: Story = {
+  ...Error,
+  name: 'Error — Dark',
+  parameters: { theme: 'dark' },
 }
 
 export const Neutral: Story = {
@@ -34,9 +46,21 @@ export const Neutral: Story = {
   },
 }
 
+export const NeutralDark: Story = {
+  ...Neutral,
+  name: 'Neutral — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const NoIcon: Story = {
   args: {
     status: 'success',
     label: 'Enabled',
   },
+}
+
+export const NoIconDark: Story = {
+  ...NoIcon,
+  name: 'No Icon — Dark',
+  parameters: { theme: 'dark' },
 }

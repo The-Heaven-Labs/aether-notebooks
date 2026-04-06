@@ -17,3 +17,4 @@
 - Changes on cell type are not saved in the history of a cell
 - There is no easy way to track cell updates from audit trail
 - When I click in one connector listed in the filesystem, it simply takes me to the /connectors pages since there is no edit for connectors
+- In the profile page, saving doesn't give user feedback that it worked or failed;

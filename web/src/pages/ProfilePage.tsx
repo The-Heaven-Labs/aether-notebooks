@@ -66,14 +66,14 @@ export function ProfilePage() {
             <input style={styles.input} value={name}
               onChange={e => setName(e.target.value)} />
           </label>
-          <label style={styles.label}>
-            Status <span style={{ color: '#aaa', fontWeight: 400 }}>(optional)</span>
+            <label style={styles.label}>
+            Status <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span>
             <input style={styles.input} value={status} placeholder="e.g. On vacation"
               onChange={e => setStatus(e.target.value)} maxLength={100} />
           </label>
           <label style={styles.label}>
             Email
-            <input style={{ ...styles.input, color: '#aaa', cursor: 'default' }}
+            <input style={{ ...styles.input, color: 'var(--text-muted)', cursor: 'default' }}
               value={user?.email ?? ''} readOnly />
           </label>
           <div style={styles.label}>
@@ -112,10 +112,10 @@ export function ProfilePage() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: '#555' },
-  input: { padding: '8px 10px', border: '1px solid #ddd', borderRadius: 4, fontSize: 14, color: '#111', background: '#fff' },
-  saveBtn: { padding: '7px 18px', background: '#111', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  themeBtn: { padding: '6px 16px', background: 'none', border: '1px solid #ddd', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: '#555' },
-  themeActive: { padding: '6px 16px', background: '#111', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, cursor: 'pointer' },
+  label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
+  input: { padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 14, color: 'var(--text-primary)', background: 'var(--bg-input)' },
+  saveBtn: { padding: '7px 18px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  themeBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
+  themeActive: { padding: '6px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, cursor: 'pointer' },
   groupTag: { padding: '3px 10px', background: 'var(--accent-light)', color: 'var(--accent)', borderRadius: 12, fontSize: 12, fontWeight: 500 },
 }

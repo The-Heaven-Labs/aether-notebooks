@@ -348,16 +348,18 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: 5,
-    color: '#6a6260',
+    color: 'var(--nav-text)',
     textDecoration: 'none',
     fontSize: 13,
     fontWeight: 500,
     flexShrink: 0,
+    opacity: 0.8,
   },
   breadcrumbSep: {
-    color: '#3a3630',
+    color: 'var(--nav-text)',
     fontSize: 14,
     flexShrink: 0,
+    opacity: 0.5,
   },
   dashboardTitle: {
     fontSize: 14,
@@ -384,7 +386,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 12,
   },
   inputWidgetCard: {
-    background: 'white',
+    background: 'var(--bg-card)',
     border: '1px solid var(--border)',
     borderRadius: 4,
     minWidth: 200,
@@ -396,7 +398,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 16,
   },
   widgetCard: {
-    background: 'white',
+    background: 'var(--bg-card)',
     border: '1px solid var(--border)',
     borderRadius: 4,
     overflow: 'hidden',

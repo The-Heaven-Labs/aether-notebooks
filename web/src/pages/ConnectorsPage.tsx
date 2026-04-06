@@ -209,7 +209,7 @@ export function ConnectorsPage() {
                   <option value="verify-full">verify-full</option>
                 </select>
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#555', gridColumn: '1 / -1' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)', gridColumn: '1 / -1' }}>
                 <input type="checkbox" checked={form.is_default ?? false}
                   onChange={e => setForm(f => ({ ...f, is_default: e.target.checked }))} />
                 Set as default connector for new notebooks
@@ -273,7 +273,7 @@ export function ConnectorsPage() {
               <label style={styles.label}>User
                 <input style={styles.input} value={editForm.user} onChange={(e) => setEditForm(f => ({ ...f, user: e.target.value }))} />
               </label>
-              <label style={styles.label}>Password <span style={{ fontWeight: 400, color: '#999' }}>(leave blank to keep current)</span>
+              <label style={styles.label}>Password <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(leave blank to keep current)</span>
                 <input style={styles.input} type="password" value={editForm.password} onChange={(e) => setEditForm(f => ({ ...f, password: e.target.value }))} />
               </label>
               <label style={styles.label}>SSL Mode
@@ -283,7 +283,7 @@ export function ConnectorsPage() {
                   <option value="verify-full">verify-full</option>
                 </select>
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#555', gridColumn: '1 / -1' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)', gridColumn: '1 / -1' }}>
                 <input type="checkbox" checked={editForm.is_default ?? false}
                   onChange={e => setEditForm(f => ({ ...f, is_default: e.target.checked }))} />
                 Set as default connector for new notebooks
@@ -314,8 +314,8 @@ export function ConnectorsPage() {
                 <td style={cellStyle}>
                   <strong>{c.name}</strong>
                   {c.is_default && (
-                    <span style={{ fontSize: 11, background: '#f5f5f5', border: '1px solid #e8e8e8',
-                      borderRadius: 3, padding: '1px 6px', color: '#555', fontFamily: 'var(--font-mono)',
+                    <span style={{ fontSize: 11, background: 'var(--accent-light)', border: '1px solid var(--border)',
+                      borderRadius: 3, padding: '1px 6px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)',
                       marginLeft: 8 }}>
                       default
                     </span>
@@ -357,8 +357,8 @@ export function ConnectorsPage() {
                   }}>Edit</button>
                   {!c.is_default && (
                     <button type="button"
-                      style={{ background: 'none', border: '1px solid #ddd', borderRadius: 4,
-                        fontSize: 12, padding: '3px 10px', cursor: 'pointer', color: '#555', marginRight: 6 }}
+                      style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4,
+                        fontSize: 12, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 }}
                       onClick={() => setDefault.mutate(c.id)}>
                       Set default
                     </button>
@@ -388,18 +388,18 @@ export function ConnectorsPage() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  newBtn: { padding: '7px 16px', background: '#111', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  newBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   body: { maxWidth: 1100, margin: '0 auto', padding: '32px 40px', width: '100%' },
   formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 },
-  label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: '#555' },
-  input: { padding: '6px 10px', border: '1px solid #ddd', borderRadius: 4, fontSize: 13, fontFamily: 'var(--font-mono)', background: '#fff', marginTop: 2 },
+  label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
+  input: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, fontFamily: 'var(--font-mono)', background: 'var(--bg-input)', color: 'var(--text-primary)', marginTop: 2 },
   formActions: { display: 'flex', gap: 8, justifyContent: 'flex-end' },
-  testBtn: { padding: '6px 16px', background: 'none', border: '1px solid #ddd', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: '#555', fontWeight: 600 },
-  cancelBtn: { padding: '6px 16px', background: 'none', border: '1px solid #ddd', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: '#555' },
-  saveBtn: { padding: '7px 16px', background: '#111', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  testBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)', fontWeight: 600 },
+  cancelBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
+  saveBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   tdActions: { padding: '8px 16px', textAlign: 'right' as const },
-  badge: { fontSize: 11, fontFamily: 'var(--font-mono)', background: '#f5f5f5', color: '#666', padding: '2px 7px', borderRadius: 3 },
-  actionBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid #ddd', borderRadius: 4, background: 'none', cursor: 'pointer', color: '#555', marginRight: 6 },
-  editBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid #ddd', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--accent)', marginRight: 6 },
-  deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid #ddd', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--error-full)' },
+  badge: { fontSize: 11, fontFamily: 'var(--font-mono)', background: 'var(--accent-light)', color: 'var(--text-secondary)', padding: '2px 7px', borderRadius: 3 },
+  actionBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 },
+  editBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--accent)', marginRight: 6 },
+  deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--error-full)' },
 }

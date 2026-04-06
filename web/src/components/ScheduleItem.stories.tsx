@@ -26,12 +26,24 @@ export const Enabled: Story = {
   },
 }
 
+export const EnabledDark: Story = {
+  ...Enabled,
+  name: 'Enabled — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const Disabled: Story = {
   args: {
     schedule: { ...baseSchedule, enabled: false },
     onToggle: () => {},
     onDelete: () => {},
   },
+}
+
+export const DisabledDark: Story = {
+  ...Disabled,
+  name: 'Disabled — Dark',
+  parameters: { theme: 'dark' },
 }
 
 export const WithError: Story = {
@@ -41,4 +53,10 @@ export const WithError: Story = {
     onDelete: () => {},
     error: 'Failed to toggle schedule',
   },
+}
+
+export const WithErrorDark: Story = {
+  ...WithError,
+  name: 'With Error — Dark',
+  parameters: { theme: 'dark' },
 }

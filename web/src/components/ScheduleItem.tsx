@@ -87,12 +87,12 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   badgeOn: {
-    background: 'rgba(39, 174, 96, 0.15)',
-    color: '#27ae60',
+    background: 'var(--success-light)',
+    color: 'var(--success)',
   },
   badgeOff: {
     background: 'var(--border)',
-    color: 'var(--text-muted)',
+    color: 'var(--text-secondary)',
   },
   toggleBtn: {
     padding: '4px 10px',
@@ -112,7 +112,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     fontSize: 12,
     fontWeight: 500,
-    color: 'var(--error-full)',
+    color: 'var(--error-text)',
     cursor: 'pointer',
     flexShrink: 0,
   },

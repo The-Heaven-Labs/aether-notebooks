@@ -119,11 +119,11 @@ function SqlHighlight({ code }: { code: string }) {
   if (last < code.length) tokens.push({ type: 'plain', text: code.slice(last) })
 
   const colorMap: Record<Token['type'], string | undefined> = {
-    kw: '#4a7cf7',
-    str: '#2e7d32',
-    cmt: '#aaa',
-    fn: '#0097a7',
-    num: '#c0392b',
+    kw: 'var(--code-keyword)',
+    str: 'var(--code-string)',
+    cmt: 'var(--code-comment)',
+    fn: 'var(--code-function)',
+    num: 'var(--code-number)',
     plain: undefined,
   }
 
@@ -259,14 +259,14 @@ export function CellVariantWireframe({
           <button style={styles.actionBtn} onClick={onSwitchType} title={isCode ? 'Switch to MD' : 'Switch to SQL'}>
             {isCode ? 'MD' : 'SQL'}
           </button>
-          {onMoveUp && <button style={styles.actionBtn} onClick={onMoveUp}><ChevronUp size={11} /></button>}
-          {onMoveDown && <button style={styles.actionBtn} onClick={onMoveDown}><ChevronDown size={11} /></button>}
-          <button style={styles.actionBtn} onClick={() => onToggleSourceVisible?.(!sourceVisible)}>
+          {onMoveUp && <button style={styles.actionBtn} onClick={onMoveUp} aria-label="Move up"><ChevronUp size={11} /></button>}
+          {onMoveDown && <button style={styles.actionBtn} onClick={onMoveDown} aria-label="Move down"><ChevronDown size={11} /></button>}
+          <button style={styles.actionBtn} onClick={() => onToggleSourceVisible?.(!sourceVisible)} aria-label={sourceVisible ? 'Hide source' : 'Show source'}>
             {sourceVisible ? <EyeOff size={11} /> : <Eye size={11} />}
           </button>
-          <button style={styles.actionBtn} onClick={() => onToggleCellCollapsed?.(true)}><ChevronRight size={11} /></button>
-          <button style={styles.actionBtn} onClick={onShowHistory}><Clock size={11} /></button>
-          <button style={{ ...styles.actionBtn, ...styles.actionBtnDelete }} onClick={onDelete}><X size={11} /></button>
+          <button style={styles.actionBtn} onClick={() => onToggleCellCollapsed?.(true)} aria-label="Collapse cell"><ChevronRight size={11} /></button>
+          <button style={styles.actionBtn} onClick={onShowHistory} aria-label="Cell history"><Clock size={11} /></button>
+          <button style={{ ...styles.actionBtn, ...styles.actionBtnDelete }} onClick={onDelete} aria-label="Delete cell"><X size={11} /></button>
         </div>
       </div>
 
@@ -279,7 +279,7 @@ export function CellVariantWireframe({
 
       {/* ── Output table ── */}
       {staticOutput && (
-        <div style={styles.outputWrap}>
+        <div style={styles.outputWrap} tabIndex={0}>
           <table style={styles.table}>
             <thead>
               <tr>
@@ -325,8 +325,8 @@ export function CellVariantWireframe({
 
 const styles: Record<string, React.CSSProperties> = {
   cell: {
-    background: '#fff',
-    borderBottom: '1px solid #e8e8e8',
+    background: 'var(--bg-card)',
+    borderBottom: '1px solid var(--border-light)',
   },
 
   // Meta bar
@@ -350,14 +350,14 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-mono)',
     fontWeight: 700,
     letterSpacing: '0.1em',
-    color: '#aaa',
+    color: 'var(--text-secondary)',
     textTransform: 'uppercase' as const,
     flexShrink: 0,
   },
   connectorLabel: {
     fontSize: 11,
     fontFamily: 'var(--font-mono)',
-    color: '#aaa',
+    color: 'var(--text-secondary)',
     flexShrink: 0,
   },
   titleInput: {
@@ -366,7 +366,7 @@ const styles: Record<string, React.CSSProperties> = {
     outline: 'none',
     fontSize: 12,
     fontWeight: 500,
-    color: '#222',
+    color: 'var(--text-primary)',
     background: 'transparent',
     fontFamily: 'var(--font-sans)',
     minWidth: 0,
@@ -388,7 +388,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     fontFamily: 'var(--font-mono)',
     fontWeight: 600,
-    color: '#999',
+    color: 'var(--text-secondary)',
     background: 'none',
     border: 'none',
     borderRadius: 3,
@@ -397,36 +397,36 @@ const styles: Record<string, React.CSSProperties> = {
     transition: 'color 0.1s, background 0.1s',
   },
   actionBtnDelete: {
-    color: '#ccc',
+    color: 'var(--text-secondary)',
   },
 
   // Source block
   sourceBlock: {
     margin: 0,
     padding: '12px 16px',
-    background: '#f7f7f7',
-    borderTop: '1px solid #ebebeb',
-    borderBottom: '1px solid #ebebeb',
+    background: 'var(--bg-cell-code)',
+    borderTop: '1px solid var(--border-light)',
+    borderBottom: '1px solid var(--border-light)',
     overflowX: 'auto',
   },
   sourceCode: {
     fontFamily: 'var(--font-mono)',
     fontSize: 12.5,
     lineHeight: 1.7,
-    color: '#333',
+    color: 'var(--text-primary)',
     whiteSpace: 'pre',
   },
   mdBlock: {
     padding: '14px 20px',
     fontSize: 14,
     lineHeight: 1.75,
-    color: '#222',
+    color: 'var(--text-primary)',
     fontFamily: 'var(--font-sans)',
-    borderTop: '1px solid #ebebeb',
-    borderBottom: '1px solid #ebebeb',
+    borderTop: '1px solid var(--border-light)',
+    borderBottom: '1px solid var(--border-light)',
   },
   headerAnchor: {
-    color: '#ccc',
+    color: 'var(--text-muted)',
     textDecoration: 'none',
     marginRight: 8,
     opacity: 0,
@@ -437,7 +437,7 @@ const styles: Record<string, React.CSSProperties> = {
 
   // Output
   outputWrap: {
-    borderTop: '1px solid #ebebeb',
+    borderTop: '1px solid var(--border-light)',
     overflowX: 'auto',
   },
   table: {
@@ -451,25 +451,25 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-mono)',
     fontSize: 11,
     fontWeight: 600,
-    color: '#888',
-    borderBottom: '1px solid #e8e8e8',
-    background: '#fafafa',
+    color: 'var(--text-secondary)',
+    borderBottom: '1px solid var(--border-light)',
+    background: 'var(--bg-secondary)',
     whiteSpace: 'nowrap',
   },
   td: {
     padding: '4px 16px',
     fontFamily: 'var(--font-mono)',
     fontSize: 12,
-    color: '#333',
-    borderBottom: '1px solid #f0f0f0',
+    color: 'var(--text-primary)',
+    borderBottom: '1px solid var(--border-light)',
     whiteSpace: 'nowrap',
   },
   rowMeta: {
     padding: '3px 16px',
     fontSize: 10,
     fontFamily: 'var(--font-mono)',
-    color: '#bbb',
-    borderTop: '1px solid #f0f0f0',
+    color: 'var(--text-secondary)',
+    borderTop: '1px solid var(--border-light)',
   },
 
   // Footer
@@ -483,18 +483,18 @@ const styles: Record<string, React.CSSProperties> = {
   footerMuted: {
     fontSize: 10,
     fontFamily: 'var(--font-mono)',
-    color: '#bbb',
+    color: 'var(--text-secondary)',
   },
   footerError: {
     fontSize: 10,
     fontFamily: 'var(--font-mono)',
-    color: '#c0392b',
+    color: 'var(--error-full)',
   },
 
   // Collapsed
   collapsed: {
-    background: '#fff',
-    borderBottom: '1px solid #e8e8e8',
+    background: 'var(--bg-card)',
+    borderBottom: '1px solid var(--border-light)',
     padding: '4px 16px',
   },
   expandTrigger: {
@@ -505,12 +505,12 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     cursor: 'pointer',
     padding: '2px 0',
-    color: '#aaa',
+    color: 'var(--text-secondary)',
   },
   collapsedTitle: {
     fontSize: 12,
     fontFamily: 'var(--font-sans)',
-    color: '#aaa',
+    color: 'var(--text-secondary)',
     fontStyle: 'italic',
   },
 }
