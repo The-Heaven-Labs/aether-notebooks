@@ -34,6 +34,48 @@ func TestHandleListConnectorDatabases(t *testing.T) {
 	}
 }
 
+func TestUpdateConnector(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("update-conn-%d@example.com", ts)
+	token := registerAndGetToken(t, srv, email, "UpdateConn Org")
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name": "OriginalName",
+		"type": "postgres",
+		"config": map[string]interface{}{
+			"host": "localhost", "port": 5432,
+			"user": "dev", "password": "secret", "database": "analytics",
+		},
+	})
+	req := httptest.NewRequest("POST", "/api/v1/connectors", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&resp)
+	connID := resp["id"].(string)
+
+	updateBody, _ := json.Marshal(map[string]interface{}{"name": "UpdatedName"})
+	req = httptest.NewRequest("PUT", "/api/v1/connectors/"+connID, bytes.NewReader(updateBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var updated map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&updated)
+	if updated["name"] != "UpdatedName" {
+		t.Fatalf("expected name UpdatedName, got %v", updated["name"])
+	}
+}
+
 func TestConnectorCRUD(t *testing.T) {
 	srv := setupTestServer(t)
 
