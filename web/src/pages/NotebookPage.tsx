@@ -124,6 +124,23 @@ export function NotebookPage() {
     onError: (err: Error) => setMutationError(err.message),
   })
 
+  const duplicateCell = useMutation({
+    mutationFn: (cellId: string) =>
+      api.post<Cell>(`/api/v1/notebooks/${id}/cells/${cellId}/duplicate`, {}),
+    onSuccess: (newCell) => {
+      setLocalCells((prev) => {
+        const shifted = prev.map((c) =>
+          c.position >= newCell.position ? { ...c, position: c.position + 1 } : c
+        )
+        return [...shifted, newCell].sort((a, b) => a.position - b.position)
+      })
+      qc.setQueryData<NotebookWithCells>(['notebook', id], (old) =>
+        old ? { ...old, cells: [...(old.cells ?? []), newCell] } : old
+      )
+    },
+    onError: (err: Error) => setMutationError(err.message),
+  })
+
   const renameNotebook = useMutation({
     mutationFn: (title: string) =>
       api.put(`/api/v1/notebooks/${id}`, { title }),
@@ -501,6 +518,7 @@ export function NotebookPage() {
                       onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
                       onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
                       onSwitchType={() => switchCellType(cell.id)}
+                      onDuplicate={() => duplicateCell.mutate(cell.id)}
                       running={runningCells.has(cell.id)}
                       saveState={cellSaveState[cell.id]}
                       runAt={cellRunAt[cell.id]}

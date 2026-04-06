@@ -152,6 +152,106 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, connectors)
 }
 
+type updateConnectorRequest struct {
+	Name      *string                 `json:"name,omitempty"`
+	Config    *models.ConnectorConfig `json:"config,omitempty"`
+	IsDefault *bool                   `json:"is_default,omitempty"`
+}
+
+func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	id := r.PathValue("id")
+	ctx := r.Context()
+
+	var req updateConnectorRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	var orgID string
+	err := s.db.Pool.QueryRow(ctx, `SELECT org_id FROM connectors WHERE id=$1`, id).Scan(&orgID)
+	if err != nil || orgID != claims.OrgID {
+		writeError(w, http.StatusNotFound, "connector not found")
+		return
+	}
+
+	if req.Name != nil {
+		if _, err := s.db.Pool.Exec(ctx,
+			`UPDATE connectors SET name=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3`,
+			*req.Name, id, claims.OrgID,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+	}
+
+	if req.Config != nil {
+		configJSON, err := json.Marshal(req.Config)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid config")
+			return
+		}
+		encrypted, err := crypto.Encrypt(configJSON, s.masterKey)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to encrypt config")
+			return
+		}
+		if _, err := s.db.Pool.Exec(ctx,
+			`UPDATE connectors SET config_encrypted=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3`,
+			encrypted, id, claims.OrgID,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+	}
+
+	if req.IsDefault != nil && *req.IsDefault {
+		tx, err := s.db.Pool.Begin(ctx)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+		defer tx.Rollback(ctx)
+		if _, err := tx.Exec(ctx, `UPDATE connectors SET is_default=false WHERE org_id=$1`, claims.OrgID); err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+		if _, err := tx.Exec(ctx, `UPDATE connectors SET is_default=true WHERE id=$1`, id); err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+		if err := tx.Commit(ctx); err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+	}
+
+	var c models.Connector
+	var encryptedConfig []byte
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id
+		 FROM connectors WHERE id=$1`,
+		id,
+	).Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
+		&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	if plain, err := crypto.Decrypt(encryptedConfig, s.masterKey); err == nil {
+		json.Unmarshal(plain, &c.Config)
+		c.Config.Password = "***"
+	}
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "connector.update", ResourceType: "connector", ResourceID: id,
+	})
+
+	writeJSON(w, http.StatusOK, c)
+}
+
 func (s *Server) handleSetDefaultConnector(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	id := r.PathValue("id")

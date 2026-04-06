@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal } from 'lucide-react'
+import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy } from 'lucide-react'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap } from '@codemirror/commands'
@@ -163,6 +163,7 @@ interface Props {
   onMoveUp?: () => void
   onMoveDown?: () => void
   onSwitchType?: () => void
+  onDuplicate?: () => void
   running?: boolean
   saveState?: SaveState
   runAt?: Date
@@ -446,6 +447,11 @@ export function Cell({
           </button>
           {onMoveUp && <button style={styles.actionBtn} onClick={onMoveUp}><ChevronUp size={11} /></button>}
           {onMoveDown && <button style={styles.actionBtn} onClick={onMoveDown}><ChevronDown size={11} /></button>}
+          {onDuplicate && (
+            <button style={styles.actionBtn} onClick={onDuplicate} title="Duplicate cell">
+              <Copy size={12} />
+            </button>
+          )}
           <button
             style={styles.actionBtn}
             onClick={() => onUpdateCellMeta?.({ source_visible: !sourceVisible })}

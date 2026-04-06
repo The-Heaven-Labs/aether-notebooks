@@ -19,6 +19,11 @@ export function ProfilePage() {
     queryFn: () => api.get('/api/v1/users/me'),
   })
 
+  const { data: myGroups = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ['groups', 'mine'],
+    queryFn: () => api.get('/api/v1/groups?member=me'),
+  })
+
   const [name, setName] = useState('')
   const [status, setStatus] = useState('')
   const [theme, setTheme] = useState<'light' | 'dark'>(
@@ -88,6 +93,18 @@ export function ProfilePage() {
               Save
             </button>
           </div>
+          <div style={{ marginTop: 32, borderTop: '1px solid var(--border-light)', paddingTop: 24 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 12 }}>My Groups</div>
+            {myGroups.length === 0 ? (
+              <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Not a member of any group.</div>
+            ) : (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {myGroups.map(g => (
+                  <span key={g.id} style={styles.groupTag}>{g.name}</span>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </AppShell>
@@ -100,4 +117,5 @@ const styles: Record<string, React.CSSProperties> = {
   saveBtn: { padding: '7px 18px', background: '#111', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   themeBtn: { padding: '6px 16px', background: 'none', border: '1px solid #ddd', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: '#555' },
   themeActive: { padding: '6px 16px', background: '#111', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, cursor: 'pointer' },
+  groupTag: { padding: '3px 10px', background: 'var(--accent-light)', color: 'var(--accent)', borderRadius: 12, fontSize: 12, fontWeight: 500 },
 }

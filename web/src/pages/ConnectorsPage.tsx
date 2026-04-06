@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Connector } from '../types'
@@ -31,10 +32,14 @@ const defaultForm = (): ConnectorForm => ({
 export function ConnectorsPage() {
   useEffect(() => { document.title = "Connectors — Heaven's Notebooks" }, [])
   const qc = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [creating, setCreating] = useState(false)
+  const [editing, setEditing] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState<ConnectorForm>(defaultForm())
   const [form, setForm] = useState<ConnectorForm>(defaultForm())
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error?: string }>>({})
   const [createError, setCreateError] = useState<string | null>(null)
+  const [editError, setEditError] = useState<string | null>(null)
   const [formTest, setFormTest] = useState<{ ok: boolean; error?: string } | null>(null)
   const [formTesting, setFormTesting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -42,6 +47,50 @@ export function ConnectorsPage() {
   const { data: connectors = [] } = useQuery({
     queryKey: ['connectors'],
     queryFn: () => api.get<Connector[]>('/api/v1/connectors'),
+  })
+
+  useEffect(() => {
+    const editId = searchParams.get('edit')
+    if (editId && connectors.length > 0) {
+      const c = connectors.find(x => x.id === editId)
+      if (c) {
+        setEditing(c.id)
+        setEditForm({
+          name: c.name,
+          type: c.type as ConnectorType,
+          host: c.config?.host ?? '',
+          port: String(c.config?.port ?? 5432),
+          database: c.config?.database ?? '',
+          user: c.config?.user ?? '',
+          password: '',
+          ssl_mode: c.config?.ssl_mode ?? 'disable',
+          is_default: c.is_default ?? false,
+        })
+        setSearchParams({})
+      }
+    }
+  }, [searchParams, connectors, setSearchParams])
+
+  const updateConnector = useMutation({
+    mutationFn: (id: string) => api.put<Connector>(`/api/v1/connectors/${id}`, {
+      name: editForm.name,
+      config: {
+        host: editForm.host,
+        port: parseInt(editForm.port),
+        database: editForm.database,
+        user: editForm.user,
+        ...(editForm.password !== '' ? { password: editForm.password } : {}),
+        ssl_mode: editForm.ssl_mode,
+      },
+      ...(editForm.is_default ? { is_default: true } : {}),
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['connectors'] })
+      setEditing(null)
+      setEditForm(defaultForm())
+      setEditError(null)
+    },
+    onError: (e: Error) => setEditError(e.message),
   })
 
   const createConnector = useMutation({
@@ -197,6 +246,65 @@ export function ConnectorsPage() {
           </FormCard>
         )}
 
+        {editing && (
+          <FormCard title="Edit Connector">
+            <div style={styles.formGrid}>
+              <label style={styles.label}>Name
+                <input style={styles.input} value={editForm.name} onChange={(e) => setEditForm(f => ({ ...f, name: e.target.value }))} />
+              </label>
+              <label style={styles.label}>Type
+                <select style={styles.input} value={editForm.type} onChange={(e) => setEditForm((f) => ({
+                  ...f, type: e.target.value as ConnectorType,
+                  port: e.target.value === 'clickhouse' ? '9000' : '5432',
+                }))}>
+                  <option value="postgres">PostgreSQL</option>
+                  <option value="clickhouse">ClickHouse</option>
+                </select>
+              </label>
+              <label style={styles.label}>Host
+                <input style={styles.input} value={editForm.host} onChange={(e) => setEditForm(f => ({ ...f, host: e.target.value }))} />
+              </label>
+              <label style={styles.label}>Port
+                <input style={styles.input} type="number" min={1} max={65535} value={editForm.port} onChange={(e) => setEditForm(f => ({ ...f, port: e.target.value }))} />
+              </label>
+              <label style={styles.label}>Database
+                <input style={styles.input} value={editForm.database} onChange={(e) => setEditForm(f => ({ ...f, database: e.target.value }))} />
+              </label>
+              <label style={styles.label}>User
+                <input style={styles.input} value={editForm.user} onChange={(e) => setEditForm(f => ({ ...f, user: e.target.value }))} />
+              </label>
+              <label style={styles.label}>Password <span style={{ fontWeight: 400, color: '#999' }}>(leave blank to keep current)</span>
+                <input style={styles.input} type="password" value={editForm.password} onChange={(e) => setEditForm(f => ({ ...f, password: e.target.value }))} />
+              </label>
+              <label style={styles.label}>SSL Mode
+                <select style={styles.input} value={editForm.ssl_mode} onChange={(e) => setEditForm(f => ({ ...f, ssl_mode: e.target.value }))}>
+                  <option value="disable">disable</option>
+                  <option value="require">require</option>
+                  <option value="verify-full">verify-full</option>
+                </select>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#555', gridColumn: '1 / -1' }}>
+                <input type="checkbox" checked={editForm.is_default ?? false}
+                  onChange={e => setEditForm(f => ({ ...f, is_default: e.target.checked }))} />
+                Set as default connector for new notebooks
+              </label>
+            </div>
+            <div style={styles.formActions}>
+              <span style={{ flex: 1 }} />
+              <button type="button" style={styles.cancelBtn} onClick={() => { setEditing(null); setEditForm(defaultForm()); setEditError(null) }}>Cancel</button>
+              <button
+                type="button"
+                style={styles.saveBtn}
+                onClick={() => updateConnector.mutate(editing!)}
+                disabled={!editForm.name || !editForm.host || !editForm.database || updateConnector.isPending}
+              >
+                {updateConnector.isPending ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+            {editError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{editError}</p>}
+          </FormCard>
+        )}
+
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
         <StyledTable headers={['Name', 'Type', 'Host', 'Database', 'Status', '']}>
           {connectors.map((c) => {
@@ -233,6 +341,20 @@ export function ConnectorsPage() {
                 </td>
                 <td style={styles.tdActions}>
                   <button type="button" style={styles.actionBtn} onClick={() => testConnector(c.id)}>Test</button>
+                  <button type="button" style={styles.editBtn} onClick={() => {
+                    setEditing(c.id)
+                    setEditForm({
+                      name: c.name,
+                      type: c.type as ConnectorType,
+                      host: c.config?.host ?? '',
+                      port: String(c.config?.port ?? 5432),
+                      database: c.config?.database ?? '',
+                      user: c.config?.user ?? '',
+                      password: '',
+                      ssl_mode: c.config?.ssl_mode ?? 'disable',
+                      is_default: c.is_default ?? false,
+                    })
+                  }}>Edit</button>
                   {!c.is_default && (
                     <button type="button"
                       style={{ background: 'none', border: '1px solid #ddd', borderRadius: 4,
@@ -278,5 +400,6 @@ const styles: Record<string, React.CSSProperties> = {
   tdActions: { padding: '8px 16px', textAlign: 'right' as const },
   badge: { fontSize: 11, fontFamily: 'var(--font-mono)', background: '#f5f5f5', color: '#666', padding: '2px 7px', borderRadius: 3 },
   actionBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid #ddd', borderRadius: 4, background: 'none', cursor: 'pointer', color: '#555', marginRight: 6 },
+  editBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid #ddd', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--accent)', marginRight: 6 },
   deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid #ddd', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--error-full)' },
 }

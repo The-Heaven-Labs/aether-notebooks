@@ -1,22 +1,17 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { BookOpen, LayoutDashboard, Database, Users, UsersRound, ClipboardList, User, ChevronLeft, ChevronRight } from 'lucide-react'
-import { useAuth } from '../hooks/useAuth'
+import { BookOpen, LayoutDashboard, Database, Users, UsersRound, ClipboardList, ChevronLeft, ChevronRight } from 'lucide-react'
 
 const NAV_ITEMS = [
   { to: '/',           title: 'Notebooks',   icon: <BookOpen size={16} /> },
   { to: '/dashboards', title: 'Dashboards',  icon: <LayoutDashboard size={16} /> },
   { to: '/connectors', title: 'Connectors',  icon: <Database size={16} /> },
   { to: '/members',    title: 'Members',     icon: <Users size={16} /> },
-  { to: '/groups',     title: 'Groups',      icon: <UsersRound size={16} />, adminBadge: true },
+  { to: '/groups',     title: 'Groups',      icon: <UsersRound size={16} /> },
   { to: '/audit',      title: 'Audit',       icon: <ClipboardList size={16} /> },
-  { to: '/profile',    title: 'Profile',     icon: <User size={16} /> },
 ]
 
 export function Sidebar() {
-  const { user } = useAuth()
-  const isAdmin = user?.role === 'admin'
-
   const [expanded, setExpanded] = useState(() => {
     return localStorage.getItem('hnb_sidebar_expanded') !== 'false'
   })
@@ -32,7 +27,7 @@ export function Sidebar() {
   return (
     <nav style={{ ...styles.sidebar, width }}>
       <div style={styles.items}>
-        {NAV_ITEMS.map(({ to, title, icon, adminBadge }) => (
+        {NAV_ITEMS.map(({ to, title, icon }) => (
           <NavLink
             key={to}
             to={to}
@@ -48,12 +43,7 @@ export function Sidebar() {
           >
             <span style={styles.icon}>{icon}</span>
             {expanded && (
-              <>
-                <span style={styles.label}>{title}</span>
-                {adminBadge && isAdmin && (
-                  <span style={{ fontSize: 9, fontWeight: 700, background: 'var(--accent)', color: '#fff', borderRadius: 3, padding: '1px 5px', marginLeft: 4 }}>Admin</span>
-                )}
-              </>
+              <span style={styles.label}>{title}</span>
             )}
           </NavLink>
         ))}
