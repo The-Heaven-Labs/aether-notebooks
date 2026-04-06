@@ -9,7 +9,7 @@ interface Props {
 }
 
 const colorMap: Record<Status, string> = {
-  success: 'var(--success-full)',
+  success: 'var(--success)',
   error: 'var(--error-full)',
   neutral: 'var(--text-muted)',
 }

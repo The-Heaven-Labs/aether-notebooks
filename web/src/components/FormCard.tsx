@@ -15,8 +15,8 @@ export function FormCard({ title, children }: Props) {
 }
 
 const cardStyle: React.CSSProperties = {
-  background: '#fff',
-  border: '1px solid #e8e8e8',
+  background: 'var(--bg-card)',
+  border: '1px solid var(--border)',
   borderRadius: 4,
   padding: 24,
   marginBottom: 24,

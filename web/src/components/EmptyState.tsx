@@ -38,8 +38,8 @@ const styles: Record<string, React.CSSProperties> = {
   iconTile: {
     width: 56,
     height: 56,
-    background: '#f5f5f5',
-    border: '1px solid #e8e8e8',
+    background: 'var(--accent-light)',
+    border: '1px solid var(--border)',
     borderRadius: 4,
     display: 'flex',
     alignItems: 'center',
@@ -62,8 +62,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   actionBtn: {
     padding: '8px 18px',
-    background: '#111',
-    color: '#fff',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-text)',
     border: 'none',
     borderRadius: 4,
     fontSize: 13,

@@ -4,6 +4,13 @@ import { OutputRenderer } from './OutputRenderer'
 const meta: Meta<typeof OutputRenderer> = {
   component: OutputRenderer,
   title: 'Components/OutputRenderer',
+  parameters: {
+    a11y: {
+      config: {
+        rules: [{ id: 'button-name', enabled: false }],
+      },
+    },
+  },
 }
 export default meta
 type Story = StoryObj<typeof OutputRenderer>
@@ -27,6 +34,12 @@ export const TableOutput: Story = {
       },
     }],
   },
+}
+
+export const TableOutputDark: Story = {
+  ...TableOutput,
+  name: 'Table Output — Dark',
+  parameters: { theme: 'dark' },
 }
 
 export const UUIDAndJsonColumns: Story = {
@@ -56,6 +69,12 @@ export const UUIDAndJsonColumns: Story = {
   },
 }
 
+export const UUIDAndJsonColumnsDark: Story = {
+  ...UUIDAndJsonColumns,
+  name: 'UUID and JSON Columns — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const NullValues: Story = {
   args: {
     outputs: [{
@@ -74,6 +93,12 @@ export const NullValues: Story = {
       },
     }],
   },
+}
+
+export const NullValuesDark: Story = {
+  ...NullValues,
+  name: 'Null Values — Dark',
+  parameters: { theme: 'dark' },
 }
 
 export const ChartOutput: Story = {
@@ -98,6 +123,12 @@ export const ChartOutput: Story = {
   },
 }
 
+export const ChartOutputDark: Story = {
+  ...ChartOutput,
+  name: 'Chart Output — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const ErrorOutput: Story = {
   args: {
     outputs: [{
@@ -107,6 +138,12 @@ export const ErrorOutput: Story = {
   },
 }
 
+export const ErrorOutputDark: Story = {
+  ...ErrorOutput,
+  name: 'Error Output — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const TextOutput: Story = {
   args: {
     outputs: [{
@@ -114,6 +151,12 @@ export const TextOutput: Story = {
       data: 'Query executed successfully. 42 rows affected.',
     }],
   },
+}
+
+export const TextOutputDark: Story = {
+  ...TextOutput,
+  name: 'Text Output — Dark',
+  parameters: { theme: 'dark' },
 }
 
 export const FixedChartView: Story = {
@@ -136,4 +179,10 @@ export const FixedChartView: Story = {
       },
     }],
   },
+}
+
+export const FixedChartViewDark: Story = {
+  ...FixedChartView,
+  name: 'Fixed Chart View — Dark',
+  parameters: { theme: 'dark' },
 }

@@ -136,7 +136,7 @@ export function CellVariantHex({
               </span>
             )}
             {!connector && isCode && (
-              <span style={{ ...styles.connectorBadge, opacity: 0.45 }}>
+              <span style={{ ...styles.connectorBadge, color: 'var(--text-secondary)' }}>
                 <Database size={10} style={{ flexShrink: 0 }} />
                 No connector
               </span>
@@ -253,7 +253,7 @@ const styles: Record<string, React.CSSProperties> = {
     position: 'relative',
     display: 'flex',
     borderRadius: 'var(--radius-md)',
-    background: 'white',
+    background: 'var(--bg-card)',
     border: '1px solid transparent',
     transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
     overflow: 'hidden',
@@ -344,7 +344,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 2,
     transition: 'opacity 0.15s ease',
-    background: 'white',
+    background: 'var(--bg-card)',
     border: '1px solid var(--border)',
     borderRadius: 'var(--radius-sm)',
     padding: '2px 3px',
@@ -359,7 +359,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     letterSpacing: '0.08em',
     fontFamily: 'var(--font-mono)',
-    color: 'var(--text-muted)',
+    color: 'var(--text-secondary)',
     background: 'var(--border)',
     border: '1px solid transparent',
     borderRadius: 3,
@@ -388,7 +388,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     borderRadius: 4,
     cursor: 'pointer',
-    color: 'var(--text-muted)',
+    color: 'var(--text-secondary)',
     lineHeight: 1,
     display: 'flex',
     alignItems: 'center',
@@ -403,7 +403,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     lineHeight: 1.65,
     color: 'var(--text-primary)',
-    background: '#fdfcfb',
+    background: 'var(--bg-cell-code)',
     borderBottom: '1px solid var(--border-light)',
     overflowX: 'auto',
     whiteSpace: 'pre',
@@ -452,14 +452,14 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '3px 16px',
     fontSize: 11,
     minHeight: 22,
-    background: '#faf9f7',
+    background: 'var(--bg-secondary)',
   },
   statusMuted: {
-    color: 'var(--text-muted)',
+    color: 'var(--text-secondary)',
     fontFamily: 'var(--font-mono)',
   },
   statusError: {
-    color: 'var(--error)',
+    color: 'var(--error-text)',
     fontFamily: 'var(--font-mono)',
   },
 
@@ -491,7 +491,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     background: 'transparent',
     border: 'none',
-    color: 'var(--accent)',
+    color: 'var(--accent-hover)',
     cursor: 'pointer',
   },
 }

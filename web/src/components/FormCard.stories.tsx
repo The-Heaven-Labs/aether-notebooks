@@ -18,6 +18,12 @@ export const Default: Story = {
   },
 }
 
+export const DefaultDark: Story = {
+  ...Default,
+  name: 'Default — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const WithActions: Story = {
   args: {
     title: 'Invite Member',
@@ -29,16 +35,22 @@ export const WithActions: Story = {
             placeholder="colleague@example.com"
             style={{ flex: 1, padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13 }}
           />
-          <select style={{ padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13 }}>
+          <select aria-label="Role" style={{ padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13 }}>
             <option>Viewer</option>
             <option>Editor</option>
             <option>Admin</option>
           </select>
-          <button type="button" style={{ padding: '7px 18px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+          <button type="button" style={{ padding: '7px 18px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
             Invite
           </button>
         </div>
       </div>
     ),
   },
+}
+
+export const WithActionsDark: Story = {
+  ...WithActions,
+  name: 'With Actions — Dark',
+  parameters: { theme: 'dark' },
 }

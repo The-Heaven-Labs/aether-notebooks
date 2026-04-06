@@ -143,7 +143,7 @@ export function MembersPage() {
                     ))}
                   </select>
                 </td>
-                <td style={{ ...cellStyle, color: 'var(--text-muted)', fontSize: 12 }}>{joinedDate}</td>
+                <td style={{ ...cellStyle, color: 'var(--text-secondary)', fontSize: 12 }}>{joinedDate}</td>
                 <td style={styles.tdActions}>
                   <button
                     type="button"
@@ -170,23 +170,25 @@ const styles: Record<string, React.CSSProperties> = {
   emailInput: {
     flex: 1,
     padding: '7px 12px',
-    border: '1px solid #ddd',
+    border: '1px solid var(--border)',
     borderRadius: 4,
     fontSize: 13,
-    background: 'var(--bg-primary)',
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
     outline: 'none',
   },
   roleSelect: {
     padding: '7px 10px',
-    border: '1px solid #ddd',
+    border: '1px solid var(--border)',
     borderRadius: 4,
     fontSize: 13,
-    background: 'white',
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
     cursor: 'pointer',
   },
   inviteBtn: {
     padding: '7px 18px',
-    background: '#111',
+    background: 'var(--accent)',
     color: '#fff',
     border: 'none',
     borderRadius: 4,
@@ -198,16 +200,16 @@ const styles: Record<string, React.CSSProperties> = {
   emptyCell: {
     padding: '40px 16px',
     textAlign: 'center' as const,
-    color: 'var(--text-muted)',
+    color: 'var(--text-secondary)',
     fontSize: 13,
   },
   selfBadge: {
     marginLeft: 8,
     fontSize: 10,
     fontWeight: 700,
-    background: '#f5f5f5',
-    color: '#666',
-    border: '1px solid #e8e8e8',
+    background: 'var(--accent-light)',
+    color: 'var(--text-secondary)',
+    border: '1px solid var(--border)',
     padding: '1px 6px',
     borderRadius: 3,
     letterSpacing: '0.04em',
@@ -215,19 +217,20 @@ const styles: Record<string, React.CSSProperties> = {
   },
   roleSelectInline: {
     padding: '4px 8px',
-    border: '1px solid #ddd',
+    border: '1px solid var(--border)',
     borderRadius: 4,
     fontSize: 12,
-    background: 'white',
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
     cursor: 'pointer',
   },
   roleSelectDisabled: {
     padding: '4px 8px',
-    border: '1px solid #ddd',
+    border: '1px solid var(--border)',
     borderRadius: 4,
     fontSize: 12,
-    background: '#f5f5f5',
-    color: '#aaa',
+    background: 'var(--bg-secondary)',
+    color: 'var(--text-muted)',
     cursor: 'not-allowed',
   },
   removeBtn: {
@@ -248,6 +251,6 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     background: 'transparent',
     cursor: 'not-allowed',
-    color: 'var(--text-muted)',
+    color: 'var(--text-secondary)',
   },
 }

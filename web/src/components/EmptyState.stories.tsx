@@ -17,6 +17,12 @@ export const WithIcon: Story = {
   },
 }
 
+export const WithIconDark: Story = {
+  ...WithIcon,
+  name: 'With Icon — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const WithoutIcon: Story = {
   args: {
     title: 'No dashboards yet',
@@ -25,9 +31,21 @@ export const WithoutIcon: Story = {
   },
 }
 
+export const WithoutIconDark: Story = {
+  ...WithoutIcon,
+  name: 'Without Icon — Dark',
+  parameters: { theme: 'dark' },
+}
+
 export const TextOnly: Story = {
   args: {
     title: 'No entries found',
     text: 'The audit log is empty.',
   },
+}
+
+export const TextOnlyDark: Story = {
+  ...TextOnly,
+  name: 'Text Only — Dark',
+  parameters: { theme: 'dark' },
 }

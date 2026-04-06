@@ -11,17 +11,17 @@ export function ErrorBanner({ message, onDismiss, variant = 'error' }: Props) {
     error: {
       background: 'var(--error-light)',
       border: '1px solid var(--error-border)',
-      color: 'var(--error-full)',
+      color: 'var(--error-text)',
     },
     warning: {
-      background: '#fff8e6',
-      border: '1px solid #f5d78e',
-      color: '#8a6d3b',
+      background: 'var(--warning-light)',
+      border: '1px solid var(--warning-border)',
+      color: 'var(--warning-text)',
     },
     info: {
       background: 'var(--accent-light)',
       border: '1px solid var(--accent)',
-      color: 'var(--accent)',
+      color: 'var(--accent-hover)',
     },
   }
 
