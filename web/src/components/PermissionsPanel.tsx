@@ -13,6 +13,13 @@ const ACTION_LABELS: Record<ResourceType, string[]> = {
   dashboard: ['view', 'edit', 'share', 'delete'],
 }
 
+const PRESETS: Record<ResourceType, Record<string, string[]>> = {
+  folder:    { none: [], viewer: ['view'], editor: ['view', 'create', 'edit'], admin: ['view', 'create', 'edit', 'manage', 'delete'] },
+  notebook:  { none: [], viewer: ['view'], editor: ['view', 'run', 'edit'], admin: ['view', 'run', 'edit', 'share', 'delete'] },
+  connector: { none: [], viewer: ['view'], editor: ['view', 'use', 'edit'], admin: ['view', 'use', 'edit', 'share', 'delete'] },
+  dashboard: { none: [], viewer: ['view'], editor: ['view', 'edit'], admin: ['view', 'edit', 'share', 'delete'] },
+}
+
 interface AclEntry {
   id: string
   subject_type: 'user' | 'group'
@@ -153,6 +160,15 @@ export function PermissionsPanel({
     setDraft(current.filter((_, i) => i !== entryIndex))
   }
 
+  function applyPreset(entryIndex: number, preset: 'none' | 'viewer' | 'editor' | 'admin') {
+    const current = draft ?? aclData ?? []
+    const actions = PRESETS[resourceType][preset]
+    const updated = current.map((e, i) =>
+      i === entryIndex ? { ...e, actions } : e
+    )
+    setDraft(updated)
+  }
+
   function handleAddEntry() {
     if (!newSubjectKey || newActions.length === 0) return
     const [subjectType, subjectId] = newSubjectKey.split(':') as ['user' | 'group', string]
@@ -243,6 +259,17 @@ export function PermissionsPanel({
                         />
                         <span style={styles.actionLabel}>{action}</span>
                       </label>
+                    ))}
+                  </div>
+                  <div style={styles.presetRow}>
+                    {(['none', 'viewer', 'editor', 'admin'] as const).map((preset) => (
+                      <button
+                        key={preset}
+                        onClick={() => applyPreset(idx, preset)}
+                        style={styles.presetBtn}
+                      >
+                        {preset}
+                      </button>
                     ))}
                   </div>
                   <button
@@ -487,6 +514,23 @@ const styles: Record<string, React.CSSProperties> = {
     flexWrap: 'wrap' as const,
     gap: 4,
     flex: 1,
+  },
+  presetRow: {
+    display: 'flex',
+    gap: 4,
+    marginTop: 4,
+    flexShrink: 0,
+  },
+  presetBtn: {
+    padding: '2px 8px',
+    fontSize: 10,
+    fontWeight: 600,
+    borderRadius: 3,
+    border: '1px solid var(--border)',
+    background: 'transparent',
+    color: 'var(--text-muted)',
+    cursor: 'pointer',
+    textTransform: 'capitalize' as const,
   },
   checkLabel: {
     display: 'flex',
