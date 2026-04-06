@@ -53,6 +53,13 @@ export function TopBar() {
               <div style={styles.dropdownName}>{name}</div>
               <div style={styles.dropdownEmail}>{email}</div>
             </div>
+            <Link
+              to="/profile"
+              style={styles.dropdownLink}
+              onClick={() => setOpen(false)}
+            >
+              Profile settings
+            </Link>
             <button style={styles.signOut} onClick={() => { logout(); setOpen(false) }}>
               Sign out
             </button>
@@ -119,6 +126,14 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '4px 8px',
     borderRadius: 4,
     border: '1px solid var(--border)',
+  },
+  dropdownLink: {
+    display: 'block',
+    padding: '10px 14px',
+    fontSize: 13,
+    color: 'var(--text-primary)',
+    textDecoration: 'none',
+    borderBottom: '1px solid var(--border-light)',
   },
   signOut: {
     width: '100%', padding: '10px 14px',

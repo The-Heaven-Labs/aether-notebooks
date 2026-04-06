@@ -250,6 +250,82 @@ func (s *Server) handleDeleteCell(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) handleDuplicateCell(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	nbID := r.PathValue("notebook_id")
+	cellID := r.PathValue("cell_id")
+	ctx := r.Context()
+
+	var src models.Cell
+	var outputs, params []byte
+	var lang, connID, title, desc, slug *string
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT id, notebook_id, position, type, language, connector_id, source, outputs,
+		        source_visible, cell_collapsed, slide_break, parameters,
+		        COALESCE(title,''), COALESCE(description,''), COALESCE(slug,'')
+		 FROM cells WHERE id=$1 AND notebook_id=$2`,
+		cellID, nbID,
+	).Scan(&src.ID, &src.NotebookID, &src.Position, &src.Type,
+		&lang, &connID, &src.Source, &outputs,
+		&src.SourceVisible, &src.CellCollapsed, &src.SlideBreak, &params,
+		&title, &desc, &slug)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "cell not found")
+		return
+	}
+
+	var orgID string
+	s.db.Pool.QueryRow(ctx, `SELECT org_id FROM notebooks WHERE id=$1`, nbID).Scan(&orgID)
+	if orgID != claims.OrgID {
+		writeError(w, http.StatusNotFound, "notebook not found")
+		return
+	}
+
+	insertPos := src.Position + 1
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE cells SET position=position+1 WHERE notebook_id=$1 AND position>=$2`,
+		nbID, insertPos,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	var newCell models.Cell
+	var newOutputs, newParams []byte
+	err = s.db.Pool.QueryRow(ctx,
+		`INSERT INTO cells (notebook_id, position, type, language, connector_id, source, outputs,
+		                    source_visible, cell_collapsed, slide_break, parameters, title, description, slug)
+		 VALUES ($1,$2,$3,$4,$5,$6,'[]',$7,$8,$9,$10,$11,$12,$13)
+		 RETURNING id, notebook_id, position, type, language, connector_id, source, outputs,
+		           source_visible, cell_collapsed, slide_break, parameters,
+		           COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''),
+		           created_at, updated_at`,
+		nbID, insertPos, src.Type, lang, connID, src.Source,
+		src.SourceVisible, src.CellCollapsed, src.SlideBreak, params, title, desc, slug,
+	).Scan(&newCell.ID, &newCell.NotebookID, &newCell.Position, &newCell.Type,
+		&lang, &connID, &newCell.Source, &newOutputs,
+		&newCell.SourceVisible, &newCell.CellCollapsed, &newCell.SlideBreak, &newParams,
+		&newCell.Title, &newCell.Description, &newCell.Slug,
+		&newCell.CreatedAt, &newCell.UpdatedAt)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to duplicate cell")
+		return
+	}
+	if lang != nil {
+		newCell.Language = *lang
+	}
+	if connID != nil {
+		newCell.ConnectorID = *connID
+	}
+	json.Unmarshal(newOutputs, &newCell.Outputs)
+	json.Unmarshal(newParams, &newCell.Parameters)
+	if newCell.Outputs == nil {
+		newCell.Outputs = []models.Output{}
+	}
+
+	writeJSON(w, http.StatusCreated, newCell)
+}
+
 func nilIfEmptyStr(s string) interface{} {
 	if s == "" {
 		return nil

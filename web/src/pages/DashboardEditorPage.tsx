@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ArrowLeft, X } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
@@ -8,6 +8,9 @@ import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { ErrorBanner } from '../components/ErrorBanner'
+import { GridLayout } from 'react-grid-layout'
+import type { LayoutItem, Layout } from 'react-grid-layout'
+import 'react-grid-layout/css/styles.css'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -16,6 +19,24 @@ interface NotebookWithCells extends Notebook {
 interface DashboardWithWidgets extends Dashboard {
   widgets: Widget[]
 }
+
+function debounce<T extends (...args: Parameters<T>) => void>(fn: T, ms: number): T {
+  let timer: ReturnType<typeof setTimeout>
+  return ((...args: Parameters<T>) => {
+    clearTimeout(timer)
+    timer = setTimeout(() => fn(...args), ms)
+  }) as T
+}
+
+const toGridItem = (w: Widget): LayoutItem => ({
+  i: w.id,
+  x: w.layout.col,
+  y: w.layout.row,
+  w: w.layout.width,
+  h: w.layout.height,
+  minW: 2,
+  minH: 1,
+})
 
 function WidgetContent({ widget }: { widget: Widget }) {
   const { data: notebook, isLoading } = useQuery({
@@ -53,6 +74,17 @@ export function DashboardEditorPage() {
   const [pickerType, setPickerType] = useState<'table' | 'chart'>('table')
   const [pickerError, setPickerError] = useState<string | null>(null)
 
+  const [containerWidth, setContainerWidth] = useState(1200)
+  const gridRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!gridRef.current) return
+    const obs = new ResizeObserver(([entry]) => {
+      setContainerWidth(entry.contentRect.width)
+    })
+    obs.observe(gridRef.current)
+    return () => obs.disconnect()
+  }, [])
+
   const { data: dashboard, isLoading, error } = useQuery({
     queryKey: ['dashboard', id],
     queryFn: () => api.get<DashboardWithWidgets>(`/api/v1/dashboards/${id}`),
@@ -89,7 +121,7 @@ export function DashboardEditorPage() {
         notebook_id: pickerNotebookId,
         cell_id: pickerCellId,
         type: pickerType,
-        layout: { x: 0, y: 0, w: 1, h: 1 },
+        layout: { row: 0, col: 0, width: 6, height: 2 },
         config: {},
       }),
     onSuccess: () => {
@@ -109,6 +141,23 @@ export function DashboardEditorPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboard', id] }),
     onError: (err: Error) => setMutationError(err.message),
   })
+
+  const handleLayoutChange = useCallback(
+    debounce((newLayout: Layout) => {
+      if (!dashboard) return
+      newLayout.forEach(item => {
+        const widget = dashboard.widgets?.find((w: Widget) => w.id === item.i)
+        if (!widget) return
+        const prev = widget.layout
+        if (prev.col === item.x && prev.row === item.y &&
+            prev.width === item.w && prev.height === item.h) return
+        api.put(`/api/v1/dashboards/${dashboard.id}/widgets/${item.i}`, {
+          layout: { row: item.y, col: item.x, width: item.w, height: item.h },
+        })
+      })
+    }, 400),
+    [dashboard],
+  )
 
   if (isLoading) {
     return (
@@ -271,24 +320,48 @@ export function DashboardEditorPage() {
             action={{ label: '+ Add Widget', onClick: () => setShowPicker(true) }}
           />
         ) : (
-          <div style={styles.grid}>
-            {widgets.map((widget) => (
-                <div key={widget.id} style={styles.widgetCard}>
-                  <button
-                    type="button"
-                    style={{ ...styles.deleteWidgetBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                    title="Remove widget"
-                    onClick={() => {
-                      if (confirm('Remove this widget?')) {
-                        deleteWidget.mutate(widget.id)
-                      }
+          <div ref={gridRef}>
+            <GridLayout
+              layout={dashboard.widgets?.map(toGridItem) ?? []}
+              width={containerWidth}
+              gridConfig={{ cols: 12, rowHeight: 120 }}
+              dragConfig={{ enabled: true, handle: '.widget-drag-handle' }}
+              resizeConfig={{ enabled: true }}
+              onLayoutChange={handleLayoutChange}
+              style={{ minHeight: 240 }}
+            >
+              {dashboard.widgets?.map((widget: Widget) => (
+                <div key={widget.id} style={{ position: 'relative' }}>
+                  <div
+                    className="widget-drag-handle"
+                    style={{
+                      position: 'absolute',
+                      top: 0, left: 0, right: 0,
+                      height: 28,
+                      cursor: 'grab',
+                      zIndex: 1,
+                      borderRadius: '4px 4px 0 0',
                     }}
-                  >
-                    <X size={12} />
-                  </button>
-                  <WidgetContent widget={widget} />
+                    title="Drag to move"
+                  />
+                  <div style={styles.widgetCard}>
+                    <button
+                      type="button"
+                      style={{ ...styles.deleteWidgetBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      title="Remove widget"
+                      onClick={() => {
+                        if (confirm('Remove this widget?')) {
+                          deleteWidget.mutate(widget.id)
+                        }
+                      }}
+                    >
+                      <X size={12} />
+                    </button>
+                    <WidgetContent widget={widget} />
+                  </div>
                 </div>
               ))}
+            </GridLayout>
           </div>
         )}
       </div>
@@ -467,17 +540,13 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '40px 40px',
     width: '100%',
   },
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(2, 1fr)',
-    gap: 16,
-  },
   widgetCard: {
     background: '#fff',
     border: '1px solid #e8e8e8',
     borderRadius: 4,
     overflow: 'hidden',
     position: 'relative',
+    height: '100%',
   },
   deleteWidgetBtn: {
     position: 'absolute',
@@ -491,7 +560,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-muted)',
     padding: '2px 6px',
     lineHeight: 1,
-    zIndex: 1,
+    zIndex: 2,
     opacity: 0.7,
   },
 }

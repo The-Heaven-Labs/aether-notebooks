@@ -11,6 +11,32 @@ import (
 	"time"
 )
 
+func TestDuplicateCell(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("dup-cell-%d@example.com", ts)
+	token := registerAndGetToken(t, srv, email, "DupCell Org")
+	nbID := createNotebook(t, srv, token, "Dup Cell NB")
+	cellID := createCell(t, srv, token, nbID, "sql", "SELECT 1", "")
+
+	req := httptest.NewRequest("POST", "/api/v1/notebooks/"+nbID+"/cells/"+cellID+"/duplicate", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("duplicate: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var dup map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&dup)
+	if dup["source"] != "SELECT 1" {
+		t.Fatalf("expected source 'SELECT 1', got %v", dup["source"])
+	}
+	if dup["position"].(float64) != 1 {
+		t.Fatalf("expected position 1, got %v", dup["position"])
+	}
+}
+
 func TestCellCRUD(t *testing.T) {
 	srv := setupTestServer(t)
 
