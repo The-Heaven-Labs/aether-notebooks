@@ -165,6 +165,11 @@ export const handlers = [
     )
   }),
 
+  // Recent
+  http.get('/api/v1/recent', () => HttpResponse.json([
+    { id: 'nb-1', type: 'notebook', name: 'Root Notebook', updated_at: '2026-01-01T00:00:00Z' },
+  ])),
+
   // Members
   http.get('/api/v1/members', () => HttpResponse.json(MEMBERS)),
 
