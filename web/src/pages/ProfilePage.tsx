@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
@@ -29,6 +29,15 @@ export function ProfilePage() {
   const [theme, setTheme] = useState<'light' | 'dark'>(
     (localStorage.getItem('hnb_theme') ?? 'light') as 'light' | 'dark'
   )
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+
+  const timeoutRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current !== null) clearTimeout(timeoutRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     if (user) {
@@ -39,7 +48,16 @@ export function ProfilePage() {
 
   const update = useMutation({
     mutationFn: (patch: Partial<UserProfile>) => api.put('/api/v1/users/me', patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['profile'] }),
+    onMutate: () => setSaveStatus('saving'),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['profile'] })
+      setSaveStatus('saved')
+      timeoutRef.current = window.setTimeout(() => setSaveStatus('idle'), 2500)
+    },
+    onError: () => {
+      setSaveStatus('error')
+      timeoutRef.current = window.setTimeout(() => setSaveStatus('idle'), 3000)
+    },
   })
 
   const handleThemeToggle = (newTheme: 'light' | 'dark') => {
@@ -88,10 +106,21 @@ export function ProfilePage() {
               ))}
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <button type="button" style={styles.saveBtn} onClick={handleSave}>
-              Save
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
+            <button
+              type="button"
+              style={{ ...styles.saveBtn, opacity: saveStatus === 'saving' ? 0.6 : 1 }}
+              onClick={handleSave}
+              disabled={saveStatus === 'saving'}
+            >
+              {saveStatus === 'saving' ? 'Saving…' : 'Save'}
             </button>
+            {saveStatus === 'saved' && (
+              <span style={{ fontSize: 13, color: 'var(--success)', fontWeight: 500 }}>Saved</span>
+            )}
+            {saveStatus === 'error' && (
+              <span style={{ fontSize: 13, color: 'var(--error)', fontWeight: 500 }}>Save failed</span>
+            )}
           </div>
           <div style={{ marginTop: 32, borderTop: '1px solid var(--border-light)', paddingTop: 24 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 12 }}>My Groups</div>
