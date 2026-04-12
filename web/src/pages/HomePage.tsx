@@ -661,11 +661,11 @@ export function HomePage() {
         )}
 
         {/* Connectors */}
-        {data && searchConnectors.length > 0 && (
+        {data && filterItems(searchConnectors).length > 0 && (
           <section style={s.section}>
             <div style={s.sectionLabel}>Connectors</div>
             <div style={s.list}>
-              {searchConnectors.map((c) => (
+              {filterItems(searchConnectors).map((c) => (
                 <div key={c.id} style={s.item}>
                   <Link to={`/connectors?edit=${c.id}`} style={s.itemLink}>
                     <Database size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
