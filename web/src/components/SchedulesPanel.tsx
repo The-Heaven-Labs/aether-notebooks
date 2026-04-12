@@ -156,8 +156,8 @@ export function SchedulesPanel({ notebookId, parameters: _parameters }: Props) {
 
 const styles: Record<string, React.CSSProperties> = {
   panel: {
-    background: '#fff',
-    borderTop: '1px solid #e8e8e8',
+    background: 'var(--bg-card)',
+    borderTop: '1px solid var(--border)',
     display: 'flex',
     flexDirection: 'column',
     flexShrink: 0,
@@ -180,7 +180,7 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     padding: '6px 10px',
     background: 'var(--bg-primary)',
-    border: '1px solid #ddd',
+    border: '1px solid var(--border)',
     borderRadius: 4,
     color: 'var(--text-primary)',
     fontSize: 13,
@@ -189,8 +189,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   createBtn: {
     padding: '6px 16px',
-    background: '#111',
-    color: '#fff',
+    background: 'var(--text-primary)',
+    color: 'var(--bg-card)',
     border: 'none',
     borderRadius: 4,
     fontSize: 13,
@@ -214,7 +214,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: 7,
     height: 7,
     borderRadius: '50%',
-    background: '#ddd',
+    background: 'var(--border)',
     opacity: 0.5,
     flexShrink: 0,
   },

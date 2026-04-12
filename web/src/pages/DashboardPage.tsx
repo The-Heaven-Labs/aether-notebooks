@@ -143,7 +143,7 @@ const inputStyles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     fontSize: 13,
     fontFamily: 'var(--font-sans)',
-    background: 'white',
+    background: 'var(--bg-input)',
     color: 'var(--text-primary)',
     width: '100%',
     boxSizing: 'border-box',

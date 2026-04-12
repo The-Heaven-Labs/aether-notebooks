@@ -104,6 +104,10 @@
 .cm-editor .cm-content span.cm-function { color: var(--code-function); }
 .cm-editor .cm-content span.cm-number { color: var(--code-number); }
 
+html {
+  transition: background-color 0.2s ease;
+}
+
 * {
   margin: 0;
   padding: 0;
