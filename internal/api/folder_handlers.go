@@ -99,7 +99,7 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 
 	// Connectors at root
 	cRows, err := s.db.Pool.Query(ctx,
-		`SELECT id, name, type, is_default, folder_id, created_by, created_at::text FROM connectors WHERE org_id = $1 AND folder_id IS NULL`,
+		`SELECT id, name, type, is_default, folder_id, COALESCE(created_by::text, ''), created_at::text FROM connectors WHERE org_id = $1 AND folder_id IS NULL`,
 		claims.OrgID,
 	)
 	if err != nil {
@@ -242,7 +242,7 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 
 	// Connectors in folder
 	cRows, err := s.db.Pool.Query(ctx,
-		`SELECT id, name, type, is_default, folder_id, created_by, created_at::text FROM connectors WHERE org_id = $1 AND folder_id = $2`,
+		`SELECT id, name, type, is_default, folder_id, COALESCE(created_by::text, ''), created_at::text FROM connectors WHERE org_id = $1 AND folder_id = $2`,
 		claims.OrgID, folderID,
 	)
 	if err != nil {
