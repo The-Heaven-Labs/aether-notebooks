@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { screen, fireEvent } from '@testing-library/react'
 import { Sidebar } from '../components/Sidebar'
-import { renderWithProviders, editorUser } from './utils'
+import { renderWithProviders } from './utils'
 
 beforeEach(() => {
   localStorage.clear()
@@ -10,7 +10,7 @@ beforeEach(() => {
 describe('Sidebar', () => {
   it('renders nav items without Profile', () => {
     renderWithProviders(<Sidebar />)
-    expect(screen.getByTitle('Notebooks')).toBeDefined()
+    expect(screen.getByTitle('Home')).toBeDefined()
     expect(screen.getByTitle('Groups')).toBeDefined()
     expect(screen.queryByTitle('Profile')).toBeNull()
   })
