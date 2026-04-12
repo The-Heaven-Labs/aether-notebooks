@@ -372,10 +372,10 @@ export function HomePage() {
     : data?.dashboards ?? []
 
   const isEmpty = data &&
-    searchFolders.length === 0 &&
-    searchNotebooks.length === 0 &&
-    searchConnectors.length === 0 &&
-    searchDashboards.length === 0
+    filterItems(searchFolders).length === 0 &&
+    filterItems(searchNotebooks).length === 0 &&
+    filterItems(searchConnectors).length === 0 &&
+    filterItems(searchDashboards).length === 0
 
   const handleCreate = () => {
     if (!newName.trim()) return
