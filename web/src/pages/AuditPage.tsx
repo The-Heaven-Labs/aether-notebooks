@@ -15,11 +15,22 @@ export function AuditPage() {
   const [offset, setOffset] = useState(0)
   const [entries, setEntries] = useState<AuditEntry[]>([])
   const [actionFilter, setActionFilter] = useState('')
+  const [resourceTypeFilter, setResourceTypeFilter] = useState('')
   const [hasMore, setHasMore] = useState(true)
 
+  useEffect(() => { setOffset(0); setEntries([]) }, [resourceTypeFilter, actionFilter])
+
   const { data: page, isFetching, isLoading, error } = useQuery({
-    queryKey: ['audit', offset],
-    queryFn: () => api.get<AuditEntry[]>(`/api/v1/audit?limit=${PAGE_SIZE}&offset=${offset}`),
+    queryKey: ['audit', offset, resourceTypeFilter, actionFilter],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        offset: String(offset),
+      })
+      if (resourceTypeFilter) params.set('resource_type', resourceTypeFilter)
+      if (actionFilter.trim()) params.set('action', actionFilter.trim())
+      return api.get<AuditEntry[]>(`/api/v1/audit?${params}`)
+    },
   })
 
   useEffect(() => {
@@ -32,11 +43,7 @@ export function AuditPage() {
     setHasMore(page.length === PAGE_SIZE)
   }, [page, offset])
 
-  const filtered = actionFilter.trim()
-    ? entries.filter((e) =>
-        e.action.toLowerCase().includes(actionFilter.toLowerCase())
-      )
-    : entries
+  const filtered = entries
 
   function handleLoadMore() {
     setOffset((prev) => prev + PAGE_SIZE)
@@ -46,6 +53,19 @@ export function AuditPage() {
     <AppShell>
         <div style={styles.content}>
           <SectionHeader title="Audit Log" subtitle={`${filtered.length} entr${filtered.length !== 1 ? 'ies' : 'y'} loaded`}>
+            <select
+              style={{ ...styles.filterInput, maxWidth: 160, cursor: 'pointer' }}
+              value={resourceTypeFilter}
+              onChange={(e) => setResourceTypeFilter(e.target.value)}
+              aria-label="Filter by resource type"
+            >
+              <option value="">All types</option>
+              <option value="notebook">Notebook</option>
+              <option value="cell">Cell</option>
+              <option value="dashboard">Dashboard</option>
+              <option value="connector">Connector</option>
+              <option value="user">User</option>
+            </select>
             <input
               style={styles.filterInput}
               value={actionFilter}
@@ -63,7 +83,7 @@ export function AuditPage() {
             <EmptyState
               icon={<span>▦</span>}
               title="No entries found"
-              text={actionFilter ? 'No entries match that action filter.' : 'The audit log is empty.'}
+              text={(actionFilter || resourceTypeFilter) ? 'No entries match the selected filters.' : 'The audit log is empty.'}
             />
           ) : (
             <StyledTable
@@ -76,7 +96,7 @@ export function AuditPage() {
             </StyledTable>
           )}
 
-          {!isLoading && hasMore && !actionFilter && (
+          {!isLoading && hasMore && !actionFilter && !resourceTypeFilter && (
             <div style={styles.loadMoreWrap}>
               <button
                 type="button"

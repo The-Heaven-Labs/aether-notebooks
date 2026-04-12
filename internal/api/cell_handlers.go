@@ -218,6 +218,23 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 		s.upsertCellVersion(ctx, cellID, *req.Source)
 	}
 
+	// Log cell type change in version history and audit trail
+	if req.Type != nil {
+		typeNote := fmt.Sprintf("[type changed to %s]", *req.Type)
+		_ = s.upsertCellVersion(ctx, cellID, typeNote)
+		s.audit.Log(ctx, audit.Entry{
+			OrgID: claims.OrgID, UserID: claims.UserID,
+			Action: "cell.type_change", ResourceType: "cell", ResourceID: cellID,
+			Metadata: map[string]any{"new_type": *req.Type},
+		})
+	}
+	if req.Source != nil {
+		s.audit.Log(ctx, audit.Entry{
+			OrgID: claims.OrgID, UserID: claims.UserID,
+			Action: "cell.update", ResourceType: "cell", ResourceID: cellID,
+		})
+	}
+
 	writeJSON(w, http.StatusOK, cell)
 }
 

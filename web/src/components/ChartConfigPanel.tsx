@@ -7,6 +7,8 @@ export interface ChartConfig {
   title?: string
   showLegend?: boolean
   showGrid?: boolean
+  showLabels?: boolean
+  seriesColors?: Record<string, string>
 }
 
 interface ChartConfigPanelProps {
@@ -15,55 +17,152 @@ interface ChartConfigPanelProps {
   onChange: (config: ChartConfig) => void
 }
 
+const CHART_TYPES: { value: ChartConfig['chartType']; label: string; symbol: string }[] = [
+  { value: 'bar',         label: 'Bar',     symbol: '▊▊' },
+  { value: 'stacked_bar', label: 'Stack',   symbol: '▊≡' },
+  { value: 'line',        label: 'Line',    symbol: '╱╲' },
+  { value: 'area',        label: 'Area',    symbol: '◣◢' },
+  { value: 'scatter',     label: 'Scatter', symbol: '⠿⠿' },
+  { value: 'pie',         label: 'Pie',     symbol: '◕' },
+  { value: 'donut',       label: 'Donut',   symbol: '◎' },
+]
+
+export const DEFAULT_COLORS = ['#6366f1', '#22d3ee', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899']
+
 export function ChartConfigPanel({ config, columns, onChange }: ChartConfigPanelProps) {
   return (
     <div style={styles.panel}>
-      <div style={styles.field}>
-        <label htmlFor="chart-type" style={styles.label}>Chart type</label>
-        <select
-          id="chart-type"
-          style={styles.select}
-          value={config.chartType}
-          onChange={e => onChange({ ...config, chartType: e.target.value as ChartConfig['chartType'] })}
-        >
-          {(['bar', 'stacked_bar', 'line', 'area', 'scatter', 'pie', 'donut'] as const).map(t => (
-            <option key={t} value={t}>{t.replace('_', ' ')}</option>
+      {/* Chart type — visual tile picker */}
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Chart type</div>
+        <div style={styles.typeGrid}>
+          {CHART_TYPES.map(ct => (
+            <button
+              key={ct.value}
+              type="button"
+              title={ct.label}
+              onClick={() => onChange({ ...config, chartType: ct.value })}
+              style={{
+                ...styles.typeBtn,
+                ...(config.chartType === ct.value ? styles.typeBtnActive : {}),
+              }}
+            >
+              <span style={{ fontSize: 14, lineHeight: 1 }}>{ct.symbol}</span>
+              <span style={{ fontSize: 11, marginTop: 2, color: 'var(--text-primary)' }}>{ct.label}</span>
+            </button>
           ))}
-        </select>
+        </div>
       </div>
-      <div style={styles.field}>
-        <label htmlFor="chart-x-axis" style={styles.label}>X axis</label>
-        <select
-          id="chart-x-axis"
-          style={styles.select}
-          value={config.xAxis}
-          onChange={e => onChange({ ...config, xAxis: e.target.value })}
-        >
-          {columns.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
+
+      {/* Axes */}
+      <div style={styles.row}>
+        <div style={styles.section}>
+          <div style={styles.sectionLabel}>X axis</div>
+          <select
+            aria-label="X axis"
+            style={styles.select}
+            value={config.xAxis}
+            onChange={e => onChange({ ...config, xAxis: e.target.value })}
+          >
+            {columns.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div style={styles.section}>
+          <div style={styles.sectionLabel}>Y axis <span style={{ fontWeight: 400, textTransform: 'none' }}>(Ctrl+click multi)</span></div>
+          <select
+            aria-label="Y axis"
+            style={{ ...styles.select, minHeight: 56 }}
+            multiple
+            value={config.yAxis}
+            onChange={e => {
+              const selected = Array.from(e.target.selectedOptions).map(o => o.value)
+              onChange({ ...config, yAxis: selected })
+            }}
+          >
+            {columns.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
       </div>
-      <div style={{ ...styles.field, gridColumn: '1 / -1' }}>
-        <label htmlFor="chart-y-axis" style={styles.label}>Y axis</label>
-        <select
-          id="chart-y-axis"
-          multiple
-          style={styles.select}
-          value={config.yAxis}
-          onChange={e => {
-            const selected = Array.from(e.target.selectedOptions).map(o => o.value)
-            onChange({ ...config, yAxis: selected })
-          }}
-        >
-          {columns.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
+
+      {/* Per-series color pickers */}
+      {config.yAxis?.length > 0 && (
+        <div style={styles.section}>
+          <div style={styles.sectionLabel}>Series colors</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {config.yAxis.map((series, i) => {
+              const color = config.seriesColors?.[series] ?? DEFAULT_COLORS[i % DEFAULT_COLORS.length]
+              return (
+                <label key={series} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' }}>
+                  <input
+                    type="color"
+                    value={color}
+                    onChange={e => onChange({
+                      ...config,
+                      seriesColors: { ...config.seriesColors, [series]: e.target.value },
+                    })}
+                    style={{ width: 26, height: 20, padding: 1, border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer', background: 'none' }}
+                  />
+                  <span style={{ color: 'var(--text-secondary)' }}>{series}</span>
+                </label>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Display toggles */}
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Display</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {([
+            { key: 'showGrid',   label: 'Grid lines',  def: true },
+            { key: 'showLegend', label: 'Legend',       def: true },
+            { key: 'showLabels', label: 'Data labels',  def: false },
+          ] as const).map(opt => (
+            <label key={opt.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={(config[opt.key] as boolean | undefined) ?? opt.def}
+                onChange={e => onChange({ ...config, [opt.key]: e.target.checked })}
+                style={{ width: 14, height: 14, accentColor: 'var(--accent)', cursor: 'pointer' }}
+              />
+              <span style={{ color: 'var(--text-secondary)' }}>{opt.label}</span>
+            </label>
+          ))}
+        </div>
       </div>
     </div>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  panel: { borderTop: '1px solid var(--border)', padding: '10px 12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 },
-  field: { display: 'flex', flexDirection: 'column', gap: 4 },
-  label: { fontSize: 11, color: 'var(--text-muted)', fontWeight: 500 },
-  select: { fontSize: 12, border: '1px solid var(--border)', borderRadius: 4, padding: '3px 6px', background: 'var(--bg-primary)', color: 'var(--text-primary)' },
+  panel: {
+    borderTop: '1px solid var(--border)',
+    padding: '12px 14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
+    background: 'var(--bg-secondary)',
+  },
+  row: { display: 'flex', gap: 12 },
+  section: { display: 'flex', flexDirection: 'column', gap: 5, flex: 1 },
+  sectionLabel: {
+    fontSize: 10, fontWeight: 700, color: 'var(--text-muted)',
+    textTransform: 'uppercase', letterSpacing: '0.07em',
+  },
+  typeGrid: { display: 'flex', flexWrap: 'wrap', gap: 4 },
+  typeBtn: {
+    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+    width: 50, height: 40, border: '1px solid var(--border)', borderRadius: 4,
+    background: 'var(--bg-card)', cursor: 'pointer', color: 'var(--text-muted)',
+    padding: '4px 2px', fontFamily: 'var(--font-sans)',
+  },
+  typeBtnActive: {
+    background: 'var(--accent-light)', borderColor: 'var(--accent)', color: 'var(--accent)',
+  },
+  select: {
+    fontSize: 12, border: '1px solid var(--border)', borderRadius: 4,
+    padding: '4px 6px', background: 'var(--bg-input)', color: 'var(--text-primary)',
+    width: '100%',
+  },
 }

@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
 import { AppShell } from '../components/AppShell'
@@ -143,7 +143,7 @@ const inputStyles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     fontSize: 13,
     fontFamily: 'var(--font-sans)',
-    background: 'white',
+    background: 'var(--bg-input)',
     color: 'var(--text-primary)',
     width: '100%',
     boxSizing: 'border-box',
@@ -166,7 +166,7 @@ const inputStyles: Record<string, React.CSSProperties> = {
   },
 }
 
-function QueryWidget({ widget }: { widget: AnyWidget }) {
+function QueryWidget({ widget, qc }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient> }) {
   const { params } = useDashboardParams()
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -197,7 +197,27 @@ function QueryWidget({ widget }: { widget: AnyWidget }) {
   const cell = notebook?.cells?.find((c: Cell) => c.id === widget.cell_id)
   if (!cell) return <div style={queryWidgetStyles.empty}>Cell not found</div>
   if (!cell.outputs?.length) {
-    return <div style={queryWidgetStyles.empty}>No results yet — run the notebook first</div>
+    return (
+      <div style={queryWidgetStyles.empty}>
+        No data yet.{' '}
+        <button
+          style={{ color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, padding: 0 }}
+          onClick={() => {
+            const token = localStorage.getItem('hnb_token')
+            fetch(`/api/v1/notebooks/${widget.notebook_id}/cells/${widget.cell_id}/execute`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              },
+              body: JSON.stringify({ parameters: {} }),
+            }).then(() => qc.invalidateQueries({ queryKey: ['notebook', widget.notebook_id] }))
+          }}
+        >
+          Run cell
+        </button>
+      </div>
+    )
   }
   const fixedView = widget.type === 'chart' ? 'chart' : 'table'
   return <OutputRenderer outputs={cell.outputs} fixedView={fixedView} />
@@ -208,7 +228,7 @@ const queryWidgetStyles: Record<string, React.CSSProperties> = {
   empty: { padding: '16px', fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' },
 }
 
-function WidgetCard({ widget }: { widget: AnyWidget }) {
+function WidgetCard({ widget, qc }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient> }) {
   if (INPUT_WIDGET_TYPES.has(widget.type)) {
     return (
       <div style={styles.inputWidgetCard}>
@@ -218,12 +238,15 @@ function WidgetCard({ widget }: { widget: AnyWidget }) {
   }
   return (
     <div style={styles.widgetCard}>
-      <QueryWidget widget={widget} />
+      <QueryWidget widget={widget} qc={qc} />
     </div>
   )
 }
 
 function DashboardContent({ id }: { id: string }) {
+  const qc = useQueryClient()
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
   const { data: dashboard, isLoading, error } = useQuery({
     queryKey: ['dashboard', id],
     queryFn: () => api.get<DashboardWithWidgets>(`/api/v1/dashboards/${id}`),
@@ -234,6 +257,42 @@ function DashboardContent({ id }: { id: string }) {
     if (dashboard) document.title = `${dashboard.title} — Heaven's Notebooks`
     return () => { document.title = "Heaven's Notebooks" }
   }, [dashboard])
+
+  async function executeAllWidgets(widgetList: AnyWidget[]) {
+    const token = localStorage.getItem('hnb_token')
+    const queryWidgets = widgetList.filter(w => !INPUT_WIDGET_TYPES.has(w.type))
+    if (!queryWidgets.length) return
+    setIsRefreshing(true)
+    try {
+      await Promise.all(
+        queryWidgets
+          .filter(w => w.notebook_id && w.cell_id)
+          .map(w =>
+            fetch(`/api/v1/notebooks/${w.notebook_id}/cells/${w.cell_id}/execute`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              },
+              body: JSON.stringify({ parameters: {} }),
+            })
+          )
+      )
+      const notebookIds = [...new Set(queryWidgets.map(w => w.notebook_id).filter(Boolean))]
+      notebookIds.forEach(nbId => qc.invalidateQueries({ queryKey: ['notebook', nbId] }))
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
+  const widgets = (dashboard?.widgets ?? []) as AnyWidget[]
+  const refreshSeconds = dashboard?.settings?.auto_refresh_seconds ?? 0
+
+  useEffect(() => {
+    if (!refreshSeconds || refreshSeconds <= 0 || !widgets.length) return
+    const intervalId = setInterval(() => executeAllWidgets(widgets), refreshSeconds * 1000)
+    return () => clearInterval(intervalId)
+  }, [refreshSeconds, widgets])
 
   if (isLoading) {
     return (
@@ -253,7 +312,6 @@ function DashboardContent({ id }: { id: string }) {
     )
   }
 
-  const widgets = (dashboard.widgets ?? []) as AnyWidget[]
   const inputWidgets = widgets.filter((w) => INPUT_WIDGET_TYPES.has(w.type))
   const dataWidgets = widgets.filter((w) => !INPUT_WIDGET_TYPES.has(w.type))
 
@@ -268,6 +326,46 @@ function DashboardContent({ id }: { id: string }) {
           </Link>
           <span style={styles.breadcrumbSep}>/</span>
           <span style={styles.dashboardTitle}>{dashboard.title}</span>
+        </div>
+        {/* Run all + auto-refresh */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            style={{
+              padding: '5px 12px', fontSize: 12, fontWeight: 600,
+              background: 'var(--accent)', color: '#fff',
+              border: 'none', borderRadius: 4, cursor: 'pointer',
+              opacity: isRefreshing ? 0.6 : 1,
+            }}
+            disabled={isRefreshing}
+            onClick={() => executeAllWidgets(widgets)}
+            title="Execute all widget cells"
+          >
+            {isRefreshing ? 'Running…' : '▶ Run all'}
+          </button>
+
+          <select
+            style={{
+              fontSize: 12, padding: '4px 8px', border: '1px solid var(--border)',
+              borderRadius: 4, background: 'var(--bg-input)', color: 'var(--text-secondary)',
+              cursor: 'pointer',
+            }}
+            value={String(dashboard?.settings?.auto_refresh_seconds ?? 0)}
+            onChange={async e => {
+              const secs = parseInt(e.target.value)
+              await api.put(`/api/v1/dashboards/${id}`, {
+                settings: { ...dashboard?.settings, auto_refresh_seconds: secs },
+              })
+              qc.invalidateQueries({ queryKey: ['dashboard', id] })
+            }}
+            title="Auto-refresh interval"
+            aria-label="Auto-refresh interval"
+          >
+            <option value="0">No auto-refresh</option>
+            <option value="30">Every 30s</option>
+            <option value="60">Every 1m</option>
+            <option value="300">Every 5m</option>
+            <option value="600">Every 10m</option>
+          </select>
         </div>
       </header>
 
@@ -292,7 +390,7 @@ function DashboardContent({ id }: { id: string }) {
         ) : dataWidgets.length === 0 ? null : (
           <div style={styles.grid}>
             {dataWidgets.map((widget) => (
-              <WidgetCard key={widget.id} widget={widget} />
+              <WidgetCard key={widget.id} widget={widget} qc={qc} />
             ))}
           </div>
         )}

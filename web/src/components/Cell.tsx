@@ -100,7 +100,7 @@ const markdownComponents = {
     const text = children?.toString() || ''
     const id = slugify(text)
     return (
-      <h1 id={id} style={{ paddingRight: 0, ...props }}>
+      <h1 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
         {children}
       </h1>
     )
@@ -109,7 +109,7 @@ const markdownComponents = {
     const text = children?.toString() || ''
     const id = slugify(text)
     return (
-      <h2 id={id} style={{ paddingRight: 0, ...props }}>
+      <h2 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
         {children}
       </h2>
     )
@@ -118,7 +118,7 @@ const markdownComponents = {
     const text = children?.toString() || ''
     const id = slugify(text)
     return (
-      <h3 id={id} style={{ paddingRight: 0, ...props }}>
+      <h3 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
         {children}
       </h3>
     )
@@ -127,7 +127,7 @@ const markdownComponents = {
     const text = children?.toString() || ''
     const id = slugify(text)
     return (
-      <h4 id={id} style={{ paddingRight: 0, ...props }}>
+      <h4 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
         {children}
       </h4>
     )
@@ -136,7 +136,7 @@ const markdownComponents = {
     const text = children?.toString() || ''
     const id = slugify(text)
     return (
-      <h5 id={id} style={{ paddingRight: 0, ...props }}>
+      <h5 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
         {children}
       </h5>
     )
@@ -145,7 +145,7 @@ const markdownComponents = {
     const text = children?.toString() || ''
     const id = slugify(text)
     return (
-      <h6 id={id} style={{ paddingRight: 0, ...props }}>
+      <h6 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
         {children}
       </h6>
     )
@@ -553,7 +553,7 @@ export function Cell({
       {/* ── Output ── */}
       {isCode && cell.outputs.length > 0 && (
         <div style={styles.outputWrap}>
-          <OutputRenderer outputs={cell.outputs} />
+          <OutputRenderer outputs={cell.outputs} cellId={cell.id ?? undefined} />
         </div>
       )}
 
