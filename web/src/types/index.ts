@@ -85,7 +85,7 @@ export interface Dashboard {
   id: string
   org_id: string
   title: string
-  settings: { refresh_interval?: number }
+  settings: { refresh_interval?: number; auto_refresh_seconds?: number }
   public_token?: string
   folder_id?: string
   created_by: string
