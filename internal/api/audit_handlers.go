@@ -28,6 +28,7 @@ func (s *Server) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
 		Action:       q.Get("action"),
 		UserID:       q.Get("user_id"),
 		ResourceType: q.Get("resource_type"),
+		ResourceID:   q.Get("resource_id"),
 	}
 
 	entries, err := s.audit.Query(ctx, params)

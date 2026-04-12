@@ -235,9 +235,17 @@ export function HomePage() {
   const qc = useQueryClient()
   const { user } = useAuth()
   const [filter, setFilter] = useState<'all' | 'mine'>('all')
+  const [searchQuery, setSearchQuery] = useState('')
 
   const filterItems = <T extends { created_by: string }>(items: T[]): T[] =>
     filter === 'mine' ? items.filter(i => i.created_by === user?.user_id) : items
+
+  const { data: recentItems = [] } = useQuery<Array<{
+    id: string; type: string; name: string; updated_at: string
+  }>>({
+    queryKey: ['recent'],
+    queryFn: () => api.get('/api/v1/recent'),
+  })
 
   const [creating, setCreating] = useState<null | 'folder' | 'notebook' | 'dashboard'>(null)
   const [newName, setNewName] = useState('')
@@ -349,11 +357,25 @@ export function HomePage() {
 
   // ── Handlers ──
 
+  const q = searchQuery.trim().toLowerCase()
+  const searchFolders = q
+    ? (data?.folders ?? []).filter(f => f.name.toLowerCase().includes(q))
+    : data?.folders ?? []
+  const searchNotebooks = q
+    ? (data?.notebooks ?? []).filter(nb => nb.title.toLowerCase().includes(q))
+    : data?.notebooks ?? []
+  const searchConnectors = q
+    ? (data?.connectors ?? []).filter(c => c.name.toLowerCase().includes(q))
+    : data?.connectors ?? []
+  const searchDashboards = q
+    ? (data?.dashboards ?? []).filter(d => d.title.toLowerCase().includes(q))
+    : data?.dashboards ?? []
+
   const isEmpty = data &&
-    data.folders.length === 0 &&
-    data.notebooks.length === 0 &&
-    data.connectors.length === 0 &&
-    data.dashboards.length === 0
+    searchFolders.length === 0 &&
+    searchNotebooks.length === 0 &&
+    searchConnectors.length === 0 &&
+    searchDashboards.length === 0
 
   const handleCreate = () => {
     if (!newName.trim()) return
@@ -426,6 +448,18 @@ export function HomePage() {
           ))}
         </div>
 
+        {/* Search bar */}
+        <div style={{ marginBottom: 12 }}>
+          <input
+            style={s.searchInput}
+            type="search"
+            placeholder="Search by name…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            aria-label="Search files"
+          />
+        </div>
+
         {/* Breadcrumb */}
         <div style={s.breadcrumb}>
           <button style={s.crumbBtn} onClick={() => setSearchParams({})}>
@@ -441,6 +475,40 @@ export function HomePage() {
             </span>
           ))}
         </div>
+
+        {/* Recent section — root only, no active search */}
+        {!folderID && !searchQuery && recentItems.length > 0 && (
+          <section style={{ ...s.section, marginBottom: 20 }}>
+            <div style={s.sectionLabel}>Recent</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {recentItems.slice(0, 5).map((item) => {
+                const href = item.type === 'notebook'
+                  ? `/notebooks/${item.id}`
+                  : item.type === 'dashboard'
+                  ? `/dashboards/${item.id}`
+                  : `/connectors`
+                const icon = item.type === 'notebook'
+                  ? <BookOpen size={12} style={{ flexShrink: 0 }} />
+                  : item.type === 'dashboard'
+                  ? <LayoutDashboard size={12} style={{ flexShrink: 0 }} />
+                  : <Database size={12} style={{ flexShrink: 0 }} />
+                return (
+                  <button
+                    key={`${item.type}-${item.id}`}
+                    style={s.recentChip}
+                    onClick={() => navigate(href)}
+                    title={item.name}
+                  >
+                    {icon}
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, maxWidth: 160 }}>
+                      {item.name}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+        )}
 
         {/* Toolbar */}
         <div style={s.toolbar}>
@@ -492,11 +560,11 @@ export function HomePage() {
         )}
 
         {/* Folders */}
-        {data && filterItems(data.folders).length > 0 && (
+        {data && filterItems(searchFolders).length > 0 && (
           <section style={s.section}>
             <div style={s.sectionLabel}>Folders</div>
             <div style={s.folderGrid}>
-              {filterItems(data.folders).map((f) => (
+              {filterItems(searchFolders).map((f) => (
                 <div key={f.id} style={s.folderCard} className="card-hover">
                   {renaming?.id === f.id ? (
                     <div style={{ flex: 1, padding: '4px 8px' }}>
@@ -543,11 +611,11 @@ export function HomePage() {
         )}
 
         {/* Notebooks */}
-        {data && filterItems(data.notebooks).length > 0 && (
+        {data && filterItems(searchNotebooks).length > 0 && (
           <section style={s.section}>
             <div style={s.sectionLabel}>Notebooks</div>
             <div style={s.list}>
-              {filterItems(data.notebooks).map((nb) => (
+              {filterItems(searchNotebooks).map((nb) => (
                 <div key={nb.id} style={s.item}>
                   {renaming?.id === nb.id ? (
                     <div style={{ flex: 1 }}>
@@ -593,11 +661,11 @@ export function HomePage() {
         )}
 
         {/* Connectors */}
-        {data && data.connectors.length > 0 && (
+        {data && searchConnectors.length > 0 && (
           <section style={s.section}>
             <div style={s.sectionLabel}>Connectors</div>
             <div style={s.list}>
-              {data.connectors.map((c) => (
+              {searchConnectors.map((c) => (
                 <div key={c.id} style={s.item}>
                   <Link to={`/connectors?edit=${c.id}`} style={s.itemLink}>
                     <Database size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
@@ -631,11 +699,11 @@ export function HomePage() {
         )}
 
         {/* Dashboards */}
-        {data && filterItems(data.dashboards).length > 0 && (
+        {data && filterItems(searchDashboards).length > 0 && (
           <section style={s.section}>
             <div style={s.sectionLabel}>Dashboards</div>
             <div style={s.list}>
-              {filterItems(data.dashboards).map((d) => (
+              {filterItems(searchDashboards).map((d) => (
                 <div key={d.id} style={s.item}>
                   <Link to={`/dashboards/${d.id}`} style={s.itemLink}>
                     <LayoutDashboard size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
@@ -719,6 +787,8 @@ const s: Record<string, React.CSSProperties> = {
   itemLink: { flex: 1, display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', minWidth: 0 },
   itemName: { fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, flex: 1 },
   renameInput: { width: '100%', padding: '5px 8px', border: '1px solid var(--accent)', borderRadius: 3, fontSize: 13, outline: 'none' },
+  searchInput: { width: '100%', maxWidth: 320, padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, outline: 'none', background: 'var(--bg-input)', color: 'var(--text-primary)' },
+  recentChip: { display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' },
 }
 
 // ─── Context menu + modal styles ─────────────────────────────────────────────

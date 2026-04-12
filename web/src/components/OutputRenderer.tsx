@@ -7,21 +7,22 @@ import { ToggleLeft, Calendar, Clock, Fingerprint, Ban, Binary, Table, BarChart2
 interface Props {
   outputs: Output[]
   fixedView?: 'table' | 'chart'
+  cellId?: string
 }
 
-export function OutputRenderer({ outputs, fixedView }: Props) {
+export function OutputRenderer({ outputs, fixedView, cellId }: Props) {
   if (!outputs || outputs.length === 0) return null
 
   return (
     <div style={styles.container}>
       {outputs.map((out, i) => (
-        <OutputItem key={i} output={out} fixedView={fixedView} />
+        <OutputItem key={i} output={out} fixedView={fixedView} cellId={cellId} />
       ))}
     </div>
   )
 }
 
-function OutputItem({ output, fixedView }: { output: Output; fixedView?: 'table' | 'chart' }) {
+function OutputItem({ output, fixedView, cellId }: { output: Output; fixedView?: 'table' | 'chart'; cellId?: string }) {
   if (output.type === 'error') {
     return (
       <div style={styles.errorWrap}>
@@ -38,7 +39,7 @@ function OutputItem({ output, fixedView }: { output: Output; fixedView?: 'table'
   if (output.type === 'table') {
     const rs = output.data as ResultSet
     if (!rs?.columns?.length) return <p style={styles.empty}>No results returned</p>
-    return <TableOutput rs={rs} fixedView={fixedView} />
+    return <TableOutput rs={rs} fixedView={fixedView} cellId={cellId} />
   }
 
   return null
@@ -111,8 +112,21 @@ const typeIconStyles: Record<string, React.CSSProperties> = {
   },
 }
 
-function TableOutput({ rs, fixedView }: { rs: ResultSet; fixedView?: 'table' | 'chart' }) {
-  const [view, setView] = useState<'table' | 'chart'>(fixedView ?? 'table')
+function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string }) {
+  const storageKey = cellId ? `hnb_cell_view_${cellId}` : null
+  const [view, setView] = useState<'table' | 'chart'>(() => {
+    if (fixedView) return fixedView
+    if (storageKey) {
+      const saved = localStorage.getItem(storageKey)
+      if (saved === 'chart' || saved === 'table') return saved
+    }
+    return 'table'
+  })
+
+  const handleViewChange = (v: 'table' | 'chart') => {
+    setView(v)
+    if (storageKey) localStorage.setItem(storageKey, v)
+  }
 
   return (
     <div style={styles.tableSection}>
@@ -124,13 +138,13 @@ function TableOutput({ rs, fixedView }: { rs: ResultSet; fixedView?: 'table' | '
           <div style={styles.viewToggle}>
             <button
               style={{ ...styles.viewBtn, ...(view === 'table' ? styles.viewBtnActive : {}), display: 'flex', alignItems: 'center', gap: 4 }}
-              onClick={() => setView('table')}
+              onClick={() => handleViewChange('table')}
             >
               <Table size={12} /> Table
             </button>
             <button
               style={{ ...styles.viewBtn, ...(view === 'chart' ? styles.viewBtnActive : {}), display: 'flex', alignItems: 'center', gap: 4 }}
-              onClick={() => setView('chart')}
+              onClick={() => handleViewChange('chart')}
             >
               <BarChart2 size={12} /> Chart
             </button>
