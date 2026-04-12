@@ -669,8 +669,13 @@ export function HomePage() {
                 <div key={c.id} style={s.item}>
                   <Link to={`/connectors?edit=${c.id}`} style={s.itemLink}>
                     <Database size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                    <span style={s.itemName}>{c.name}</span>
-                    {c.is_default && <span style={s.badge}>default</span>}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={s.itemName}>{c.name}</span>
+                        {c.is_default && <span style={s.badge}>default</span>}
+                      </div>
+                      <MetaLine createdBy={memberName(c.created_by)} createdAt={c.created_at} />
+                    </div>
                   </Link>
                   <div style={{ position: 'relative' }}>
                     <button
