@@ -158,6 +158,8 @@ export interface FolderContents {
     type: string
     is_default?: boolean
     folder_id?: string
+    created_by: string
+    created_at: string
   }>
   dashboards: Dashboard[]
 }
