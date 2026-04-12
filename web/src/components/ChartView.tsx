@@ -35,54 +35,38 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
   const xAxis = cfg.xAxis || columns[0] || ''
   const yAxes = cfg.yAxis?.length ? cfg.yAxis : columns.slice(1, 2)
 
+  const savedConfig = (() => {
+    if (!onConfigChange && cellId) {
+      try {
+        const saved = localStorage.getItem(`hnb_chart_config_${cellId}`)
+        return saved ? (JSON.parse(saved) as ChartConfig) : null
+      } catch { /* ignore */ }
+    }
+    return null
+  })()
+
   const [showConfig, setShowConfig] = useState(false)
 
   // Local state for legacy (rs-only) mode where no onConfigChange is provided
-  const [localChartType, setLocalChartType] = useState<ChartConfig['chartType']>(() => {
-    if (!onConfigChange && cellId) {
-      try {
-        const saved = localStorage.getItem(`hnb_chart_config_${cellId}`)
-        if (saved) return (JSON.parse(saved) as ChartConfig).chartType ?? cfg.chartType ?? 'bar'
-      } catch { /* ignore */ }
-    }
-    return cfg.chartType ?? 'bar'
-  })
-  const [localXAxis, setLocalXAxis] = useState<string>(() => {
-    if (!onConfigChange && cellId) {
-      try {
-        const saved = localStorage.getItem(`hnb_chart_config_${cellId}`)
-        if (saved) return (JSON.parse(saved) as ChartConfig).xAxis ?? xAxis
-      } catch { /* ignore */ }
-    }
-    return xAxis
-  })
-  const [localYAxes, setLocalYAxes] = useState<string[]>(() => {
-    if (!onConfigChange && cellId) {
-      try {
-        const saved = localStorage.getItem(`hnb_chart_config_${cellId}`)
-        if (saved) return (JSON.parse(saved) as ChartConfig).yAxis ?? yAxes
-      } catch { /* ignore */ }
-    }
-    return yAxes
-  })
+  const [localChartType, setLocalChartType] = useState<ChartConfig['chartType']>(() =>
+    savedConfig?.chartType ?? cfg.chartType ?? 'bar'
+  )
+  const [localXAxis, setLocalXAxis] = useState<string>(() =>
+    savedConfig?.xAxis ?? xAxis
+  )
+  const [localYAxes, setLocalYAxes] = useState<string[]>(() =>
+    savedConfig?.yAxis ?? yAxes
+  )
 
-  const persistedExtras = (() => {
-    if (!onConfigChange && cellId) {
-      try {
-        const saved = localStorage.getItem(`hnb_chart_config_${cellId}`)
-        if (saved) {
-          const p = JSON.parse(saved) as ChartConfig
-          return {
-            showLegend: p.showLegend,
-            showGrid: p.showGrid,
-            showLabels: p.showLabels,
-            seriesColors: p.seriesColors,
-          }
-        }
-      } catch { /* ignore */ }
-    }
-    return {}
-  })()
+  const persistedExtras = savedConfig
+    ? {
+        showLegend: savedConfig.showLegend,
+        showGrid: savedConfig.showGrid,
+        showLabels: savedConfig.showLabels,
+        seriesColors: savedConfig.seriesColors,
+        title: savedConfig.title,
+      }
+    : {}
 
   const effectiveConfig: ChartConfig = onConfigChange
     ? cfg
