@@ -22,9 +22,11 @@ interface ChartViewProps {
   /** Legacy API: pass a ResultSet directly (used by OutputRenderer) */
   rs?: ResultSet
   onConfigChange?: (config: ChartConfig) => void
+  /** When provided and no onConfigChange, config is persisted to localStorage */
+  cellId?: string
 }
 
-export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
+export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps) {
   // Normalise data source — either from output.data or from legacy rs prop
   const data = output?.data ?? (rs ? { columns: rs.columns, rows: rs.rows } : undefined)
   const columns = data?.columns?.map(c => c.name) ?? []
@@ -36,13 +38,55 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
   const [showConfig, setShowConfig] = useState(false)
 
   // Local state for legacy (rs-only) mode where no onConfigChange is provided
-  const [localChartType, setLocalChartType] = useState<ChartConfig['chartType']>(cfg.chartType ?? 'bar')
-  const [localXAxis, setLocalXAxis] = useState(xAxis)
-  const [localYAxes, setLocalYAxes] = useState<string[]>(yAxes)
+  const [localChartType, setLocalChartType] = useState<ChartConfig['chartType']>(() => {
+    if (!onConfigChange && cellId) {
+      try {
+        const saved = localStorage.getItem(`hnb_chart_config_${cellId}`)
+        if (saved) return (JSON.parse(saved) as ChartConfig).chartType ?? cfg.chartType ?? 'bar'
+      } catch { /* ignore */ }
+    }
+    return cfg.chartType ?? 'bar'
+  })
+  const [localXAxis, setLocalXAxis] = useState<string>(() => {
+    if (!onConfigChange && cellId) {
+      try {
+        const saved = localStorage.getItem(`hnb_chart_config_${cellId}`)
+        if (saved) return (JSON.parse(saved) as ChartConfig).xAxis ?? xAxis
+      } catch { /* ignore */ }
+    }
+    return xAxis
+  })
+  const [localYAxes, setLocalYAxes] = useState<string[]>(() => {
+    if (!onConfigChange && cellId) {
+      try {
+        const saved = localStorage.getItem(`hnb_chart_config_${cellId}`)
+        if (saved) return (JSON.parse(saved) as ChartConfig).yAxis ?? yAxes
+      } catch { /* ignore */ }
+    }
+    return yAxes
+  })
+
+  const persistedExtras = (() => {
+    if (!onConfigChange && cellId) {
+      try {
+        const saved = localStorage.getItem(`hnb_chart_config_${cellId}`)
+        if (saved) {
+          const p = JSON.parse(saved) as ChartConfig
+          return {
+            showLegend: p.showLegend,
+            showGrid: p.showGrid,
+            showLabels: p.showLabels,
+            seriesColors: p.seriesColors,
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    return {}
+  })()
 
   const effectiveConfig: ChartConfig = onConfigChange
     ? cfg
-    : { chartType: localChartType, xAxis: localXAxis, yAxis: localYAxes }
+    : { chartType: localChartType, xAxis: localXAxis, yAxis: localYAxes, ...persistedExtras }
 
   const getColor = (series: string, index: number): string =>
     effectiveConfig.seriesColors?.[series] ?? DEFAULT_COLORS[index % DEFAULT_COLORS.length]
@@ -57,6 +101,11 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
       setLocalChartType(newCfg.chartType)
       setLocalXAxis(newCfg.xAxis)
       setLocalYAxes(newCfg.yAxis)
+      if (cellId) {
+        try {
+          localStorage.setItem(`hnb_chart_config_${cellId}`, JSON.stringify(newCfg))
+        } catch { /* ignore */ }
+      }
     }
   }
 
