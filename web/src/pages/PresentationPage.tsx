@@ -1,79 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import type React from 'react'
 import { useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import { OutputRenderer } from '../components/OutputRenderer'
 import type { Notebook, Cell, Output } from '../types'
-
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/\s+/g, '-')
-    .replace(/[^\w-]/g, '')
-}
-
-const markdownComponents = {
-  h1: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
-    const text = children?.toString() || ''
-    const id = slugify(text)
-    return (
-      <h1 id={id} {...props}>
-        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
-        {children}
-      </h1>
-    )
-  },
-  h2: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
-    const text = children?.toString() || ''
-    const id = slugify(text)
-    return (
-      <h2 id={id} {...props}>
-        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
-        {children}
-      </h2>
-    )
-  },
-  h3: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
-    const text = children?.toString() || ''
-    const id = slugify(text)
-    return (
-      <h3 id={id} {...props}>
-        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
-        {children}
-      </h3>
-    )
-  },
-  h4: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
-    const text = children?.toString() || ''
-    const id = slugify(text)
-    return (
-      <h4 id={id} {...props}>
-        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
-        {children}
-      </h4>
-    )
-  },
-  h5: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
-    const text = children?.toString() || ''
-    const id = slugify(text)
-    return (
-      <h5 id={id} {...props}>
-        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
-        {children}
-      </h5>
-    )
-  },
-  h6: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
-    const text = children?.toString() || ''
-    const id = slugify(text)
-    return (
-      <h6 id={id} {...props}>
-        <a href={`#${id}`} style={styles.headerAnchor}>#</a>
-        {children}
-      </h6>
-    )
-  },
-}
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -128,7 +57,7 @@ export function PresentationPage() {
           {currentSlide.map((cell) => (
             cell.type === 'text' ? (
               <div key={cell.id} style={styles.markdownSlide}>
-                <ReactMarkdown components={markdownComponents}>{cell.source}</ReactMarkdown>
+                <ReactMarkdown>{cell.source}</ReactMarkdown>
               </div>
             ) : (
               <div key={cell.id} style={styles.codeSlide}>
@@ -202,15 +131,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 24,
     lineHeight: 1.6,
     color: '#f0f0f0',
-  },
-  headerAnchor: {
-    color: '#666',
-    textDecoration: 'none',
-    marginRight: 8,
-    opacity: 0,
-    transition: 'opacity 0.15s',
-    fontFamily: 'var(--font-mono, monospace)',
-    fontSize: '0.85em',
   },
   codeSlide: {
     background: '#1a1a1a',
