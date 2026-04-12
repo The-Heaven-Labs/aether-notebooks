@@ -106,6 +106,15 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		_, err = tx.Exec(ctx,
+			`INSERT INTO groups (org_id, name) VALUES ($1, 'Everyone') ON CONFLICT DO NOTHING`,
+			orgID,
+		)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create everyone group")
+			return
+		}
+
 		if err := tx.Commit(ctx); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to commit")
 			return

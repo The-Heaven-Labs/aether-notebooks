@@ -49,6 +49,21 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 	}
 	rows.Close()
 
+	// Include "Everyone" groups: any org member implicitly belongs to these.
+	everyoneRows, err := s.db.Pool.Query(ctx, `SELECT id FROM groups WHERE org_id = $1 AND name = 'Everyone'`, orgID)
+	if err != nil {
+		return false, fmt.Errorf("everyone group query: %w", err)
+	}
+	for everyoneRows.Next() {
+		var gid string
+		if err := everyoneRows.Scan(&gid); err != nil {
+			everyoneRows.Close()
+			return false, fmt.Errorf("scan everyone group_id: %w", err)
+		}
+		groupIDs = append(groupIDs, gid)
+	}
+	everyoneRows.Close()
+
 	// 2. ACL entries directly on the resource (specificity = -1)
 	var candidates []aclCandidate
 	resRows, err := s.db.Pool.Query(ctx,

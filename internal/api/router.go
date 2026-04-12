@@ -129,6 +129,9 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/connectors/{id}/schema", authMW(http.HandlerFunc(s.handleConnectorSchema)))
 	s.mux.Handle("GET /api/v1/connectors/{id}/databases", authMW(http.HandlerFunc(s.handleListConnectorDatabases)))
 
+	// Recent route
+	s.mux.Handle("GET /api/v1/recent", authMW(http.HandlerFunc(s.handleGetRecent)))
+
 	// Folder routes
 	s.mux.Handle("GET /api/v1/folders", authMW(http.HandlerFunc(s.handleListRootContents)))
 	s.mux.Handle("GET /api/v1/folders/{id}", authMW(s.requirePermission("folder", "id", "view")(http.HandlerFunc(s.handleGetFolderContents))))

@@ -30,7 +30,9 @@ describe('Root view (T2.1)', () => {
 
   test('shows notebooks from root contents', async () => {
     renderWithProviders(<HomePage />)
-    expect(await screen.findByText('Root Notebook')).toBeInTheDocument()
+    // 'Root Notebook' may appear in both the Recent chips and the Notebooks section
+    const matches = await screen.findAllByText('Root Notebook')
+    expect(matches.length).toBeGreaterThan(0)
   })
 
   test('shows New Folder, New Notebook, New Dashboard toolbar buttons', async () => {
