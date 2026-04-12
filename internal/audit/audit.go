@@ -27,6 +27,7 @@ type QueryParams struct {
 	UserID       string
 	Action       string
 	ResourceType string
+	ResourceID   string
 	Limit        int
 	Offset       int
 }
@@ -98,6 +99,11 @@ func (l *Logger) Query(ctx context.Context, p QueryParams) ([]Entry, error) {
 	if p.ResourceType != "" {
 		query += fmt.Sprintf(" AND al.resource_type = $%d", argN)
 		args = append(args, p.ResourceType)
+		argN++
+	}
+	if p.ResourceID != "" {
+		query += fmt.Sprintf(" AND al.resource_id = $%d", argN)
+		args = append(args, p.ResourceID)
 		argN++
 	}
 
