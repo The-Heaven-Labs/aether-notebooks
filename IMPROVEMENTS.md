@@ -1,14 +1,14 @@
 - [x] In the filesystem view, there should be some part dedicated to "recent"; *(batch 2)*
 - [x] In the filesystem view, there should be some part that could search for notebooks via name or some part of the content; *(batch 2)*
-- In the filesystem view, there should be filters, like "things created by me" and similar
-- The Profile menu should appear when you click in the avatar/Name on the top right, not as a potential menu on the left sidebar;
-- The current user group appear as a label on the side of the Groups sidebar link. The list of groups someone belongs should appear in the profile instead;
+- [x] In the filesystem view, there should be filters, like "things created by me" and similar *(batch 1)*
+- [x] The Profile menu should appear when you click in the avatar/Name on the top right, not as a potential menu on the left sidebar; *(batch 1)*
+- [x] The current user group appear as a label on the side of the Groups sidebar link. The list of groups someone belongs should appear in the profile instead; *(batch 1)*
 - [x] In the chart config, there should be options to show labels, and to change colors of things *(batch 2)*
 - [x] There is a menu for dashboards and connectors, but there is also a menu for notebooks that shows dashboards and connectors aswell. This is confusing. *(batch 2 — renamed nav to "Home")*
-- The new groups UI looks amazing, however, it is not the same visual style as other parts of the project. Create new components for the older parts of the project in this style within storybook so I can take a look and choose what I deem better;
+- [x] The new groups UI looks amazing, however, it is not the same visual style as other parts of the project. Create new components for the older parts of the project in this style within storybook so I can take a look and choose what I deem better; *(batch 3)*
 - [x] The dark theme is just not implemented well. Do a complete quality implementation of a dark theme. Dont use colors that are too contrastant, e.g. #000000 or #FFFFFF, but some pastel easier on the eyes colors *(batch 2)*
 - [x] When adding widgets to a dashboard, the components come in a "non-executed" state that has no data, evne markdown ones, asking to execute the notebook, but there is no option to execute anything; *(batch 2)*
-- In the filesystem views, the list should list not only the name, but who created and creation date. Optionally last update if you think it won't clutter things too much
+- [x] In the filesystem views, the list should list not only the name, but who created and creation date. Optionally last update if you think it won't clutter things too much *(batch 3)*
 - [x] There should be a default group "Everyone" or "All", for when someone wants to give permission to everyone regardless of what groups they have; *(batch 2)*
 - [x] In the permissions menu there should be default configs for None, viewer, editor and admin which will tick different specific permissions, e.g. editor can view, use, edit, but not share and delete in the case of a connector; *(batch 1)*
 - [x] I can't edit an already created connector via UI *(batch 1)*
@@ -18,6 +18,6 @@
 - [x] There is no easy way to track cell updates from audit trail *(batch 2)*
 - [x] When I click in one connector listed in the filesystem, it simply takes me to the /connectors pages since there is no edit for connectors *(batch 1)*
 - [x] In the profile page, saving doesn't give user feedback that it worked or failed; *(batch 2)*
-- In the chart view, when switching between chart types, the selection is not persisted — when I close and re-open the same cell I lose my chart config; *(batch 2 — localStorage persistence per cell)*
+- [x] In the chart view, when switching between chart types, the selection is not persisted — when I close and re-open the same cell I lose my chart config; *(batch 3 — full config persisted to localStorage per cell)*
 - [x] The chart config panel UX is bad. Redesign it to have a visual chart type selector with icons *(batch 2)*
 - [x] In the presentation view the headings should not have those # anchor links shown, it breaks the UX *(batch 2)*
