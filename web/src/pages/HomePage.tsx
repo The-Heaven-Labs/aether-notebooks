@@ -372,10 +372,10 @@ export function HomePage() {
     : data?.dashboards ?? []
 
   const isEmpty = data &&
-    searchFolders.length === 0 &&
-    searchNotebooks.length === 0 &&
-    searchConnectors.length === 0 &&
-    searchDashboards.length === 0
+    filterItems(searchFolders).length === 0 &&
+    filterItems(searchNotebooks).length === 0 &&
+    filterItems(searchConnectors).length === 0 &&
+    filterItems(searchDashboards).length === 0
 
   const handleCreate = () => {
     if (!newName.trim()) return
@@ -661,16 +661,21 @@ export function HomePage() {
         )}
 
         {/* Connectors */}
-        {data && searchConnectors.length > 0 && (
+        {data && filterItems(searchConnectors).length > 0 && (
           <section style={s.section}>
             <div style={s.sectionLabel}>Connectors</div>
             <div style={s.list}>
-              {searchConnectors.map((c) => (
+              {filterItems(searchConnectors).map((c) => (
                 <div key={c.id} style={s.item}>
                   <Link to={`/connectors?edit=${c.id}`} style={s.itemLink}>
                     <Database size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                    <span style={s.itemName}>{c.name}</span>
-                    {c.is_default && <span style={s.badge}>default</span>}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={s.itemName}>{c.name}</span>
+                        {c.is_default && <span style={s.badge}>default</span>}
+                      </div>
+                      <MetaLine createdBy={memberName(c.created_by)} createdAt={c.created_at} />
+                    </div>
                   </Link>
                   <div style={{ position: 'relative' }}>
                     <button

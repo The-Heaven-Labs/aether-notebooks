@@ -22,9 +22,11 @@ interface ChartViewProps {
   /** Legacy API: pass a ResultSet directly (used by OutputRenderer) */
   rs?: ResultSet
   onConfigChange?: (config: ChartConfig) => void
+  /** When provided and no onConfigChange, config is persisted to localStorage */
+  cellId?: string
 }
 
-export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
+export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps) {
   // Normalise data source — either from output.data or from legacy rs prop
   const data = output?.data ?? (rs ? { columns: rs.columns, rows: rs.rows } : undefined)
   const columns = data?.columns?.map(c => c.name) ?? []
@@ -33,16 +35,42 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
   const xAxis = cfg.xAxis || columns[0] || ''
   const yAxes = cfg.yAxis?.length ? cfg.yAxis : columns.slice(1, 2)
 
+  const savedConfig = (() => {
+    if (!onConfigChange && cellId) {
+      try {
+        const saved = localStorage.getItem(`hnb_chart_config_${cellId}`)
+        return saved ? (JSON.parse(saved) as ChartConfig) : null
+      } catch { /* ignore */ }
+    }
+    return null
+  })()
+
   const [showConfig, setShowConfig] = useState(false)
 
   // Local state for legacy (rs-only) mode where no onConfigChange is provided
-  const [localChartType, setLocalChartType] = useState<ChartConfig['chartType']>(cfg.chartType ?? 'bar')
-  const [localXAxis, setLocalXAxis] = useState(xAxis)
-  const [localYAxes, setLocalYAxes] = useState<string[]>(yAxes)
+  const [localChartType, setLocalChartType] = useState<ChartConfig['chartType']>(() =>
+    savedConfig?.chartType ?? cfg.chartType ?? 'bar'
+  )
+  const [localXAxis, setLocalXAxis] = useState<string>(() =>
+    savedConfig?.xAxis ?? xAxis
+  )
+  const [localYAxes, setLocalYAxes] = useState<string[]>(() =>
+    savedConfig?.yAxis ?? yAxes
+  )
+
+  const persistedExtras = savedConfig
+    ? {
+        showLegend: savedConfig.showLegend,
+        showGrid: savedConfig.showGrid,
+        showLabels: savedConfig.showLabels,
+        seriesColors: savedConfig.seriesColors,
+        title: savedConfig.title,
+      }
+    : {}
 
   const effectiveConfig: ChartConfig = onConfigChange
     ? cfg
-    : { chartType: localChartType, xAxis: localXAxis, yAxis: localYAxes }
+    : { chartType: localChartType, xAxis: localXAxis, yAxis: localYAxes, ...persistedExtras }
 
   const getColor = (series: string, index: number): string =>
     effectiveConfig.seriesColors?.[series] ?? DEFAULT_COLORS[index % DEFAULT_COLORS.length]
@@ -57,6 +85,11 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
       setLocalChartType(newCfg.chartType)
       setLocalXAxis(newCfg.xAxis)
       setLocalYAxes(newCfg.yAxis)
+      if (cellId) {
+        try {
+          localStorage.setItem(`hnb_chart_config_${cellId}`, JSON.stringify(newCfg))
+        } catch { /* ignore */ }
+      }
     }
   }
 

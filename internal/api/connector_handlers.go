@@ -71,10 +71,10 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		err = tx.QueryRow(ctx,
-			`INSERT INTO connectors (org_id, name, type, config_encrypted, is_default, folder_id)
-			 VALUES ($1, $2, $3, $4, $5, $6)
+			`INSERT INTO connectors (org_id, name, type, config_encrypted, is_default, folder_id, created_by)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7)
 			 RETURNING id, org_id, name, type, max_rows, timeout_seconds, is_default, folder_id`,
-			claims.OrgID, req.Name, req.Type, encrypted, true, req.FolderID,
+			claims.OrgID, req.Name, req.Type, encrypted, true, req.FolderID, claims.UserID,
 		).Scan(&id, &orgID, &name, &connType, &maxRows, &timeout, &isDefault, &folderID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create connector")
@@ -86,10 +86,10 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		err = s.db.Pool.QueryRow(ctx,
-			`INSERT INTO connectors (org_id, name, type, config_encrypted, folder_id)
-			 VALUES ($1, $2, $3, $4, $5)
+			`INSERT INTO connectors (org_id, name, type, config_encrypted, folder_id, created_by)
+			 VALUES ($1, $2, $3, $4, $5, $6)
 			 RETURNING id, org_id, name, type, max_rows, timeout_seconds, is_default, folder_id`,
-			claims.OrgID, req.Name, req.Type, encrypted, req.FolderID,
+			claims.OrgID, req.Name, req.Type, encrypted, req.FolderID, claims.UserID,
 		).Scan(&id, &orgID, &name, &connType, &maxRows, &timeout, &isDefault, &folderID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create connector")

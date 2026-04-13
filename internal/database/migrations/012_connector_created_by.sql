@@ -1,0 +1,1 @@
+ALTER TABLE connectors ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id);
