@@ -92,7 +92,7 @@ const s: Record<string, React.CSSProperties> = {
   name: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' },
   typeBadge: {
     fontSize: 10, fontWeight: 700, borderRadius: 3, padding: '1px 6px',
-    background: 'var(--accent-light)', color: 'var(--accent)',
+    background: 'var(--accent-light)', color: 'var(--text-primary)',
     textTransform: 'uppercase' as const, letterSpacing: '0.04em', flexShrink: 0,
   },
   defaultBadge: {
@@ -108,7 +108,7 @@ const s: Record<string, React.CSSProperties> = {
   deleteBtn: {
     padding: '4px 10px', fontSize: 12, fontWeight: 500,
     border: '1px solid transparent', borderRadius: 4,
-    background: 'transparent', cursor: 'pointer', color: 'var(--error)',
+    background: 'transparent', cursor: 'pointer', color: 'var(--error-text)',
   },
   body: { borderTop: '1px solid var(--border)', padding: '12px 16px', background: 'var(--bg-secondary)' },
   detailGrid: { display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '4px 16px' },
