@@ -25,6 +25,8 @@ type folderConnector struct {
 	Type      string  `json:"type"`
 	IsDefault bool    `json:"is_default"`
 	FolderID  *string `json:"folder_id,omitempty"`
+	CreatedBy string  `json:"created_by"`
+	CreatedAt string  `json:"created_at"`
 }
 
 func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +99,7 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 
 	// Connectors at root
 	cRows, err := s.db.Pool.Query(ctx,
-		`SELECT id, name, type, is_default, folder_id FROM connectors WHERE org_id = $1 AND folder_id IS NULL`,
+		`SELECT id, name, type, is_default, folder_id, COALESCE(created_by::text, ''), created_at::text FROM connectors WHERE org_id = $1 AND folder_id IS NULL`,
 		claims.OrgID,
 	)
 	if err != nil {
@@ -108,7 +110,7 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 	var allConnectors []folderConnector
 	for cRows.Next() {
 		var c folderConnector
-		if err := cRows.Scan(&c.ID, &c.Name, &c.Type, &c.IsDefault, &c.FolderID); err != nil {
+		if err := cRows.Scan(&c.ID, &c.Name, &c.Type, &c.IsDefault, &c.FolderID, &c.CreatedBy, &c.CreatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
@@ -240,7 +242,7 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 
 	// Connectors in folder
 	cRows, err := s.db.Pool.Query(ctx,
-		`SELECT id, name, type, is_default, folder_id FROM connectors WHERE org_id = $1 AND folder_id = $2`,
+		`SELECT id, name, type, is_default, folder_id, COALESCE(created_by::text, ''), created_at::text FROM connectors WHERE org_id = $1 AND folder_id = $2`,
 		claims.OrgID, folderID,
 	)
 	if err != nil {
@@ -251,7 +253,7 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 	var subConnectors []folderConnector
 	for cRows.Next() {
 		var c folderConnector
-		if err := cRows.Scan(&c.ID, &c.Name, &c.Type, &c.IsDefault, &c.FolderID); err != nil {
+		if err := cRows.Scan(&c.ID, &c.Name, &c.Type, &c.IsDefault, &c.FolderID, &c.CreatedBy, &c.CreatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
