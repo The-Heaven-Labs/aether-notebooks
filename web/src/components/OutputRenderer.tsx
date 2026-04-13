@@ -184,8 +184,7 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
         </div>
       ) : (
         // TODO: pass onConfigChange to persist chart config to backend (PUT /cells/:id output)
-        // Currently chart config is session-only (reset on cell re-execution or reload)
-        <ChartView rs={rs} />
+        <ChartView rs={rs} cellId={cellId} />
       )}
     </div>
   )
