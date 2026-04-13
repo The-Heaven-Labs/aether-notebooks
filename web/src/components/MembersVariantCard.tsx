@@ -20,7 +20,7 @@ const ROLES = ['admin', 'editor', 'viewer'] as const
 
 const rolePalette: Record<string, { background: string; color: string }> = {
   admin:  { background: 'var(--error-light)', color: 'var(--error-text)' },
-  editor: { background: 'var(--accent-light)', color: 'var(--accent)' },
+  editor: { background: 'var(--accent-light)', color: 'var(--text-primary)' },
   viewer: { background: 'var(--bg-secondary)', color: 'var(--text-secondary)' },
 }
 
@@ -52,7 +52,7 @@ export function MembersVariantCard({ members, currentUserId, isAdmin, onRoleChan
               <div style={s.right}>
                 {isAdmin && !isSelf ? (
                   <select
-                    style={{ ...s.roleSelect, ...palette }}
+                    style={s.roleSelect}
                     value={m.role}
                     onChange={(e) => onRoleChange?.(m.user_id, e.target.value)}
                     aria-label={`Role for ${displayName}`}
@@ -82,7 +82,7 @@ const s: Record<string, React.CSSProperties> = {
   row: { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--bg-card)' },
   avatar: {
     width: 32, height: 32, borderRadius: '50%',
-    background: 'var(--accent-light)', color: 'var(--accent)',
+    background: 'var(--text-primary)', color: 'var(--bg-card)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     fontSize: 11, fontWeight: 700, flexShrink: 0, letterSpacing: '0.02em',
   },
@@ -91,7 +91,7 @@ const s: Record<string, React.CSSProperties> = {
   name: { fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' },
   selfBadge: {
     fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 3,
-    background: 'var(--accent-light)', color: 'var(--accent)',
+    background: 'var(--accent-light)', color: 'var(--text-primary)',
   },
   email: {
     fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)',
@@ -102,6 +102,7 @@ const s: Record<string, React.CSSProperties> = {
   roleSelect: {
     fontSize: 11, fontWeight: 600, padding: '2px 6px', borderRadius: 3,
     border: '1px solid var(--border)', cursor: 'pointer', outline: 'none',
+    background: 'var(--bg-input)', color: 'var(--text-primary)',
   },
   joined: { fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' as const },
   removeBtn: {
