@@ -5,6 +5,7 @@ import (
 
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/auth"
+	"github.com/heavenlabs/hnb/internal/cache"
 	"github.com/heavenlabs/hnb/internal/database"
 )
 
@@ -17,9 +18,10 @@ type Server struct {
 	mux           *http.ServeMux
 	oidcProviders map[string]auth.OIDCProvider
 	attachmentDir string
+	Cache         *cache.Cache
 }
 
-func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, oidcProviders map[string]auth.OIDCProvider) *Server {
+func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, oidcProviders map[string]auth.OIDCProvider, redisCache *cache.Cache) *Server {
 	s := &Server{
 		db:            db,
 		jwt:           jwt,
@@ -28,6 +30,7 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 		hub:           NewHub(),
 		mux:           http.NewServeMux(),
 		oidcProviders: oidcProviders,
+		Cache:         redisCache,
 	}
 	s.routes()
 	return s
