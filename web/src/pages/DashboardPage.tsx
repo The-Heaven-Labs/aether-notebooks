@@ -8,6 +8,9 @@ import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { DashboardParamsProvider, useDashboardParams } from '../contexts/DashboardParamsContext'
+import { GridLayout } from 'react-grid-layout'
+import type { LayoutItem } from 'react-grid-layout'
+import 'react-grid-layout/css/styles.css'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -243,9 +246,27 @@ function WidgetCard({ widget, qc }: { widget: AnyWidget; qc: ReturnType<typeof u
   )
 }
 
+const toGridItem = (w: Widget): LayoutItem => ({
+  i: w.id,
+  x: w.layout.col,
+  y: w.layout.row,
+  w: w.layout.width,
+  h: w.layout.height,
+})
+
 function DashboardContent({ id }: { id: string }) {
   const qc = useQueryClient()
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [containerWidth, setContainerWidth] = useState(1200)
+  const gridRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!gridRef.current) return
+    const obs = new ResizeObserver(([entry]) => {
+      setContainerWidth(entry.contentRect.width)
+    })
+    obs.observe(gridRef.current)
+    return () => obs.disconnect()
+  }, [])
 
   const { data: dashboard, isLoading, error } = useQuery({
     queryKey: ['dashboard', id],
@@ -388,10 +409,21 @@ function DashboardContent({ id }: { id: string }) {
             text="Add widgets in the dashboard editor to display notebook cell outputs."
           />
         ) : dataWidgets.length === 0 ? null : (
-          <div style={styles.grid}>
-            {dataWidgets.map((widget) => (
-              <WidgetCard key={widget.id} widget={widget} qc={qc} />
-            ))}
+          <div ref={gridRef}>
+            <GridLayout
+              layout={dataWidgets.map(toGridItem)}
+              width={containerWidth}
+              gridConfig={{ cols: 12, rowHeight: 120 }}
+              dragConfig={{ enabled: false }}
+              resizeConfig={{ enabled: false }}
+              style={{ minHeight: 240 }}
+            >
+              {dataWidgets.map((widget) => (
+                <div key={widget.id} style={styles.widgetCard}>
+                  <WidgetCard widget={widget} qc={qc} />
+                </div>
+              ))}
+            </GridLayout>
           </div>
         )}
       </div>
@@ -490,11 +522,7 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 200,
     flex: '0 1 auto',
   },
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(2, 1fr)',
-    gap: 16,
-  },
+
   widgetCard: {
     background: 'var(--bg-card)',
     border: '1px solid var(--border)',
