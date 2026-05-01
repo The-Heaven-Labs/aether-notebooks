@@ -12,6 +12,7 @@ import (
 	"github.com/heavenlabs/hnb/internal/api"
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/auth"
+	"github.com/heavenlabs/hnb/internal/cache"
 	"github.com/heavenlabs/hnb/internal/config"
 	"github.com/heavenlabs/hnb/internal/crypto"
 	"github.com/heavenlabs/hnb/internal/database"
@@ -38,6 +39,19 @@ func main() {
 	}
 	log.Println("migrations applied")
 
+	// Connect to Redis
+	redisCache, err := cache.New(cfg.RedisURL)
+	if err != nil {
+		log.Fatalf("cache: %v", err)
+	}
+	defer redisCache.Close()
+	pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer pingCancel()
+	if err := redisCache.Ping(pingCtx); err != nil {
+		log.Fatalf("cache ping: %v", err)
+	}
+	log.Println("redis connected")
+
 	// Initialize services
 	jwtIssuer := auth.NewJWTIssuer(cfg.JWTSecret, 24*time.Hour)
 	masterKey := crypto.DeriveKey(cfg.MasterKey)
@@ -53,7 +67,7 @@ func main() {
 	defer sched.Stop()
 
 	// Build HTTP server
-	srv := api.NewServer(db, jwtIssuer, auditLogger, masterKey, nil)
+	srv := api.NewServer(db, jwtIssuer, auditLogger, masterKey, nil, redisCache)
 	srv.SetAttachmentDir(cfg.AttachmentDir)
 	httpSrv := &http.Server{
 		Addr:         ":" + cfg.Port,
