@@ -11,6 +11,8 @@ import { ErrorBanner } from '../components/ErrorBanner'
 import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem, Layout } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -54,6 +56,16 @@ function WidgetContent({ widget }: { widget: Widget }) {
 
   const cell = notebook?.cells?.find((c: Cell) => c.id === widget.cell_id)
   if (!cell) return <div style={widgetContentStyles.empty}>Cell not found</div>
+
+  // Markdown cells render their source directly — they don't need to be "run"
+  if (cell.type === 'text') {
+    return (
+      <div style={widgetContentStyles.markdown}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{cell.source || ''}</ReactMarkdown>
+      </div>
+    )
+  }
+
   if (!cell.outputs?.length) {
     return <div style={widgetContentStyles.empty}>No results yet — run the notebook first</div>
   }
@@ -64,6 +76,7 @@ function WidgetContent({ widget }: { widget: Widget }) {
 const widgetContentStyles: Record<string, React.CSSProperties> = {
   loading: { padding: '16px', fontSize: 13, color: 'var(--text-muted)' },
   empty: { padding: '16px', fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' },
+  markdown: { padding: '16px', fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.6, overflow: 'auto', height: '100%' },
 }
 
 export function DashboardEditorPage() {
@@ -79,6 +92,8 @@ export function DashboardEditorPage() {
   const [pickerCellId, setPickerCellId] = useState('')
   const [pickerType, setPickerType] = useState<'table' | 'chart'>('table')
   const [pickerError, setPickerError] = useState<string | null>(null)
+
+  const [gridCols, setGridCols] = useState(12)
 
   const [containerWidth, setContainerWidth] = useState(1200)
   const gridRef = useRef<HTMLDivElement>(null)
@@ -98,7 +113,10 @@ export function DashboardEditorPage() {
   })
 
   useEffect(() => {
-    if (dashboard) document.title = `${dashboard.title} — Heaven's Notebooks`
+    if (dashboard) {
+      document.title = `${dashboard.title} — Heaven's Notebooks`
+      if (dashboard.settings?.grid_cols) setGridCols(dashboard.settings.grid_cols)
+    }
     return () => { document.title = "Heaven's Notebooks" }
   }, [dashboard])
 
@@ -224,6 +242,34 @@ export function DashboardEditorPage() {
           )}
         </div>
         <div style={styles.headerRight}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cols</span>
+            {[6, 8, 12, 16, 24].map(c => (
+              <button
+                key={c}
+                type="button"
+                style={{
+                  padding: '3px 8px',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  border: '1px solid var(--border)',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  background: gridCols === c ? 'var(--accent)' : 'var(--bg-input)',
+                  color: gridCols === c ? '#fff' : 'var(--text-secondary)',
+                }}
+                onClick={async () => {
+                  setGridCols(c)
+                  await api.put(`/api/v1/dashboards/${id}`, {
+                    settings: { ...dashboard?.settings, grid_cols: c },
+                  })
+                  qc.invalidateQueries({ queryKey: ['dashboard', id] })
+                }}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             style={styles.addWidgetBtn}
@@ -330,7 +376,7 @@ export function DashboardEditorPage() {
             <GridLayout
               layout={dashboard.widgets?.map(toGridItem) ?? []}
               width={containerWidth}
-              gridConfig={{ cols: 12, rowHeight: 120 }}
+              gridConfig={{ cols: gridCols, rowHeight: 120 }}
               dragConfig={{ enabled: true, handle: '.widget-drag-handle' }}
               resizeConfig={{ enabled: true }}
               onLayoutChange={handleLayoutChange}
