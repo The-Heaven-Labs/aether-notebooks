@@ -216,12 +216,14 @@ function MoveModal({ target, onConfirm, onClose }: MoveModalProps) {
 
 // ─── MetaLine ─────────────────────────────────────────────────────────────────
 
-function MetaLine({ createdBy, createdAt }: { createdBy: string; createdAt: string }) {
-  const date = new Date(createdAt)
-  const formatted = isNaN(date.getTime()) ? '' : date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+function MetaLine({ createdBy, createdAt, updatedAt }: { createdBy: string; createdAt: string; updatedAt?: string }) {
+  const created = new Date(createdAt)
+  const updated = updatedAt ? new Date(updatedAt) : null
+  const fmt = (d: Date) => isNaN(d.getTime()) ? '' : d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+  const showUpdated = updated && !isNaN(updated.getTime()) && updated.getTime() - created.getTime() > 60_000
   return (
     <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2, display: 'block', lineHeight: 1.4 }}>
-      {createdBy} · {formatted}
+      {createdBy} · {fmt(created)}{showUpdated && <> · Updated {fmt(updated!)}</>}
     </span>
   )
 }
@@ -582,7 +584,7 @@ export function HomePage() {
                           <span style={s.folderName}>{f.name}</span>
                           {f.is_home && <span style={s.badge}>home</span>}
                         </div>
-                        <MetaLine createdBy={memberName(f.created_by)} createdAt={f.created_at} />
+                        <MetaLine createdBy={memberName(f.created_by)} createdAt={f.created_at} updatedAt={f.updated_at} />
                       </div>
                     </button>
                   )}
@@ -630,7 +632,7 @@ export function HomePage() {
                       <BookOpen size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <span style={s.itemName}>{nb.title}</span>
-                        <MetaLine createdBy={memberName(nb.created_by)} createdAt={nb.created_at} />
+                        <MetaLine createdBy={memberName(nb.created_by)} createdAt={nb.created_at} updatedAt={nb.updated_at} />
                       </div>
                     </Link>
                   )}
@@ -714,7 +716,7 @@ export function HomePage() {
                     <LayoutDashboard size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <span style={s.itemName}>{d.title}</span>
-                      <MetaLine createdBy={memberName(d.created_by)} createdAt={d.created_at} />
+                      <MetaLine createdBy={memberName(d.created_by)} createdAt={d.created_at} updatedAt={d.updated_at} />
                     </div>
                   </Link>
                   <div style={{ position: 'relative' }}>

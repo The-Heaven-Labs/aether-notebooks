@@ -38,6 +38,12 @@ const toGridItem = (w: Widget): LayoutItem => ({
   minH: 1,
 })
 
+function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width: number; height: number } {
+  if (!widgets.length) return { row: 0, col: 0, width: 6, height: 2 }
+  const maxBottom = widgets.reduce((max, w) => Math.max(max, w.layout.row + w.layout.height), 0)
+  return { row: maxBottom, col: 0, width: 6, height: 2 }
+}
+
 function WidgetContent({ widget }: { widget: Widget }) {
   const { data: notebook, isLoading } = useQuery({
     queryKey: ['notebook', widget.notebook_id],
@@ -121,7 +127,7 @@ export function DashboardEditorPage() {
         notebook_id: pickerNotebookId,
         cell_id: pickerCellId,
         type: pickerType,
-        layout: { row: 0, col: 0, width: 6, height: 2 },
+        layout: nextWidgetLayout(dashboard?.widgets ?? []),
         config: {},
       }),
     onSuccess: () => {

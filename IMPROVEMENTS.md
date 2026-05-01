@@ -21,6 +21,6 @@
 - [x] In the chart view, when switching between chart types, the selection is not persisted — when I close and re-open the same cell I lose my chart config; *(batch 3 — full config persisted to localStorage per cell)*
 - [x] The chart config panel UX is bad. Redesign it to have a visual chart type selector with icons *(batch 2)*
 - [x] In the presentation view the headings should not have those # anchor links shown, it breaks the UX *(batch 2)*
-- [ ] The "created by me" filter in Home only works for connectors, not for notebooks; *(batch 4)*
-- [ ] There should be a "last updated" datetime shown in the filesystem view alongside creation date; *(batch 4)*
-- [ ] Dashboards are broken — widgets overlap, the grid is not configurable, and widgets are not draggable; *(batch 4)*
+- [x] The "created by me" filter in Home only works for connectors, not for notebooks; *(batch 4 — verified working; was a past bug fixed in batch 2/3)*
+- [x] There should be a "last updated" datetime shown in the filesystem view alongside creation date; *(batch 4)*
+- [x] Dashboards are broken — widgets overlap, the grid is not configurable, and widgets are not draggable; *(batch 4 — smart placement for new widgets; view page now uses react-grid-layout)*
