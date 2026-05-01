@@ -11,6 +11,8 @@ import { DashboardParamsProvider, useDashboardParams } from '../contexts/Dashboa
 import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -199,6 +201,16 @@ function QueryWidget({ widget, qc }: { widget: AnyWidget; qc: ReturnType<typeof 
 
   const cell = notebook?.cells?.find((c: Cell) => c.id === widget.cell_id)
   if (!cell) return <div style={queryWidgetStyles.empty}>Cell not found</div>
+
+  // Markdown cells render their source directly — they don't need to be "run"
+  if (cell.type === 'text') {
+    return (
+      <div style={queryWidgetStyles.markdown}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{cell.source || ''}</ReactMarkdown>
+      </div>
+    )
+  }
+
   if (!cell.outputs?.length) {
     return (
       <div style={queryWidgetStyles.empty}>
@@ -229,6 +241,7 @@ function QueryWidget({ widget, qc }: { widget: AnyWidget; qc: ReturnType<typeof 
 const queryWidgetStyles: Record<string, React.CSSProperties> = {
   loading: { padding: '16px', fontSize: 13, color: 'var(--text-muted)' },
   empty: { padding: '16px', fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' },
+  markdown: { padding: '16px', fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.6, overflow: 'auto', height: '100%' },
 }
 
 function WidgetCard({ widget, qc }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient> }) {
@@ -413,7 +426,7 @@ function DashboardContent({ id }: { id: string }) {
             <GridLayout
               layout={dataWidgets.map(toGridItem)}
               width={containerWidth}
-              gridConfig={{ cols: 12, rowHeight: 120 }}
+              gridConfig={{ cols: dashboard.settings?.grid_cols ?? 12, rowHeight: 120 }}
               dragConfig={{ enabled: false }}
               resizeConfig={{ enabled: false }}
               style={{ minHeight: 240 }}

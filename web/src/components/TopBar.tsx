@@ -91,9 +91,9 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 14, color: 'white',
   },
   brandDivider: { width: 1, height: 20, background: 'var(--nav-border)', flexShrink: 0 },
-  appName: { fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', letterSpacing: '0.01em' },
+  appName: { fontSize: 13, fontWeight: 500, color: 'var(--nav-text)', letterSpacing: '0.01em' },
   spacer: { flex: 1 },
-  orgName: { fontSize: 12, color: 'var(--text-primary)', fontWeight: 500 },
+  orgName: { fontSize: 12, color: 'var(--nav-text)', fontWeight: 500, opacity: 0.75 },
   right: { position: 'relative', display: 'flex', alignItems: 'center', gap: 10 },
   avatar: {
     width: 30, height: 30,

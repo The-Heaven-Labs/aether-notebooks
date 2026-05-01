@@ -27,7 +27,18 @@ const CHART_TYPES: { value: ChartConfig['chartType']; label: string; symbol: str
   { value: 'donut',       label: 'Donut',   symbol: '◎' },
 ]
 
-export const DEFAULT_COLORS = ['#6366f1', '#22d3ee', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899']
+export const DEFAULT_COLORS = [
+  '#6366f1', // indigo
+  '#06b6d4', // cyan
+  '#10b981', // emerald
+  '#f59e0b', // amber
+  '#f43f5e', // rose
+  '#8b5cf6', // violet
+  '#0ea5e9', // sky
+  '#84cc16', // lime
+]
+
+const PRESET_SWATCHES = DEFAULT_COLORS
 
 export function ChartConfigPanel({ config, columns, onChange }: ChartConfigPanelProps) {
   return (
@@ -88,22 +99,47 @@ export function ChartConfigPanel({ config, columns, onChange }: ChartConfigPanel
       {config.yAxis?.length > 0 && (
         <div style={styles.section}>
           <div style={styles.sectionLabel}>Series colors</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {config.yAxis.map((series, i) => {
               const color = config.seriesColors?.[series] ?? DEFAULT_COLORS[i % DEFAULT_COLORS.length]
+              const applyColor = (val: string) => onChange({
+                ...config,
+                seriesColors: { ...config.seriesColors, [series]: val },
+              })
               return (
-                <label key={series} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' }}>
-                  <input
-                    type="color"
-                    value={color}
-                    onChange={e => onChange({
-                      ...config,
-                      seriesColors: { ...config.seriesColors, [series]: e.target.value },
-                    })}
-                    style={{ width: 26, height: 20, padding: 1, border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer', background: 'none' }}
-                  />
-                  <span style={{ color: 'var(--text-secondary)' }}>{series}</span>
-                </label>
+                <div key={series}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' }}>
+                    <input
+                      type="color"
+                      key={color}
+                      defaultValue={color}
+                      onBlur={e => applyColor(e.target.value)}
+                      style={{ width: 26, height: 20, padding: 1, border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer', background: 'none' }}
+                    />
+                    <span style={{ color: 'var(--text-secondary)' }}>{series}</span>
+                  </label>
+                  <div style={{ display: 'flex', gap: 4, marginTop: 4, marginLeft: 2 }}>
+                    {PRESET_SWATCHES.map(swatch => (
+                      <button
+                        key={swatch}
+                        type="button"
+                        title={swatch}
+                        onClick={() => applyColor(swatch)}
+                        style={{
+                          width: 14,
+                          height: 14,
+                          borderRadius: '50%',
+                          background: swatch,
+                          border: color === swatch ? '2px solid var(--text-primary)' : '2px solid transparent',
+                          padding: 0,
+                          cursor: 'pointer',
+                          outline: 'none',
+                          flexShrink: 0,
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
               )
             })}
           </div>

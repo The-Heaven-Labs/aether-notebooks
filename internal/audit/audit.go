@@ -10,16 +10,17 @@ import (
 )
 
 type Entry struct {
-	ID           int64                  `json:"id"`
-	OrgID        string                 `json:"org_id"`
-	UserID       string                 `json:"user_id,omitempty"`
-	UserEmail    string                 `json:"user_email,omitempty"`
-	Action       string                 `json:"action"`
-	ResourceType string                 `json:"resource_type"`
-	ResourceID   string                 `json:"resource_id,omitempty"`
-	ResourceName string                 `json:"resource_name,omitempty"`
-	Metadata     map[string]any         `json:"metadata,omitempty"`
-	CreatedAt    time.Time              `json:"created_at"`
+	ID                 int64          `json:"id"`
+	OrgID              string         `json:"org_id"`
+	UserID             string         `json:"user_id,omitempty"`
+	UserEmail          string         `json:"user_email,omitempty"`
+	Action             string         `json:"action"`
+	ResourceType       string         `json:"resource_type"`
+	ResourceID         string         `json:"resource_id,omitempty"`
+	ResourceName       string         `json:"resource_name,omitempty"`
+	ResourceParentName string         `json:"resource_parent_name,omitempty"`
+	Metadata           map[string]any `json:"metadata,omitempty"`
+	CreatedAt          time.Time      `json:"created_at"`
 }
 
 type QueryParams struct {
@@ -79,6 +80,16 @@ func (l *Logger) Query(ctx context.Context, p QueryParams) ([]Entry, error) {
 					ELSE ''
 				END, ''
 			),
+			COALESCE(
+				CASE al.resource_type
+					WHEN 'cell' THEN (
+						SELECT n.title FROM cells c
+						LEFT JOIN notebooks n ON n.id = c.notebook_id
+						WHERE c.id = al.resource_id
+					)
+					ELSE ''
+				END, ''
+			),
 			al.metadata, al.created_at
 		FROM audit_logs al
 		LEFT JOIN users u ON u.id = al.user_id
@@ -92,8 +103,8 @@ func (l *Logger) Query(ctx context.Context, p QueryParams) ([]Entry, error) {
 		argN++
 	}
 	if p.Action != "" {
-		query += fmt.Sprintf(" AND al.action = $%d", argN)
-		args = append(args, p.Action)
+		query += fmt.Sprintf(" AND al.action ILIKE $%d", argN)
+		args = append(args, "%"+p.Action+"%")
 		argN++
 	}
 	if p.ResourceType != "" {
@@ -121,7 +132,7 @@ func (l *Logger) Query(ctx context.Context, p QueryParams) ([]Entry, error) {
 		var e Entry
 		var metaJSON []byte
 		if err := rows.Scan(&e.ID, &e.OrgID, &e.UserID, &e.UserEmail, &e.Action,
-			&e.ResourceType, &e.ResourceID, &e.ResourceName, &metaJSON, &e.CreatedAt); err != nil {
+			&e.ResourceType, &e.ResourceID, &e.ResourceName, &e.ResourceParentName, &metaJSON, &e.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		if len(metaJSON) > 0 {

@@ -228,3 +228,57 @@ a:hover {
 h1:hover a, h2:hover a, h3:hover a, h4:hover a, h5:hover a, h6:hover a {
   opacity: 1;
 }
+
+/* react-grid-layout: use accent color for drag/resize placeholder instead of default red */
+.react-grid-placeholder {
+  background: var(--accent) !important;
+  opacity: 0.18 !important;
+  border: 2px solid var(--accent) !important;
+  border-radius: 4px !important;
+}
+
+/* ── Output scroll area scrollbar (light mode) ─────────────────────────── */
+.output-scroll-area::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.output-scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.output-scroll-area::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 4px;
+}
+
+.output-scroll-area::-webkit-scrollbar-thumb:hover {
+  background: #aaa;
+}
+
+/* ── Output scroll area scrollbar (dark mode) ──────────────────────────── */
+[data-theme="dark"] .output-scroll-area::-webkit-scrollbar-thumb {
+  background: var(--border-color, #3a3a3a);
+}
+
+[data-theme="dark"] .output-scroll-area::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* ── Resize handle hover feedback ──────────────────────────────────────── */
+.output-resize-handle:hover .output-resize-grip {
+  opacity: 1;
+}
+
+/* ── CodeMirror cursor color ───────────────────────────────────────────── */
+/* Light mode: dark cursor (default is fine, but make explicit) */
+.cm-editor .cm-cursor,
+.cm-editor .cm-dropCursor {
+  border-left-color: #333 !important;
+}
+
+/* Dark mode: light cursor so it's visible on dark background */
+[data-theme="dark"] .cm-editor .cm-cursor,
+[data-theme="dark"] .cm-editor .cm-dropCursor {
+  border-left-color: #e2e8f0 !important;
+}

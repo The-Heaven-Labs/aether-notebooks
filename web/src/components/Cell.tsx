@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check } from 'lucide-react'
+import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard } from 'lucide-react'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap } from '@codemirror/commands'
@@ -180,6 +180,7 @@ interface Props {
   onUpdateCellMeta?: (updates: Partial<Pick<Cell, 'source_visible' | 'cell_collapsed' | 'slide_break' | 'title' | 'description' | 'slug'>>) => void
   onShowHistory?: () => void
   onFocus?: (cellId: string) => void
+  onAddToDashboard?: (cellId: string) => void
   index?: number
 }
 
@@ -362,6 +363,7 @@ export function Cell({
   onUpdateCellMeta,
   onShowHistory,
   onFocus,
+  onAddToDashboard,
   index,
 }: Props) {
   const [hovered, setHovered] = useState(false)
@@ -519,13 +521,22 @@ export function Cell({
           <button style={styles.actionBtn} onClick={onShowHistory} title="History">
             <Clock size={11} />
           </button>
+          {onAddToDashboard && (
+            <button
+              style={styles.actionBtn}
+              onClick={(e) => { e.stopPropagation(); onAddToDashboard(cell.id) }}
+              title="Add to dashboard"
+            >
+              <LayoutDashboard size={11} />
+            </button>
+          )}
           <button
             type="button"
-            title={cell.slide_break ? 'Remove slide break' : 'Start new slide here'}
+            title={cell.slide_break ? 'Separate into own slide' : 'Join with previous slide'}
             style={{ ...styles.actionBtn, color: cell.slide_break ? 'var(--accent)' : '#bbb' }}
             onClick={() => onUpdateCellMeta?.({ slide_break: !cell.slide_break })}
           >
-            <SeparatorHorizontal size={13} />
+            {cell.slide_break ? <Link size={13} /> : <SeparatorHorizontal size={13} />}
           </button>
           <button
             style={{ ...styles.actionBtn, ...styles.actionBtnDelete }}
