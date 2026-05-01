@@ -57,20 +57,34 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
   const [localYAxes, setLocalYAxes] = useState<string[]>(() =>
     savedConfig?.yAxis ?? yAxes
   )
-
-  const persistedExtras = savedConfig
-    ? {
-        showLegend: savedConfig.showLegend,
-        showGrid: savedConfig.showGrid,
-        showLabels: savedConfig.showLabels,
-        seriesColors: savedConfig.seriesColors,
-        title: savedConfig.title,
-      }
-    : {}
+  const [localShowLegend, setLocalShowLegend] = useState<boolean | undefined>(() =>
+    savedConfig?.showLegend
+  )
+  const [localShowGrid, setLocalShowGrid] = useState<boolean | undefined>(() =>
+    savedConfig?.showGrid
+  )
+  const [localShowLabels, setLocalShowLabels] = useState<boolean | undefined>(() =>
+    savedConfig?.showLabels
+  )
+  const [localSeriesColors, setLocalSeriesColors] = useState<Record<string, string> | undefined>(() =>
+    savedConfig?.seriesColors
+  )
+  const [localTitle, setLocalTitle] = useState<string | undefined>(() =>
+    savedConfig?.title
+  )
 
   const effectiveConfig: ChartConfig = onConfigChange
     ? cfg
-    : { chartType: localChartType, xAxis: localXAxis, yAxis: localYAxes, ...persistedExtras }
+    : {
+        chartType: localChartType,
+        xAxis: localXAxis,
+        yAxis: localYAxes,
+        showLegend: localShowLegend,
+        showGrid: localShowGrid,
+        showLabels: localShowLabels,
+        seriesColors: localSeriesColors,
+        title: localTitle,
+      }
 
   const getColor = (series: string, index: number): string =>
     effectiveConfig.seriesColors?.[series] ?? DEFAULT_COLORS[index % DEFAULT_COLORS.length]
@@ -85,6 +99,11 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
       setLocalChartType(newCfg.chartType)
       setLocalXAxis(newCfg.xAxis)
       setLocalYAxes(newCfg.yAxis)
+      setLocalShowLegend(newCfg.showLegend)
+      setLocalShowGrid(newCfg.showGrid)
+      setLocalShowLabels(newCfg.showLabels)
+      setLocalSeriesColors(newCfg.seriesColors)
+      setLocalTitle(newCfg.title)
       if (cellId) {
         try {
           localStorage.setItem(`hnb_chart_config_${cellId}`, JSON.stringify(newCfg))
@@ -206,7 +225,10 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
               innerRadius={innerRadius}
               paddingAngle={2}
             >
-              {chartData.map((_, i) => <Cell key={i} fill={DEFAULT_COLORS[i % DEFAULT_COLORS.length]} stroke="none" />)}
+              {chartData.map((entry, i) => {
+                const label = String((entry as Record<string, unknown>)[effectiveXAxis] ?? i)
+                return <Cell key={i} fill={effectiveConfig.seriesColors?.[label] ?? DEFAULT_COLORS[i % DEFAULT_COLORS.length]} stroke="none" />
+              })}
             </Pie>
             <Tooltip contentStyle={tooltipStyle} />
             {showLegend && <Legend wrapperStyle={legendStyle} />}

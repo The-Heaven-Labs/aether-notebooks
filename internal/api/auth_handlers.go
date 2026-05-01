@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 
@@ -290,6 +291,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: orgID, UserID: userID,
 		Action: "user.login", ResourceType: "user", ResourceID: userID,
+		Metadata: map[string]any{"ip": clientIP(r)},
 	})
 
 	resp := authResponse{}
@@ -357,6 +359,27 @@ func createHomeFolder(ctx context.Context, q querier, orgID, userID, userName st
 		return fmt.Errorf("seed home folder ACL: %w", err)
 	}
 	return nil
+}
+
+// clientIP returns the best-guess client IP from the request, respecting
+// X-Forwarded-For and X-Real-IP headers set by reverse proxies.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// X-Forwarded-For may be a comma-separated list; take the first entry.
+		if idx := strings.IndexByte(xff, ','); idx >= 0 {
+			return strings.TrimSpace(xff[:idx])
+		}
+		return strings.TrimSpace(xff)
+	}
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return strings.TrimSpace(xri)
+	}
+	// Strip port from RemoteAddr.
+	addr := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
 }
 
 func slugify(name string) string {

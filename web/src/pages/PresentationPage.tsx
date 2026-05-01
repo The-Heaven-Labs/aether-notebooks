@@ -24,9 +24,11 @@ export function PresentationPage() {
 
   const slides = useMemo(() => {
     const cells = notebook?.cells ?? []
+    // Each cell is its own slide by default.
+    // slide_break=true means "join this cell with the previous slide".
     return cells.reduce<Cell[][]>((acc, cell) => {
-      if (cell.slide_break || acc.length === 0) acc.push([cell])
-      else acc[acc.length - 1].push(cell)
+      if (cell.slide_break && acc.length > 0) acc[acc.length - 1].push(cell)
+      else acc.push([cell])
       return acc
     }, [])
   }, [notebook?.cells])
@@ -54,13 +56,19 @@ export function PresentationPage() {
     <div style={styles.page}>
       <div style={styles.content}>
         <div style={styles.slideContainer}>
-          {currentSlide.map((cell) => (
+          {currentSlide.map((cell, i) => (
             cell.type === 'text' ? (
               <div key={cell.id} style={styles.markdownSlide}>
                 <ReactMarkdown>{cell.source}</ReactMarkdown>
               </div>
             ) : (
-              <div key={cell.id} style={styles.codeSlide}>
+              <div
+                key={cell.id}
+                style={{
+                  ...styles.codeSlide,
+                  ...(i > 0 ? { marginTop: '2rem' } : {}),
+                }}
+              >
                 {(cell.outputs ?? []).length > 0 ? (
                   <OutputRenderer outputs={cell.outputs as Output[]} />
                 ) : (

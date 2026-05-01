@@ -85,7 +85,7 @@ export interface Dashboard {
   id: string
   org_id: string
   title: string
-  settings: { refresh_interval?: number; auto_refresh_seconds?: number }
+  settings: { refresh_interval?: number; auto_refresh_seconds?: number; grid_cols?: number }
   public_token?: string
   folder_id?: string
   created_by: string
@@ -125,6 +125,8 @@ export interface AuditEntry {
   resource_type: string
   resource_id: string
   resource_name: string
+  resource_parent_name?: string
+  metadata?: Record<string, unknown>
   created_at: string
 }
 

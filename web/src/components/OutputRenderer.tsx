@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import type React from 'react'
 import type { Output, ResultSet } from '../types'
 import { ChartView } from './ChartView'
@@ -112,6 +112,9 @@ const typeIconStyles: Record<string, React.CSSProperties> = {
   },
 }
 
+const OUTPUT_MIN_HEIGHT = 80
+const OUTPUT_DEFAULT_HEIGHT = 340
+
 function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string }) {
   const storageKey = cellId ? `hnb_cell_view_${cellId}` : null
   const [view, setView] = useState<'table' | 'chart'>(() => {
@@ -122,11 +125,36 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
     }
     return 'table'
   })
+  const [outputHeight, setOutputHeight] = useState(OUTPUT_DEFAULT_HEIGHT)
+  const dragStartY = useRef<number | null>(null)
+  const dragStartHeight = useRef<number>(OUTPUT_DEFAULT_HEIGHT)
 
   const handleViewChange = (v: 'table' | 'chart') => {
     setView(v)
     if (storageKey) localStorage.setItem(storageKey, v)
   }
+
+  const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    dragStartY.current = e.clientY
+    dragStartHeight.current = outputHeight
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (dragStartY.current === null) return
+      const delta = ev.clientY - dragStartY.current
+      const newHeight = Math.max(OUTPUT_MIN_HEIGHT, dragStartHeight.current + delta)
+      setOutputHeight(newHeight)
+    }
+
+    const onMouseUp = () => {
+      dragStartY.current = null
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }, [outputHeight])
 
   return (
     <div style={styles.tableSection}>
@@ -153,7 +181,7 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
       </div>
 
       {view === 'table' ? (
-        <div style={styles.tableWrap}>
+        <div className="output-scroll-area" style={{ ...styles.tableWrap, maxHeight: outputHeight }}>
           <table style={styles.table}>
             <thead>
               <tr>
@@ -186,6 +214,14 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
         // TODO: pass onConfigChange to persist chart config to backend (PUT /cells/:id output)
         <ChartView rs={rs} cellId={cellId} />
       )}
+
+      <div
+        style={styles.resizeHandle}
+        onMouseDown={onResizeMouseDown}
+        title="Drag to resize output"
+      >
+        <span style={styles.resizeGrip} />
+      </div>
     </div>
   )
 }
@@ -194,8 +230,8 @@ const styles: Record<string, React.CSSProperties> = {
   container: {},
   errorWrap: {
     padding: '12px 16px',
-    background: '#fdf5f5',
-    border: '1px solid #f5d0d0',
+    background: 'var(--error-light)',
+    border: '1px solid var(--error-border)',
     borderRadius: 4,
     display: 'flex',
     flexDirection: 'column',
@@ -204,12 +240,12 @@ const styles: Record<string, React.CSSProperties> = {
   errorLabel: {
     fontSize: 11,
     fontWeight: 700,
-    color: '#9a2828',
+    color: 'var(--error-text)',
     textTransform: 'uppercase',
     letterSpacing: '0.06em',
   },
   error: {
-    color: '#9a2828',
+    color: 'var(--error-text)',
     fontSize: 13,
     fontFamily: 'var(--font-mono)',
     whiteSpace: 'pre-wrap',
@@ -273,7 +309,24 @@ const styles: Record<string, React.CSSProperties> = {
   tableWrap: {
     overflowX: 'auto',
     overflowY: 'auto',
-    maxHeight: 340,
+  },
+  resizeHandle: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 8,
+    cursor: 'ns-resize',
+    background: 'var(--border-light)',
+    borderTop: '1px solid var(--border-light)',
+    userSelect: 'none',
+  },
+  resizeGrip: {
+    display: 'block',
+    width: 28,
+    height: 3,
+    borderRadius: 2,
+    background: 'var(--border)',
+    opacity: 0.6,
   },
   table: {
     width: '100%',

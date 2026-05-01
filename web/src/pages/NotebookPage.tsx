@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ChevronsRight, ChevronLeft, Loader2 } from 'lucide-react'
+import { ChevronsRight, ChevronLeft, Loader2, X } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { LoadingPage } from '../components/LoadingPage'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { Notebook, Cell, Output, Connector, Parameter, CellVersion } from '../types'
+import type { Notebook, Cell, Output, Connector, Parameter, CellVersion, Dashboard, Widget } from '../types'
 import { Cell as NotebookCell } from '../components/Cell'
 import { ParametersBar } from '../components/ParametersBar'
 import { SchemaBrowser } from '../components/SchemaBrowser'
@@ -63,6 +63,10 @@ export function NotebookPage() {
   const [historyVersions, setHistoryVersions] = useState<CellVersion[]>([])
   const [showShortcuts, setShowShortcuts] = useState(false)
 
+  // Add-to-dashboard modal
+  const [addToDashboardCellId, setAddToDashboardCellId] = useState<string | null>(null)
+  const [addToDashboardToast, setAddToDashboardToast] = useState<string | null>(null)
+
   const { data: notebook, isLoading } = useQuery({
     queryKey: ['notebook', id],
     queryFn: () => api.get<NotebookWithCells>(`/api/v1/notebooks/${id}`),
@@ -72,6 +76,12 @@ export function NotebookPage() {
   const { data: connectors = [] } = useQuery({
     queryKey: ['connectors'],
     queryFn: () => api.get<Connector[]>('/api/v1/connectors'),
+  })
+
+  const { data: dashboards = [] } = useQuery({
+    queryKey: ['dashboards'],
+    queryFn: () => api.get<Dashboard[]>('/api/v1/dashboards'),
+    enabled: addToDashboardCellId !== null,
   })
 
   useEffect(() => {
@@ -253,6 +263,27 @@ export function NotebookPage() {
     setNotebookConnectorId(val)
     updateNotebook.mutate({ connector_id: val })
   }, [updateNotebook])
+
+  const addCellToDashboard = useCallback(async (dashboardId: string, cellId: string) => {
+    const cell = localCells.find(c => c.id === cellId)
+    if (!cell) return
+    // Fetch existing widgets to compute layout
+    const dash = await api.get<Dashboard & { widgets: Widget[] }>(`/api/v1/dashboards/${dashboardId}`)
+    const existingWidgets = dash.widgets ?? []
+    const maxBottom = existingWidgets.reduce((max: number, w: Widget) => Math.max(max, w.layout.row + w.layout.height), 0)
+    const layout = { row: maxBottom, col: 0, width: 6, height: 2 }
+    const widgetType = cell.type === 'text' ? 'text' : 'table'
+    await api.post(`/api/v1/dashboards/${dashboardId}/widgets`, {
+      notebook_id: id,
+      cell_id: cellId,
+      type: widgetType,
+      layout,
+      config: {},
+    })
+    setAddToDashboardCellId(null)
+    setAddToDashboardToast(`Added to "${dash.title}"`)
+    setTimeout(() => setAddToDashboardToast(null), 3000)
+  }, [id, localCells])
 
   const saveAndRun = useCallback(
     async (cellId: string) => {
@@ -525,6 +556,7 @@ export function NotebookPage() {
                       onUpdateCellMeta={(updates) => updateCellMeta(cell.id, updates)}
                       onShowHistory={() => fetchHistory(cell.id)}
                       onFocus={(cid) => setFocusedCellId(cid)}
+                      onAddToDashboard={(cid) => setAddToDashboardCellId(cid)}
                       index={i}
                     />
                   </div>
@@ -550,6 +582,46 @@ export function NotebookPage() {
         </div>
       </div>
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
+
+      {/* Add to dashboard modal */}
+      {addToDashboardCellId && (
+        <div style={atdStyles.overlay} onClick={() => setAddToDashboardCellId(null)}>
+          <div style={atdStyles.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={atdStyles.header}>
+              <span style={atdStyles.title}>Add to Dashboard</span>
+              <button style={atdStyles.close} onClick={() => setAddToDashboardCellId(null)} aria-label="Close">
+                <X size={14} />
+              </button>
+            </div>
+            <div style={atdStyles.body}>
+              {dashboards.length === 0 ? (
+                <p style={atdStyles.empty}>No dashboards found. Create one first.</p>
+              ) : (
+                <ul style={atdStyles.list}>
+                  {dashboards.map((dash) => (
+                    <li key={dash.id}>
+                      <button
+                        style={atdStyles.dashItem}
+                        onClick={() => addCellToDashboard(dash.id, addToDashboardCellId)}
+                      >
+                        {dash.title}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success toast */}
+      {addToDashboardToast && (
+        <div style={atdStyles.toast}>
+          {addToDashboardToast}
+        </div>
+      )}
+
       {historyCell && (
         <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, zIndex: 200 }}>
           <HistoryPanel
@@ -796,5 +868,93 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-mono)',
     cursor: 'pointer',
     transition: 'border-color 0.15s, color 0.15s',
+  },
+}
+
+const atdStyles: Record<string, React.CSSProperties> = {
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'var(--bg-overlay)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+  },
+  modal: {
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    boxShadow: 'var(--shadow-md)',
+    width: 360,
+    maxWidth: '90vw',
+    maxHeight: '60vh',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+  header: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '14px 18px',
+    borderBottom: '1px solid var(--border)',
+  },
+  title: {
+    fontSize: 14,
+    fontWeight: 700,
+    color: 'var(--text-primary)',
+  },
+  close: {
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    color: 'var(--text-muted)',
+    display: 'flex',
+    alignItems: 'center',
+    padding: '2px 4px',
+    borderRadius: 4,
+  },
+  body: {
+    padding: '12px 0',
+    overflowY: 'auto',
+  },
+  empty: {
+    padding: '12px 18px',
+    fontSize: 13,
+    color: 'var(--text-muted)',
+    fontStyle: 'italic',
+  },
+  list: {
+    listStyle: 'none',
+    margin: 0,
+    padding: 0,
+  },
+  dashItem: {
+    display: 'block',
+    width: '100%',
+    padding: '10px 18px',
+    textAlign: 'left',
+    background: 'none',
+    border: 'none',
+    fontSize: 13,
+    color: 'var(--text-primary)',
+    cursor: 'pointer',
+    fontFamily: 'var(--font-sans)',
+  },
+  toast: {
+    position: 'fixed',
+    bottom: 24,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    background: 'var(--bg-elevated)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    padding: '10px 20px',
+    fontSize: 13,
+    color: 'var(--text-primary)',
+    boxShadow: 'var(--shadow-md)',
+    zIndex: 1100,
+    whiteSpace: 'nowrap',
   },
 }
