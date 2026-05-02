@@ -261,7 +261,7 @@ function SSOProvidersTab() {
           Platform-level OIDC providers available to all organizations.
         </p>
         {!showAddForm && (
-          <button style={ssoStyles.addBtn} onClick={() => { setShowAddForm(true); setFormError(null) }}>
+          <button style={ssoStyles.addBtn} onClick={() => { setShowAddForm(true); setAddFormError(null) }}>
             + Add Provider
           </button>
         )}
