@@ -13,6 +13,7 @@ type Config struct {
 	JWTSecret          string
 	AttachmentDir      string
 	PlatformAdminEmail string
+	PublicURL          string // base URL used in OAuth callbacks (e.g. https://app.example.com)
 }
 
 func Load() (*Config, error) {
@@ -24,6 +25,7 @@ func Load() (*Config, error) {
 		JWTSecret:          os.Getenv("HNB_JWT_SECRET"),
 		AttachmentDir:      envOrDefault("HNB_ATTACHMENT_DIR", "./attachments"),
 		PlatformAdminEmail: os.Getenv("HNB_PLATFORM_ADMIN_EMAIL"),
+		PublicURL:          os.Getenv("HNB_PUBLIC_URL"),
 	}
 	if cfg.MasterKey == "" {
 		return nil, fmt.Errorf("HNB_MASTER_KEY is required")
