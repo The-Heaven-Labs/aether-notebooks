@@ -63,6 +63,8 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	isPlatformAdmin := s.platformAdminEmail != "" && req.Email == s.platformAdminEmail
+
 	// Legacy / backcompat flow: org_name provided → create user + org atomically
 	if req.OrgName != "" {
 		tx, err := s.db.Pool.Begin(ctx)
@@ -74,8 +76,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 		var userID string
 		err = tx.QueryRow(ctx,
-			`INSERT INTO users (email, password_hash, name, email_verified) VALUES ($1, $2, $3, FALSE) RETURNING id`,
-			req.Email, hash, req.Name,
+			`INSERT INTO users (email, password_hash, name, email_verified, is_platform_admin)
+			 VALUES ($1, $2, $3, FALSE, $4) RETURNING id`,
+			req.Email, hash, req.Name, isPlatformAdmin,
 		).Scan(&userID)
 		if err != nil {
 			writeError(w, http.StatusConflict, "email already registered")
@@ -121,7 +124,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		token, err := s.jwt.Issue(userID, orgID, "admin")
+		token, err := s.jwt.IssueFull(userID, orgID, "admin", isPlatformAdmin)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to issue token")
 			return
@@ -148,8 +151,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// New account-only flow: create user, no org yet
 	var userID string
 	err = s.db.Pool.QueryRow(ctx,
-		`INSERT INTO users (email, password_hash, name, email_verified) VALUES ($1, $2, $3, FALSE) RETURNING id`,
-		req.Email, hash, req.Name,
+		`INSERT INTO users (email, password_hash, name, email_verified, is_platform_admin)
+		 VALUES ($1, $2, $3, FALSE, $4) RETURNING id`,
+		req.Email, hash, req.Name, isPlatformAdmin,
 	).Scan(&userID)
 	if err != nil {
 		writeError(w, http.StatusConflict, "email already registered")
@@ -198,7 +202,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if autoJoinOrgID != "" {
-		token, err := s.jwt.Issue(userID, autoJoinOrgID, "viewer")
+		token, err := s.jwt.IssueFull(userID, autoJoinOrgID, "viewer", isPlatformAdmin)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to issue token")
 			return

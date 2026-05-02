@@ -90,3 +90,47 @@ func (s *Server) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"users": users})
 }
+
+func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
+	targetID := r.PathValue("id")
+	if targetID == "" {
+		writeError(w, http.StatusBadRequest, "missing user id")
+		return
+	}
+
+	claims := ClaimsFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	var req struct {
+		IsPlatformAdmin bool `json:"is_platform_admin"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Prevent self-demotion only. Self-promotion is a no-op for an existing platform admin
+	// and is allowed to avoid a special case.
+	if claims.UserID == targetID && !req.IsPlatformAdmin {
+		writeError(w, http.StatusBadRequest, "cannot remove your own platform admin status")
+		return
+	}
+
+	tag, err := s.db.Pool.Exec(r.Context(),
+		`UPDATE users SET is_platform_admin=$1 WHERE id=$2`,
+		req.IsPlatformAdmin, targetID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update user")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
