@@ -198,6 +198,46 @@ func UpdateProvider(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, p
 	return result, nil
 }
 
+// ProbeResult is the public-safe view of a provider returned by the probe endpoint.
+// It never includes client_secret, discovery_url, or org_id.
+type ProbeResult struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	ProviderType string `json:"provider_type"`
+}
+
+// ListProvidersByDomain returns active providers across all orgs whose allowed_domains contains domain.
+// Never returns client_secret.
+func ListProvidersByDomain(ctx context.Context, pool *pgxpool.Pool, domain string) ([]ProbeResult, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT id, name, provider_type
+		 FROM sso_providers
+		 WHERE enabled = true
+		   AND $1 = ANY(allowed_domains)`,
+		domain,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list providers by domain: %w", err)
+	}
+	defer rows.Close()
+
+	var results []ProbeResult
+	for rows.Next() {
+		var r ProbeResult
+		if err := rows.Scan(&r.ID, &r.Name, &r.ProviderType); err != nil {
+			return nil, fmt.Errorf("scan probe result: %w", err)
+		}
+		results = append(results, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error: %w", err)
+	}
+	if results == nil {
+		results = []ProbeResult{}
+	}
+	return results, nil
+}
+
 // DeleteProvider removes a provider by ID.
 func DeleteProvider(ctx context.Context, pool *pgxpool.Pool, id string) error {
 	_, err := pool.Exec(ctx, `DELETE FROM sso_providers WHERE id=$1`, id)
