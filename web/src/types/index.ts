@@ -190,3 +190,25 @@ export interface ACLEntry {
   actions: string[]
   created_at: string
 }
+
+export interface SSOProvider {
+  id: string
+  scope: string
+  org_id?: string
+  name: string
+  provider_type: string
+  client_id: string
+  discovery_url: string
+  allowed_domains: string[]
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface PlatformSSOProvider extends SSOProvider {
+  enabled_for_org: boolean
+}
+
+export interface SSOSettings {
+  sso_password_login: boolean
+}
