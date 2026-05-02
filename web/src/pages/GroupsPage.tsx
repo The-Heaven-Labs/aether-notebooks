@@ -1,10 +1,273 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { AppShell } from '../components/AppShell'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Group, GroupMember, Member } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { ErrorBanner } from '../components/ErrorBanner'
+
+// ─── MemberDropdown ──────────────────────────────────────────────────────────
+
+interface MemberDropdownProps {
+  options: Member[]
+  value: string
+  onChange: (userId: string) => void
+  placeholder?: string
+}
+
+function MemberDropdown({ options, value, onChange, placeholder = 'Add member…' }: MemberDropdownProps) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [focusedIdx, setFocusedIdx] = useState(-1)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
+
+  const selectedMember = options.find((m) => m.user_id === value)
+
+  const filtered = query.trim()
+    ? options.filter((m) => {
+        const q = query.toLowerCase()
+        return (m.name ?? '').toLowerCase().includes(q) || m.email.toLowerCase().includes(q)
+      })
+    : options
+
+  const openDropdown = () => {
+    setOpen(true)
+    setQuery('')
+    setFocusedIdx(-1)
+    setTimeout(() => inputRef.current?.focus(), 0)
+  }
+
+  const closeDropdown = useCallback(() => {
+    setOpen(false)
+    setQuery('')
+    setFocusedIdx(-1)
+  }, [])
+
+  const selectOption = (userId: string) => {
+    onChange(userId)
+    closeDropdown()
+  }
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        closeDropdown()
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open, closeDropdown])
+
+  // Scroll focused item into view
+  useEffect(() => {
+    if (focusedIdx < 0 || !listRef.current) return
+    const item = listRef.current.children[focusedIdx] as HTMLElement | undefined
+    item?.scrollIntoView({ block: 'nearest' })
+  }, [focusedIdx])
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (!open) {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+        e.preventDefault()
+        openDropdown()
+      }
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeDropdown()
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setFocusedIdx((i) => Math.min(i + 1, filtered.length - 1))
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setFocusedIdx((i) => Math.max(i - 1, 0))
+      return
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (focusedIdx >= 0 && filtered[focusedIdx]) {
+        selectOption(filtered[focusedIdx].user_id)
+      }
+      return
+    }
+  }
+
+  const displayLabel = selectedMember
+    ? selectedMember.name ? `${selectedMember.name} (${selectedMember.email})` : selectedMember.email
+    : placeholder
+
+  return (
+    <div ref={containerRef} style={dd.container}>
+      {/* Trigger button */}
+      <button
+        type="button"
+        style={{ ...dd.trigger, color: selectedMember ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+        onClick={() => open ? closeDropdown() : openDropdown()}
+        onKeyDown={handleKeyDown}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span style={dd.triggerLabel}>{displayLabel}</span>
+        <span style={{ ...dd.chevron, transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }}>▾</span>
+      </button>
+
+      {/* Dropdown panel */}
+      {open && (
+        <div style={dd.panel}>
+          {/* Search input */}
+          <div style={dd.searchWrapper}>
+            <input
+              ref={inputRef}
+              style={dd.searchInput}
+              type="text"
+              value={query}
+              onChange={(e) => { setQuery(e.target.value); setFocusedIdx(-1) }}
+              onKeyDown={handleKeyDown}
+              placeholder="Search…"
+              autoComplete="off"
+            />
+          </div>
+
+          {/* Options list */}
+          <ul ref={listRef} style={dd.list} role="listbox">
+            {filtered.length === 0 && (
+              <li style={dd.empty}>No members found</li>
+            )}
+            {filtered.map((m, idx) => {
+              const isFocused = idx === focusedIdx
+              const isSelected = m.user_id === value
+              return (
+                <li
+                  key={m.user_id}
+                  role="option"
+                  aria-selected={isSelected}
+                  style={{
+                    ...dd.option,
+                    background: isFocused ? 'var(--accent-light)' : isSelected ? 'var(--accent-light)' : 'transparent',
+                    color: isSelected ? 'var(--accent)' : 'var(--text-primary)',
+                  }}
+                  onMouseEnter={() => setFocusedIdx(idx)}
+                  onMouseDown={(e) => { e.preventDefault(); selectOption(m.user_id) }}
+                >
+                  <span style={dd.optionName}>{m.name || m.email}</span>
+                  {m.name && <span style={dd.optionEmail}>{m.email}</span>}
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const dd: Record<string, React.CSSProperties> = {
+  container: {
+    position: 'relative',
+    flex: 1,
+    minWidth: 0,
+  },
+  trigger: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+    padding: '6px 10px',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    fontSize: 13,
+    background: 'var(--bg-input)',
+    cursor: 'pointer',
+    textAlign: 'left' as const,
+    fontFamily: 'var(--font-sans)',
+  },
+  triggerLabel: {
+    flex: 1,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  chevron: {
+    fontSize: 11,
+    color: 'var(--text-secondary)',
+    transition: 'transform 0.15s ease',
+    flexShrink: 0,
+  },
+  panel: {
+    position: 'absolute',
+    top: 'calc(100% + 4px)',
+    left: 0,
+    right: 0,
+    zIndex: 200,
+    background: 'var(--bg-elevated)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    boxShadow: 'var(--shadow-md)',
+    overflow: 'hidden',
+  },
+  searchWrapper: {
+    padding: '6px 8px',
+    borderBottom: '1px solid var(--border)',
+  },
+  searchInput: {
+    width: '100%',
+    padding: '5px 8px',
+    fontSize: 12,
+    border: '1px solid var(--border)',
+    borderRadius: 3,
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
+    outline: 'none',
+    fontFamily: 'var(--font-sans)',
+  },
+  list: {
+    listStyle: 'none',
+    margin: 0,
+    padding: '4px 0',
+    maxHeight: 200,
+    overflowY: 'auto',
+  },
+  option: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '6px 12px',
+    fontSize: 13,
+    cursor: 'pointer',
+    transition: 'background 0.1s ease',
+  },
+  optionName: {
+    fontWeight: 500,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  optionEmail: {
+    fontSize: 11,
+    color: 'var(--text-secondary)',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    marginLeft: 'auto',
+    flexShrink: 0,
+  },
+  empty: {
+    padding: '8px 12px',
+    fontSize: 12,
+    color: 'var(--text-muted)',
+    fontStyle: 'italic',
+  },
+}
 
 export function GroupsPage() {
   useEffect(() => { document.title = "Groups — Heaven's Notebooks" }, [])
@@ -304,20 +567,13 @@ export function GroupsPage() {
 
                     {isAdmin && (
                       <div style={styles.addMemberRow}>
-                        <select
-                          style={styles.memberSelect}
+                        <MemberDropdown
+                          options={availableToAdd}
                           value={selectedUserId[group.id] ?? ''}
-                          onChange={(e) =>
-                            setSelectedUserId((prev) => ({ ...prev, [group.id]: e.target.value }))
+                          onChange={(userId) =>
+                            setSelectedUserId((prev) => ({ ...prev, [group.id]: userId }))
                           }
-                        >
-                          <option value="">Add member…</option>
-                          {availableToAdd.map((m) => (
-                            <option key={m.user_id} value={m.user_id}>
-                              {m.name ? `${m.name} (${m.email})` : m.email}
-                            </option>
-                          ))}
-                        </select>
+                        />
                         <button
                           type="button"
                           style={styles.primaryBtn}
@@ -350,10 +606,11 @@ const styles: Record<string, React.CSSProperties> = {
   input: {
     flex: 1,
     padding: '7px 12px',
-    border: '1px solid var(--nav-border)',
+    border: '1px solid var(--border)',
     borderRadius: 4,
     fontSize: 13,
-    background: 'var(--bg-primary)',
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
     outline: 'none',
   },
   primaryBtn: {
@@ -421,7 +678,8 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid var(--accent)',
     borderRadius: 3,
     outline: 'none',
-    background: 'var(--bg-primary)',
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
     minWidth: 160,
   },
   actions: { display: 'flex', gap: 6, flexShrink: 0 },
@@ -491,15 +749,5 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 6,
     paddingTop: 8,
     borderTop: '1px solid var(--border)',
-  },
-  memberSelect: {
-    flex: 1,
-    padding: '6px 10px',
-    border: '1px solid var(--border)',
-    borderRadius: 4,
-    fontSize: 13,
-    background: 'var(--bg-primary)',
-    color: 'var(--text-primary)',
-    cursor: 'pointer',
   },
 }
