@@ -16,21 +16,19 @@ type Server struct {
 	masterKey     []byte
 	hub           *Hub
 	mux           *http.ServeMux
-	oidcProviders map[string]auth.OIDCProvider
 	attachmentDir string
 	Cache         *cache.Cache
 }
 
-func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, oidcProviders map[string]auth.OIDCProvider, redisCache *cache.Cache) *Server {
+func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, redisCache *cache.Cache) *Server {
 	s := &Server{
-		db:            db,
-		jwt:           jwt,
-		audit:         auditLogger,
-		masterKey:     masterKey,
-		hub:           NewHub(),
-		mux:           http.NewServeMux(),
-		oidcProviders: oidcProviders,
-		Cache:         redisCache,
+		db:        db,
+		jwt:       jwt,
+		audit:     auditLogger,
+		masterKey: masterKey,
+		hub:       NewHub(),
+		mux:       http.NewServeMux(),
+		Cache:     redisCache,
 	}
 	s.routes()
 	return s
@@ -43,6 +41,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // SetAttachmentDir sets the directory where uploaded attachments are stored.
 func (s *Server) SetAttachmentDir(dir string) {
 	s.attachmentDir = dir
+}
+
+// DB returns the database connection (used in tests).
+func (s *Server) DB() *database.DB {
+	return s.db
+}
+
+// MasterKey returns the master encryption key (used in tests).
+func (s *Server) MasterKey() []byte {
+	return s.masterKey
 }
 
 func (s *Server) routes() {

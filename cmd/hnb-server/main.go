@@ -67,7 +67,7 @@ func main() {
 	defer sched.Stop()
 
 	// Build HTTP server
-	srv := api.NewServer(db, jwtIssuer, auditLogger, masterKey, nil, redisCache)
+	srv := api.NewServer(db, jwtIssuer, auditLogger, masterKey, redisCache)
 	srv.SetAttachmentDir(cfg.AttachmentDir)
 	httpSrv := &http.Server{
 		Addr:         ":" + cfg.Port,
