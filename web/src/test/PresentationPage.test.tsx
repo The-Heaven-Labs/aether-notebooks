@@ -9,8 +9,8 @@ const mockNotebook = {
   title: 'Sales Report',
   cells: [
     { id: 'c1', type: 'text', source: '# Slide 1', outputs: [], slide_break: false },
-    { id: 'c2', type: 'code', source: 'SELECT 1', outputs: [{ type: 'table', data: { columns: [], rows: [] } }], slide_break: true },
-    { id: 'c3', type: 'text', source: '# Slide 3', outputs: [], slide_break: true },
+    { id: 'c2', type: 'code', source: 'SELECT 1', outputs: [{ type: 'table', data: { columns: [], rows: [] } }], slide_break: false },
+    { id: 'c3', type: 'text', source: '# Slide 3', outputs: [], slide_break: false },
   ],
 }
 

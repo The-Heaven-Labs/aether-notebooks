@@ -1,8 +1,8 @@
-import { render, screen } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import { AdminPage } from '../pages/AdminPage'
 import { http, HttpResponse } from 'msw'
 import { server } from './server'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { renderWithProviders } from './utils'
 
 beforeEach(() => {
   server.use(
@@ -16,11 +16,7 @@ beforeEach(() => {
 })
 
 function renderAdmin() {
-  return render(
-    <MemoryRouter initialEntries={['/admin']}>
-      <Routes><Route path="/admin" element={<AdminPage />} /></Routes>
-    </MemoryRouter>
-  )
+  return renderWithProviders(<AdminPage />, { initialPath: '/admin' })
 }
 
 test('shows orgs list', async () => {
