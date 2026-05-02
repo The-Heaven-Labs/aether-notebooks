@@ -169,6 +169,17 @@ func (s *Server) routes() {
 	s.mux.Handle("PUT /api/v1/admin/sso/providers/{id}", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminUpdateSSOProvider))))
 	s.mux.Handle("DELETE /api/v1/admin/sso/providers/{id}", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminDeleteSSOProvider))))
 
+	// Org admin SSO routes
+	s.mux.Handle("GET /api/v1/sso/providers", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgListSSOProviders))))
+	s.mux.Handle("POST /api/v1/sso/providers", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgCreateSSOProvider))))
+	s.mux.Handle("PUT /api/v1/sso/providers/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgUpdateSSOProvider))))
+	s.mux.Handle("DELETE /api/v1/sso/providers/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgDeleteSSOProvider))))
+	s.mux.Handle("GET /api/v1/sso/platform-providers", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgListPlatformProviders))))
+	s.mux.Handle("POST /api/v1/sso/platform-providers/{id}/enable", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgEnablePlatformProvider))))
+	s.mux.Handle("DELETE /api/v1/sso/platform-providers/{id}/enable", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgDisablePlatformProvider))))
+	s.mux.Handle("GET /api/v1/sso/settings", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgGetSSOSettings))))
+	s.mux.Handle("PUT /api/v1/sso/settings", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgUpdateSSOSettings))))
+
 	// Audit routes
 	s.mux.Handle("GET /api/v1/audit", authMW(RequireRole("admin")(http.HandlerFunc(s.handleListAuditLogs))))
 
