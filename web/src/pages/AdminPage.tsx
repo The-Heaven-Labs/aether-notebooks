@@ -449,6 +449,14 @@ export function AdminPage() {
   const [orgs, setOrgs] = useState<Org[]>([])
   const [users, setUsers] = useState<User[]>([])
 
+  const togglePlatformAdmin = useMutation({
+    mutationFn: ({ id, isPlatformAdmin }: { id: string; isPlatformAdmin: boolean }) =>
+      api.put(`/api/v1/admin/users/${id}`, { is_platform_admin: isPlatformAdmin }),
+    onSuccess: (_data, { id, isPlatformAdmin }) => {
+      setUsers(prev => prev.map(u => u.id === id ? { ...u, is_platform_admin: isPlatformAdmin } : u))
+    },
+  })
+
   useEffect(() => {
     const token = localStorage.getItem('hnb_token')
     const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
@@ -520,7 +528,23 @@ export function AdminPage() {
               <tr key={u.id}>
                 <td style={styles.td}>{u.email}</td>
                 <td style={styles.td}>{u.name}</td>
-                <td style={styles.td}>{u.is_platform_admin ? 'Yes' : 'No'}</td>
+                <td style={styles.td}>
+                  <button
+                    style={{
+                      padding: '2px 10px',
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      borderRadius: 4,
+                      border: '1px solid var(--border)',
+                      background: u.is_platform_admin ? 'var(--accent)' : 'transparent',
+                      color: u.is_platform_admin ? '#fff' : 'var(--text-muted)',
+                    }}
+                    disabled={togglePlatformAdmin.isPending}
+                    onClick={() => togglePlatformAdmin.mutate({ id: u.id, isPlatformAdmin: !u.is_platform_admin })}
+                  >
+                    {u.is_platform_admin ? 'Admin' : 'User'}
+                  </button>
+                </td>
                 <td style={styles.td}>{u.orgs.join(', ')}</td>
               </tr>
             ))}
