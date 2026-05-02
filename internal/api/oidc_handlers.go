@@ -24,12 +24,17 @@ func generateState() (string, error) {
 }
 
 // callbackURL builds the absolute callback URL for the given provider ID.
-func callbackURL(r *http.Request, providerID string) string {
-	scheme := "https"
-	if r.TLS == nil {
-		scheme = "http"
+// If HNB_PUBLIC_URL is set it takes precedence; otherwise it is inferred from the request.
+func (s *Server) callbackURL(r *http.Request, providerID string) string {
+	base := s.publicURL
+	if base == "" {
+		scheme := "https"
+		if r.TLS == nil {
+			scheme = "http"
+		}
+		base = fmt.Sprintf("%s://%s", scheme, r.Host)
 	}
-	return fmt.Sprintf("%s://%s/api/v1/auth/oidc/%s/callback", scheme, r.Host, providerID)
+	return fmt.Sprintf("%s/api/v1/auth/oidc/%s/callback", base, providerID)
 }
 
 func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +50,7 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	provider, err := auth.NewGenericOIDCProvider(ctx, dbProvider.Name, dbProvider.DiscoveryURL, dbProvider.ClientID, dbProvider.ClientSecret, callbackURL(r, providerID), nil)
+	provider, err := auth.NewGenericOIDCProvider(ctx, dbProvider.Name, dbProvider.DiscoveryURL, dbProvider.ClientID, dbProvider.ClientSecret, s.callbackURL(r, providerID), nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to initialize OIDC provider: "+err.Error())
 		return
@@ -80,7 +85,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	provider, err := auth.NewGenericOIDCProvider(ctx, dbProvider.Name, dbProvider.DiscoveryURL, dbProvider.ClientID, dbProvider.ClientSecret, callbackURL(r, providerID), nil)
+	provider, err := auth.NewGenericOIDCProvider(ctx, dbProvider.Name, dbProvider.DiscoveryURL, dbProvider.ClientID, dbProvider.ClientSecret, s.callbackURL(r, providerID), nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to initialize OIDC provider: "+err.Error())
 		return

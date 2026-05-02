@@ -39,6 +39,14 @@ services:
 
   # ── API server (Go + Air hot-reload) ─────────────────────────────────────
 
+  dex:
+    image: ghcr.io/dexidp/dex:v2.38.0
+    command: dex serve /etc/dex/config.yaml
+    ports:
+      - "5556:5556"
+    volumes:
+      - ./dev/dex-config.yaml:/etc/dex/config.yaml:ro
+
   api:
     build:
       context: .
@@ -50,6 +58,8 @@ services:
       HNB_REDIS_URL: redis://hnb-redis:6379
       HNB_MASTER_KEY: dev-master-key-change-in-production
       HNB_JWT_SECRET: dev-jwt-secret-change-in-production
+      HNB_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com
+      HNB_PUBLIC_URL: http://localhost:8080
     volumes:
       # Mount entire repo so Air can watch and rebuild on Go file changes.
       # Named volumes for the Go caches survive container restarts, making
