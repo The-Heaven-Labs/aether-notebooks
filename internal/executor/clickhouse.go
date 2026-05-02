@@ -8,6 +8,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/shopspring/decimal"
 )
 
 type ClickHouseExecutor struct {
@@ -83,7 +84,7 @@ func chAllocDest(typeName string) interface{} {
 			var v *uint64
 			return &v
 		case strings.HasPrefix(base, "Decimal"):
-			var v *float64
+			var v *decimal.Decimal
 			return &v
 		default:
 			var v *string
@@ -106,7 +107,7 @@ func chAllocDest(typeName string) interface{} {
 	case strings.HasPrefix(base, "UInt"):
 		return new(uint64)
 	case strings.HasPrefix(base, "Decimal"):
-		return new(float64)
+		return new(decimal.Decimal)
 	default:
 		return new(string)
 	}
@@ -157,6 +158,15 @@ func chExtractValue(dest interface{}) interface{} {
 			return nil
 		}
 		return **v
+	case *decimal.Decimal:
+		f, _ := v.Float64()
+		return f
+	case **decimal.Decimal:
+		if *v == nil {
+			return nil
+		}
+		f, _ := (*v).Float64()
+		return f
 	case *time.Time:
 		if v.IsZero() {
 			return nil
