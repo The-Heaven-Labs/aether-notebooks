@@ -164,6 +164,10 @@ func (s *Server) routes() {
 	// Platform admin routes
 	s.mux.Handle("GET /api/v1/admin/orgs", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminListOrgs))))
 	s.mux.Handle("GET /api/v1/admin/users", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminListUsers))))
+	s.mux.Handle("GET /api/v1/admin/sso/providers", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminListSSOProviders))))
+	s.mux.Handle("POST /api/v1/admin/sso/providers", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminCreateSSOProvider))))
+	s.mux.Handle("PUT /api/v1/admin/sso/providers/{id}", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminUpdateSSOProvider))))
+	s.mux.Handle("DELETE /api/v1/admin/sso/providers/{id}", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminDeleteSSOProvider))))
 
 	// Audit routes
 	s.mux.Handle("GET /api/v1/audit", authMW(RequireRole("admin")(http.HandlerFunc(s.handleListAuditLogs))))
