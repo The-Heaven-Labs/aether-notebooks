@@ -21,8 +21,8 @@ function getStoredUser() {
     return null
   }
   return {
-    user_id: claims.sub as string,
-    org_id: claims.org_id as string,
+    user_id: claims.uid as string,
+    org_id: claims.oid as string,
     role: claims.role as string,
   }
 }
@@ -34,6 +34,7 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>
   /** Returns onboarding_token if account was created without an org, null otherwise */
   register: (email: string, password: string, name: string) => Promise<string | null>
+  loginWithToken: (token: string) => void
   logout: () => void
   isAuthenticated: boolean
 }
@@ -78,6 +79,14 @@ export function useAuthProvider(): AuthContextValue {
     return null
   }, [])
 
+  const loginWithToken = useCallback((token: string) => {
+    localStorage.setItem('hnb_token', token)
+    const claims = parseJwt(token)
+    if (claims) {
+      setUser({ user_id: claims.uid as string, org_id: claims.oid as string, role: claims.role as string })
+    }
+  }, [])
+
   const logout = useCallback(() => {
     apiLogout()
     localStorage.removeItem('hnb_user_name')
@@ -87,7 +96,7 @@ export function useAuthProvider(): AuthContextValue {
     setUser(null)
   }, [])
 
-  return { user, login, register, logout, isAuthenticated: !!user }
+  return { user, login, register, loginWithToken, logout, isAuthenticated: !!user }
 }
 
 export function useAuth(): AuthContextValue {
