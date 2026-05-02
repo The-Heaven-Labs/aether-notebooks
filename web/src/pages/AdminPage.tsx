@@ -190,16 +190,18 @@ function SSOProvidersTab() {
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
-  const [formError, setFormError] = useState<string | null>(null)
+  const [addFormError, setAddFormError] = useState<string | null>(null)
+  const [editFormError, setEditFormError] = useState<string | null>(null)
+  const [togglingId, setTogglingId] = useState<string | null>(null)
 
   const createProvider = useMutation({
     mutationFn: (body: Record<string, unknown>) => api.post('/api/v1/admin/sso/providers', body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'sso', 'providers'] })
       setShowAddForm(false)
-      setFormError(null)
+      setAddFormError(null)
     },
-    onError: (e: unknown) => setFormError(String(e)),
+    onError: (e: unknown) => setAddFormError(String(e)),
   })
 
   const updateProvider = useMutation({
@@ -208,9 +210,10 @@ function SSOProvidersTab() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'sso', 'providers'] })
       setEditingId(null)
-      setFormError(null)
+      setEditFormError(null)
+      setTogglingId(null)
     },
-    onError: (e: unknown) => setFormError(String(e)),
+    onError: (e: unknown) => { setEditFormError(String(e)); setTogglingId(null) },
   })
 
   const deleteProvider = useMutation({
@@ -269,9 +272,9 @@ function SSOProvidersTab() {
           initial={emptyForm}
           isEdit={false}
           onSave={handleCreate}
-          onCancel={() => { setShowAddForm(false); setFormError(null) }}
+          onCancel={() => { setShowAddForm(false); setAddFormError(null) }}
           saving={createProvider.isPending}
-          error={formError}
+          error={addFormError}
         />
       )}
 
@@ -293,8 +296,8 @@ function SSOProvidersTab() {
                 <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
                   <button
                     style={p.enabled ? ssoStyles.badgeEnabled : ssoStyles.badgeDisabled}
-                    onClick={() => updateProvider.mutate({ id: p.id, body: { enabled: !p.enabled } })}
-                    disabled={updateProvider.isPending}
+                    onClick={() => { setTogglingId(p.id); updateProvider.mutate({ id: p.id, body: { enabled: !p.enabled } }) }}
+                    disabled={togglingId === p.id}
                   >
                     {p.enabled ? 'Enabled' : 'Disabled'}
                   </button>
@@ -302,7 +305,7 @@ function SSOProvidersTab() {
                     style={ssoStyles.iconBtn}
                     onClick={() => {
                       setEditingId(editingId === p.id ? null : p.id)
-                      setFormError(null)
+                      setEditFormError(null)
                     }}
                   >
                     Edit
@@ -332,12 +335,13 @@ function SSOProvidersTab() {
               </div>
               {editingId === p.id && (
                 <ProviderForm
+                  key={p.id}
                   initial={providerToForm(p)}
                   isEdit={true}
                   onSave={values => handleUpdate(p.id, values)}
-                  onCancel={() => { setEditingId(null); setFormError(null) }}
+                  onCancel={() => { setEditingId(null); setEditFormError(null) }}
                   saving={updateProvider.isPending}
-                  error={formError}
+                  error={editFormError}
                 />
               )}
             </div>
@@ -407,10 +411,12 @@ const ssoStyles: Record<string, React.CSSProperties> = {
     padding: '2px 8px',
     background: 'var(--success-bg, #d1fae5)',
     color: 'var(--success, #065f46)',
+    border: '1px solid var(--success, #065f46)',
     borderRadius: 10,
     fontSize: 11,
     fontWeight: 600,
     flexShrink: 0,
+    cursor: 'pointer',
   },
   badgeDisabled: {
     padding: '2px 8px',
@@ -421,6 +427,7 @@ const ssoStyles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     fontWeight: 600,
     flexShrink: 0,
+    cursor: 'pointer',
   },
   iconBtn: {
     padding: '4px 10px',
