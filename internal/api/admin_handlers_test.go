@@ -98,7 +98,8 @@ func TestAdminUpdateUser_Promote(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var promoted bool
-	s.DB().Pool.QueryRow(ctx, `SELECT is_platform_admin FROM users WHERE id=$1`, targetID).Scan(&promoted)
+	err = s.DB().Pool.QueryRow(ctx, `SELECT is_platform_admin FROM users WHERE id=$1`, targetID).Scan(&promoted)
+	require.NoError(t, err)
 	assert.True(t, promoted)
 }
 
@@ -123,7 +124,8 @@ func TestAdminUpdateUser_Demote(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var demoted bool
-	s.DB().Pool.QueryRow(ctx, `SELECT is_platform_admin FROM users WHERE id=$1`, targetID).Scan(&demoted)
+	err = s.DB().Pool.QueryRow(ctx, `SELECT is_platform_admin FROM users WHERE id=$1`, targetID).Scan(&demoted)
+	require.NoError(t, err)
 	assert.False(t, demoted)
 }
 
@@ -138,6 +140,18 @@ func TestAdminUpdateUser_SelfDemotionBlocked(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestAdminUpdateUser_NotFound(t *testing.T) {
+	s := setupTestServer(t)
+
+	body, _ := json.Marshal(map[string]bool{"is_platform_admin": true})
+	req := httptest.NewRequest("PUT", "/api/v1/admin/users/00000000-0000-0000-0000-000000000000", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = withPlatformAdminClaims(req)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestAdminUpdateUser_RequiresPlatformAdmin(t *testing.T) {
