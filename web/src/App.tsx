@@ -17,6 +17,7 @@ import { PresentationPage } from './pages/PresentationPage'
 import { OrgOnboardingPage } from './pages/OrgOnboardingPage'
 import { ProfilePage } from './pages/ProfilePage'
 import { GroupsPage } from './pages/GroupsPage'
+import { OrgSettingsPage } from './pages/OrgSettingsPage'
 import './styles/theme.css'
 
 const queryClient = new QueryClient({
@@ -108,6 +109,7 @@ function AppRoutes() {
       />
       <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
       <Route path="/groups" element={<ProtectedRoute><GroupsPage /></ProtectedRoute>} />
+      <Route path="/settings" element={<ProtectedRoute><OrgSettingsPage /></ProtectedRoute>} />
       <Route path="/onboarding" element={<OrgOnboardingPage />} />
       <Route path="/public/dashboards/:token" element={<PublicDashboardPage />} />
       <Route path="/notebooks/:id/present" element={<PresentationPage />} />
