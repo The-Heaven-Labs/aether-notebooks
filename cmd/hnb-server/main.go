@@ -54,13 +54,13 @@ func main() {
 
 	// Seed platform admin from env if configured
 	if cfg.PlatformAdminEmail != "" {
-		if _, err := db.Pool.Exec(ctx,
-			`UPDATE users SET is_platform_admin=true WHERE email=$1`,
-			cfg.PlatformAdminEmail,
-		); err != nil {
+		promoted, err := api.SeedPlatformAdmin(ctx, db.Pool, cfg.PlatformAdminEmail)
+		if err != nil {
 			log.Printf("warning: failed to seed platform admin: %v", err)
-		} else {
+		} else if promoted {
 			log.Printf("platform admin seeded for %s", cfg.PlatformAdminEmail)
+		} else {
+			log.Printf("platform admin email configured (%s) but user not found; will take effect after first registration", cfg.PlatformAdminEmail)
 		}
 	}
 
