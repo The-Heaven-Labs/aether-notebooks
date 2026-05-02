@@ -82,6 +82,7 @@ func main() {
 	srv := api.NewServer(db, jwtIssuer, auditLogger, masterKey, redisCache)
 	srv.SetAttachmentDir(cfg.AttachmentDir)
 	srv.SetPlatformAdminEmail(cfg.PlatformAdminEmail)
+	srv.SetPublicURL(cfg.PublicURL)
 	httpSrv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      srv,

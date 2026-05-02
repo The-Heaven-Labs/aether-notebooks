@@ -18,6 +18,7 @@ type Server struct {
 	mux                 *http.ServeMux
 	attachmentDir       string
 	platformAdminEmail  string
+	publicURL           string
 	Cache               *cache.Cache
 }
 
@@ -47,6 +48,11 @@ func (s *Server) SetAttachmentDir(dir string) {
 // SetPlatformAdminEmail configures which email gets platform admin on registration.
 func (s *Server) SetPlatformAdminEmail(email string) {
 	s.platformAdminEmail = email
+}
+
+// SetPublicURL sets the base URL used when building OAuth callback URLs.
+func (s *Server) SetPublicURL(u string) {
+	s.publicURL = u
 }
 
 // DB returns the database connection (used in tests).
