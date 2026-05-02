@@ -10,6 +10,7 @@ env:
   HNB_DATABASE_URL: "{{.DB_URL}}"
   HNB_MASTER_KEY: dev-master-key-change-in-production
   HNB_JWT_SECRET: dev-jwt-secret-change-in-production
+  HNB_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com
 
 tasks:
 

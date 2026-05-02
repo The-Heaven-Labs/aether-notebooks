@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
@@ -57,56 +58,81 @@ func chBaseType(t string) (base string, nullable bool) {
 }
 
 // chAllocDest returns a pointer suitable for scanning a ClickHouse column.
+// The driver requires exact-width types for each integer size; wider types
+// (Int128/Int256/UInt128/UInt256) use *big.Int.
 // Nullable columns require a pointer-to-pointer so the driver can set nil.
 func chAllocDest(typeName string) interface{} {
 	base, nullable := chBaseType(typeName)
 	if nullable {
-		switch {
-		case base == "String" || strings.HasPrefix(base, "FixedString") || base == "UUID" || base == "Enum8" || base == "Enum16":
-			var v *string
-			return &v
-		case base == "Bool":
-			var v *bool
-			return &v
-		case base == "Float32":
-			var v *float32
-			return &v
-		case base == "Float64":
-			var v *float64
-			return &v
-		case base == "DateTime" || strings.HasPrefix(base, "DateTime") || base == "Date" || base == "Date32":
-			var v *time.Time
-			return &v
-		case strings.HasPrefix(base, "Int"):
-			var v *int64
-			return &v
-		case strings.HasPrefix(base, "UInt"):
-			var v *uint64
-			return &v
-		case strings.HasPrefix(base, "Decimal"):
-			var v *decimal.Decimal
-			return &v
+		switch base {
+		case "String", "FixedString", "UUID", "Enum8", "Enum16":
+			var v *string; return &v
+		case "Bool":
+			var v *bool; return &v
+		case "Float32":
+			var v *float32; return &v
+		case "Float64":
+			var v *float64; return &v
+		case "Int8":
+			var v *int8; return &v
+		case "Int16":
+			var v *int16; return &v
+		case "Int32":
+			var v *int32; return &v
+		case "Int64":
+			var v *int64; return &v
+		case "Int128", "Int256":
+			var v *big.Int; return &v
+		case "UInt8":
+			var v *uint8; return &v
+		case "UInt16":
+			var v *uint16; return &v
+		case "UInt32":
+			var v *uint32; return &v
+		case "UInt64":
+			var v *uint64; return &v
+		case "UInt128", "UInt256":
+			var v *big.Int; return &v
+		case "DateTime", "DateTime64", "Date", "Date32":
+			var v *time.Time; return &v
+		case "Decimal":
+			var v *decimal.Decimal; return &v
 		default:
-			var v *string
-			return &v
+			var v *string; return &v
 		}
 	}
-	switch {
-	case base == "String" || strings.HasPrefix(base, "FixedString") || base == "UUID" || base == "Enum8" || base == "Enum16":
+	switch base {
+	case "String", "FixedString", "UUID", "Enum8", "Enum16":
 		return new(string)
-	case base == "Bool":
+	case "Bool":
 		return new(bool)
-	case base == "Float32":
+	case "Float32":
 		return new(float32)
-	case base == "Float64":
+	case "Float64":
 		return new(float64)
-	case base == "DateTime" || strings.HasPrefix(base, "DateTime") || base == "Date" || base == "Date32":
-		return new(time.Time)
-	case strings.HasPrefix(base, "Int"):
+	case "Int8":
+		return new(int8)
+	case "Int16":
+		return new(int16)
+	case "Int32":
+		return new(int32)
+	case "Int64":
 		return new(int64)
-	case strings.HasPrefix(base, "UInt"):
+	case "Int128", "Int256":
+		return new(big.Int)
+	case "UInt8":
+		return new(uint8)
+	case "UInt16":
+		return new(uint16)
+	case "UInt32":
+		return new(uint32)
+	case "UInt64":
 		return new(uint64)
-	case strings.HasPrefix(base, "Decimal"):
+	case "UInt128", "UInt256":
+		return new(big.Int)
+	case "DateTime", "DateTime64", "Date", "Date32":
+		return new(time.Time)
+	case "Decimal":
 		return new(decimal.Decimal)
 	default:
 		return new(string)
@@ -114,6 +140,7 @@ func chAllocDest(typeName string) interface{} {
 }
 
 // chExtractValue dereferences the scan destination into a JSON-friendly value.
+// Narrow integers are widened to int64/uint64; big.Int is returned as a string.
 func chExtractValue(dest interface{}) interface{} {
 	switch v := dest.(type) {
 	case *string:
@@ -144,6 +171,27 @@ func chExtractValue(dest interface{}) interface{} {
 			return nil
 		}
 		return **v
+	case *int8:
+		return int64(*v)
+	case **int8:
+		if *v == nil {
+			return nil
+		}
+		return int64(**v)
+	case *int16:
+		return int64(*v)
+	case **int16:
+		if *v == nil {
+			return nil
+		}
+		return int64(**v)
+	case *int32:
+		return int64(*v)
+	case **int32:
+		if *v == nil {
+			return nil
+		}
+		return int64(**v)
 	case *int64:
 		return *v
 	case **int64:
@@ -151,6 +199,34 @@ func chExtractValue(dest interface{}) interface{} {
 			return nil
 		}
 		return **v
+	case *big.Int:
+		return v.String()
+	case **big.Int:
+		if *v == nil {
+			return nil
+		}
+		return (*v).String()
+	case *uint8:
+		return uint64(*v)
+	case **uint8:
+		if *v == nil {
+			return nil
+		}
+		return uint64(**v)
+	case *uint16:
+		return uint64(*v)
+	case **uint16:
+		if *v == nil {
+			return nil
+		}
+		return uint64(**v)
+	case *uint32:
+		return uint64(*v)
+	case **uint32:
+		if *v == nil {
+			return nil
+		}
+		return uint64(**v)
 	case *uint64:
 		return *v
 	case **uint64:
