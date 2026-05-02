@@ -16,6 +16,7 @@ import (
 	"github.com/heavenlabs/hnb/internal/api"
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/auth"
+	"github.com/heavenlabs/hnb/internal/cache"
 	"github.com/heavenlabs/hnb/internal/crypto"
 	"github.com/heavenlabs/hnb/internal/database"
 )
@@ -62,13 +63,31 @@ func setupTestDB(t *testing.T) *database.DB {
 	return db
 }
 
+func setupTestCache(t *testing.T) *cache.Cache {
+	t.Helper()
+	redisURL := os.Getenv("HNB_REDIS_URL")
+	if redisURL == "" {
+		redisURL = "redis://localhost:6379"
+	}
+	c, err := cache.New(redisURL)
+	if err != nil {
+		t.Fatalf("cache.New: %v", err)
+	}
+	if err := c.Ping(context.Background()); err != nil {
+		t.Fatalf("cache ping: %v", err)
+	}
+	t.Cleanup(func() { c.Close() })
+	return c
+}
+
 func setupTestServer(t *testing.T) *api.Server {
 	t.Helper()
 	db := setupTestDB(t)
 	jwt := auth.NewJWTIssuer("test-secret", 15*time.Minute)
 	auditLogger := audit.NewLogger(db)
 	key := crypto.DeriveKey("test-master-key-for-tests-only!")
-	return api.NewServer(db, jwt, auditLogger, key, nil)
+	redisCache := setupTestCache(t)
+	return api.NewServer(db, jwt, auditLogger, key, redisCache)
 }
 
 func registerAndGetToken(t *testing.T, srv *api.Server, email, orgName string) string {

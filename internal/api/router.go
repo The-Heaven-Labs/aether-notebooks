@@ -5,29 +5,31 @@ import (
 
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/auth"
+	"github.com/heavenlabs/hnb/internal/cache"
 	"github.com/heavenlabs/hnb/internal/database"
 )
 
 type Server struct {
-	db            *database.DB
-	jwt           *auth.JWTIssuer
-	audit         *audit.Logger
-	masterKey     []byte
-	hub           *Hub
-	mux           *http.ServeMux
-	oidcProviders map[string]auth.OIDCProvider
-	attachmentDir string
+	db                  *database.DB
+	jwt                 *auth.JWTIssuer
+	audit               *audit.Logger
+	masterKey           []byte
+	hub                 *Hub
+	mux                 *http.ServeMux
+	attachmentDir       string
+	platformAdminEmail  string
+	Cache               *cache.Cache
 }
 
-func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, oidcProviders map[string]auth.OIDCProvider) *Server {
+func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, redisCache *cache.Cache) *Server {
 	s := &Server{
-		db:            db,
-		jwt:           jwt,
-		audit:         auditLogger,
-		masterKey:     masterKey,
-		hub:           NewHub(),
-		mux:           http.NewServeMux(),
-		oidcProviders: oidcProviders,
+		db:        db,
+		jwt:       jwt,
+		audit:     auditLogger,
+		masterKey: masterKey,
+		hub:       NewHub(),
+		mux:       http.NewServeMux(),
+		Cache:     redisCache,
 	}
 	s.routes()
 	return s
@@ -42,6 +44,21 @@ func (s *Server) SetAttachmentDir(dir string) {
 	s.attachmentDir = dir
 }
 
+// SetPlatformAdminEmail configures which email gets platform admin on registration.
+func (s *Server) SetPlatformAdminEmail(email string) {
+	s.platformAdminEmail = email
+}
+
+// DB returns the database connection (used in tests).
+func (s *Server) DB() *database.DB {
+	return s.db
+}
+
+// MasterKey returns the master encryption key (used in tests).
+func (s *Server) MasterKey() []byte {
+	return s.masterKey
+}
+
 func (s *Server) routes() {
 	authMW := AuthMiddleware(s.jwt)
 
@@ -51,6 +68,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/auth/register", s.handleRegister)
 	s.mux.HandleFunc("GET /api/v1/auth/oidc/{provider}", s.handleOIDCLogin)
 	s.mux.HandleFunc("GET /api/v1/auth/oidc/{provider}/callback", s.handleOIDCCallback)
+	s.mux.HandleFunc("GET /api/v1/auth/sso-providers", s.handleSSOProbe)
 
 	// Onboarding routes (require auth but allow onboarding role)
 	s.mux.Handle("POST /api/v1/auth/org/create", authMW(http.HandlerFunc(s.handleOrgCreate)))
@@ -161,6 +179,22 @@ func (s *Server) routes() {
 	// Platform admin routes
 	s.mux.Handle("GET /api/v1/admin/orgs", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminListOrgs))))
 	s.mux.Handle("GET /api/v1/admin/users", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminListUsers))))
+	s.mux.Handle("PUT /api/v1/admin/users/{id}", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminUpdateUser))))
+	s.mux.Handle("GET /api/v1/admin/sso/providers", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminListSSOProviders))))
+	s.mux.Handle("POST /api/v1/admin/sso/providers", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminCreateSSOProvider))))
+	s.mux.Handle("PUT /api/v1/admin/sso/providers/{id}", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminUpdateSSOProvider))))
+	s.mux.Handle("DELETE /api/v1/admin/sso/providers/{id}", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminDeleteSSOProvider))))
+
+	// Org admin SSO routes
+	s.mux.Handle("GET /api/v1/sso/providers", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgListSSOProviders))))
+	s.mux.Handle("POST /api/v1/sso/providers", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgCreateSSOProvider))))
+	s.mux.Handle("PUT /api/v1/sso/providers/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgUpdateSSOProvider))))
+	s.mux.Handle("DELETE /api/v1/sso/providers/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgDeleteSSOProvider))))
+	s.mux.Handle("GET /api/v1/sso/platform-providers", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgListPlatformProviders))))
+	s.mux.Handle("POST /api/v1/sso/platform-providers/{id}/enable", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgEnablePlatformProvider))))
+	s.mux.Handle("DELETE /api/v1/sso/platform-providers/{id}/enable", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgDisablePlatformProvider))))
+	s.mux.Handle("GET /api/v1/sso/settings", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgGetSSOSettings))))
+	s.mux.Handle("PUT /api/v1/sso/settings", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgUpdateSSOSettings))))
 
 	// Audit routes
 	s.mux.Handle("GET /api/v1/audit", authMW(RequireRole("admin")(http.HandlerFunc(s.handleListAuditLogs))))
