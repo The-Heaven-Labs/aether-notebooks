@@ -27,9 +27,12 @@ export function LoginPage() {
   const [probing, setProbing] = useState(false)
   const [ssoProviders, setSsoProviders] = useState<SSOProvider[]>([])
 
-  // Handle OIDC callback: pick up ?token= from the URL query string
+  // Handle OIDC callback: pick up ?token= from the hash fragment (hash routing
+  // places query params inside the hash, e.g. /#/login?token=...)
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
+    const hash = window.location.hash
+    const qIdx = hash.indexOf('?')
+    const params = new URLSearchParams(qIdx >= 0 ? hash.slice(qIdx) : '')
     const token = params.get('token')
     if (token) {
       setToken(token)
@@ -351,8 +354,8 @@ const styles: Record<string, React.CSSProperties> = {
   formInner: {
     width: '100%',
     maxWidth: 360,
-    background: '#fff',
-    border: '1px solid #e8e8e8',
+    background: 'var(--bg-modal)',
+    border: '1px solid var(--border)',
     borderRadius: 4,
     padding: '28px 32px',
     boxSizing: 'border-box',
@@ -362,7 +365,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 4,
     marginBottom: 28,
     padding: 4,
-    background: '#f5f5f5',
+    background: 'var(--bg-secondary)',
     borderRadius: 4,
   },
   tab: {
@@ -378,7 +381,7 @@ const styles: Record<string, React.CSSProperties> = {
     transition: 'all 0.15s',
   },
   tabActive: {
-    background: 'white',
+    background: 'var(--bg-elevated)',
     color: 'var(--text-primary)',
     boxShadow: 'none',
   },
@@ -408,17 +411,17 @@ const styles: Record<string, React.CSSProperties> = {
   input: {
     padding: '9px 12px',
     borderRadius: 4,
-    border: '1px solid #ddd',
+    border: '1px solid var(--border)',
     fontSize: 14,
     outline: 'none',
-    background: 'white',
+    background: 'var(--bg-input)',
     color: 'var(--text-primary)',
     transition: 'border-color 0.15s',
   },
   submit: {
     padding: '11px',
-    background: '#111',
-    color: '#fff',
+    background: 'var(--text-primary)',
+    color: 'var(--bg-primary)',
     border: 'none',
     borderRadius: 4,
     fontSize: 14,
@@ -434,8 +437,8 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     marginBottom: 16,
     padding: '8px 10px',
-    background: '#f9f9f9',
-    border: '1px solid #e8e8e8',
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
     borderRadius: 4,
   },
   emailDisplay: {
@@ -480,7 +483,7 @@ const styles: Record<string, React.CSSProperties> = {
   dividerLine: {
     flex: 1,
     height: 1,
-    background: '#e8e8e8',
+    background: 'var(--border)',
   },
   dividerText: {
     fontSize: 12,
