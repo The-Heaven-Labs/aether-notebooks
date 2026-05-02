@@ -124,7 +124,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		token, err := s.jwt.Issue(userID, orgID, "admin")
+		token, err := s.jwt.IssueFull(userID, orgID, "admin", isPlatformAdmin)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to issue token")
 			return
@@ -202,7 +202,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if autoJoinOrgID != "" {
-		token, err := s.jwt.Issue(userID, autoJoinOrgID, "viewer")
+		token, err := s.jwt.IssueFull(userID, autoJoinOrgID, "viewer", isPlatformAdmin)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to issue token")
 			return

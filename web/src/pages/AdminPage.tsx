@@ -536,7 +536,7 @@ export function AdminPage() {
                 <td style={styles.td}>
                   <button
                     style={{
-                      ...styles.iconBtn,
+                      ...ssoStyles.iconBtn,
                       background: u.is_platform_admin ? 'var(--accent)' : 'transparent',
                       color: u.is_platform_admin ? '#fff' : 'var(--text-muted)',
                     }}
