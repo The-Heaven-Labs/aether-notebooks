@@ -60,6 +60,7 @@ services:
       HNB_JWT_SECRET: dev-jwt-secret-change-in-production
       HNB_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com
       HNB_PUBLIC_URL: http://localhost:8080
+      HNB_FRONTEND_URL: http://localhost:5173
     volumes:
       # Mount entire repo so Air can watch and rebuild on Go file changes.
       # Named volumes for the Go caches survive container restarts, making
