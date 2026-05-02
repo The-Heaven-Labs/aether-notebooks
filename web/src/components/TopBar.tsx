@@ -60,6 +60,15 @@ export function TopBar() {
             >
               Profile settings
             </Link>
+            {user?.role === 'admin' && (
+              <Link
+                to="/settings"
+                style={styles.dropdownLink}
+                onClick={() => setOpen(false)}
+              >
+                Settings
+              </Link>
+            )}
             <button style={styles.signOut} onClick={() => { logout(); setOpen(false) }}>
               Sign out
             </button>
