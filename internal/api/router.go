@@ -19,6 +19,7 @@ type Server struct {
 	attachmentDir       string
 	platformAdminEmail  string
 	publicURL           string
+	frontendURL         string
 	Cache               *cache.Cache
 }
 
@@ -53,6 +54,11 @@ func (s *Server) SetPlatformAdminEmail(email string) {
 // SetPublicURL sets the base URL used when building OAuth callback URLs.
 func (s *Server) SetPublicURL(u string) {
 	s.publicURL = u
+}
+
+// SetFrontendURL sets the base URL used for post-auth redirects.
+func (s *Server) SetFrontendURL(u string) {
+	s.frontendURL = u
 }
 
 // DB returns the database connection (used in tests).
