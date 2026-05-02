@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/heavenlabs/hnb/internal/api"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,10 +49,10 @@ func TestSeedPlatformAdmin(t *testing.T) {
 
 	email := fmt.Sprintf("admin-%d@example.com", time.Now().UnixNano())
 
-	// User doesn't exist yet: UPDATE is a no-op (not an error)
-	_, err := s.DB().Pool.Exec(ctx,
-		`UPDATE users SET is_platform_admin=true WHERE email=$1`, email)
+	// User doesn't exist yet: seed is a no-op, no error
+	promoted, err := api.SeedPlatformAdmin(ctx, s.DB().Pool, email)
 	assert.NoError(t, err)
+	assert.False(t, promoted)
 
 	// Create the user
 	var userID string
@@ -61,10 +62,11 @@ func TestSeedPlatformAdmin(t *testing.T) {
 	require.NoError(t, err)
 
 	// Seed: user now exists, should be promoted
-	_, err = s.DB().Pool.Exec(ctx,
-		`UPDATE users SET is_platform_admin=true WHERE email=$1`, email)
+	promoted, err = api.SeedPlatformAdmin(ctx, s.DB().Pool, email)
 	require.NoError(t, err)
+	assert.True(t, promoted)
 
+	// Verify in DB
 	var isPlatformAdmin bool
 	err = s.DB().Pool.QueryRow(ctx,
 		`SELECT is_platform_admin FROM users WHERE id=$1`, userID).Scan(&isPlatformAdmin)
