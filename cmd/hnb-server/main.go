@@ -52,6 +52,18 @@ func main() {
 	}
 	log.Println("redis connected")
 
+	// Seed platform admin from env if configured
+	if cfg.PlatformAdminEmail != "" {
+		if _, err := db.Pool.Exec(ctx,
+			`UPDATE users SET is_platform_admin=true WHERE email=$1`,
+			cfg.PlatformAdminEmail,
+		); err != nil {
+			log.Printf("warning: failed to seed platform admin: %v", err)
+		} else {
+			log.Printf("platform admin seeded for %s", cfg.PlatformAdminEmail)
+		}
+	}
+
 	// Initialize services
 	jwtIssuer := auth.NewJWTIssuer(cfg.JWTSecret, 24*time.Hour)
 	masterKey := crypto.DeriveKey(cfg.MasterKey)
@@ -69,6 +81,7 @@ func main() {
 	// Build HTTP server
 	srv := api.NewServer(db, jwtIssuer, auditLogger, masterKey, redisCache)
 	srv.SetAttachmentDir(cfg.AttachmentDir)
+	srv.SetPlatformAdminEmail(cfg.PlatformAdminEmail)
 	httpSrv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      srv,
