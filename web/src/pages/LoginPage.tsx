@@ -2,43 +2,83 @@ import { useState, useEffect } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import { ApiError, setToken } from '../api/client'
+import { ApiError, api, setToken } from '../api/client'
 import { ErrorBanner } from '../components/ErrorBanner'
+
+type LoginStep = 'email' | 'password' | 'sso_and_password'
+
+interface SSOProvider {
+  id: string
+  name: string
+  provider_type: string
+}
 
 export function LoginPage() {
   const { login, register } = useAuth()
   const navigate = useNavigate()
   const [mode, setMode] = useState<'login' | 'register'>('login')
+  const [step, setStep] = useState<LoginStep>('email')
   const [email, setEmail] = useState('')
+  const [emailInput, setEmailInput] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [probing, setProbing] = useState(false)
+  const [ssoProviders, setSsoProviders] = useState<SSOProvider[]>([])
 
-// Handle OIDC callback: pick up ?token= from the URL query string
-useEffect(() => {
-  const params = new URLSearchParams(window.location.search)
-  const token = params.get('token')
-  if (token) {
-    setToken(token)
-    // Fetch user info after OIDC login
-    fetch('/api/v1/users/me', {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-      .then(res => res.json())
-      .then(user => {
-        if (user.name) localStorage.setItem('hnb_user_name', user.name)
-        if (user.email) localStorage.setItem('hnb_user_email', user.email)
-        if (user.is_platform_admin) localStorage.setItem('hnb_is_platform_admin', 'true')
+  // Handle OIDC callback: pick up ?token= from the URL query string
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const token = params.get('token')
+    if (token) {
+      setToken(token)
+      // Fetch user info after OIDC login
+      fetch('/api/v1/users/me', {
+        headers: { Authorization: `Bearer ${token}` }
       })
-      .catch(err => console.warn('[OIDC] Failed to fetch user info:', err))
-      .finally(() => {
-        // Clean up the URL and navigate to home
-        window.history.replaceState({}, '', window.location.pathname)
-        navigate('/')
-      })
+        .then(res => res.json())
+        .then(user => {
+          if (user.name) localStorage.setItem('hnb_user_name', user.name)
+          if (user.email) localStorage.setItem('hnb_user_email', user.email)
+          if (user.is_platform_admin) localStorage.setItem('hnb_is_platform_admin', 'true')
+        })
+        .catch(err => console.warn('[OIDC] Failed to fetch user info:', err))
+        .finally(() => {
+          // Clean up the URL and navigate to home
+          window.history.replaceState({}, '', window.location.pathname)
+          navigate('/')
+        })
+    }
+  }, [navigate])
+
+  async function handleEmailContinue(e: FormEvent) {
+    e.preventDefault()
+    setError('')
+    setProbing(true)
+    try {
+      const providers = await api.get<SSOProvider[]>(
+        `/api/v1/auth/sso-providers?email=${encodeURIComponent(emailInput)}`
+      )
+      setSsoProviders(providers)
+      setEmail(emailInput)
+      setStep(providers.length > 0 ? 'sso_and_password' : 'password')
+    } catch (err) {
+      // On probe failure, fall through to password login
+      setEmail(emailInput)
+      setSsoProviders([])
+      setStep('password')
+    } finally {
+      setProbing(false)
+    }
   }
-}, [navigate])
+
+  function handleBackToEmail() {
+    setStep('email')
+    setEmailInput(email)
+    setSsoProviders([])
+    setError('')
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -63,9 +103,14 @@ useEffect(() => {
     }
   }
 
-  function handleSSOLogin() {
-    window.location.href = '/api/v1/auth/oidc/default'
+  function handleSSOProviderLogin(providerId: string) {
+    window.location.href = `/api/v1/auth/oidc/${providerId}`
   }
+
+  // In register mode, skip the email step entirely
+  const showEmailStep = mode === 'login' && step === 'email'
+  const showPasswordStep = mode === 'register' || step === 'password' || step === 'sso_and_password'
+  const showSSOProviders = mode === 'login' && step === 'sso_and_password' && ssoProviders.length > 0
 
   return (
     <div style={styles.page}>
@@ -102,7 +147,7 @@ useEffect(() => {
           <div style={styles.tabs}>
             <button
               style={{ ...styles.tab, ...(mode === 'login' ? styles.tabActive : {}) }}
-              onClick={() => { setMode('login'); setError('') }}
+              onClick={() => { setMode('login'); setStep('email'); setEmailInput(email); setError('') }}
             >
               Sign In
             </button>
@@ -118,59 +163,114 @@ useEffect(() => {
             {mode === 'login' ? 'Welcome back' : 'Get started free'}
           </p>
 
-          <form onSubmit={handleSubmit} style={styles.form}>
-            {mode === 'register' && (
-              <>
-                <div style={styles.field}>
-                  <label style={styles.label}>Your name</label>
-                  <input
-                    style={styles.input}
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    required
-                    placeholder="Jane Doe"
-                  />
-                </div>
-              </>
-            )}
-            <div style={styles.field}>
-              <label style={styles.label}>Email</label>
-              <input
-                style={styles.input}
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                placeholder="you@example.com"
-              />
-            </div>
-            <div style={styles.field}>
-              <label style={styles.label}>Password</label>
-              <input
-                style={styles.input}
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                placeholder="••••••••"
-              />
-            </div>
-            {error && <ErrorBanner message={error} onDismiss={() => setError('')} />}
-            <button type="submit" style={styles.submit} disabled={loading}>
-              {loading ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Create Account'}
-            </button>
-          </form>
+          {/* Step 1: Email input (login mode only) */}
+          {showEmailStep && (
+            <form onSubmit={handleEmailContinue} style={styles.form}>
+              <div style={styles.field}>
+                <label style={styles.label}>Email</label>
+                <input
+                  style={styles.input}
+                  type="email"
+                  value={emailInput}
+                  onChange={(e) => setEmailInput(e.target.value)}
+                  required
+                  placeholder="you@example.com"
+                  autoFocus
+                />
+              </div>
+              {error && <ErrorBanner message={error} onDismiss={() => setError('')} />}
+              <button type="submit" style={styles.submit} disabled={probing}>
+                {probing ? 'Please wait…' : 'Continue'}
+              </button>
+            </form>
+          )}
 
-          <div style={styles.divider}>
-            <div style={styles.dividerLine} />
-            <span style={styles.dividerText}>or</span>
-            <div style={styles.dividerLine} />
-          </div>
+          {/* Step 2: SSO providers + password form */}
+          {mode === 'login' && (step === 'password' || step === 'sso_and_password') && (
+            <>
+              {/* Email label with back link */}
+              <div style={styles.emailLabel}>
+                <span style={styles.emailDisplay}>{email}</span>
+                <button
+                  type="button"
+                  style={styles.backLink}
+                  onClick={handleBackToEmail}
+                >
+                  ← Use different email
+                </button>
+              </div>
 
-          <button type="button" style={styles.ssoButton} onClick={handleSSOLogin}>
-            Sign in with SSO
-          </button>
+              {/* SSO buttons */}
+              {showSSOProviders && (
+                <>
+                  <div style={styles.ssoList}>
+                    {ssoProviders.map(provider => (
+                      <button
+                        key={provider.id}
+                        type="button"
+                        style={styles.ssoProviderButton}
+                        onClick={() => handleSSOProviderLogin(provider.id)}
+                      >
+                        Sign in with {provider.name}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={styles.divider}>
+                    <div style={styles.dividerLine} />
+                    <span style={styles.dividerText}>or</span>
+                    <div style={styles.dividerLine} />
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          {/* Password form (login step 2 or register) */}
+          {showPasswordStep && (
+            <form onSubmit={handleSubmit} style={styles.form}>
+              {mode === 'register' && (
+                <>
+                  <div style={styles.field}>
+                    <label style={styles.label}>Your name</label>
+                    <input
+                      style={styles.input}
+                      type="text"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      required
+                      placeholder="Jane Doe"
+                    />
+                  </div>
+                  <div style={styles.field}>
+                    <label style={styles.label}>Email</label>
+                    <input
+                      style={styles.input}
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      required
+                      placeholder="you@example.com"
+                    />
+                  </div>
+                </>
+              )}
+              <div style={styles.field}>
+                <label style={styles.label}>Password</label>
+                <input
+                  style={styles.input}
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  placeholder="••••••••"
+                />
+              </div>
+              {error && <ErrorBanner message={error} onDismiss={() => setError('')} />}
+              <button type="submit" style={styles.submit} disabled={loading}>
+                {loading ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Create Account'}
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </div>
@@ -328,6 +428,49 @@ const styles: Record<string, React.CSSProperties> = {
     letterSpacing: '0.01em',
     transition: 'background 0.15s',
   },
+  emailLabel: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    padding: '8px 10px',
+    background: '#f9f9f9',
+    border: '1px solid #e8e8e8',
+    borderRadius: 4,
+  },
+  emailDisplay: {
+    fontSize: 13,
+    color: 'var(--text-primary)',
+    fontWeight: 500,
+  },
+  backLink: {
+    background: 'none',
+    border: 'none',
+    fontSize: 12,
+    color: 'var(--accent)',
+    cursor: 'pointer',
+    padding: 0,
+    fontWeight: 500,
+  },
+  ssoList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    marginBottom: 4,
+  },
+  ssoProviderButton: {
+    width: '100%',
+    padding: '11px',
+    background: 'var(--accent)',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 4,
+    fontSize: 14,
+    fontWeight: 600,
+    cursor: 'pointer',
+    letterSpacing: '0.01em',
+    transition: 'opacity 0.15s',
+  },
   divider: {
     display: 'flex',
     alignItems: 'center',
@@ -343,18 +486,5 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     color: 'var(--text-secondary)',
     flexShrink: 0,
-  },
-  ssoButton: {
-    width: '100%',
-    padding: '11px',
-    background: '#fff',
-    color: '#333',
-    border: '1px solid #ddd',
-    borderRadius: 4,
-    fontSize: 14,
-    fontWeight: 600,
-    cursor: 'pointer',
-    letterSpacing: '0.01em',
-    transition: 'border-color 0.15s, background 0.15s',
   },
 }
