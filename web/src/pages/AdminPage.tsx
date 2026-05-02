@@ -291,9 +291,13 @@ function SSOProvidersTab() {
                   </span>
                 </div>
                 <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
-                  <span style={p.enabled ? ssoStyles.badgeEnabled : ssoStyles.badgeDisabled}>
+                  <button
+                    style={p.enabled ? ssoStyles.badgeEnabled : ssoStyles.badgeDisabled}
+                    onClick={() => updateProvider.mutate({ id: p.id, body: { enabled: !p.enabled } })}
+                    disabled={updateProvider.isPending}
+                  >
                     {p.enabled ? 'Enabled' : 'Disabled'}
-                  </span>
+                  </button>
                   <button
                     style={ssoStyles.iconBtn}
                     onClick={() => {
