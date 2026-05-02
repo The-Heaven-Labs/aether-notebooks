@@ -46,6 +46,7 @@ function OutputItem({ output, fixedView, cellId }: { output: Output; fixedView?:
 }
 
 const TYPE_MAP: Record<string, { icon: React.ReactNode; label: string }> = {
+  // Generic / Postgres
   string: { icon: 'Aa', label: 'String' },
   varchar: { icon: 'Aa', label: 'String' },
   text: { icon: 'Aa', label: 'String' },
@@ -67,7 +68,9 @@ const TYPE_MAP: Record<string, { icon: React.ReactNode; label: string }> = {
   boolean: { icon: <ToggleLeft size={12} />, label: 'Boolean' },
   bool: { icon: <ToggleLeft size={12} />, label: 'Boolean' },
   date: { icon: <Calendar size={12} />, label: 'Date' },
+  date32: { icon: <Calendar size={12} />, label: 'Date' },
   datetime: { icon: <Clock size={12} />, label: 'Datetime' },
+  datetime64: { icon: <Clock size={12} />, label: 'Datetime' },
   timestamp: { icon: <Clock size={12} />, label: 'Datetime' },
   timestamptz: { icon: <Clock size={12} />, label: 'Datetime' },
   'timestamp with time zone': { icon: <Clock size={12} />, label: 'Datetime' },
@@ -81,13 +84,44 @@ const TYPE_MAP: Record<string, { icon: React.ReactNode; label: string }> = {
   bytes: { icon: <Binary size={12} />, label: 'Bytes' },
   bytea: { icon: <Binary size={12} />, label: 'Bytes' },
   unknown: { icon: '?', label: 'Unknown' },
+  // ClickHouse-specific base types (after stripping wrappers/params)
+  fixedstring: { icon: 'Aa', label: 'String' },
+  enum8: { icon: 'Aa', label: 'String' },
+  enum16: { icon: 'Aa', label: 'String' },
+  int16: { icon: '#', label: 'Integer' },
+  int32: { icon: '#', label: 'Integer' },
+  int64: { icon: '#', label: 'Integer' },
+  int128: { icon: '#', label: 'Integer' },
+  int256: { icon: '#', label: 'Integer' },
+  uint8: { icon: '#', label: 'Integer' },
+  uint16: { icon: '#', label: 'Integer' },
+  uint32: { icon: '#', label: 'Integer' },
+  uint64: { icon: '#', label: 'Integer' },
+  uint128: { icon: '#', label: 'Integer' },
+  uint256: { icon: '#', label: 'Integer' },
+  float32: { icon: '0.1', label: 'Float' },
+  float64: { icon: '0.1', label: 'Float' },
+}
+
+// Strips ClickHouse type wrappers (Nullable, LowCardinality) and parameters
+// so "LowCardinality(String)" → "string", "Decimal(10, 2)" → "decimal".
+function normalizeTypeName(type: string): string {
+  let t = type.trim()
+  for (const wrapper of ['Nullable', 'LowCardinality']) {
+    if (t.startsWith(wrapper + '(') && t.endsWith(')')) {
+      t = t.slice(wrapper.length + 1, -1).trim()
+    }
+  }
+  const parenIdx = t.indexOf('(')
+  if (parenIdx !== -1) t = t.slice(0, parenIdx)
+  return t.toLowerCase()
 }
 
 function TypeIcon({ type }: { type: string }) {
-  const normalized = type.toLowerCase()
+  const normalized = normalizeTypeName(type)
   const info = TYPE_MAP[normalized] ?? { icon: '?', label: 'Unknown' }
   return (
-    <span title={info.label} style={typeIconStyles.badge}>
+    <span title={`${info.label} (${type})`} style={typeIconStyles.badge}>
       {info.icon}
     </span>
   )
