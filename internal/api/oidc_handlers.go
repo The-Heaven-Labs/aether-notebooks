@@ -188,6 +188,6 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 
 	// Redirect to the frontend with the token as a query param so LoginPage can pick it up.
 	// In dev the frontend runs on a different port (Vite), so HNB_FRONTEND_URL overrides the base.
-	redirectURL := s.frontendURL + "/#/login?token=" + url.QueryEscape(token)
+	redirectURL := s.frontendURL + "/login?token=" + url.QueryEscape(token)
 	http.Redirect(w, r, redirectURL, http.StatusFound)
 }

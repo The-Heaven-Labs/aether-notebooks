@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import { ApiError, api, setToken } from '../api/client'
+import { ApiError, api } from '../api/client'
 import { ErrorBanner } from '../components/ErrorBanner'
 
 type LoginStep = 'email' | 'password' | 'sso_and_password'
@@ -14,7 +14,7 @@ interface SSOProvider {
 }
 
 export function LoginPage() {
-  const { login, register } = useAuth()
+  const { login, register, loginWithToken } = useAuth()
   const navigate = useNavigate()
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [step, setStep] = useState<LoginStep>('email')
@@ -27,16 +27,13 @@ export function LoginPage() {
   const [probing, setProbing] = useState(false)
   const [ssoProviders, setSsoProviders] = useState<SSOProvider[]>([])
 
-  // Handle OIDC callback: pick up ?token= from the hash fragment (hash routing
-  // places query params inside the hash, e.g. /#/login?token=...)
+  // Handle OIDC callback: pick up ?token= from the query string
   useEffect(() => {
-    const hash = window.location.hash
-    const qIdx = hash.indexOf('?')
-    const params = new URLSearchParams(qIdx >= 0 ? hash.slice(qIdx) : '')
+    const params = new URLSearchParams(window.location.search)
     const token = params.get('token')
     if (token) {
-      setToken(token)
-      // Fetch user info after OIDC login
+      loginWithToken(token)
+      // Fetch supplementary user info (name, email, platform admin flag)
       fetch('/api/v1/users/me', {
         headers: { Authorization: `Bearer ${token}` }
       })
@@ -48,7 +45,6 @@ export function LoginPage() {
         })
         .catch(err => console.warn('[OIDC] Failed to fetch user info:', err))
         .finally(() => {
-          // Clean up the URL and navigate to home
           window.history.replaceState({}, '', window.location.pathname)
           navigate('/')
         })
