@@ -66,6 +66,36 @@ func TestClickHouseDecimalScan(t *testing.T) {
 	}
 }
 
+func TestClickHouseIntegerWidths(t *testing.T) {
+	cfg := testDevClickHouseConfig(t)
+	exec, err := executor.NewClickHouseExecutor(cfg)
+	if err != nil {
+		t.Skipf("dev ClickHouse not reachable: %v", err)
+	}
+	defer exec.Close()
+
+	// Each toUIntN / toIntN cast returns that exact ClickHouse type.
+	result, err := exec.Execute(context.Background(),
+		`SELECT toUInt8(1) AS u8, toUInt16(2) AS u16, toUInt32(3) AS u32, toUInt64(4) AS u64,
+		        toInt8(-1) AS i8, toInt16(-2) AS i16, toInt32(-3) AS i32, toInt64(-4) AS i64`,
+		nil, 1)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+	row := result.Rows[0]
+	for i, col := range result.Columns {
+		switch row[i].(type) {
+		case int64, uint64:
+			// ok — narrow types are widened
+		default:
+			t.Errorf("col %s scanned as %T, want int64 or uint64", col.Name, row[i])
+		}
+	}
+}
+
 func TestClickHouseDatabases(t *testing.T) {
 	cfg := testClickHouseConfig(t)
 	exec, err := executor.NewClickHouseExecutor(cfg)
