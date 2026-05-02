@@ -1,8 +1,8 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import type React from 'react'
 import type { Output, ResultSet } from '../types'
 import { ChartView } from './ChartView'
-import { ToggleLeft, Calendar, Clock, Fingerprint, Ban, Binary, Table, BarChart2, Timer, Sigma } from 'lucide-react'
+import { ToggleLeft, Calendar, Clock, Fingerprint, Ban, Binary, Table, BarChart2, Timer, Sigma, ChevronUp, ChevronDown, X } from 'lucide-react'
 
 interface Props {
   outputs: Output[]
@@ -148,6 +148,48 @@ const typeIconStyles: Record<string, React.CSSProperties> = {
 
 const OUTPUT_MIN_HEIGHT = 80
 const OUTPUT_DEFAULT_HEIGHT = 340
+const MAX_CELL_DISPLAY = 100
+
+type SortDirection = 'none' | 'asc' | 'desc'
+
+interface SortState {
+  column: string | null
+  direction: SortDirection
+}
+
+interface DetailPanel {
+  rowIndex: number
+  colIndex: number
+  value: string
+  colName: string
+}
+
+function isNumericColumn(rs: ResultSet, colIndex: number): boolean {
+  const nonNullValues = rs.rows
+    .map((row) => (row as unknown[])[colIndex])
+    .filter((v) => v !== null && v !== undefined && v !== '')
+  if (nonNullValues.length === 0) return false
+  return nonNullValues.every((v) => !Number.isNaN(parseFloat(String(v))))
+}
+
+function sortRows(rows: unknown[][], colIndex: number, direction: SortDirection, numeric: boolean): unknown[][] {
+  if (direction === 'none') return rows
+  const sorted = [...rows].sort((a, b) => {
+    const av = (a as unknown[])[colIndex]
+    const bv = (b as unknown[])[colIndex]
+    // nulls last
+    if (av === null || av === undefined) return 1
+    if (bv === null || bv === undefined) return -1
+    let cmp: number
+    if (numeric) {
+      cmp = parseFloat(String(av)) - parseFloat(String(bv))
+    } else {
+      cmp = String(av).localeCompare(String(bv))
+    }
+    return direction === 'asc' ? cmp : -cmp
+  })
+  return sorted
+}
 
 function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string }) {
   const storageKey = cellId ? `hnb_cell_view_${cellId}` : null
@@ -162,6 +204,8 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
   const [outputHeight, setOutputHeight] = useState(OUTPUT_DEFAULT_HEIGHT)
   const dragStartY = useRef<number | null>(null)
   const dragStartHeight = useRef<number>(OUTPUT_DEFAULT_HEIGHT)
+  const [sort, setSort] = useState<SortState>({ column: null, direction: 'none' })
+  const [detail, setDetail] = useState<DetailPanel | null>(null)
 
   const handleViewChange = (v: 'table' | 'chart') => {
     setView(v)
@@ -190,6 +234,51 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
     window.addEventListener('mouseup', onMouseUp)
   }, [outputHeight])
 
+  const handleColumnClick = (colName: string) => {
+    setSort((prev) => {
+      if (prev.column !== colName) return { column: colName, direction: 'asc' }
+      if (prev.direction === 'asc') return { column: colName, direction: 'desc' }
+      if (prev.direction === 'desc') return { column: null, direction: 'none' }
+      return { column: colName, direction: 'asc' }
+    })
+  }
+
+  const sortColIndex = sort.column !== null ? rs.columns.findIndex((c) => c.name === sort.column) : -1
+  const numericSort = sortColIndex >= 0 ? isNumericColumn(rs, sortColIndex) : false
+  const displayRows = sortColIndex >= 0 && sort.direction !== 'none'
+    ? sortRows(rs.rows, sortColIndex, sort.direction, numericSort)
+    : rs.rows
+
+  const openDetail = (rowIndex: number, colIndex: number, value: string) => {
+    setDetail({ rowIndex, colIndex, value, colName: rs.columns[colIndex].name })
+  }
+
+  const closeDetail = () => setDetail(null)
+
+  const navigateDetail = useCallback((delta: number) => {
+    if (!detail) return
+    const newRow = detail.rowIndex + delta
+    if (newRow < 0 || newRow >= displayRows.length) return
+    const rawValue = (displayRows[newRow] as unknown[])[detail.colIndex]
+    const value = rawValue === null || rawValue === undefined
+      ? ''
+      : typeof rawValue === 'object'
+        ? JSON.stringify(rawValue)
+        : String(rawValue)
+    setDetail({ ...detail, rowIndex: newRow, value })
+  }, [detail, displayRows])
+
+  useEffect(() => {
+    if (!detail) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { closeDetail(); return }
+      if (e.key === 'ArrowDown') { e.preventDefault(); navigateDetail(1) }
+      if (e.key === 'ArrowUp') { e.preventDefault(); navigateDetail(-1) }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [detail, navigateDetail])
+
   return (
     <div style={styles.tableSection}>
       <div style={styles.outputBar}>
@@ -215,34 +304,107 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
       </div>
 
       {view === 'table' ? (
-        <div className="output-scroll-area" style={{ ...styles.tableWrap, maxHeight: outputHeight }}>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                {rs.columns.map((col) => (
-                  <th key={col.name} style={styles.th}>
-                    <span style={styles.colName}>{col.name}</span>
-                    <TypeIcon type={col.type} />
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rs.rows.map((row, i) => (
-                <tr key={i}>
-                  {(row as unknown[]).map((cell, j) => (
-                    <td key={j} style={styles.td}>
-                      {cell === null
-                        ? <span style={styles.null}>null</span>
-                        : typeof cell === 'object'
-                          ? <span style={styles.json}>{JSON.stringify(cell)}</span>
-                          : String(cell)}
-                    </td>
-                  ))}
+        <div style={{ position: 'relative', display: 'flex' }}>
+          <div className="output-scroll-area" style={{ ...styles.tableWrap, maxHeight: outputHeight, flex: 1, minWidth: 0 }}>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  {rs.columns.map((col) => {
+                    const isSorted = sort.column === col.name
+                    return (
+                      <th
+                        key={col.name}
+                        style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }}
+                        onClick={() => handleColumnClick(col.name)}
+                        title={`Sort by ${col.name}`}
+                      >
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <span style={styles.colName}>{col.name}</span>
+                          <TypeIcon type={col.type} />
+                          {isSorted && sort.direction === 'asc' && (
+                            <ChevronUp size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                          )}
+                          {isSorted && sort.direction === 'desc' && (
+                            <ChevronDown size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                          )}
+                          {!isSorted && (
+                            <span style={{ width: 12, flexShrink: 0, opacity: 0 }}><ChevronUp size={12} /></span>
+                          )}
+                        </span>
+                      </th>
+                    )
+                  })}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {displayRows.map((row, i) => (
+                  <tr key={i} style={detail?.rowIndex === i ? { background: 'var(--bg-secondary)' } : undefined}>
+                    {(row as unknown[]).map((cell, j) => {
+                      if (cell === null) {
+                        return <td key={j} style={styles.td}><span style={styles.null}>null</span></td>
+                      }
+                      const strValue = typeof cell === 'object' ? JSON.stringify(cell) : String(cell)
+                      const isTruncated = strValue.length > MAX_CELL_DISPLAY
+                      const displayValue = isTruncated ? strValue.slice(0, MAX_CELL_DISPLAY) + '…' : strValue
+                      const isObj = typeof cell === 'object'
+                      return (
+                        <td key={j} style={styles.td}>
+                          {isTruncated ? (
+                            <span
+                              style={styles.truncatedCell}
+                              onClick={() => openDetail(i, j, strValue)}
+                              title="Click to view full value"
+                            >
+                              <span style={isObj ? styles.json : undefined}>{displayValue}</span>
+                            </span>
+                          ) : (
+                            <span style={isObj ? styles.json : undefined}>{strValue}</span>
+                          )}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {detail && (
+            <div style={styles.detailPanel}>
+              <div style={styles.detailHeader}>
+                <div style={styles.detailHeaderLeft}>
+                  <span style={styles.detailColName}>{detail.colName}</span>
+                  <span style={styles.detailRowLabel}>row {detail.rowIndex + 1} of {displayRows.length}</span>
+                </div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button
+                    style={styles.detailNavBtn}
+                    onClick={() => navigateDetail(-1)}
+                    disabled={detail.rowIndex === 0}
+                    title="Previous row (↑)"
+                    aria-label="Previous row"
+                  >
+                    <ChevronUp size={14} />
+                  </button>
+                  <button
+                    style={styles.detailNavBtn}
+                    onClick={() => navigateDetail(1)}
+                    disabled={detail.rowIndex >= displayRows.length - 1}
+                    title="Next row (↓)"
+                    aria-label="Next row"
+                  >
+                    <ChevronDown size={14} />
+                  </button>
+                  <button style={styles.detailCloseBtn} onClick={closeDetail} aria-label="Close panel">
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+              <div style={styles.detailBody}>
+                <pre style={styles.detailValue}>{detail.value}</pre>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         // TODO: pass onConfigChange to persist chart config to backend (PUT /cells/:id output)
@@ -397,5 +559,88 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-mono)',
     fontSize: 11,
     color: 'var(--text-muted)',
+  },
+  truncatedCell: {
+    cursor: 'pointer',
+    textDecoration: 'underline',
+    textDecorationStyle: 'dotted',
+    textDecorationColor: 'var(--text-muted)',
+    color: 'var(--text-primary)',
+  },
+  detailPanel: {
+    width: 320,
+    flexShrink: 0,
+    borderLeft: '1px solid var(--border)',
+    background: 'var(--bg-card)',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+  detailHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '8px 12px',
+    borderBottom: '1px solid var(--border)',
+    background: 'var(--bg-secondary)',
+    gap: 8,
+  },
+  detailHeaderLeft: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+    minWidth: 0,
+  },
+  detailColName: {
+    fontSize: 12,
+    fontWeight: 700,
+    color: 'var(--text-primary)',
+    fontFamily: 'var(--font-mono)',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  detailRowLabel: {
+    fontSize: 10,
+    color: 'var(--text-muted)',
+    fontFamily: 'var(--font-mono)',
+  },
+  detailNavBtn: {
+    background: 'none',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    cursor: 'pointer',
+    color: 'var(--text-secondary)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '3px 5px',
+    lineHeight: 1,
+  },
+  detailCloseBtn: {
+    background: 'none',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    cursor: 'pointer',
+    color: 'var(--text-secondary)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '3px 5px',
+    lineHeight: 1,
+  },
+  detailBody: {
+    flex: 1,
+    overflow: 'auto',
+    padding: '12px',
+  },
+  detailValue: {
+    margin: 0,
+    fontSize: 13,
+    fontFamily: 'var(--font-mono)',
+    color: 'var(--text-primary)',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-all',
+    lineHeight: 1.6,
   },
 }

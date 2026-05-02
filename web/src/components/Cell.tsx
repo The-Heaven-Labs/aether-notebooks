@@ -3,7 +3,8 @@ import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap } from '@codemirror/commands'
-import { sql } from '@codemirror/lang-sql'
+import { sql, PostgreSQL, MySQL } from '@codemirror/lang-sql'
+import { javascript } from '@codemirror/lang-javascript'
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 import { format } from 'sql-formatter'
@@ -204,9 +205,20 @@ interface CodeEditorProps {
   onRun: (cellId: string) => void
   onSourceChange: (cellId: string, source: string) => void
   collapsed: boolean
+  connector?: Connector
 }
 
-function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed }: CodeEditorProps) {
+function languageExtension(cell: Cell, connector?: Connector) {
+  if (cell.language === 'javascript') return javascript()
+  // Choose SQL dialect based on connector type
+  const connType = connector?.type
+  if (connType === 'clickhouse') return sql({ dialect: MySQL })
+  if (connType === 'postgres') return sql({ dialect: PostgreSQL })
+  // Default: MySQL dialect covers a broad set of keywords including SHOW, TABLES, etc.
+  return sql({ dialect: MySQL })
+}
+
+function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, connector }: CodeEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null)
   const onRunRef = useRef(onRun)
   const onSourceChangeRef = useRef(onSourceChange)
@@ -243,7 +255,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed }: 
         doc: cell.source,
         extensions: [
           cellKeymap,
-          sql(),
+          languageExtension(cell, connector),
           syntaxHighlighting(sqlHighlight),
           EditorView.theme({
             '&': { fontFamily: 'var(--font-mono)', fontSize: '13px' },
@@ -252,6 +264,8 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed }: 
             '.cm-focused': { outline: 'none' },
             '.cm-editor': { background: 'var(--cm-editor-bg)' },
             '.cm-gutters': { display: 'none' },
+            // Fix cursor visibility: use text color so it's always visible in any theme
+            '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--text-primary)' },
           }),
           compartment.of([]),
           EditorView.updateListener.of((update) => {
@@ -557,6 +571,7 @@ export function Cell({
               onRun={onRun}
               onSourceChange={onSourceChange}
               collapsed={false}
+              connector={connector}
             />
           : <MarkdownView cell={cell} onSourceChange={onSourceChange} onSave={onSave} />
       )}
