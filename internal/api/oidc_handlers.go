@@ -3,47 +3,17 @@ package api
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
-	"sync"
 	"time"
 
+	"github.com/heavenlabs/hnb/internal/auth"
+	"github.com/heavenlabs/hnb/internal/sso"
 	"github.com/jackc/pgx/v5"
+	"github.com/redis/go-redis/v9"
 )
-
-// oidcStateStore holds short-lived state tokens to mitigate CSRF in the OIDC flow.
-type oidcStateStore struct {
-	mu      sync.Mutex
-	entries map[string]time.Time
-}
-
-var globalStateStore = &oidcStateStore{
-	entries: make(map[string]time.Time),
-}
-
-func (s *oidcStateStore) set(state string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	// Purge entries older than 10 minutes
-	now := time.Now()
-	for k, v := range s.entries {
-		if now.Sub(v) > 10*time.Minute {
-			delete(s.entries, k)
-		}
-	}
-	s.entries[state] = now
-}
-
-func (s *oidcStateStore) consume(state string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	created, ok := s.entries[state]
-	if !ok {
-		return false
-	}
-	delete(s.entries, state)
-	return time.Since(created) <= 10*time.Minute
-}
 
 func generateState() (string, error) {
 	b := make([]byte, 16)
@@ -53,11 +23,31 @@ func generateState() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
+// callbackURL builds the absolute callback URL for the given provider ID.
+func callbackURL(r *http.Request, providerID string) string {
+	scheme := "https"
+	if r.TLS == nil {
+		scheme = "http"
+	}
+	return fmt.Sprintf("%s://%s/api/v1/auth/oidc/%s/callback", scheme, r.Host, providerID)
+}
+
 func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
-	providerName := r.PathValue("provider")
-	provider, ok := s.oidcProviders[providerName]
-	if !ok {
-		writeError(w, http.StatusNotFound, "OIDC provider not found: "+providerName)
+	providerID := r.PathValue("provider")
+	ctx := r.Context()
+
+	dbProvider, err := sso.GetCachedProvider(ctx, s.db.Pool, s.Cache.Client(), s.masterKey, providerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "provider not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load provider")
+		return
+	}
+
+	provider, err := auth.NewGenericOIDCProvider(ctx, dbProvider.Name, dbProvider.DiscoveryURL, dbProvider.ClientID, dbProvider.ClientSecret, callbackURL(r, providerID), nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to initialize OIDC provider: "+err.Error())
 		return
 	}
 
@@ -67,15 +57,32 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	globalStateStore.set(state)
+	key := fmt.Sprintf("oidc:state:%s", state)
+	stored, err := s.Cache.Client().SetNX(ctx, key, "1", 10*time.Minute).Result()
+	if err != nil || !stored {
+		writeError(w, http.StatusInternalServerError, "failed to store state")
+		return
+	}
+
 	http.Redirect(w, r, provider.AuthURL(state), http.StatusFound)
 }
 
 func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
-	providerName := r.PathValue("provider")
-	provider, ok := s.oidcProviders[providerName]
-	if !ok {
-		writeError(w, http.StatusNotFound, "OIDC provider not found: "+providerName)
+	providerID := r.PathValue("provider")
+	ctx := r.Context()
+
+	dbProvider, err := sso.GetCachedProvider(ctx, s.db.Pool, s.Cache.Client(), s.masterKey, providerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "provider not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load provider")
+		return
+	}
+
+	provider, err := auth.NewGenericOIDCProvider(ctx, dbProvider.Name, dbProvider.DiscoveryURL, dbProvider.ClientID, dbProvider.ClientSecret, callbackURL(r, providerID), nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to initialize OIDC provider: "+err.Error())
 		return
 	}
 
@@ -86,12 +93,17 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !globalStateStore.consume(state) {
+	key := fmt.Sprintf("oidc:state:%s", state)
+	_, err = s.Cache.Client().GetDel(ctx, key).Result()
+	if err == redis.Nil {
 		writeError(w, http.StatusBadRequest, "invalid or expired state")
 		return
 	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "state validation error")
+		return
+	}
 
-	ctx := r.Context()
 	claims, err := provider.Exchange(ctx, code)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "OIDC exchange failed: "+err.Error())
