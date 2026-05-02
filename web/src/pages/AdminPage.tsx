@@ -448,12 +448,17 @@ export function AdminPage() {
   const [tab, setTab] = useState<'orgs' | 'users' | 'sso'>('orgs')
   const [orgs, setOrgs] = useState<Org[]>([])
   const [users, setUsers] = useState<User[]>([])
+  const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
 
   const togglePlatformAdmin = useMutation({
     mutationFn: ({ id, isPlatformAdmin }: { id: string; isPlatformAdmin: boolean }) =>
       api.put(`/api/v1/admin/users/${id}`, { is_platform_admin: isPlatformAdmin }),
     onSuccess: (_data, { id, isPlatformAdmin }) => {
       setUsers(prev => prev.map(u => u.id === id ? { ...u, is_platform_admin: isPlatformAdmin } : u))
+      setTogglingUserId(null)
+    },
+    onError: (_err, { id }) => {
+      setTogglingUserId(null)
     },
   })
 
@@ -531,16 +536,15 @@ export function AdminPage() {
                 <td style={styles.td}>
                   <button
                     style={{
-                      padding: '2px 10px',
-                      fontSize: 12,
-                      cursor: 'pointer',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
+                      ...styles.iconBtn,
                       background: u.is_platform_admin ? 'var(--accent)' : 'transparent',
                       color: u.is_platform_admin ? '#fff' : 'var(--text-muted)',
                     }}
-                    disabled={togglePlatformAdmin.isPending}
-                    onClick={() => togglePlatformAdmin.mutate({ id: u.id, isPlatformAdmin: !u.is_platform_admin })}
+                    disabled={togglingUserId === u.id}
+                    onClick={() => {
+                      setTogglingUserId(u.id)
+                      togglePlatformAdmin.mutate({ id: u.id, isPlatformAdmin: !u.is_platform_admin })
+                    }}
                   >
                     {u.is_platform_admin ? 'Admin' : 'User'}
                   </button>
