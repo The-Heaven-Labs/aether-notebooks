@@ -3,12 +3,14 @@ package sso
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/heavenlabs/hnb/internal/crypto"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 // Provider is the decoded (decrypted) SSO provider record.
@@ -111,6 +113,38 @@ func GetProvider(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, id s
 	if err != nil {
 		return Provider{}, err
 	}
+	return p, nil
+}
+
+// GetCachedProvider loads a provider from Redis cache (60s TTL) or falls back to DB.
+// Cache key: sso:provider:{id}
+// If redisClient is nil (e.g. test environments without Redis), falls through to DB directly.
+func GetCachedProvider(ctx context.Context, pool *pgxpool.Pool, redisClient *redis.Client, masterKey []byte, id string) (Provider, error) {
+	key := "sso:provider:" + id
+
+	if redisClient != nil {
+		val, err := redisClient.Get(ctx, key).Bytes()
+		if err == nil {
+			var p Provider
+			if jsonErr := json.Unmarshal(val, &p); jsonErr == nil {
+				return p, nil
+			}
+		}
+		// On redis.Nil or any other error, fall through to DB.
+	}
+
+	p, err := GetProvider(ctx, pool, masterKey, id)
+	if err != nil {
+		return Provider{}, err
+	}
+
+	if redisClient != nil {
+		if data, jsonErr := json.Marshal(p); jsonErr == nil {
+			// Ignore cache-set errors — non-fatal.
+			redisClient.Set(ctx, key, data, 60*time.Second)
+		}
+	}
+
 	return p, nil
 }
 
