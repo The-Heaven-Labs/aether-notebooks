@@ -83,6 +83,7 @@ func main() {
 	srv.SetAttachmentDir(cfg.AttachmentDir)
 	srv.SetPlatformAdminEmail(cfg.PlatformAdminEmail)
 	srv.SetPublicURL(cfg.PublicURL)
+	srv.SetFrontendURL(cfg.FrontendURL)
 	httpSrv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      srv,
