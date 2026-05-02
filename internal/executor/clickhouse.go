@@ -82,6 +82,9 @@ func chAllocDest(typeName string) interface{} {
 		case strings.HasPrefix(base, "UInt"):
 			var v *uint64
 			return &v
+		case strings.HasPrefix(base, "Decimal"):
+			var v *float64
+			return &v
 		default:
 			var v *string
 			return &v
@@ -102,6 +105,8 @@ func chAllocDest(typeName string) interface{} {
 		return new(int64)
 	case strings.HasPrefix(base, "UInt"):
 		return new(uint64)
+	case strings.HasPrefix(base, "Decimal"):
+		return new(float64)
 	default:
 		return new(string)
 	}
