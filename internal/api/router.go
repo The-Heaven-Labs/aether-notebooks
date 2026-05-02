@@ -10,14 +10,15 @@ import (
 )
 
 type Server struct {
-	db            *database.DB
-	jwt           *auth.JWTIssuer
-	audit         *audit.Logger
-	masterKey     []byte
-	hub           *Hub
-	mux           *http.ServeMux
-	attachmentDir string
-	Cache         *cache.Cache
+	db                  *database.DB
+	jwt                 *auth.JWTIssuer
+	audit               *audit.Logger
+	masterKey           []byte
+	hub                 *Hub
+	mux                 *http.ServeMux
+	attachmentDir       string
+	platformAdminEmail  string
+	Cache               *cache.Cache
 }
 
 func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, redisCache *cache.Cache) *Server {
@@ -41,6 +42,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // SetAttachmentDir sets the directory where uploaded attachments are stored.
 func (s *Server) SetAttachmentDir(dir string) {
 	s.attachmentDir = dir
+}
+
+// SetPlatformAdminEmail configures which email gets platform admin on registration.
+func (s *Server) SetPlatformAdminEmail(email string) {
+	s.platformAdminEmail = email
 }
 
 // DB returns the database connection (used in tests).
