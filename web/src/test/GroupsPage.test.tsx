@@ -112,10 +112,9 @@ describe('Add member', () => {
     fireEvent.click(screen.getByText('CSIRT'))
     await screen.findByText('No members in this group.')
 
-    // Select user from dropdown (Alice is the only non-member for CSIRT)
-    const selects = screen.getAllByRole('combobox')
-    const memberSelect = selects[selects.length - 1]
-    fireEvent.change(memberSelect, { target: { value: 'user-2' } })
+    // Open MemberDropdown and select Bob Editor (user-2)
+    fireEvent.click(screen.getByText('Add member…'))
+    fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob Editor/i }))
     fireEvent.click(screen.getByText('Add'))
     await waitFor(() => expect(addedUserId).toBe('user-2'))
   })
@@ -130,8 +129,10 @@ describe('Add member', () => {
     await screen.findByText('CSIRT')
     fireEvent.click(screen.getByText('CSIRT'))
     await screen.findByText('No members in this group.')
-    const selects = screen.getAllByRole('combobox')
-    fireEvent.change(selects[selects.length - 1], { target: { value: 'user-2' } })
+
+    // Open MemberDropdown and select Bob Editor (user-2)
+    fireEvent.click(screen.getByText('Add member…'))
+    fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob Editor/i }))
     fireEvent.click(screen.getByText('Add'))
     expect(await screen.findByText(/conflict/i)).toBeInTheDocument()
   })
