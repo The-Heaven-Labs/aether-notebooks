@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 
@@ -90,6 +90,22 @@ export function PermissionsPanel({
   const [newSubjectKey, setNewSubjectKey] = useState<string>('') // "{type}:{id}"
   const [newActions, setNewActions] = useState<string[]>([])
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [selectOpen, setSelectOpen] = useState(false)
+  const [selectSearch, setSelectSearch] = useState('')
+
+  // Close custom select on outside click
+  const selectRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!selectOpen) return
+    const handler = (e: MouseEvent) => {
+      if (selectRef.current && !selectRef.current.contains(e.target as Node)) {
+        setSelectOpen(false)
+        setSelectSearch('')
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [selectOpen])
 
   // ── Queries ──
 
@@ -193,10 +209,10 @@ export function PermissionsPanel({
   const inheritedCount = parentAcl?.length ?? 0
 
   const typeBadgeColors: Record<ResourceType, string> = {
-    folder: '#e8f0fe',
-    notebook: '#fce8ff',
-    connector: '#e8fff0',
-    dashboard: '#fff8e8',
+    folder: 'var(--accent-light)',
+    notebook: 'var(--accent-light)',
+    connector: 'var(--success-light)',
+    dashboard: 'var(--warning-light)',
   }
 
   // ── Render ──
@@ -310,31 +326,84 @@ export function PermissionsPanel({
 
               {/* Add entry row */}
               <div style={styles.addRow}>
-                <select
-                  style={styles.select}
-                  value={newSubjectKey}
-                  onChange={(e) => setNewSubjectKey(e.target.value)}
-                >
-                  <option value="">Select user or group…</option>
-                  {members.length > 0 && (
-                    <optgroup label="Users">
-                      {members.map((m) => (
-                        <option key={m.id} value={`user:${m.id}`}>
-                          {m.name || m.email}
-                        </option>
-                      ))}
-                    </optgroup>
+                <div style={styles.customSelect} ref={selectRef}>
+                  <button
+                    type="button"
+                    style={styles.customSelectTrigger}
+                    onClick={() => setSelectOpen(!selectOpen)}
+                  >
+                    {newSubjectKey
+                      ? (() => {
+                          const [stype, sid] = newSubjectKey.split(':')
+                          if (stype === 'user') {
+                            const m = members.find(m => m.id === sid)
+                            return m ? m.name || m.email : 'Unknown'
+                          }
+                          const g = groups.find(g => g.id === sid)
+                          return g ? g.name : 'Unknown'
+                        })()
+                      : 'Select user or group…'}
+                    <span style={styles.customSelectArrow}>▾</span>
+                  </button>
+                  {selectOpen && (
+                    <div style={styles.customSelectDropdown}>
+                      <div style={styles.customSelectSearch}>
+                        <input
+                          style={styles.customSelectSearchInput}
+                          placeholder="Search…"
+                          value={selectSearch}
+                          onChange={(e) => setSelectSearch(e.target.value)}
+                          autoFocus
+                        />
+                      </div>
+                      {members.length > 0 && (
+                        <div style={styles.customSelectGroup}>
+                          <div style={styles.customSelectGroupLabel}>Users</div>
+                          {members
+                            .filter(m => !selectSearch || (m.name || m.email).toLowerCase().includes(selectSearch.toLowerCase()))
+                            .map((m) => (
+                              <button
+                                key={m.id}
+                                type="button"
+                                style={{
+                                  ...styles.customSelectItem,
+                                  background: newSubjectKey === `user:${m.id}` ? 'var(--accent-light)' : 'transparent',
+                                }}
+                                onClick={() => { setNewSubjectKey(`user:${m.id}`); setSelectOpen(false); setSelectSearch('') }}
+                              >
+                                <span style={styles.customSelectItemName}>{m.name || m.email}</span>
+                                <span style={styles.customSelectItemType}>user</span>
+                              </button>
+                            ))}
+                        </div>
+                      )}
+                      {groups.length > 0 && (
+                        <div style={styles.customSelectGroup}>
+                          <div style={styles.customSelectGroupLabel}>Groups</div>
+                          {groups
+                            .filter(g => !selectSearch || g.name.toLowerCase().includes(selectSearch.toLowerCase()))
+                            .map((g) => (
+                              <button
+                                key={g.id}
+                                type="button"
+                                style={{
+                                  ...styles.customSelectItem,
+                                  background: newSubjectKey === `group:${g.id}` ? 'var(--accent-light)' : 'transparent',
+                                }}
+                                onClick={() => { setNewSubjectKey(`group:${g.id}`); setSelectOpen(false); setSelectSearch('') }}
+                              >
+                                <span style={styles.customSelectItemName}>{g.name}</span>
+                                <span style={styles.customSelectItemType}>group</span>
+                              </button>
+                            ))}
+                        </div>
+                      )}
+                      {members.length === 0 && groups.length === 0 && (
+                        <div style={styles.customSelectEmpty}>No users or groups available</div>
+                      )}
+                    </div>
                   )}
-                  {groups.length > 0 && (
-                    <optgroup label="Groups">
-                      {groups.map((g) => (
-                        <option key={g.id} value={`group:${g.id}`}>
-                          {g.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
+                </div>
 
                 <div style={styles.checkboxGroup}>
                   {actions.map((action) => (
@@ -375,7 +444,7 @@ const styles: Record<string, React.CSSProperties> = {
   backdrop: {
     position: 'fixed',
     inset: 0,
-    background: 'rgba(0,0,0,0.3)',
+    background: 'var(--bg-overlay)',
     zIndex: 1500,
   },
   drawer: {
@@ -385,7 +454,7 @@ const styles: Record<string, React.CSSProperties> = {
     height: '100vh',
     width: 420,
     background: 'var(--bg-card)',
-    boxShadow: '-4px 0 24px rgba(0,0,0,0.12)',
+    boxShadow: 'var(--shadow-md)',
     zIndex: 1501,
     display: 'flex',
     flexDirection: 'column',
@@ -396,7 +465,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: '16px 20px',
-    borderBottom: '1px solid var(--nav-border, #e8e8e8)',
+    borderBottom: '1px solid var(--border)',
     flexShrink: 0,
   },
   headerLeft: {
@@ -428,16 +497,16 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     cursor: 'pointer',
     fontSize: 22,
-    color: 'var(--text-muted, #888)',
+    color: 'var(--text-muted)',
     lineHeight: 1,
     padding: '0 4px',
     flexShrink: 0,
   },
   inheritNote: {
     fontSize: 12,
-    color: 'var(--text-muted, #888)',
+    color: 'var(--text-muted)',
     padding: '8px 20px',
-    borderBottom: '1px solid var(--nav-border, #e8e8e8)',
+    borderBottom: '1px solid var(--border)',
     background: 'var(--bg-secondary)',
     flexShrink: 0,
   },
@@ -451,12 +520,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   loading: {
     fontSize: 13,
-    color: 'var(--text-muted, #888)',
+    color: 'var(--text-muted)',
     padding: '8px 0',
   },
   emptyText: {
     fontSize: 13,
-    color: 'var(--text-muted, #888)',
+    color: 'var(--text-muted)',
     padding: '8px 0',
   },
   errorText: {
@@ -472,7 +541,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 10,
     padding: '10px 0',
-    borderBottom: '1px solid var(--nav-border, #e8e8e8)',
+    borderBottom: '1px solid var(--border)',
   },
   avatar: {
     width: 32,
@@ -581,7 +650,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-secondary)',
   },
   divider: {
-    borderTop: '1px solid var(--nav-border, #e8e8e8)',
+    borderTop: '1px solid var(--border)',
     margin: '8px 0',
   },
   addRow: {
@@ -601,6 +670,105 @@ const styles: Record<string, React.CSSProperties> = {
     outline: 'none',
     minWidth: 160,
     maxWidth: 200,
+  },
+  customSelect: {
+    position: 'relative' as const,
+    minWidth: 160,
+    maxWidth: 200,
+  },
+  customSelectTrigger: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+    padding: '6px 10px',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    fontSize: 13,
+    color: 'var(--text-primary)',
+    background: 'var(--bg-input)',
+    cursor: 'pointer',
+    fontFamily: 'var(--font-sans)',
+    textAlign: 'left' as const,
+  },
+  customSelectArrow: {
+    fontSize: 10,
+    color: 'var(--text-muted)',
+    flexShrink: 0,
+  },
+  customSelectDropdown: {
+    position: 'absolute' as const,
+    top: '100%',
+    left: 0,
+    right: 0,
+    marginTop: 2,
+    background: 'var(--bg-elevated)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    boxShadow: 'var(--shadow-md)',
+    zIndex: 1600,
+    maxHeight: 220,
+    overflow: 'auto',
+  },
+  customSelectSearch: {
+    padding: 6,
+    borderBottom: '1px solid var(--border)',
+  },
+  customSelectSearchInput: {
+    width: '100%',
+    padding: '5px 8px',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    fontSize: 12,
+    color: 'var(--text-primary)',
+    background: 'var(--bg-input)',
+    outline: 'none',
+    fontFamily: 'var(--font-sans)',
+  },
+  customSelectGroup: {
+    borderBottom: '1px solid var(--border-light)',
+  },
+  customSelectGroupLabel: {
+    padding: '4px 10px',
+    fontSize: 10,
+    fontWeight: 700,
+    color: 'var(--text-muted)',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.06em',
+    background: 'var(--bg-secondary)',
+  },
+  customSelectItem: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    padding: '6px 10px',
+    border: 'none',
+    fontSize: 13,
+    color: 'var(--text-primary)',
+    cursor: 'pointer',
+    fontFamily: 'var(--font-sans)',
+    textAlign: 'left' as const,
+    transition: 'background 0.1s',
+  },
+  customSelectItemName: {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap' as const,
+  },
+  customSelectItemType: {
+    fontSize: 10,
+    color: 'var(--text-muted)',
+    fontWeight: 500,
+    flexShrink: 0,
+  },
+  customSelectEmpty: {
+    padding: '12px 10px',
+    fontSize: 12,
+    color: 'var(--text-muted)',
+    textAlign: 'center' as const,
   },
   addBtn: {
     padding: '6px 16px',

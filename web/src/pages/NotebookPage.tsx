@@ -215,6 +215,14 @@ export function NotebookPage() {
 
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
+  // Cleanup save timers on unmount to prevent stale saves and memory leaks
+  useEffect(() => {
+    return () => {
+      Object.values(saveTimers.current).forEach(clearTimeout)
+      saveTimers.current = {}
+    }
+  }, [])
+
   const saveCellSource = useCallback(async (cellId: string, source: string) => {
     setCellSaveState((prev) => ({ ...prev, [cellId]: { saving: true, savedAt: prev[cellId]?.savedAt ?? null, error: null } }))
     try {
@@ -359,13 +367,24 @@ export function NotebookPage() {
     setLocalCells((prev) => {
       const idx = prev.findIndex((c) => c.id === cellId)
       if (idx < 0) return prev
-      const next = [...prev]
-      const swap = idx + dir
-      if (swap < 0 || swap >= next.length) return prev
-      ;[next[idx], next[swap]] = [next[swap], next[idx]]
+      const swapIdx = idx + dir
+      if (swapIdx < 0 || swapIdx >= prev.length) return prev
+
+      // Persist swapped positions to the API
+      const movedCell = prev[idx]
+      const swappedCell = prev[swapIdx]
+      const movedNewPos = swappedCell.position
+      const swappedNewPos = movedCell.position
+
+      // Fire and forget — positions update asynchronously
+      api.put(`/api/v1/notebooks/${id}/cells/${movedCell.id}`, { position: movedNewPos }).catch(() => {})
+      api.put(`/api/v1/notebooks/${id}/cells/${swappedCell.id}`, { position: swappedNewPos }).catch(() => {})
+
+      const next = [...prev];
+      [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]]
       return next
     })
-  }, [])
+  }, [id])
 
   const runningCount = runningCells.size
   const schemaConnectorId = localCells.find((c) => c.type === 'code' && c.connector_id)?.connector_id ?? null

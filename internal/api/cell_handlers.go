@@ -29,6 +29,7 @@ type updateCellRequest struct {
 	Title         *string            `json:"title,omitempty"`
 	Description   *string            `json:"description,omitempty"`
 	Slug          *string            `json:"slug,omitempty"`
+	Position      *int               `json:"position,omitempty"`
 }
 
 func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
@@ -126,6 +127,29 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 	query := "UPDATE cells SET updated_at = NOW()"
 	args := []interface{}{}
 	argN := 1
+
+	// When position is provided, swap positions with the cell currently there
+	if req.Position != nil {
+		var currentPos int
+		s.db.Pool.QueryRow(ctx, "SELECT position FROM cells WHERE id=$1 AND notebook_id=$2", cellID, nbID).Scan(&currentPos)
+		if currentPos != *req.Position {
+			tx, err := s.db.Pool.Begin(ctx)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "transaction failed")
+				return
+			}
+			defer tx.Rollback(ctx)
+
+			// Shift other cells: if moving up (smaller position), increment the gap; if moving down, decrement
+			if *req.Position < currentPos {
+				tx.Exec(ctx, `UPDATE cells SET position = position + 1 WHERE notebook_id=$1 AND position >= $2 AND position < $3 AND id != $4`, nbID, *req.Position, currentPos, cellID)
+			} else {
+				tx.Exec(ctx, `UPDATE cells SET position = position - 1 WHERE notebook_id=$1 AND position > $2 AND position <= $3 AND id != $4`, nbID, currentPos, *req.Position, cellID)
+			}
+			tx.Exec(ctx, `UPDATE cells SET position = $1, updated_at = NOW() WHERE id=$2 AND notebook_id=$3`, *req.Position, cellID, nbID)
+			tx.Commit(ctx)
+		}
+	}
 
 	if req.Type != nil {
 		query += fmt.Sprintf(", type = $%d", argN)

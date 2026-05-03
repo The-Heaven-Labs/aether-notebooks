@@ -34,11 +34,11 @@
   --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
   --radius-xs: 3px;
-  --radius-sm: 4px;
-  --radius: 4px;
-  --radius-md: 4px;
-  --radius-lg: 4px;
-  --shadow-sm: none;
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
   --shadow-md: 0 2px 16px rgba(0,0,0,0.10);
   --shadow-lg: 0 8px 32px rgba(0,0,0,0.18);
   --shadow-overlay: rgba(0,0,0,0.12);
@@ -65,8 +65,8 @@
   --border: #2e2e2e;
   --border-light: #242424;
   --text-primary: #e8e8e8;
-  --text-secondary: #aaa;
-  --text-muted: #888;
+  --text-secondary: #b0b0b0;
+  --text-muted: #999999;
   --accent: #9b8fc4;
   --accent-hover: #b8a9d8;
   --accent-light: #242430;

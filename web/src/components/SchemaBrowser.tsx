@@ -108,8 +108,8 @@ const styles: Record<string, React.CSSProperties> = {
   sidebar: {
     width: 280,
     flexShrink: 0,
-    background: '#fff',
-    borderRight: '1px solid #e8e8e8',
+    background: 'var(--bg-card)',
+    borderRight: '1px solid var(--border)',
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
