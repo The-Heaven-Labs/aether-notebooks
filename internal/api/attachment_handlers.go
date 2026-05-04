@@ -16,7 +16,10 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 
 	var exists bool
-	s.db.Pool.QueryRow(ctx, "SELECT true FROM notebooks WHERE id = $1 AND org_id = $2", nbID, claims.OrgID).Scan(&exists)
+	if err := s.db.Pool.QueryRow(ctx, "SELECT true FROM notebooks WHERE id = $1 AND org_id = $2", nbID, claims.OrgID).Scan(&exists); err != nil && err != pgx.ErrNoRows {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
 	if !exists {
 		writeError(w, http.StatusNotFound, "notebook not found")
 		return
@@ -69,7 +72,7 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]interface{}{
+	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":        attID,
 		"filename":  header.Filename,
 		"mime_type": mimeType,
@@ -147,7 +150,7 @@ func (s *Server) handleListAttachments(w http.ResponseWriter, r *http.Request) {
 	if atts == nil {
 		atts = []att{}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"attachments": atts})
+	writeJSON(w, http.StatusOK, map[string]any{"attachments": atts})
 }
 
 func (s *Server) handleDeleteAttachment(w http.ResponseWriter, r *http.Request) {
