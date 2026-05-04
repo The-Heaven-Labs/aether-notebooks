@@ -17,6 +17,7 @@ import (
 	"github.com/heavenlabs/hnb/internal/crypto"
 	"github.com/heavenlabs/hnb/internal/database"
 	"github.com/heavenlabs/hnb/internal/scheduler"
+	"github.com/heavenlabs/hnb/internal/storage"
 )
 
 func main() {
@@ -80,7 +81,11 @@ func main() {
 
 	// Build HTTP server
 	srv := api.NewServer(db, jwtIssuer, auditLogger, masterKey, redisCache)
-	srv.SetAttachmentDir(cfg.AttachmentDir)
+	localStore, err := storage.NewLocalStorage(cfg.AttachmentDir)
+	if err != nil {
+		log.Fatalf("storage: %v", err)
+	}
+	srv.SetStorage(localStore)
 	srv.SetPlatformAdminEmail(cfg.PlatformAdminEmail)
 	srv.SetPublicURL(cfg.PublicURL)
 	srv.SetFrontendURL(cfg.FrontendURL)

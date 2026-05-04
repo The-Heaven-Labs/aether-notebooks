@@ -7,6 +7,7 @@ import (
 	"github.com/heavenlabs/hnb/internal/auth"
 	"github.com/heavenlabs/hnb/internal/cache"
 	"github.com/heavenlabs/hnb/internal/database"
+	"github.com/heavenlabs/hnb/internal/storage"
 )
 
 type Server struct {
@@ -16,7 +17,7 @@ type Server struct {
 	masterKey           []byte
 	hub                 *Hub
 	mux                 *http.ServeMux
-	attachmentDir       string
+	store               storage.Storage
 	platformAdminEmail  string
 	publicURL           string
 	frontendURL         string
@@ -41,9 +42,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }
 
-// SetAttachmentDir sets the directory where uploaded attachments are stored.
-func (s *Server) SetAttachmentDir(dir string) {
-	s.attachmentDir = dir
+// SetStorage sets the object storage backend.
+func (s *Server) SetStorage(st storage.Storage) {
+	s.store = st
 }
 
 // SetPlatformAdminEmail configures which email gets platform admin on registration.

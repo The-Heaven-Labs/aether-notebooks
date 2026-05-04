@@ -19,6 +19,8 @@ import (
 	"github.com/heavenlabs/hnb/internal/cache"
 	"github.com/heavenlabs/hnb/internal/crypto"
 	"github.com/heavenlabs/hnb/internal/database"
+	"github.com/heavenlabs/hnb/internal/storage"
+	"github.com/stretchr/testify/require"
 )
 
 const testOrgID = "00000000-0000-0000-0000-000000000001"
@@ -162,7 +164,9 @@ func withEditorClaims(r *http.Request, orgID string) *http.Request {
 func setupTestServerWithAttachDir(t *testing.T) *api.Server {
 	t.Helper()
 	s := setupTestServer(t)
-	s.SetAttachmentDir(t.TempDir())
+	st, err := storage.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	s.SetStorage(st)
 	return s
 }
 
