@@ -99,6 +99,9 @@ func main() {
 		store = s3Store
 		log.Printf("storage: s3 (bucket=%s, endpoint=%q)", cfg.S3Bucket, cfg.S3Endpoint)
 	default:
+		if cfg.StorageBackend != "local" && cfg.StorageBackend != "" {
+			log.Printf("warning: unknown storage backend %q, falling back to local", cfg.StorageBackend)
+		}
 		localStore, err := storage.NewLocalStorage(cfg.AttachmentDir)
 		if err != nil {
 			log.Fatalf("local storage: %v", err)
