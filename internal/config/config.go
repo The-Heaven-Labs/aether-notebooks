@@ -47,6 +47,17 @@ func Load() (*Config, error) {
 	if cfg.JWTSecret == "" {
 		return nil, fmt.Errorf("HNB_JWT_SECRET is required")
 	}
+	if cfg.StorageBackend == "s3" {
+		if cfg.S3Bucket == "" {
+			return nil, fmt.Errorf("HNB_S3_BUCKET is required when HNB_STORAGE_BACKEND=s3")
+		}
+		if cfg.S3AccessKey == "" {
+			return nil, fmt.Errorf("HNB_S3_ACCESS_KEY is required when HNB_STORAGE_BACKEND=s3")
+		}
+		if cfg.S3SecretKey == "" {
+			return nil, fmt.Errorf("HNB_S3_SECRET_KEY is required when HNB_STORAGE_BACKEND=s3")
+		}
+	}
 	return cfg, nil
 }
 
