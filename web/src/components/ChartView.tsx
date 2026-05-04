@@ -66,6 +66,9 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
   const [localShowLabels, setLocalShowLabels] = useState<boolean | undefined>(() =>
     savedConfig?.showLabels
   )
+  const [localSkipEmpty, setLocalSkipEmpty] = useState<boolean | undefined>(() =>
+    savedConfig?.skipEmpty
+  )
   const [localSeriesColors, setLocalSeriesColors] = useState<Record<string, string> | undefined>(() =>
     savedConfig?.seriesColors
   )
@@ -82,6 +85,7 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
         showLegend: localShowLegend,
         showGrid: localShowGrid,
         showLabels: localShowLabels,
+        skipEmpty: localSkipEmpty,
         seriesColors: localSeriesColors,
         title: localTitle,
       }
@@ -102,6 +106,7 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
       setLocalShowLegend(newCfg.showLegend)
       setLocalShowGrid(newCfg.showGrid)
       setLocalShowLabels(newCfg.showLabels)
+      setLocalSkipEmpty(newCfg.skipEmpty)
       setLocalSeriesColors(newCfg.seriesColors)
       setLocalTitle(newCfg.title)
       if (cellId) {
@@ -125,6 +130,7 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
   const showLegend = effectiveConfig.showLegend ?? true
   const showGrid = effectiveConfig.showGrid ?? true
   const showLabels = effectiveConfig.showLabels ?? false
+  const skipEmpty = effectiveConfig.skipEmpty ?? true
 
   const   tooltipStyle: React.CSSProperties = {
     background: 'var(--bg-card)',
@@ -139,8 +145,15 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
     color: 'var(--text-muted)',
   }
 
+  const displayData = skipEmpty
+    ? chartData.filter(row => effectiveYAxes.some(y => {
+        const v = row[y]
+        return v !== null && v !== undefined && v !== 0 && v !== ''
+      }))
+    : chartData
+
   const renderChart = () => {
-    const commonProps = { data: chartData, margin: { top: 8, right: 16, bottom: 8, left: 0 } }
+    const commonProps = { data: displayData, margin: { top: showLabels ? 20 : 8, right: 16, bottom: 8, left: 0 } }
     switch (effectiveConfig.chartType ?? 'bar') {
       case 'bar':
         return (
@@ -151,7 +164,7 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
             <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'var(--border)', opacity: 0.4 }} />
             {showLegend && <Legend wrapperStyle={legendStyle} />}
             {effectiveYAxes.map((y, i) => (
-              <Bar key={y} dataKey={y} fill={getColor(y, i)} radius={[3, 3, 0, 0]}>
+              <Bar key={y} dataKey={y} fill={getColor(y, i)} radius={[3, 3, 0, 0]} isAnimationActive={false}>
                 {showLabels && (
                   <LabelList dataKey={y} position="top" style={{ fontSize: 10, fill: 'var(--text-muted)' }} />
                 )}
@@ -168,7 +181,7 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
             <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'var(--border)', opacity: 0.4 }} />
             {showLegend && <Legend wrapperStyle={legendStyle} />}
             {effectiveYAxes.map((y, i) => (
-              <Bar key={y} dataKey={y} stackId="a" fill={getColor(y, i)} radius={i === effectiveYAxes.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]}>
+              <Bar key={y} dataKey={y} stackId="a" fill={getColor(y, i)} radius={i === effectiveYAxes.length - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]} isAnimationActive={false}>
                 {showLabels && (
                   <LabelList dataKey={y} position="top" style={{ fontSize: 10, fill: 'var(--text-muted)' }} />
                 )}
@@ -185,7 +198,7 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
             <Tooltip contentStyle={tooltipStyle} />
             {showLegend && <Legend wrapperStyle={legendStyle} />}
             {effectiveYAxes.map((y, i) => (
-              <Line key={y} type="monotone" dataKey={y} stroke={getColor(y, i)} strokeWidth={2} dot={{ r: 3, strokeWidth: 0 }} activeDot={{ r: 5 }}>
+              <Line key={y} type="monotone" dataKey={y} stroke={getColor(y, i)} strokeWidth={2} dot={{ r: 3, strokeWidth: 0 }} activeDot={{ r: 5 }} isAnimationActive={false}>
                 {showLabels && (
                   <LabelList dataKey={y} position="top" style={{ fontSize: 10, fill: 'var(--text-muted)' }} />
                 )}
@@ -202,7 +215,7 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
             <Tooltip contentStyle={tooltipStyle} />
             {showLegend && <Legend wrapperStyle={legendStyle} />}
             {effectiveYAxes.map((y, i) => (
-              <Area key={y} type="monotone" dataKey={y} stroke={getColor(y, i)} strokeWidth={2} fill={getColor(y, i)} fillOpacity={0.15} dot={false} activeDot={{ r: 5 }}>
+              <Area key={y} type="monotone" dataKey={y} stroke={getColor(y, i)} strokeWidth={2} fill={getColor(y, i)} fillOpacity={0.15} dot={false} activeDot={{ r: 5 }} isAnimationActive={false}>
                 {showLabels && (
                   <LabelList dataKey={y} position="top" style={{ fontSize: 10, fill: 'var(--text-muted)' }} />
                 )}
@@ -216,7 +229,7 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
         return (
           <PieChart>
             <Pie
-              data={chartData}
+              data={displayData}
               dataKey={effectiveYAxes[0] ?? ''}
               nameKey={effectiveXAxis}
               cx="50%"
@@ -225,7 +238,7 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
               innerRadius={innerRadius}
               paddingAngle={2}
             >
-              {chartData.map((entry, i) => {
+              {displayData.map((entry, i) => {
                 const label = String((entry as Record<string, unknown>)[effectiveXAxis] ?? i)
                 return <Cell key={i} fill={effectiveConfig.seriesColors?.[label] ?? DEFAULT_COLORS[i % DEFAULT_COLORS.length]} stroke="none" />
               })}
@@ -242,7 +255,7 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
             <XAxis dataKey={effectiveXAxis} name={effectiveXAxis} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
             <YAxis dataKey={effectiveYAxes[0]} name={effectiveYAxes[0]} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} width={40} />
             <Tooltip contentStyle={tooltipStyle} cursor={{ strokeDasharray: '3 3', stroke: 'var(--border)' }} />
-            <Scatter data={chartData} fill={getColor(effectiveYAxes[0] ?? '', 0)} />
+            <Scatter data={displayData} fill={getColor(effectiveYAxes[0] ?? '', 0)} />
           </ScatterChart>
         )
       default:

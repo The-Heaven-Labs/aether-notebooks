@@ -70,7 +70,7 @@ export function PresentationPage() {
                 }}
               >
                 {(cell.outputs ?? []).length > 0 ? (
-                  <OutputRenderer outputs={cell.outputs as Output[]} />
+                  <OutputRenderer outputs={cell.outputs as Output[]} cellId={cell.id} />
                 ) : (
                   <pre style={styles.codePre}>{cell.source}</pre>
                 )}

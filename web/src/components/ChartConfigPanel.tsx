@@ -8,6 +8,7 @@ export interface ChartConfig {
   showLegend?: boolean
   showGrid?: boolean
   showLabels?: boolean
+  skipEmpty?: boolean
   seriesColors?: Record<string, string>
 }
 
@@ -151,9 +152,10 @@ export function ChartConfigPanel({ config, columns, onChange }: ChartConfigPanel
         <div style={styles.sectionLabel}>Display</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {([
-            { key: 'showGrid',   label: 'Grid lines',  def: true },
-            { key: 'showLegend', label: 'Legend',       def: true },
-            { key: 'showLabels', label: 'Data labels',  def: false },
+            { key: 'showGrid',   label: 'Grid lines',       def: true },
+            { key: 'showLegend', label: 'Legend',            def: true },
+            { key: 'showLabels', label: 'Data labels',       def: false },
+            { key: 'skipEmpty',  label: 'Skip empty X rows', def: true },
           ] as const).map(opt => (
             <label key={opt.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' }}>
               <input
