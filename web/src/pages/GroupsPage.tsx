@@ -467,7 +467,7 @@ export function GroupsPage() {
             return (
               <div key={group.id} style={styles.groupCard}>
                 {/* Collapsed / header row */}
-                <div style={styles.groupRow}>
+                <div style={{ ...styles.groupRow, borderRadius: isExpanded ? '6px 6px 0 0' : 6 }}>
                   <button
                     type="button"
                     style={styles.expandBtn}
@@ -540,7 +540,7 @@ export function GroupsPage() {
 
                 {/* Expanded content */}
                 {isExpanded && (
-                  <div style={styles.expandedBody}>
+                  <div style={{ ...styles.expandedBody, borderRadius: '0 0 6px 6px' }}>
                     {isLoadingGroup && (
                       <div style={styles.loadingText}>Loading members…</div>
                     )}
@@ -633,7 +633,6 @@ const styles: Record<string, React.CSSProperties> = {
   groupCard: {
     border: '1px solid var(--border)',
     borderRadius: 6,
-    overflow: 'hidden',
   },
   groupRow: {
     display: 'flex',

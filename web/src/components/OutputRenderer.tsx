@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type React from 'react'
-import type { Output, ResultSet } from '../types'
+import type { Output, ResultSet, Column } from '../types'
 import { ChartView } from './ChartView'
-import { ToggleLeft, Calendar, Clock, Fingerprint, Ban, Binary, Table, BarChart2, Timer, Sigma, ChevronUp, ChevronDown, X } from 'lucide-react'
+import { ToggleLeft, Calendar, Clock, Fingerprint, Ban, Binary, Table, BarChart2, Timer, Sigma, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, X, Copy, Check } from 'lucide-react'
 
 interface Props {
   outputs: Output[]
@@ -164,15 +164,27 @@ interface DetailPanel {
   colName: string
 }
 
-function isNumericColumn(rs: ResultSet, colIndex: number): boolean {
-  const nonNullValues = rs.rows
-    .map((row) => (row as unknown[])[colIndex])
-    .filter((v) => v !== null && v !== undefined && v !== '')
-  if (nonNullValues.length === 0) return false
-  return nonNullValues.every((v) => !Number.isNaN(parseFloat(String(v))))
+const NUMERIC_TYPES = new Set([
+  'int2', 'int4', 'int8', 'integer', 'bigint', 'smallint',
+  'float', 'float4', 'float8', 'double', 'decimal', 'numeric', 'real',
+  'int16', 'int32', 'int64', 'int128', 'int256',
+  'uint8', 'uint16', 'uint32', 'uint64', 'uint128', 'uint256',
+  'float32', 'float64',
+])
+
+const DATE_TYPES = new Set([
+  'date', 'date32', 'datetime', 'datetime64',
+  'timestamp', 'timestamptz', 'timestamp with time zone', 'time', 'interval',
+])
+
+function getColumnSortType(col: Column): 'numeric' | 'date' | 'string' {
+  const normalized = normalizeTypeName(col.type)
+  if (NUMERIC_TYPES.has(normalized)) return 'numeric'
+  if (DATE_TYPES.has(normalized)) return 'date'
+  return 'string'
 }
 
-function sortRows(rows: unknown[][], colIndex: number, direction: SortDirection, numeric: boolean): unknown[][] {
+function sortRows(rows: unknown[][], colIndex: number, direction: SortDirection, sortType: 'numeric' | 'date' | 'string'): unknown[][] {
   if (direction === 'none') return rows
   const sorted = [...rows].sort((a, b) => {
     const av = (a as unknown[])[colIndex]
@@ -181,8 +193,10 @@ function sortRows(rows: unknown[][], colIndex: number, direction: SortDirection,
     if (av === null || av === undefined) return 1
     if (bv === null || bv === undefined) return -1
     let cmp: number
-    if (numeric) {
+    if (sortType === 'numeric') {
       cmp = parseFloat(String(av)) - parseFloat(String(bv))
+    } else if (sortType === 'date') {
+      cmp = new Date(String(av)).getTime() - new Date(String(bv)).getTime()
     } else {
       cmp = String(av).localeCompare(String(bv))
     }
@@ -206,6 +220,17 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
   const dragStartHeight = useRef<number>(OUTPUT_DEFAULT_HEIGHT)
   const [sort, setSort] = useState<SortState>({ column: null, direction: 'none' })
   const [detail, setDetail] = useState<DetailPanel | null>(null)
+  const activeCellRef = useRef<HTMLTableCellElement | null>(null)
+  const theadRef = useRef<HTMLTableSectionElement | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  const copyDetail = useCallback(() => {
+    if (!detail) return
+    navigator.clipboard.writeText(detail.value).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }, [detail])
 
   const handleViewChange = (v: 'table' | 'chart') => {
     setView(v)
@@ -244,9 +269,9 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
   }
 
   const sortColIndex = sort.column !== null ? rs.columns.findIndex((c) => c.name === sort.column) : -1
-  const numericSort = sortColIndex >= 0 ? isNumericColumn(rs, sortColIndex) : false
+  const sortType = sortColIndex >= 0 ? getColumnSortType(rs.columns[sortColIndex]) : 'string'
   const displayRows = sortColIndex >= 0 && sort.direction !== 'none'
-    ? sortRows(rs.rows, sortColIndex, sort.direction, numericSort)
+    ? sortRows(rs.rows, sortColIndex, sort.direction, sortType)
     : rs.rows
 
   const openDetail = (rowIndex: number, colIndex: number, value: string) => {
@@ -255,29 +280,42 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
 
   const closeDetail = () => setDetail(null)
 
-  const navigateDetail = useCallback((delta: number) => {
+  const navigateDetail = useCallback((rowDelta: number, colDelta: number) => {
     if (!detail) return
-    const newRow = detail.rowIndex + delta
+    const newRow = detail.rowIndex + rowDelta
+    const newCol = detail.colIndex + colDelta
     if (newRow < 0 || newRow >= displayRows.length) return
-    const rawValue = (displayRows[newRow] as unknown[])[detail.colIndex]
+    if (newCol < 0 || newCol >= rs.columns.length) return
+    const rawValue = (displayRows[newRow] as unknown[])[newCol]
     const value = rawValue === null || rawValue === undefined
       ? ''
       : typeof rawValue === 'object'
         ? JSON.stringify(rawValue)
         : String(rawValue)
-    setDetail({ ...detail, rowIndex: newRow, value })
-  }, [detail, displayRows])
+    setDetail({ rowIndex: newRow, colIndex: newCol, value, colName: rs.columns[newCol].name })
+  }, [detail, displayRows, rs.columns])
+
+  useEffect(() => {
+    if (activeCellRef.current) {
+      const headerHeight = theadRef.current?.offsetHeight ?? 0
+      activeCellRef.current.style.scrollMarginTop = `${headerHeight}px`
+      activeCellRef.current.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    }
+  }, [detail?.rowIndex, detail?.colIndex])
 
   useEffect(() => {
     if (!detail) return
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { closeDetail(); return }
-      if (e.key === 'ArrowDown') { e.preventDefault(); navigateDetail(1) }
-      if (e.key === 'ArrowUp') { e.preventDefault(); navigateDetail(-1) }
+      if (e.key === 'ArrowDown') { e.preventDefault(); navigateDetail(1, 0) }
+      if (e.key === 'ArrowUp') { e.preventDefault(); navigateDetail(-1, 0) }
+      if (e.key === 'ArrowRight') { e.preventDefault(); navigateDetail(0, 1) }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); navigateDetail(0, -1) }
+      if (e.key === 'c' && (e.ctrlKey || e.metaKey)) { copyDetail() }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [detail, navigateDetail])
+  }, [detail, navigateDetail, copyDetail])
 
   return (
     <div style={styles.tableSection}>
@@ -307,7 +345,7 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
         <div style={{ position: 'relative', display: 'flex' }}>
           <div className="output-scroll-area" style={{ ...styles.tableWrap, maxHeight: outputHeight, flex: 1, minWidth: 0 }}>
             <table style={styles.table}>
-              <thead>
+              <thead ref={theadRef}>
                 <tr>
                   {rs.columns.map((col) => {
                     const isSorted = sort.column === col.name
@@ -338,28 +376,29 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
               </thead>
               <tbody>
                 {displayRows.map((row, i) => (
-                  <tr key={i} style={detail?.rowIndex === i ? { background: 'var(--bg-secondary)' } : undefined}>
+                  <tr key={i}>
                     {(row as unknown[]).map((cell, j) => {
+                      const isActiveCell = detail?.rowIndex === i && detail?.colIndex === j
                       if (cell === null) {
-                        return <td key={j} style={styles.td}><span style={styles.null}>null</span></td>
+                        return (
+                          <td key={j} ref={isActiveCell ? activeCellRef : undefined} style={{ ...styles.td, ...(isActiveCell ? styles.tdActive : {}) }}>
+                            <span style={styles.null}>null</span>
+                          </td>
+                        )
                       }
                       const strValue = typeof cell === 'object' ? JSON.stringify(cell) : String(cell)
                       const isTruncated = strValue.length > MAX_CELL_DISPLAY
                       const displayValue = isTruncated ? strValue.slice(0, MAX_CELL_DISPLAY) + '…' : strValue
                       const isObj = typeof cell === 'object'
                       return (
-                        <td key={j} style={styles.td}>
-                          {isTruncated ? (
-                            <span
-                              style={styles.truncatedCell}
-                              onClick={() => openDetail(i, j, strValue)}
-                              title="Click to view full value"
-                            >
-                              <span style={isObj ? styles.json : undefined}>{displayValue}</span>
-                            </span>
-                          ) : (
-                            <span style={isObj ? styles.json : undefined}>{strValue}</span>
-                          )}
+                        <td key={j} ref={isActiveCell ? activeCellRef : undefined} style={{ ...styles.td, ...(isActiveCell ? styles.tdActive : {}) }}>
+                          <span
+                            style={isTruncated ? styles.truncatedCell : styles.clickableCell}
+                            onClick={() => openDetail(i, j, strValue)}
+                            title={isTruncated ? 'Click to view full value' : undefined}
+                          >
+                            <span style={isObj ? styles.json : undefined}>{displayValue}</span>
+                          </span>
                         </td>
                       )
                     })}
@@ -374,12 +413,44 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
               <div style={styles.detailHeader}>
                 <div style={styles.detailHeaderLeft}>
                   <span style={styles.detailColName}>{detail.colName}</span>
-                  <span style={styles.detailRowLabel}>row {detail.rowIndex + 1} of {displayRows.length}</span>
+                  <span style={styles.detailRowLabel}>
+                    col {detail.colIndex + 1}/{rs.columns.length} · row {detail.rowIndex + 1}/{displayRows.length}
+                  </span>
                 </div>
                 <div style={{ display: 'flex', gap: 4 }}>
+                  <button style={styles.detailNavBtn} onClick={copyDetail} title="Copy value" aria-label="Copy value">
+                    {copied ? <Check size={14} style={{ color: 'var(--success, #10b981)' }} /> : <Copy size={14} />}
+                  </button>
+                  <button style={styles.detailCloseBtn} onClick={closeDetail} aria-label="Close panel">
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+              <div style={styles.detailNav}>
+                <div style={styles.detailNavGroup}>
                   <button
                     style={styles.detailNavBtn}
-                    onClick={() => navigateDetail(-1)}
+                    onClick={() => navigateDetail(0, -1)}
+                    disabled={detail.colIndex === 0}
+                    title="Previous column (←)"
+                    aria-label="Previous column"
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                  <button
+                    style={styles.detailNavBtn}
+                    onClick={() => navigateDetail(0, 1)}
+                    disabled={detail.colIndex >= rs.columns.length - 1}
+                    title="Next column (→)"
+                    aria-label="Next column"
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+                <div style={styles.detailNavGroup}>
+                  <button
+                    style={styles.detailNavBtn}
+                    onClick={() => navigateDetail(-1, 0)}
                     disabled={detail.rowIndex === 0}
                     title="Previous row (↑)"
                     aria-label="Previous row"
@@ -388,15 +459,12 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
                   </button>
                   <button
                     style={styles.detailNavBtn}
-                    onClick={() => navigateDetail(1)}
+                    onClick={() => navigateDetail(1, 0)}
                     disabled={detail.rowIndex >= displayRows.length - 1}
                     title="Next row (↓)"
                     aria-label="Next row"
                   >
                     <ChevronDown size={14} />
-                  </button>
-                  <button style={styles.detailCloseBtn} onClick={closeDetail} aria-label="Close panel">
-                    <X size={14} />
                   </button>
                 </div>
               </div>
@@ -567,6 +635,15 @@ const styles: Record<string, React.CSSProperties> = {
     textDecorationColor: 'var(--text-muted)',
     color: 'var(--text-primary)',
   },
+  clickableCell: {
+    cursor: 'pointer',
+    color: 'var(--text-primary)',
+  },
+  tdActive: {
+    background: 'var(--accent-light)',
+    outline: '1px solid var(--accent)',
+    outlineOffset: -1,
+  },
   detailPanel: {
     width: 320,
     flexShrink: 0,
@@ -604,6 +681,18 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     color: 'var(--text-muted)',
     fontFamily: 'var(--font-mono)',
+  },
+  detailNav: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '6px 12px',
+    borderBottom: '1px solid var(--border)',
+    background: 'var(--bg-secondary)',
+  },
+  detailNavGroup: {
+    display: 'flex',
+    gap: 4,
   },
   detailNavBtn: {
     background: 'none',
