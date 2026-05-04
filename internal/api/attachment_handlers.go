@@ -25,6 +25,16 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "edit")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusForbidden, "write permission required")
+		return
+	}
+
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid multipart form")
 		return
@@ -85,11 +95,11 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 	attID := r.PathValue("id")
 	ctx := r.Context()
 
-	var mimeType, filename string
+	var mimeType, filename, notebookID string
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT mime_type, filename FROM attachments WHERE id = $1 AND org_id = $2`,
+		`SELECT mime_type, filename, COALESCE(notebook_id::text, '') FROM attachments WHERE id = $1 AND org_id = $2`,
 		attID, claims.OrgID,
-	).Scan(&mimeType, &filename)
+	).Scan(&mimeType, &filename, &notebookID)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return
@@ -97,6 +107,14 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
+	}
+
+	if notebookID != "" {
+		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", notebookID, "view")
+		if err != nil || !ok {
+			writeError(w, http.StatusNotFound, "attachment not found")
+			return
+		}
 	}
 
 	rc, err := s.store.Get(attID)
