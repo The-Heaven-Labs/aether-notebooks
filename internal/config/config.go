@@ -15,6 +15,12 @@ type Config struct {
 	PlatformAdminEmail string
 	PublicURL          string // base URL used in OAuth callbacks (e.g. https://app.example.com)
 	FrontendURL        string // base URL for post-auth redirects; defaults to same host as API
+	StorageBackend     string // "local" (default) or "s3"
+	S3Endpoint         string // leave empty for AWS; set for Garage/self-hosted
+	S3Bucket           string
+	S3Region           string
+	S3AccessKey        string
+	S3SecretKey        string
 }
 
 func Load() (*Config, error) {
@@ -28,6 +34,12 @@ func Load() (*Config, error) {
 		PlatformAdminEmail: os.Getenv("HNB_PLATFORM_ADMIN_EMAIL"),
 		PublicURL:          os.Getenv("HNB_PUBLIC_URL"),
 		FrontendURL:        os.Getenv("HNB_FRONTEND_URL"),
+		StorageBackend:     envOrDefault("HNB_STORAGE_BACKEND", "local"),
+		S3Endpoint:         os.Getenv("HNB_S3_ENDPOINT"),
+		S3Bucket:           os.Getenv("HNB_S3_BUCKET"),
+		S3Region:           envOrDefault("HNB_S3_REGION", "us-east-1"),
+		S3AccessKey:        os.Getenv("HNB_S3_ACCESS_KEY"),
+		S3SecretKey:        os.Getenv("HNB_S3_SECRET_KEY"),
 	}
 	if cfg.MasterKey == "" {
 		return nil, fmt.Errorf("HNB_MASTER_KEY is required")
