@@ -81,11 +81,32 @@ func main() {
 
 	// Build HTTP server
 	srv := api.NewServer(db, jwtIssuer, auditLogger, masterKey, redisCache)
-	localStore, err := storage.NewLocalStorage(cfg.AttachmentDir)
-	if err != nil {
-		log.Fatalf("storage: %v", err)
+
+	// Configure storage backend
+	var store storage.Storage
+	switch cfg.StorageBackend {
+	case "s3":
+		s3Store, err := storage.NewS3Storage(storage.S3Config{
+			Endpoint:  cfg.S3Endpoint,
+			Region:    cfg.S3Region,
+			Bucket:    cfg.S3Bucket,
+			AccessKey: cfg.S3AccessKey,
+			SecretKey: cfg.S3SecretKey,
+		})
+		if err != nil {
+			log.Fatalf("s3 storage: %v", err)
+		}
+		store = s3Store
+		log.Printf("storage: s3 (bucket=%s, endpoint=%q)", cfg.S3Bucket, cfg.S3Endpoint)
+	default:
+		localStore, err := storage.NewLocalStorage(cfg.AttachmentDir)
+		if err != nil {
+			log.Fatalf("local storage: %v", err)
+		}
+		store = localStore
+		log.Printf("storage: local (%s)", cfg.AttachmentDir)
 	}
-	srv.SetStorage(localStore)
+	srv.SetStorage(store)
 	srv.SetPlatformAdminEmail(cfg.PlatformAdminEmail)
 	srv.SetPublicURL(cfg.PublicURL)
 	srv.SetFrontendURL(cfg.FrontendURL)
