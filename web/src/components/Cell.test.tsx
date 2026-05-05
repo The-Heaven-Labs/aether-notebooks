@@ -145,10 +145,11 @@ describe('MarkdownView image upload', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const { onSourceChange } = renderMarkdownCell('')
+    const { container, onSourceChange } = renderMarkdownCell('')
 
-    // Enter edit mode
-    fireEvent.click(screen.getByText('Click to add content…'))
+    // Enter edit mode by clicking the empty block div
+    const emptyBlock = container.querySelector('[data-testid="md-empty-block"]') as HTMLElement
+    fireEvent.click(emptyBlock)
     const textarea = screen.getByPlaceholderText('Write markdown…') as HTMLTextAreaElement
     expect(textarea).toBeTruthy()
 
@@ -186,10 +187,11 @@ describe('MarkdownView image upload', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    renderMarkdownCell('')
+    const { container } = renderMarkdownCell('')
 
-    // Enter edit mode
-    fireEvent.click(screen.getByText('Click to add content…'))
+    // Enter edit mode by clicking the empty block div
+    const emptyBlock = container.querySelector('[data-testid="md-empty-block"]') as HTMLElement
+    fireEvent.click(emptyBlock)
 
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement
     const imageFile = new File(['(binary)'], 'loading.png', { type: 'image/png' })

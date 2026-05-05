@@ -223,6 +223,29 @@ function makeMarkdownComponents(onResize: (src: string, newWidth: number) => voi
   }
 }
 
+export function splitIntoBlocks(source: string): string[] {
+  if (!source.trim()) return ['']
+  const lines = source.split('\n')
+  const blocks: string[] = []
+  let current: string[] = []
+  let inFence = false
+  for (const line of lines) {
+    if (line.match(/^```/)) inFence = !inFence
+    if (!inFence && line.trim() === '' && current.length > 0) {
+      blocks.push(current.join('\n'))
+      current = []
+    } else {
+      current.push(line)
+    }
+  }
+  if (current.length > 0) blocks.push(current.join('\n'))
+  return blocks.length > 0 ? blocks : ['']
+}
+
+export function joinBlocks(blocks: string[]): string {
+  return blocks.join('\n\n')
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface SaveState {
@@ -375,7 +398,8 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
 }
 
 // ── MarkdownView ──────────────────────────────────────────────────────────────
-// View mode: rendered markdown. Click to enter edit mode (plain textarea).
+// Block-based WYSIWYG: each paragraph renders as markdown; clicking a block
+// enters edit mode for that block only.
 
 interface MarkdownViewProps {
   cell: Cell
@@ -384,15 +408,92 @@ interface MarkdownViewProps {
   onSave?: (cellId: string, source: string) => void
 }
 
+interface MarkdownBlockProps {
+  source: string
+  focused: boolean
+  onFocus: () => void
+  onChange: (s: string) => void
+  onBlur: (s: string) => void
+  onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
+  onPaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void
+  markdownComponents: ReturnType<typeof makeMarkdownComponents>
+  textareaRef?: React.RefObject<HTMLTextAreaElement | null>
+}
+
+function MarkdownBlock({ source, focused, onFocus, onChange, onBlur, onKeyDown, onPaste, markdownComponents, textareaRef }: MarkdownBlockProps) {
+  const localRef = useRef<HTMLTextAreaElement>(null)
+  const ref = textareaRef ?? localRef
+
+  useEffect(() => {
+    if (focused && ref.current) {
+      const el = ref.current
+      el.style.height = 'auto'
+      el.style.height = el.scrollHeight + 'px'
+      el.focus()
+    }
+  }, [focused, ref])
+
+  if (focused) {
+    return (
+      <textarea
+        ref={ref}
+        style={styles.mdBlockTextarea}
+        value={source}
+        onChange={(e) => {
+          const el = e.target
+          el.style.height = 'auto'
+          el.style.height = el.scrollHeight + 'px'
+          onChange(e.target.value)
+        }}
+        onBlur={(e) => onBlur(e.target.value)}
+        onKeyDown={onKeyDown}
+        onPaste={onPaste}
+        placeholder="Write markdown…"
+      />
+    )
+  }
+
+  if (!source.trim()) {
+    return <div data-testid="md-empty-block" onClick={onFocus} style={{ minHeight: 24 }} />
+  }
+
+  return (
+    <div style={styles.mdBlock} onClick={onFocus}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>
+        {source}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
 function MarkdownView({ cell, notebookId, onSourceChange, onSave }: MarkdownViewProps) {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(cell.source)
+  const [blocks, setBlocks] = useState(() => splitIntoBlocks(cell.source))
+  const [focusedIdx, setFocusedIdx] = useState<number | null>(null)
   const [uploading, setUploading] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Keep draft in sync if source changes externally (e.g. history restore)
-  useEffect(() => { setDraft(cell.source) }, [cell.source])
+  // Sync when source changes externally (history restore, Yjs, etc.)
+  useEffect(() => {
+    setBlocks(splitIntoBlocks(cell.source))
+  }, [cell.source])
+
+  const updateBlock = useCallback((idx: number, s: string) => {
+    setBlocks(prev => {
+      const next = [...prev]; next[idx] = s
+      onSourceChange(cell.id, joinBlocks(next))
+      return next
+    })
+  }, [cell.id, onSourceChange])
+
+  const blurBlock = useCallback((idx: number, s: string) => {
+    setBlocks(prev => {
+      const next = [...prev]; next[idx] = s
+      onSave?.(cell.id, joinBlocks(next))
+      return next
+    })
+    setFocusedIdx(null)
+  }, [cell.id, onSave])
 
   const handleResize = useCallback((imgSrc: string, newWidth: number) => {
     const escaped = imgSrc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -405,7 +506,7 @@ function MarkdownView({ cell, notebookId, onSourceChange, onSave }: MarkdownView
 
   const markdownComponents = useMemo(() => makeMarkdownComponents(handleResize), [handleResize])
 
-  const uploadImage = useCallback(async (file: File): Promise<{ id: string; filename: string }> => {
+  const uploadImage = useCallback(async (file: File) => {
     const form = new FormData()
     form.append('file', file)
     const res = await fetch(`/api/v1/notebooks/${notebookId}/attachments`, {
@@ -414,69 +515,68 @@ function MarkdownView({ cell, notebookId, onSourceChange, onSave }: MarkdownView
       body: form,
     })
     if (!res.ok) throw new Error(`upload failed: ${res.status}`)
-    return res.json()
+    return res.json() as Promise<{ id: string; filename: string }>
   }, [notebookId])
 
-  const insertImageTag = useCallback((att: { id: string; filename: string }) => {
+  const insertImageTag = useCallback((att: { id: string; filename: string }, idx: number) => {
     const textarea = textareaRef.current
     const imgTag = `<img src="/api/v1/attachments/${att.id}" alt="${att.filename}" width="100%">`
-    if (textarea) {
-      const start = textarea.selectionStart
-      const end = textarea.selectionEnd
-      const newDraft = draft.slice(0, start) + imgTag + draft.slice(end)
-      setDraft(newDraft)
-      onSourceChange(cell.id, newDraft)
-      // restore cursor after the inserted tag
-      requestAnimationFrame(() => {
-        textarea.selectionStart = start + imgTag.length
-        textarea.selectionEnd = start + imgTag.length
-      })
-    } else {
-      const newDraft = draft + imgTag
-      setDraft(newDraft)
-      onSourceChange(cell.id, newDraft)
-    }
-  }, [draft, cell.id, onSourceChange])
+    setBlocks(prev => {
+      const next = [...prev]
+      if (textarea) {
+        const start = textarea.selectionStart
+        const end = textarea.selectionEnd
+        next[idx] = next[idx].slice(0, start) + imgTag + next[idx].slice(end)
+      } else {
+        next[idx] = next[idx] + imgTag
+      }
+      onSourceChange(cell.id, joinBlocks(next))
+      return next
+    })
+  }, [cell.id, onSourceChange])
 
-  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>, idx: number) => {
     const files = Array.from(e.clipboardData.files).filter(f => f.type.startsWith('image/'))
     if (files.length === 0) return
     e.preventDefault()
     setUploading(true)
-    try {
-      const att = await uploadImage(files[0])
-      insertImageTag(att)
-    } catch (err) {
-      console.error('Image upload failed:', err)
-    } finally {
-      setUploading(false)
-    }
+    try { insertImageTag(await uploadImage(files[0]), idx) }
+    catch (err) { console.error('Image upload failed:', err) }
+    finally { setUploading(false) }
   }, [uploadImage, insertImageTag])
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (!file) return
-    // reset input so same file can be re-selected
+    if (!file || focusedIdx === null) return
     e.target.value = ''
     setUploading(true)
-    try {
-      const att = await uploadImage(file)
-      insertImageTag(att)
-    } catch (err) {
-      console.error('Image upload failed:', err)
-    } finally {
-      setUploading(false)
-    }
-  }, [uploadImage, insertImageTag])
+    try { insertImageTag(await uploadImage(file), focusedIdx) }
+    catch (err) { console.error('Image upload failed:', err) }
+    finally { setUploading(false) }
+  }, [uploadImage, insertImageTag, focusedIdx])
 
-  if (editing) {
-    return (
-      <div>
+  return (
+    <div style={styles.mdContainer}>
+      {blocks.map((block, idx) => (
+        <MarkdownBlock
+          key={idx}
+          source={block}
+          focused={focusedIdx === idx}
+          onFocus={() => setFocusedIdx(idx)}
+          onChange={s => updateBlock(idx, s)}
+          onBlur={s => blurBlock(idx, s)}
+          onKeyDown={e => { if (e.key === 'Escape') e.currentTarget.blur() }}
+          onPaste={e => handlePaste(e, idx)}
+          markdownComponents={markdownComponents}
+          textareaRef={focusedIdx === idx ? textareaRef : undefined}
+        />
+      ))}
+      {focusedIdx !== null && (
         <div style={styles.mdToolbar}>
           <button
             style={styles.mdToolbarBtn}
             disabled={uploading}
-            onMouseDown={(e) => e.preventDefault()}
+            onMouseDown={e => e.preventDefault()}
             onClick={() => fileInputRef.current?.click()}
             title="Upload image"
           >
@@ -488,46 +588,9 @@ function MarkdownView({ cell, notebookId, onSourceChange, onSave }: MarkdownView
               </svg>
             )}
           </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            style={{ display: 'none' }}
-            onChange={handleFileSelect}
-          />
+          <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileSelect} />
         </div>
-        <textarea
-          ref={textareaRef}
-          style={styles.mdEditor}
-          value={draft}
-          onChange={(e) => {
-            setDraft(e.target.value)
-            onSourceChange(cell.id, e.target.value)
-          }}
-          onBlur={() => {
-            setEditing(false)
-            onSave?.(cell.id, draft)
-          }}
-          onKeyDown={(e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-              setEditing(false)
-              onSave?.(cell.id, draft)
-            }
-          }}
-          onPaste={handlePaste}
-          autoFocus
-          placeholder="Write markdown…"
-        />
-      </div>
-    )
-  }
-
-  return (
-    <div style={styles.mdRendered} onClick={() => setEditing(true)}>
-      {cell.source
-        ? <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>{cell.source}</ReactMarkdown>
-        : <span style={styles.mdPlaceholder}>Click to add content…</span>
-      }
+      )}
     </div>
   )
 }
@@ -904,22 +967,35 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: '1px solid var(--border-light)',
   },
 
-  // Markdown view mode
-  mdRendered: {
+  // Markdown block-based editor container
+  mdContainer: {
+    borderTop: '1px solid var(--border-light)',
+    borderBottom: '1px solid var(--border-light)',
     padding: '14px 20px',
     fontSize: 14,
     lineHeight: 1.75,
     color: 'var(--text-primary)',
     fontFamily: 'var(--font-sans)',
-    borderTop: '1px solid var(--border-light)',
-    borderBottom: '1px solid var(--border-light)',
     cursor: 'text',
     minHeight: 48,
   },
-  mdPlaceholder: {
-    color: 'var(--text-muted)',
-    fontStyle: 'italic',
-    fontSize: 13,
+  mdBlock: {
+  },
+  mdBlockTextarea: {
+    display: 'block',
+    width: '100%',
+    fontFamily: 'var(--font-sans)',
+    fontSize: 14,
+    lineHeight: 1.75,
+    color: 'var(--text-primary)',
+    background: 'transparent',
+    border: 'none',
+    outline: 'none',
+    resize: 'none',
+    padding: 0,
+    margin: 0,
+    overflow: 'hidden',
+    boxSizing: 'border-box' as const,
   },
   headerAnchor: {
     color: 'var(--text-muted)',
@@ -953,25 +1029,6 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 3,
     cursor: 'pointer',
     lineHeight: 1,
-  },
-
-  // Markdown edit mode
-  mdEditor: {
-    display: 'block',
-    width: '100%',
-    padding: '14px 20px',
-    fontFamily: 'var(--font-mono)',
-    fontSize: 13,
-    lineHeight: 1.7,
-    color: 'var(--text-primary)',
-    background: 'var(--bg-cell-code)',
-    border: 'none',
-    borderTop: '1px solid var(--border-light)',
-    borderBottom: '1px solid var(--border-light)',
-    outline: 'none',
-    resize: 'vertical',
-    minHeight: 100,
-    boxSizing: 'border-box',
   },
 
   // Output
