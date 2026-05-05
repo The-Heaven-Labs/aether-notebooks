@@ -35,7 +35,11 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	maxBytes := s.maxAttachmentBytes
+	if maxBytes == 0 {
+		maxBytes = 32 << 20
+	}
+	if err := r.ParseMultipartForm(maxBytes); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid multipart form")
 		return
 	}
@@ -45,6 +49,11 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer file.Close()
+
+	if header.Size > maxBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "file too large")
+		return
+	}
 
 	// Detect MIME from first 512 bytes
 	sniff := make([]byte, 512)

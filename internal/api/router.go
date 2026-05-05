@@ -11,17 +11,18 @@ import (
 )
 
 type Server struct {
-	db                  *database.DB
-	jwt                 *auth.JWTIssuer
-	audit               *audit.Logger
-	masterKey           []byte
-	hub                 *Hub
-	mux                 *http.ServeMux
-	store               storage.Storage
-	platformAdminEmail  string
-	publicURL           string
-	frontendURL         string
-	Cache               *cache.Cache
+	db                 *database.DB
+	jwt                *auth.JWTIssuer
+	audit              *audit.Logger
+	masterKey          []byte
+	hub                *Hub
+	mux                *http.ServeMux
+	store              storage.Storage
+	platformAdminEmail string
+	publicURL          string
+	frontendURL        string
+	Cache              *cache.Cache
+	maxAttachmentBytes int64
 }
 
 func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, redisCache *cache.Cache) *Server {
@@ -60,6 +61,11 @@ func (s *Server) SetPublicURL(u string) {
 // SetFrontendURL sets the base URL used for post-auth redirects.
 func (s *Server) SetFrontendURL(u string) {
 	s.frontendURL = u
+}
+
+// SetMaxAttachmentBytes sets the maximum allowed attachment upload size in bytes.
+func (s *Server) SetMaxAttachmentBytes(n int64) {
+	s.maxAttachmentBytes = n
 }
 
 // DB returns the database connection (used in tests).

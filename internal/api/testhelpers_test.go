@@ -89,7 +89,9 @@ func setupTestServer(t *testing.T) *api.Server {
 	auditLogger := audit.NewLogger(db)
 	key := crypto.DeriveKey("test-master-key-for-tests-only!")
 	redisCache := setupTestCache(t)
-	return api.NewServer(db, jwt, auditLogger, key, redisCache)
+	srv := api.NewServer(db, jwt, auditLogger, key, redisCache)
+	srv.SetMaxAttachmentBytes(10 << 20) // 10 MB default for tests
+	return srv
 }
 
 func registerAndGetToken(t *testing.T, srv *api.Server, email, orgName string) string {

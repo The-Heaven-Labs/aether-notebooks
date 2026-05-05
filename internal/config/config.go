@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 )
 
 type Config struct {
@@ -21,9 +22,14 @@ type Config struct {
 	S3Region           string
 	S3AccessKey        string
 	S3SecretKey        string
+	MaxAttachmentBytes int64
 }
 
 func Load() (*Config, error) {
+	maxAttachmentBytes, err := strconv.ParseInt(envOrDefault("HNB_MAX_ATTACHMENT_BYTES", "10485760"), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid HNB_MAX_ATTACHMENT_BYTES: %w", err)
+	}
 	cfg := &Config{
 		Port:               envOrDefault("HNB_PORT", "8080"),
 		DatabaseURL:        envOrDefault("HNB_DATABASE_URL", "postgres://hnb:hnb_dev@localhost:5432/hnb?sslmode=disable"),
@@ -40,6 +46,7 @@ func Load() (*Config, error) {
 		S3Region:           envOrDefault("HNB_S3_REGION", "us-east-1"),
 		S3AccessKey:        os.Getenv("HNB_S3_ACCESS_KEY"),
 		S3SecretKey:        os.Getenv("HNB_S3_SECRET_KEY"),
+		MaxAttachmentBytes: maxAttachmentBytes,
 	}
 	if cfg.MasterKey == "" {
 		return nil, fmt.Errorf("HNB_MASTER_KEY is required")
