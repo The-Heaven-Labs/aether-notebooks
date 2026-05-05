@@ -473,10 +473,12 @@ function MarkdownView({ cell, notebookId, onSourceChange, onSave }: MarkdownView
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Sync when source changes externally (history restore, Yjs, etc.)
+  // Sync when source changes externally (history restore, Yjs, etc.) — skip while editing
+  // to prevent cursor jumps and image flicker caused by re-splitting during active typing.
   useEffect(() => {
+    if (focusedIdx !== null) return
     setBlocks(splitIntoBlocks(cell.source))
-  }, [cell.source])
+  }, [cell.source, focusedIdx])
 
   const updateBlock = useCallback((idx: number, s: string) => {
     setBlocks(prev => {
