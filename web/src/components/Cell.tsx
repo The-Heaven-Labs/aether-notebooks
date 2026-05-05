@@ -105,17 +105,18 @@ export interface ResizableImageProps {
   onResize?: (src: string, newWidth: number) => void
 }
 
+const blobUrlCache = new Map<string, string>()
+
 export function ResizableImage({ src, alt, width, onResize }: ResizableImageProps) {
   const imgRef = useRef<HTMLImageElement>(null)
-  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const [blobUrl, setBlobUrl] = useState<string | null>(() => blobUrlCache.get(src) ?? null)
 
   useEffect(() => {
-    let url: string
+    if (blobUrlCache.has(src)) { setBlobUrl(blobUrlCache.get(src)!); return }
     fetch(src, { headers: { Authorization: `Bearer ${getToken()}` } })
       .then(r => r.blob())
-      .then(blob => { url = URL.createObjectURL(blob); setBlobUrl(url) })
+      .then(blob => { const u = URL.createObjectURL(blob); blobUrlCache.set(src, u); setBlobUrl(u) })
       .catch(() => setBlobUrl(src))
-    return () => { if (url) URL.revokeObjectURL(url) }
   }, [src])
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -433,11 +434,11 @@ function MarkdownBlock({ source, focused, onFocus, onChange, onBlur, onKeyDown, 
     }
   }, [focused, ref])
 
-  if (focused) {
-    return (
+  return (
+    <>
       <textarea
         ref={ref}
-        style={styles.mdBlockTextarea}
+        style={{ ...styles.mdBlockTextarea, display: focused ? 'block' : 'none' }}
         value={source}
         onChange={(e) => {
           const el = e.target
@@ -450,19 +451,16 @@ function MarkdownBlock({ source, focused, onFocus, onChange, onBlur, onKeyDown, 
         onPaste={onPaste}
         placeholder="Write markdown…"
       />
-    )
-  }
-
-  if (!source.trim()) {
-    return <div data-testid="md-empty-block" onClick={onFocus} style={{ minHeight: 24 }} />
-  }
-
-  return (
-    <div style={styles.mdBlock} onClick={onFocus}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>
-        {source}
-      </ReactMarkdown>
-    </div>
+      <div
+        data-testid={!source.trim() ? 'md-empty-block' : undefined}
+        style={{ ...styles.mdBlock, display: focused ? 'none' : 'block', minHeight: source.trim() ? undefined : 24 }}
+        onClick={onFocus}
+      >
+        {source.trim()
+          ? <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>{source}</ReactMarkdown>
+          : null}
+      </div>
+    </>
   )
 }
 
