@@ -472,6 +472,10 @@ function MarkdownView({ cell, notebookId, onSourceChange, onSave }: MarkdownView
   const [uploading, setUploading] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const blocksRef = useRef(blocks)
+  const onSaveRef = useRef(onSave)
+  useEffect(() => { blocksRef.current = blocks }, [blocks])
+  useEffect(() => { onSaveRef.current = onSave }, [onSave])
 
   // Sync when source changes externally (history restore, Yjs, etc.) — skip while editing
   // to prevent cursor jumps and image flicker caused by re-splitting during active typing.
@@ -499,12 +503,13 @@ function MarkdownView({ cell, notebookId, onSourceChange, onSave }: MarkdownView
 
   const handleResize = useCallback((imgSrc: string, newWidth: number) => {
     const escaped = imgSrc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const updated = cell.source.replace(
+    const source = joinBlocks(blocksRef.current)
+    const updated = source.replace(
       new RegExp(`(<img\\b[^>]*\\bsrc="${escaped}"[^>]*?)(?:\\s+width="[^"]*")?([^>]*?>)`, 'i'),
       (_, before, after) => `${before} width="${newWidth}"${after}`,
     )
-    onSave?.(cell.id, updated)
-  }, [cell.source, cell.id, onSave])
+    onSaveRef.current?.(cell.id, updated)
+  }, [cell.id])
 
   const markdownComponents = useMemo(() => makeMarkdownComponents(handleResize), [handleResize])
 
