@@ -16,6 +16,7 @@ import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import { OutputRenderer } from './OutputRenderer'
 import type { Cell, Connector } from '../types'
+import { getToken } from '../api/client'
 
 const sqlHighlight = HighlightStyle.define([
   { tag: tags.keyword, class: 'cm-keyword' },
@@ -366,13 +367,17 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
 
 interface MarkdownViewProps {
   cell: Cell
+  notebookId: string
   onSourceChange: (cellId: string, source: string) => void
   onSave?: (cellId: string, source: string) => void
 }
 
-function MarkdownView({ cell, onSourceChange, onSave }: MarkdownViewProps) {
+function MarkdownView({ cell, notebookId, onSourceChange, onSave }: MarkdownViewProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(cell.source)
+  const [uploading, setUploading] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Keep draft in sync if source changes externally (e.g. history restore)
   useEffect(() => { setDraft(cell.source) }, [cell.source])
@@ -388,28 +393,119 @@ function MarkdownView({ cell, onSourceChange, onSave }: MarkdownViewProps) {
 
   const markdownComponents = makeMarkdownComponents(handleResize)
 
+  const uploadImage = useCallback(async (file: File): Promise<{ id: string; filename: string }> => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`/api/v1/notebooks/${notebookId}/attachments`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${getToken()}` },
+      body: form,
+    })
+    if (!res.ok) throw new Error(`upload failed: ${res.status}`)
+    return res.json()
+  }, [notebookId])
+
+  const insertImageTag = useCallback((att: { id: string; filename: string }) => {
+    const textarea = textareaRef.current
+    const imgTag = `<img src="/api/v1/attachments/${att.id}" alt="${att.filename}" width="100%">`
+    if (textarea) {
+      const start = textarea.selectionStart
+      const end = textarea.selectionEnd
+      const newDraft = draft.slice(0, start) + imgTag + draft.slice(end)
+      setDraft(newDraft)
+      onSourceChange(cell.id, newDraft)
+      // restore cursor after the inserted tag
+      requestAnimationFrame(() => {
+        textarea.selectionStart = start + imgTag.length
+        textarea.selectionEnd = start + imgTag.length
+      })
+    } else {
+      const newDraft = draft + imgTag
+      setDraft(newDraft)
+      onSourceChange(cell.id, newDraft)
+    }
+  }, [draft, cell.id, onSourceChange])
+
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(e.clipboardData.files).filter(f => f.type.startsWith('image/'))
+    if (files.length === 0) return
+    e.preventDefault()
+    setUploading(true)
+    try {
+      const att = await uploadImage(files[0])
+      insertImageTag(att)
+    } catch (err) {
+      console.error('Image upload failed:', err)
+    } finally {
+      setUploading(false)
+    }
+  }, [uploadImage, insertImageTag])
+
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    // reset input so same file can be re-selected
+    e.target.value = ''
+    setUploading(true)
+    try {
+      const att = await uploadImage(file)
+      insertImageTag(att)
+    } catch (err) {
+      console.error('Image upload failed:', err)
+    } finally {
+      setUploading(false)
+    }
+  }, [uploadImage, insertImageTag])
+
   if (editing) {
     return (
-      <textarea
-        style={styles.mdEditor}
-        value={draft}
-        onChange={(e) => {
-          setDraft(e.target.value)
-          onSourceChange(cell.id, e.target.value)
-        }}
-        onBlur={() => {
-          setEditing(false)
-          onSave?.(cell.id, draft)
-        }}
-        onKeyDown={(e) => {
-          if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      <div>
+        <div style={styles.mdToolbar}>
+          <button
+            style={styles.mdToolbarBtn}
+            disabled={uploading}
+            onClick={() => fileInputRef.current?.click()}
+            title="Upload image"
+          >
+            {uploading ? '...' : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+            )}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={handleFileSelect}
+          />
+        </div>
+        <textarea
+          ref={textareaRef}
+          style={styles.mdEditor}
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value)
+            onSourceChange(cell.id, e.target.value)
+          }}
+          onBlur={() => {
             setEditing(false)
             onSave?.(cell.id, draft)
-          }
-        }}
-        autoFocus
-        placeholder="Write markdown…"
-      />
+          }}
+          onKeyDown={(e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+              setEditing(false)
+              onSave?.(cell.id, draft)
+            }
+          }}
+          onPaste={handlePaste}
+          autoFocus
+          placeholder="Write markdown…"
+        />
+      </div>
     )
   }
 
@@ -641,7 +737,7 @@ export function Cell({
               collapsed={false}
               connector={connector}
             />
-          : <MarkdownView cell={cell} onSourceChange={onSourceChange} onSave={onSave} />
+          : <MarkdownView cell={cell} notebookId={notebookId} onSourceChange={onSourceChange} onSave={onSave} />
       )}
 
       {/* ── Output ── */}
@@ -820,6 +916,30 @@ const styles: Record<string, React.CSSProperties> = {
     transition: 'opacity 0.15s',
     fontFamily: 'var(--font-mono)',
     fontSize: '0.85em',
+  },
+
+  // Markdown edit toolbar
+  mdToolbar: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    padding: '4px 12px',
+    borderTop: '1px solid var(--border-light)',
+    background: 'var(--bg-cell-code)',
+  },
+  mdToolbarBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '3px 6px',
+    fontSize: 11,
+    fontFamily: 'var(--font-mono)',
+    color: 'var(--text-muted)',
+    background: 'none',
+    border: '1px solid var(--border)',
+    borderRadius: 3,
+    cursor: 'pointer',
+    lineHeight: 1,
   },
 
   // Markdown edit mode
