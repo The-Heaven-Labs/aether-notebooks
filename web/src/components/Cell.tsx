@@ -107,6 +107,16 @@ export interface ResizableImageProps {
 
 export function ResizableImage({ src, alt, width, onResize }: ResizableImageProps) {
   const imgRef = useRef<HTMLImageElement>(null)
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    let url: string
+    fetch(src, { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then(r => r.blob())
+      .then(blob => { url = URL.createObjectURL(blob); setBlobUrl(url) })
+      .catch(() => setBlobUrl(src))
+    return () => { if (url) URL.revokeObjectURL(url) }
+  }, [src])
 
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -131,7 +141,7 @@ export function ResizableImage({ src, alt, width, onResize }: ResizableImageProp
 
   return (
     <span style={{ display: 'inline-block', position: 'relative' }}>
-      <img ref={imgRef} src={src} alt={alt} width={width} style={{ display: 'block', maxWidth: '100%' }} />
+      <img ref={imgRef} src={blobUrl ?? ''} alt={alt} width={width} style={{ display: 'block', maxWidth: '100%' }} />
       <span
         className="img-resize-handle"
         onMouseDown={handleMouseDown}
@@ -464,6 +474,7 @@ function MarkdownView({ cell, notebookId, onSourceChange, onSave }: MarkdownView
           <button
             style={styles.mdToolbarBtn}
             disabled={uploading}
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => fileInputRef.current?.click()}
             title="Upload image"
           >
