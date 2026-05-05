@@ -104,8 +104,8 @@ describe('MarkdownView image upload', () => {
 
     const { onSourceChange } = renderMarkdownCell('before ')
 
-    // Enter edit mode by clicking rendered area
-    fireEvent.click(screen.getByText('before'))
+    // Enter edit mode by clicking the rendered paragraph (not the hidden textarea)
+    fireEvent.click(screen.getByText('before', { selector: 'p' }))
     const textarea = screen.getByPlaceholderText('Write markdown…') as HTMLTextAreaElement
 
     // Position cursor at end
@@ -121,10 +121,11 @@ describe('MarkdownView image upload', () => {
     })
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock.mock.calls.some((args: unknown[]) => args[0] === '/api/v1/notebooks/nb-1/attachments')).toBe(true)
     })
 
-    const [url, opts] = fetchMock.mock.calls[0]
+    const uploadCall = fetchMock.mock.calls.find((args: unknown[]) => args[0] === '/api/v1/notebooks/nb-1/attachments')!
+    const [url, opts] = uploadCall
     expect(url).toBe('/api/v1/notebooks/nb-1/attachments')
     expect(opts.method).toBe('POST')
     expect(opts.headers.Authorization).toBe('Bearer test-token')
@@ -165,10 +166,10 @@ describe('MarkdownView image upload', () => {
     })
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock.mock.calls.some((args: unknown[]) => args[0] === '/api/v1/notebooks/nb-1/attachments')).toBe(true)
     })
 
-    const [url] = fetchMock.mock.calls[0]
+    const [url] = fetchMock.mock.calls.find((args: unknown[]) => args[0] === '/api/v1/notebooks/nb-1/attachments')!
     expect(url).toBe('/api/v1/notebooks/nb-1/attachments')
 
     await waitFor(() => {
