@@ -1,6 +1,6 @@
 const BASE_URL = import.meta.env.VITE_API_URL || ''
 
-function getToken(): string | null {
+export function getToken(): string | null {
   return localStorage.getItem('hnb_token')
 }
 
