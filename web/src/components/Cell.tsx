@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard } from 'lucide-react'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
@@ -13,6 +13,7 @@ import { HocuspocusProvider } from '@hocuspocus/provider'
 import { yCollab } from 'y-codemirror.next'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
 import { OutputRenderer } from './OutputRenderer'
 import type { Cell, Connector } from '../types'
 
@@ -96,61 +97,117 @@ function getFirstHeadingSlug(source: string): string | null {
   return slugify(match[1])
 }
 
-const markdownComponents = {
-  h1: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
-    const text = children?.toString() || ''
-    const id = slugify(text)
-    return (
-      <h1 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
-        {children}
-      </h1>
-    )
-  },
-  h2: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
-    const text = children?.toString() || ''
-    const id = slugify(text)
-    return (
-      <h2 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
-        {children}
-      </h2>
-    )
-  },
-  h3: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
-    const text = children?.toString() || ''
-    const id = slugify(text)
-    return (
-      <h3 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
-        {children}
-      </h3>
-    )
-  },
-  h4: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
-    const text = children?.toString() || ''
-    const id = slugify(text)
-    return (
-      <h4 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
-        {children}
-      </h4>
-    )
-  },
-  h5: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
-    const text = children?.toString() || ''
-    const id = slugify(text)
-    return (
-      <h5 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
-        {children}
-      </h5>
-    )
-  },
-  h6: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
-    const text = children?.toString() || ''
-    const id = slugify(text)
-    return (
-      <h6 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
-        {children}
-      </h6>
-    )
-  },
+export interface ResizableImageProps {
+  src: string
+  alt?: string
+  width?: string
+  onResize?: (src: string, newWidth: number) => void
+}
+
+export function ResizableImage({ src, alt, width, onResize }: ResizableImageProps) {
+  const imgRef = useRef<HTMLImageElement>(null)
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startWidth = imgRef.current?.getBoundingClientRect().width ?? (parseInt(width ?? '0') || 300)
+
+    const onMouseMove = (ev: MouseEvent) => {
+      const newWidth = Math.max(50, startWidth + (ev.clientX - startX))
+      if (imgRef.current) imgRef.current.style.width = `${newWidth}px`
+    }
+
+    const onMouseUp = (ev: MouseEvent) => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      const newWidth = Math.max(50, startWidth + (ev.clientX - startX))
+      onResize?.(src, Math.round(newWidth))
+    }
+
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+  }
+
+  return (
+    <span style={{ display: 'inline-block', position: 'relative' }}>
+      <img ref={imgRef} src={src} alt={alt} width={width} style={{ display: 'block', maxWidth: '100%' }} />
+      <span
+        className="img-resize-handle"
+        onMouseDown={handleMouseDown}
+        style={{
+          position: 'absolute',
+          right: 0,
+          top: 0,
+          bottom: 0,
+          width: 8,
+          cursor: 'ew-resize',
+          background: 'rgba(0,0,0,0.15)',
+        }}
+      />
+    </span>
+  )
+}
+
+function makeMarkdownComponents(onResize: (src: string, newWidth: number) => void) {
+  return {
+    img: ({ src, alt, width }: React.ImgHTMLAttributes<HTMLImageElement>) => (
+      <ResizableImage src={src ?? ''} alt={alt} width={width?.toString()} onResize={onResize} />
+    ),
+    h1: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
+      const text = children?.toString() || ''
+      const id = slugify(text)
+      return (
+        <h1 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
+          {children}
+        </h1>
+      )
+    },
+    h2: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
+      const text = children?.toString() || ''
+      const id = slugify(text)
+      return (
+        <h2 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
+          {children}
+        </h2>
+      )
+    },
+    h3: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
+      const text = children?.toString() || ''
+      const id = slugify(text)
+      return (
+        <h3 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
+          {children}
+        </h3>
+      )
+    },
+    h4: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
+      const text = children?.toString() || ''
+      const id = slugify(text)
+      return (
+        <h4 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
+          {children}
+        </h4>
+      )
+    },
+    h5: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
+      const text = children?.toString() || ''
+      const id = slugify(text)
+      return (
+        <h5 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
+          {children}
+        </h5>
+      )
+    },
+    h6: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
+      const text = children?.toString() || ''
+      const id = slugify(text)
+      return (
+        <h6 id={id ?? undefined} style={{ paddingRight: 0, ...props }}>
+          {children}
+        </h6>
+      )
+    },
+  }
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -320,6 +377,17 @@ function MarkdownView({ cell, onSourceChange, onSave }: MarkdownViewProps) {
   // Keep draft in sync if source changes externally (e.g. history restore)
   useEffect(() => { setDraft(cell.source) }, [cell.source])
 
+  const handleResize = useCallback((imgSrc: string, newWidth: number) => {
+    const escaped = imgSrc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const updated = cell.source.replace(
+      new RegExp(`(<img\\b[^>]*\\bsrc="${escaped}"[^>]*?)(?:\\s+width="[^"]*")?([^>]*?>)`, 'i'),
+      (_, before, after) => `${before} width="${newWidth}"${after}`,
+    )
+    onSave?.(cell.id, updated)
+  }, [cell.source, cell.id, onSave])
+
+  const markdownComponents = makeMarkdownComponents(handleResize)
+
   if (editing) {
     return (
       <textarea
@@ -348,7 +416,7 @@ function MarkdownView({ cell, onSourceChange, onSave }: MarkdownViewProps) {
   return (
     <div style={styles.mdRendered} onClick={() => setEditing(true)}>
       {cell.source
-        ? <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{cell.source}</ReactMarkdown>
+        ? <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>{cell.source}</ReactMarkdown>
         : <span style={styles.mdPlaceholder}>Click to add content…</span>
       }
     </div>
