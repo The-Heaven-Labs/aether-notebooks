@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
-import { ResizableImage, Cell } from './Cell'
+import { ResizableImage } from './MarkdownCell'
+import { Cell } from './Cell'
 import type { Cell as CellType } from '../types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -176,6 +177,50 @@ describe('MarkdownView image upload', () => {
       expect(onSourceChange).toHaveBeenCalledWith(
         'cell-1',
         expect.stringContaining('<img src="/api/v1/attachments/att-99" alt="photo.jpg" width="100%">')
+      )
+    })
+  })
+
+  it('drop of an image file uploads and inserts <img> tag', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: 'att-drop-1', filename: 'dropped.png' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { onSourceChange } = renderMarkdownCell('drop here')
+
+    // Click the rendered paragraph to get the block div
+    fireEvent.click(screen.getByText('drop here', { selector: 'p' }))
+
+    // Blur to exit edit mode so we can drop on the rendered view
+    const textarea = screen.getByPlaceholderText('Write markdown…') as HTMLTextAreaElement
+    fireEvent.blur(textarea)
+
+    // Find the rendered block div (the one with the paragraph)
+    const blockDiv = screen.getByText('drop here', { selector: 'p' }).parentElement as HTMLElement
+
+    const imageFile = new File(['(binary)'], 'dropped.png', { type: 'image/png' })
+    const dataTransfer = {
+      files: [imageFile],
+    }
+
+    await act(async () => {
+      fireEvent.dragOver(blockDiv)
+      fireEvent.drop(blockDiv, { dataTransfer })
+    })
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some((args: unknown[]) => args[0] === '/api/v1/notebooks/nb-1/attachments')).toBe(true)
+    })
+
+    const uploadCall = fetchMock.mock.calls.find((args: unknown[]) => args[0] === '/api/v1/notebooks/nb-1/attachments')!
+    expect(uploadCall[0]).toBe('/api/v1/notebooks/nb-1/attachments')
+
+    await waitFor(() => {
+      expect(onSourceChange).toHaveBeenCalledWith(
+        'cell-1',
+        expect.stringContaining('<img src="/api/v1/attachments/att-drop-1" alt="dropped.png" width="100%">')
       )
     })
   })

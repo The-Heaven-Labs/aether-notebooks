@@ -205,6 +205,27 @@ func TestAttachmentGetDeniedWhenNotebookACLRestrictsViewer(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
+func TestAttachmentUploadTooLarge(t *testing.T) {
+	ctx := setupAttachTestContext(t)
+	nbID := createTestNotebook(t, ctx.srv, ctx.token)
+
+	// Set a very small limit so any file exceeds it
+	ctx.srv.SetMaxAttachmentBytes(1)
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("file", "test.png")
+	io.WriteString(fw, "fake-png-data")
+	mw.Close()
+
+	req := httptest.NewRequest("POST", "/api/v1/notebooks/"+nbID+"/attachments", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+ctx.token)
+	rw := httptest.NewRecorder()
+	ctx.srv.ServeHTTP(rw, req)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rw.Code)
+}
+
 func TestAttachmentUploadRequiresWritePermission(t *testing.T) {
 	ts := time.Now().UnixNano()
 	actx := setupAttachTestContext(t)
