@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard } from 'lucide-react'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
@@ -120,6 +120,7 @@ export function ResizableImage({ src, alt, width, onResize }: ResizableImageProp
 
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault()
+    e.stopPropagation()
     const startX = e.clientX
     const startWidth = imgRef.current?.getBoundingClientRect().width ?? (parseInt(width ?? '0') || 300)
 
@@ -140,11 +141,12 @@ export function ResizableImage({ src, alt, width, onResize }: ResizableImageProp
   }
 
   return (
-    <span style={{ display: 'inline-block', position: 'relative' }}>
+    <span style={{ display: 'inline-block', position: 'relative' }} onClick={e => e.stopPropagation()}>
       <img ref={imgRef} src={blobUrl ?? ''} alt={alt} width={width} style={{ display: 'block', maxWidth: '100%' }} />
       <span
         className="img-resize-handle"
         onMouseDown={handleMouseDown}
+        onClick={e => e.stopPropagation()}
         style={{
           position: 'absolute',
           right: 0,
@@ -401,7 +403,7 @@ function MarkdownView({ cell, notebookId, onSourceChange, onSave }: MarkdownView
     onSave?.(cell.id, updated)
   }, [cell.source, cell.id, onSave])
 
-  const markdownComponents = makeMarkdownComponents(handleResize)
+  const markdownComponents = useMemo(() => makeMarkdownComponents(handleResize), [handleResize])
 
   const uploadImage = useCallback(async (file: File): Promise<{ id: string; filename: string }> => {
     const form = new FormData()
