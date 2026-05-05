@@ -43,10 +43,16 @@ function renderMarkdownCell(source = 'hello') {
 // ── ResizableImage ─────────────────────────────────────────────────────────────
 
 describe('ResizableImage', () => {
-  it('renders an img with the correct src and alt', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ blob: async () => new Blob(['x'], { type: 'image/png' }) }))
+    vi.stubGlobal('URL', { createObjectURL: vi.fn(() => 'blob:mock'), revokeObjectURL: vi.fn() })
+  })
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('renders an img with a blob url and correct alt', async () => {
     render(<ResizableImage src="/api/v1/attachments/abc123" alt="photo.png" width="100%" />)
     const img = screen.getByRole('img')
-    expect(img).toHaveAttribute('src', '/api/v1/attachments/abc123')
+    await waitFor(() => expect(img).toHaveAttribute('src', 'blob:mock'))
     expect(img).toHaveAttribute('alt', 'photo.png')
   })
 
