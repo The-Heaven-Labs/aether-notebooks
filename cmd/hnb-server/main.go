@@ -110,6 +110,7 @@ func main() {
 		log.Printf("storage: local (%s)", cfg.AttachmentDir)
 	}
 	srv.SetStorage(store)
+	srv.StartBackgroundJobs(ctx)
 	srv.SetPlatformAdminEmail(cfg.PlatformAdminEmail)
 	srv.SetPublicURL(cfg.PublicURL)
 	srv.SetFrontendURL(cfg.FrontendURL)
