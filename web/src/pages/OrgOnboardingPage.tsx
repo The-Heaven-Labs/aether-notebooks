@@ -154,7 +154,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'center',
     fontSize: 24,
-    color: 'white',
+    color: 'var(--button-primary-text)',
     marginBottom: 20,
   },
   heading: {
@@ -217,8 +217,9 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1.5px solid var(--border)',
     fontSize: 14,
     outline: 'none',
-    background: 'white',
+    background: 'var(--bg-input)',
     color: 'var(--text-primary)',
+    caretColor: 'var(--text-primary)',
   },
   error: {
     color: 'var(--error)',
@@ -232,7 +233,7 @@ const styles: Record<string, React.CSSProperties> = {
   primaryBtn: {
     padding: '11px',
     background: 'var(--accent)',
-    color: 'white',
+    color: 'var(--button-primary-text)',
     border: 'none',
     borderRadius: 4,
     fontSize: 14,

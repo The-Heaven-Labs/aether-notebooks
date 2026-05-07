@@ -438,7 +438,7 @@ export function Cell({
           <button
             type="button"
             title={cell.slide_break ? 'Separate into own slide' : 'Join with previous slide'}
-            style={{ ...styles.actionBtn, color: cell.slide_break ? 'var(--accent)' : '#bbb' }}
+            style={{ ...styles.actionBtn, color: cell.slide_break ? 'var(--accent)' : 'var(--text-muted)' }}
             onClick={() => onUpdateCellMeta?.({ slide_break: !cell.slide_break })}
           >
             {cell.slide_break ? <Link size={13} /> : <SeparatorHorizontal size={13} />}
@@ -569,6 +569,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'transparent',
     fontFamily: 'var(--font-sans)',
     minWidth: 0,
+    caretColor: 'var(--text-primary)',
   },
 
   // Hover toolbar
@@ -595,7 +596,7 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1,
   },
   actionBtnDelete: {
-    color: 'var(--text-muted)',
+    color: 'var(--error)',
   },
   copiedBadge: {
     display: 'inline-flex',

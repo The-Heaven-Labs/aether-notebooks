@@ -44,12 +44,14 @@
   --shadow-overlay: rgba(0,0,0,0.12);
   --code-keyword: #3451c9;
   --code-string: #2e7d32;
-  --code-comment: #aaa;
+  --code-comment: #777;
   --code-function: #0097a7;
   --code-number: #c0392b;
   --button-primary-bg: #6a5e96;
   --button-primary-text: #ffffff;
   --cm-editor-bg: #f7f7f7;
+  --accent-bg: var(--accent-light);
+  --accent-border: var(--accent);
 }
 
 [data-theme="dark"] {
