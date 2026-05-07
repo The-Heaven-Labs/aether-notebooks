@@ -590,7 +590,6 @@ const styles: Record<string, React.CSSProperties> = {
     height: 3,
     borderRadius: 2,
     background: 'var(--border)',
-    opacity: 0.6,
   },
   table: {
     width: '100%',

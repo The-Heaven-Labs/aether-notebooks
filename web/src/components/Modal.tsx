@@ -27,5 +27,5 @@ const styles: Record<string, React.CSSProperties> = {
   modal: { background: 'var(--bg-card)', borderRadius: 4, border: '1px solid var(--border)', boxShadow: 'var(--shadow-md)', maxHeight: '80vh', overflow: 'auto' },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border)' },
   title: { fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' },
-  close: { background: 'transparent', border: 'none', fontSize: 14, cursor: 'pointer', color: 'var(--text-muted)' },
+  close: { background: 'transparent', border: 'none', fontSize: 14, cursor: 'pointer', color: 'var(--text-secondary)' },
 }
