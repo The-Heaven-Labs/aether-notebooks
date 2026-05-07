@@ -109,7 +109,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '50%',
     background: 'var(--accent-light)',
     border: '1.5px solid var(--accent)',
-    color: 'var(--accent)',
+    color: 'var(--accent-hover)',
     fontSize: 13, fontWeight: 700,
     cursor: 'pointer',
     display: 'flex', alignItems: 'center', justifyContent: 'center',

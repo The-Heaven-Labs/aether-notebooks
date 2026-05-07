@@ -11,6 +11,7 @@ export interface ResizableImageProps {
   alt?: string
   width?: string
   onResize?: (src: string, newWidth: number) => void
+  readOnly?: boolean
 }
 
 const blobUrlCache = new Map<string, string>()
@@ -40,7 +41,7 @@ function setCachedBlobUrl(src: string, url: string) {
   }
 }
 
-export function ResizableImage({ src, alt, width, onResize }: ResizableImageProps) {
+export function ResizableImage({ src, alt, width, onResize, readOnly }: ResizableImageProps) {
   const imgRef = useRef<HTMLImageElement>(null)
   const [blobUrl, setBlobUrl] = useState<string | null>(() => getCachedBlobUrl(src) ?? null)
 
@@ -48,7 +49,7 @@ export function ResizableImage({ src, alt, width, onResize }: ResizableImageProp
     const cached = getCachedBlobUrl(src)
     if (cached) { setBlobUrl(cached); return }
     fetch(src, { headers: { Authorization: `Bearer ${getToken()}` } })
-      .then(r => r.blob())
+      .then(r => { if (!r.ok) throw new Error(`fetch failed: ${r.status}`); return r.blob() })
       .then(blob => { const u = URL.createObjectURL(blob); setCachedBlobUrl(src, u); setBlobUrl(u) })
       .catch(() => setBlobUrl(src))
   }, [src])
@@ -78,28 +79,30 @@ export function ResizableImage({ src, alt, width, onResize }: ResizableImageProp
   return (
     <span style={{ display: 'inline-block', position: 'relative' }} onClick={e => e.stopPropagation()}>
       <img ref={imgRef} src={blobUrl ?? ''} alt={alt} width={width} style={{ display: 'block', maxWidth: '100%', background: blobUrl ? undefined : 'var(--border)', minHeight: blobUrl ? undefined : 80 }} />
-      <span
-        className="img-resize-handle"
-        onMouseDown={handleMouseDown}
-        onClick={e => e.stopPropagation()}
-        style={{
-          position: 'absolute',
-          right: 0,
-          top: 0,
-          bottom: 0,
-          width: 8,
-          cursor: 'ew-resize',
-          background: 'rgba(0,0,0,0.15)',
-        }}
-      />
+      {!readOnly && (
+        <span
+          className="img-resize-handle"
+          onMouseDown={handleMouseDown}
+          onClick={e => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            right: 0,
+            top: 0,
+            bottom: 0,
+            width: 8,
+            cursor: 'ew-resize',
+            background: 'rgba(0,0,0,0.15)',
+          }}
+        />
+      )}
     </span>
   )
 }
 
-export function makeMarkdownComponents(onResize: (src: string, newWidth: number) => void) {
+export function makeMarkdownComponents(onResize: (src: string, newWidth: number) => void, readOnly = false) {
   return {
     img: ({ src, alt, width }: React.ImgHTMLAttributes<HTMLImageElement>) => (
-      <ResizableImage src={src ?? ''} alt={alt} width={width?.toString()} onResize={onResize} />
+      <ResizableImage src={src ?? ''} alt={alt} width={width?.toString()} onResize={onResize} readOnly={readOnly} />
     ),
     h1: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
       const text = children?.toString() || ''
@@ -256,6 +259,7 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
   const [uploading, setUploading] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const activeBlockIdxRef = useRef<number | null>(null)
   const blocksRef = useRef(blocks)
   const onSaveRef = useRef(onSave)
   useEffect(() => { blocksRef.current = blocks }, [blocks])
@@ -288,12 +292,18 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
   const handleResize = useCallback((imgSrc: string, newWidth: number) => {
     const escaped = imgSrc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const source = joinBlocks(blocksRef.current)
-    const updated = source.replace(
-      new RegExp(`(<img\\b[^>]*\\bsrc="${escaped}"[^>]*?)(?:\\s+width="[^"]*")?([^>]*?>)`, 'i'),
-      (_, before, after) => `${before} width="${newWidth}"${after}`,
-    )
+    const imgTagRegex = new RegExp(`<img\\b[^>]*\\bsrc="${escaped}"[^>]*>`, 'i')
+    const match = source.match(imgTagRegex)
+    if (!match) return
+    const newTag = match[0]
+      .replace(/\s+width="[^"]*"/i, '')
+      .replace(/(\/?>)$/, ` width="${newWidth}"$1`)
+    const updated = source.replace(imgTagRegex, newTag)
+    if (updated === source) return
+    setBlocks(splitIntoBlocks(updated))
+    onSourceChange(cell.id, updated)
     onSaveRef.current?.(cell.id, updated)
-  }, [cell.id])
+  }, [cell.id, onSourceChange])
 
   const markdownComponents = useMemo(() => makeMarkdownComponents(handleResize), [handleResize])
 
@@ -312,18 +322,21 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
   const insertImageTag = useCallback((att: { id: string; filename: string }, idx: number) => {
     const textarea = textareaRef.current
     const imgTag = `<img src="/api/v1/attachments/${att.id}" alt="${att.filename}" width="100%">`
-    setBlocks(prev => {
-      const next = [...prev]
-      if (textarea) {
-        const start = textarea.selectionStart
-        const end = textarea.selectionEnd
-        next[idx] = next[idx].slice(0, start) + imgTag + next[idx].slice(end)
-      } else {
-        next[idx] = next[idx] + imgTag
-      }
-      onSourceChange(cell.id, joinBlocks(next))
-      return next
-    })
+    const current = blocksRef.current[idx] ?? ''
+    let nextBlock: string
+    if (textarea) {
+      const start = textarea.selectionStart
+      const end = textarea.selectionEnd
+      nextBlock = current.slice(0, start) + imgTag + current.slice(end)
+    } else {
+      nextBlock = current + imgTag
+    }
+    const next = [...blocksRef.current]
+    next[idx] = nextBlock
+    const updated = joinBlocks(next)
+    setBlocks(next)
+    onSourceChange(cell.id, updated)
+    onSaveRef.current?.(cell.id, updated)
   }, [cell.id, onSourceChange])
 
   const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>, idx: number) => {
@@ -348,13 +361,15 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (!file || focusedIdx === null) return
+    const idx = activeBlockIdxRef.current
+    if (!file || idx === null) return
     e.target.value = ''
+    activeBlockIdxRef.current = null
     setUploading(true)
-    try { insertImageTag(await uploadImage(file), focusedIdx) }
+    try { insertImageTag(await uploadImage(file), idx) }
     catch (err) { console.error('Image upload failed:', err) }
     finally { setUploading(false) }
-  }, [uploadImage, insertImageTag, focusedIdx])
+  }, [uploadImage, insertImageTag])
 
   return (
     <div style={styles.mdContainer}>
@@ -379,7 +394,10 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
             style={styles.mdToolbarBtn}
             disabled={uploading}
             onMouseDown={e => e.preventDefault()}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => {
+              activeBlockIdxRef.current = focusedIdx
+              fileInputRef.current?.click()
+            }}
             title="Upload image"
           >
             {uploading ? '...' : (
@@ -390,9 +408,9 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
               </svg>
             )}
           </button>
-          <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileSelect} />
         </div>
       )}
+      <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileSelect} />
     </div>
   )
 }
@@ -418,7 +436,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 14,
     lineHeight: 1.75,
     color: 'var(--text-primary)',
-    background: 'transparent',
+    background: 'var(--bg-cell-text)',
     border: 'none',
     outline: 'none',
     resize: 'none',
@@ -426,6 +444,7 @@ const styles: Record<string, React.CSSProperties> = {
     margin: 0,
     overflow: 'hidden',
     boxSizing: 'border-box' as const,
+    caretColor: 'var(--text-primary)',
   },
   mdToolbar: {
     display: 'flex',

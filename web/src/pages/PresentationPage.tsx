@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
 import { OutputRenderer } from '../components/OutputRenderer'
+import { makeMarkdownComponents } from '../components/MarkdownCell'
 import type { Notebook, Cell, Output } from '../types'
 
 interface NotebookWithCells extends Notebook {
@@ -59,7 +62,9 @@ export function PresentationPage() {
           {currentSlide.map((cell, i) => (
             cell.type === 'text' ? (
               <div key={cell.id} style={styles.markdownSlide}>
-                <ReactMarkdown>{cell.source}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={makeMarkdownComponents(() => {}, true)}>
+                  {cell.source}
+                </ReactMarkdown>
               </div>
             ) : (
               <div
