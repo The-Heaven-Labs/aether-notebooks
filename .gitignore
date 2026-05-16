@@ -9,3 +9,6 @@ web/dist/
 relay/node_modules/
 .worktrees/
 attachments/
+.claude/
+.mcp.json
+.repowise/
