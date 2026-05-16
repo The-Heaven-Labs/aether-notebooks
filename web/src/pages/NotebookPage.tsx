@@ -35,6 +35,66 @@ function fmtTime(date: Date): string {
   return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+function AddCellBar({ onAddCode, onAddText }: { onAddCode: () => void; onAddText: () => void }) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <div
+      style={{
+        ...addBarStyles.bar,
+        ...(hovered ? addBarStyles.barHover : {}),
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <div style={addBarStyles.line} />
+      <div style={{ ...addBarStyles.buttons, opacity: hovered ? 1 : 0 }}>
+        <button style={addBarStyles.btn} onClick={onAddCode}>+ Code</button>
+        <button style={addBarStyles.btn} onClick={onAddText}>+ Text</button>
+      </div>
+      <div style={addBarStyles.line} />
+    </div>
+  )
+}
+
+const addBarStyles: Record<string, React.CSSProperties> = {
+  bar: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    height: 20,
+    margin: '2px 0',
+    transition: 'all 0.15s ease',
+    cursor: 'pointer',
+  },
+  barHover: {
+    height: 28,
+    margin: '4px 0',
+  },
+  line: {
+    flex: 1,
+    height: 1,
+    background: 'var(--border-light)',
+    transition: 'background 0.15s',
+  },
+  buttons: {
+    display: 'flex',
+    gap: 6,
+    transition: 'opacity 0.12s',
+    flexShrink: 0,
+  },
+  btn: {
+    padding: '2px 10px',
+    border: '1px dashed var(--border)',
+    borderRadius: 4,
+    background: 'var(--bg-card)',
+    color: 'var(--text-muted)',
+    fontSize: 11,
+    fontFamily: 'var(--font-mono)',
+    cursor: 'pointer',
+    lineHeight: 1.4,
+  },
+}
+
 export function NotebookPage() {
   const { id } = useParams<{ id: string }>()
   const qc = useQueryClient()
@@ -101,11 +161,12 @@ export function NotebookPage() {
   }, [notebook])
 
   const createCell = useMutation({
-    mutationFn: (type: 'code' | 'text') =>
+    mutationFn: ({ type, position }: { type: 'code' | 'text'; position?: number }) =>
       api.post<Cell>(`/api/v1/notebooks/${id}/cells`, {
         type,
         language: type === 'code' ? 'sql' : 'markdown',
         source: '',
+        position,
       }),
     onSuccess: (cell) => {
       const withConnector = cell.type === 'code' && notebookConnectorId
@@ -114,9 +175,9 @@ export function NotebookPage() {
       if (withConnector.connector_id) {
         assignConnector(cell.id, withConnector.connector_id)
       }
-      setLocalCells((prev) => [...prev, withConnector])
+      setLocalCells((prev) => [...prev, withConnector].sort((a, b) => a.position - b.position))
       qc.setQueryData<NotebookWithCells>(['notebook', id], (old) =>
-        old ? { ...old, cells: [...(old.cells ?? []), withConnector] } : old
+        old ? { ...old, cells: [...(old.cells ?? []), withConnector].sort((a, b) => a.position - b.position) } : old
       )
     },
     onError: (err: Error) => setMutationError(err.message),
@@ -329,8 +390,16 @@ export function NotebookPage() {
   useNotebookKeyboardShortcuts(
     {
       runFocusedCell: () => { if (focusedCellId) saveAndRun(focusedCellId) },
-      addCellBelow: () => createCell.mutate('code'),
-      addCellAbove: () => createCell.mutate('code'),
+      addCellBelow: () => {
+        const idx = localCells.findIndex((c) => c.id === focusedCellId)
+        const pos = idx >= 0 ? localCells[idx].position + 1 : undefined
+        createCell.mutate({ type: 'code', position: pos })
+      },
+      addCellAbove: () => {
+        const idx = localCells.findIndex((c) => c.id === focusedCellId)
+        const pos = idx >= 0 ? localCells[idx].position : undefined
+        createCell.mutate({ type: 'code', position: pos })
+      },
       deleteFocusedCell: () => { if (focusedCellId) deleteCell.mutate(focusedCellId) },
       moveFocusDown: () => {
         if (!focusedCellId) return
@@ -559,14 +628,18 @@ export function NotebookPage() {
                       onAddToDashboard={(cid) => setAddToDashboardCellId(cid)}
                       index={i}
                     />
+                    <AddCellBar
+                      onAddCode={() => createCell.mutate({ type: 'code', position: cell.position + 1 })}
+                      onAddText={() => createCell.mutate({ type: 'text', position: cell.position + 1 })}
+                    />
                   </div>
                 ))}
 
                 <div style={styles.addRow}>
-                  <button type="button" style={styles.addBtn} onClick={() => createCell.mutate('code')}>
+                  <button type="button" style={styles.addBtn} onClick={() => createCell.mutate({ type: 'code' })}>
                     + Code Cell
                   </button>
-                  <button type="button" style={styles.addBtn} onClick={() => createCell.mutate('text')}>
+                  <button type="button" style={styles.addBtn} onClick={() => createCell.mutate({ type: 'text' })}>
                     + Text Cell
                   </button>
                 </div>

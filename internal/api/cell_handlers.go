@@ -15,6 +15,7 @@ type createCellRequest struct {
 	Language    string          `json:"language,omitempty"`
 	ConnectorID string          `json:"connector_id,omitempty"`
 	Source      string          `json:"source"`
+	Position    *int            `json:"position,omitempty"`
 }
 
 type updateCellRequest struct {
@@ -55,11 +56,23 @@ func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var maxPos *int
-	s.db.Pool.QueryRow(ctx, "SELECT MAX(position) FROM cells WHERE notebook_id=$1", nbID).Scan(&maxPos)
-	nextPos := 0
-	if maxPos != nil {
-		nextPos = *maxPos + 1
+	var insertPos int
+	if req.Position != nil {
+		insertPos = *req.Position
+		if _, err := s.db.Pool.Exec(ctx,
+			`UPDATE cells SET position=position+1 WHERE notebook_id=$1 AND position>=$2`,
+			nbID, insertPos,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+	} else {
+		var maxPos *int
+		s.db.Pool.QueryRow(ctx, "SELECT MAX(position) FROM cells WHERE notebook_id=$1", nbID).Scan(&maxPos)
+		insertPos = 0
+		if maxPos != nil {
+			insertPos = *maxPos + 1
+		}
 	}
 
 	var cell models.Cell
@@ -78,7 +91,7 @@ func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
 		 RETURNING id, notebook_id, position, type, language, connector_id, source, outputs,
 		           source_visible, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''),
 		           created_at, updated_at`,
-		nbID, nextPos, req.Type, lang, connID, req.Source,
+		nbID, insertPos, req.Type, lang, connID, req.Source,
 	).Scan(&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &lang, &connID, &cell.Source, &outputs,
 		&cell.SourceVisible, &cell.CellCollapsed, &cell.SlideBreak, &cellParams, &cell.Title, &cell.Description, &cell.Slug,
 		&cell.CreatedAt, &cell.UpdatedAt)
