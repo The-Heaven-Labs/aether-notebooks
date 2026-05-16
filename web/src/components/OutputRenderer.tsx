@@ -347,6 +347,9 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
             <table style={styles.table}>
               <thead ref={theadRef}>
                 <tr>
+                  <th style={{ ...styles.th, ...styles.rowNumTh, cursor: 'default' }}>
+                    <span style={styles.colName}>#</span>
+                  </th>
                   {rs.columns.map((col) => {
                     const isSorted = sort.column === col.name
                     return (
@@ -377,6 +380,9 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
               <tbody>
                 {displayRows.map((row, i) => (
                   <tr key={i}>
+                    <td style={{ ...styles.td, ...styles.rowNumTd }}>
+                      <span style={styles.rowNum}>{i + 1}</span>
+                    </td>
                     {(row as unknown[]).map((cell, j) => {
                       const isActiveCell = detail?.rowIndex === i && detail?.colIndex === j
                       if (cell === null) {
@@ -605,6 +611,25 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap',
     position: 'sticky',
     top: 0,
+  },
+  rowNumTh: {
+    padding: '9px 8px',
+    textAlign: 'center',
+    width: 1,
+    minWidth: 40,
+  },
+  rowNumTd: {
+    padding: '7px 8px',
+    textAlign: 'center',
+    borderBottom: '1px solid var(--border-light)',
+    width: 1,
+    minWidth: 40,
+  },
+  rowNum: {
+    fontSize: 11,
+    color: 'var(--text-muted)',
+    fontFamily: 'var(--font-mono)',
+    userSelect: 'none',
   },
   colName: {
     fontWeight: 600,
