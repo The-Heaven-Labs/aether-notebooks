@@ -69,6 +69,8 @@ export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps
   }
 
   const rootFolders = allFolders.filter(f => !f.parent_id)
+  const homeFolders = rootFolders.filter(f => f.is_home)
+  const orgFolders = rootFolders.filter(f => !f.is_home)
 
   const toggleFolder = (id: string) => {
     setExpanded(prev => {
@@ -102,22 +104,49 @@ export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps
 
   return (
     <div style={{ padding: '8px 0' }}>
-      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '0 12px', marginBottom: 8 }}>
-        Folders
-      </div>
-      {rootFolders.map(f => (
-        <TreeNodeComponent
-          key={f.id}
-          folder={f}
-          children={childrenMap[f.id] ?? []}
-          childrenMap={childrenMap}
-          expanded={expanded}
-          onToggle={toggleFolder}
-          onSelect={onSelectFolder}
-          selectedFolderId={selectedFolderId}
-          depth={0}
-        />
-      ))}
+      {/* Home folders section */}
+      {homeFolders.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '0 12px', marginBottom: 8 }}>
+            Home
+          </div>
+          {homeFolders.map(f => (
+            <TreeNodeComponent
+              key={f.id}
+              folder={f}
+              children={childrenMap[f.id] ?? []}
+              childrenMap={childrenMap}
+              expanded={expanded}
+              onToggle={toggleFolder}
+              onSelect={onSelectFolder}
+              selectedFolderId={selectedFolderId}
+              depth={0}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Root folders section */}
+      {orgFolders.length > 0 && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '0 12px', marginBottom: 8 }}>
+            Folders
+          </div>
+          {orgFolders.map(f => (
+            <TreeNodeComponent
+              key={f.id}
+              folder={f}
+              children={childrenMap[f.id] ?? []}
+              childrenMap={childrenMap}
+              expanded={expanded}
+              onToggle={toggleFolder}
+              onSelect={onSelectFolder}
+              selectedFolderId={selectedFolderId}
+              depth={0}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
