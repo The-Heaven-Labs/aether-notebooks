@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { ChevronRight, ChevronDown, Folder, FolderOpen } from 'lucide-react'
+import { ChevronRight, ChevronDown, Folder as FolderIcon, FolderOpen } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Folder } from '../types'
@@ -131,7 +131,7 @@ function TreeNodeComponent({ folder, allFolders, expanded, onToggle, onSelect, s
         ) : (
           <span style={{ width: 12 }} />
         )}
-        {isExpanded && hasChildren ? <FolderOpen size={14} style={{ color: 'var(--accent)' }} /> : <Folder size={14} style={{ color: 'var(--accent)' }} />}
+        {isExpanded && hasChildren ? <FolderOpen size={14} style={{ color: 'var(--accent)' }} /> : <FolderIcon size={14} style={{ color: 'var(--accent)' }} />}
         <span style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{folder.name}</span>
       </div>
       {isExpanded && hasChildren && children.map(child => (
