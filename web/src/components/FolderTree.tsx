@@ -110,6 +110,7 @@ export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps
           key={f.id}
           folder={f}
           children={childrenMap[f.id] ?? []}
+          childrenMap={childrenMap}
           expanded={expanded}
           onToggle={toggleFolder}
           onSelect={onSelectFolder}
@@ -124,6 +125,7 @@ export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps
 interface TreeNodeComponentProps {
   folder: Folder
   children: Folder[]
+  childrenMap: Record<string, Folder[]>
   expanded: Set<string>
   onToggle: (id: string) => void
   onSelect: (id: string) => void
@@ -131,7 +133,7 @@ interface TreeNodeComponentProps {
   depth: number
 }
 
-function TreeNodeComponent({ folder, children, expanded, onToggle, onSelect, selectedFolderId, depth }: TreeNodeComponentProps) {
+function TreeNodeComponent({ folder, children, childrenMap, expanded, onToggle, onSelect, selectedFolderId, depth }: TreeNodeComponentProps) {
   const hasChildren = children.length > 0
   const isExpanded = expanded.has(folder.id)
   const isSelected = selectedFolderId === folder.id
@@ -181,6 +183,7 @@ function TreeNodeComponent({ folder, children, expanded, onToggle, onSelect, sel
           key={child.id}
           folder={child}
           children={childrenMap[child.id] ?? []}
+          childrenMap={childrenMap}
           expanded={expanded}
           onToggle={onToggle}
           onSelect={onSelect}
