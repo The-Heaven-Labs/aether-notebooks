@@ -489,8 +489,8 @@ func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 
 	var folder models.Folder
 	err := s.db.Pool.QueryRow(ctx,
-		`INSERT INTO folders (org_id, parent_id, name, created_by)
-		 VALUES ($1, $2, $3, $4)
+		`INSERT INTO folders (org_id, parent_id, name, owner_id, created_by)
+		 VALUES ($1, $2, $3, $4, $4)
 		 RETURNING id, org_id, parent_id, name, is_home, owner_id, created_by, created_at, updated_at`,
 		claims.OrgID, req.ParentID, req.Name, claims.UserID,
 	).Scan(&folder.ID, &folder.OrgID, &folder.ParentID, &folder.Name, &folder.IsHome,
