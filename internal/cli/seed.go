@@ -199,11 +199,11 @@ This creates:
 			}
 			fmt.Printf("  ✓ API Monitoring (%s)\n", apiMonitoringID)
 
-			apiDocsNotebookID, err := createNotebook(cl, orgID, "API Reference", "Internal API documentation", apiDocsID)
+			apiReferenceID, err := createNotebook(cl, orgID, "API Reference", "Internal API documentation", apiDocsID)
 			if err != nil {
 				return fmt.Errorf("failed to create API Reference: %w", err)
 			}
-			fmt.Printf("  ✓ API Reference (%s)\n", apiDocsNotebookID)
+			fmt.Printf("  ✓ API Reference (%s)\n", apiReferenceID)
 
 			// Archive notebooks
 			oldReportID, err := createNotebook(cl, orgID, "Q1 2024 Review", "First quarter analysis", oldReportsID)
@@ -236,6 +236,51 @@ This creates:
 				return fmt.Errorf("failed to create Scratchpad: %w", err)
 			}
 			fmt.Printf("  ✓ Scratchpad (%s)\n", scratchpadID)
+
+			// Create Everyone group and add all org members
+			fmt.Println("\nCreating Everyone group...")
+			everyoneID, err := createGroup(cl, orgID, "Everyone")
+			if err != nil {
+				fmt.Printf("  ⚠ Everyone group may already exist: %v (skipping)\n", err)
+			} else {
+				fmt.Printf("  ✓ Everyone (%s)\n", everyoneID)
+
+				// Add all org members to Everyone group
+				var members []map[string]interface{}
+				if err := cl.GetJSON("/api/v1/members", &members); err == nil {
+					for _, m := range members {
+						if userID, ok := m["user_id"].(string); ok {
+							if err := addGroupMember(cl, everyoneID, userID); err != nil {
+								fmt.Printf("  ⚠ Could not add user to Everyone: %v\n", err)
+							}
+						}
+					}
+					fmt.Printf("  ✓ Added all members to Everyone group\n")
+				}
+			}
+
+			// Create Everyone group and add all org members
+			fmt.Println("\nCreating Everyone group...")
+			everyoneID, createErr := createGroup(cl, orgID, "Everyone")
+			if createErr != nil {
+				fmt.Printf("  ⚠ Everyone group may already exist: %v (skipping)\n", createErr)
+				everyoneID = "" // Can't use it for ACLs if creation failed
+			} else {
+				fmt.Printf("  ✓ Everyone (%s)\n", everyoneID)
+
+				// Add all org members to Everyone group
+				var members []map[string]interface{}
+				if getErr := cl.GetJSON("/api/v1/members", &members); getErr == nil {
+					for _, m := range members {
+						if userID, ok := m["user_id"].(string); ok {
+							if addErr := addGroupMember(cl, everyoneID, userID); addErr != nil {
+								fmt.Printf("  ⚠ Could not add user to Everyone: %v\n", addErr)
+							}
+						}
+					}
+					fmt.Printf("  ✓ Added all members to Everyone group\n")
+				}
+			}
 
 			// Create Data Team group
 			fmt.Println("\nCreating Data Team group...")
@@ -304,6 +349,19 @@ This creates:
 				fmt.Printf("  ⚠ Failed to set ACL on Sales Dashboard: %v\n", err)
 			} else {
 				fmt.Printf("  ✓ Data Team can view+edit+run Sales Dashboard\n")
+			}
+
+			// Give Everyone group view on Shared Projects and Archive
+			if everyoneID != "" {
+				for _, folderID := range []string{sharedProjectsID, archivedID} {
+					if err := setACL(cl, "folder", folderID, []aclEntryInput{
+						{SubjectType: "group", SubjectID: everyoneID, Actions: []string{"view"}},
+					}); err != nil {
+						fmt.Printf("  ⚠ Failed to set Everyone ACL on folder: %v\n", err)
+					} else {
+						fmt.Printf("  ✓ Everyone can view %s\n", folderID[:8]+"...")
+					}
+				}
 			}
 
 			fmt.Println("\n✓ Seed data created successfully!")
