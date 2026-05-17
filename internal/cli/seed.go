@@ -206,11 +206,11 @@ This creates:
 			fmt.Printf("  ✓ API Reference (%s)\n", apiReferenceID)
 
 			// Archive notebooks
-			oldReportID, err := createNotebook(cl, orgID, "Q1 2024 Review", "First quarter analysis", oldReportsID)
+			q1ReviewID, err := createNotebook(cl, orgID, "Q1 2024 Review", "First quarter analysis", oldReportsID)
 			if err != nil {
 				return fmt.Errorf("failed to create Q1 2024 Review: %w", err)
 			}
-			fmt.Printf("  ✓ Q1 2024 Review (%s)\n", oldReportID)
+			fmt.Printf("  ✓ Q1 2024 Review (%s)\n", q1ReviewID)
 
 			// Home folder notebooks
 			modelTrainingID, err := createNotebook(cl, orgID, "Model Training", "Training scripts for recommendation model", mlResearchID)
@@ -259,30 +259,28 @@ This creates:
 				}
 			}
 
-			// Create Everyone group and add all org members
-			fmt.Println("\nCreating Everyone group...")
-			everyoneID, createErr := createGroup(cl, orgID, "Everyone")
-			if createErr != nil {
-				fmt.Printf("  ⚠ Everyone group may already exist: %v (skipping)\n", createErr)
-				everyoneID = "" // Can't use it for ACLs if creation failed
-			} else {
-				fmt.Printf("  ✓ Everyone (%s)\n", everyoneID)
+			// Set up ACLs using special "everyone" org_role (no group needed - auto-includes all org members)
+			fmt.Println("\nSetting up permissions...")
 
-				// Add all org members to Everyone group
-				var members []map[string]interface{}
-				if getErr := cl.GetJSON("/api/v1/members", &members); getErr == nil {
-					for _, m := range members {
-						if userID, ok := m["user_id"].(string); ok {
-							if addErr := addGroupMember(cl, everyoneID, userID); addErr != nil {
-								fmt.Printf("  ⚠ Could not add user to Everyone: %v\n", addErr)
-							}
-						}
-					}
-					fmt.Printf("  ✓ Added all members to Everyone group\n")
+			// Give "everyone" org_role view on Shared Projects and Archive
+			for _, folderID := range []string{sharedProjectsID, archivedID} {
+				if err := setACL(cl, "folder", folderID, []aclEntryInput{
+					{SubjectType: "org_role", SubjectID: "everyone", Actions: []string{"view", "create"}},
+				}); err != nil {
+					fmt.Printf("  ⚠ Failed to set Everyone ACL on folder: %v\n", err)
+				} else {
+					fmt.Printf("  ✓ Everyone can view+create in %s\n", folderID[:8]+"...")
 				}
 			}
 
-			// Create Data Team group
+			// Give "everyone" view on all notebooks
+			for _, notebookID := range []string{salesDashboardID, userMetricsID, monthlyExportID, apiMonitoringID, apiReferenceID, q1ReviewID, modelTrainingID, hypothesisID, personalNotesID, scratchpadID} {
+				if err := setACL(cl, "notebook", notebookID, []aclEntryInput{
+					{SubjectType: "org_role", SubjectID: "everyone", Actions: []string{"view"}},
+				}); err != nil {
+					fmt.Printf("  ⚠ Failed to set Everyone ACL on notebook: %v\n", err)
+				}
+			}
 			fmt.Println("\nCreating Data Team group...")
 			dataTeamID, err := createGroup(cl, orgID, "Data Team")
 			if err != nil {
