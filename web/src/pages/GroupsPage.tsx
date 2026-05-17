@@ -409,7 +409,10 @@ export function GroupsPage() {
 
   const handleCreateGroup = () => {
     const trimmed = newGroupName.trim()
-    if (!trimmed) return
+    if (!trimmed) {
+      setCreateError('Group name is required')
+      return
+    }
     createGroup.mutate(trimmed)
   }
 
@@ -552,13 +555,16 @@ export function GroupsPage() {
                         <span style={styles.memberName}>{m.name || m.email}</span>
                         <span style={styles.memberEmail}>{m.email}</span>
                         {isAdmin && (
-                          <button
-                            type="button"
-                            style={styles.removeBtn}
-                            title="Remove from group"
-                            onClick={() => removeMember.mutate({ groupId: group.id, userId: m.user_id })}
-                            disabled={removeMember.isPending}
-                          >
+<button
+                          type="button"
+                          style={styles.removeBtn}
+                          title="Remove from group"
+                          onClick={() => {
+                            if (!window.confirm(`Remove ${m.name || m.email} from this group?`)) return
+                            removeMember.mutate({ groupId: group.id, userId: m.user_id })
+                          }}
+                          disabled={removeMember.isPending}
+                        >
                             ×
                           </button>
                         )}
@@ -580,7 +586,8 @@ export function GroupsPage() {
                           disabled={!selectedUserId[group.id] || addMember.isPending}
                           onClick={() => {
                             const userId = selectedUserId[group.id]
-                            if (userId) addMember.mutate({ groupId: group.id, userId })
+                            if (!userId) return
+                            addMember.mutate({ groupId: group.id, userId })
                           }}
                         >
                           Add
@@ -611,6 +618,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     background: 'var(--bg-input)',
     color: 'var(--text-primary)',
+    caretColor: 'var(--text-primary)',
     outline: 'none',
   },
   primaryBtn: {
@@ -679,6 +687,7 @@ const styles: Record<string, React.CSSProperties> = {
     outline: 'none',
     background: 'var(--bg-input)',
     color: 'var(--text-primary)',
+    caretColor: 'var(--text-primary)',
     minWidth: 160,
   },
   actions: { display: 'flex', gap: 6, flexShrink: 0 },

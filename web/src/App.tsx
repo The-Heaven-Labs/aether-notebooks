@@ -35,14 +35,8 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
-      <Route
-        path="/"
-        element={
-          <ProtectedRoute>
-            <HomePage />
-          </ProtectedRoute>
-        }
-      />
+      <Route path="/" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
+      <Route path="/home" element={<ProtectedRoute><HomePage homeView /></ProtectedRoute>} />
       <Route
         path="/notebooks/:id"
         element={

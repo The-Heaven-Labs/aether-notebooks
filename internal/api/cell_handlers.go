@@ -30,6 +30,7 @@ type updateCellRequest struct {
 	Title         *string            `json:"title,omitempty"`
 	Description   *string            `json:"description,omitempty"`
 	Slug          *string            `json:"slug,omitempty"`
+	Limit         *int               `json:"limit,omitempty"`
 }
 
 func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
@@ -85,16 +86,17 @@ func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var outputs, cellParams []byte
+	var limit *int
 	err := s.db.Pool.QueryRow(ctx,
 		`INSERT INTO cells (notebook_id, position, type, language, connector_id, source, outputs)
 		 VALUES ($1, $2, $3, $4, $5, $6, '[]')
 		 RETURNING id, notebook_id, position, type, language, connector_id, source, outputs,
-		           source_visible, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''),
+		           source_visible, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), "limit",
 		           created_at, updated_at`,
 		nbID, insertPos, req.Type, lang, connID, req.Source,
 	).Scan(&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &lang, &connID, &cell.Source, &outputs,
 		&cell.SourceVisible, &cell.CellCollapsed, &cell.SlideBreak, &cellParams, &cell.Title, &cell.Description, &cell.Slug,
-		&cell.CreatedAt, &cell.UpdatedAt)
+		&limit, &cell.CreatedAt, &cell.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create cell")
 		return
@@ -104,6 +106,9 @@ func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
 	}
 	if connID != nil {
 		cell.ConnectorID = *connID
+	}
+	if limit != nil {
+		cell.Limit = limit
 	}
 	json.Unmarshal(outputs, &cell.Outputs)
 	json.Unmarshal(cellParams, &cell.Parameters)
@@ -196,18 +201,24 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 		args = append(args, paramsJSON)
 		argN++
 	}
+	if req.Limit != nil {
+		query += fmt.Sprintf(", limit = $%d", argN)
+		args = append(args, *req.Limit)
+		argN++
+	}
 
 	query += fmt.Sprintf(" WHERE id = $%d AND notebook_id = $%d", argN, argN+1)
 	args = append(args, cellID, nbID)
-	query += " RETURNING id, notebook_id, position, type, language, connector_id, source, outputs, source_visible, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), created_at, updated_at"
+	query += " RETURNING id, notebook_id, position, type, language, connector_id, source, outputs, source_visible, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), \"limit\", created_at, updated_at"
 
 	var cell models.Cell
 	var lang, connID *string
 	var outputs, cellParams []byte
+	var limit *int
 	err := s.db.Pool.QueryRow(ctx, query, args...).Scan(
 		&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &lang, &connID,
 		&cell.Source, &outputs, &cell.SourceVisible, &cell.CellCollapsed, &cell.SlideBreak, &cellParams,
-		&cell.Title, &cell.Description, &cell.Slug,
+		&cell.Title, &cell.Description, &cell.Slug, &limit,
 		&cell.CreatedAt, &cell.UpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
@@ -223,6 +234,9 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 	}
 	if connID != nil {
 		cell.ConnectorID = *connID
+	}
+	if limit != nil {
+		cell.Limit = limit
 	}
 	json.Unmarshal(outputs, &cell.Outputs)
 	json.Unmarshal(cellParams, &cell.Parameters)
@@ -289,16 +303,17 @@ func (s *Server) handleDuplicateCell(w http.ResponseWriter, r *http.Request) {
 	var src models.Cell
 	var outputs, params []byte
 	var lang, connID, title, desc, slug *string
+	var limit *int
 	err := s.db.Pool.QueryRow(ctx,
 		`SELECT id, notebook_id, position, type, language, connector_id, source, outputs,
 		        source_visible, cell_collapsed, slide_break, parameters,
-		        COALESCE(title,''), COALESCE(description,''), COALESCE(slug,'')
+		        COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), "limit"
 		 FROM cells WHERE id=$1 AND notebook_id=$2`,
 		cellID, nbID,
 	).Scan(&src.ID, &src.NotebookID, &src.Position, &src.Type,
 		&lang, &connID, &src.Source, &outputs,
 		&src.SourceVisible, &src.CellCollapsed, &src.SlideBreak, &params,
-		&title, &desc, &slug)
+		&title, &desc, &slug, &limit)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "cell not found")
 		return
@@ -322,20 +337,21 @@ func (s *Server) handleDuplicateCell(w http.ResponseWriter, r *http.Request) {
 
 	var newCell models.Cell
 	var newOutputs, newParams []byte
+	var newLimit *int
 	err = s.db.Pool.QueryRow(ctx,
 		`INSERT INTO cells (notebook_id, position, type, language, connector_id, source, outputs,
-		                    source_visible, cell_collapsed, slide_break, parameters, title, description, slug)
-		 VALUES ($1,$2,$3,$4,$5,$6,'[]',$7,$8,$9,$10,$11,$12,$13)
+		                    source_visible, cell_collapsed, slide_break, parameters, title, description, slug, "limit")
+		 VALUES ($1,$2,$3,$4,$5,$6,'[]',$7,$8,$9,$10,$11,$12,$13,$14)
 		 RETURNING id, notebook_id, position, type, language, connector_id, source, outputs,
 		           source_visible, cell_collapsed, slide_break, parameters,
-		           COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''),
+		           COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), "limit",
 		           created_at, updated_at`,
 		nbID, insertPos, src.Type, lang, connID, src.Source,
-		src.SourceVisible, src.CellCollapsed, src.SlideBreak, params, title, desc, slug,
+		src.SourceVisible, src.CellCollapsed, src.SlideBreak, params, title, desc, slug, limit,
 	).Scan(&newCell.ID, &newCell.NotebookID, &newCell.Position, &newCell.Type,
 		&lang, &connID, &newCell.Source, &newOutputs,
 		&newCell.SourceVisible, &newCell.CellCollapsed, &newCell.SlideBreak, &newParams,
-		&newCell.Title, &newCell.Description, &newCell.Slug,
+		&newCell.Title, &newCell.Description, &newCell.Slug, &newLimit,
 		&newCell.CreatedAt, &newCell.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to duplicate cell")
@@ -346,6 +362,9 @@ func (s *Server) handleDuplicateCell(w http.ResponseWriter, r *http.Request) {
 	}
 	if connID != nil {
 		newCell.ConnectorID = *connID
+	}
+	if newLimit != nil {
+		newCell.Limit = newLimit
 	}
 	json.Unmarshal(newOutputs, &newCell.Outputs)
 	json.Unmarshal(newParams, &newCell.Parameters)

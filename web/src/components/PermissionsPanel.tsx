@@ -14,10 +14,10 @@ const ACTION_LABELS: Record<ResourceType, string[]> = {
 }
 
 const PRESETS: Record<ResourceType, Record<string, string[]>> = {
-  folder:    { none: [], viewer: ['view'], editor: ['view', 'create', 'edit'], admin: ['view', 'create', 'edit', 'manage', 'delete'] },
-  notebook:  { none: [], viewer: ['view'], editor: ['view', 'run', 'edit'], admin: ['view', 'run', 'edit', 'share', 'delete'] },
-  connector: { none: [], viewer: ['view'], editor: ['view', 'use', 'edit'], admin: ['view', 'use', 'edit', 'share', 'delete'] },
-  dashboard: { none: [], viewer: ['view'], editor: ['view', 'edit'], admin: ['view', 'edit', 'share', 'delete'] },
+  folder:    { none: [], no_access: [], viewer: ['view'], editor: ['view', 'create', 'edit'], admin: ['view', 'create', 'edit', 'manage', 'delete'] },
+  notebook:  { none: [], no_access: [], viewer: ['view'], editor: ['view', 'run', 'edit'], admin: ['view', 'run', 'edit', 'share', 'delete'] },
+  connector: { none: [], no_access: [], viewer: ['view'], editor: ['view', 'use', 'edit'], admin: ['view', 'use', 'edit', 'share', 'delete'] },
+  dashboard: { none: [], no_access: [], viewer: ['view'], editor: ['view', 'edit'], admin: ['view', 'edit', 'share', 'delete'] },
 }
 
 interface AclEntry {
@@ -44,6 +44,7 @@ export interface PermissionsPanelProps {
   resourceId: string
   resourceName: string
   parentFolderId?: string
+  canEdit?: boolean
   onClose: () => void
 }
 
@@ -73,6 +74,7 @@ export function PermissionsPanel({
   resourceId,
   resourceName,
   parentFolderId,
+  canEdit = true,
   onClose,
 }: PermissionsPanelProps) {
   const qc = useQueryClient()
@@ -160,7 +162,7 @@ export function PermissionsPanel({
     setDraft(current.filter((_, i) => i !== entryIndex))
   }
 
-  function applyPreset(entryIndex: number, preset: 'none' | 'viewer' | 'editor' | 'admin') {
+  function applyPreset(entryIndex: number, preset: 'none' | 'no_access' | 'viewer' | 'editor' | 'admin') {
     const current = draft ?? aclData ?? []
     const actions = PRESETS[resourceType][preset]
     const updated = current.map((e, i) =>
@@ -228,6 +230,12 @@ export function PermissionsPanel({
             : 'No inherited permissions'}
         </div>
 
+        {!canEdit && (
+          <div style={styles.readOnlyNote}>
+            You do not have permission to edit these permissions.
+          </div>
+        )}
+
         {/* Body */}
         <div style={styles.body}>
           {saveError && <div style={styles.errorText}>{saveError}</div>}
@@ -254,7 +262,8 @@ export function PermissionsPanel({
                         <input
                           type="checkbox"
                           checked={entry.actions.includes(action)}
-                          onChange={() => handleToggleAction(idx, action)}
+                          onChange={() => canEdit && handleToggleAction(idx, action)}
+                          disabled={!canEdit}
                           style={{ marginRight: 3 }}
                         />
                         <span style={styles.actionLabel}>{action}</span>
@@ -262,20 +271,22 @@ export function PermissionsPanel({
                     ))}
                   </div>
                   <div style={styles.presetRow}>
-                    {(['none', 'viewer', 'editor', 'admin'] as const).map((preset) => (
+                    {(['none', 'no_access', 'viewer', 'editor', 'admin'] as const).map((preset) => (
                       <button
                         key={preset}
-                        onClick={() => applyPreset(idx, preset)}
-                        style={styles.presetBtn}
+                        onClick={() => canEdit && applyPreset(idx, preset)}
+                        disabled={!canEdit}
+                        style={{ ...styles.presetBtn, opacity: canEdit ? 1 : 0.4 }}
                       >
                         {preset}
                       </button>
                     ))}
                   </div>
                   <button
-                    style={styles.removeBtn}
+                    style={{ ...styles.removeBtn, opacity: canEdit ? 1 : 0.4 }}
                     title="Remove"
-                    onClick={() => handleRemoveEntry(idx)}
+                    disabled={!canEdit}
+                    onClick={() => canEdit && handleRemoveEntry(idx)}
                   >
                     ×
                   </button>
@@ -283,7 +294,7 @@ export function PermissionsPanel({
               ))}
 
               {/* Save / Discard */}
-              {draft !== null && (
+              {draft !== null && canEdit && (
                 <div style={styles.draftActions}>
                   <button
                     style={{
@@ -353,9 +364,9 @@ export function PermissionsPanel({
                 <button
                   style={{
                     ...styles.addBtn,
-                    opacity: !newSubjectKey || newActions.length === 0 || saveAcl.isPending ? 0.5 : 1,
+                    opacity: !canEdit || !newSubjectKey || newActions.length === 0 || saveAcl.isPending ? 0.5 : 1,
                   }}
-                  disabled={!newSubjectKey || newActions.length === 0 || saveAcl.isPending}
+                  disabled={!canEdit || !newSubjectKey || newActions.length === 0 || saveAcl.isPending}
                   onClick={handleAddEntry}
                 >
                   Add
@@ -440,6 +451,14 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: '1px solid var(--nav-border, #e8e8e8)',
     background: 'var(--bg-secondary)',
     flexShrink: 0,
+  },
+  readOnlyNote: {
+    fontSize: 12,
+    color: 'var(--text-muted, #888)',
+    padding: '8px 20px',
+    background: 'var(--bg-secondary)',
+    borderBottom: '1px solid var(--nav-border, #e8e8e8)',
+    fontStyle: 'italic',
   },
   body: {
     flex: 1,

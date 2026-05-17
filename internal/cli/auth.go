@@ -31,11 +31,15 @@ func LoginCmd() *cobra.Command {
 			defer resp.Body.Close()
 			data, _ := io.ReadAll(resp.Body)
 			if resp.StatusCode != 200 {
-				var e struct{ Error string `json:"error"` }
+				var e struct {
+					Error string `json:"error"`
+				}
 				json.Unmarshal(data, &e)
 				return fmt.Errorf("login failed: %s", e.Error)
 			}
-			var res struct{ Token string `json:"token"` }
+			var res struct {
+				Token string `json:"token"`
+			}
 			json.Unmarshal(data, &res)
 			if err := SaveCredentials(res.Token, apiURL); err != nil {
 				return err

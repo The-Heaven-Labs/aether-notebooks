@@ -16,8 +16,8 @@ import (
 // Provider is the decoded (decrypted) SSO provider record.
 type Provider struct {
 	ID             string
-	Scope          string   // "platform" or "org"
-	OrgID          *string  // nil for platform providers
+	Scope          string  // "platform" or "org"
+	OrgID          *string // nil for platform providers
 	Name           string
 	ProviderType   string
 	ClientID       string

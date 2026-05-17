@@ -8,7 +8,7 @@ import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
 import { FormCard } from '../components/FormCard'
 import { ErrorBanner } from '../components/ErrorBanner'
 
-const ROLES = ['admin', 'editor', 'viewer'] as const
+const ROLES = ['admin', 'editor', 'viewer', 'no_access'] as const
 
 export function MembersPage() {
   useEffect(() => { document.title = "Members — Heaven's Notebooks" }, [])
@@ -18,6 +18,11 @@ export function MembersPage() {
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState('viewer')
   const [inviteError, setInviteError] = useState<string | null>(null)
+  const [showLinkForm, setShowLinkForm] = useState(false)
+  const [linkRole, setLinkRole] = useState('viewer')
+  const [generatedLink, setGeneratedLink] = useState<string | null>(null)
+  const [linkError, setLinkError] = useState<string | null>(null)
+  const [linkLoading, setLinkLoading] = useState(false)
 
   const [roleError, setRoleError] = useState<string | null>(null)
   const [removeError, setRemoveError] = useState<string | null>(null)
@@ -55,6 +60,19 @@ export function MembersPage() {
       setRemoveError(null)
     },
     onError: (err: Error) => setRemoveError(err.message),
+  })
+
+  const generateInviteLink = useMutation({
+    mutationFn: () => api.post<{ token: string; url: string }>('/api/v1/organizations/invite-link', { role: linkRole }),
+    onSuccess: (data) => {
+      setGeneratedLink(data.url)
+      setLinkError(null)
+      setLinkLoading(false)
+    },
+    onError: (err: Error) => {
+      setLinkError(err.message)
+      setLinkLoading(false)
+    },
   })
 
   const handleInvite = () => {
@@ -101,6 +119,66 @@ export function MembersPage() {
           </div>
           {inviteError && <ErrorBanner message={inviteError} onDismiss={() => setInviteError(null)} />}
         </FormCard>
+
+        {/* Invite link generator */}
+        <div style={{ marginTop: 16 }}>
+          <button
+            type="button"
+            style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '6px 12px', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 13 }}
+            onClick={() => setShowLinkForm(!showLinkForm)}
+          >
+            {showLinkForm ? '− Hide' : '+ Generate invite link'}
+          </button>
+        </div>
+
+        {showLinkForm && (
+          <FormCard title="Invite Link">
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12 }}>
+              <select
+                style={styles.roleSelect}
+                value={linkRole}
+                onChange={(e) => setLinkRole(e.target.value)}
+              >
+                {ROLES.map((r) => (
+                  <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                style={styles.inviteBtn}
+                disabled={linkLoading}
+                onClick={() => {
+                  setLinkLoading(true)
+                  setGeneratedLink(null)
+                  generateInviteLink.mutate()
+                }}
+              >
+                {linkLoading ? 'Generating…' : 'Generate'}
+              </button>
+            </div>
+            {generatedLink && (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  style={{ ...styles.emailInput, flex: 1 }}
+                  type="text"
+                  value={generatedLink}
+                  readOnly
+                  onClick={(e) => (e.target as HTMLInputElement).select()}
+                />
+                <button
+                  type="button"
+                  style={{ ...styles.inviteBtn, padding: '7px 12px' }}
+                  onClick={() => {
+                    navigator.clipboard.writeText(generatedLink)
+                  }}
+                >
+                  Copy
+                </button>
+              </div>
+            )}
+            {linkError && <ErrorBanner message={linkError} onDismiss={() => setLinkError(null)} />}
+          </FormCard>
+        )}
 
         {/* Error banners for role/remove */}
         {roleError && <ErrorBanner message={roleError} onDismiss={() => setRoleError(null)} />}

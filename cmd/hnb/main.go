@@ -20,6 +20,7 @@ func main() {
 		cli.NotebooksCmd(),
 		cli.CellsCmd(),
 		cli.ConnectorsCmd(),
+		cli.SeedCmd(),
 	)
 
 	if err := root.Execute(); err != nil {

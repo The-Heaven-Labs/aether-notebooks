@@ -120,18 +120,22 @@ function truncateId(id: string) {
 function ResourceCell({ entry }: { entry: AuditEntry }) {
   const { resource_type, resource_id, resource_name, resource_parent_name } = entry
 
+  const handleCopy = () => {
+    if (resource_id) navigator.clipboard.writeText(resource_id)
+  }
+
   if (resource_type === 'cell') {
     const parent = resource_parent_name || null
     const id = resource_id ? truncateId(resource_id) : null
     if (parent && id) {
-      return <span>{parent} <span style={styles.resourceSub}>› {id}</span></span>
+      return <span>{parent} <span style={styles.resourceSub}>› {id}</span> <button type="button" onClick={handleCopy} style={styles.copyBtn} title="Copy ID">📋</button></span>
     }
     if (parent) return <span>{parent}</span>
     return <span style={styles.mono}>{id || '—'}</span>
   }
 
   if (resource_name) return <span>{resource_name}</span>
-  if (resource_id) return <span style={styles.mono}>{truncateId(resource_id)}</span>
+  if (resource_id) return <span style={styles.mono}>{truncateId(resource_id)} <button type="button" onClick={handleCopy} style={styles.copyBtn} title="Copy ID">📋</button></span>
   return <span>—</span>
 }
 
@@ -157,9 +161,9 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
       </td>
       <td style={styles.td} title={entry.user_id}>
         <span>{entry.user_email || entry.user_id || '—'}</span>
-        {entry.metadata?.ip && (
+        {entry.metadata?.ip ? (
           <span style={styles.resourceSub}> · {String(entry.metadata.ip)}</span>
-        )}
+        ) : null}
       </td>
     </tr>
   )
@@ -247,5 +251,14 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     color: 'var(--text-primary)',
     transition: 'border-color 0.15s',
+  },
+  copyBtn: {
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    fontSize: 11,
+    padding: '0 2px',
+    verticalAlign: 'middle',
+    opacity: 0.5,
   },
 }
