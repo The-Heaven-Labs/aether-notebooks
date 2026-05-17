@@ -16,6 +16,12 @@ var orgRoleActions = map[string]map[string]bool{
 	"admin":  {"view": true, "run": true, "edit": true, "use": true, "create": true, "share": true, "delete": true, "manage": true},
 }
 
+// everyoneRoleActions is the default actions for the special "everyone" pseudo-role.
+// Using this as a subject grants the action to every member of the org.
+var everyoneRoleActions = map[string]bool{
+	"view": true, "create": true,
+}
+
 // resourceTable maps resource types to their DB table names.
 var resourceTable = map[string]string{
 	"notebook":  "notebooks",
@@ -170,9 +176,13 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 		return false, nil // ACL exists in chain but user not in it → DENY
 	}
 
-	// 8. Fallback to org role defaults
+	// 8. Fallback to org role defaults, but "everyone" always has limited default access
 	if actions, ok := orgRoleActions[orgRole]; ok {
 		return actions[action], nil
+	}
+	// Special "everyone" pseudo-role fallback (used for org-wide shared resources)
+	if everyoneRoleActions[action] {
+		return true, nil
 	}
 	return false, nil
 }
@@ -188,6 +198,9 @@ func matchesUser(c aclCandidate, userID, orgRole string, groupIDs []string) bool
 			}
 		}
 	case "org_role":
+		if c.subjectID == "everyone" {
+			return true // special org_role that matches all users in the org
+		}
 		return c.subjectID == orgRole
 	}
 	return false
