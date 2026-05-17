@@ -59,40 +59,11 @@ export function TwoPanelLayout({ leftPanel, rightPanel, leftWidth = 240 }: TwoPa
             cursor: 'pointer',
             zIndex: 10,
             display: 'flex',
-            transition: 'opacity 0.2s ease',
-            opacity: collapsed ? 0 : 1,
-            pointerEvents: collapsed ? 'none' : 'auto',
           }}
           onClick={toggle}
           title="Collapse folder tree"
         >
           <ChevronLeft size={14} />
-        </button>
-      )}
-
-      {/* Expand button when tree is collapsed */}
-      {!isMobile && collapsed && (
-        <button
-          style={{
-            position: 'fixed',
-            left: 16,
-            top: 16,
-            background: 'var(--bg-secondary)',
-            border: '1px solid var(--border)',
-            borderRadius: 4,
-            padding: '6px 8px',
-            cursor: 'pointer',
-            zIndex: 10,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            fontSize: 13,
-          }}
-          onClick={toggle}
-          title="Expand folder tree"
-        >
-          <ChevronRight size={14} />
-          <span>Folder Tree</span>
         </button>
       )}
 
