@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { ChevronRight, ChevronDown, Folder as FolderIcon, FolderOpen } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { Folder } from '../types'
+import type { Folder, FolderContents } from '../types'
 
 interface TreeNode {
   id: string
@@ -26,10 +26,12 @@ export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps
     }
   })
 
-  const { data: folders = [] } = useQuery<Folder[]>({
+  const { data: folderData } = useQuery<FolderContents>({
     queryKey: ['folder-tree-root'],
-    queryFn: () => api.get<Folder[]>('/api/v1/folders'),
+    queryFn: () => api.get<FolderContents>('/api/v1/folders'),
   })
+
+  const folders = folderData?.folders ?? []
 
   useEffect(() => {
     if (!selectedFolderId) return
