@@ -4,13 +4,6 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Folder, FolderContents } from '../types'
 
-interface TreeNode {
-  id: string
-  name: string
-  parent_id: string | null
-  is_home: boolean
-}
-
 interface FolderTreeProps {
   onSelectFolder: (folderId: string | null) => void
   selectedFolderId: string | null
@@ -31,8 +24,79 @@ export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps
     queryFn: () => api.get<FolderContents>('/api/v1/folders'),
   })
 
-  const folders = folderData?.folders ?? []
+  const [childrenMap, setChildrenMap] = useState<Record<string, Folder[]>>({})
+  const [allFolders, setAllFolders] = useState<Folder[]>([])
 
+  // Fetch root folders + home folders separately
+  const { data: homeData } = useQuery<Array<{
+    id: string
+    name: string
+    owner_id: string
+    owner_name: string
+    is_home: boolean
+    sub_folders: Folder[]
+  }>>({
+    queryKey: ['folder-home'],
+    queryFn: () => api.get('/api/v1/home'),
+  })
+
+  // Initialize allFolders from root folders + all home folders + their sub_folders
+  useEffect(() => {
+    if (!folderData?.folders && !homeData) return
+
+    const rootFolders = folderData?.folders ?? []
+    const homeFolders: Folder[] = (homeData ?? []).map(h => ({
+      id: h.id,
+      org_id: '',
+      parent_id: null,
+      name: h.name,
+      is_home: h.is_home,
+      owner_id: h.owner_id,
+      created_by: '',
+      created_at: '',
+      updated_at: '',
+    }))
+
+    // Collect all sub_folders from home entries
+    const subFolderLists: Folder[] = []
+    const childMap: Record<string, Folder[]> = {}
+
+    for (const home of (homeData ?? [])) {
+      for (const sub of (home.sub_folders ?? [])) {
+        subFolderLists.push(sub)
+        if (!childMap[home.id]) childMap[home.id] = []
+        childMap[home.id].push(sub)
+      }
+    }
+
+    setAllFolders([...rootFolders, ...homeFolders])
+    setChildrenMap(prev => ({ ...prev, ...childMap }))
+  }, [folderData, homeData])
+
+  const fetchChildren = (folderId: string) => {
+    if (childrenMap[folderId]) return // Already have children
+
+    api.get<FolderContents>(`/api/v1/folders/${folderId}`).then(data => {
+      setChildrenMap(prev => ({ ...prev, [folderId]: data.folders ?? [] }))
+    }).catch(console.error)
+  }
+
+  const rootFolders = allFolders.filter(f => !f.parent_id)
+
+  const toggleFolder = (id: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else {
+        next.add(id)
+        fetchChildren(id) // Fetch children when expanding
+      }
+      localStorage.setItem('hnb_tree_expanded', JSON.stringify([...next]))
+      return next
+    })
+  }
+
+  // Auto-expand when selected folder changes
   useEffect(() => {
     if (!selectedFolderId) return
 
@@ -43,21 +107,11 @@ export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps
           ancestors.forEach(a => next.add(a.id))
           return next
         })
+        // Also fetch children for each ancestor
+        ancestors.forEach(a => fetchChildren(a.id))
       })
       .catch(console.error)
   }, [selectedFolderId])
-
-  const rootFolders = folders.filter(f => !f.parent_id)
-
-  const toggleFolder = (id: string) => {
-    setExpanded(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      localStorage.setItem('hnb_tree_expanded', JSON.stringify([...next]))
-      return next
-    })
-  }
 
   return (
     <div style={{ padding: '8px 0' }}>
@@ -68,7 +122,7 @@ export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps
         <TreeNodeComponent
           key={f.id}
           folder={f}
-          allFolders={folders}
+          children={childrenMap[f.id] ?? []}
           expanded={expanded}
           onToggle={toggleFolder}
           onSelect={onSelectFolder}
@@ -82,7 +136,7 @@ export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps
 
 interface TreeNodeComponentProps {
   folder: Folder
-  allFolders: Folder[]
+  children: Folder[]
   expanded: Set<string>
   onToggle: (id: string) => void
   onSelect: (id: string) => void
@@ -90,8 +144,7 @@ interface TreeNodeComponentProps {
   depth: number
 }
 
-function TreeNodeComponent({ folder, allFolders, expanded, onToggle, onSelect, selectedFolderId, depth }: TreeNodeComponentProps) {
-  const children = allFolders.filter(f => f.parent_id === folder.id)
+function TreeNodeComponent({ folder, children, expanded, onToggle, onSelect, selectedFolderId, depth }: TreeNodeComponentProps) {
   const hasChildren = children.length > 0
   const isExpanded = expanded.has(folder.id)
   const isSelected = selectedFolderId === folder.id
@@ -140,7 +193,7 @@ function TreeNodeComponent({ folder, allFolders, expanded, onToggle, onSelect, s
         <TreeNodeComponent
           key={child.id}
           folder={child}
-          allFolders={allFolders}
+          children={childrenMap[child.id] ?? []}
           expanded={expanded}
           onToggle={onToggle}
           onSelect={onSelect}
