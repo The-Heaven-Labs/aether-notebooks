@@ -28,27 +28,18 @@ export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps
   const [allFolders, setAllFolders] = useState<Folder[]>([])
 
   // Fetch root folders + home folders separately
-  const { data: homeData } = useQuery<Array<{
-    id: string
-    name: string
-    owner_id: string
-    owner_name: string
-    is_home: boolean
-    sub_folders: Folder[]
-  }>>({
+  const { data: homeData } = useQuery({
     queryKey: ['folder-home'],
     queryFn: () => api.get('/api/v1/home'),
   })
 
   // Initialize allFolders from root folders + all home folders + their sub_folders
   useEffect(() => {
-    if (!folderData?.folders && !homeData) return
-
     const rootFolders = folderData?.folders ?? []
-    const homeFolders: Folder[] = (homeData ?? []).map(h => ({
+    const homeFolders: Folder[] = (homeData ?? []).map((h: any) => ({
       id: h.id,
       org_id: '',
-      parent_id: null,
+      parent_id: null as string | null,
       name: h.name,
       is_home: h.is_home,
       owner_id: h.owner_id,
@@ -57,20 +48,16 @@ export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps
       updated_at: '',
     }))
 
-    // Collect all sub_folders from home entries
-    const subFolderLists: Folder[] = []
+    // Build children map from home sub_folders
     const childMap: Record<string, Folder[]> = {}
-
     for (const home of (homeData ?? [])) {
-      for (const sub of (home.sub_folders ?? [])) {
-        subFolderLists.push(sub)
-        if (!childMap[home.id]) childMap[home.id] = []
-        childMap[home.id].push(sub)
+      if (home.sub_folders) {
+        childMap[home.id] = home.sub_folders
       }
     }
 
     setAllFolders([...rootFolders, ...homeFolders])
-    setChildrenMap(prev => ({ ...prev, ...childMap }))
+    setChildrenMap(childMap)
   }, [folderData, homeData])
 
   const fetchChildren = (folderId: string) => {
