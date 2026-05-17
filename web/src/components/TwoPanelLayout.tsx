@@ -48,8 +48,8 @@ export function TwoPanelLayout({ leftPanel, rightPanel, leftWidth = 240 }: TwoPa
       {!isMobile && (
         <button
           style={{
-            position: 'absolute',
-            left: collapsed ? 0 : leftWidth,
+            position: 'fixed',
+            left: 16,
             top: '50%',
             transform: 'translateY(-50%)',
             background: 'var(--bg-secondary)',
@@ -59,7 +59,6 @@ export function TwoPanelLayout({ leftPanel, rightPanel, leftWidth = 240 }: TwoPa
             cursor: 'pointer',
             zIndex: 10,
             display: 'flex',
-            transition: 'left 0.2s ease',
           }}
           onClick={toggle}
           title={collapsed ? 'Expand tree' : 'Collapse tree'}
