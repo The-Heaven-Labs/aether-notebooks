@@ -133,6 +133,14 @@ export function NotebookPage() {
     enabled: !!id,
   })
 
+  const { data: permissions } = useQuery({
+    queryKey: ['notebook-permissions', id],
+    queryFn: () => api.get<{ can_edit: boolean; can_run: boolean }>(`/api/v1/notebooks/${id}/permissions`),
+    enabled: !!id,
+  })
+
+  const readOnly = !permissions?.can_edit
+
   const { data: connectors = [] } = useQuery({
     queryKey: ['connectors'],
     queryFn: () => api.get<Connector[]>('/api/v1/connectors'),
@@ -609,37 +617,38 @@ export function NotebookPage() {
                       cell={cell}
                       connectors={connectors}
                       notebookId={id!}
-                      onRun={saveAndRun}
-                      onDelete={(cid) => deleteCell.mutate(cid)}
-                      onSourceChange={updateSource}
-                      onSave={saveCellSource}
-                      onAssignConnector={assignConnector}
-                      onClearConnector={clearCellConnector}
-                      onMoveUp={i > 0 ? () => moveCell(cell.id, -1) : undefined}
-                      onMoveDown={i < localCells.length - 1 ? () => moveCell(cell.id, 1) : undefined}
-                      onSwitchType={() => switchCellType(cell.id)}
-                      onDuplicate={() => duplicateCell.mutate(cell.id)}
+                      readOnly={readOnly}
+                      onRun={permissions?.can_run ? saveAndRun : () => {}}
+                      onDelete={readOnly ? () => {} : (cid) => deleteCell.mutate(cid)}
+                      onSourceChange={readOnly ? () => {} : updateSource}
+                      onSave={readOnly ? undefined : saveCellSource}
+                      onAssignConnector={readOnly ? () => {} : assignConnector}
+                      onClearConnector={readOnly ? undefined : clearCellConnector}
+                      onMoveUp={readOnly || i === 0 ? undefined : () => moveCell(cell.id, -1)}
+                      onMoveDown={readOnly || i === localCells.length - 1 ? undefined : () => moveCell(cell.id, 1)}
+                      onSwitchType={readOnly ? undefined : () => switchCellType(cell.id)}
+                      onDuplicate={readOnly ? undefined : () => duplicateCell.mutate(cell.id)}
                       running={runningCells.has(cell.id)}
                       saveState={cellSaveState[cell.id]}
                       runAt={cellRunAt[cell.id]}
-                      onUpdateCellMeta={(updates) => updateCellMeta(cell.id, updates)}
-                      onShowHistory={() => fetchHistory(cell.id)}
+                      onUpdateCellMeta={readOnly ? undefined : (updates) => updateCellMeta(cell.id, updates)}
+                      onShowHistory={readOnly ? undefined : () => fetchHistory(cell.id)}
                       onFocus={(cid) => setFocusedCellId(cid)}
-                      onAddToDashboard={(cid) => setAddToDashboardCellId(cid)}
+                      onAddToDashboard={readOnly ? undefined : (cid) => setAddToDashboardCellId(cid)}
                       index={i}
                     />
                     <AddCellBar
-                      onAddCode={() => createCell.mutate({ type: 'code', position: cell.position + 1 })}
-                      onAddText={() => createCell.mutate({ type: 'text', position: cell.position + 1 })}
+                      onAddCode={readOnly ? () => {} : () => createCell.mutate({ type: 'code', position: cell.position + 1 })}
+                      onAddText={readOnly ? () => {} : () => createCell.mutate({ type: 'text', position: cell.position + 1 })}
                     />
                   </div>
                 ))}
 
                 <div style={styles.addRow}>
-                  <button type="button" style={styles.addBtn} onClick={() => createCell.mutate({ type: 'code' })}>
+                  <button type="button" style={styles.addBtn} onClick={readOnly ? () => {} : () => createCell.mutate({ type: 'code' })} disabled={readOnly}>
                     + Code Cell
                   </button>
-                  <button type="button" style={styles.addBtn} onClick={() => createCell.mutate({ type: 'text' })}>
+                  <button type="button" style={styles.addBtn} onClick={readOnly ? () => {} : () => createCell.mutate({ type: 'text' })} disabled={readOnly}>
                     + Text Cell
                   </button>
                 </div>

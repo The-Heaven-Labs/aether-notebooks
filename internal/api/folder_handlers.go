@@ -29,6 +29,101 @@ type folderConnector struct {
 	CreatedAt string  `json:"created_at"`
 }
 
+// handleListHomeFolders returns all home folders for the org, grouped by owner.
+// Each entry includes the home folder info and a list of sub-folders the user can access.
+func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	ctx := r.Context()
+
+	type homeFolderEntry struct {
+		models.Folder
+		OwnerName  string          `json:"owner_name"`
+		SubFolders []models.Folder `json:"sub_folders"`
+	}
+
+	// Collect user's group memberships
+	groupRows, err := s.db.Pool.Query(ctx, `SELECT group_id FROM group_members WHERE user_id = $1`, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	var groupIDs []string
+	for groupRows.Next() {
+		var gid string
+		if err := groupRows.Scan(&gid); err != nil {
+			groupRows.Close()
+			writeError(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		groupIDs = append(groupIDs, gid)
+	}
+	groupRows.Close()
+
+	// Get all home folders for the org with owner names
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT f.id, f.org_id, f.parent_id, f.name, f.is_home, f.owner_id, f.created_by, f.created_at, f.updated_at,
+		        COALESCE(u.name, '') as owner_name
+		 FROM folders f
+		 JOIN users u ON u.id = f.owner_id
+		 WHERE f.org_id = $1 AND f.is_home = true
+		 ORDER BY f.name`,
+		claims.OrgID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	defer rows.Close()
+
+	var entries []homeFolderEntry
+	for rows.Next() {
+		var e homeFolderEntry
+		if err := rows.Scan(&e.ID, &e.OrgID, &e.ParentID, &e.Name, &e.IsHome,
+			&e.OwnerID, &e.CreatedBy, &e.CreatedAt, &e.UpdatedAt, &e.OwnerName); err != nil {
+			writeError(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		entries = append(entries, e)
+	}
+
+	// For each home folder, get sub-folders the user can access
+	for i := range entries {
+		subRows, err := s.db.Pool.Query(ctx,
+			`SELECT f.id, f.org_id, f.parent_id, f.name, f.is_home, f.owner_id, f.created_by, f.created_at, f.updated_at
+			 FROM folders f
+			 WHERE f.parent_id = $1
+			 AND (
+			   f.owner_id = $2
+			   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'user' AND subject_id = $2::text)
+			   OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = f.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
+			 )
+			 ORDER BY f.name`,
+			entries[i].ID, claims.UserID, groupIDs,
+		)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+		for subRows.Next() {
+			var sub models.Folder
+			if err := subRows.Scan(&sub.ID, &sub.OrgID, &sub.ParentID, &sub.Name, &sub.IsHome,
+				&sub.OwnerID, &sub.CreatedBy, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
+				subRows.Close()
+				writeError(w, http.StatusInternalServerError, "scan failed")
+				return
+			}
+			entries[i].SubFolders = append(entries[i].SubFolders, sub)
+		}
+		subRows.Close()
+	}
+
+	if entries == nil {
+		entries = []homeFolderEntry{}
+	}
+
+	writeJSON(w, http.StatusOK, entries)
+}
+
 func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -40,18 +135,42 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		Dashboards: []models.Dashboard{},
 	}
 
-	// Folders at root
+	// Collect user's group memberships for permission checks
+	groupRows, err := s.db.Pool.Query(ctx, `SELECT group_id FROM group_members WHERE user_id = $1`, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	var groupIDs []string
+	for groupRows.Next() {
+		var gid string
+		if err := groupRows.Scan(&gid); err != nil {
+			groupRows.Close()
+			writeError(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		groupIDs = append(groupIDs, gid)
+	}
+	groupRows.Close()
+
+	// Folders at root: include folders user can access, but EXCLUDE is_home folders (those appear under /home)
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, parent_id, name, is_home, owner_id, created_by, created_at, updated_at
-		 FROM folders WHERE org_id = $1 AND parent_id IS NULL ORDER BY name`,
-		claims.OrgID,
+		`SELECT f.id, f.org_id, f.parent_id, f.name, f.is_home, f.owner_id, f.created_by, f.created_at, f.updated_at
+		 FROM folders f
+		 WHERE f.org_id = $1 AND f.parent_id IS NULL AND f.is_home = false
+		 AND (
+		   f.owner_id = $2
+		   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'user' AND subject_id = $2::text)
+		   OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = f.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
+		 )
+		 ORDER BY f.name`,
+		claims.OrgID, claims.UserID, groupIDs,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
 	defer rows.Close()
-	var allFolders []models.Folder
 	for rows.Next() {
 		var f models.Folder
 		if err := rows.Scan(&f.ID, &f.OrgID, &f.ParentID, &f.Name, &f.IsHome,
@@ -59,14 +178,11 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		allFolders = append(allFolders, f)
+		contents.Folders = append(contents.Folders, f)
 	}
-	rows.Close()
-	for _, f := range allFolders {
-		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", f.ID, "view")
-		if err == nil && ok {
-			contents.Folders = append(contents.Folders, f)
-		}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
 	}
 
 	// Notebooks at root

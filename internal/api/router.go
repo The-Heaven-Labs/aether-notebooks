@@ -106,6 +106,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/notebooks/{id}", authMW(http.HandlerFunc(s.handleGetNotebook)))
 	s.mux.Handle("DELETE /api/v1/notebooks/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDeleteNotebook))))
 	s.mux.Handle("PUT /api/v1/notebooks/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleUpdateNotebook))))
+	s.mux.Handle("GET /api/v1/notebooks/{id}/permissions", authMW(http.HandlerFunc(s.handleGetNotebookPermissions)))
 
 	// Cell routes
 	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/cells", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateCell))))
@@ -168,6 +169,9 @@ func (s *Server) routes() {
 
 	// Recent route
 	s.mux.Handle("GET /api/v1/recent", authMW(http.HandlerFunc(s.handleGetRecent)))
+
+	// Home route - lists all home folders for the current org
+	s.mux.Handle("GET /api/v1/home", authMW(http.HandlerFunc(s.handleListHomeFolders)))
 
 	// Folder routes
 	s.mux.Handle("GET /api/v1/folders", authMW(http.HandlerFunc(s.handleListRootContents)))

@@ -107,6 +107,7 @@ interface Props {
   cell: Cell
   connectors: Connector[]
   notebookId: string
+  readOnly?: boolean
   onRun: (cellId: string) => void
   onDelete: (cellId: string) => void
   onSourceChange: (cellId: string, source: string) => void
@@ -120,7 +121,7 @@ interface Props {
   running?: boolean
   saveState?: SaveState
   runAt?: Date
-  onUpdateCellMeta?: (updates: Partial<Pick<Cell, 'source_visible' | 'cell_collapsed' | 'slide_break' | 'title' | 'description' | 'slug'>>) => void
+  onUpdateCellMeta?: (updates: Partial<Pick<Cell, 'source_visible' | 'cell_collapsed' | 'slide_break' | 'title' | 'description' | 'slug' | 'limit'>>) => void
   onShowHistory?: () => void
   onFocus?: (cellId: string) => void
   onAddToDashboard?: (cellId: string) => void
@@ -252,6 +253,7 @@ export function Cell({
   cell,
   connectors,
   notebookId,
+  readOnly = false,
   onRun,
   onDelete,
   onSourceChange,
@@ -341,6 +343,24 @@ export function Cell({
                 {connector?.name ?? 'no connector'}
               </button>
             )
+          )}
+
+          {/* LIMIT selector for code cells */}
+          {isCode && (
+            <select
+              style={styles.limitSelect}
+              value={cell.limit == null ? 'null' : String(cell.limit)}
+              onChange={(e) => {
+                const val = e.target.value
+                onUpdateCellMeta?.({ limit: val === 'null' ? null : parseInt(val) })
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <option value="1000">LIMIT 1000</option>
+              <option value="100">LIMIT 100</option>
+              <option value="10">LIMIT 10</option>
+              <option value="null">Unlimited</option>
+            </select>
           )}
 
           {/* Title */}
@@ -553,6 +573,16 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     fontFamily: 'var(--font-mono)',
     color: 'var(--text-secondary)',
+    border: '1px solid var(--border)',
+    borderRadius: 3,
+    padding: '1px 4px',
+    background: 'var(--bg-card)',
+    outline: 'none',
+  },
+  limitSelect: {
+    fontSize: 11,
+    fontFamily: 'var(--font-mono)',
+    color: 'var(--text-muted)',
     border: '1px solid var(--border)',
     borderRadius: 3,
     padding: '1px 4px',

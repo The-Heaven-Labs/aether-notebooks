@@ -1,22 +1,18 @@
-# Improvements Backlog
-
-This file tracks known bugs, UX gaps, and feature improvements for future sprints.
-
-## Bugs
-
-- There are components in Storybook that are being tested but are not currently used in the application. Delete them and their specific tests.
-
-## UX Improvements
-
-- [ ] The Groups page in the dark theme has no contrast for the cursor nor the text in the create new group input text
-- [ ] The "add member" dropdown uses the "system" dropdown. It should be a stylized one that matches the style of the app and not be system native, but rather web based completely
-- [ ] The cursor on the dark theme for code cells is still with wrong contrast. You should validate it directly before saying it is fixed.
-- [ ] "SHOW TABLES" is not color highlighted in a code cell.
-- [ ] Color highlighting should be able to identify the type of connection inside the cell and use appropriate syntax understanding
-- [ ] On the table results, it should be possible to click on the column names to order by it. It should respect the type of the column, if string alphabetically, if number smaller/greater. Order by should be NONE, ASC, DESC on these clicks
-- [ ] Some column values are too big to directly show in the table view. When that's the case, there should be some default truncation, but the value should be clickable. When clicking, a new modal should appear on the right side of the cell or page showing the full value. This "navigation" should support moving from the keyboard, so pressing Down would select the next row and the focused value change with it
-
-## Features
-
-- [ ] I may be mistaken, but while there is a button to login with SSO/OIDC, there is no way to configure it. Is that reading correct? *(confirmed: OIDC providers are startup-configured only via env/config; runtime UI configuration requires a new admin panel + hot-reload — pending)*
-- [ ] Trying to run a query into a clickhouse query returns: scan: clickhouse [ScanRow]: (user_id) converting UInt32 to *uint64 is unsupported. try using *uint32; Query: SELECT * FROM test.events LIMIT 100;
+- [ ] The settings page flashes quickly on load then turns all white
+- [ ] Contrast of the left menu items on the light theme is not great with the dark lateral menu background color
+- [ ] In the groups page, there is no feedback if I do not fill the new group name and press the create button. Same trying to add someone to a group but not selecting a person
+- [ ] On the settings page, pressing the Save button has no feedback
+- [ ] Contrast of the cursor in code cells in the dark theme is not good. Cursor is dark on the dark background.
+- [ ] Code cells should have a default LIMIT 1000 config that is applied to queries. It should be visible in the UI and have a Unlimited option
+- [ ] Contrast for color highlighting of code cells in the dark theme are not great, I think it misses saturation for the colors, look too much like white
+- [ ] In the connectors page, if I click test it will update the status, but clicking again shows no feedback and nothing changes
+- [ ] Add a default No Access role to go along admin/editor/viewer
+- [ ] In the audit view, actions made to notebooks show the notebook name and the first part of the id. While a tooltip appears showing the full id, there is no way to copy the full id.
+- [ ] Adding an user to a group seem to not create an audit action same for removing
+- [ ] Removing an user from a group does not ask for confirmation on the UI
+- [ ] When creating an account, I can either create a new org or paste an invite token. But it seems there is no way to generate such token?
+- [ ] If I'm a viewer and access one notebook, I can start editing it but when leaving I receive insufficient permissions. If the user has no permission, cells should be read-only. Same goes for the permissions menu, I can start editing and even save permissions for a notebook I have no permission, but it should be blocked from even starting
+- [ ] The navigation for items created should have a "home" and from this home, every user home folder should be in it, and thus it should be possible for users to (given they have access) navigate other users' folders
+- [ ] When logging-in, if the user does not authenticate with SSO, the password field should have focus
+- [ ] Currently there is no way to change permissions on who can access/use/etc on a connector.
+- [ ]

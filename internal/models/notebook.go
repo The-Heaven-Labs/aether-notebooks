@@ -22,23 +22,24 @@ type Parameter struct {
 }
 
 type Cell struct {
-	ID            string    `json:"id"`
-	NotebookID    string    `json:"notebook_id"`
-	Position      int       `json:"position"`
-	Type          CellType  `json:"type"`
-	Language      string    `json:"language,omitempty"`
-	ConnectorID   string    `json:"connector_id,omitempty"`
-	Source        string    `json:"source"`
-	Outputs       []Output  `json:"outputs"`
-	SourceVisible bool      `json:"source_visible"`
+	ID            string      `json:"id"`
+	NotebookID    string      `json:"notebook_id"`
+	Position      int         `json:"position"`
+	Type          CellType    `json:"type"`
+	Language      string      `json:"language,omitempty"`
+	ConnectorID   string      `json:"connector_id,omitempty"`
+	Source        string      `json:"source"`
+	Outputs       []Output    `json:"outputs"`
+	SourceVisible bool        `json:"source_visible"`
 	CellCollapsed bool        `json:"cell_collapsed"`
 	SlideBreak    bool        `json:"slide_break"`
 	Parameters    []Parameter `json:"parameters"`
 	Title         string      `json:"title,omitempty"`
-	Description   string    `json:"description,omitempty"`
-	Slug          string    `json:"slug,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	Description   string      `json:"description,omitempty"`
+	Slug          string      `json:"slug,omitempty"`
+	Limit         *int        `json:"limit,omitempty"`
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
 }
 
 type CellType string

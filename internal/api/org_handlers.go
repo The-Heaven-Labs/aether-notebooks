@@ -267,9 +267,9 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 	if req.Role == "" {
 		req.Role = "viewer"
 	}
-	validRoles := map[string]bool{"viewer": true, "editor": true, "admin": true}
+	validRoles := map[string]bool{"viewer": true, "editor": true, "admin": true, "no_access": true}
 	if !validRoles[req.Role] {
-		writeError(w, http.StatusBadRequest, "role must be viewer, editor, or admin")
+		writeError(w, http.StatusBadRequest, "role must be viewer, editor, admin, or no_access")
 		return
 	}
 
@@ -320,7 +320,7 @@ func (s *Server) handleCreateInviteLink(w http.ResponseWriter, r *http.Request) 
 	if req.Role == "" {
 		req.Role = "viewer"
 	}
-	validRolesLink := map[string]bool{"viewer": true, "editor": true, "admin": true}
+	validRolesLink := map[string]bool{"viewer": true, "editor": true, "admin": true, "no_access": true}
 	if !validRolesLink[req.Role] {
 		writeError(w, http.StatusBadRequest, "role must be viewer, editor, or admin")
 		return

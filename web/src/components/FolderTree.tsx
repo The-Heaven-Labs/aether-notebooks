@@ -105,11 +105,26 @@ function TreeNodeComponent({ folder, allFolders, expanded, onToggle, onSelect, s
         background: isSelected ? 'var(--accent-light)' : 'transparent',
         gap: 4,
         transition: 'background 0.15s ease',
-      }} onClick={() => onSelect(folder.id)}>
+      }} onClick={() => onSelect(folder.id)}
+      onMouseEnter={(e) => {
+        if (!isSelected) e.currentTarget.style.background = 'var(--bg-secondary)'
+      }}
+      onMouseLeave={(e) => {
+        if (!isSelected) e.currentTarget.style.background = 'transparent'
+      }}
+    >
         {hasChildren ? (
           <button
             style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', color: 'var(--text-muted)' }}
             onClick={(e) => { e.stopPropagation(); onToggle(folder.id) }}
+            onMouseEnter={(e) => {
+              e.stopPropagation()
+              e.currentTarget.style.color = 'var(--accent)'
+            }}
+            onMouseLeave={(e) => {
+              e.stopPropagation()
+              e.currentTarget.style.color = 'var(--text-muted)'
+            }}
           >
             {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
           </button>

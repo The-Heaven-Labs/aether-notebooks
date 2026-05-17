@@ -38,6 +38,7 @@ export function ConnectorsPage() {
   const [editForm, setEditForm] = useState<ConnectorForm>(defaultForm())
   const [form, setForm] = useState<ConnectorForm>(defaultForm())
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error?: string }>>({})
+  const [testingId, setTestingId] = useState<string | null>(null)
   const [createError, setCreateError] = useState<string | null>(null)
   const [editError, setEditError] = useState<string | null>(null)
   const [formTest, setFormTest] = useState<{ ok: boolean; error?: string } | null>(null)
@@ -130,11 +131,14 @@ export function ConnectorsPage() {
   })
 
   const testConnector = async (id: string) => {
+    setTestingId(id)
     try {
       const result = await api.post<{ ok: boolean; error?: string }>(`/api/v1/connectors/${id}/test`, {})
       setTestResults((prev) => ({ ...prev, [id]: result }))
     } catch {
       setTestResults((prev) => ({ ...prev, [id]: { ok: false, error: 'Request failed' } }))
+    } finally {
+      setTestingId(null)
     }
   }
 
@@ -340,7 +344,9 @@ export function ConnectorsPage() {
                   )}
                 </td>
                 <td style={styles.tdActions}>
-                  <button type="button" style={styles.actionBtn} onClick={() => testConnector(c.id)}>Test</button>
+                  <button type="button" style={styles.actionBtn} onClick={() => testConnector(c.id)} disabled={testingId === c.id}>
+                    {testingId === c.id ? 'Testing…' : 'Test'}
+                  </button>
                   <button type="button" style={styles.editBtn} onClick={() => {
                     setEditing(c.id)
                     setEditForm({
