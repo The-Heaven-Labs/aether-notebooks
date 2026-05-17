@@ -132,10 +132,16 @@ This creates:
 			}
 			fmt.Printf("  ✓ 2024 Reports (%s)\n", oldReportsID)
 
-			// Get user's home folder
+			// Get user's home folder, create if doesn't exist
 			homeID, err := getHomeFolder(cl)
 			if err != nil {
-				return fmt.Errorf("failed to get home folder: %w", err)
+				fmt.Printf("  ⚠ No home folder found, creating... ")
+				homeID, err = createFolder(cl, orgID, "", me.Name+"'s Home")
+				if err != nil {
+					return fmt.Errorf("failed to create home folder: %w", err)
+				}
+				// Mark as home folder via direct API call if possible, otherwise just use it
+				fmt.Printf("created %s\n", homeID)
 			}
 			fmt.Printf("  ✓ Home folder (%s)\n", homeID)
 
@@ -235,42 +241,46 @@ This creates:
 			fmt.Println("\nCreating Data Team group...")
 			dataTeamID, err := createGroup(cl, orgID, "Data Team")
 			if err != nil {
-				return fmt.Errorf("failed to create Data Team group: %w", err)
-			}
-			fmt.Printf("  ✓ Data Team (%s)\n", dataTeamID)
-
-			// Add current user to Data Team
-			if err := addGroupMember(cl, dataTeamID, me.ID); err != nil {
-				fmt.Printf("  ⚠ Could not add self to group: %v (may already be a member)\n", err)
+				fmt.Printf("  ⚠ Data Team group may already exist: %v (skipping)\n", err)
 			} else {
-				fmt.Printf("  ✓ Added %s to Data Team\n", me.Name)
+				fmt.Printf("  ✓ Data Team (%s)\n", dataTeamID)
+
+				// Add current user to Data Team
+				if err := addGroupMember(cl, dataTeamID, me.ID); err != nil {
+					fmt.Printf("  ⚠ Could not add self to group: %v (may already be a member)\n", err)
+				} else {
+					fmt.Printf("  ✓ Added %s to Data Team\n", me.Name)
+				}
 			}
 
-			// Invite bob to Data Team
+			// Invite bob to Data Team and create some content for bob
 			bobToken, err := loginAs(baseURL, "bob@example.com", "password123")
 			if err != nil {
-				fmt.Printf("  ⚠ Could not login as Bob to add to group: %v\n", err)
+				fmt.Printf("  ⚠ Could not login as Bob: %v (skipping bob setup)\n", err)
 			} else {
 				bobCl := &Client{BaseURL: baseURL, Token: bobToken}
 				var bobMe struct {
 					ID string `json:"id"`
 				}
 				if err := bobCl.GetJSON("/api/v1/users/me", &bobMe); err == nil {
-					if err := addGroupMember(cl, dataTeamID, bobMe.ID); err != nil {
-						fmt.Printf("  ⚠ Could not add Bob to group: %v\n", err)
-					} else {
-						fmt.Printf("  ✓ Added Bob to Data Team\n")
+					// Try to add Bob to Data Team
+					if dataTeamID != "" {
+						if err := addGroupMember(cl, dataTeamID, bobMe.ID); err != nil {
+							fmt.Printf("  ⚠ Could not add Bob to Data Team: %v\n", err)
+						} else {
+							fmt.Printf("  ✓ Added Bob to Data Team\n")
+						}
 					}
-				}
-				// Give Bob a home folder with content
-				var bobsHome []map[string]interface{}
-				if err := bobCl.GetJSON("/api/v1/home", &bobsHome); err == nil && len(bobsHome) > 0 {
-					bobHomeID := bobsHome[0]["id"].(string)
-					bobProjectsID, err := createFolderForUser(bobCl, bobHomeID, "Bob's Projects")
-					if err == nil {
-						fmt.Printf("  ✓ Bob's Projects folder created\n")
-						createNotebookForUser(bobCl, "Bob's Analysis", "Personal analysis notebook", bobProjectsID)
-						fmt.Printf("  ✓ Bob's Analysis notebook created\n")
+					// Give Bob a home folder with content
+					var bobsHome []map[string]interface{}
+					if err := bobCl.GetJSON("/api/v1/home", &bobsHome); err == nil && len(bobsHome) > 0 {
+						bobHomeID := bobsHome[0]["id"].(string)
+						bobProjectsID, err := createFolderForUser(bobCl, bobHomeID, "Bob's Projects")
+						if err == nil {
+							fmt.Printf("  ✓ Bob's Projects folder created\n")
+							createNotebookForUser(bobCl, "Bob's Analysis", "Personal analysis notebook", bobProjectsID)
+							fmt.Printf("  ✓ Bob's Analysis notebook created\n")
+						}
 					}
 				}
 			}
