@@ -7,7 +7,9 @@ import { useAuth } from '../hooks/useAuth'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorBanner } from '../components/ErrorBanner'
+import { FolderTree } from '../components/FolderTree'
 import { PermissionsPanel } from '../components/PermissionsPanel'
+import { TwoPanelLayout } from '../components/TwoPanelLayout'
 import { Folder as FolderIcon, BookOpen, LayoutDashboard, Database, Home } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -274,6 +276,8 @@ export function HomePage() {
       : api.get<FolderContents>('/api/v1/folders'),
   })
 
+  
+
   const { data: ancestors = [] } = useQuery<Array<{ id: string; name: string }>>({
     queryKey: ['folder-ancestors', folderID],
     queryFn: () => api.get(`/api/v1/folders/${folderID}/ancestors`),
@@ -427,344 +431,356 @@ export function HomePage() {
 
   return (
     <AppShell>
-      <div style={{ maxWidth: 1280, margin: '0 auto', position: 'relative' }}>
-        {/* Filter pills */}
-        <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-          {(['all', 'mine'] as const).map(f => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              style={{
-                padding: '4px 12px',
-                borderRadius: 20,
-                fontSize: 12,
-                fontWeight: 500,
-                cursor: 'pointer',
-                border: 'none',
-                background: filter === f ? 'var(--accent)' : 'var(--accent-light)',
-                color: filter === f ? '#fff' : 'var(--accent)',
-              }}
-            >
-              {f === 'all' ? 'All' : 'Created by me'}
-            </button>
-          ))}
-        </div>
-
-        {/* Search bar */}
-        <div style={{ marginBottom: 12 }}>
-          <input
-            style={s.searchInput}
-            type="search"
-            placeholder="Search by name…"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            aria-label="Search files"
+      <TwoPanelLayout
+        leftPanel={
+          <FolderTree
+            onSelectFolder={(id) => setSearchParams(id ? { folder: id } : {})}
+            selectedFolderId={folderID}
           />
-        </div>
-
-        {/* Breadcrumb */}
-        <div style={s.breadcrumb}>
-          <button style={s.crumbBtn} onClick={() => setSearchParams({})}>
-            <Home size={13} style={{ marginRight: 4 }} />
-            Files
-          </button>
-          {ancestors.map((a) => (
-            <span key={a.id} style={{ display: 'flex', alignItems: 'center' }}>
-              <span style={s.sep}>/</span>
-              <button style={s.crumbBtn} onClick={() => setSearchParams({ folder: a.id })}>
-                {a.name}
-              </button>
-            </span>
-          ))}
-        </div>
-
-        {/* Recent section — root only, no active search */}
-        {!folderID && !searchQuery && recentItems.length > 0 && (
-          <section style={{ ...s.section, marginBottom: 20 }}>
-            <div style={s.sectionLabel}>Recent</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {recentItems.slice(0, 5).map((item) => {
-                const href = item.type === 'notebook'
-                  ? `/notebooks/${item.id}`
-                  : item.type === 'dashboard'
-                  ? `/dashboards/${item.id}`
-                  : `/connectors`
-                const icon = item.type === 'notebook'
-                  ? <BookOpen size={12} style={{ flexShrink: 0 }} />
-                  : item.type === 'dashboard'
-                  ? <LayoutDashboard size={12} style={{ flexShrink: 0 }} />
-                  : <Database size={12} style={{ flexShrink: 0 }} />
-                return (
-                  <button
-                    key={`${item.type}-${item.id}`}
-                    style={s.recentChip}
-                    onClick={() => navigate(href)}
-                    title={item.name}
-                  >
-                    {icon}
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, maxWidth: 160 }}>
-                      {item.name}
-                    </span>
-                  </button>
-                )
-              })}
+        }
+        rightPanel={
+          <div style={{ maxWidth: 1280, margin: '0 auto', position: 'relative' }}>
+            {/* Filter pills */}
+            <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+              {(['all', 'mine'] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setFilter(f)}
+                  style={{
+                    padding: '4px 12px',
+                    borderRadius: 20,
+                    fontSize: 12,
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    border: 'none',
+                    background: filter === f ? 'var(--accent)' : 'var(--accent-light)',
+                    color: filter === f ? '#fff' : 'var(--accent)',
+                  }}
+                >
+                  {f === 'all' ? 'All' : 'Created by me'}
+                </button>
+              ))}
             </div>
-          </section>
-        )}
 
-        {/* Toolbar */}
-        <div style={s.toolbar}>
-          <button style={s.newBtn} onClick={() => { setCreating('folder'); setNewName('') }}>
-            + New Folder
-          </button>
-          <button style={s.newBtn} onClick={() => { setCreating('notebook'); setNewName('') }}>
-            + New Notebook
-          </button>
-          <button style={s.newBtn} onClick={() => { setCreating('dashboard'); setNewName('') }}>
-            + New Dashboard
-          </button>
-        </div>
+            {/* Search bar */}
+            <div style={{ marginBottom: 12 }}>
+              <input
+                style={s.searchInput}
+                type="search"
+                placeholder="Search by name…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                aria-label="Search files"
+              />
+            </div>
 
-        {/* Inline create form */}
-        {creating && (
-          <div style={s.createForm}>
-            <input
-              style={s.input}
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder={
-                creating === 'folder' ? 'Folder name…'
-                : creating === 'notebook' ? 'Notebook title…'
-                : 'Dashboard title…'
-              }
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleCreate()
-                if (e.key === 'Escape') { setCreating(null); setNewName('') }
-              }}
-            />
-            <button style={s.createBtn} disabled={!newName.trim()} onClick={handleCreate}>Create</button>
-            <button style={s.cancelBtn} onClick={() => { setCreating(null); setNewName('') }}>Cancel</button>
-          </div>
-        )}
-
-        {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
-
-        {isLoading && <div style={{ padding: 32, color: 'var(--text-muted)', fontSize: 14 }}>Loading…</div>}
-
-        {!isLoading && isEmpty && !creating && (
-          <EmptyState
-            icon={<FolderIcon size={32} />}
-            title="This folder is empty"
-            text="Create a folder or notebook to get started."
-            action={{ label: '+ New Notebook', onClick: () => setCreating('notebook') }}
-          />
-        )}
-
-        {/* Folders */}
-        {data && filterItems(searchFolders).length > 0 && (
-          <section style={s.section}>
-            <div style={s.sectionLabel}>Folders</div>
-            <div style={s.folderGrid}>
-              {filterItems(searchFolders).map((f) => (
-                <div key={f.id} style={s.folderCard} className="card-hover">
-                  {renaming?.id === f.id ? (
-                    <div style={{ flex: 1, padding: '4px 8px' }}>
-                      <InlineRename
-                        initialValue={renaming.currentName}
-                        onConfirm={handleRenameConfirm}
-                        onCancel={() => setRenaming(null)}
-                      />
-                    </div>
-                  ) : (
-                    <button style={s.folderBtn} onClick={() => setSearchParams({ folder: f.id })}>
-                      <FolderIcon size={16} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={s.folderName}>{f.name}</span>
-                          {f.is_home && <span style={s.badge}>home</span>}
-                        </div>
-                        <MetaLine createdBy={memberName(f.created_by)} createdAt={f.created_at} updatedAt={f.updated_at} />
-                      </div>
+            {/* Breadcrumb — only when in a folder */}
+            {folderID && (
+              <div style={s.breadcrumb}>
+                <button style={s.crumbBtn} onClick={() => setSearchParams({})}>
+                  <Home size={13} style={{ marginRight: 4 }} />
+                  Files
+                </button>
+                {ancestors.map((a) => (
+                  <span key={a.id} style={{ display: 'flex', alignItems: 'center' }}>
+                    <span style={s.sep}>/</span>
+                    <button style={s.crumbBtn} onClick={() => setSearchParams({ folder: a.id })}>
+                      {a.name}
                     </button>
-                  )}
-                  <button
-                    style={s.menuBtn}
-                    title="More options"
-                    onClick={(e) => handleMenuOpen(e, { type: 'folder', id: f.id, name: f.name })}
-                  >⋯</button>
-                  {openMenu?.id === f.id && menuPos && (
-                    <div style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, zIndex: 1000 }}>
-                      <ContextMenu
-                        target={openMenu}
-                        onRename={setRenaming}
-                        onMove={setMoving}
-                        onPermissions={handlePermissions}
-                        onDelete={handleDelete}
-                        onEdit={handleEdit}
-                        onClose={() => setOpenMenu(null)}
-                      />
-                    </div>
-                  )}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Recent section — root only, no active search */}
+            {!folderID && !searchQuery && recentItems.length > 0 && (
+              <section style={{ ...s.section, marginBottom: 20 }}>
+                <div style={s.sectionLabel}>Recent</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {recentItems.slice(0, 5).map((item) => {
+                    const href = item.type === 'notebook'
+                      ? `/notebooks/${item.id}`
+                      : item.type === 'dashboard'
+                      ? `/dashboards/${item.id}`
+                      : `/connectors`
+                    const icon = item.type === 'notebook'
+                      ? <BookOpen size={12} style={{ flexShrink: 0 }} />
+                      : item.type === 'dashboard'
+                      ? <LayoutDashboard size={12} style={{ flexShrink: 0 }} />
+                      : <Database size={12} style={{ flexShrink: 0 }} />
+                    return (
+                      <button
+                        key={`${item.type}-${item.id}`}
+                        style={s.recentChip}
+                        onClick={() => navigate(href)}
+                        title={item.name}
+                      >
+                        {icon}
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, maxWidth: 160 }}>
+                          {item.name}
+                        </span>
+                      </button>
+                    )
+                  })}
                 </div>
-              ))}
-            </div>
-          </section>
-        )}
+              </section>
+            )}
 
-        {/* Notebooks */}
-        {data && filterItems(searchNotebooks).length > 0 && (
-          <section style={s.section}>
-            <div style={s.sectionLabel}>Notebooks</div>
-            <div style={s.list}>
-              {filterItems(searchNotebooks).map((nb) => (
-                <div key={nb.id} style={s.item}>
-                  {renaming?.id === nb.id ? (
-                    <div style={{ flex: 1 }}>
-                      <InlineRename
-                        initialValue={renaming.currentName}
-                        onConfirm={handleRenameConfirm}
-                        onCancel={() => setRenaming(null)}
-                      />
+            {/* Toolbar */}
+            <div style={s.toolbar}>
+              <button style={s.newBtn} onClick={() => { setCreating('folder'); setNewName('') }}>
+                + New Folder
+              </button>
+              <button style={s.newBtn} onClick={() => { setCreating('notebook'); setNewName('') }}>
+                + New Notebook
+              </button>
+              <button style={s.newBtn} onClick={() => { setCreating('dashboard'); setNewName('') }}>
+                + New Dashboard
+              </button>
+            </div>
+
+            {/* Inline create form */}
+            {creating && (
+              <div style={s.createForm}>
+                <input
+                  style={s.input}
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder={
+                    creating === 'folder' ? 'Folder name…'
+                    : creating === 'notebook' ? 'Notebook title…'
+                    : 'Dashboard title…'
+                  }
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleCreate()
+                    if (e.key === 'Escape') { setCreating(null); setNewName('') }
+                  }}
+                />
+                <button style={s.createBtn} disabled={!newName.trim()} onClick={handleCreate}>Create</button>
+                <button style={s.cancelBtn} onClick={() => { setCreating(null); setNewName('') }}>Cancel</button>
+              </div>
+            )}
+
+            {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
+
+            {isLoading && <div style={{ padding: 32, color: 'var(--text-muted)', fontSize: 14 }}>Loading…</div>}
+
+            {!isLoading && isEmpty && !creating && (
+              <EmptyState
+                icon={<FolderIcon size={32} />}
+                title="This folder is empty"
+                text="Create a folder or notebook to get started."
+                action={{ label: '+ New Notebook', onClick: () => setCreating('notebook') }}
+              />
+            )}
+
+            {/* Folders */}
+            {data && filterItems(searchFolders).length > 0 && (
+              <section style={s.section}>
+                <div style={s.sectionLabel}>Folders</div>
+                <div style={s.folderGrid}>
+                  {filterItems(searchFolders).map((f) => (
+                    <div key={f.id} style={s.folderCard} className="card-hover">
+                      {renaming?.id === f.id ? (
+                        <div style={{ flex: 1, padding: '4px 8px' }}>
+                          <InlineRename
+                            initialValue={renaming.currentName}
+                            onConfirm={handleRenameConfirm}
+                            onCancel={() => setRenaming(null)}
+                          />
+                        </div>
+                      ) : (
+                        <button style={s.folderBtn} onClick={() => setSearchParams({ folder: f.id })}>
+                          <FolderIcon size={16} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span style={s.folderName}>{f.name}</span>
+                              {f.is_home && <span style={s.badge}>home</span>}
+                            </div>
+                            <MetaLine createdBy={memberName(f.created_by)} createdAt={f.created_at} updatedAt={f.updated_at} />
+                          </div>
+                        </button>
+                      )}
+                      <button
+                        style={s.menuBtn}
+                        title="More options"
+                        onClick={(e) => handleMenuOpen(e, { type: 'folder', id: f.id, name: f.name })}
+                      >⋯</button>
+                      {openMenu?.id === f.id && menuPos && (
+                        <div style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, zIndex: 1000 }}>
+                          <ContextMenu
+                            target={openMenu}
+                            onRename={setRenaming}
+                            onMove={setMoving}
+                            onPermissions={handlePermissions}
+                            onDelete={handleDelete}
+                            onEdit={handleEdit}
+                            onClose={() => setOpenMenu(null)}
+                          />
+                        </div>
+                      )}
                     </div>
-                  ) : (
-                    <Link to={`/notebooks/${nb.id}`} style={s.itemLink}>
-                      <BookOpen size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <span style={s.itemName}>{nb.title}</span>
-                        <MetaLine createdBy={memberName(nb.created_by)} createdAt={nb.created_at} updatedAt={nb.updated_at} />
-                      </div>
-                    </Link>
-                  )}
-                  <div style={{ position: 'relative' }}>
-                    <button
-                      style={s.menuBtn}
-                      title="More options"
-                      onClick={(e) => handleMenuOpen(e, { type: 'notebook', id: nb.id, name: nb.title })}
-                    >⋯</button>
-                    {openMenu?.id === nb.id && menuPos && (
-                      <div style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, zIndex: 1000 }}>
-                        <ContextMenu
-                          target={openMenu}
-                          onRename={setRenaming}
-                          onMove={setMoving}
-                          onPermissions={handlePermissions}
-                          onDelete={handleDelete}
-                          onEdit={handleEdit}
-                          onClose={() => setOpenMenu(null)}
-                        />
-                      </div>
-                    )}
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </section>
-        )}
+              </section>
+            )}
 
-        {/* Connectors */}
-        {data && filterItems(searchConnectors).length > 0 && (
-          <section style={s.section}>
-            <div style={s.sectionLabel}>Connectors</div>
-            <div style={s.list}>
-              {filterItems(searchConnectors).map((c) => (
-                <div key={c.id} style={s.item}>
-                  <Link to={`/connectors?edit=${c.id}`} style={s.itemLink}>
-                    <Database size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={s.itemName}>{c.name}</span>
-                        {c.is_default && <span style={s.badge}>default</span>}
+            {/* Notebooks */}
+            {data && filterItems(searchNotebooks).length > 0 && (
+              <section style={s.section}>
+                <div style={s.sectionLabel}>Notebooks</div>
+                <div style={s.list}>
+                  {filterItems(searchNotebooks).map((nb) => (
+                    <div key={nb.id} style={s.item}>
+                      {renaming?.id === nb.id ? (
+                        <div style={{ flex: 1 }}>
+                          <InlineRename
+                            initialValue={renaming.currentName}
+                            onConfirm={handleRenameConfirm}
+                            onCancel={() => setRenaming(null)}
+                          />
+                        </div>
+                      ) : (
+                        <Link to={`/notebooks/${nb.id}`} style={s.itemLink}>
+                          <BookOpen size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <span style={s.itemName}>{nb.title}</span>
+                            <MetaLine createdBy={memberName(nb.created_by)} createdAt={nb.created_at} updatedAt={nb.updated_at} />
+                          </div>
+                        </Link>
+                      )}
+                      <div style={{ position: 'relative' }}>
+                        <button
+                          style={s.menuBtn}
+                          title="More options"
+                          onClick={(e) => handleMenuOpen(e, { type: 'notebook', id: nb.id, name: nb.title })}
+                        >⋯</button>
+                        {openMenu?.id === nb.id && menuPos && (
+                          <div style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, zIndex: 1000 }}>
+                            <ContextMenu
+                              target={openMenu}
+                              onRename={setRenaming}
+                              onMove={setMoving}
+                              onPermissions={handlePermissions}
+                              onDelete={handleDelete}
+                              onEdit={handleEdit}
+                              onClose={() => setOpenMenu(null)}
+                            />
+                          </div>
+                        )}
                       </div>
-                      <MetaLine createdBy={memberName(c.created_by)} createdAt={c.created_at} />
                     </div>
-                  </Link>
-                  <div style={{ position: 'relative' }}>
-                    <button
-                      style={s.menuBtn}
-                      title="More options"
-                      onClick={(e) => handleMenuOpen(e, { type: 'connector', id: c.id, name: c.name })}
-                    >⋯</button>
-                    {openMenu?.id === c.id && menuPos && (
-                      <div style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, zIndex: 1000 }}>
-                        <ContextMenu
-                          target={openMenu}
-                          onRename={setRenaming}
-                          onMove={setMoving}
-                          onPermissions={handlePermissions}
-                          onDelete={handleDelete}
-                          onEdit={handleEdit}
-                          onClose={() => setOpenMenu(null)}
-                        />
-                      </div>
-                    )}
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </section>
-        )}
+              </section>
+            )}
 
-        {/* Dashboards */}
-        {data && filterItems(searchDashboards).length > 0 && (
-          <section style={s.section}>
-            <div style={s.sectionLabel}>Dashboards</div>
-            <div style={s.list}>
-              {filterItems(searchDashboards).map((d) => (
-                <div key={d.id} style={s.item}>
-                  <Link to={`/dashboards/${d.id}`} style={s.itemLink}>
-                    <LayoutDashboard size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <span style={s.itemName}>{d.title}</span>
-                      <MetaLine createdBy={memberName(d.created_by)} createdAt={d.created_at} updatedAt={d.updated_at} />
+            {/* Connectors */}
+            {data && filterItems(searchConnectors).length > 0 && (
+              <section style={s.section}>
+                <div style={s.sectionLabel}>Connectors</div>
+                <div style={s.list}>
+                  {filterItems(searchConnectors).map((c) => (
+                    <div key={c.id} style={s.item}>
+                      <Link to={`/connectors?edit=${c.id}`} style={s.itemLink}>
+                        <Database size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={s.itemName}>{c.name}</span>
+                            {c.is_default && <span style={s.badge}>default</span>}
+                          </div>
+                          <MetaLine createdBy={memberName(c.created_by)} createdAt={c.created_at} />
+                        </div>
+                      </Link>
+                      <div style={{ position: 'relative' }}>
+                        <button
+                          style={s.menuBtn}
+                          title="More options"
+                          onClick={(e) => handleMenuOpen(e, { type: 'connector', id: c.id, name: c.name })}
+                        >⋯</button>
+                        {openMenu?.id === c.id && menuPos && (
+                          <div style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, zIndex: 1000 }}>
+                            <ContextMenu
+                              target={openMenu}
+                              onRename={setRenaming}
+                              onMove={setMoving}
+                              onPermissions={handlePermissions}
+                              onDelete={handleDelete}
+                              onEdit={handleEdit}
+                              onClose={() => setOpenMenu(null)}
+                            />
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </Link>
-                  <div style={{ position: 'relative' }}>
-                    <button
-                      style={s.menuBtn}
-                      title="More options"
-                      onClick={(e) => handleMenuOpen(e, { type: 'dashboard', id: d.id, name: d.title })}
-                    >⋯</button>
-                    {openMenu?.id === d.id && menuPos && (
-                      <div style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, zIndex: 1000 }}>
-                        <ContextMenu
-                          target={openMenu}
-                          onRename={setRenaming}
-                          onMove={setMoving}
-                          onPermissions={handlePermissions}
-                          onDelete={handleDelete}
-                          onEdit={handleEdit}
-                          onClose={() => setOpenMenu(null)}
-                        />
-                      </div>
-                    )}
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </section>
-        )}
+              </section>
+            )}
 
-        {/* Move modal */}
-        {moving && (
-          <MoveModal
-            target={moving}
-            onConfirm={handleMoveConfirm}
-            onClose={() => setMoving(null)}
-          />
-        )}
+            {/* Dashboards */}
+            {data && filterItems(searchDashboards).length > 0 && (
+              <section style={s.section}>
+                <div style={s.sectionLabel}>Dashboards</div>
+                <div style={s.list}>
+                  {filterItems(searchDashboards).map((d) => (
+                    <div key={d.id} style={s.item}>
+                      <Link to={`/dashboards/${d.id}`} style={s.itemLink}>
+                        <LayoutDashboard size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <span style={s.itemName}>{d.title}</span>
+                          <MetaLine createdBy={memberName(d.created_by)} createdAt={d.created_at} updatedAt={d.updated_at} />
+                        </div>
+                      </Link>
+                      <div style={{ position: 'relative' }}>
+                        <button
+                          style={s.menuBtn}
+                          title="More options"
+                          onClick={(e) => handleMenuOpen(e, { type: 'dashboard', id: d.id, name: d.title })}
+                        >⋯</button>
+                        {openMenu?.id === d.id && menuPos && (
+                          <div style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, zIndex: 1000 }}>
+                            <ContextMenu
+                              target={openMenu}
+                              onRename={setRenaming}
+                              onMove={setMoving}
+                              onPermissions={handlePermissions}
+                              onDelete={handleDelete}
+                              onEdit={handleEdit}
+                              onClose={() => setOpenMenu(null)}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
-        {/* Permissions panel */}
-        {permissionsTarget && (
-          <PermissionsPanel
-            resourceType={permissionsTarget.type}
-            resourceId={permissionsTarget.id}
-            resourceName={permissionsTarget.name}
-            parentFolderId={folderID ?? undefined}
-            onClose={() => setPermissionsTarget(null)}
-          />
-        )}
-      </div>
+            {/* Move modal */}
+            {moving && (
+              <MoveModal
+                target={moving}
+                onConfirm={handleMoveConfirm}
+                onClose={() => setMoving(null)}
+              />
+            )}
+
+            {/* Permissions panel */}
+            {permissionsTarget && (
+              <PermissionsPanel
+                resourceType={permissionsTarget.type}
+                resourceId={permissionsTarget.id}
+                resourceName={permissionsTarget.name}
+                parentFolderId={folderID ?? undefined}
+                onClose={() => setPermissionsTarget(null)}
+              />
+            )}
+          </div>
+        }
+      />
     </AppShell>
   )
 }
