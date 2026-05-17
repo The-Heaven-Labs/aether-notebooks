@@ -262,6 +262,7 @@ export function LoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   placeholder="••••••••"
+                  autoFocus={ssoProviders.length === 0}
                 />
               </div>
               {error && <ErrorBanner message={error} onDismiss={() => setError('')} />}

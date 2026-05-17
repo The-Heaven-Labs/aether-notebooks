@@ -10,7 +10,9 @@ import (
 	"time"
 )
 
-func createSchedule(t *testing.T, srv interface{ ServeHTTP(http.ResponseWriter, *http.Request) }, token, nbID, cronExpr string) string {
+func createSchedule(t *testing.T, srv interface {
+	ServeHTTP(http.ResponseWriter, *http.Request)
+}, token, nbID, cronExpr string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"cron_expression": cronExpr})
 	req := httptest.NewRequest("POST", fmt.Sprintf("/api/v1/notebooks/%s/schedules", nbID), bytes.NewReader(body))

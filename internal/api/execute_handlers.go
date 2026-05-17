@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/crypto"
@@ -33,14 +35,15 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	var cell models.Cell
 	var lang, connID *string
 	var outputs, cellParamsJSON []byte
+	var cellLimit *int
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT c.id, c.notebook_id, c.position, c.type, c.language, c.connector_id, c.source, c.outputs, c.parameters, c.created_at, c.updated_at
+		`SELECT c.id, c.notebook_id, c.position, c.type, c.language, c.connector_id, c.source, c.outputs, c.parameters, c."limit", c.created_at, c.updated_at
 		 FROM cells c
 		 JOIN notebooks n ON n.id = c.notebook_id
 		 WHERE c.id = $1 AND c.notebook_id = $2 AND n.org_id = $3`,
 		cellID, nbID, claims.OrgID,
 	).Scan(&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &lang, &connID,
-		&cell.Source, &outputs, &cellParamsJSON, &cell.CreatedAt, &cell.UpdatedAt)
+		&cell.Source, &outputs, &cellParamsJSON, &cellLimit, &cell.CreatedAt, &cell.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "cell not found")
 		return
@@ -54,6 +57,9 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	}
 	if connID != nil {
 		cell.ConnectorID = *connID
+	}
+	if cellLimit != nil {
+		cell.Limit = cellLimit
 	}
 
 	if cell.Type != models.CellTypeCode || cell.Language != "sql" {
@@ -115,6 +121,13 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// Apply cell-level LIMIT if set (and query doesn't already have a LIMIT)
+	if cell.Limit != nil && *cell.Limit > 0 {
+		if !strings.Contains(strings.ToUpper(resolvedSource), "LIMIT") {
+			resolvedSource = resolvedSource + " LIMIT " + strconv.Itoa(*cell.Limit)
+		}
 	}
 
 	// Load connector

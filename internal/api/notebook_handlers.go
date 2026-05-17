@@ -143,6 +143,16 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 	nb.FolderID = folderID
 	json.Unmarshal(params, &nb.Parameters)
 
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "view")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
 	cellRows, err := s.db.Pool.Query(ctx,
 		`SELECT id, notebook_id, position, type, language, connector_id, source, outputs,
 		        source_visible, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''),
@@ -189,6 +199,26 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleGetNotebookPermissions(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	nbID := r.PathValue("id")
+	ctx := r.Context()
+
+	viewOK, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "view")
+	if err != nil || !viewOK {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
+	editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "edit")
+	runOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "run")
+
+	writeJSON(w, http.StatusOK, map[string]bool{
+		"can_edit": editOK,
+		"can_run":  runOK,
+	})
 }
 
 func (s *Server) handleDeleteNotebook(w http.ResponseWriter, r *http.Request) {

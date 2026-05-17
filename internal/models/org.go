@@ -27,7 +27,8 @@ type OrgMember struct {
 type Role string
 
 const (
-	RoleAdmin  Role = "admin"
-	RoleEditor Role = "editor"
-	RoleViewer Role = "viewer"
+	RoleAdmin    Role = "admin"
+	RoleEditor   Role = "editor"
+	RoleViewer   Role = "viewer"
+	RoleNoAccess Role = "no_access"
 )

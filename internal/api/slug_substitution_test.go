@@ -69,4 +69,3 @@ func TestResolveSlugRefs_NestedResolution(t *testing.T) {
 		t.Fatalf("got %q\nwant %q", result, expected)
 	}
 }
-

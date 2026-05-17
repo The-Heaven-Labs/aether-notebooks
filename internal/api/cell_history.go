@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	versionMergeMaxDist = 50              // chars
+	versionMergeMaxDist = 50 // chars
 	versionMergeWindow  = 60 * time.Second
 )
 

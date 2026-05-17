@@ -83,7 +83,9 @@ func (c *Client) GetJSON(path string, out interface{}) error {
 		return err
 	}
 	if status >= 400 {
-		var e struct{ Error string `json:"error"` }
+		var e struct {
+			Error string `json:"error"`
+		}
 		json.Unmarshal(data, &e)
 		return fmt.Errorf("API error %d: %s", status, e.Error)
 	}
@@ -96,7 +98,9 @@ func (c *Client) PostJSON(path string, body, out interface{}) error {
 		return err
 	}
 	if status >= 400 {
-		var e struct{ Error string `json:"error"` }
+		var e struct {
+			Error string `json:"error"`
+		}
 		json.Unmarshal(data, &e)
 		return fmt.Errorf("API error %d: %s", status, e.Error)
 	}
@@ -112,7 +116,9 @@ func (c *Client) DeleteJSON(path string) error {
 		return err
 	}
 	if status >= 400 {
-		var e struct{ Error string `json:"error"` }
+		var e struct {
+			Error string `json:"error"`
+		}
 		json.Unmarshal(data, &e)
 		return fmt.Errorf("API error %d: %s", status, e.Error)
 	}

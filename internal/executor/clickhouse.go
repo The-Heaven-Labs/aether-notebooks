@@ -66,39 +66,56 @@ func chAllocDest(typeName string) interface{} {
 	if nullable {
 		switch base {
 		case "String", "FixedString", "UUID", "Enum8", "Enum16":
-			var v *string; return &v
+			var v *string
+			return &v
 		case "Bool":
-			var v *bool; return &v
+			var v *bool
+			return &v
 		case "Float32":
-			var v *float32; return &v
+			var v *float32
+			return &v
 		case "Float64":
-			var v *float64; return &v
+			var v *float64
+			return &v
 		case "Int8":
-			var v *int8; return &v
+			var v *int8
+			return &v
 		case "Int16":
-			var v *int16; return &v
+			var v *int16
+			return &v
 		case "Int32":
-			var v *int32; return &v
+			var v *int32
+			return &v
 		case "Int64":
-			var v *int64; return &v
+			var v *int64
+			return &v
 		case "Int128", "Int256":
-			var v *big.Int; return &v
+			var v *big.Int
+			return &v
 		case "UInt8":
-			var v *uint8; return &v
+			var v *uint8
+			return &v
 		case "UInt16":
-			var v *uint16; return &v
+			var v *uint16
+			return &v
 		case "UInt32":
-			var v *uint32; return &v
+			var v *uint32
+			return &v
 		case "UInt64":
-			var v *uint64; return &v
+			var v *uint64
+			return &v
 		case "UInt128", "UInt256":
-			var v *big.Int; return &v
+			var v *big.Int
+			return &v
 		case "DateTime", "DateTime64", "Date", "Date32":
-			var v *time.Time; return &v
+			var v *time.Time
+			return &v
 		case "Decimal":
-			var v *decimal.Decimal; return &v
+			var v *decimal.Decimal
+			return &v
 		default:
-			var v *string; return &v
+			var v *string
+			return &v
 		}
 	}
 	switch base {
