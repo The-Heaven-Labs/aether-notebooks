@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ChevronRight, ChevronDown, Folder, FolderOpen } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -17,12 +17,33 @@ interface FolderTreeProps {
 }
 
 export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('hnb_tree_expanded')
+      return saved ? new Set(JSON.parse(saved)) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
 
   const { data: folders = [] } = useQuery<Folder[]>({
     queryKey: ['folder-tree-root'],
     queryFn: () => api.get<Folder[]>('/api/v1/folders'),
   })
+
+  useEffect(() => {
+    if (!selectedFolderId) return
+
+    api.get<Array<{ id: string }>>(`/api/v1/folders/${selectedFolderId}/ancestors`)
+      .then(ancestors => {
+        setExpanded(prev => {
+          const next = new Set(prev)
+          ancestors.forEach(a => next.add(a.id))
+          return next
+        })
+      })
+      .catch(console.error)
+  }, [selectedFolderId])
 
   const rootFolders = folders.filter(f => !f.parent_id)
 
@@ -31,6 +52,7 @@ export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
+      localStorage.setItem('hnb_tree_expanded', JSON.stringify([...next]))
       return next
     })
   }
