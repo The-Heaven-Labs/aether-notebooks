@@ -37,7 +37,7 @@ export function HistoryPanel({ versions, currentSource, onRestore, onClose }: Pr
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  panel: { width: 300, borderLeft: '1px solid var(--border)', background: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', flexShrink: 0, overflowY: 'auto' },
+  panel: { width: 300, height: '100%', borderLeft: '1px solid var(--border)', background: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', flexShrink: 0, overflowY: 'auto' },
   empty: { padding: 16, fontSize: 13, color: 'var(--text-muted)', textAlign: 'center' },
   item: { padding: '10px 14px', borderBottom: '1px solid var(--border-light)' },
   itemHeader: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 },
