@@ -301,3 +301,9 @@ h1:hover a, h2:hover a, h3:hover a, h4:hover a, h5:hover a, h6:hover a {
   border-left-color: #f0f0f0 !important;
   caret-color: #f0f0f0 !important;
 }
+
+/* Resource type badge text — only the connector badge has light bg, needs dark text */
+[data-theme="light"] .permissions-panel-type-badge[data-type="connector"],
+.permissions-panel-type-badge[data-type="connector"] {
+  color: var(--text-badge-on-light);
+}
