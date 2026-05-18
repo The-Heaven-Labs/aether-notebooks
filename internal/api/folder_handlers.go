@@ -96,6 +96,7 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 			   f.owner_id = $2
 			   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'user' AND subject_id = $2::text)
 			   OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = f.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
+			   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'org_role' AND subject_id = 'everyone')
 			 )
 			 ORDER BY f.name`,
 			entries[i].ID, claims.UserID, groupIDs,
@@ -162,6 +163,7 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		   f.owner_id = $2
 		   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'user' AND subject_id = $2::text)
 		   OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = f.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
+		   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'org_role' AND subject_id = 'everyone')
 		 )
 		 ORDER BY f.name`,
 		claims.OrgID, claims.UserID, groupIDs,
@@ -582,6 +584,61 @@ func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, folder)
+}
+
+// handleEnsureHomeFolder creates the user's home folder if it doesn't already exist.
+// This allows home folder creation to be triggered via API without requiring login.
+func (s *Server) handleEnsureHomeFolder(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	ctx := r.Context()
+
+	var userName string
+	if err := s.db.Pool.QueryRow(ctx, `SELECT name FROM users WHERE id = $1`, claims.UserID).Scan(&userName); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fetch user")
+		return
+	}
+
+	// Get user's org membership
+	var orgID string
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT om.org_id FROM org_members om WHERE om.user_id = $1 ORDER BY om.created_at LIMIT 1`,
+		claims.UserID,
+	).Scan(&orgID)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "user is not a member of any org")
+		return
+	}
+
+	// Check if home folder already exists
+	var existingID string
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT id FROM folders WHERE owner_id = $1 AND is_home = true LIMIT 1`,
+		claims.UserID,
+	).Scan(&existingID)
+	if err == nil {
+		// Home folder already exists
+		writeJSON(w, http.StatusOK, map[string]string{"id": existingID})
+		return
+	}
+	if err != pgx.ErrNoRows {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	// Create the home folder
+	if err := createHomeFolder(ctx, s.db.Pool, orgID, claims.UserID, userName); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create home folder")
+		return
+	}
+
+	// Fetch the newly created folder ID
+	var folderID string
+	s.db.Pool.QueryRow(ctx,
+		`SELECT id FROM folders WHERE owner_id = $1 AND is_home = true LIMIT 1`,
+		claims.UserID,
+	).Scan(&folderID)
+
+	writeJSON(w, http.StatusCreated, map[string]string{"id": folderID})
 }
 
 func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
