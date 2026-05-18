@@ -20,6 +20,37 @@ const PRESETS: Record<ResourceType, Record<string, string[]>> = {
   dashboard: { none: [], viewer: ['view'], editor: ['view', 'edit'], admin: ['view', 'edit', 'share', 'delete'] },
 }
 
+const ACTION_DESCRIPTIONS: Record<ResourceType, Record<string, string>> = {
+  connector: {
+    view:   'See connector name, type, host, and status',
+    use:    'Run SQL queries against the connector',
+    edit:   'Edit connector configuration and credentials',
+    share:  'Share this connector with others',
+    delete: 'Delete the connector permanently',
+  },
+  notebook: {
+    view:   'See notebook content and cell outputs',
+    run:    'Execute notebook cells',
+    edit:   'Edit cell contents and notebook settings',
+    share:  'Share this notebook with others',
+    delete: 'Delete the notebook permanently',
+  },
+  dashboard: {
+    view:   'View the dashboard',
+    edit:   'Edit dashboard layout and content',
+    share:  'Share this dashboard with others',
+    delete: 'Delete the dashboard permanently',
+  },
+  folder: {
+    view:   'See the folder and its contents',
+    create: 'Create sub-folders and items',
+    edit:   'Rename or restructure the folder',
+    manage: 'Manage folder-level permissions',
+    share:  'Share this folder with others',
+    delete: 'Delete the folder permanently',
+  },
+}
+
 interface AclEntry {
   id: string
   subject_type: 'user' | 'group'
@@ -118,6 +149,12 @@ export function PermissionsPanel({
     enabled: !!parentFolderId,
   })
 
+  const { data: parentFolder } = useQuery<{ id: string; name: string }>({
+    queryKey: ['folder', parentFolderId],
+    queryFn: () => api.get<{ id: string; name: string }>(`/api/v1/folders/${parentFolderId}`),
+    enabled: !!parentFolderId,
+  })
+
   // ── Mutation ──
 
   const saveAcl = useMutation({
@@ -192,7 +229,14 @@ export function PermissionsPanel({
 
   // ── Derived ──
 
-  const inheritedCount = parentAcl?.length ?? 0
+  const allEntries = [
+    ...(aclData ?? []).map((e: AclEntry) => ({ ...e, inherited: false })),
+    ...(parentAcl ?? []).map((e: AclEntry) => ({ ...e, inherited: true })),
+  ]
+
+  const directEntries = allEntries.filter((e) => !e.inherited)
+  const inheritedEntries = allEntries.filter((e) => e.inherited)
+  const inheritedCount = inheritedEntries.length
 
   const typeBadgeColors: Record<ResourceType, string> = {
     folder: '#e8f0fe',
@@ -244,13 +288,51 @@ export function PermissionsPanel({
             <div style={styles.loading}>Loading…</div>
           ) : (
             <>
-              {/* ACL entries */}
-              {(draft ?? aclData ?? []).length === 0 && (
+              {/* Inherited permissions */}
+              {inheritedEntries.length > 0 && (
+                <div style={styles.inheritedSection}>
+                  <div style={styles.inheritedHeader}>
+                    <span style={styles.inheritedTitle}>
+                      Inherited from {parentFolder?.name ?? 'parent folder'}
+                    </span>
+                    <span style={styles.readOnlyBadge}>read only</span>
+                  </div>
+                  {inheritedEntries.map((entry, idx) => (
+                    <div key={`inherited-${entry.id || idx}`} style={{ ...styles.entryRow, opacity: 0.6 }}>
+                      <Avatar name={subjectName(entry)} type={entry.subject_type} />
+                      <div style={styles.entryInfo}>
+                        <span style={styles.entryName}>{subjectName(entry)}</span>
+                        <span style={styles.entryType}>{entry.subject_type}</span>
+                      </div>
+                      <div style={styles.checkboxGroup}>
+                        {actions.map((action) => (
+                          <label key={action} style={styles.checkLabel} title={ACTION_DESCRIPTIONS[resourceType][action]}>
+                            <input
+                              type="checkbox"
+                              checked={entry.actions.includes(action)}
+                              disabled
+                              style={{ marginRight: 3 }}
+                            />
+                            <span style={styles.actionLabel}>{action}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Direct permissions */}
+              {directEntries.length === 0 && !aclLoading && inheritedEntries.length === 0 && (
                 <div style={styles.emptyText}>No permissions set. Add one below.</div>
               )}
 
-              {(draft ?? aclData ?? []).map((entry, idx) => (
-                <div key={entry.id || idx} style={styles.entryRow}>
+              {directEntries.length === 0 && inheritedEntries.length > 0 && (
+                <div style={styles.emptyText}>No direct permissions. Only inherited permissions above.</div>
+              )}
+
+              {directEntries.map((entry, idx) => (
+                <div key={entry.id || `direct-${idx}`} style={styles.entryRow}>
                   <Avatar name={subjectName(entry)} type={entry.subject_type} />
                   <div style={styles.entryInfo}>
                     <span style={styles.entryName}>{subjectName(entry)}</span>
@@ -258,7 +340,7 @@ export function PermissionsPanel({
                   </div>
                   <div style={styles.checkboxGroup}>
                     {actions.map((action) => (
-                      <label key={action} style={styles.checkLabel} title={action}>
+                      <label key={action} style={styles.checkLabel} title={ACTION_DESCRIPTIONS[resourceType][action]}>
                         <input
                           type="checkbox"
                           checked={entry.actions.includes(action)}
@@ -349,7 +431,7 @@ export function PermissionsPanel({
 
                 <div style={styles.checkboxGroup}>
                   {actions.map((action) => (
-                    <label key={action} style={styles.checkLabel} title={action}>
+                    <label key={action} style={styles.checkLabel} title={ACTION_DESCRIPTIONS[resourceType][action]}>
                       <input
                         type="checkbox"
                         checked={newActions.includes(action)}
@@ -637,5 +719,35 @@ entryInfo: {
     cursor: 'pointer',
     flexShrink: 0,
     transition: 'opacity 0.15s',
+  },
+  inheritedSection: {
+    marginBottom: 8,
+    borderRadius: 6,
+    border: '1px solid var(--nav-border, #e8e8e8)',
+    overflow: 'hidden',
+  },
+  inheritedHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '8px 12px',
+    background: 'var(--bg-secondary)',
+    borderBottom: '1px solid var(--nav-border, #e8e8e8)',
+  },
+  inheritedTitle: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: 'var(--text-secondary)',
+  },
+  readOnlyBadge: {
+    fontSize: 10,
+    fontWeight: 600,
+    padding: '2px 6px',
+    borderRadius: 3,
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
+    color: 'var(--text-muted)',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.04em',
   },
 }
