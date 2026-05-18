@@ -200,6 +200,7 @@ export function OrgSettingsPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
 
   const createProvider = useMutation({
     mutationFn: (body: Record<string, unknown>) => api.post('/api/v1/sso/providers', body),
@@ -207,6 +208,8 @@ export function OrgSettingsPage() {
       qc.invalidateQueries({ queryKey: ['sso', 'providers'] })
       setShowAddForm(false)
       setFormError(null)
+      setSaveSuccess('Provider created successfully')
+      setTimeout(() => setSaveSuccess(null), 3000)
     },
     onError: (e: unknown) => setFormError(String(e)),
   })
@@ -218,6 +221,8 @@ export function OrgSettingsPage() {
       qc.invalidateQueries({ queryKey: ['sso', 'providers'] })
       setEditingId(null)
       setFormError(null)
+      setSaveSuccess('Provider updated successfully')
+      setTimeout(() => setSaveSuccess(null), 3000)
     },
     onError: (e: unknown) => setFormError(String(e)),
   })
@@ -227,6 +232,8 @@ export function OrgSettingsPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sso', 'providers'] })
       setConfirmDeleteId(null)
+      setSaveSuccess('Provider deleted')
+      setTimeout(() => setSaveSuccess(null), 3000)
     },
   })
 
@@ -279,6 +286,12 @@ export function OrgSettingsPage() {
     <AppShell>
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '32px 40px' }}>
         <SectionHeader title="Organization Settings" />
+
+        {saveSuccess && (
+          <div style={{ background: '#d4edda', color: '#155724', padding: '10px 16px', borderRadius: 4, marginBottom: 20, fontSize: 13 }}>
+            {saveSuccess}
+          </div>
+        )}
 
         {/* ── A. Platform Providers ── */}
         <section style={styles.section}>
