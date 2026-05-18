@@ -280,7 +280,7 @@ export function PermissionsPanel({
         <div style={styles.header}>
           <div style={styles.headerLeft}>
             <span style={styles.resourceName}>{resourceName}</span>
-            <span style={{ ...styles.typeBadge, background: typeBadgeColors[resourceType], color: resourceType === 'connector' ? 'var(--text-badge-on-light)' : undefined }}>
+            <span style={{ ...styles.typeBadge, background: typeBadgeColors[resourceType] }} data-type={resourceType}>
               {resourceType}
             </span>
           </div>
@@ -561,7 +561,6 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '2px 7px',
     letterSpacing: '0.05em',
     textTransform: 'uppercase' as const,
-    color: 'var(--text-primary)',
     flexShrink: 0,
   },
   closeBtn: {
