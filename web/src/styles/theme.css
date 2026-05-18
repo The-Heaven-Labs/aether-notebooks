@@ -50,6 +50,7 @@
   --code-number: #c0392b;
   --button-primary-bg: #6a5e96;
   --button-primary-text: #ffffff;
+  --text-badge-on-light: #111;
   --cm-editor-bg: #f7f7f7;
   --accent-bg: var(--accent-light);
   --accent-border: var(--accent);
@@ -99,6 +100,7 @@
   --code-number: #ff8a8a;
   --button-primary-bg: #b8a9d8;
   --button-primary-text: #111111;
+  --text-badge-on-light: #111;
   --cm-editor-bg: #1e1e1e;
 }
 

@@ -280,7 +280,7 @@ export function PermissionsPanel({
         <div style={styles.header}>
           <div style={styles.headerLeft}>
             <span style={styles.resourceName}>{resourceName}</span>
-            <span style={{ ...styles.typeBadge, background: typeBadgeColors[resourceType], color: resourceType === 'connector' ? '#111' : undefined }}>
+            <span style={{ ...styles.typeBadge, background: typeBadgeColors[resourceType], color: resourceType === 'connector' ? 'var(--text-badge-on-light)' : undefined }}>
               {resourceType}
             </span>
           </div>
@@ -569,14 +569,14 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     cursor: 'pointer',
     fontSize: 22,
-    color: 'var(--text-muted, #888)',
+    color: 'var(--text-muted)',
     lineHeight: 1,
     padding: '0 4px',
     flexShrink: 0,
   },
   inheritNote: {
     fontSize: 12,
-    color: 'var(--text-muted, #888)',
+    color: 'var(--text-muted)',
     padding: '8px 20px',
     borderBottom: '1px solid var(--border)',
     background: 'var(--bg-secondary)',
@@ -584,7 +584,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   readOnlyNote: {
     fontSize: 12,
-    color: 'var(--text-muted, #888)',
+    color: 'var(--text-muted)',
     padding: '8px 20px',
     background: 'var(--bg-secondary)',
     borderBottom: '1px solid var(--border)',
@@ -601,12 +601,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   loading: {
     fontSize: 13,
-    color: 'var(--text-muted, #888)',
+    color: 'var(--text-muted)',
     padding: '8px 0',
   },
   emptyText: {
     fontSize: 13,
-    color: 'var(--text-muted, #888)',
+    color: 'var(--text-muted)',
     padding: '8px 0',
   },
   errorText: {
@@ -716,7 +716,7 @@ entryInfo: {
     border: 'none',
     cursor: 'pointer',
     fontSize: 18,
-    color: 'var(--text-muted, #888)',
+    color: 'var(--text-muted)',
     lineHeight: 1,
     padding: '0 4px',
     flexShrink: 0,
