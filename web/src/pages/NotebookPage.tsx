@@ -704,14 +704,17 @@ export function NotebookPage() {
       )}
 
       {historyCell && (
-        <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 300, display: 'flex', flexDirection: 'column', zIndex: 200 }}>
-          <HistoryPanel
-            versions={historyVersions}
-            currentSource={localCells.find((c) => c.id === historyCell)?.source ?? ''}
-            onRestore={(vId) => restoreVersion(historyCell, vId)}
-            onClose={() => setHistoryCell(null)}
-          />
-        </div>
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 199 }} onClick={() => setHistoryCell(null)} />
+          <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 300, overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
+            <HistoryPanel
+              versions={historyVersions}
+              currentSource={localCells.find((c) => c.id === historyCell)?.source ?? ''}
+              onRestore={(vId) => restoreVersion(historyCell, vId)}
+              onClose={() => setHistoryCell(null)}
+            />
+          </div>
+        </>
       )}
     </div>
     </AppShell>

@@ -537,7 +537,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: '16px 20px',
-    borderBottom: '1px solid var(--nav-border, #e8e8e8)',
+    borderBottom: '1px solid var(--border)',
     flexShrink: 0,
   },
   headerLeft: {
@@ -578,7 +578,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     color: 'var(--text-muted, #888)',
     padding: '8px 20px',
-    borderBottom: '1px solid var(--nav-border, #e8e8e8)',
+    borderBottom: '1px solid var(--border)',
     background: 'var(--bg-secondary)',
     flexShrink: 0,
   },
@@ -587,7 +587,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-muted, #888)',
     padding: '8px 20px',
     background: 'var(--bg-secondary)',
-    borderBottom: '1px solid var(--nav-border, #e8e8e8)',
+    borderBottom: '1px solid var(--border)',
     fontStyle: 'italic',
   },
   body: {
@@ -622,7 +622,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 10,
     padding: '10px 0',
-    borderBottom: '1px solid var(--nav-border, #e8e8e8)',
+    borderBottom: '1px solid var(--border)',
   },
   expandedRow: {
     display: 'flex',
@@ -669,7 +669,8 @@ entryInfo: {
   },
   entryType: {
     fontSize: 10,
-    color: 'var(--text-muted, #888)',
+    fontWeight: 600,
+    color: 'var(--text-secondary)',
     textTransform: 'capitalize' as const,
   },
   checkboxGroup: {
@@ -747,7 +748,7 @@ entryInfo: {
     color: 'var(--text-secondary)',
   },
   divider: {
-    borderTop: '1px solid var(--nav-border, #e8e8e8)',
+    borderTop: '1px solid var(--border)',
     margin: '8px 0',
   },
   addRow: {
@@ -783,7 +784,7 @@ entryInfo: {
   inheritedSection: {
     marginBottom: 8,
     borderRadius: 6,
-    border: '1px solid var(--nav-border, #e8e8e8)',
+    border: '1px solid var(--border)',
     overflow: 'hidden',
   },
   inheritedHeader: {
@@ -792,7 +793,7 @@ entryInfo: {
     justifyContent: 'space-between',
     padding: '8px 12px',
     background: 'var(--bg-secondary)',
-    borderBottom: '1px solid var(--nav-border, #e8e8e8)',
+    borderBottom: '1px solid var(--border)',
   },
   inheritedTitle: {
     fontSize: 12,
