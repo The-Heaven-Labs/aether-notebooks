@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/models"
 )
 
@@ -10,6 +11,18 @@ type aclEntryInput struct {
 	SubjectType string   `json:"subject_type"`
 	SubjectID   string   `json:"subject_id"`
 	Actions     []string `json:"actions"`
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) handleGetACL(w http.ResponseWriter, r *http.Request) {
@@ -88,6 +101,27 @@ func (s *Server) handlePutACL(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(ctx)
 
+	// Capture existing entries before deleting (for audit comparison)
+	existingRows, err := tx.Query(ctx,
+		`SELECT subject_type, subject_id, actions FROM acl_entries
+         WHERE resource_type = $1 AND resource_id = $2::uuid AND org_id = $3`,
+		resourceType, resourceID, claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to query existing ACL")
+		return
+	}
+	var oldEntries []models.ACLEntry
+	for existingRows.Next() {
+		var e models.ACLEntry
+		if err := existingRows.Scan(&e.SubjectType, &e.SubjectID, &e.Actions); err != nil {
+			existingRows.Close()
+			writeError(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		oldEntries = append(oldEntries, e)
+	}
+	existingRows.Close()
+
 	// Delete all existing entries for this resource in this org
 	if _, err := tx.Exec(ctx,
 		`DELETE FROM acl_entries WHERE resource_type = $1 AND resource_id = $2::uuid AND org_id = $3`,
@@ -117,9 +151,81 @@ func (s *Server) handlePutACL(w http.ResponseWriter, r *http.Request) {
 		inserted = append(inserted, entry)
 	}
 
+	// Compare old vs new to build audit events
+	var auditEvents []audit.Entry
+	for _, old := range oldEntries {
+		found := false
+		for _, new := range inserted {
+			if old.SubjectType == new.SubjectType && old.SubjectID == new.SubjectID {
+				found = true
+				if !slicesEqual(old.Actions, new.Actions) {
+					auditEvents = append(auditEvents, audit.Entry{
+						OrgID:        claims.OrgID,
+						UserID:       claims.UserID,
+						Action:       "acl.updated",
+						ResourceType: resourceType,
+						ResourceID:   resourceID,
+						Metadata: map[string]any{
+							"subject_type": new.SubjectType,
+							"subject_id":   new.SubjectID,
+							"old_actions":  old.Actions,
+							"new_actions":  new.Actions,
+						},
+					})
+				}
+				break
+			}
+		}
+		if !found {
+			auditEvents = append(auditEvents, audit.Entry{
+				OrgID:        claims.OrgID,
+				UserID:       claims.UserID,
+				Action:       "acl.revoked",
+				ResourceType: resourceType,
+				ResourceID:   resourceID,
+				Metadata: map[string]any{
+					"subject_type": old.SubjectType,
+					"subject_id":   old.SubjectID,
+					"actions":      old.Actions,
+				},
+			})
+		}
+	}
+	for _, new := range inserted {
+		found := false
+		for _, old := range oldEntries {
+			if old.SubjectType == new.SubjectType && old.SubjectID == new.SubjectID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			auditEvents = append(auditEvents, audit.Entry{
+				OrgID:        claims.OrgID,
+				UserID:       claims.UserID,
+				Action:       "acl.granted",
+				ResourceType: resourceType,
+				ResourceID:   resourceID,
+				Metadata: map[string]any{
+					"subject_type": new.SubjectType,
+					"subject_id":   new.SubjectID,
+					"actions":      new.Actions,
+				},
+			})
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "commit failed")
 		return
+	}
+
+	// Log audit events after successful commit
+	for _, e := range auditEvents {
+		if err := s.audit.Log(ctx, e); err != nil {
+			// Log error but don't fail the request since ACL was updated successfully
+			continue
+		}
 	}
 
 	if inserted == nil {

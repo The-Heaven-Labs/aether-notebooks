@@ -9,19 +9,18 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// resourceTable maps resource types to their DB table names.
-var resourceTable = map[string]string{
-	"notebook":  "notebooks",
-	"connector": "connectors",
-	"dashboard": "dashboards",
-}
-
 type aclCandidate struct {
 	subjectType string
 	subjectID   string
 	actions     []string
 	specificity int // -1 = on resource itself, 0 = immediate parent folder, 1+ = ancestor
 	subjectRank int // user=0, group=1, org_role=2
+}
+
+var resourceTable = map[string]string{
+	"notebook":  "notebooks",
+	"connector": "connectors",
+	"dashboard": "dashboards",
 }
 
 // checkPermission returns true if userID has action on resourceType/resourceID within orgID.
