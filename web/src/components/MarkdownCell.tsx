@@ -257,9 +257,9 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
   const [blocks, setBlocks] = useState(() => splitIntoBlocks(cell.source))
   const [focusedIdx, setFocusedIdx] = useState<number | null>(null)
   const [uploading, setUploading] = useState(false)
+  const [selectedBlockIdx, setSelectedBlockIdx] = useState<number | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const activeBlockIdxRef = useRef<number | null>(null)
   const blocksRef = useRef(blocks)
   const onSaveRef = useRef(onSave)
   useEffect(() => { blocksRef.current = blocks }, [blocks])
@@ -361,15 +361,14 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    const idx = activeBlockIdxRef.current
+    const idx = selectedBlockIdx
     if (!file || idx === null) return
-    e.target.value = ''
-    activeBlockIdxRef.current = null
+    setSelectedBlockIdx(null)
     setUploading(true)
     try { insertImageTag(await uploadImage(file), idx) }
     catch (err) { console.error('Image upload failed:', err) }
     finally { setUploading(false) }
-  }, [uploadImage, insertImageTag])
+  }, [uploadImage, insertImageTag, selectedBlockIdx])
 
   return (
     <div style={styles.mdContainer}>
@@ -395,7 +394,7 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
             disabled={uploading}
             onMouseDown={e => e.preventDefault()}
             onClick={() => {
-              activeBlockIdxRef.current = focusedIdx
+              setSelectedBlockIdx(focusedIdx)
               fileInputRef.current?.click()
             }}
             title="Upload image"
