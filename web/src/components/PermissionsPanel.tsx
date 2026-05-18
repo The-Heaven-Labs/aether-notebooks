@@ -123,6 +123,16 @@ export function PermissionsPanel({
   const [newSubjectKey, setNewSubjectKey] = useState<string>('') // "{type}:{id}"
   const [newActions, setNewActions] = useState<string[]>([])
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set())
+
+  function toggleExpand(idx: number) {
+    setExpandedRows(prev => {
+      const next = new Set(prev)
+      if (next.has(idx)) next.delete(idx)
+      else next.add(idx)
+      return next
+    })
+  }
 
   // ── Queries ──
 
@@ -192,6 +202,11 @@ export function PermissionsPanel({
       return { ...e, actions }
     })
     setDraft(updated)
+    setExpandedRows(prev => {
+      const next = new Set(prev)
+      next.add(entryIndex)
+      return next
+    })
   }
 
   function handleRemoveEntry(entryIndex: number) {
@@ -206,6 +221,11 @@ export function PermissionsPanel({
       i === entryIndex ? { ...e, actions } : e
     )
     setDraft(updated)
+    setExpandedRows(prev => {
+      const next = new Set(prev)
+      next.add(entryIndex)
+      return next
+    })
   }
 
   function handleAddEntry() {
@@ -237,6 +257,8 @@ export function PermissionsPanel({
   const directEntries = allEntries.filter((e) => !e.inherited)
   const inheritedEntries = allEntries.filter((e) => e.inherited)
   const inheritedCount = inheritedEntries.length
+
+  const visibleEntries = draft !== null ? draft : directEntries
 
   const typeBadgeColors: Record<ResourceType, string> = {
     folder: '#e8f0fe',
@@ -331,47 +353,73 @@ export function PermissionsPanel({
                 <div style={styles.emptyText}>No direct permissions. Only inherited permissions above.</div>
               )}
 
-              {directEntries.map((entry, idx) => (
-                <div key={entry.id || `direct-${idx}`} style={styles.entryRow}>
+              {visibleEntries.map((entry, idx) => (
+                <div
+                  key={entry.id || `direct-${idx}`}
+                  style={styles.entryRow}
+                  onMouseEnter={() => toggleExpand(idx)}
+                  onMouseLeave={() => toggleExpand(idx)}
+                  onFocus={() => toggleExpand(idx)}
+                  tabIndex={0}
+                >
                   <Avatar name={subjectName(entry)} type={entry.subject_type} />
                   <div style={styles.entryInfo}>
                     <span style={styles.entryName}>{subjectName(entry)}</span>
-                    <span style={styles.entryType}>{entry.subject_type}</span>
-                  </div>
-                  <div style={styles.checkboxGroup}>
-                    {actions.map((action) => (
-                      <label key={action} style={styles.checkLabel} title={ACTION_DESCRIPTIONS[resourceType][action]}>
-                        <input
-                          type="checkbox"
-                          checked={entry.actions.includes(action)}
-                          onChange={() => canEdit && handleToggleAction(idx, action)}
-                          disabled={!canEdit}
-                          style={{ marginRight: 3 }}
-                        />
-                        <span style={styles.actionLabel}>{action}</span>
-                      </label>
-                    ))}
-                  </div>
-                  <div style={styles.presetRow}>
-                    {(['none', 'viewer', 'editor', 'admin'] as const).map((preset) => (
-                      <button
-                        key={preset}
-                        onClick={() => canEdit && applyPreset(idx, preset)}
-                        disabled={!canEdit}
-                        style={{ ...styles.presetBtn, opacity: canEdit ? 1 : 0.4 }}
-                      >
-                        {preset}
-                      </button>
-                    ))}
+                    <span style={styles.typeBadge}>{entry.subject_type}</span>
                   </div>
                   <button
                     style={{ ...styles.removeBtn, opacity: canEdit ? 1 : 0.4 }}
                     title="Remove"
                     disabled={!canEdit}
-                    onClick={() => canEdit && handleRemoveEntry(idx)}
+                    onClick={() => {
+                      if (canEdit) handleRemoveEntry(idx)
+                    }}
                   >
                     ×
                   </button>
+                  {expandedRows.has(idx) && (
+                    <div style={styles.expandedRow}>
+                      <div style={styles.presetRow}>
+                        {(['none', 'viewer', 'editor', 'admin'] as const).map((preset) => {
+                          const presetActions = PRESETS[resourceType][preset]
+                          const isSelected = presetActions.length === entry.actions.length &&
+                            presetActions.every(a => entry.actions.includes(a))
+                          return (
+                            <button
+                              key={preset}
+onClick={() => {
+                                if (canEdit) applyPreset(idx, preset)
+                              }}
+                              disabled={!canEdit}
+                              style={{
+                                ...styles.presetBtn,
+                                ...(isSelected ? styles.presetBtnSelected : {}),
+                                opacity: canEdit ? 1 : 0.4,
+                              }}
+                            >
+                              {preset}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      <div style={styles.checkboxGroup}>
+                        {actions.map((action) => (
+                          <label key={action} style={styles.checkLabel} title={ACTION_DESCRIPTIONS[resourceType][action]}>
+                            <input
+                              type="checkbox"
+                              checked={entry.actions.includes(action)}
+                              onChange={() => {
+                                if (canEdit) handleToggleAction(idx, action)
+                              }}
+                              disabled={!canEdit}
+                              style={{ marginRight: 3 }}
+                            />
+                            <span style={styles.actionLabel}>{action}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
 
@@ -476,7 +524,7 @@ const styles: Record<string, React.CSSProperties> = {
     right: 0,
     top: 0,
     height: '100vh',
-    width: 420,
+    width: 480,
     background: 'var(--bg-card)',
     boxShadow: '-4px 0 24px rgba(0,0,0,0.12)',
     zIndex: 1501,
@@ -513,7 +561,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '2px 7px',
     letterSpacing: '0.05em',
     textTransform: 'uppercase' as const,
-    color: 'var(--text-secondary)',
+    color: 'var(--text-primary)',
     flexShrink: 0,
   },
   closeBtn: {
@@ -576,6 +624,18 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '10px 0',
     borderBottom: '1px solid var(--nav-border, #e8e8e8)',
   },
+  expandedRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    width: '100%',
+    marginTop: 4,
+  },
+  presetBtnSelected: {
+    background: 'var(--accent)',
+    color: '#fff',
+    border: '1px solid var(--accent)',
+  },
   avatar: {
     width: 32,
     height: 32,
@@ -594,8 +654,8 @@ entryInfo: {
     display: 'flex',
     flexDirection: 'column',
     gap: 1,
-    minWidth: 80,
-    maxWidth: 100,
+    minWidth: 120,
+    maxWidth: 160,
     flexShrink: 0,
   },
   entryName: {
@@ -605,7 +665,7 @@ entryInfo: {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
-    maxWidth: 90,
+    maxWidth: 150,
   },
   entryType: {
     fontSize: 10,
@@ -648,7 +708,7 @@ entryInfo: {
   },
   actionLabel: {
     fontSize: 11,
-    color: 'var(--text-secondary)',
+    color: 'var(--text-primary)',
   },
   removeBtn: {
     background: 'none',
