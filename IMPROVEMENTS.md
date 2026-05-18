@@ -1,18 +1,22 @@
+## Implemented / In Progress
+
+- [x] If I'm a viewer and access one notebook, I can start editing it but when leaving I receive insufficient permissions. If the user has no permission, cells should be read-only. Same goes for the permissions menu, I can start editing and even save permissions for a notebook I have no permission, but it should be blocked from even starting
+- [x] In the groups page, there is no feedback if I do not fill the new group name and press the create button. Same trying to add someone to a group but not selecting a person
+- [x] On the settings page, pressing the Save button has no feedback
+- [x] In the connectors page, if I click test it will update the status, but clicking again shows no feedback and nothing changes
+- [x] When logging-in, if the user does not authenticate with SSO, the password field should have focus
+
+## Not Yet Implemented
+
 - [ ] The settings page flashes quickly on load then turns all white
 - [ ] Contrast of the left menu items on the light theme is not great with the dark lateral menu background color
-- [ ] In the groups page, there is no feedback if I do not fill the new group name and press the create button. Same trying to add someone to a group but not selecting a person
-- [ ] On the settings page, pressing the Save button has no feedback
 - [ ] Contrast of the cursor in code cells in the dark theme is not good. Cursor is dark on the dark background.
 - [ ] Code cells should have a default LIMIT 1000 config that is applied to queries. It should be visible in the UI and have a Unlimited option
 - [ ] Contrast for color highlighting of code cells in the dark theme are not great, I think it misses saturation for the colors, look too much like white
-- [ ] In the connectors page, if I click test it will update the status, but clicking again shows no feedback and nothing changes
 - [ ] Add a default No Access role to go along admin/editor/viewer
 - [ ] In the audit view, actions made to notebooks show the notebook name and the first part of the id. While a tooltip appears showing the full id, there is no way to copy the full id.
 - [ ] Adding an user to a group seem to not create an audit action same for removing
 - [ ] Removing an user from a group does not ask for confirmation on the UI
 - [ ] When creating an account, I can either create a new org or paste an invite token. But it seems there is no way to generate such token?
-- [ ] If I'm a viewer and access one notebook, I can start editing it but when leaving I receive insufficient permissions. If the user has no permission, cells should be read-only. Same goes for the permissions menu, I can start editing and even save permissions for a notebook I have no permission, but it should be blocked from even starting
 - [ ] The navigation for items created should have a "home" and from this home, every user home folder should be in it, and thus it should be possible for users to (given they have access) navigate other users' folders
-- [ ] When logging-in, if the user does not authenticate with SSO, the password field should have focus
 - [ ] Currently there is no way to change permissions on who can access/use/etc on a connector.
-- [ ]
