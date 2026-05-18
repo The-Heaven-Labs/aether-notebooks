@@ -172,6 +172,8 @@ func (s *Server) routes() {
 
 	// Home route - lists all home folders for the current org
 	s.mux.Handle("GET /api/v1/home", authMW(http.HandlerFunc(s.handleListHomeFolders)))
+	// Ensure home folder exists for current user (creates if missing)
+	s.mux.Handle("POST /api/v1/users/me/home", authMW(http.HandlerFunc(s.handleEnsureHomeFolder)))
 
 	// Folder routes
 	s.mux.Handle("GET /api/v1/folders", authMW(http.HandlerFunc(s.handleListRootContents)))

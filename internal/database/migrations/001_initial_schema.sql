@@ -76,7 +76,7 @@ CREATE TABLE cells (
     connector_id UUID REFERENCES connectors(id) ON DELETE SET NULL,
     source TEXT NOT NULL DEFAULT '',
     outputs JSONB NOT NULL DEFAULT '[]',
-    limit INTEGER,
+    "limit" INTEGER,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (notebook_id, position)

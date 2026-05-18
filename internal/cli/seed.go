@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -76,57 +77,75 @@ This creates:
 				}
 			}
 
+			// Trigger home folder creation for all test users
+			for _, u := range testUsers {
+				// Login to trigger auto-home-folder creation on login
+				token, err := loginAs(baseURL, u.email, u.password)
+				if err != nil {
+					fmt.Printf("  ⚠ Could not login as %s to create home folder: %v\n", u.email, err)
+					continue
+				}
+				userCl := &Client{BaseURL: baseURL, Token: token}
+				// Call the ensure home endpoint to create home folder if missing
+				var homeResp map[string]string
+				if err := userCl.PostJSON("/api/v1/users/me/home", nil, &homeResp); err != nil {
+					fmt.Printf("  ⚠ Could not ensure home folder for %s: %v\n", u.email, err)
+				} else {
+					fmt.Printf("  ✓ %s home folder ready\n", u.name)
+				}
+			}
+
 			// Create folders
 			fmt.Println("\nCreating folders...")
 
-			// Root folders
-			sharedProjectsID, err := createFolder(cl, orgID, "", "Shared Projects")
+			// Root folders (use getOrCreateFolder to handle idempotency)
+			sharedProjectsID, err := getOrCreateFolder(cl, orgID, "", "Shared Projects")
 			if err != nil {
 				return fmt.Errorf("failed to create Shared Projects: %w", err)
 			}
 			fmt.Printf("  ✓ Shared Projects (%s)\n", sharedProjectsID)
 
-			archivedID, err := createFolder(cl, orgID, "", "Archive")
+			archivedID, err := getOrCreateFolder(cl, orgID, "", "Archive")
 			if err != nil {
 				return fmt.Errorf("failed to create Archive: %w", err)
 			}
 			fmt.Printf("  ✓ Archive (%s)\n", archivedID)
 
 			// Shared Projects subfolders
-			analyticsID, err := createFolder(cl, orgID, sharedProjectsID, "Analytics")
+			analyticsID, err := getOrCreateFolder(cl, orgID, sharedProjectsID, "Analytics")
 			if err != nil {
 				return fmt.Errorf("failed to create Analytics: %w", err)
 			}
 			fmt.Printf("  ✓ Analytics (%s)\n", analyticsID)
 
-			engineeringID, err := createFolder(cl, orgID, sharedProjectsID, "Engineering")
+			engineeringID, err := getOrCreateFolder(cl, orgID, sharedProjectsID, "Engineering")
 			if err != nil {
 				return fmt.Errorf("failed to create Engineering: %w", err)
 			}
 			fmt.Printf("  ✓ Engineering (%s)\n", engineeringID)
 
 			// Analytics subfolders
-			reportsID, err := createFolder(cl, orgID, analyticsID, "Reports")
+			reportsID, err := getOrCreateFolder(cl, orgID, analyticsID, "Reports")
 			if err != nil {
 				return fmt.Errorf("failed to create Reports: %w", err)
 			}
 			fmt.Printf("  ✓ Reports (%s)\n", reportsID)
 
-			exportsID, err := createFolder(cl, orgID, analyticsID, "Exports")
+			exportsID, err := getOrCreateFolder(cl, orgID, analyticsID, "Exports")
 			if err != nil {
 				return fmt.Errorf("failed to create Exports: %w", err)
 			}
 			fmt.Printf("  ✓ Exports (%s)\n", exportsID)
 
 			// Engineering subfolders
-			apiDocsID, err := createFolder(cl, orgID, engineeringID, "API Docs")
+			apiDocsID, err := getOrCreateFolder(cl, orgID, engineeringID, "API Docs")
 			if err != nil {
 				return fmt.Errorf("failed to create API Docs: %w", err)
 			}
 			fmt.Printf("  ✓ API Docs (%s)\n", apiDocsID)
 
 			// Archive subfolders
-			oldReportsID, err := createFolder(cl, orgID, archivedID, "2024 Reports")
+			oldReportsID, err := getOrCreateFolder(cl, orgID, archivedID, "2024 Reports")
 			if err != nil {
 				return fmt.Errorf("failed to create 2024 Reports: %w", err)
 			}
@@ -136,7 +155,7 @@ This creates:
 			homeID, err := getHomeFolder(cl)
 			if err != nil {
 				fmt.Printf("  ⚠ No home folder found, creating... ")
-				homeID, err = createFolder(cl, orgID, "", me.Name+"'s Home")
+				homeID, err = getOrCreateFolder(cl, orgID, "", me.Name+"'s Home")
 				if err != nil {
 					return fmt.Errorf("failed to create home folder: %w", err)
 				}
@@ -145,26 +164,26 @@ This creates:
 			}
 			fmt.Printf("  ✓ Home folder (%s)\n", homeID)
 
-			// Home folder subfolders
-			mlResearchID, err := createFolder(cl, orgID, homeID, "ML Research")
+			// Home folder subfolders (use getOrCreateFolder to handle idempotency)
+			mlResearchID, err := getOrCreateFolder(cl, orgID, homeID, "ML Research")
 			if err != nil {
 				return fmt.Errorf("failed to create ML Research: %w", err)
 			}
 			fmt.Printf("  ✓ ML Research (%s)\n", mlResearchID)
 
-			experimentsID, err := createFolder(cl, orgID, mlResearchID, "Experiments")
+			experimentsID, err := getOrCreateFolder(cl, orgID, mlResearchID, "Experiments")
 			if err != nil {
 				return fmt.Errorf("failed to create Experiments: %w", err)
 			}
 			fmt.Printf("  ✓ Experiments (%s)\n", experimentsID)
 
-			datasetsID, err := createFolder(cl, orgID, mlResearchID, "Datasets")
+			datasetsID, err := getOrCreateFolder(cl, orgID, mlResearchID, "Datasets")
 			if err != nil {
 				return fmt.Errorf("failed to create Datasets: %w", err)
 			}
 			fmt.Printf("  ✓ Datasets (%s)\n", datasetsID)
 
-			scratchID, err := createFolder(cl, orgID, homeID, "Scratch")
+			scratchID, err := getOrCreateFolder(cl, orgID, homeID, "Scratch")
 			if err != nil {
 				return fmt.Errorf("failed to create Scratch: %w", err)
 			}
@@ -262,15 +281,13 @@ This creates:
 			// Set up ACLs using special "everyone" org_role (no group needed - auto-includes all org members)
 			fmt.Println("\nSetting up permissions...")
 
-			// Give "everyone" org_role view on Shared Projects and Archive
-			for _, folderID := range []string{sharedProjectsID, archivedID} {
-				if err := setACL(cl, "folder", folderID, []aclEntryInput{
-					{SubjectType: "org_role", SubjectID: "everyone", Actions: []string{"view", "create"}},
-				}); err != nil {
-					fmt.Printf("  ⚠ Failed to set Everyone ACL on folder: %v\n", err)
-				} else {
-					fmt.Printf("  ✓ Everyone can view+create in %s\n", folderID[:8]+"...")
-				}
+			// Give "everyone" org_role view+create on Archive only (Shared Projects gets it later with Data Team)
+			if err := setACL(cl, "folder", archivedID, []aclEntryInput{
+				{SubjectType: "org_role", SubjectID: "everyone", Actions: []string{"view", "create"}},
+			}); err != nil {
+				fmt.Printf("  ⚠ Failed to set Everyone ACL on Archive: %v\n", err)
+			} else {
+				fmt.Printf("  ✓ Everyone can view+create in Archive\n")
 			}
 
 			// Give "everyone" view on all notebooks
@@ -331,13 +348,14 @@ This creates:
 			// Set up ACLs
 			fmt.Println("\nSetting up permissions...")
 
-			// Give Data Team view+create on Shared Projects
+			// Give Data Team AND everyone org_role view+create on Shared Projects
 			if err := setACL(cl, "folder", sharedProjectsID, []aclEntryInput{
 				{SubjectType: "group", SubjectID: dataTeamID, Actions: []string{"view", "create"}},
+				{SubjectType: "org_role", SubjectID: "everyone", Actions: []string{"view", "create"}},
 			}); err != nil {
 				fmt.Printf("  ⚠ Failed to set ACL on Shared Projects: %v\n", err)
 			} else {
-				fmt.Printf("  ✓ Data Team can view+create in Shared Projects\n")
+				fmt.Printf("  ✓ Data Team + Everyone can view+create in Shared Projects\n")
 			}
 
 			// Give Data Team view+edit+run on Sales Dashboard
@@ -349,18 +367,9 @@ This creates:
 				fmt.Printf("  ✓ Data Team can view+edit+run Sales Dashboard\n")
 			}
 
-			// Give Everyone group view on Shared Projects and Archive
-			if everyoneID != "" {
-				for _, folderID := range []string{sharedProjectsID, archivedID} {
-					if err := setACL(cl, "folder", folderID, []aclEntryInput{
-						{SubjectType: "group", SubjectID: everyoneID, Actions: []string{"view"}},
-					}); err != nil {
-						fmt.Printf("  ⚠ Failed to set Everyone ACL on folder: %v\n", err)
-					} else {
-						fmt.Printf("  ✓ Everyone can view %s\n", folderID[:8]+"...")
-					}
-				}
-			}
+			// Note: Everyone group ACLs above use org_role:everyone which auto-includes
+			// all org members without needing group membership. The group-based ACLs at
+			// lines 370-380 were removed because they overwrote the org_role ACLs.
 
 			fmt.Println("\n✓ Seed data created successfully!")
 			fmt.Println("\nFolder hierarchy:")
@@ -482,6 +491,60 @@ func createFolder(cl *Client, orgID, parentID, name string) (string, error) {
 		return "", err
 	}
 	return resp["id"].(string), nil
+}
+
+func getOrCreateFolder(cl *Client, orgID, parentID, name string) (string, error) {
+	body := map[string]interface{}{"name": name}
+	if parentID != "" {
+		body["parent_id"] = parentID
+	}
+
+	var resp map[string]interface{}
+	postErr := cl.PostJSON("/api/v1/folders", body, &resp)
+	if postErr == nil {
+		return resp["id"].(string), nil
+	}
+
+	if !strings.Contains(postErr.Error(), "500") || !strings.Contains(postErr.Error(), "failed to create folder") {
+		return "", postErr
+	}
+
+	var listResp struct {
+		Folders []struct {
+			ID        string `json:"id"`
+			Name      string `json:"name"`
+			ParentID  string `json:"parent_id"`
+			CreatedAt string `json:"created_at"`
+		} `json:"folders"`
+	}
+	var listErr error
+	if parentID == "" {
+		listErr = cl.GetJSON("/api/v1/folders", &listResp)
+	} else {
+		listErr = cl.GetJSON("/api/v1/folders/"+parentID, &listResp)
+	}
+	if listErr != nil {
+		return "", fmt.Errorf("folder %q already exists but cannot list folders: %v", name, listErr)
+	}
+
+	var bestMatch struct {
+		ID        string
+		CreatedAt string
+	}
+	found := false
+	for _, f := range listResp.Folders {
+		if f.Name == name && f.ParentID == parentID {
+			if !found || f.CreatedAt > bestMatch.CreatedAt {
+				bestMatch.ID = f.ID
+				bestMatch.CreatedAt = f.CreatedAt
+				found = true
+			}
+		}
+	}
+	if found {
+		return bestMatch.ID, nil
+	}
+	return "", fmt.Errorf("folder %q already exists but cannot find ID", name)
 }
 
 func createNotebook(cl *Client, orgID, title, description, folderID string) (string, error) {

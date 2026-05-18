@@ -14,10 +14,10 @@ const ACTION_LABELS: Record<ResourceType, string[]> = {
 }
 
 const PRESETS: Record<ResourceType, Record<string, string[]>> = {
-  folder:    { none: [], no_access: [], viewer: ['view'], editor: ['view', 'create', 'edit'], admin: ['view', 'create', 'edit', 'manage', 'delete'] },
-  notebook:  { none: [], no_access: [], viewer: ['view'], editor: ['view', 'run', 'edit'], admin: ['view', 'run', 'edit', 'share', 'delete'] },
-  connector: { none: [], no_access: [], viewer: ['view'], editor: ['view', 'use', 'edit'], admin: ['view', 'use', 'edit', 'share', 'delete'] },
-  dashboard: { none: [], no_access: [], viewer: ['view'], editor: ['view', 'edit'], admin: ['view', 'edit', 'share', 'delete'] },
+  folder:    { none: [], viewer: ['view'], editor: ['view', 'create', 'edit'], admin: ['view', 'create', 'edit', 'manage', 'delete'] },
+  notebook:  { none: [], viewer: ['view'], editor: ['view', 'run', 'edit'], admin: ['view', 'run', 'edit', 'share', 'delete'] },
+  connector: { none: [], viewer: ['view'], editor: ['view', 'use', 'edit'], admin: ['view', 'use', 'edit', 'share', 'delete'] },
+  dashboard: { none: [], viewer: ['view'], editor: ['view', 'edit'], admin: ['view', 'edit', 'share', 'delete'] },
 }
 
 interface AclEntry {
@@ -162,7 +162,7 @@ export function PermissionsPanel({
     setDraft(current.filter((_, i) => i !== entryIndex))
   }
 
-  function applyPreset(entryIndex: number, preset: 'none' | 'no_access' | 'viewer' | 'editor' | 'admin') {
+  function applyPreset(entryIndex: number, preset: 'none' | 'viewer' | 'editor' | 'admin') {
     const current = draft ?? aclData ?? []
     const actions = PRESETS[resourceType][preset]
     const updated = current.map((e, i) =>
@@ -271,7 +271,7 @@ export function PermissionsPanel({
                     ))}
                   </div>
                   <div style={styles.presetRow}>
-                    {(['none', 'no_access', 'viewer', 'editor', 'admin'] as const).map((preset) => (
+                    {(['none', 'viewer', 'editor', 'admin'] as const).map((preset) => (
                       <button
                         key={preset}
                         onClick={() => canEdit && applyPreset(idx, preset)}
@@ -462,6 +462,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   body: {
     flex: 1,
+    overflowX: 'hidden',
     overflowY: 'auto',
     padding: '16px 20px',
     display: 'flex',
@@ -507,11 +508,12 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     letterSpacing: '0.02em',
   },
-  entryInfo: {
+entryInfo: {
     display: 'flex',
     flexDirection: 'column',
     gap: 1,
     minWidth: 80,
+    maxWidth: 100,
     flexShrink: 0,
   },
   entryName: {
@@ -533,12 +535,15 @@ const styles: Record<string, React.CSSProperties> = {
     flexWrap: 'wrap' as const,
     gap: 4,
     flex: 1,
+    maxWidth: '100%',
+    overflow: 'hidden',
   },
   presetRow: {
     display: 'flex',
     gap: 4,
     marginTop: 4,
     flexShrink: 0,
+    overflowX: 'auto',
   },
   presetBtn: {
     padding: '2px 8px',

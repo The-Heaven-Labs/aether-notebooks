@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -88,16 +89,25 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		var orgID string
 		slug := slugify(req.OrgName)
 		err = tx.QueryRow(ctx,
-			`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
-			req.OrgName, slug,
+			`SELECT id FROM orgs WHERE slug = $1`,
+			slug,
 		).Scan(&orgID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create organization")
+		if err == pgx.ErrNoRows {
+			err = tx.QueryRow(ctx,
+				`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
+				req.OrgName, slug,
+			).Scan(&orgID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to create organization")
+				return
+			}
+		} else if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to check organization")
 			return
 		}
 
 		_, err = tx.Exec(ctx,
-			`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin')`,
+			`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin') ON CONFLICT DO NOTHING`,
 			orgID, userID,
 		)
 		if err != nil {
@@ -284,6 +294,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusForbidden, "no organization membership found")
 		return
+	}
+
+	// Auto-create home folder if it doesn't exist for this org membership
+	var folderID string
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT id FROM folders WHERE owner_id = $1 AND is_home = true LIMIT 1`,
+		userID,
+	).Scan(&folderID); err == pgx.ErrNoRows {
+		if err := createHomeFolder(ctx, s.db.Pool, orgID, userID, name); err != nil {
+			// Non-fatal: log but don't block login
+			log.Printf("warning: failed to create home folder for user %s: %v", userID, err)
+		}
 	}
 
 	token, err := s.jwt.IssueFull(userID, orgID, role, isPlatformAdmin)
