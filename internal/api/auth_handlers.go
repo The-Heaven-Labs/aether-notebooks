@@ -136,7 +136,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 			userID, orgID,
 		)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to add member to everyone group")
+			writeError(w, http.StatusInternalServerError, "failed to add user to everyone group")
 			return
 		}
 
@@ -214,14 +214,14 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 					autoJoinTx.Rollback(ctx)
 					fmt.Printf("auto-join createHomeFolder failed: %v\n", hmErr)
 					autoJoinOrgID = ""
-				} else if _, egErr := autoJoinTx.Exec(ctx,
+				} else if _, gErr := autoJoinTx.Exec(ctx,
 					`INSERT INTO group_members (group_id, user_id)
 					 SELECT g.id, $1 FROM groups g WHERE g.org_id = $2 AND g.name = 'Everyone'
 					 ON CONFLICT (group_id, user_id) DO NOTHING`,
 					userID, autoJoinOrgID,
-				); egErr != nil {
+				); gErr != nil {
 					autoJoinTx.Rollback(ctx)
-					fmt.Printf("auto-join group_members insert failed: %v\n", egErr)
+					fmt.Printf("auto-join group_members insert failed: %v\n", gErr)
 					autoJoinOrgID = ""
 				} else if commitErr := autoJoinTx.Commit(ctx); commitErr != nil {
 					fmt.Printf("auto-join commit failed: %v\n", commitErr)
