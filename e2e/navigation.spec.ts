@@ -12,6 +12,63 @@ test.describe('Navigation', () => {
     await loginAsNewUser(page)
   })
 
+  test('sidebar contrast is sufficient in light theme', async ({ page }) => {
+    // Use light theme
+    await page.emulateMedia({ colorScheme: 'light' })
+    await page.goto('/')
+    await loginAsNewUser(page)
+
+    // Expand sidebar to see labels
+    await page.getByTitle('Expand sidebar').click()
+
+    // Get all non-active nav items (should be muted)
+    const navItems = page.locator('nav a')
+    const count = await navItems.count()
+
+    for (let i = 0; i < count; i++) {
+      const item = navItems.nth(i)
+      const isActive = await item.getAttribute('aria-current')
+      if (isActive) continue // Skip active item (uses accent color)
+
+      const color = await item.evaluate((el) => {
+        return window.getComputedStyle(el).color
+      })
+      const bgColor = await item.evaluate((el) => {
+        return window.getComputedStyle(el).backgroundColor
+      })
+
+      // Parse RGB values
+      const parseRgb = (rgb: string) => {
+        const match = rgb.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
+        if (!match) return [0, 0, 0]
+        return [parseInt(match[1]), parseInt(match[2]), parseInt(match[3])]
+      }
+
+      const textRgb = parseRgb(color)
+      const bgRgb = parseRgb(bgColor)
+
+      // Calculate relative luminance
+      const luminance = (rgb: number[]) => {
+        const [r, g, b] = rgb.map((v) => {
+          const normalized = v / 255
+          return normalized <= 0.03928 ? normalized / 12.92 : Math.pow((normalized + 0.055) / 1.055, 2.4)
+        })
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+      }
+
+      const textLum = luminance(textRgb)
+      const bgLum = luminance(bgRgb)
+
+      const contrastRatio =
+        textLum > bgLum
+          ? (bgLum + 0.05) / (textLum + 0.05)
+          : (textLum + 0.05) / (bgLum + 0.05)
+
+      // WCAG AA requires 4.5:1 for normal text
+      expect(contrastRatio).toBeGreaterThan(4.5)
+    }
+  })
+
   test('sidebar renders and collapses', async ({ page }) => {
     await expect(page.getByTitle('Notebooks')).toBeVisible()
     await expect(page.getByTitle('Dashboards')).toBeVisible()
