@@ -125,6 +125,21 @@ body {
   font-size: 14px;
 }
 
+.cm-editor,
+.cm-editor .cm-content {
+  caret-color: var(--text-primary) !important;
+}
+
+:root {
+  --text-primary: #111;
+  caret-color: var(--text-primary);
+}
+
+[data-theme="dark"] {
+  --text-primary: #e8e8e8;
+  caret-color: var(--text-primary);
+}
+
 a {
   color: var(--accent);
   text-decoration: none;
@@ -273,15 +288,13 @@ h1:hover a, h2:hover a, h3:hover a, h4:hover a, h5:hover a, h6:hover a {
   opacity: 1;
 }
 
-/* ── CodeMirror cursor color ───────────────────────────────────────────── */
-/* Light mode: dark cursor (default is fine, but make explicit) */
-.cm-editor .cm-cursor,
-.cm-editor .cm-dropCursor {
-  border-left-color: #333 !important;
-}
+/* ── CodeMirror cursor/caret color ──────────────────────────────────────── */
+/* border-left is set via CodeMirror theme extension in Cell.tsx
+   caret-color is set globally above via .cm-editor */
 
 /* Dark mode: light cursor so it's visible on dark background */
 [data-theme="dark"] .cm-editor .cm-cursor,
 [data-theme="dark"] .cm-editor .cm-dropCursor {
   border-left-color: #f0f0f0 !important;
+  caret-color: #f0f0f0 !important;
 }
