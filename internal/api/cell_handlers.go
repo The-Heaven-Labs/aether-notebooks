@@ -250,13 +250,13 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(cellParams, &cell.Parameters)
 
 	if req.Source != nil {
-		s.upsertCellVersion(ctx, cellID, *req.Source)
+		s.upsertCellVersion(ctx, cellID, *req.Source, claims.UserID)
 	}
 
 	// Log cell type change in version history and audit trail
 	if req.Type != nil {
 		typeNote := fmt.Sprintf("[type changed to %s]", *req.Type)
-		_ = s.upsertCellVersion(ctx, cellID, typeNote)
+		_ = s.upsertCellVersion(ctx, cellID, typeNote, claims.UserID)
 		s.audit.Log(ctx, audit.Entry{
 			OrgID: claims.OrgID, UserID: claims.UserID,
 			Action: "cell.type_change", ResourceType: "cell", ResourceID: cellID,
