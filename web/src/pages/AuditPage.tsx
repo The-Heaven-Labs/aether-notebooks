@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Copy } from 'lucide-react'
 import { api } from '../api/client'
 import type { AuditEntry } from '../types'
 import { AppShell } from '../components/AppShell'
@@ -129,7 +130,7 @@ function ResourceCell({ entry }: { entry: AuditEntry }) {
     const parent = resource_parent_name || null
     const id = resource_id ? truncateId(resource_id) : null
     if (parent && id) {
-      return <span>{parent} <span style={styles.resourceSub}>› {id}</span> <button type="button" onClick={handleCopy} style={styles.copyBtn} title={`Copy ID: ${resource_id}`}>📋</button></span>
+      return <span>{parent} <span style={styles.resourceSub}>› {id}</span> <button type="button" onClick={handleCopy} style={styles.copyBtn} title={`Copy ID: ${resource_id}`}><Copy size={12} /></button></span>
     }
     if (parent) return <span>{parent}</span>
     return <span style={styles.mono}>{id || '—'}</span>
@@ -144,7 +145,7 @@ function ResourceCell({ entry }: { entry: AuditEntry }) {
         </span>
       )}
       {resource_id && (
-        <button type="button" onClick={handleCopy} style={styles.copyBtn} title={`Copy full ID: ${resource_id}`}>📋</button>
+        <button type="button" onClick={handleCopy} style={styles.copyBtn} title={`Copy full ID: ${resource_id}`}><Copy size={12} /></button>
       )}
     </span>
   )
@@ -267,9 +268,11 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'none',
     border: 'none',
     cursor: 'pointer',
-    fontSize: 11,
-    padding: '0 2px',
+    padding: '2px',
     verticalAlign: 'middle',
     opacity: 0.5,
+    display: 'inline-flex',
+    alignItems: 'center',
+    color: 'var(--text-muted)',
   },
 }
