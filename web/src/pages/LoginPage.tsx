@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
@@ -16,6 +16,7 @@ interface SSOProvider {
 export function LoginPage() {
   const { login, register, loginWithToken } = useAuth()
   const navigate = useNavigate()
+  const passwordRef = useRef<HTMLInputElement>(null)
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [step, setStep] = useState<LoginStep>('email')
   const [email, setEmail] = useState('')
@@ -26,6 +27,13 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [probing, setProbing] = useState(false)
   const [ssoProviders, setSsoProviders] = useState<SSOProvider[]>([])
+
+  // Focus password field when it becomes visible and no SSO providers
+  useEffect(() => {
+    if (showPasswordStep && ssoProviders.length === 0) {
+      passwordRef.current?.focus()
+    }
+  }, [showPasswordStep, ssoProviders.length])
 
   // Handle OIDC callback: pick up ?token= from the query string
   useEffect(() => {
@@ -256,13 +264,13 @@ export function LoginPage() {
               <div style={styles.field}>
                 <label style={styles.label}>Password</label>
                 <input
+                  ref={passwordRef}
                   style={styles.input}
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   placeholder="••••••••"
-                  autoFocus={ssoProviders.length === 0}
                 />
               </div>
               {error && <ErrorBanner message={error} onDismiss={() => setError('')} />}
