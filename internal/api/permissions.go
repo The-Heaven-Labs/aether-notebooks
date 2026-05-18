@@ -9,32 +9,18 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// orgRoleActions maps org roles to their default allowed actions (fallback when no ACL exists).
-var orgRoleActions = map[string]map[string]bool{
-	"viewer": {"view": true},
-	"editor": {"view": true, "run": true, "edit": true, "use": true},
-	"admin":  {"view": true, "run": true, "edit": true, "use": true, "create": true, "share": true, "delete": true, "manage": true},
-}
-
-// everyoneRoleActions is the default actions for the special "everyone" pseudo-role.
-// Using this as a subject grants the action to every member of the org.
-var everyoneRoleActions = map[string]bool{
-	"view": true, "create": true,
-}
-
-// resourceTable maps resource types to their DB table names.
-var resourceTable = map[string]string{
-	"notebook":  "notebooks",
-	"connector": "connectors",
-	"dashboard": "dashboards",
-}
-
 type aclCandidate struct {
 	subjectType string
 	subjectID   string
 	actions     []string
 	specificity int // -1 = on resource itself, 0 = immediate parent folder, 1+ = ancestor
 	subjectRank int // user=0, group=1, org_role=2
+}
+
+var resourceTable = map[string]string{
+	"notebook":  "notebooks",
+	"connector": "connectors",
+	"dashboard": "dashboards",
 }
 
 // checkPermission returns true if userID has action on resourceType/resourceID within orgID.
@@ -69,6 +55,11 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 		groupIDs = append(groupIDs, gid)
 	}
 	everyoneRows.Close()
+
+	// Org admins always have full access to everything
+	if orgRole == "admin" {
+		return true, nil
+	}
 
 	// 2. ACL entries directly on the resource (specificity = -1)
 	var candidates []aclCandidate
@@ -190,14 +181,7 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 		return false, nil
 	}
 
-	// 9. No ACL matched user → use org role defaults
-	if actions, ok := orgRoleActions[orgRole]; ok {
-		return actions[action], nil
-	}
-	// Special "everyone" pseudo-role fallback
-	if everyoneRoleActions[action] {
-		return true, nil
-	}
+	// 9. No ACL matched user → DENY (deny-by-default)
 	return false, nil
 }
 
