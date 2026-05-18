@@ -367,18 +367,18 @@ export function PermissionsPanel({
                     <span style={styles.entryName}>{subjectName(entry)}</span>
                     <span style={styles.typeBadge}>{entry.subject_type}</span>
                   </div>
-                  <button
-                    style={{ ...styles.removeBtn, opacity: canEdit ? 1 : 0.4 }}
-                    title="Remove"
-                    disabled={!canEdit}
-                    onClick={() => {
-                      if (canEdit) handleRemoveEntry(idx)
-                    }}
-                  >
-                    ×
-                  </button>
                   {expandedRows.has(idx) && (
                     <div style={styles.expandedRow}>
+                      <button
+                        style={{ ...styles.removeBtn, opacity: canEdit ? 1 : 0.4 }}
+                        title="Remove"
+                        disabled={!canEdit}
+                        onClick={() => {
+                          if (canEdit) handleRemoveEntry(idx)
+                        }}
+                      >
+                        ×
+                      </button>
                       <div style={styles.presetRow}>
                         {(['none', 'viewer', 'editor', 'admin'] as const).map((preset) => {
                           const presetActions = PRESETS[resourceType][preset]
