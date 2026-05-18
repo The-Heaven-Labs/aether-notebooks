@@ -280,7 +280,7 @@ export function PermissionsPanel({
         <div style={styles.header}>
           <div style={styles.headerLeft}>
             <span style={styles.resourceName}>{resourceName}</span>
-            <span style={{ ...styles.typeBadge, background: typeBadgeColors[resourceType] }} data-type={resourceType}>
+            <span style={{ ...styles.typeBadge, background: typeBadgeColors[resourceType] }} data-type={resourceType} className="permissions-panel-type-badge">
               {resourceType}
             </span>
           </div>
