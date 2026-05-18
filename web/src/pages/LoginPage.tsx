@@ -29,6 +29,8 @@ export function LoginPage() {
   const [ssoProviders, setSsoProviders] = useState<SSOProvider[]>([])
 
   // Focus password field when it becomes visible and no SSO providers
+  const showPasswordStep = mode === 'register' || step === 'password' || step === 'sso_and_password'
+
   useEffect(() => {
     if (showPasswordStep && ssoProviders.length === 0) {
       passwordRef.current?.focus()
@@ -116,7 +118,6 @@ export function LoginPage() {
 
   // In register mode, skip the email step entirely
   const showEmailStep = mode === 'login' && step === 'email'
-  const showPasswordStep = mode === 'register' || step === 'password' || step === 'sso_and_password'
   const showSSOProviders = mode === 'login' && step === 'sso_and_password' && ssoProviders.length > 0
 
   return (

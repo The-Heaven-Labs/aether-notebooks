@@ -301,7 +301,13 @@ export function HomePage() {
   const createFolder = useMutation({
     mutationFn: (name: string) =>
       api.post<Folder>('/api/v1/folders', { name, ...(folderID ? { parent_id: folderID } : {}) }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['folder-contents'] }); setCreating(null); setNewName('') },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['folder-contents'] })
+      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
+      qc.invalidateQueries({ queryKey: ['folder-home'] })
+      setCreating(null)
+      setNewName('')
+    },
     onError: (e: Error) => setError(e.message),
   })
 
@@ -321,27 +327,45 @@ export function HomePage() {
 
   const deleteFolder = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/folders/${id}?force=true`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['folder-contents'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['folder-contents'] })
+      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
+      qc.invalidateQueries({ queryKey: ['folder-home'] })
+    },
     onError: (e: Error) => setError(e.message),
   })
 
   const deleteNotebook = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/notebooks/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['folder-contents'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['folder-contents'] })
+      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
+      qc.invalidateQueries({ queryKey: ['folder-home'] })
+    },
     onError: (e: Error) => setError(e.message),
   })
 
   const renameFolder = useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) =>
       api.put(`/api/v1/folders/${id}`, { name }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['folder-contents'] }); setRenaming(null) },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['folder-contents'] })
+      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
+      qc.invalidateQueries({ queryKey: ['folder-home'] })
+      setRenaming(null)
+    },
     onError: (e: Error) => setError(e.message),
   })
 
   const renameNotebook = useMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) =>
       api.put(`/api/v1/notebooks/${id}`, { title }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['folder-contents'] }); setRenaming(null) },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['folder-contents'] })
+      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
+      qc.invalidateQueries({ queryKey: ['folder-home'] })
+      setRenaming(null)
+    },
     onError: (e: Error) => setError(e.message),
   })
 
@@ -357,7 +381,12 @@ export function HomePage() {
         return api.put(`/api/v1/dashboards/${id}`, { folder_id: destFolderID })
       }
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['folder-contents'] }); setMoving(null) },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['folder-contents'] })
+      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
+      qc.invalidateQueries({ queryKey: ['folder-home'] })
+      setMoving(null)
+    },
     onError: (e: Error) => setError(e.message),
   })
 
@@ -827,7 +856,7 @@ const ms: Record<string, React.CSSProperties> = {
   pickerCrumb: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', padding: '8px 16px', borderBottom: '1px solid var(--border-light)', fontSize: 12, gap: 2 },
   crumbLink: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)', fontSize: 12, fontWeight: 500, padding: '2px 4px', borderRadius: 3 },
   folderList: { flex: 1, overflowY: 'auto', padding: '8px 0', minHeight: 120, maxHeight: 300 },
-  folderRow: { display: 'flex', alignItems: 'center', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '9px 16px', textAlign: 'left', borderBottom: '1px solid var(--border-light)' },
+  folderRow: { display: 'flex', alignItems: 'center', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '9px 16px', textAlign: 'left', borderBottom: '1px solid var(--border-light)', color: 'var(--text-primary)' },
   drillArrow: { color: 'var(--text-muted)', fontSize: 16, marginLeft: 4 },
   loadingText: { padding: '16px', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center' },
   emptyText: { padding: '16px', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center' },

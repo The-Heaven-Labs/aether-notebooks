@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { ChevronLeft, ChevronRight, Menu } from 'lucide-react'
+import { ChevronLeft, Menu } from 'lucide-react'
 
 interface TwoPanelLayoutProps {
   leftPanel: React.ReactNode

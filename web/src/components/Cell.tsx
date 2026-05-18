@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard } from 'lucide-react'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
@@ -107,7 +107,6 @@ interface Props {
   cell: Cell
   connectors: Connector[]
   notebookId: string
-  readOnly?: boolean
   onRun: (cellId: string) => void
   onDelete: (cellId: string) => void
   onSourceChange: (cellId: string, source: string) => void
@@ -253,7 +252,6 @@ export function Cell({
   cell,
   connectors,
   notebookId,
-  readOnly = false,
   onRun,
   onDelete,
   onSourceChange,

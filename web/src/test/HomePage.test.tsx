@@ -86,7 +86,8 @@ describe('Create folder (T2.2)', () => {
     await userEvent.type(input, 'My New Folder')
     fireEvent.click(screen.getByText('Create'))
     await waitFor(() => expect(capturedBody).not.toBeNull())
-    expect(capturedBody?.name).toBe('My New Folder')
+    const captured = capturedBody!
+    expect(captured.name).toBe('My New Folder')
   })
 })
 
@@ -215,7 +216,8 @@ describe('Rename (T2.7)', () => {
     await userEvent.type(input, 'New Name')
     fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() => expect(capturedBody).not.toBeNull())
-    expect(capturedBody?.name).toBe('New Name')
+    const captured = capturedBody!
+    expect(captured.name).toBe('New Name')
   })
 })
 
@@ -245,7 +247,8 @@ describe('New Dashboard (T2.9)', () => {
     await userEvent.type(input, 'Sales Dashboard')
     fireEvent.click(screen.getByText('Create'))
     await waitFor(() => expect(capturedBody).not.toBeNull())
-    expect(capturedBody?.title).toBe('Sales Dashboard')
+    const captured = capturedBody!
+    expect(captured.title).toBe('Sales Dashboard')
   })
 })
 

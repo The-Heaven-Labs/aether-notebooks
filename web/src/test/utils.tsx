@@ -36,6 +36,7 @@ export function renderWithProviders(
     login: async () => {},
     register: async () => null,
     logout: () => {},
+    loginWithToken: (_token: string) => {},
   }
 
   function Wrapper({ children }: { children: ReactNode }) {
