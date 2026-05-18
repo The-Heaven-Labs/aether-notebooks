@@ -275,9 +275,14 @@ export function OrgSettingsPage() {
 
   const updateSettings = useMutation({
     mutationFn: (body: SSOSettings) => api.put('/api/v1/sso/settings', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sso', 'settings'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sso', 'settings'] })
+      setSaveSuccess('Settings saved')
+      setTimeout(() => setSaveSuccess(null), 3000)
+    },
     onError: (e: unknown) => {
       console.error('Failed to update settings:', e)
+      setFormError(String(e))
     },
   })
 

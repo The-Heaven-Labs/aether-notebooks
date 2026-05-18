@@ -5,18 +5,17 @@
 - [x] On the settings page, pressing the Save button has no feedback
 - [x] In the connectors page, if I click test it will update the status, but clicking again shows no feedback and nothing changes
 - [x] When logging-in, if the user does not authenticate with SSO, the password field should have focus
+- [x] The settings page flashes quickly on load then turns all white
+- [x] Contrast of the left menu items on the light theme with the dark lateral menu background color
+- [x] Contrast of the cursor in code cells in the dark theme is not good. Cursor is dark on the dark background.
+- [x] Code cells should have a default LIMIT 1000 config that is applied to queries. It should be visible in the UI and have a Unlimited option
+- [x] Contrast for color highlighting of code cells in the dark theme are not great, I think it misses saturation for the colors, look too much like white
+- [x] Add a default No Access role to go along admin/editor/viewer
+- [x] In the audit view, actions made to notebooks show the notebook name and the first part of the id. While a tooltip appears showing the full id, there is no way to copy the full id.
+- [x] Adding an user to a group does not create an audit action same for removing
+- [x] Removing an user from a group does not ask for confirmation on the UI
+- [x] When creating an account, I can either create a new org or paste an invite token. But it seems there is no way to generate such token?
+- [x] The navigation for items created should have a "home" and from this home, every user home folder should be in it, and thus it should be possible for users to (given they have access) navigate other users' folders
+- [x] Currently there is no way to change permissions on who can access/use/etc on a connector.
 
 ## Not Yet Implemented
-
-- [ ] The settings page flashes quickly on load then turns all white
-- [ ] Contrast of the left menu items on the light theme is not great with the dark lateral menu background color
-- [ ] Contrast of the cursor in code cells in the dark theme is not good. Cursor is dark on the dark background.
-- [ ] Code cells should have a default LIMIT 1000 config that is applied to queries. It should be visible in the UI and have a Unlimited option
-- [ ] Contrast for color highlighting of code cells in the dark theme are not great, I think it misses saturation for the colors, look too much like white
-- [ ] Add a default No Access role to go along admin/editor/viewer
-- [ ] In the audit view, actions made to notebooks show the notebook name and the first part of the id. While a tooltip appears showing the full id, there is no way to copy the full id.
-- [ ] Adding an user to a group seem to not create an audit action same for removing
-- [ ] Removing an user from a group does not ask for confirmation on the UI
-- [ ] When creating an account, I can either create a new org or paste an invite token. But it seems there is no way to generate such token?
-- [ ] The navigation for items created should have a "home" and from this home, every user home folder should be in it, and thus it should be possible for users to (given they have access) navigate other users' folders
-- [ ] Currently there is no way to change permissions on who can access/use/etc on a connector.

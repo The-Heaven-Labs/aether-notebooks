@@ -12,7 +12,7 @@ export function AppShell({ children, noPadding }: Props) {
       <TopBar />
       <div style={styles.body}>
         <Sidebar />
-        <main style={{ ...styles.main, ...(noPadding ? { padding: 0, overflow: 'hidden' } : {}) }}>{children}</main>
+        <main style={{ ...styles.main, background: 'var(--bg-primary)', ...(noPadding ? { padding: 0, overflow: 'hidden' } : {}) }}>{children}</main>
       </div>
     </div>
   )

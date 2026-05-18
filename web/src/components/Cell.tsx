@@ -354,10 +354,10 @@ export function Cell({
               }}
               onClick={(e) => e.stopPropagation()}
             >
+              <option value="null">Unlimited</option>
               <option value="1000">LIMIT 1000</option>
               <option value="100">LIMIT 100</option>
               <option value="10">LIMIT 10</option>
-              <option value="null">Unlimited</option>
             </select>
           )}
 

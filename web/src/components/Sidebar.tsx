@@ -38,7 +38,7 @@ export function Sidebar() {
               justifyContent: expanded ? 'flex-start' : 'center',
               padding: expanded ? '8px 12px' : '8px 0',
               background: isActive ? 'var(--accent-light)' : 'transparent',
-              color: isActive ? 'var(--accent)' : 'var(--text-secondary)',
+              color: isActive ? 'var(--accent)' : 'var(--nav-text-muted)',
             })}
           >
             <span style={styles.icon}>{icon}</span>

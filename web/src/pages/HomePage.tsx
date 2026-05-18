@@ -80,7 +80,10 @@ function ContextMenu({ target, onRename, onMove, onPermissions, onDelete, onEdit
         onClose()
       }}>Move to…</button>
       {target.type === 'connector' ? (
-        <button style={ms.item} onClick={() => { onEdit(target.type, target.id); onClose() }}>Edit</button>
+        <>
+          <button style={ms.item} onClick={() => { onEdit(target.type, target.id); onClose() }}>Edit</button>
+          <button style={ms.item} onClick={() => { onPermissions({ type: target.type, id: target.id, name: target.name }); onClose() }}>Permissions</button>
+        </>
       ) : (
         <button style={ms.item} onClick={() => {
           onPermissions({ type: target.type, id: target.id, name: target.name })
