@@ -9,6 +9,7 @@ import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
 import { FormCard } from '../components/FormCard'
 import { StatusBadge } from '../components/StatusBadge'
 import { SectionHeader } from '../components/SectionHeader'
+import { PermissionsPanel } from '../components/PermissionsPanel'
 
 type ConnectorType = 'postgres' | 'clickhouse'
 
@@ -44,6 +45,7 @@ export function ConnectorsPage() {
   const [formTest, setFormTest] = useState<{ ok: boolean; error?: string } | null>(null)
   const [formTesting, setFormTesting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [permissionsTarget, setPermissionsTarget] = useState<{ type: 'connector'; id: string; name: string } | null>(null)
 
   const { data: connectors = [] } = useQuery({
     queryKey: ['connectors'],
@@ -365,6 +367,7 @@ export function ConnectorsPage() {
                       is_default: c.is_default ?? false,
                     })
                   }}>Edit</button>
+                  <button type="button" style={styles.actionBtn} onClick={() => setPermissionsTarget({ type: 'connector', id: c.id, name: c.name })}>Permissions</button>
                   {!c.is_default && (
                     <button type="button"
                       style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4,
@@ -392,6 +395,14 @@ export function ConnectorsPage() {
             </tr>
           )}
         </StyledTable>
+        {permissionsTarget && (
+          <PermissionsPanel
+            resourceType="connector"
+            resourceId={permissionsTarget.id}
+            resourceName={permissionsTarget.name}
+            onClose={() => setPermissionsTarget(null)}
+          />
+        )}
       </div>
     </AppShell>
   )
