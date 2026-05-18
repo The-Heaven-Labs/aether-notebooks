@@ -49,6 +49,8 @@ export interface CellVersion {
   cell_id: string
   source: string
   created_at: string
+  created_by: string
+  user?: { id: string; name: string; email: string }
 }
 
 export interface Output {
