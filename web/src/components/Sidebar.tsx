@@ -1,10 +1,9 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { Home, LayoutDashboard, Database, Users, UsersRound, ClipboardList, ChevronLeft, ChevronRight, User } from 'lucide-react'
+import { Home, LayoutDashboard, Database, Users, UsersRound, ClipboardList, ChevronLeft, ChevronRight } from 'lucide-react'
 
 const NAV_ITEMS = [
   { to: '/',           title: 'Files',       icon: <Home size={16} /> },
-  { to: '/home',       title: 'Home',        icon: <User size={16} /> },
   { to: '/dashboards', title: 'Dashboards',  icon: <LayoutDashboard size={16} /> },
   { to: '/connectors', title: 'Connectors',  icon: <Database size={16} /> },
   { to: '/members',    title: 'Members',     icon: <Users size={16} /> },

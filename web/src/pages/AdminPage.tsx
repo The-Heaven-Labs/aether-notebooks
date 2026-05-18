@@ -457,7 +457,7 @@ export function AdminPage() {
       setUsers(prev => prev.map(u => u.id === id ? { ...u, is_platform_admin: isPlatformAdmin } : u))
       setTogglingUserId(null)
     },
-    onError: (_err, { id }) => {
+    onError: (_err, { id: _id }) => {
       setTogglingUserId(null)
     },
   })

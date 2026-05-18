@@ -28,7 +28,7 @@ export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps
   const [allFolders, setAllFolders] = useState<Folder[]>([])
 
   // Fetch root folders + home folders separately
-  const { data: homeData } = useQuery({
+  const { data: homeData } = useQuery<Array<{ id: string; name: string; is_home: boolean; owner_id: string; sub_folders?: Folder[] }>>({
     queryKey: ['folder-home'],
     queryFn: () => api.get('/api/v1/home'),
   })
@@ -36,10 +36,10 @@ export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps
   // Initialize allFolders from root folders + all home folders + their sub_folders
   useEffect(() => {
     const rootFolders = folderData?.folders ?? []
-    const homeFolders: Folder[] = (homeData ?? []).map((h: any) => ({
+    const homeFolders: Folder[] = (homeData ?? []).map((h) => ({
       id: h.id,
       org_id: '',
-      parent_id: null as string | null,
+      parent_id: undefined,
       name: h.name,
       is_home: h.is_home,
       owner_id: h.owner_id,
