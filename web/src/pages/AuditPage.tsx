@@ -120,7 +120,8 @@ function truncateId(id: string) {
 function ResourceCell({ entry }: { entry: AuditEntry }) {
   const { resource_type, resource_id, resource_name, resource_parent_name } = entry
 
-  const handleCopy = () => {
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation()
     if (resource_id) navigator.clipboard.writeText(resource_id)
   }
 
@@ -128,15 +129,25 @@ function ResourceCell({ entry }: { entry: AuditEntry }) {
     const parent = resource_parent_name || null
     const id = resource_id ? truncateId(resource_id) : null
     if (parent && id) {
-      return <span>{parent} <span style={styles.resourceSub}>› {id}</span> <button type="button" onClick={handleCopy} style={styles.copyBtn} title="Copy ID">📋</button></span>
+      return <span>{parent} <span style={styles.resourceSub}>› {id}</span> <button type="button" onClick={handleCopy} style={styles.copyBtn} title={`Copy ID: ${resource_id}`}>📋</button></span>
     }
     if (parent) return <span>{parent}</span>
     return <span style={styles.mono}>{id || '—'}</span>
   }
 
-  if (resource_name) return <span>{resource_name}</span>
-  if (resource_id) return <span style={styles.mono}>{truncateId(resource_id)} <button type="button" onClick={handleCopy} style={styles.copyBtn} title="Copy ID">📋</button></span>
-  return <span>—</span>
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      {resource_name && <span>{resource_name}</span>}
+      {resource_id && (
+        <span style={resource_name ? styles.resourceSub : styles.mono}>
+          {truncateId(resource_id)}
+        </span>
+      )}
+      {resource_id && (
+        <button type="button" onClick={handleCopy} style={styles.copyBtn} title={`Copy full ID: ${resource_id}`}>📋</button>
+      )}
+    </span>
+  )
 }
 
 function AuditRow({ entry }: { entry: AuditEntry }) {
