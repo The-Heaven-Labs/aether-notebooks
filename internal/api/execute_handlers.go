@@ -126,6 +126,7 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	// Apply cell-level LIMIT if set (and query doesn't already have a LIMIT)
 	if cell.Limit != nil && *cell.Limit > 0 {
 		if !strings.Contains(strings.ToUpper(resolvedSource), "LIMIT") {
+			resolvedSource = strings.TrimRight(strings.TrimSpace(resolvedSource), ";")
 			resolvedSource = resolvedSource + " LIMIT " + strconv.Itoa(*cell.Limit)
 		}
 	}

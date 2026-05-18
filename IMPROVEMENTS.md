@@ -1,4 +1,4 @@
-## Implemented / In Progress
+## Implemented
 
 - [x] If I'm a viewer and access one notebook, I can start editing it but when leaving I receive insufficient permissions. If the user has no permission, cells should be read-only. Same goes for the permissions menu, I can start editing and even save permissions for a notebook I have no permission, but it should be blocked from even starting
 - [x] In the groups page, there is no feedback if I do not fill the new group name and press the create button. Same trying to add someone to a group but not selecting a person
@@ -19,3 +19,5 @@
 - [x] Currently there is no way to change permissions on who can access/use/etc on a connector.
 
 ## Not Yet Implemented
+
+
