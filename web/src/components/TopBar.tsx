@@ -4,8 +4,18 @@ import { useAuth } from '../hooks/useAuth'
 
 function LogoMark() {
   return (
-    <svg style={{ display: 'block' }} width="18" height="18" viewBox="0 0 18 18" fill="none">
-      <path d="M3 14V4L9 13V4M9 13V4l6 10V4" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    <svg style={{ display: 'block' }} width="28" height="28" viewBox="0 0 32 32">
+      <rect x="1" y="1" width="12" height="12" rx="2" fill="#6366F1"/>
+      <rect x="15" y="1" width="12" height="12" rx="2" fill="#6366F1"/>
+      <rect x="1" y="15" width="5" height="5" rx="1" fill="#6366F1" fillOpacity="0.4"/>
+      <rect x="8" y="15" width="5" height="5" rx="1" fill="#6366F1"/>
+      <rect x="15" y="15" width="5" height="5" rx="1" fill="#6366F1" fillOpacity="0.4"/>
+      <rect x="22" y="15" width="5" height="5" rx="1" fill="#6366F1" fillOpacity="0.4"/>
+      <rect x="1" y="22" width="5" height="5" rx="1" fill="#6366F1" fillOpacity="0.4"/>
+      <rect x="8" y="22" width="5" height="5" rx="1" fill="#6366F1" fillOpacity="0.4"/>
+      <rect x="15" y="22" width="5" height="5" rx="1" fill="#6366F1" fillOpacity="0.4"/>
+      <rect x="22" y="22" width="5" height="5" rx="1" fill="#6366F1" fillOpacity="0.4"/>
+      <circle cx="10.5" cy="10.5" r="1.5" fill="white"/>
     </svg>
   )
 }
@@ -35,8 +45,7 @@ export function TopBar() {
     <header style={styles.bar}>
       <Link to="/" style={styles.brand}>
         <div style={styles.logo}><LogoMark /></div>
-        <div style={styles.brandDivider} />
-        <span style={styles.appName}>Heaven's Notebooks</span>
+        <span style={styles.appName}>HNB</span>
       </Link>
       <div style={styles.spacer} />
       {isPlatformAdmin && (
@@ -93,11 +102,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   brand: { display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' },
   logo: {
-    width: 36, height: 36,
-    background: 'var(--accent)',
-    borderRadius: 10,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    fontSize: 14, color: 'white',
   },
   brandDivider: { width: 1, height: 20, background: 'var(--nav-border)', flexShrink: 0 },
   appName: { fontSize: 13, fontWeight: 500, color: 'var(--nav-text)', letterSpacing: '0.01em' },
