@@ -131,12 +131,14 @@ export function ConnectorsPage() {
   })
 
   const testConnector = async (id: string) => {
+    // Clear previous result to show fresh test is running
+    setTestResults((prev) => ({ ...prev, [id]: undefined as unknown as { ok: boolean; error?: string } }))
     setTestingId(id)
     try {
       const result = await api.post<{ ok: boolean; error?: string }>(`/api/v1/connectors/${id}/test`, {})
       setTestResults((prev) => ({ ...prev, [id]: result }))
-    } catch {
-      setTestResults((prev) => ({ ...prev, [id]: { ok: false, error: 'Request failed' } }))
+    } catch (e) {
+      setTestResults((prev) => ({ ...prev, [id]: { ok: false, error: String(e) } }))
     } finally {
       setTestingId(null)
     }
@@ -333,7 +335,9 @@ export function ConnectorsPage() {
                   {c.config?.database ?? '—'}
                 </td>
                 <td style={cellStyle}>
-                  {test ? (
+                  {testingId === c.id ? (
+                    <StatusBadge status="neutral" label="Testing…" />
+                  ) : test ? (
                     <StatusBadge
                       status={test.ok ? 'success' : 'error'}
                       label={test.ok ? 'Connected' : (test.error ?? 'Failed')}
