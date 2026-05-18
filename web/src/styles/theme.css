@@ -85,16 +85,17 @@
   --warning-border: #5a4a2e;
   --warning-text: #e5b97a;
   --nav-bg: #0a0a0a;
-  --nav-text: #d0ccc0;
+  --nav-text: #f0ece4;
+  --nav-text-muted: #9e9690;
   --nav-border: #1a1a1a;
   --shadow-md: 0 2px 16px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
   --shadow-overlay: rgba(0, 0, 0, 0.3);
-  --code-keyword: #8b9fff;
-  --code-string: #6fcf97;
+  --code-keyword: #7b9eff;
+  --code-string: #6ee7a0;
   --code-comment: #888;
-  --code-function: #56d4dd;
-  --code-number: #ff7b7b;
+  --code-function: #5dd9e8;
+  --code-number: #ff8a8a;
   --button-primary-bg: #b8a9d8;
   --button-primary-text: #111111;
   --cm-editor-bg: #1e1e1e;
@@ -282,5 +283,5 @@ h1:hover a, h2:hover a, h3:hover a, h4:hover a, h5:hover a, h6:hover a {
 /* Dark mode: light cursor so it's visible on dark background */
 [data-theme="dark"] .cm-editor .cm-cursor,
 [data-theme="dark"] .cm-editor .cm-dropCursor {
-  border-left-color: #e2e8f0 !important;
+  border-left-color: #f0f0f0 !important;
 }
