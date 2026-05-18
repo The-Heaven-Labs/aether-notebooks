@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import { getToken } from '../api/client'
 import type { Cell } from '../types'
-import { slugify, getFirstHeadingSlug } from './Cell'
+import { slugify } from './Cell'
 
 export interface ResizableImageProps {
   src: string
