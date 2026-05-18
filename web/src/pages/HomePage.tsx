@@ -260,7 +260,7 @@ export function HomePage() {
 
   // Context menu
   const [openMenu, setOpenMenu] = useState<MenuTarget | null>(null)
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null)
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number }>()
 
   // Rename
   const [renaming, setRenaming] = useState<RenameTarget | null>(null)
@@ -457,6 +457,14 @@ export function HomePage() {
     setPermissionsTarget(t)
   }
 
+  function handleMoveFolder(folder: Folder) {
+    setMoving({ type: 'folder', id: folder.id, name: folder.name })
+  }
+
+  function handlePermissionsFolder(folder: Folder) {
+    setPermissionsTarget({ type: 'folder', id: folder.id, name: folder.name })
+  }
+
   function handleEdit(type: ResourceType, id: string) {
     if (type === 'connector') navigate(`/connectors?edit=${id}`)
   }
@@ -468,6 +476,8 @@ export function HomePage() {
           <FolderTree
             onSelectFolder={(id) => setSearchParams(id ? { folder: id } : {})}
             selectedFolderId={folderID}
+            onMoveFolder={handleMoveFolder}
+            onPermissionsFolder={handlePermissionsFolder}
           />
         }
         rightPanel={

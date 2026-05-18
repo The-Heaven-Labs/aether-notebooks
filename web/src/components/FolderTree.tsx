@@ -7,9 +7,11 @@ import type { Folder, FolderContents } from '../types'
 interface FolderTreeProps {
   onSelectFolder: (folderId: string | null) => void
   selectedFolderId: string | null
+  onMoveFolder?: (folder: Folder) => void
+  onPermissionsFolder?: (folder: Folder) => void
 }
 
-export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps) {
+export function FolderTree({ onSelectFolder, selectedFolderId, onMoveFolder, onPermissionsFolder }: FolderTreeProps) {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     try {
       const saved = localStorage.getItem('hnb_tree_expanded')
@@ -18,6 +20,16 @@ export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps
       return new Set()
     }
   })
+
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null)
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null)
+
+  useEffect(() => {
+    if (!openMenuId) return
+    const close = () => setOpenMenuId(null)
+    setTimeout(() => document.addEventListener('click', close), 0)
+    return () => document.removeEventListener('click', close)
+  }, [openMenuId])
 
   const { data: folderData } = useQuery<FolderContents>({
     queryKey: ['folder-tree-root'],
@@ -121,6 +133,12 @@ export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps
               onSelect={onSelectFolder}
               selectedFolderId={selectedFolderId}
               depth={0}
+              onMoveFolder={onMoveFolder}
+              onPermissionsFolder={onPermissionsFolder}
+              openMenuId={openMenuId}
+              setOpenMenuId={setOpenMenuId}
+              menuPos={menuPos}
+              setMenuPos={setMenuPos}
             />
           ))}
         </div>
@@ -143,6 +161,12 @@ export function FolderTree({ onSelectFolder, selectedFolderId }: FolderTreeProps
               onSelect={onSelectFolder}
               selectedFolderId={selectedFolderId}
               depth={0}
+              onMoveFolder={onMoveFolder}
+              onPermissionsFolder={onPermissionsFolder}
+              openMenuId={openMenuId}
+              setOpenMenuId={setOpenMenuId}
+              menuPos={menuPos}
+              setMenuPos={setMenuPos}
             />
           ))}
         </div>
@@ -160,12 +184,43 @@ interface TreeNodeComponentProps {
   onSelect: (id: string) => void
   selectedFolderId: string | null
   depth: number
+  onMoveFolder?: (folder: Folder) => void
+  onPermissionsFolder?: (folder: Folder) => void
+  openMenuId: string | null
+  setOpenMenuId: (id: string | null) => void
+  menuPos: { top: number; left: number } | null
+  setMenuPos: (pos: { top: number; left: number } | null) => void
 }
 
-function TreeNodeComponent({ folder, children, childrenMap, expanded, onToggle, onSelect, selectedFolderId, depth }: TreeNodeComponentProps) {
+function TreeNodeComponent({ folder, children, childrenMap, expanded, onToggle, onSelect, selectedFolderId, depth, onMoveFolder, onPermissionsFolder, openMenuId, setOpenMenuId, menuPos, setMenuPos }: TreeNodeComponentProps) {
   const hasChildren = children.length > 0
   const isExpanded = expanded.has(folder.id)
   const isSelected = selectedFolderId === folder.id
+  const isMenuOpen = openMenuId === folder.id
+  const [isHovered, setIsHovered] = useState(false)
+
+  const toggleMenu = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (isMenuOpen) {
+      setOpenMenuId(null)
+    } else {
+      const rect = e.currentTarget.getBoundingClientRect()
+      setMenuPos({ top: rect.top, left: rect.right + 8 })
+      setOpenMenuId(folder.id)
+    }
+  }
+
+  const handleMoveFolder = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (onMoveFolder) { onMoveFolder(folder) }
+    setOpenMenuId(null)
+  }
+
+  const handlePermissionsFolder = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (onPermissionsFolder) { onPermissionsFolder(folder) }
+    setOpenMenuId(null)
+  }
 
   return (
     <div>
@@ -180,9 +235,11 @@ function TreeNodeComponent({ folder, children, childrenMap, expanded, onToggle, 
         transition: 'background 0.15s ease',
       }} onClick={() => onSelect(folder.id)}
       onMouseEnter={(e) => {
+        setIsHovered(true)
         if (!isSelected) e.currentTarget.style.background = 'var(--bg-secondary)'
       }}
       onMouseLeave={(e) => {
+        setIsHovered(false)
         if (!isSelected) e.currentTarget.style.background = 'transparent'
       }}
     >
@@ -205,8 +262,44 @@ function TreeNodeComponent({ folder, children, childrenMap, expanded, onToggle, 
           <span style={{ width: 12 }} />
         )}
         {isExpanded && hasChildren ? <FolderOpen size={14} style={{ color: 'var(--accent)' }} /> : <FolderIcon size={14} style={{ color: 'var(--accent)' }} />}
-        <span style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{folder.name}</span>
+        <span style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{folder.name}</span>
+        {isHovered && (
+          <button
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 16, padding: '2px 6px', lineHeight: 1, flexShrink: 0 }}
+            title="More options"
+            onClick={toggleMenu}
+          >⋯</button>
+        )}
       </div>
+      {isMenuOpen && menuPos && (
+        <div
+          style={{
+            position: 'fixed',
+            top: menuPos.top,
+            left: menuPos.left,
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+            boxShadow: 'var(--shadow-md)',
+            minWidth: 140,
+            padding: '4px 0',
+            zIndex: 1000,
+          }}
+        >
+          {onMoveFolder && (
+            <button
+              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}
+              onClick={handleMoveFolder}
+            >Move to…</button>
+          )}
+          {onPermissionsFolder && (
+            <button
+              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}
+              onClick={handlePermissionsFolder}
+            >Permissions</button>
+          )}
+        </div>
+      )}
       {isExpanded && hasChildren && children.map(child => (
         <TreeNodeComponent
           key={child.id}
@@ -218,6 +311,12 @@ function TreeNodeComponent({ folder, children, childrenMap, expanded, onToggle, 
           onSelect={onSelect}
           selectedFolderId={selectedFolderId}
           depth={depth + 1}
+          onMoveFolder={onMoveFolder}
+          onPermissionsFolder={onPermissionsFolder}
+          openMenuId={openMenuId}
+          setOpenMenuId={setOpenMenuId}
+          menuPos={menuPos}
+          setMenuPos={setMenuPos}
         />
       ))}
     </div>
