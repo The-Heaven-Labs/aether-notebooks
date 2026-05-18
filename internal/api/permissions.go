@@ -91,8 +91,6 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 	}
 	resRows.Close()
 
-	anyACLInChain := len(candidates) > 0
-
 	// 3. Find the folder to start the ancestor walk from
 	var ancestorFolderID *string
 	if resourceType == "folder" {
@@ -142,7 +140,6 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 			}
 			c.subjectRank = subjectRank(c.subjectType)
 			candidates = append(candidates, c)
-			anyACLInChain = true
 		}
 		folderRows.Close()
 		if err := folderRows.Err(); err != nil {
@@ -159,8 +156,13 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 	})
 
 	// 6. Find first entry that matches this user
+	var (
+		matchedNonEveryoneEntry bool
+		aclExistsButUserNotInIt bool
+	)
 	for _, c := range candidates {
 		if !matchesUser(c, userID, orgRole, groupIDs) {
+			aclExistsButUserNotInIt = true
 			continue
 		}
 		for _, a := range c.actions {
@@ -168,19 +170,31 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 				return true, nil
 			}
 		}
-		return false, nil // matched but action not granted
+		// org_role:everyone entries are not restrictive - they don't block org role defaults
+		if c.subjectType == "org_role" && c.subjectID == "everyone" {
+			aclExistsButUserNotInIt = false // org_role:everyone doesn't count as restrictive
+			continue
+		}
+		// User matched entry but action not granted - this is restrictive, don't fall through
+		matchedNonEveryoneEntry = true
+		break
 	}
 
-	// 7. No matching entry found
-	if anyACLInChain {
-		return false, nil // ACL exists in chain but user not in it → DENY
+	// 7. User matched a restrictive ACL but action not granted
+	if matchedNonEveryoneEntry {
+		return false, nil
 	}
 
-	// 8. Fallback to org role defaults, but "everyone" always has limited default access
+	// 8. ACL exists in chain but user not in it → DENY (don't fall through to org role defaults)
+	if aclExistsButUserNotInIt {
+		return false, nil
+	}
+
+	// 9. No ACL matched user → use org role defaults
 	if actions, ok := orgRoleActions[orgRole]; ok {
 		return actions[action], nil
 	}
-	// Special "everyone" pseudo-role fallback (used for org-wide shared resources)
+	// Special "everyone" pseudo-role fallback
 	if everyoneRoleActions[action] {
 		return true, nil
 	}

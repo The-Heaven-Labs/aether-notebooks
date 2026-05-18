@@ -36,6 +36,12 @@ type updateCellRequest struct {
 func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("notebook_id")
+	ctx := r.Context()
+
+	if allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "create"); err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "no permission to create cells in this notebook")
+		return
+	}
 
 	var req createCellRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -47,8 +53,6 @@ func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "type must be 'code' or 'text'")
 		return
 	}
-
-	ctx := r.Context()
 
 	var exists bool
 	s.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM notebooks WHERE id=$1 AND org_id=$2)", nbID, claims.OrgID).Scan(&exists)
@@ -125,14 +129,18 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("notebook_id")
 	cellID := r.PathValue("cell_id")
+	ctx := r.Context()
+
+	if allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "edit"); err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "no permission to edit cells in this notebook")
+		return
+	}
 
 	var req updateCellRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-
-	ctx := r.Context()
 
 	var exists bool
 	s.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM notebooks WHERE id=$1 AND org_id=$2)", nbID, claims.OrgID).Scan(&exists)
@@ -269,8 +277,12 @@ func (s *Server) handleDeleteCell(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("notebook_id")
 	cellID := r.PathValue("cell_id")
-
 	ctx := r.Context()
+
+	if allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "edit"); err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "no permission to delete cells from this notebook")
+		return
+	}
 
 	result, err := s.db.Pool.Exec(ctx,
 		`DELETE FROM cells WHERE id = $1 AND notebook_id = $2
@@ -299,6 +311,11 @@ func (s *Server) handleDuplicateCell(w http.ResponseWriter, r *http.Request) {
 	nbID := r.PathValue("notebook_id")
 	cellID := r.PathValue("cell_id")
 	ctx := r.Context()
+
+	if allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "create"); err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "no permission to duplicate cells in this notebook")
+		return
+	}
 
 	var src models.Cell
 	var outputs, params []byte
