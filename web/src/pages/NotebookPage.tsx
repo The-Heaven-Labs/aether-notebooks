@@ -704,7 +704,7 @@ export function NotebookPage() {
       )}
 
       {historyCell && (
-        <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, zIndex: 200 }}>
+        <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 300, display: 'flex', flexDirection: 'column', zIndex: 200 }}>
           <HistoryPanel
             versions={historyVersions}
             currentSource={localCells.find((c) => c.id === historyCell)?.source ?? ''}

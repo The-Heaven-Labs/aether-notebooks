@@ -18,7 +18,7 @@ const (
 // upsertCellVersion is called after each cell source save.
 // It merges into the latest version if the edit is small and recent,
 // otherwise inserts a new version row.
-func (s *Server) upsertCellVersion(ctx context.Context, cellID, newSource string) error {
+func (s *Server) upsertCellVersion(ctx context.Context, cellID, newSource string, userID string) error {
 	var lastID string
 	var lastSource string
 	var lastCreatedAt time.Time
@@ -32,8 +32,8 @@ func (s *Server) upsertCellVersion(ctx context.Context, cellID, newSource string
 	if err == pgx.ErrNoRows {
 		// No versions yet — create first
 		_, err = s.db.Pool.Exec(ctx,
-			`INSERT INTO cell_versions (cell_id, source) VALUES ($1, $2)`,
-			cellID, newSource,
+			`INSERT INTO cell_versions (cell_id, source, created_by) VALUES ($1, $2, $3)`,
+			cellID, newSource, userID,
 		)
 		return err
 	}
@@ -47,16 +47,16 @@ func (s *Server) upsertCellVersion(ctx context.Context, cellID, newSource string
 	if dist < versionMergeMaxDist && age < versionMergeWindow {
 		// Merge: update existing version in place
 		_, err = s.db.Pool.Exec(ctx,
-			`UPDATE cell_versions SET source = $1 WHERE id = $2`,
-			newSource, lastID,
+			`UPDATE cell_versions SET source = $1, created_by = $2 WHERE id = $3`,
+			newSource, userID, lastID,
 		)
 		return err
 	}
 
 	// New version
 	_, err = s.db.Pool.Exec(ctx,
-		`INSERT INTO cell_versions (cell_id, source) VALUES ($1, $2)`,
-		cellID, newSource,
+		`INSERT INTO cell_versions (cell_id, source, created_by) VALUES ($1, $2, $3)`,
+		cellID, newSource, userID,
 	)
 	return err
 }
@@ -115,7 +115,11 @@ func (s *Server) handleListCellVersions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, cell_id, source, created_at FROM cell_versions WHERE cell_id=$1 ORDER BY created_at DESC`,
+		`SELECT cv.id, cv.cell_id, cv.source, cv.created_at, cv.created_by,
+		        u.id, u.name, u.email
+		 FROM cell_versions cv
+		 LEFT JOIN users u ON u.id = cv.created_by
+		 WHERE cv.cell_id=$1 ORDER BY cv.created_at DESC`,
 		cellID,
 	)
 	if err != nil {
@@ -127,9 +131,13 @@ func (s *Server) handleListCellVersions(w http.ResponseWriter, r *http.Request) 
 	var versions []models.CellVersion
 	for rows.Next() {
 		var v models.CellVersion
-		if err := rows.Scan(&v.ID, &v.CellID, &v.Source, &v.CreatedAt); err != nil {
+		var userID, userName, userEmail *string
+		if err := rows.Scan(&v.ID, &v.CellID, &v.Source, &v.CreatedAt, &v.CreatedBy, &userID, &userName, &userEmail); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
+		}
+		if userID != nil {
+			v.User = &models.User{ID: *userID, Name: *userName, Email: *userEmail}
 		}
 		versions = append(versions, v)
 	}
@@ -192,7 +200,7 @@ func (s *Server) handleRestoreCellVersion(w http.ResponseWriter, r *http.Request
 	json.Unmarshal(outputs, &cell.Outputs)
 
 	// Version the restored source (best-effort — cell is already updated)
-	_ = s.upsertCellVersion(ctx, cellID, source)
+	_ = s.upsertCellVersion(ctx, cellID, source, claims.UserID)
 
 	writeJSON(w, http.StatusOK, cell)
 }
@@ -318,7 +326,7 @@ func (s *Server) handleRestoreSnapshot(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "restore failed")
 			return
 		}
-		s.upsertCellVersion(ctx, cellID, src)
+		s.upsertCellVersion(ctx, cellID, src, claims.UserID)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "restored"})

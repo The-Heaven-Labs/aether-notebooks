@@ -60,6 +60,8 @@ type CellVersion struct {
 	CellID    string    `json:"cell_id"`
 	Source    string    `json:"source"`
 	CreatedAt time.Time `json:"created_at"`
+	CreatedBy string    `json:"created_by"`
+	User      *User     `json:"user,omitempty"`
 }
 
 type NotebookSnapshot struct {

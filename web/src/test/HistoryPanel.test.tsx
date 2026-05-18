@@ -4,8 +4,8 @@ import { HistoryPanel } from '../components/HistoryPanel'
 import type { CellVersion } from '../types'
 
 const versions: CellVersion[] = [
-  { id: 'v1', cell_id: 'c1', source: 'SELECT 2', created_at: '2026-01-02T00:00:00Z' },
-  { id: 'v2', cell_id: 'c1', source: 'SELECT 1', created_at: '2026-01-01T00:00:00Z' },
+  { id: 'v1', cell_id: 'c1', source: 'SELECT 2', created_at: '2026-01-02T00:00:00Z', created_by: 'u1', user: { id: 'u1', name: 'Alice', email: 'alice@example.com' } },
+  { id: 'v2', cell_id: 'c1', source: 'SELECT 1', created_at: '2026-01-01T00:00:00Z', created_by: 'u2', user: { id: 'u2', name: 'Bob', email: 'bob@example.com' } },
 ]
 
 describe('HistoryPanel', () => {
