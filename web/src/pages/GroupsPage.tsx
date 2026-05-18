@@ -416,6 +416,15 @@ export function GroupsPage() {
     createGroup.mutate(trimmed)
   }
 
+  const handleAddMemberClick = (groupId: string) => {
+    const userId = selectedUserId[groupId]
+    if (!userId) {
+      setMutateError('Please select a member to add')
+      return
+    }
+    addMember.mutate({ groupId, userId })
+  }
+
   return (
     <AppShell>
       <div style={styles.body}>
@@ -435,13 +444,18 @@ export function GroupsPage() {
                 }}
               />
               <button
-                type="button"
-                style={styles.primaryBtn}
-                disabled={!newGroupName.trim() || createGroup.isPending}
-                onClick={handleCreateGroup}
-              >
-                {createGroup.isPending ? 'Creating…' : '+ New Group'}
-              </button>
+                  type="button"
+                  style={{
+                    ...styles.primaryBtn,
+                    opacity: (!newGroupName.trim() || createGroup.isPending) ? 0.5 : 1,
+                    cursor: (!newGroupName.trim() || createGroup.isPending) ? 'not-allowed' : 'pointer',
+                  }}
+                  title={!newGroupName.trim() ? 'Enter a group name' : undefined}
+                  disabled={!newGroupName.trim() || createGroup.isPending}
+                  onClick={handleCreateGroup}
+                >
+                  {createGroup.isPending ? 'Creating…' : '+ New Group'}
+                </button>
             </div>
           )}
           {createError && <ErrorBanner message={createError} onDismiss={() => setCreateError(null)} />}
@@ -582,13 +596,14 @@ export function GroupsPage() {
                         />
                         <button
                           type="button"
-                          style={styles.primaryBtn}
-                          disabled={!selectedUserId[group.id] || addMember.isPending}
-                          onClick={() => {
-                            const userId = selectedUserId[group.id]
-                            if (!userId) return
-                            addMember.mutate({ groupId: group.id, userId })
+                          style={{
+                            ...styles.primaryBtn,
+                            opacity: (!selectedUserId[group.id] || addMember.isPending) ? 0.5 : 1,
+                            cursor: (!selectedUserId[group.id] || addMember.isPending) ? 'not-allowed' : 'pointer',
                           }}
+                          title={!selectedUserId[group.id] ? 'Select a member first' : undefined}
+                          disabled={!selectedUserId[group.id] || addMember.isPending}
+                          onClick={() => handleAddMemberClick(group.id)}
                         >
                           Add
                         </button>
