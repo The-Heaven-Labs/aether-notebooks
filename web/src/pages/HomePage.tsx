@@ -240,12 +240,8 @@ export function HomePage() {
   const folderID = searchParams.get('folder')
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const { user } = useAuth()
-  const [filter, setFilter] = useState<'all' | 'mine'>('all')
+  useAuth()
   const [searchQuery, setSearchQuery] = useState('')
-
-  const filterItems = <T extends { created_by: string }>(items: T[]): T[] =>
-    filter === 'mine' ? items.filter(i => i.created_by === user?.user_id) : items
 
   const { data: recentItems = [] } = useQuery<Array<{
     id: string; type: string; name: string; updated_at: string
@@ -410,10 +406,10 @@ export function HomePage() {
     : data?.dashboards ?? []
 
   const isEmpty = data &&
-    filterItems(searchFolders).length === 0 &&
-    filterItems(searchNotebooks).length === 0 &&
-    filterItems(searchConnectors).length === 0 &&
-    filterItems(searchDashboards).length === 0
+    searchFolders.length === 0 &&
+    searchNotebooks.length === 0 &&
+    searchConnectors.length === 0 &&
+    searchDashboards.length === 0
 
   const handleCreate = () => {
     if (!newName.trim()) return
@@ -482,28 +478,6 @@ export function HomePage() {
         }
         rightPanel={
           <div style={{ maxWidth: 1280, margin: '0 auto', position: 'relative' }}>
-            {/* Filter pills */}
-            <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-              {(['all', 'mine'] as const).map(f => (
-                <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  style={{
-                    padding: '4px 12px',
-                    borderRadius: 20,
-                    fontSize: 12,
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                    border: 'none',
-                    background: filter === f ? 'var(--accent)' : 'var(--accent-light)',
-                    color: filter === f ? '#fff' : 'var(--accent)',
-                  }}
-                >
-                  {f === 'all' ? 'All' : 'Created by me'}
-                </button>
-              ))}
-            </div>
-
             {/* Search bar */}
             <div style={{ marginBottom: 12 }}>
               <input
@@ -618,11 +592,11 @@ export function HomePage() {
             )}
 
             {/* Folders */}
-            {data && filterItems(searchFolders).length > 0 && (
+            {data && searchFolders.length > 0 && (
               <section style={s.section}>
                 <div style={s.sectionLabel}>Folders</div>
                 <div style={s.folderGrid}>
-                  {filterItems(searchFolders).map((f) => (
+                  {searchFolders.map((f) => (
                     <div key={f.id} style={s.folderCard} className="card-hover">
                       {renaming?.id === f.id ? (
                         <div style={{ flex: 1, padding: '4px 8px' }}>
@@ -669,11 +643,11 @@ export function HomePage() {
             )}
 
             {/* Notebooks */}
-            {data && filterItems(searchNotebooks).length > 0 && (
+            {data && searchNotebooks.length > 0 && (
               <section style={s.section}>
                 <div style={s.sectionLabel}>Notebooks</div>
                 <div style={s.list}>
-                  {filterItems(searchNotebooks).map((nb) => (
+                  {searchNotebooks.map((nb) => (
                     <div key={nb.id} style={s.item}>
                       {renaming?.id === nb.id ? (
                         <div style={{ flex: 1 }}>
@@ -719,11 +693,11 @@ export function HomePage() {
             )}
 
             {/* Connectors */}
-            {data && filterItems(searchConnectors).length > 0 && (
+            {data && searchConnectors.length > 0 && (
               <section style={s.section}>
                 <div style={s.sectionLabel}>Connectors</div>
                 <div style={s.list}>
-                  {filterItems(searchConnectors).map((c) => (
+                  {searchConnectors.map((c) => (
                     <div key={c.id} style={s.item}>
                       <Link to={`/connectors?edit=${c.id}`} style={s.itemLink}>
                         <Database size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
@@ -762,11 +736,11 @@ export function HomePage() {
             )}
 
             {/* Dashboards */}
-            {data && filterItems(searchDashboards).length > 0 && (
+            {data && searchDashboards.length > 0 && (
               <section style={s.section}>
                 <div style={s.sectionLabel}>Dashboards</div>
                 <div style={s.list}>
-                  {filterItems(searchDashboards).map((d) => (
+                  {searchDashboards.map((d) => (
                     <div key={d.id} style={s.item}>
                       <Link to={`/dashboards/${d.id}`} style={s.itemLink}>
                         <LayoutDashboard size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
