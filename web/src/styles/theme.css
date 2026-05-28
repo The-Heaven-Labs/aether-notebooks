@@ -306,3 +306,11 @@ h1:hover a, h2:hover a, h3:hover a, h4:hover a, h5:hover a, h6:hover a {
 .permissions-panel-type-badge[data-type] {
   color: var(--text-badge-on-light);
 }
+
+@keyframes agent-cell-flash {
+  0% { background-color: var(--accent); box-shadow: 0 0 20px var(--accent); }
+  100% { background-color: transparent; box-shadow: none; }
+}
+.cell-flash {
+  animation: agent-cell-flash 1.5s ease-out;
+}

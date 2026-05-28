@@ -283,7 +283,9 @@ export function Cell({
 
   if (cell.cell_collapsed) {
     return (
-      <div style={styles.collapsed}>
+      <div
+        id={'cell-' + cell.id}
+        style={styles.collapsed}>
         <button
           style={styles.expandTrigger}
           onClick={() => onUpdateCellMeta?.({ cell_collapsed: false })}
@@ -302,6 +304,7 @@ export function Cell({
 
   return (
     <div
+      id={'cell-' + cell.id}
       style={styles.cell}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
