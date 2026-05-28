@@ -68,6 +68,19 @@ func main() {
 	// Initialize services
 	jwtIssuer := auth.NewJWTIssuer(cfg.JWTSecret, 24*time.Hour)
 	masterKey := crypto.DeriveKey(cfg.MasterKey)
+	log.Printf("master key: env_value=%q derived_sha256_first8=%x", cfg.MasterKey, masterKey[:8])
+
+	// Validate master key works by encrypting/decrypting a known value
+	testPlaintext := []byte("master-key-validation")
+	testCiphertext, err := crypto.Encrypt(testPlaintext, masterKey)
+	if err != nil {
+		log.Fatalf("master key validation: encryption failed: %v", err)
+	}
+	decrypted, err := crypto.Decrypt(testCiphertext, masterKey)
+	if err != nil || string(decrypted) != string(testPlaintext) {
+		log.Fatalf("master key validation: decryption failed — HNB_MASTER_KEY may have changed since server start")
+	}
+
 	auditLogger := audit.NewLogger(db)
 
 	// Start scheduler (runs due notebook schedules every minute)

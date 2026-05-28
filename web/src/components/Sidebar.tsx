@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { Home, LayoutDashboard, Database, Users, UsersRound, ClipboardList, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Home, LayoutDashboard, Database, Users, UsersRound, ClipboardList, ChevronLeft, ChevronRight, Bot, Brain, Wrench, Puzzle } from 'lucide-react'
 
 const NAV_ITEMS = [
   { to: '/',           title: 'Files',       icon: <Home size={16} /> },
@@ -9,6 +9,13 @@ const NAV_ITEMS = [
   { to: '/members',    title: 'Members',     icon: <Users size={16} /> },
   { to: '/groups',     title: 'Groups',      icon: <UsersRound size={16} /> },
   { to: '/audit',      title: 'Audit',       icon: <ClipboardList size={16} /> },
+]
+
+const AGENT_NAV_ITEMS = [
+  { to: '/agents',  title: 'Agents',  icon: <Bot size={16} /> },
+  { to: '/models',  title: 'Models',  icon: <Brain size={16} /> },
+  { to: '/skills',  title: 'Skills',  icon: <Wrench size={16} /> },
+  { to: '/mcps',    title: 'MCPs',    icon: <Puzzle size={16} /> },
 ]
 
 export function Sidebar() {
@@ -24,6 +31,14 @@ export function Sidebar() {
 
   const width = expanded ? 200 : 48
 
+  const itemStyle = (isActive: boolean) => ({
+    ...styles.item,
+    justifyContent: expanded ? 'flex-start' : 'center',
+    padding: expanded ? '8px 12px' : '8px 0',
+    background: isActive ? 'var(--accent-light)' : 'transparent',
+    color: isActive ? 'var(--accent)' : 'var(--nav-text-muted)',
+  })
+
   return (
     <nav style={{ ...styles.sidebar, width }}>
       <div style={styles.items}>
@@ -33,13 +48,31 @@ export function Sidebar() {
             to={to}
             end={to === '/'}
             title={title}
-            style={({ isActive }) => ({
-              ...styles.item,
-              justifyContent: expanded ? 'flex-start' : 'center',
-              padding: expanded ? '8px 12px' : '8px 0',
-              background: isActive ? 'var(--accent-light)' : 'transparent',
-              color: isActive ? 'var(--accent)' : 'var(--nav-text-muted)',
-            })}
+            style={({ isActive }) => itemStyle(isActive)}
+          >
+            <span style={styles.icon}>{icon}</span>
+            {expanded && (
+              <span style={styles.label}>{title}</span>
+            )}
+          </NavLink>
+        ))}
+        <div style={styles.sectionDivider} />
+        {expanded ? (
+          <div style={styles.sectionHeader}>
+            <span style={styles.sectionTitle}>AI Agents</span>
+          </div>
+        ) : (
+          <div style={{ ...styles.sectionHeader, justifyContent: 'center' }}>
+            <Bot size={14} style={{ color: 'var(--text-muted)' }} />
+          </div>
+        )}
+        {AGENT_NAV_ITEMS.map(({ to, title, icon }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={to === to}
+            title={title}
+            style={({ isActive }) => itemStyle(isActive)}
           >
             <span style={styles.icon}>{icon}</span>
             {expanded && (
@@ -108,5 +141,24 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     color: 'var(--text-secondary)',
     borderTop: '1px solid var(--nav-border)',
+  },
+  sectionDivider: {
+    height: 1,
+    background: 'var(--nav-border)',
+    margin: '8px 9px',
+  },
+  sectionHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    padding: '4px 18px',
+    marginTop: 4,
+    marginBottom: 2,
+  },
+  sectionTitle: {
+    fontSize: 10,
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    color: 'var(--text-muted)',
   },
 }

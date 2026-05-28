@@ -1,0 +1,133 @@
+package models
+
+import (
+	"time"
+)
+
+type ModelConfig struct {
+	ID              string    `json:"id"`
+	OrgID           string    `json:"org_id"`
+	Name            string    `json:"name"`
+	Provider        string    `json:"provider"`
+	BaseURL         string    `json:"base_url"`
+	Model           string    `json:"model"`
+	APIKeyEncrypted []byte    `json:"-"`
+	DefaultParams   JSONMap   `json:"default_params"`
+	ContextWindow   int       `json:"context_window"`
+	FolderID        *string   `json:"folder_id,omitempty"`
+	CreatedBy       string    `json:"created_by"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type Skill struct {
+	ID           string    `json:"id"`
+	OrgID        string    `json:"org_id"`
+	Name         string    `json:"name"`
+	Description  string    `json:"description,omitempty"`
+	SystemPrompt string    `json:"system_prompt,omitempty"`
+	ToolIDs      []string  `json:"tool_ids"`
+	FolderID     *string   `json:"folder_id,omitempty"`
+	CreatedBy    string    `json:"created_by"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type MCPServer struct {
+	Name    string   `json:"name"`
+	Type    string   `json:"type"`
+	Command string   `json:"command"`
+	Args    []string `json:"args,omitempty"`
+}
+
+type Agent struct {
+	ID                    string       `json:"id"`
+	OrgID                 string       `json:"org_id"`
+	Name                  string       `json:"name"`
+	Description           string       `json:"description,omitempty"`
+	ModelConfigID         *string      `json:"model_config_id,omitempty"`
+	SubagentModelConfigID *string      `json:"subagent_model_config_id,omitempty"`
+	SystemPrompt          string       `json:"system_prompt,omitempty"`
+	SkillIDs              []string     `json:"skill_ids"`
+	MCPServers            []MCPServer  `json:"mcp_servers"`
+	FolderID              *string      `json:"folder_id,omitempty"`
+	CreatedBy             string       `json:"created_by"`
+	CreatedAt             time.Time    `json:"created_at"`
+	UpdatedAt             time.Time    `json:"updated_at"`
+}
+
+type AgentSession struct {
+	ID         string     `json:"id"`
+	AgentID    string     `json:"agent_id"`
+	NotebookID string     `json:"notebook_id"`
+	UserID     string     `json:"user_id"`
+	MaxTurns   int        `json:"max_turns"`
+	MaxTokens  int        `json:"max_tokens"`
+	EndedAt    *time.Time `json:"ended_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+type ToolCall struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Arguments  any    `json:"arguments"`
+	Result     any    `json:"result,omitempty"`
+	Error      *string `json:"error,omitempty"`
+	DurationMs int    `json:"duration_ms,omitempty"`
+}
+
+type AgentMessage struct {
+	ID               string     `json:"id"`
+	SessionID        string     `json:"session_id"`
+	Role             string     `json:"role"`
+	Content          string     `json:"content,omitempty"`
+	ToolCallID       *string    `json:"tool_call_id,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	TokensInput      int        `json:"tokens_input,omitempty"`
+	TokensOutput     int        `json:"tokens_output,omitempty"`
+	ModelCalls       int        `json:"model_calls,omitempty"`
+	DurationMs       int        `json:"duration_ms,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+}
+
+type SubagentTask struct {
+	ID              string     `json:"id"`
+	ParentSessionID string     `json:"parent_session_id"`
+	ParentMessageID *string    `json:"parent_message_id,omitempty"`
+	AgentID         *string    `json:"agent_id,omitempty"`
+	Goal            string     `json:"goal"`
+	Context         JSONMap    `json:"context,omitempty"`
+	Status          string     `json:"status"`
+	Result          JSONMap    `json:"result,omitempty"`
+	TokensInput     int        `json:"tokens_input,omitempty"`
+	TokensOutput    int        `json:"tokens_output,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+}
+
+type AgentStatsDaily struct {
+	Date           string `json:"date"`
+	AgentID        string `json:"agent_id"`
+	UserID         string `json:"user_id"`
+	SessionsCount  int    `json:"sessions_count"`
+	MessagesCount  int    `json:"messages_count"`
+	TokensInput    int64  `json:"tokens_input"`
+	TokensOutput   int64  `json:"tokens_output"`
+}
+
+type AgentVersion struct {
+	ID            string    `json:"id"`
+	AgentID       string    `json:"agent_id"`
+	Version       int       `json:"version"`
+	Name          *string   `json:"name,omitempty"`
+	Description   *string   `json:"description,omitempty"`
+	SystemPrompt  *string   `json:"system_prompt,omitempty"`
+	SkillIDs      []string  `json:"skill_ids,omitempty"`
+	ModelConfigID *string   `json:"model_config_id,omitempty"`
+	ChangedBy     string    `json:"changed_by"`
+	ChangeReason  string    `json:"change_reason,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type JSONMap map[string]any

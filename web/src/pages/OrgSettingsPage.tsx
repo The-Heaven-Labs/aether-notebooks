@@ -179,7 +179,7 @@ export function OrgSettingsPage() {
   // ── Platform providers ───────────────────────────────────────────────────
   const { data: platformProviders = [], isLoading: loadingPlatform } = useQuery<PlatformSSOProvider[]>({
     queryKey: ['sso', 'platform-providers'],
-    queryFn: () => api.get('/api/v1/sso/platform-providers'),
+    queryFn: () => api.get<{ providers: PlatformSSOProvider[] }>('/api/v1/sso/platform-providers').then(r => r.providers),
   })
 
   const togglePlatformProvider = useMutation({
@@ -193,7 +193,7 @@ export function OrgSettingsPage() {
   // ── Custom providers ─────────────────────────────────────────────────────
   const { data: customProviders = [], isLoading: loadingCustom } = useQuery<SSOProvider[]>({
     queryKey: ['sso', 'providers'],
-    queryFn: () => api.get('/api/v1/sso/providers'),
+    queryFn: () => api.get<{ providers: SSOProvider[] }>('/api/v1/sso/providers').then(r => r.providers),
   })
 
   const [showAddForm, setShowAddForm] = useState(false)
@@ -270,7 +270,7 @@ export function OrgSettingsPage() {
   // ── SSO Settings ─────────────────────────────────────────────────────────
   const { data: ssoSettings } = useQuery<SSOSettings>({
     queryKey: ['sso', 'settings'],
-    queryFn: () => api.get('/api/v1/sso/settings'),
+    queryFn: () => api.get<SSOSettings>('/api/v1/sso/settings'),
   })
 
   const updateSettings = useMutation({

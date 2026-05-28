@@ -1,0 +1,115 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/heavenlabs/hnb/internal/models"
+)
+
+type SessionStore struct {
+	pool *pgxpool.Pool
+}
+
+func NewSessionStore(pool *pgxpool.Pool) *SessionStore {
+	return &SessionStore{pool: pool}
+}
+
+func (s *SessionStore) CreateSession(ctx context.Context, agentID, notebookID, userID string, maxTurns, maxTokens int) (*models.AgentSession, error) {
+	session := &models.AgentSession{
+		ID:         uuid.New().String(),
+		AgentID:    agentID,
+		NotebookID: notebookID,
+		UserID:     userID,
+		MaxTurns:   maxTurns,
+		MaxTokens:  maxTokens,
+		CreatedAt:  time.Now(),
+	}
+
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, max_tokens, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, session.ID, session.AgentID, session.NotebookID, session.UserID, session.MaxTurns, session.MaxTokens, session.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("create session: %w", err)
+	}
+
+	return session, nil
+}
+
+func (s *SessionStore) GetSession(ctx context.Context, sessionID string) (*models.AgentSession, error) {
+	var session models.AgentSession
+	var endedAt *time.Time
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, agent_id, notebook_id, user_id, max_turns, max_tokens, ended_at, created_at
+		FROM agent_sessions WHERE id = $1
+	`, sessionID).Scan(&session.ID, &session.AgentID, &session.NotebookID, &session.UserID, &session.MaxTurns, &session.MaxTokens, &endedAt, &session.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("get session: %w", err)
+	}
+	session.EndedAt = endedAt
+	return &session, nil
+}
+
+func (s *SessionStore) EndSession(ctx context.Context, sessionID string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE agent_sessions SET ended_at = NOW() WHERE id = $1
+	`, sessionID)
+	return err
+}
+
+func (s *SessionStore) AppendMessage(ctx context.Context, msg *models.AgentMessage) error {
+	toolCallsJSON, _ := json.Marshal(msg.ToolCalls)
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO agent_messages (id, session_id, role, content, tool_call_id, tool_calls, reasoning_content, tokens_input, tokens_output, model_calls, duration_ms, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	`, msg.ID, msg.SessionID, msg.Role, msg.Content, msg.ToolCallID, toolCallsJSON, msg.ReasoningContent, msg.TokensInput, msg.TokensOutput, msg.ModelCalls, msg.DurationMs, msg.CreatedAt)
+	return err
+}
+
+func (s *SessionStore) GetMessages(ctx context.Context, sessionID string) ([]models.AgentMessage, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, session_id, role, content, tool_call_id, tool_calls, reasoning_content, tokens_input, tokens_output, model_calls, duration_ms, created_at
+		FROM agent_messages WHERE session_id = $1 ORDER BY created_at ASC
+	`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []models.AgentMessage
+	for rows.Next() {
+		var msg models.AgentMessage
+		var content *string
+		var toolCallID *string
+		var toolCallsJSON []byte
+		var reasoningContent *string
+		err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &content, &toolCallID, &toolCallsJSON, &reasoningContent, &msg.TokensInput, &msg.TokensOutput, &msg.ModelCalls, &msg.DurationMs, &msg.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		if content != nil {
+			msg.Content = *content
+		}
+		if reasoningContent != nil {
+			msg.ReasoningContent = *reasoningContent
+		}
+		msg.ToolCallID = toolCallID
+		if toolCallsJSON != nil {
+			json.Unmarshal(toolCallsJSON, &msg.ToolCalls)
+		}
+		messages = append(messages, msg)
+	}
+
+	return messages, nil
+}
+
+func (s *SessionStore) GetMessageCount(ctx context.Context, sessionID string) (int, error) {
+	var count int
+	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM agent_messages WHERE session_id = $1`, sessionID).Scan(&count)
+	return count, err
+}

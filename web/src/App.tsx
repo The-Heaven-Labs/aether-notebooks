@@ -18,6 +18,10 @@ import { OrgOnboardingPage } from './pages/OrgOnboardingPage'
 import { ProfilePage } from './pages/ProfilePage'
 import { GroupsPage } from './pages/GroupsPage'
 import { OrgSettingsPage } from './pages/OrgSettingsPage'
+import { AgentsPage } from './pages/AgentsPage'
+import { ModelsPage } from './pages/ModelsPage'
+import { SkillsPage } from './pages/SkillsPage'
+import { MCPPage } from './pages/MCPPage'
 import './styles/theme.css'
 
 const queryClient = new QueryClient({
@@ -103,6 +107,10 @@ function AppRoutes() {
       <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
       <Route path="/groups" element={<ProtectedRoute><GroupsPage /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><OrgSettingsPage /></ProtectedRoute>} />
+      <Route path="/agents" element={<ProtectedRoute><AgentsPage /></ProtectedRoute>} />
+      <Route path="/models" element={<ProtectedRoute><ModelsPage /></ProtectedRoute>} />
+      <Route path="/skills" element={<ProtectedRoute><SkillsPage /></ProtectedRoute>} />
+      <Route path="/mcps" element={<ProtectedRoute><MCPPage /></ProtectedRoute>} />
       <Route path="/onboarding" element={<OrgOnboardingPage />} />
       <Route path="/public/dashboards/:token" element={<PublicDashboardPage />} />
       <Route path="/notebooks/:id/present" element={<PresentationPage />} />
