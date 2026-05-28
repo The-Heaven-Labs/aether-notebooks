@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ChevronsRight, ChevronLeft, Loader2, X } from 'lucide-react'
+import { ChevronsRight, ChevronLeft, Loader2, X, Bot } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { LoadingPage } from '../components/LoadingPage'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -15,6 +15,7 @@ import { HistoryPanel } from '../components/HistoryPanel'
 import { ShortcutsModal } from '../components/ShortcutsModal'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { ErrorBanner } from '../components/ErrorBanner'
+import { AgentPanel } from '../components/AgentPanel'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -122,6 +123,9 @@ export function NotebookPage() {
   const [historyCell, setHistoryCell] = useState<string | null>(null)
   const [historyVersions, setHistoryVersions] = useState<CellVersion[]>([])
   const [showShortcuts, setShowShortcuts] = useState(false)
+  const [showAgent, setShowAgent] = useState(false)
+
+  const cellsEndRef = useRef<HTMLDivElement>(null)
 
   // Add-to-dashboard modal
   const [addToDashboardCellId, setAddToDashboardCellId] = useState<string | null>(null)
@@ -566,6 +570,13 @@ export function NotebookPage() {
           <button type="button" style={styles.runAllBtn} onClick={runAll} disabled={runningCount > 0}>
             <ChevronsRight size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} /> Run All
           </button>
+          <button
+            type="button"
+            style={{ ...styles.schemaBtn, ...(showAgent ? styles.schemaBtnActive : {}), display: 'flex', alignItems: 'center', gap: 4 }}
+            onClick={() => setShowAgent((v) => !v)}
+          >
+            <Bot size={13} /> AI
+          </button>
         </div>
       </div>
 
@@ -651,6 +662,7 @@ export function NotebookPage() {
                     + Text Cell
                   </button>
                 </div>
+                <div ref={cellsEndRef} />
               </div>
             </div>
           </div>
@@ -715,6 +727,26 @@ export function NotebookPage() {
             />
           </div>
         </>
+      )}
+
+      {showAgent && (
+        <div style={{ position: 'fixed', right: 0, top: 48, bottom: 0, width: 360, zIndex: 100 }}>
+          <AgentPanel
+            notebookId={id!}
+            onClose={() => setShowAgent(false)}
+            onCellCreated={() => {
+              qc.invalidateQueries({ queryKey: ['notebook', id] })
+            }}
+            onCellScrollTo={(cellId) => {
+              setTimeout(() => {
+                const el = document.getElementById('cell-' + cellId)
+                el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                el?.classList.add('cell-flash')
+                setTimeout(() => el?.classList.remove('cell-flash'), 1500)
+              }, 300)
+            }}
+          />
+        </div>
       )}
     </div>
     </AppShell>

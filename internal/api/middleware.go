@@ -15,13 +15,20 @@ const claimsKey contextKey = "claims"
 func AuthMiddleware(issuer *auth.JWTIssuer) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			header := r.Header.Get("Authorization")
-			if !strings.HasPrefix(header, "Bearer ") {
+			token := ""
+
+			// WebSocket connections can't set Authorization header, so accept token via query param
+			if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
+				token = strings.TrimPrefix(header, "Bearer ")
+			} else if queryToken := r.URL.Query().Get("token"); queryToken != "" {
+				token = queryToken
+			}
+
+			if token == "" {
 				writeError(w, http.StatusUnauthorized, "missing or invalid authorization header")
 				return
 			}
 
-			token := strings.TrimPrefix(header, "Bearer ")
 			claims, err := issuer.Validate(token)
 			if err != nil {
 				writeError(w, http.StatusUnauthorized, "invalid token")

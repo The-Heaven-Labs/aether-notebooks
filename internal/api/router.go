@@ -3,9 +3,12 @@ package api
 import (
 	"net/http"
 
+	"github.com/gorilla/websocket"
+	"github.com/heavenlabs/hnb/internal/agent"
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/auth"
 	"github.com/heavenlabs/hnb/internal/cache"
+	"github.com/heavenlabs/hnb/internal/crypto"
 	"github.com/heavenlabs/hnb/internal/database"
 	"github.com/heavenlabs/hnb/internal/storage"
 )
@@ -23,6 +26,8 @@ type Server struct {
 	frontendURL        string
 	Cache              *cache.Cache
 	maxAttachmentBytes int64
+	agentEngine        *agent.Engine
+	upgrader           websocket.Upgrader
 }
 
 func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, redisCache *cache.Cache) *Server {
@@ -34,7 +39,9 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 		hub:       NewHub(),
 		mux:       http.NewServeMux(),
 		Cache:     redisCache,
+		upgrader:  websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
 	}
+	s.agentEngine = agent.NewEngine(db.Pool)
 	s.routes()
 	return s
 }
@@ -83,6 +90,20 @@ func (s *Server) routes() {
 
 	// Public routes
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.HandleFunc("GET /api/v1/_diagnose/master-key", func(w http.ResponseWriter, r *http.Request) {
+		test := []byte("diagnostic-ping")
+		enc, err := crypto.Encrypt(test, s.masterKey)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "encrypt failed: " + err.Error()})
+			return
+		}
+		dec, err := crypto.Decrypt(enc, s.masterKey)
+		if err != nil || string(dec) != string(test) {
+			writeJSON(w, 500, map[string]string{"error": "decrypt failed or mismatch: " + err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]string{"status": "ok", "key_hint": "master key is working correctly"})
+	})
 	s.mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	s.mux.HandleFunc("POST /api/v1/auth/register", s.handleRegister)
 	s.mux.HandleFunc("GET /api/v1/auth/oidc/{provider}", s.handleOIDCLogin)
@@ -229,6 +250,37 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/members", authMW(RequireRole("admin")(http.HandlerFunc(s.handleInviteMember))))
 	s.mux.Handle("PUT /api/v1/members/{user_id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateMemberRole))))
 	s.mux.Handle("DELETE /api/v1/members/{user_id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleRemoveMember))))
+
+	// Agent routes
+	ah := agentHandlers{server: s}
+	s.mux.Handle("GET /api/v1/agents", authMW(http.HandlerFunc(ah.handleListAgents)))
+	s.mux.Handle("POST /api/v1/agents", authMW(http.HandlerFunc(ah.handleCreateAgent)))
+	s.mux.Handle("GET /api/v1/agents/{id}", authMW(http.HandlerFunc(ah.handleGetAgent)))
+	s.mux.Handle("PUT /api/v1/agents/{id}", authMW(http.HandlerFunc(ah.handleUpdateAgent)))
+	s.mux.Handle("DELETE /api/v1/agents/{id}", authMW(http.HandlerFunc(ah.handleDeleteAgent)))
+	s.mux.Handle("POST /api/v1/agents/{id}/session", authMW(http.HandlerFunc(ah.handleCreateSession)))
+	s.mux.Handle("GET /api/v1/agents/{id}/sessions", authMW(http.HandlerFunc(ah.handleListSessions)))
+	s.mux.Handle("GET /api/v1/sessions/{session_id}", authMW(http.HandlerFunc(ah.handleGetSession)))
+
+	mch := modelConfigHandlers{server: s}
+	s.mux.Handle("GET /api/v1/model-configs", authMW(http.HandlerFunc(mch.handleList)))
+	s.mux.Handle("POST /api/v1/model-configs", authMW(http.HandlerFunc(mch.handleCreate)))
+	s.mux.Handle("PUT /api/v1/model-configs/{id}", authMW(http.HandlerFunc(mch.handleUpdate)))
+	s.mux.Handle("DELETE /api/v1/model-configs/{id}", authMW(http.HandlerFunc(mch.handleDelete)))
+	s.mux.Handle("POST /api/v1/model-configs/{id}/test", authMW(http.HandlerFunc(mch.handleTest)))
+
+	sh := skillHandlers{server: s}
+	s.mux.Handle("GET /api/v1/skills", authMW(http.HandlerFunc(sh.handleList)))
+	s.mux.Handle("POST /api/v1/skills", authMW(http.HandlerFunc(sh.handleCreate)))
+	s.mux.Handle("PUT /api/v1/skills/{id}", authMW(http.HandlerFunc(sh.handleUpdate)))
+	s.mux.Handle("DELETE /api/v1/skills/{id}", authMW(http.HandlerFunc(sh.handleDelete)))
+
+	// Agent WebSocket route
+	s.mux.Handle("GET /api/v1/ws/agents/{session_id}", authMW(http.HandlerFunc(s.handleAgentWS)))
+
+	// Agent stats routes
+	s.mux.Handle("GET /api/v1/agents/stats", authMW(RequireRole("admin")(http.HandlerFunc(ah.handleAgentStats))))
+	s.mux.Handle("GET /api/v1/agents/{id}/stats", authMW(RequireRole("admin")(http.HandlerFunc(ah.handleAgentStatsByAgent))))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
