@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -29,16 +28,12 @@ func (h *skillHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var s models.Skill
 		var desc, sysPrompt *string
-		var toolIDs []byte
-		rows.Scan(&s.ID, &s.OrgID, &s.Name, &desc, &sysPrompt, &toolIDs, &s.FolderID, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
+		rows.Scan(&s.ID, &s.OrgID, &s.Name, &desc, &sysPrompt, &s.ToolIDs, &s.FolderID, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
 		if desc != nil {
 			s.Description = *desc
 		}
 		if sysPrompt != nil {
 			s.SystemPrompt = *sysPrompt
-		}
-		if toolIDs != nil {
-			json.Unmarshal(toolIDs, &s.ToolIDs)
 		}
 		skills = append(skills, s)
 	}
