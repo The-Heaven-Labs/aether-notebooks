@@ -13,6 +13,7 @@ interface AgentPanelProps {
 }
 
 const WS_URL = (import.meta.env.VITE_WS_URL || 'ws://localhost:8080') + '/api/v1/ws/agents/'
+const LAST_AGENT_KEY = 'hnb:lastAgentId'
 
 export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose }: AgentPanelProps) {
   const [agents, setAgents] = useState<Agent[]>([])
@@ -52,6 +53,18 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
       .catch(() => setError('Failed to load agents'))
       .finally(() => setIsLoadingAgents(false))
   }, [])
+
+  useEffect(() => {
+    if (!selectedAgent && agents.length > 0 && !isLoadingAgents) {
+      const lastId = localStorage.getItem(LAST_AGENT_KEY)
+      if (lastId) {
+        const agent = agents.find((a) => a.id === lastId)
+        if (agent) {
+          startSession(agent)
+        }
+      }
+    }
+  }, [agents, isLoadingAgents])
 
   const connectWebSocket = useCallback((sid: string) => {
     const token = getToken()
@@ -135,6 +148,7 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
       })
       setSessionId(res.session_id)
       setSelectedAgent(agent)
+      localStorage.setItem(LAST_AGENT_KEY, agent.id)
       setMessages([])
       connectWebSocket(res.session_id)
     } catch {
