@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -32,13 +31,9 @@ func (h *mcpServerHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	servers := []models.MCPServerOrg{}
 	for rows.Next() {
 		var s models.MCPServerOrg
-		var args []byte
-		if err := rows.Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &s.Args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
-		}
-		if args != nil {
-			json.Unmarshal(args, &s.Args)
 		}
 		servers = append(servers, s)
 	}
@@ -76,12 +71,11 @@ func (h *mcpServerHandlers) handleCreate(w http.ResponseWriter, r *http.Request)
 	}
 
 	id := uuid.New().String()
-	argsJSON, _ := json.Marshal(req.Args)
 
 	_, err := h.server.db.Pool.Exec(r.Context(), `
 		INSERT INTO mcp_servers (id, org_id, name, type, command, args, created_by, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-	`, id, claims.OrgID, req.Name, req.Type, req.Command, argsJSON, claims.UserID)
+	`, id, claims.OrgID, req.Name, req.Type, req.Command, req.Args, claims.UserID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "an MCP server with this name already exists in your organization")
@@ -104,20 +98,16 @@ func (h *mcpServerHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
 	var s models.MCPServerOrg
-	var args []byte
 	err := h.server.db.Pool.QueryRow(r.Context(), `
 		SELECT id, org_id, name, type, command, args, created_by, created_at, updated_at
 		FROM mcp_servers WHERE id = $1 AND org_id = $2
-	`, id, claims.OrgID).Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
+	`, id, claims.OrgID).Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &s.Args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "mcp server not found")
 		return
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	if args != nil {
-		json.Unmarshal(args, &s.Args)
 	}
 
 	writeJSON(w, http.StatusOK, s)
@@ -143,11 +133,6 @@ func (h *mcpServerHandlers) handleUpdate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var argsJSON []byte
-	if req.Args != nil {
-		argsJSON, _ = json.Marshal(req.Args)
-	}
-
 	result, err := h.server.db.Pool.Exec(r.Context(), `
 		UPDATE mcp_servers SET
 			name = COALESCE($2, name),
@@ -156,7 +141,7 @@ func (h *mcpServerHandlers) handleUpdate(w http.ResponseWriter, r *http.Request)
 			args = COALESCE($5, args),
 			updated_at = NOW()
 		WHERE id = $1 AND org_id = $6
-	`, id, req.Name, req.Type, req.Command, argsJSON, claims.OrgID)
+	`, id, req.Name, req.Type, req.Command, req.Args, claims.OrgID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "an MCP server with this name already exists in your organization")
