@@ -328,6 +328,21 @@ func (h *agentHandlers) handleGetSession(w http.ResponseWriter, r *http.Request)
 
 func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("session_id")
+	claims := ClaimsFromContext(r.Context())
+
+	var agentID string
+	err := h.server.db.Pool.QueryRow(r.Context(), `
+		SELECT agent_id FROM agent_sessions WHERE id = $1
+	`, sessionID).Scan(&agentID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "view")
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
 		SELECT id, role, content, tool_calls, tool_call_id, reasoning_content, created_at
