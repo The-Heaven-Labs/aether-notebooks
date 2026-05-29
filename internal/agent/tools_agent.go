@@ -48,7 +48,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 		Handler: makeSpawnSubagentsHandler(pool),
 	})
 
-		reg.Register(&ToolDef{
+	reg.Register(&ToolDef{
 		Function: struct {
 			Name        string `json:"name"`
 			Description string `json:"description"`
@@ -104,10 +104,10 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 func makeUpdateAgentHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
-			Name        *string  `json:"name"`
-			Description *string  `json:"description"`
-			SystemPrompt *string `json:"system_prompt"`
-			SkillIDs    []string `json:"skill_ids"`
+			Name         *string  `json:"name"`
+			Description  *string  `json:"description"`
+			SystemPrompt *string  `json:"system_prompt"`
+			SkillIDs     []string `json:"skill_ids"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -151,10 +151,10 @@ func makeUpdateAgentHandler(pool *pgxpool.Pool) ToolHandler {
 func makeCreateSkillHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
-			Name        string   `json:"name"`
-			Description string   `json:"description"`
-			SystemPrompt string  `json:"system_prompt"`
-			ToolIDs     []string `json:"tool_ids"`
+			Name         string   `json:"name"`
+			Description  string   `json:"description"`
+			SystemPrompt string   `json:"system_prompt"`
+			ToolIDs      []string `json:"tool_ids"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -180,10 +180,10 @@ func makeSpawnSubagentsHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
 			Tasks []struct {
-				ID      string `json:"id"`
-				Goal    string `json:"goal"`
+				ID      string         `json:"id"`
+				Goal    string         `json:"goal"`
 				Context map[string]any `json:"context"`
-				AgentID *string `json:"agent_id"`
+				AgentID *string        `json:"agent_id"`
 			} `json:"tasks"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
@@ -219,10 +219,10 @@ func makeSpawnSubagentsHandler(pool *pgxpool.Pool) ToolHandler {
 func makeUpdateSkillHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
-			SkillID     string   `json:"skill_id"`
-			Name        *string  `json:"name"`
-			SystemPrompt *string `json:"system_prompt"`
-			ToolIDs     []string `json:"tool_ids"`
+			SkillID      string   `json:"skill_id"`
+			Name         *string  `json:"name"`
+			SystemPrompt *string  `json:"system_prompt"`
+			ToolIDs      []string `json:"tool_ids"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)

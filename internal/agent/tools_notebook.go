@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/heavenlabs/hnb/internal/crypto"
 	"github.com/heavenlabs/hnb/internal/executor"
 	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
@@ -298,11 +298,11 @@ func makeListCellsHandler(db *pgxpool.Pool) ToolHandler {
 		var cells []map[string]any
 		for rows.Next() {
 			var c struct {
-				ID       string `json:"id"`
-				Type     string `json:"type"`
-				Language string `json:"language"`
+				ID       string  `json:"id"`
+				Type     string  `json:"type"`
+				Language string  `json:"language"`
 				Title    *string `json:"title"`
-				Position int    `json:"position"`
+				Position int     `json:"position"`
 			}
 			if err := rows.Scan(&c.ID, &c.Type, &c.Language, &c.Title, &c.Position); err != nil {
 				continue

@@ -54,12 +54,12 @@ type ChatResponse struct {
 type Choice struct {
 	Message      ChatMessage `json:"message"`
 	FinishReason string      `json:"finish_reason"`
-	ToolCalls    []ToolCall `json:"tool_calls,omitempty"`
+	ToolCalls    []ToolCall  `json:"tool_calls,omitempty"`
 }
 
 type ToolCall struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
+	ID       string `json:"id"`
+	Type     string `json:"type"`
 	Function struct {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
@@ -151,15 +151,15 @@ func (c *LLMClient) Chat(ctx context.Context, messages []ChatMessage, tools []Op
 }
 
 type StreamResponse struct {
-	Type    string `json:"type"`
-	Content string `json:"content,omitempty"`
+	Type     string `json:"type"`
+	Content  string `json:"content,omitempty"`
 	ToolCall *struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 		Args string `json:"arguments"`
 	} `json:"tool_call,omitempty"`
 	FinishReason string `json:"finish_reason,omitempty"`
-	Usage         Usage  `json:"usage,omitempty"`
+	Usage        Usage  `json:"usage,omitempty"`
 }
 
 func (c *LLMClient) ChatStream(ctx context.Context, messages []ChatMessage, tools []OpenAITool, masterKey []byte, onToken func(string)) error {

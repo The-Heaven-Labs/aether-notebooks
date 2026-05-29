@@ -5,13 +5,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type RateLimiter struct {
 	sessionStore *SessionStore
-	pool        *pgxpool.Pool
+	pool         *pgxpool.Pool
 }
 
 func NewRateLimiter(pool *pgxpool.Pool) *RateLimiter {
