@@ -1,0 +1,209 @@
+package api
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+
+	"github.com/google/uuid"
+	"github.com/heavenlabs/hnb/internal/audit"
+	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+type mcpServerHandlers struct {
+	server *Server
+}
+
+func (h *mcpServerHandlers) handleList(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+
+	rows, err := h.server.db.Pool.Query(r.Context(), `
+		SELECT id, org_id, name, type, command, args, created_by, created_at, updated_at
+		FROM mcp_servers WHERE org_id = $1 ORDER BY created_at DESC
+	`, claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	servers := []models.MCPServerOrg{}
+	for rows.Next() {
+		var s models.MCPServerOrg
+		var args []byte
+		if err := rows.Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if args != nil {
+			json.Unmarshal(args, &s.Args)
+		}
+		servers = append(servers, s)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, servers)
+}
+
+func (h *mcpServerHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+
+	var req struct {
+		Name    string   `json:"name"`
+		Type    string   `json:"type"`
+		Command string   `json:"command"`
+		Args    []string `json:"args"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if req.Name == "" || req.Command == "" {
+		writeError(w, http.StatusBadRequest, "name and command are required")
+		return
+	}
+	if req.Type != "stdio" && req.Type != "http" {
+		writeError(w, http.StatusBadRequest, "type must be 'stdio' or 'http'")
+		return
+	}
+	if req.Args == nil {
+		req.Args = []string{}
+	}
+
+	id := uuid.New().String()
+	argsJSON, _ := json.Marshal(req.Args)
+
+	_, err := h.server.db.Pool.Exec(r.Context(), `
+		INSERT INTO mcp_servers (id, org_id, name, type, command, args, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+	`, id, claims.OrgID, req.Name, req.Type, req.Command, argsJSON, claims.UserID)
+	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "an MCP server with this name already exists in your organization")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	h.server.audit.Log(r.Context(), audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "mcp_server.create", ResourceType: "mcp_server", ResourceID: id,
+	})
+
+	writeJSON(w, http.StatusCreated, map[string]string{"id": id})
+}
+
+func (h *mcpServerHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	claims := ClaimsFromContext(r.Context())
+
+	var s models.MCPServerOrg
+	var args []byte
+	err := h.server.db.Pool.QueryRow(r.Context(), `
+		SELECT id, org_id, name, type, command, args, created_by, created_at, updated_at
+		FROM mcp_servers WHERE id = $1 AND org_id = $2
+	`, id, claims.OrgID).Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "mcp server not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if args != nil {
+		json.Unmarshal(args, &s.Args)
+	}
+
+	writeJSON(w, http.StatusOK, s)
+}
+
+func (h *mcpServerHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	claims := ClaimsFromContext(r.Context())
+
+	var req struct {
+		Name    *string  `json:"name"`
+		Type    *string  `json:"type"`
+		Command *string  `json:"command"`
+		Args    []string `json:"args"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	if req.Type != nil && *req.Type != "stdio" && *req.Type != "http" {
+		writeError(w, http.StatusBadRequest, "type must be 'stdio' or 'http'")
+		return
+	}
+
+	var argsJSON []byte
+	if req.Args != nil {
+		argsJSON, _ = json.Marshal(req.Args)
+	}
+
+	result, err := h.server.db.Pool.Exec(r.Context(), `
+		UPDATE mcp_servers SET
+			name = COALESCE($2, name),
+			type = COALESCE($3, type),
+			command = COALESCE($4, command),
+			args = COALESCE($5, args),
+			updated_at = NOW()
+		WHERE id = $1 AND org_id = $6
+	`, id, req.Name, req.Type, req.Command, argsJSON, claims.OrgID)
+	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "an MCP server with this name already exists in your organization")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if result.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "mcp server not found")
+		return
+	}
+
+	h.server.audit.Log(r.Context(), audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "mcp_server.update", ResourceType: "mcp_server", ResourceID: id,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+}
+
+func (h *mcpServerHandlers) handleDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	claims := ClaimsFromContext(r.Context())
+
+	result, err := h.server.db.Pool.Exec(r.Context(), `DELETE FROM mcp_servers WHERE id = $1 AND org_id = $2`, id, claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if result.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "mcp server not found")
+		return
+	}
+
+	h.server.audit.Log(r.Context(), audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "mcp_server.delete", ResourceType: "mcp_server", ResourceID: id,
+	})
+
+	writeJSON(w, http.StatusNoContent, nil)
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	return false
+}

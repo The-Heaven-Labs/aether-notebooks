@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -19,7 +20,7 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
 		SELECT id, org_id, name, description, model_config_id, subagent_model_config_id,
-			   system_prompt, skill_ids, mcp_servers, folder_id, created_by, created_at, updated_at
+			   system_prompt, skill_ids, folder_id, created_by, created_at, updated_at
 		FROM agents WHERE org_id = $1 ORDER BY created_at DESC
 	`, claims.OrgID)
 	if err != nil {
@@ -29,13 +30,15 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 	defer rows.Close()
 
 	agents := []models.Agent{}
+	var agentIDs []string
 	for rows.Next() {
 		var a models.Agent
 		var desc, sysPrompt *string
-		var mcpServers []byte
 		var skillIDs []byte
-		rows.Scan(&a.ID, &a.OrgID, &a.Name, &desc, &a.ModelConfigID, &a.SubagentModelConfigID,
-			&sysPrompt, &skillIDs, &mcpServers, &a.FolderID, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt)
+		if err := rows.Scan(&a.ID, &a.OrgID, &a.Name, &desc, &a.ModelConfigID, &a.SubagentModelConfigID,
+			&sysPrompt, &skillIDs, &a.FolderID, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			continue
+		}
 		if desc != nil {
 			a.Description = *desc
 		}
@@ -45,26 +48,76 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 		if skillIDs != nil {
 			json.Unmarshal(skillIDs, &a.SkillIDs)
 		}
-		if mcpServers != nil {
-			json.Unmarshal(mcpServers, &a.MCPServers)
-		}
 		agents = append(agents, a)
+		agentIDs = append(agentIDs, a.ID)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if len(agentIDs) > 0 {
+		mcpMap := h.batchLoadMCPHandlers(r.Context(), agentIDs)
+		for i := range agents {
+			if mcp, ok := mcpMap[agents[i].ID]; ok {
+				agents[i].MCPServerIDs = mcp.IDs
+				agents[i].MCPServers = mcp.Servers
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, agents)
 }
 
+type mcpGroup struct {
+	IDs     []string
+	Servers []models.MCPServerOrg
+}
+
+func (h *agentHandlers) batchLoadMCPHandlers(ctx context.Context, agentIDs []string) map[string]*mcpGroup {
+	rows, err := h.server.db.Pool.Query(ctx, `
+		SELECT ams.agent_id, ms.id, ms.org_id, ms.name, ms.type, ms.command, ms.args, ms.created_by, ms.created_at, ms.updated_at
+		FROM agent_mcp_servers ams
+		JOIN mcp_servers ms ON ms.id = ams.mcp_server_id
+		WHERE ams.agent_id = ANY($1)
+		ORDER BY ms.name
+	`, agentIDs)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	result := make(map[string]*mcpGroup)
+	for rows.Next() {
+		var agentID string
+		var s models.MCPServerOrg
+		var args []byte
+		if err := rows.Scan(&agentID, &s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt); err != nil {
+			continue
+		}
+		if args != nil {
+			json.Unmarshal(args, &s.Args)
+		}
+		if result[agentID] == nil {
+			result[agentID] = &mcpGroup{}
+		}
+		result[agentID].IDs = append(result[agentID].IDs, s.ID)
+		result[agentID].Servers = append(result[agentID].Servers, s)
+	}
+	return result
+}
+
 func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req struct {
-		Name                  string             `json:"name"`
-		Description           string             `json:"description"`
-		ModelConfigID         *string            `json:"model_config_id"`
-		SubagentModelConfigID *string            `json:"subagent_model_config_id"`
-		SystemPrompt          string             `json:"system_prompt"`
-		SkillIDs              []string           `json:"skill_ids"`
-		MCPServers            []models.MCPServer `json:"mcp_servers"`
-		FolderID              *string            `json:"folder_id"`
+		Name                  string   `json:"name"`
+		Description           string   `json:"description"`
+		ModelConfigID         *string  `json:"model_config_id"`
+		SubagentModelConfigID *string  `json:"subagent_model_config_id"`
+		SystemPrompt          string   `json:"system_prompt"`
+		SkillIDs              []string `json:"skill_ids"`
+		MCPServerIDs          []string `json:"mcp_server_ids"`
+		FolderID              *string  `json:"folder_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -73,12 +126,11 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 	if req.SkillIDs == nil {
 		req.SkillIDs = []string{}
 	}
-	if req.MCPServers == nil {
-		req.MCPServers = []models.MCPServer{}
+	if req.MCPServerIDs == nil {
+		req.MCPServerIDs = []string{}
 	}
 
 	agentID := uuid.New().String()
-	mcpServersJSON, _ := json.Marshal(req.MCPServers)
 
 	skillIDs := req.SkillIDs
 	if skillIDs == nil {
@@ -87,13 +139,36 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 
 	_, err := h.server.db.Pool.Exec(r.Context(), `
 		INSERT INTO agents (id, org_id, name, description, model_config_id, subagent_model_config_id,
-			system_prompt, skill_ids, mcp_servers, folder_id, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+			system_prompt, skill_ids, folder_id, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
 	`, agentID, claims.OrgID, req.Name, req.Description, req.ModelConfigID, req.SubagentModelConfigID,
-		req.SystemPrompt, skillIDs, mcpServersJSON, req.FolderID, claims.UserID)
+		req.SystemPrompt, skillIDs, req.FolderID, claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	if len(req.MCPServerIDs) > 0 {
+		var count int
+		err := h.server.db.Pool.QueryRow(r.Context(), `SELECT COUNT(*) FROM mcp_servers WHERE id = ANY($1) AND org_id = $2`, req.MCPServerIDs, claims.OrgID).Scan(&count)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if count != len(req.MCPServerIDs) {
+			writeError(w, http.StatusBadRequest, "one or more mcp_server_ids not found in your organization")
+			return
+		}
+		for _, mcpID := range req.MCPServerIDs {
+			_, err := h.server.db.Pool.Exec(r.Context(), `
+				INSERT INTO agent_mcp_servers (agent_id, mcp_server_id) VALUES ($1, $2)
+				ON CONFLICT DO NOTHING
+			`, agentID, mcpID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
 	}
 
 	h.server.audit.Log(r.Context(), audit.Entry{
@@ -116,14 +191,13 @@ func (h *agentHandlers) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 
 	var a models.Agent
 	var desc, sysPrompt *string
-	var mcpServers []byte
 	var skillIDs []byte
 	err = h.server.db.Pool.QueryRow(r.Context(), `
 		SELECT id, org_id, name, description, model_config_id, subagent_model_config_id,
-			   system_prompt, skill_ids, mcp_servers, folder_id, created_by, created_at, updated_at
-		FROM agents WHERE id = $1
-	`, agentID).Scan(&a.ID, &a.OrgID, &a.Name, &desc, &a.ModelConfigID, &a.SubagentModelConfigID,
-		&sysPrompt, &skillIDs, &mcpServers, &a.FolderID, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt)
+			   system_prompt, skill_ids, folder_id, created_by, created_at, updated_at
+		FROM agents WHERE id = $1 AND org_id = $2
+	`, agentID, claims.OrgID).Scan(&a.ID, &a.OrgID, &a.Name, &desc, &a.ModelConfigID, &a.SubagentModelConfigID,
+		&sysPrompt, &skillIDs, &a.FolderID, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
@@ -137,8 +211,11 @@ func (h *agentHandlers) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 	if skillIDs != nil {
 		json.Unmarshal(skillIDs, &a.SkillIDs)
 	}
-	if mcpServers != nil {
-		json.Unmarshal(mcpServers, &a.MCPServers)
+
+	mcpMap := h.batchLoadMCPHandlers(r.Context(), []string{a.ID})
+	if mcp, ok := mcpMap[a.ID]; ok {
+		a.MCPServerIDs = mcp.IDs
+		a.MCPServers = mcp.Servers
 	}
 
 	writeJSON(w, http.StatusOK, a)
@@ -155,11 +232,13 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 	}
 
 	var req struct {
-		Name          *string  `json:"name"`
-		Description   *string  `json:"description"`
-		SystemPrompt  *string  `json:"system_prompt"`
-		SkillIDs      []string `json:"skill_ids"`
-		ModelConfigID *string  `json:"model_config_id"`
+		Name                  *string  `json:"name"`
+		Description           *string  `json:"description"`
+		SystemPrompt          *string  `json:"system_prompt"`
+		SkillIDs              []string `json:"skill_ids"`
+		ModelConfigID         *string  `json:"model_config_id"`
+		SubagentModelConfigID *string  `json:"subagent_model_config_id"`
+		MCPServerIDs          []string `json:"mcp_server_ids"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -173,9 +252,10 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 			system_prompt = COALESCE($4, system_prompt),
 			skill_ids = COALESCE($5, skill_ids),
 			model_config_id = COALESCE($6, model_config_id),
+			subagent_model_config_id = COALESCE($7, subagent_model_config_id),
 			updated_at = NOW()
-		WHERE id = $1 AND org_id = $7
-	`, agentID, req.Name, req.Description, req.SystemPrompt, req.SkillIDs, req.ModelConfigID, claims.OrgID)
+		WHERE id = $1 AND org_id = $8
+	`, agentID, req.Name, req.Description, req.SystemPrompt, req.SkillIDs, req.ModelConfigID, req.SubagentModelConfigID, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -183,6 +263,47 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 	if result.RowsAffected() == 0 {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
+	}
+
+	if req.MCPServerIDs != nil {
+		if len(req.MCPServerIDs) > 0 {
+			var count int
+			err := h.server.db.Pool.QueryRow(r.Context(), `SELECT COUNT(*) FROM mcp_servers WHERE id = ANY($1) AND org_id = $2`, req.MCPServerIDs, claims.OrgID).Scan(&count)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if count != len(req.MCPServerIDs) {
+				writeError(w, http.StatusBadRequest, "one or more mcp_server_ids not found in your organization")
+				return
+			}
+		}
+		tx, err := h.server.db.Pool.Begin(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer tx.Rollback(r.Context())
+
+		_, err = tx.Exec(r.Context(), `DELETE FROM agent_mcp_servers WHERE agent_id = $1`, agentID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for _, mcpID := range req.MCPServerIDs {
+			_, err := tx.Exec(r.Context(), `
+				INSERT INTO agent_mcp_servers (agent_id, mcp_server_id) VALUES ($1, $2)
+				ON CONFLICT DO NOTHING
+			`, agentID, mcpID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 
 	h.server.audit.Log(r.Context(), audit.Entry{

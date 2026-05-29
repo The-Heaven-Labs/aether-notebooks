@@ -33,27 +33,33 @@ type Skill struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-type MCPServer struct {
-	Name    string   `json:"name"`
-	Type    string   `json:"type"`
-	Command string   `json:"command"`
-	Args    []string `json:"args,omitempty"`
+type MCPServerOrg struct {
+	ID        string    `json:"id"`
+	OrgID     string    `json:"org_id"`
+	Name      string    `json:"name"`
+	Type      string    `json:"type"`
+	Command   string    `json:"command"`
+	Args      []string  `json:"args,omitempty"`
+	CreatedBy string    `json:"created_by"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type Agent struct {
-	ID                    string      `json:"id"`
-	OrgID                 string      `json:"org_id"`
-	Name                  string      `json:"name"`
-	Description           string      `json:"description,omitempty"`
-	ModelConfigID         *string     `json:"model_config_id,omitempty"`
-	SubagentModelConfigID *string     `json:"subagent_model_config_id,omitempty"`
-	SystemPrompt          string      `json:"system_prompt,omitempty"`
-	SkillIDs              []string    `json:"skill_ids"`
-	MCPServers            []MCPServer `json:"mcp_servers"`
-	FolderID              *string     `json:"folder_id,omitempty"`
-	CreatedBy             string      `json:"created_by"`
-	CreatedAt             time.Time   `json:"created_at"`
-	UpdatedAt             time.Time   `json:"updated_at"`
+	ID                    string         `json:"id"`
+	OrgID                 string         `json:"org_id"`
+	Name                  string         `json:"name"`
+	Description           string         `json:"description,omitempty"`
+	ModelConfigID         *string        `json:"model_config_id,omitempty"`
+	SubagentModelConfigID *string        `json:"subagent_model_config_id,omitempty"`
+	SystemPrompt          string         `json:"system_prompt,omitempty"`
+	SkillIDs             []string       `json:"skill_ids"`
+	MCPServerIDs         []string       `json:"mcp_server_ids"`
+	MCPServers            []MCPServerOrg `json:"mcp_servers"`
+	FolderID              *string        `json:"folder_id,omitempty"`
+	CreatedBy             string         `json:"created_by"`
+	CreatedAt             time.Time      `json:"created_at"`
+	UpdatedAt             time.Time      `json:"updated_at"`
 }
 
 type AgentSession struct {

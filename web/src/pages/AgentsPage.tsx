@@ -4,15 +4,7 @@ import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
 import { FormCard } from '../components/FormCard'
 import { api } from '../api/client'
-import type { Agent, ModelConfig, Skill } from '../types/agent'
-
-interface MCPServerForm {
-  name: string
-  type: 'stdio' | 'http'
-  command: string
-  args: string
-  env: Record<string, string>
-}
+import type { Agent, ModelConfig, Skill, MCPServerOrg } from '../types/agent'
 
 interface AgentForm {
   name: string
@@ -21,8 +13,7 @@ interface AgentForm {
   model_config_id: string
   subagent_model_config_id: string
   skill_ids: string[]
-  mcp_servers: MCPServerForm[]
-  mcp_env: Record<string, Record<string, string>>
+  mcp_server_ids: string[]
 }
 
 const emptyForm = (): AgentForm => ({
@@ -32,8 +23,7 @@ const emptyForm = (): AgentForm => ({
   model_config_id: '',
   subagent_model_config_id: '',
   skill_ids: [],
-  mcp_servers: [],
-  mcp_env: {},
+  mcp_server_ids: [],
 })
 
 export function AgentsPage() {
@@ -44,35 +34,7 @@ export function AgentsPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<AgentForm>(emptyForm())
   const [formError, setFormError] = useState<string | null>(null)
-  const [expandedMCPEnv, setExpandedMCPEnv] = useState<number | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
-
-  const updateMCPEnv = (i: number, key: string, value: string) => setForm(f => ({
-    ...f,
-    mcp_env: { ...f.mcp_env, [f.mcp_servers[i]?.name || '']: { ...f.mcp_env[f.mcp_servers[i]?.name || ''], [key]: value } },
-  }))
-
-  const addMCPEnvVar = (i: number) => {
-    const name = form.mcp_servers[i]?.name || ''
-    setForm(f => ({
-      ...f,
-      mcp_env: { ...f.mcp_env, [name]: { ...(f.mcp_env[name] || {}), '': '' } },
-    }))
-  }
-
-  const removeMCPEnvVar = (i: number, key: string) => {
-    const name = form.mcp_servers[i]?.name || ''
-    setForm(f => {
-      const newEnv = { ...f.mcp_env }
-      if (newEnv[name]) {
-        const { [key]: _, ...rest } = newEnv[name]
-        newEnv[name] = rest
-      }
-      return { ...f, mcp_env: newEnv }
-    })
-  }
-
-  const toggleMCPEnv = (i: number) => setExpandedMCPEnv(prev => prev === i ? null : i)
 
   const { data: agents = [], isLoading } = useQuery<Agent[]>({
     queryKey: ['agents'],
@@ -89,6 +51,11 @@ export function AgentsPage() {
     queryFn: () => api.get<Skill[]>('/api/v1/skills'),
   })
 
+  const { data: mcpServers = [] } = useQuery<MCPServerOrg[]>({
+    queryKey: ['mcp-servers'],
+    queryFn: () => api.get<MCPServerOrg[]>('/api/v1/mcp-servers'),
+  })
+
   const createMutation = useMutation({
     mutationFn: () => api.post<{ id: string }>('/api/v1/agents', {
       name: form.name,
@@ -97,15 +64,7 @@ export function AgentsPage() {
       model_config_id: form.model_config_id || undefined,
       subagent_model_config_id: form.subagent_model_config_id || undefined,
       skill_ids: form.skill_ids,
-      mcp_servers: form.mcp_servers
-        .filter(m => m.name && m.command)
-        .map(m => ({
-          name: m.name,
-          type: m.type,
-          command: m.command,
-          args: m.args ? m.args.split(' ').filter(Boolean) : [],
-        })),
-      mcp_env: form.mcp_env,
+      mcp_server_ids: form.mcp_server_ids,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agents'] })
@@ -124,15 +83,7 @@ export function AgentsPage() {
       model_config_id: form.model_config_id || undefined,
       subagent_model_config_id: form.subagent_model_config_id || undefined,
       skill_ids: form.skill_ids,
-      mcp_servers: form.mcp_servers
-        .filter(m => m.name && m.command)
-        .map(m => ({
-          name: m.name,
-          type: m.type,
-          command: m.command,
-          args: m.args ? m.args.split(' ').filter(Boolean) : [],
-        })),
-      mcp_env: form.mcp_env,
+      mcp_server_ids: form.mcp_server_ids,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agents'] })
@@ -158,14 +109,7 @@ export function AgentsPage() {
       model_config_id: agent.model_config_id ?? '',
       subagent_model_config_id: agent.subagent_model_config_id ?? '',
       skill_ids: agent.skill_ids ?? [],
-      mcp_servers: (agent.mcp_servers ?? []).map(m => ({
-        name: m.name,
-        type: m.type as 'stdio' | 'http',
-        command: m.command,
-        args: m.args?.join(' ') ?? '',
-        env: {},
-      })),
-      mcp_env: {},
+      mcp_server_ids: agent.mcp_server_ids ?? [],
     })
   }
 
@@ -174,19 +118,9 @@ export function AgentsPage() {
     skill_ids: f.skill_ids.includes(id) ? f.skill_ids.filter(s => s !== id) : [...f.skill_ids, id],
   }))
 
-  const updateMCP = (i: number, patch: Partial<MCPServerForm>) => setForm(f => ({
+  const toggleMCPServer = (id: string) => setForm(f => ({
     ...f,
-    mcp_servers: f.mcp_servers.map((m, idx) => idx === i ? { ...m, ...patch } : m),
-  }))
-
-  const addMCP = () => setForm(f => ({
-    ...f,
-    mcp_servers: [...f.mcp_servers, { name: '', type: 'stdio', command: '', args: '', env: {} }],
-  }))
-
-  const removeMCP = (i: number) => setForm(f => ({
-    ...f,
-    mcp_servers: f.mcp_servers.filter((_, idx) => idx !== i),
+    mcp_server_ids: f.mcp_server_ids.includes(id) ? f.mcp_server_ids.filter(s => s !== id) : [...f.mcp_server_ids, id],
   }))
 
   return (
@@ -203,14 +137,8 @@ export function AgentsPage() {
           <FormCard title="New Agent">
             <AgentFormFields
               form={form} setForm={setForm}
-              modelConfigs={modelConfigs} skills={skills}
-              toggleSkill={toggleSkill}
-              updateMCP={updateMCP} addMCP={addMCP} removeMCP={removeMCP}
-              expandedMCPEnv={expandedMCPEnv}
-              toggleMCPEnv={toggleMCPEnv}
-              updateMCPEnv={updateMCPEnv}
-              addMCPEnvVar={addMCPEnvVar}
-              removeMCPEnvVar={removeMCPEnvVar}
+              modelConfigs={modelConfigs} skills={skills} mcpServers={mcpServers}
+              toggleSkill={toggleSkill} toggleMCPServer={toggleMCPServer}
             />
             <div style={styles.formActions}>
               <span style={{ flex: 1 }} />
@@ -227,14 +155,8 @@ export function AgentsPage() {
           <FormCard title="Edit Agent">
             <AgentFormFields
               form={form} setForm={setForm}
-              modelConfigs={modelConfigs} skills={skills}
-              toggleSkill={toggleSkill}
-              updateMCP={updateMCP} addMCP={addMCP} removeMCP={removeMCP}
-              expandedMCPEnv={expandedMCPEnv}
-              toggleMCPEnv={toggleMCPEnv}
-              updateMCPEnv={updateMCPEnv}
-              addMCPEnvVar={addMCPEnvVar}
-              removeMCPEnvVar={removeMCPEnvVar}
+              modelConfigs={modelConfigs} skills={skills} mcpServers={mcpServers}
+              toggleSkill={toggleSkill} toggleMCPServer={toggleMCPServer}
             />
             <div style={styles.formActions}>
               <span style={{ flex: 1 }} />
@@ -293,20 +215,14 @@ export function AgentsPage() {
   )
 }
 
-function AgentFormFields({ form, setForm, modelConfigs, skills, toggleSkill, updateMCP, addMCP, removeMCP, expandedMCPEnv, toggleMCPEnv, updateMCPEnv, addMCPEnvVar, removeMCPEnvVar }: {
+function AgentFormFields({ form, setForm, modelConfigs, skills, mcpServers, toggleSkill, toggleMCPServer }: {
   form: AgentForm
   setForm: React.Dispatch<React.SetStateAction<AgentForm>>
   modelConfigs: ModelConfig[]
   skills: Skill[]
+  mcpServers: MCPServerOrg[]
   toggleSkill: (id: string) => void
-  updateMCP: (i: number, patch: Partial<MCPServerForm>) => void
-  addMCP: () => void
-  removeMCP: (i: number) => void
-  expandedMCPEnv: number | null
-  toggleMCPEnv: (i: number) => void
-  updateMCPEnv: (i: number, key: string, value: string) => void
-  addMCPEnvVar: (i: number) => void
-  removeMCPEnvVar: (i: number, key: string) => void
+  toggleMCPServer: (id: string) => void
 }) {
   return (
     <div style={styles.formGrid}>
@@ -360,63 +276,24 @@ function AgentFormFields({ form, setForm, modelConfigs, skills, toggleSkill, upd
       </label>
       <label style={{ ...styles.label, gridColumn: '1 / -1' }}>
         MCP Servers
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
-          {form.mcp_servers.length === 0 && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No MCP servers</span>}
-          {form.mcp_servers.map((m, i) => (
-            <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '120px 90px 1fr 1fr 32px', gap: 6, alignItems: 'center' }}>
-                <input style={styles.input} value={m.name} onChange={e => updateMCP(i, { name: e.target.value })} placeholder="name" />
-                <select style={styles.input} value={m.type} onChange={e => updateMCP(i, { type: e.target.value as 'stdio' | 'http' })}>
-                  <option value="stdio">stdio</option>
-                  <option value="http">http</option>
-                </select>
-                <input style={styles.input} value={m.command} onChange={e => updateMCP(i, { command: e.target.value })} placeholder="command" />
-                <input style={styles.input} value={m.args} onChange={e => updateMCP(i, { args: e.target.value })} placeholder="args (space-separated)" />
-                <button type="button" style={styles.removeBtn} onClick={() => removeMCP(i)}>×</button>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 4 }}>
-                <button type="button" style={{ fontSize: 11, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0' }} onClick={() => toggleMCPEnv(i)}>
-                  {expandedMCPEnv === i ? '▼' : '▶'} Env Variables
-                </button>
-              </div>
-              {expandedMCPEnv === i && (
-                <div style={{ padding: '4px 0 4px 4px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {Object.entries(form.mcp_env[m.name] || {}).map(([key, value]) => (
-                    <div key={key} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 28px', gap: 4, alignItems: 'center' }}>
-                      <input
-                        style={styles.input}
-                        value={key}
-                        onChange={e => {
-                          const newEnv = { ...form.mcp_env }
-                          const oldKey = key
-                          if (oldKey !== e.target.value) {
-                            const val = newEnv[m.name][oldKey]
-                            delete newEnv[m.name][oldKey]
-                            newEnv[m.name][e.target.value] = val
-                          } else {
-                            newEnv[m.name][key] = e.target.value
-                          }
-                          setForm(f => ({ ...f, mcp_env: newEnv }))
-                        }}
-                        placeholder="KEY"
-                      />
-                      <input
-                        style={styles.input}
-                        value={value}
-                        onChange={e => updateMCPEnv(i, key, e.target.value)}
-                        placeholder="value"
-                      />
-                      <button type="button" style={styles.removeBtn} onClick={() => removeMCPEnvVar(i, key)}>×</button>
-                    </div>
-                  ))}
-                  <button type="button" style={{ fontSize: 11, color: 'var(--text-muted)', background: 'none', border: '1px dashed var(--border)', borderRadius: 4, cursor: 'pointer', padding: '3px 8px', width: 'fit-content' }} onClick={() => addMCPEnvVar(i)}>
-                    + Add Env Var
-                  </button>
-                </div>
-              )}
-            </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+          {mcpServers.length === 0 && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No MCP servers configured — <a href="/mcps" style={{ color: 'var(--accent)' }}>create one</a></span>}
+          {mcpServers.map(m => (
+            <button
+              key={m.id}
+              type="button"
+              style={{
+                padding: '3px 10px', fontSize: 12, borderRadius: 12, cursor: 'pointer',
+                background: form.mcp_server_ids.includes(m.id) ? 'var(--accent)' : 'var(--bg-input)',
+                color: form.mcp_server_ids.includes(m.id) ? '#fff' : 'var(--text-secondary)',
+                border: `1px solid ${form.mcp_server_ids.includes(m.id) ? 'var(--accent)' : 'var(--border)'}`,
+                fontWeight: 500,
+              }}
+              onClick={() => toggleMCPServer(m.id)}
+            >
+              {m.name} <span style={{ opacity: 0.7, fontSize: 10 }}>{m.type}</span>
+            </button>
           ))}
-          <button type="button" style={styles.addBtn} onClick={addMCP}>+ Add MCP Server</button>
         </div>
       </label>
     </div>
@@ -435,8 +312,6 @@ const styles: Record<string, React.CSSProperties> = {
   editBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--accent)', marginRight: 6 },
   deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--error-full)' },
   tdActions: { padding: '8px 16px', textAlign: 'right' as const },
-  addBtn: { padding: '4px 12px', fontSize: 12, background: 'none', border: '1px dashed var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text-muted)', width: 'fit-content' },
-  removeBtn: { width: 28, height: 28, background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text-muted)', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center' },
   badge: { fontSize: 11, fontFamily: 'var(--font-mono)', background: 'var(--accent-light)', color: 'var(--text-secondary)', padding: '2px 7px', borderRadius: 3 },
 }
 
