@@ -20,6 +20,7 @@ type ToolContext struct {
 	TurnCount        int
 	CumulativeTokens int
 	Events           *[]EngineEvent
+	MasterKey        []byte
 }
 
 type EngineEvent struct {

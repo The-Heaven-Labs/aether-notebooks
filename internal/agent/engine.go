@@ -209,6 +209,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				DB:         e.pool,
 				TurnCount:  turn,
 				Events:     &events,
+				MasterKey:  masterKey,
 			}
 
 			result, err := toolDef.Handler(json.RawMessage(tc.Function.Arguments), toolCtx)
