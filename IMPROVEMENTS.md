@@ -30,3 +30,5 @@
 - [x] Instead of MCPs being configured at agent level, they should be configured at application level, and then could be shared between multiple agents
 
 ## Not Yet Implemented
+
+- [x] There should be a way to copy the whole agent conversation as markdown
