@@ -49,11 +49,11 @@ func (h *skillHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 func (h *skillHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req struct {
-		Name        string   `json:"name"`
-		Description string   `json:"description"`
-		SystemPrompt string  `json:"system_prompt"`
-		ToolIDs     []string `json:"tool_ids"`
-		FolderID    *string  `json:"folder_id"`
+		Name         string   `json:"name"`
+		Description  string   `json:"description"`
+		SystemPrompt string   `json:"system_prompt"`
+		ToolIDs      []string `json:"tool_ids"`
+		FolderID     *string  `json:"folder_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -82,10 +82,10 @@ func (h *skillHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
 	var req struct {
-		Name        *string  `json:"name"`
-		Description *string  `json:"description"`
-		SystemPrompt *string `json:"system_prompt"`
-		ToolIDs     []string `json:"tool_ids"`
+		Name         *string  `json:"name"`
+		Description  *string  `json:"description"`
+		SystemPrompt *string  `json:"system_prompt"`
+		ToolIDs      []string `json:"tool_ids"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")

@@ -14,12 +14,12 @@ const MaxSubagentParallelism = 3
 const MaxSubagentTurns = 20
 
 type SubagentResult struct {
-	TaskID     string
-	Status     string
-	Result     any
-	Error      string
-	TokensIn   int
-	TokensOut  int
+	TaskID    string
+	Status    string
+	Result    any
+	Error     string
+	TokensIn  int
+	TokensOut int
 }
 
 type SubagentTaskConfig struct {
@@ -85,9 +85,9 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 		if choice.Message.Content != "" {
 			messages = append(messages, ChatMessage{Role: "assistant", Content: choice.Message.Content})
 			result := SubagentResult{
-				TaskID:  taskID,
-				Status:  "completed",
-				Result:  choice.Message.Content,
+				TaskID:    taskID,
+				Status:    "completed",
+				Result:    choice.Message.Content,
 				TokensIn:  resp.Usage.PromptTokens,
 				TokensOut: resp.Usage.CompletionTokens,
 			}
@@ -114,7 +114,7 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 				OrgRole:    "subagent",
 				NotebookID: taskID,
 				SessionID:  parentSessionID,
-				DB:        e.pool,
+				DB:         e.pool,
 			})
 
 			if err != nil {

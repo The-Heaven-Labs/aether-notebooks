@@ -69,7 +69,7 @@ func makeListNotebooksHandler(db *pgxpool.Pool) ToolHandler {
 		}
 		json.Unmarshal(args, &req)
 
-		query := `SELECT n.id, n.name, COALESCE(n.description, ''), n.folder_id, n.created_at
+		query := `SELECT n.id, n.title, COALESCE(n.description, ''), n.folder_id, n.created_at
 			FROM notebooks n WHERE n.org_id = $1`
 		params := []any{ctx.OrgID}
 		argIdx := 2
@@ -80,7 +80,7 @@ func makeListNotebooksHandler(db *pgxpool.Pool) ToolHandler {
 			argIdx++
 		}
 		if req.Search != "" {
-			query += fmt.Sprintf(` AND n.name ILIKE '%%' || $%d || '%%'`, argIdx)
+			query += fmt.Sprintf(` AND n.title ILIKE '%%' || $%d || '%%'`, argIdx)
 			params = append(params, req.Search)
 			argIdx++
 		}

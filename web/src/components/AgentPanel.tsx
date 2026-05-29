@@ -220,7 +220,6 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       if (showSlashPicker) {
-        setShowSlashPicker(false)
         return
       }
       sendMessage()
