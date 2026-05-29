@@ -140,6 +140,21 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 							Error  string `json:"error,omitempty"`
 						}{Type: "tool_result", Tool: toolName, Params: params, Result: result, Error: errMsg})
 					},
+					func(evt agent.EngineEvent) {
+						switch evt.Type {
+						case "cell_created":
+							conn.WriteJSON(struct {
+								Type     string `json:"type"`
+								CellID   string `json:"cell_id"`
+								Position int    `json:"position"`
+							}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position})
+						case "tasks_updated":
+							conn.WriteJSON(struct {
+								Type string            `json:"type"`
+								Data []agent.AgentTask `json:"data"`
+							}{Type: "tasks_updated", Data: evt.Tasks})
+						}
+					},
 				)
 				if err != nil {
 					conn.WriteJSON(WSErrorResponse{Type: "error", Message: err.Error()})
@@ -262,6 +277,21 @@ func (s *Server) handleAgentWSWithUpgrader(upgrader websocket.Upgrader) http.Han
 								Result string `json:"result"`
 								Error  string `json:"error,omitempty"`
 							}{Type: "tool_result", Tool: toolName, Params: params, Result: result, Error: errMsg})
+						},
+						func(evt agent.EngineEvent) {
+							switch evt.Type {
+							case "cell_created":
+								conn.WriteJSON(struct {
+									Type     string `json:"type"`
+									CellID   string `json:"cell_id"`
+									Position int    `json:"position"`
+								}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position})
+							case "tasks_updated":
+								conn.WriteJSON(struct {
+									Type string            `json:"type"`
+									Data []agent.AgentTask `json:"data"`
+								}{Type: "tasks_updated", Data: evt.Tasks})
+							}
 						},
 					)
 					if err != nil {
