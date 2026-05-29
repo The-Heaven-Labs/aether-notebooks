@@ -27,6 +27,6 @@
 - [x] There should be a native tool call for data schema exploration
 - [x] There should be native tools for task tracking
 - [x] When the agent creates a new cell, it should be highlighted and scrolled immediatly, not only when that part of the session/command ends
+- [x] Instead of MCPs being configured at agent level, they should be configured at application level, and then could be shared between multiple agents
 
 ## Not Yet Implemented
-- [ ] Instead of MCPs being configured at agent level, they should be configured at application level, and then could be shared between multiple agents

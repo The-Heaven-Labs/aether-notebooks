@@ -49,17 +49,38 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	var agent models.Agent
 	var systemPrompt string
 	var skillIDs []byte
-	var mcpServers []byte
-	err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, description, model_config_id, subagent_model_config_id, system_prompt, array_to_json(skill_ids)::text, mcp_servers, folder_id, created_by, created_at, updated_at FROM agents WHERE id = $1`, session.AgentID).Scan(
-		&agent.ID, &agent.OrgID, &agent.Name, &agent.Description, &agent.ModelConfigID, &agent.SubagentModelConfigID, &systemPrompt, &skillIDs, &mcpServers, &agent.FolderID, &agent.CreatedBy, &agent.CreatedAt, &agent.UpdatedAt)
+	err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, description, model_config_id, subagent_model_config_id, system_prompt, array_to_json(skill_ids)::text, folder_id, created_by, created_at, updated_at FROM agents WHERE id = $1`, session.AgentID).Scan(
+		&agent.ID, &agent.OrgID, &agent.Name, &agent.Description, &agent.ModelConfigID, &agent.SubagentModelConfigID, &systemPrompt, &skillIDs, &agent.FolderID, &agent.CreatedBy, &agent.CreatedAt, &agent.UpdatedAt)
 	if err != nil {
 		return "", "", nil, events, fmt.Errorf("get agent: %w", err)
 	}
 	if skillIDs != nil {
 		json.Unmarshal(skillIDs, &agent.SkillIDs)
 	}
-	if mcpServers != nil {
-		json.Unmarshal(mcpServers, &agent.MCPServers)
+
+	mcpRows, err := e.pool.Query(ctx, `
+		SELECT ms.id, ms.org_id, ms.name, ms.type, ms.command, ms.args, ms.created_by, ms.created_at, ms.updated_at
+		FROM agent_mcp_servers ams
+		JOIN mcp_servers ms ON ms.id = ams.mcp_server_id
+		WHERE ams.agent_id = $1
+		ORDER BY ms.name
+	`, session.AgentID)
+	if err == nil {
+		for mcpRows.Next() {
+			var s models.MCPServerOrg
+			var args []byte
+			if err := mcpRows.Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt); err == nil {
+				if args != nil {
+					json.Unmarshal(args, &s.Args)
+				}
+				agent.MCPServerIDs = append(agent.MCPServerIDs, s.ID)
+				agent.MCPServers = append(agent.MCPServers, s)
+			}
+		}
+		if err := mcpRows.Err(); err != nil {
+			slog.Warn("error iterating mcp server rows", "session_id", sessionID, "error", err)
+		}
+		mcpRows.Close()
 	}
 
 	ok, err := e.rateLimiter.CheckAndUpdateTokens(ctx, sessionID, 0, 0)
@@ -152,6 +173,10 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 
 	if len(agent.MCPServers) > 0 {
 		for _, ms := range agent.MCPServers {
+			if ms.Type == "stdio" {
+				slog.Warn("stdio MCP server not supported at runtime, skipping", "server", ms.Name, "session_id", sessionID)
+				continue
+			}
 			if ms.Type == "http" {
 				allTools = append(allTools,
 					&ToolDef{
