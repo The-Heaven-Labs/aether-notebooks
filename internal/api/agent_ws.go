@@ -147,11 +147,19 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 				}
 
 			for _, evt := range events {
+				switch evt.Type {
+				case "cell_created":
 					conn.WriteJSON(struct {
 						Type     string `json:"type"`
 						CellID   string `json:"cell_id"`
 						Position int    `json:"position"`
 					}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position})
+				case "tasks_updated":
+					conn.WriteJSON(struct {
+						Type string            `json:"type"`
+						Data []agent.AgentTask `json:"data"`
+					}{Type: "tasks_updated", Data: evt.Tasks})
+				}
 				}
 				select {
 				case writeChan <- resp:
@@ -262,11 +270,19 @@ func (s *Server) handleAgentWSWithUpgrader(upgrader websocket.Upgrader) http.Han
 					}
 
 					for _, evt := range events {
-						conn.WriteJSON(struct {
-							Type     string `json:"type"`
-							CellID   string `json:"cell_id"`
-							Position int    `json:"position"`
-						}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position})
+						switch evt.Type {
+						case "cell_created":
+							conn.WriteJSON(struct {
+								Type     string `json:"type"`
+								CellID   string `json:"cell_id"`
+								Position int    `json:"position"`
+							}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position})
+						case "tasks_updated":
+							conn.WriteJSON(struct {
+								Type string            `json:"type"`
+								Data []agent.AgentTask `json:"data"`
+							}{Type: "tasks_updated", Data: evt.Tasks})
+						}
 					}
 					writeChan <- resp
 conn.WriteJSON(WSResponse{Type: "done", Data: map[string]any{"content": resp, "reasoning": reasoning}})
