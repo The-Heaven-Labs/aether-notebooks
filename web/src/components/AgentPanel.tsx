@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Bot, Send, Loader2 } from 'lucide-react'
+import { Bot, Send, Loader2, History } from 'lucide-react'
 import { api, getToken } from '../api/client'
 import type { Agent, WSMessage } from '../types/agent'
 import { PanelHeader } from './PanelHeader'
+import { SessionHistory } from './SessionHistory'
 
 interface AgentPanelProps {
   notebookId: string
@@ -40,6 +41,7 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
     setCurrentStreamingReasoning(val)
   }
   const [isLoadingAgents, setIsLoadingAgents] = useState(true)
+  const [showHistory, setShowHistory] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const messageListRef = useRef<HTMLDivElement>(null)
@@ -179,7 +181,9 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
         style={{ borderBottom: '1px solid var(--border)', flexShrink: 0 }}
       />
 
-      {!selectedAgent ? (
+      {showHistory && selectedAgent ? (
+        <SessionHistory agentId={selectedAgent.id} onBack={() => setShowHistory(false)} />
+      ) : !selectedAgent ? (
         <div style={styles.agentSelect}>
           {isLoadingAgents ? (
             <div style={styles.loading}>
@@ -219,6 +223,13 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
               }}
             >
               Change
+            </button>
+            <button
+              style={styles.historyBtn}
+              onClick={() => setShowHistory(true)}
+              title="View chat history"
+            >
+              <History size={14} />
             </button>
           </div>
 
@@ -371,6 +382,16 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     cursor: 'pointer',
     color: 'var(--text-secondary)',
+  },
+  historyBtn: {
+    padding: '3px 8px',
+    background: 'none',
+    border: 'none',
+    borderRadius: 4,
+    cursor: 'pointer',
+    color: 'var(--text-secondary)',
+    display: 'flex',
+    alignItems: 'center',
   },
   messageList: {
     flex: 1,
