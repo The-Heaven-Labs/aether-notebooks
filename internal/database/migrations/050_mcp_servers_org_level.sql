@@ -7,7 +7,7 @@ CREATE TABLE mcp_servers (
     name        TEXT NOT NULL,
     type        TEXT NOT NULL CHECK (type IN ('stdio', 'http')),
     command     TEXT NOT NULL,
-    args        JSONB NOT NULL DEFAULT '[]',
+    args        TEXT[] NOT NULL DEFAULT '{}',
     created_by  UUID NOT NULL REFERENCES users(id),
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()

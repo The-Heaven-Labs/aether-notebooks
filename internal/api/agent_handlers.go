@@ -34,9 +34,8 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 	for rows.Next() {
 		var a models.Agent
 		var desc, sysPrompt *string
-		var skillIDs []byte
 		if err := rows.Scan(&a.ID, &a.OrgID, &a.Name, &desc, &a.ModelConfigID, &a.SubagentModelConfigID,
-			&sysPrompt, &skillIDs, &a.FolderID, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			&sysPrompt, &a.SkillIDs, &a.FolderID, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			continue
 		}
 		if desc != nil {
@@ -44,9 +43,6 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 		}
 		if sysPrompt != nil {
 			a.SystemPrompt = *sysPrompt
-		}
-		if skillIDs != nil {
-			json.Unmarshal(skillIDs, &a.SkillIDs)
 		}
 		agents = append(agents, a)
 		agentIDs = append(agentIDs, a.ID)
@@ -91,12 +87,8 @@ func (h *agentHandlers) batchLoadMCPHandlers(ctx context.Context, agentIDs []str
 	for rows.Next() {
 		var agentID string
 		var s models.MCPServerOrg
-		var args []byte
-		if err := rows.Scan(&agentID, &s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		if err := rows.Scan(&agentID, &s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &s.Args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			continue
-		}
-		if args != nil {
-			json.Unmarshal(args, &s.Args)
 		}
 		if result[agentID] == nil {
 			result[agentID] = &mcpGroup{}
@@ -191,13 +183,12 @@ func (h *agentHandlers) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 
 	var a models.Agent
 	var desc, sysPrompt *string
-	var skillIDs []byte
 	err = h.server.db.Pool.QueryRow(r.Context(), `
 		SELECT id, org_id, name, description, model_config_id, subagent_model_config_id,
 			   system_prompt, skill_ids, folder_id, created_by, created_at, updated_at
 		FROM agents WHERE id = $1 AND org_id = $2
 	`, agentID, claims.OrgID).Scan(&a.ID, &a.OrgID, &a.Name, &desc, &a.ModelConfigID, &a.SubagentModelConfigID,
-		&sysPrompt, &skillIDs, &a.FolderID, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt)
+		&sysPrompt, &a.SkillIDs, &a.FolderID, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
@@ -207,9 +198,6 @@ func (h *agentHandlers) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if sysPrompt != nil {
 		a.SystemPrompt = *sysPrompt
-	}
-	if skillIDs != nil {
-		json.Unmarshal(skillIDs, &a.SkillIDs)
 	}
 
 	mcpMap := h.batchLoadMCPHandlers(r.Context(), []string{a.ID})
