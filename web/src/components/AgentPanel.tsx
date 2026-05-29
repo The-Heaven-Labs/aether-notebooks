@@ -46,7 +46,7 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
   const [showHistory, setShowHistory] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showSlashPicker, setShowSlashPicker] = useState(false)
-  const [_pendingMessages, setPendingMessages] = useState<string[]>([])
+  const [pendingMessages, setPendingMessages] = useState<string[]>([])
   const wsRef = useRef<WebSocket | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const messageListRef = useRef<HTMLDivElement>(null)
@@ -178,7 +178,7 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
   const sendMessage = () => {
     if (!input.trim() || !wsRef.current) return
 
-    if (isStreaming) {
+    if (isStreaming || pendingMessages.length > 0) {
       setPendingMessages((prev) => [...prev, input])
       setMessages((prev) => [...prev, { role: 'user', content: input }])
       setInput('')
@@ -368,6 +368,9 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
               onKeyDown={handleKeyDown}
               placeholder="Message agent... (/ for commands)"
             />
+            {pendingMessages.length > 0 && (
+              <span style={styles.pendingBadge}>{pendingMessages.length}</span>
+            )}
             <button
               style={{ ...styles.sendButton, ...(isStreaming ? styles.sendButtonDisabled : {}) }}
               onClick={sendMessage}
@@ -562,5 +565,21 @@ const styles: Record<string, React.CSSProperties> = {
   sendButtonDisabled: {
     opacity: 0.5,
     cursor: 'not-allowed',
+  },
+  pendingBadge: {
+    position: 'absolute',
+    right: 52,
+    top: -4,
+    background: 'var(--accent)',
+    color: 'white',
+    fontSize: 10,
+    fontWeight: 600,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '0 4px',
   },
 }
