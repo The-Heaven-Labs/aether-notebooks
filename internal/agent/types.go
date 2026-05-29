@@ -23,15 +23,28 @@ type ToolContext struct {
 	MasterKey        []byte
 }
 
+type AgentTask struct {
+	ID          string `json:"id"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
+}
+
 type EngineEvent struct {
-	Type     string `json:"type"`
-	CellID   string `json:"cell_id,omitempty"`
-	Position int    `json:"position,omitempty"`
+	Type     string      `json:"type"`
+	CellID   string      `json:"cell_id,omitempty"`
+	Position int         `json:"position,omitempty"`
+	Tasks    []AgentTask `json:"tasks,omitempty"`
 }
 
 func (tc *ToolContext) EmitCellCreated(cellID string, position int) {
 	if tc.Events != nil {
 		*tc.Events = append(*tc.Events, EngineEvent{Type: "cell_created", CellID: cellID, Position: position})
+	}
+}
+
+func (tc *ToolContext) EmitTasksUpdated(tasks []AgentTask) {
+	if tc.Events != nil {
+		*tc.Events = append(*tc.Events, EngineEvent{Type: "tasks_updated", Tasks: tasks})
 	}
 }
 

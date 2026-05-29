@@ -48,7 +48,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 		Handler: makeSpawnSubagentsHandler(pool),
 	})
 
-	reg.Register(&ToolDef{
+		reg.Register(&ToolDef{
 		Function: struct {
 			Name        string `json:"name"`
 			Description string `json:"description"`
@@ -59,6 +59,45 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"skill_id":{"type":"string"},"name":{"type":"string"},"system_prompt":{"type":"string"},"tool_ids":{"type":"array","items":{"type":"string"}}},"required":["skill_id"]}`,
 		},
 		Handler: makeUpdateSkillHandler(pool),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "create_tasks",
+			Description: "Create a task list for the current session to track progress on complex work. Use this to break down complex requests into smaller, trackable tasks.",
+			Parameters:  `{"type":"object","properties":{"tasks":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","description":"Short unique identifier for the task"},"description":{"type":"string","description":"What needs to be done"}},"required":["id","description"]}}},"required":["tasks"]}`,
+		},
+		Handler: makeCreateTasksHandler(),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "update_task",
+			Description: "Update a task's status. Valid statuses: pending, in_progress, done.",
+			Parameters:  `{"type":"object","properties":{"task_id":{"type":"string"},"status":{"type":"string","enum":["pending","in_progress","done"]}},"required":["task_id","status"]}`,
+		},
+		Handler: makeUpdateTaskHandler(),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "get_tasks",
+			Description: "Get the current task list for the session. Use this to check what tasks are pending and what has been completed.",
+			Parameters:  `{"type":"object","properties":{}}`,
+		},
+		Handler: makeGetTasksHandler(),
 	})
 }
 
@@ -204,5 +243,54 @@ func makeUpdateSkillHandler(pool *pgxpool.Pool) ToolHandler {
 		}
 
 		return map[string]any{"skill_id": req.SkillID}, nil
+	}
+}
+
+func makeCreateTasksHandler() ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			Tasks []struct {
+				ID          string `json:"id"`
+				Description string `json:"description"`
+			} `json:"tasks"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+
+		tasks := make([]AgentTask, len(req.Tasks))
+		for i, t := range req.Tasks {
+			tasks[i] = AgentTask{ID: t.ID, Description: t.Description, Status: "pending"}
+		}
+
+		ctx.EmitTasksUpdated(tasks)
+
+		return map[string]any{"tasks": tasks, "count": len(tasks)}, nil
+	}
+}
+
+func makeUpdateTaskHandler() ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			TaskID string `json:"task_id"`
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+
+		if req.Status != "pending" && req.Status != "in_progress" && req.Status != "done" {
+			return nil, fmt.Errorf("invalid status: %s. Must be pending, in_progress, or done", req.Status)
+		}
+
+		ctx.EmitTasksUpdated([]AgentTask{{ID: req.TaskID, Description: "", Status: req.Status}})
+
+		return map[string]any{"task_id": req.TaskID, "status": req.Status}, nil
+	}
+}
+
+func makeGetTasksHandler() ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		return map[string]any{"tasks": []AgentTask{}, "message": "Task state is tracked via events sent to the UI"}, nil
 	}
 }
