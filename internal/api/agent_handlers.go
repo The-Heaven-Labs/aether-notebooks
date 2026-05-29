@@ -259,15 +259,15 @@ func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Reques
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
 		SELECT s.id, s.agent_id, s.notebook_id, s.user_id, s.max_turns, s.max_tokens, s.ended_at, s.created_at,
-			COALESCE(m.first_message, ''), COALESCE(m.msg_count, 0)
+			COALESCE(
+				(SELECT content FROM agent_messages WHERE session_id = s.id AND role = 'user' ORDER BY created_at ASC LIMIT 1),
+				''
+			) as first_message,
+			COALESCE(
+				(SELECT COUNT(*) FROM agent_messages WHERE session_id = s.id),
+				0
+			) as message_count
 		FROM agent_sessions s
-		LEFT JOIN (
-			SELECT session_id,
-				MIN(CASE WHEN role = 'user' THEN content END) as first_message,
-				COUNT(*) as msg_count
-			FROM agent_messages
-			GROUP BY session_id
-		) m ON m.session_id = s.id
 		WHERE s.agent_id = $1
 		ORDER BY s.created_at DESC LIMIT 50
 	`, agentID)
@@ -289,11 +289,18 @@ func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Reques
 			"agent_id":      s.AgentID,
 			"notebook_id":   s.NotebookID,
 			"user_id":       s.UserID,
+			"max_turns":     s.MaxTurns,
+			"max_tokens":    s.MaxTokens,
 			"ended_at":      endedAt,
 			"created_at":    s.CreatedAt,
 			"first_message": firstMsg,
 			"message_count": msgCount,
 		})
+	}
+
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
 	writeJSON(w, http.StatusOK, sessions)
@@ -359,6 +366,11 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 			msg["tool_calls"] = json.RawMessage(toolCalls)
 		}
 		messages = append(messages, msg)
+	}
+
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
 	writeJSON(w, http.StatusOK, messages)
