@@ -57,14 +57,14 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req struct {
-		Name                  string              `json:"name"`
-		Description           string              `json:"description"`
-		ModelConfigID         *string             `json:"model_config_id"`
-		SubagentModelConfigID *string             `json:"subagent_model_config_id"`
-		SystemPrompt          string              `json:"system_prompt"`
-		SkillIDs              []string            `json:"skill_ids"`
-		MCPServers            []models.MCPServer  `json:"mcp_servers"`
-		FolderID              *string             `json:"folder_id"`
+		Name                  string             `json:"name"`
+		Description           string             `json:"description"`
+		ModelConfigID         *string            `json:"model_config_id"`
+		SubagentModelConfigID *string            `json:"subagent_model_config_id"`
+		SystemPrompt          string             `json:"system_prompt"`
+		SkillIDs              []string           `json:"skill_ids"`
+		MCPServers            []models.MCPServer `json:"mcp_servers"`
+		FolderID              *string            `json:"folder_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -155,11 +155,11 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 	}
 
 	var req struct {
-		Name                  *string  `json:"name"`
-		Description           *string  `json:"description"`
-		SystemPrompt          *string  `json:"system_prompt"`
-		SkillIDs              []string `json:"skill_ids"`
-		ModelConfigID         *string  `json:"model_config_id"`
+		Name          *string  `json:"name"`
+		Description   *string  `json:"description"`
+		SystemPrompt  *string  `json:"system_prompt"`
+		SkillIDs      []string `json:"skill_ids"`
+		ModelConfigID *string  `json:"model_config_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")

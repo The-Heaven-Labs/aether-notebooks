@@ -41,19 +41,19 @@ type MCPServer struct {
 }
 
 type Agent struct {
-	ID                    string       `json:"id"`
-	OrgID                 string       `json:"org_id"`
-	Name                  string       `json:"name"`
-	Description           string       `json:"description,omitempty"`
-	ModelConfigID         *string      `json:"model_config_id,omitempty"`
-	SubagentModelConfigID *string      `json:"subagent_model_config_id,omitempty"`
-	SystemPrompt          string       `json:"system_prompt,omitempty"`
-	SkillIDs              []string     `json:"skill_ids"`
-	MCPServers            []MCPServer  `json:"mcp_servers"`
-	FolderID              *string      `json:"folder_id,omitempty"`
-	CreatedBy             string       `json:"created_by"`
-	CreatedAt             time.Time    `json:"created_at"`
-	UpdatedAt             time.Time    `json:"updated_at"`
+	ID                    string      `json:"id"`
+	OrgID                 string      `json:"org_id"`
+	Name                  string      `json:"name"`
+	Description           string      `json:"description,omitempty"`
+	ModelConfigID         *string     `json:"model_config_id,omitempty"`
+	SubagentModelConfigID *string     `json:"subagent_model_config_id,omitempty"`
+	SystemPrompt          string      `json:"system_prompt,omitempty"`
+	SkillIDs              []string    `json:"skill_ids"`
+	MCPServers            []MCPServer `json:"mcp_servers"`
+	FolderID              *string     `json:"folder_id,omitempty"`
+	CreatedBy             string      `json:"created_by"`
+	CreatedAt             time.Time   `json:"created_at"`
+	UpdatedAt             time.Time   `json:"updated_at"`
 }
 
 type AgentSession struct {
@@ -68,12 +68,12 @@ type AgentSession struct {
 }
 
 type ToolCall struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Arguments  any    `json:"arguments"`
-	Result     any    `json:"result,omitempty"`
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	Arguments  any     `json:"arguments"`
+	Result     any     `json:"result,omitempty"`
 	Error      *string `json:"error,omitempty"`
-	DurationMs int    `json:"duration_ms,omitempty"`
+	DurationMs int     `json:"duration_ms,omitempty"`
 }
 
 type AgentMessage struct {
@@ -107,13 +107,13 @@ type SubagentTask struct {
 }
 
 type AgentStatsDaily struct {
-	Date           string `json:"date"`
-	AgentID        string `json:"agent_id"`
-	UserID         string `json:"user_id"`
-	SessionsCount  int    `json:"sessions_count"`
-	MessagesCount  int    `json:"messages_count"`
-	TokensInput    int64  `json:"tokens_input"`
-	TokensOutput   int64  `json:"tokens_output"`
+	Date          string `json:"date"`
+	AgentID       string `json:"agent_id"`
+	UserID        string `json:"user_id"`
+	SessionsCount int    `json:"sessions_count"`
+	MessagesCount int    `json:"messages_count"`
+	TokensInput   int64  `json:"tokens_input"`
+	TokensOutput  int64  `json:"tokens_output"`
 }
 
 type AgentVersion struct {

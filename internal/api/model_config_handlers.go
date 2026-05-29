@@ -100,13 +100,13 @@ func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Reques
 	claims := ClaimsFromContext(r.Context())
 
 	var req struct {
-		Name          *string        `json:"name"`
-		Provider      *string        `json:"provider"`
-		BaseURL       *string        `json:"base_url"`
-		Model         *string        `json:"model"`
-		APIKey        *string        `json:"api_key"`
+		Name          *string         `json:"name"`
+		Provider      *string         `json:"provider"`
+		BaseURL       *string         `json:"base_url"`
+		Model         *string         `json:"model"`
+		APIKey        *string         `json:"api_key"`
 		DefaultParams *models.JSONMap `json:"default_params"`
-		ContextWindow *int           `json:"context_window"`
+		ContextWindow *int            `json:"context_window"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -192,9 +192,9 @@ func (h *modelConfigHandlers) handleTest(w http.ResponseWriter, r *http.Request)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":    "ok",
-		"response":  resp.Choices[0].Message.Content,
-		"model":     resp.Model,
-		"usage":     resp.Usage,
+		"status":   "ok",
+		"response": resp.Choices[0].Message.Content,
+		"model":    resp.Model,
+		"usage":    resp.Usage,
 	})
 }

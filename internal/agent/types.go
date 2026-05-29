@@ -105,8 +105,8 @@ type ToolResult struct {
 type ToolHandler func(args json.RawMessage, ctx *ToolContext) (any, error)
 
 type ToolDef struct {
-	Type        string `json:"type"`
-	Function    struct {
+	Type     string `json:"type"`
+	Function struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		Parameters  any    `json:"parameters"`

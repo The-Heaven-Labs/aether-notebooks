@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Engine struct {
@@ -102,6 +102,15 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		chatMsgs = append(chatMsgs, msg)
 	}
 	chatMsgs = append(chatMsgs, ChatMessage{Role: "user", Content: userMessage})
+
+	userMsgID := uuid.New().String()
+	e.session.AppendMessage(ctx, &models.AgentMessage{
+		ID:        userMsgID,
+		SessionID: sessionID,
+		Role:      "user",
+		Content:   userMessage,
+		CreatedAt: time.Now(),
+	})
 
 	toolsList := make([]OpenAITool, len(tools))
 	for i, t := range tools {

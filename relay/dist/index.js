@@ -13,6 +13,8 @@ const server = new server_1.Hocuspocus({
                 if (!res.ok)
                     return null;
                 const buf = await res.arrayBuffer();
+                if (buf.byteLength === 0)
+                    return null;
                 return new Uint8Array(buf);
             },
             store: async ({ documentName, state }) => {
@@ -24,13 +26,16 @@ const server = new server_1.Hocuspocus({
             },
         }),
     ],
+    // HocuspocusProvider sends the JWT inside a Hocuspocus auth message so
+    // onAuthenticate receives it directly — no URL-param parsing needed.
     async onAuthenticate({ token }) {
+        if (!token)
+            throw new Error('Unauthorized');
         const res = await fetch(`${API_URL}/internal/auth/validate`, {
             headers: { Authorization: `Bearer ${token}` },
         });
-        if (!res.ok) {
+        if (!res.ok)
             throw new Error('Unauthorized');
-        }
     },
 });
 server.listen().then(() => {

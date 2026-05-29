@@ -12,8 +12,8 @@ import (
 )
 
 type agentWSHandler struct {
-	server  *Server
-	engine  *agent.Engine
+	server *Server
+	engine *agent.Engine
 }
 
 type WSMessage struct {
@@ -146,20 +146,20 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-			for _, evt := range events {
-				switch evt.Type {
-				case "cell_created":
-					conn.WriteJSON(struct {
-						Type     string `json:"type"`
-						CellID   string `json:"cell_id"`
-						Position int    `json:"position"`
-					}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position})
-				case "tasks_updated":
-					conn.WriteJSON(struct {
-						Type string            `json:"type"`
-						Data []agent.AgentTask `json:"data"`
-					}{Type: "tasks_updated", Data: evt.Tasks})
-				}
+				for _, evt := range events {
+					switch evt.Type {
+					case "cell_created":
+						conn.WriteJSON(struct {
+							Type     string `json:"type"`
+							CellID   string `json:"cell_id"`
+							Position int    `json:"position"`
+						}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position})
+					case "tasks_updated":
+						conn.WriteJSON(struct {
+							Type string            `json:"type"`
+							Data []agent.AgentTask `json:"data"`
+						}{Type: "tasks_updated", Data: evt.Tasks})
+					}
 				}
 				select {
 				case writeChan <- resp:
@@ -285,7 +285,7 @@ func (s *Server) handleAgentWSWithUpgrader(upgrader websocket.Upgrader) http.Han
 						}
 					}
 					writeChan <- resp
-conn.WriteJSON(WSResponse{Type: "done", Data: map[string]any{"content": resp, "reasoning": reasoning}})
+					conn.WriteJSON(WSResponse{Type: "done", Data: map[string]any{"content": resp, "reasoning": reasoning}})
 				} else if msg.Type == "slash_command" {
 					result, err := s.agentEngine.HandleSlashCommand(ctx, sessionID, msg.Command, s.masterKey)
 					if err != nil {
