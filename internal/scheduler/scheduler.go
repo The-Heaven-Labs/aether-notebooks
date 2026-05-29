@@ -46,6 +46,12 @@ func (s *Scheduler) loop() {
 
 func (s *Scheduler) tick() {
 	ctx := context.Background()
+
+	now := time.Now()
+	if now.Hour() == 0 && now.Minute() == 0 {
+		s.runAgentStatsRollup(ctx)
+	}
+
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, notebook_id, cron_expression, parameter_overrides
 		 FROM schedules WHERE enabled = TRUE AND next_run_at <= NOW()`)
@@ -85,4 +91,32 @@ func NextRun(cronExpr string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return schedule.Next(time.Now()), nil
+}
+
+func (s *Scheduler) runAgentStatsRollup(ctx context.Context) {
+	yesterday := time.Now().AddDate(0, 0, -1).Truncate(24 * time.Hour)
+
+	_, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO agent_stats_daily (date, agent_id, user_id, sessions_count, messages_count, tokens_input, tokens_output)
+		SELECT
+			$1 as date,
+			s.agent_id,
+			s.user_id,
+			COUNT(DISTINCT s.id) as sessions_count,
+			COUNT(m.id) as messages_count,
+			COALESCE(SUM(m.tokens_input), 0) as tokens_input,
+			COALESCE(SUM(m.tokens_output), 0) as tokens_output
+		FROM agent_sessions s
+		LEFT JOIN agent_messages m ON m.session_id = s.id
+		WHERE s.created_at::date = $1::date
+		GROUP BY s.agent_id, s.user_id
+		ON CONFLICT (date, agent_id, user_id) DO UPDATE SET
+			sessions_count = EXCLUDED.sessions_count,
+			messages_count = EXCLUDED.messages_count,
+			tokens_input = EXCLUDED.tokens_input,
+			tokens_output = EXCLUDED.tokens_output
+	`, yesterday)
+	if err != nil {
+		log.Printf("scheduler: agent stats rollup: %v", err)
+	}
 }
