@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -60,28 +62,31 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	writeChan := make(chan any, 256)
-	done := make(chan struct{})
+	var wg sync.WaitGroup
 
+	wg.Add(1)
 	go func() {
-		for {
-			select {
-			case out := <-writeChan:
-				if err := conn.WriteJSON(out); err != nil {
-					return
-				}
-			case <-done:
+		defer wg.Done()
+		for out := range writeChan {
+			if err := conn.WriteJSON(out); err != nil {
+				slog.Debug("ws: write error, writer exiting", "session_id", sessionID, "error", err)
 				return
 			}
 		}
 	}()
 
+	wg.Add(1)
 	go func() {
-		defer close(done)
+		defer wg.Done()
+		defer close(writeChan)
 		for {
 			var msg WSMessage
 			if err := conn.ReadJSON(&msg); err != nil {
+				slog.Debug("ws: read error, reader exiting", "session_id", sessionID, "error", err)
 				return
 			}
+
+			slog.Debug("ws: received message", "session_id", sessionID, "type", msg.Type, "content_len", len(msg.Content))
 
 			if msg.Type == "reconnect" {
 				rows, err := s.db.Pool.Query(ctx, `
@@ -113,6 +118,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if msg.Type == "message" {
+				slog.Info("ws: processing message", "session_id", sessionID, "content_len", len(msg.Content))
 				_, reasoning, _, events, err := s.agentEngine.ProcessMessage(ctx, sessionID, msg.Content, s.agentEngine.GetRegistry().List(), s.masterKey,
 					func(token string) {
 						writeChan <- WSResponse{Type: "token", Data: token}
@@ -153,13 +159,14 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					},
 				)
 				if err != nil {
+					slog.Error("ws: process message error", "session_id", sessionID, "error", err)
 					writeChan <- WSErrorResponse{Type: "error", Message: err.Error()}
 					return
 				}
 
-				for range events {
-				}
+				_ = events
 				writeChan <- WSResponse{Type: "done", Data: map[string]any{"content": "", "reasoning": reasoning}}
+				slog.Debug("ws: message done", "session_id", sessionID, "reasoning_len", len(reasoning))
 			} else if msg.Type == "slash_command" {
 				result, err := s.agentEngine.HandleSlashCommand(ctx, sessionID, msg.Command, claims.OrgID, s.masterKey)
 				if err != nil {
@@ -175,5 +182,5 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	<-done
+	wg.Wait()
 }

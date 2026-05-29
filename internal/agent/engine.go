@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -38,8 +39,10 @@ func NewEngine(pool *pgxpool.Pool) *Engine {
 
 func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, tools []*ToolDef, masterKey []byte, onToken func(string), onReasoning func(string), onToolCall func(string, string, string), onToolResult func(string, string, string, string), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, error) {
 	var events []EngineEvent
+	slog.Debug("engine: ProcessMessage start", "session_id", sessionID, "msg_len", len(userMessage))
 	session, err := e.session.GetSession(ctx, sessionID)
 	if err != nil {
+		slog.Error("engine: get session failed", "session_id", sessionID, "error", err)
 		return "", "", nil, events, fmt.Errorf("get session: %w", err)
 	}
 
@@ -61,9 +64,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 
 	ok, err := e.rateLimiter.CheckAndUpdateTokens(ctx, sessionID, 0, 0)
 	if err != nil {
+		slog.Error("rate limit check failed", "session_id", sessionID, "error", err)
 		return "", "", nil, events, fmt.Errorf("rate limit check: %w", err)
 	}
 	if !ok {
+		slog.Warn("rate limit exceeded", "session_id", sessionID)
 		return "", "", nil, events, fmt.Errorf("rate limit exceeded: session has reached max turns or tokens")
 	}
 
@@ -83,6 +88,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 
 	llmClient := e.llm
 	if agent.ModelConfigID != nil && *agent.ModelConfigID != "" {
+		slog.Debug("engine: using agent model config", "session_id", sessionID, "model_config_id", *agent.ModelConfigID)
 		var mc models.ModelConfig
 		var defaultParams []byte
 		err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at FROM model_configs WHERE id = $1`, *agent.ModelConfigID).Scan(
@@ -94,6 +100,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			json.Unmarshal(defaultParams, &mc.DefaultParams)
 		}
 		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted)
+	} else {
+		slog.Warn("engine: no model config on agent, using default LLM client", "session_id", sessionID, "default_llm_nil", e.llm == nil)
 	}
 
 	if llmClient == nil {
@@ -198,12 +206,15 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	modelCalls := 0
 
 	for turn := 0; turn < maxTurns; turn++ {
+		slog.Debug("engine: calling LLM", "session_id", sessionID, "turn", turn, "msgs", len(chatMsgs), "tools", len(toolsList))
 		resp, err := llmClient.Chat(ctx, chatMsgs, toolsList, masterKey)
 		if err != nil {
+			slog.Error("engine: LLM call failed", "session_id", sessionID, "turn", turn, "error", err)
 			return "", "", nil, events, fmt.Errorf("llm call: %w", err)
 		}
 
 		if len(resp.Choices) == 0 {
+			slog.Error("engine: no choices in LLM response", "session_id", sessionID)
 			return "", "", nil, events, fmt.Errorf("no choices in response")
 		}
 
@@ -220,6 +231,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			if text == "" {
 				text = "I wasn't able to generate a response. Could you rephrase your request?"
 			}
+			slog.Debug("engine: final response", "session_id", sessionID, "text_len", len(text), "reasoning_len", len(reasoningContent), "tool_calls_total", len(allToolCalls))
 			if onReasoning != nil && reasoningContent != "" {
 				chunk(reasoningContent, 10, func(s string) {
 					onReasoning(s)
@@ -247,6 +259,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			}
 			e.session.AppendMessage(ctx, agentMsg)
 			return text, reasoningContent, allToolCalls, events, nil
+		} else {
+			slog.Debug("engine: tool calls in response", "session_id", sessionID, "turn", turn, "num_tool_calls", len(toolCalls), "text_len", len(text))
 		}
 
 		chatMsgs = append(chatMsgs, ChatMessage{
