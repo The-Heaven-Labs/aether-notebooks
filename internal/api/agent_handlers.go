@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/heavenlabs/hnb/internal/audit"
@@ -257,8 +258,18 @@ func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Reques
 	}
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT id, agent_id, notebook_id, user_id, max_turns, max_tokens, ended_at, created_at
-		FROM agent_sessions WHERE agent_id = $1 ORDER BY created_at DESC LIMIT 50
+		SELECT s.id, s.agent_id, s.notebook_id, s.user_id, s.max_turns, s.max_tokens, s.ended_at, s.created_at,
+			COALESCE(m.first_message, ''), COALESCE(m.msg_count, 0)
+		FROM agent_sessions s
+		LEFT JOIN (
+			SELECT session_id,
+				MIN(CASE WHEN role = 'user' THEN content END) as first_message,
+				COUNT(*) as msg_count
+			FROM agent_messages
+			GROUP BY session_id
+		) m ON m.session_id = s.id
+		WHERE s.agent_id = $1
+		ORDER BY s.created_at DESC LIMIT 50
 	`, agentID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -266,11 +277,23 @@ func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Reques
 	}
 	defer rows.Close()
 
-	var sessions []models.AgentSession
+	var sessions []map[string]any
 	for rows.Next() {
 		var s models.AgentSession
-		rows.Scan(&s.ID, &s.AgentID, &s.NotebookID, &s.UserID, &s.MaxTurns, &s.MaxTokens, &s.EndedAt, &s.CreatedAt)
-		sessions = append(sessions, s)
+		var firstMsg string
+		var msgCount int
+		var endedAt *time.Time
+		rows.Scan(&s.ID, &s.AgentID, &s.NotebookID, &s.UserID, &s.MaxTurns, &s.MaxTokens, &endedAt, &s.CreatedAt, &firstMsg, &msgCount)
+		sessions = append(sessions, map[string]any{
+			"id":            s.ID,
+			"agent_id":      s.AgentID,
+			"notebook_id":   s.NotebookID,
+			"user_id":       s.UserID,
+			"ended_at":      endedAt,
+			"created_at":    s.CreatedAt,
+			"first_message": firstMsg,
+			"message_count": msgCount,
+		})
 	}
 
 	writeJSON(w, http.StatusOK, sessions)
@@ -294,6 +317,51 @@ func (h *agentHandlers) handleGetSession(w http.ResponseWriter, r *http.Request)
 	_ = claims
 
 	writeJSON(w, http.StatusOK, s)
+}
+
+func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("session_id")
+
+	rows, err := h.server.db.Pool.Query(r.Context(), `
+		SELECT id, role, content, tool_calls, tool_call_id, reasoning_content, created_at
+		FROM agent_messages WHERE session_id = $1 ORDER BY created_at ASC
+	`, sessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var messages []map[string]any
+	for rows.Next() {
+		var id, role string
+		var content *string
+		var toolCalls []byte
+		var toolCallID *string
+		var reasoning *string
+		var createdAt time.Time
+		rows.Scan(&id, &role, &content, &toolCalls, &toolCallID, &reasoning, &createdAt)
+		msg := map[string]any{
+			"id":         id,
+			"role":       role,
+			"created_at": createdAt,
+		}
+		if content != nil {
+			msg["content"] = *content
+		}
+		if toolCallID != nil {
+			msg["tool_call_id"] = *toolCallID
+		}
+		if reasoning != nil {
+			msg["reasoning_content"] = *reasoning
+		}
+		if len(toolCalls) > 0 {
+			msg["tool_calls"] = json.RawMessage(toolCalls)
+		}
+		messages = append(messages, msg)
+	}
+
+	writeJSON(w, http.StatusOK, messages)
 }
 
 func (h *agentHandlers) handleAgentStats(w http.ResponseWriter, r *http.Request) {
