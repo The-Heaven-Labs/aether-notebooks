@@ -29,7 +29,18 @@ type SubagentTaskConfig struct {
 	AgentID *string
 }
 
-func (e *Engine) SpawnSubagents(ctx context.Context, parentSessionID string, tasks []SubagentTaskConfig, onUpdate func([]SubagentResult)) error {
+func (e *Engine) SpawnSubagents(ctx context.Context, parentSessionID string, tasks []SubagentTaskConfig, masterKey []byte, onUpdate func([]SubagentResult)) error {
+	var parentUserID, parentAgentID string
+	err := e.pool.QueryRow(ctx, `SELECT user_id, agent_id FROM agent_sessions WHERE id = $1`, parentSessionID).Scan(&parentUserID, &parentAgentID)
+	if err != nil {
+		return fmt.Errorf("get parent session: %w", err)
+	}
+	var orgID string
+	err = e.pool.QueryRow(ctx, `SELECT org_id FROM agents WHERE id = $1`, parentAgentID).Scan(&orgID)
+	if err != nil {
+		return fmt.Errorf("get agent org: %w", err)
+	}
+
 	sem := make(chan struct{}, MaxSubagentParallelism)
 	var wg sync.WaitGroup
 	results := make([]SubagentResult, len(tasks))
@@ -42,7 +53,7 @@ func (e *Engine) SpawnSubagents(ctx context.Context, parentSessionID string, tas
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			result := e.runSubagent(ctx, parentSessionID, task)
+			result := e.runSubagent(ctx, parentSessionID, task, parentUserID, orgID, masterKey)
 			results[i] = result
 			onUpdate(results)
 		}(i, task)
@@ -52,7 +63,7 @@ func (e *Engine) SpawnSubagents(ctx context.Context, parentSessionID string, tas
 	return nil
 }
 
-func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task SubagentTaskConfig) SubagentResult {
+func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task SubagentTaskConfig, parentUserID, parentOrgID string, masterKey []byte) SubagentResult {
 	taskID := task.ID
 	if taskID == "" {
 		taskID = uuid.New().String()
@@ -75,7 +86,7 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 			return SubagentResult{TaskID: taskID, Status: "failed", Error: "no LLM client configured"}
 		}
 
-		resp, err := e.llm.Chat(ctx, messages, nil, nil)
+		resp, err := e.llm.Chat(ctx, messages, nil, masterKey)
 		if err != nil {
 			return SubagentResult{TaskID: taskID, Status: "failed", Error: err.Error()}
 		}
@@ -103,24 +114,26 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 		for _, tc := range choice.ToolCalls {
 			toolDef, ok := e.registry.Get(tc.Function.Name)
 			if !ok {
-				messages = append(messages, ChatMessage{Role: "tool", Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name)})
+				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name)})
 				continue
 			}
 
 			result, err := toolDef.Handler(json.RawMessage(tc.Function.Arguments), &ToolContext{
 				Context:    ctx,
-				UserID:     "subagent",
-				OrgID:      "subagent",
-				OrgRole:    "subagent",
+				UserID:     parentUserID,
+				OrgID:      parentOrgID,
+				OrgRole:    "editor",
 				NotebookID: taskID,
 				SessionID:  parentSessionID,
 				DB:         e.pool,
+				MasterKey:  masterKey,
 			})
 
 			if err != nil {
-				messages = append(messages, ChatMessage{Role: "tool", Content: err.Error()})
+				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: err.Error()})
 			} else {
-				messages = append(messages, ChatMessage{Role: "tool", Content: fmt.Sprintf("%v", result)})
+				resultJSON, _ := json.Marshal(result)
+				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: string(resultJSON)})
 			}
 		}
 	}

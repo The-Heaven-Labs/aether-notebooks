@@ -52,12 +52,22 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
   const wsRef = useRef<WebSocket | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const messageListRef = useRef<HTMLDivElement>(null)
+  const streamingTextRef = useRef('')
+  const reconnectAttemptsRef = useRef(0)
+  const processingRef = useRef(false)
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     api.get<Agent[]>('/api/v1/agents')
       .then(setAgents)
       .catch(() => setError('Failed to load agents'))
       .finally(() => setIsLoadingAgents(false))
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+    }
   }, [])
 
   useEffect(() => {
@@ -75,15 +85,23 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
 
   const connectWebSocket = useCallback((sid: string) => {
     const token = getToken()
+    // Note: JWT is sent as a query param because browsers don't support
+    // setting WebSocket headers natively. The token is short-lived (15min).
+    // If needed, migrate to first-message auth pattern.
     const ws = new WebSocket(WS_URL + sid + '?token=' + token)
     wsRef.current = ws
+    reconnectAttemptsRef.current = 0
 
     ws.onmessage = (event) => {
       const msg: WSMessage = JSON.parse(event.data)
 
       switch (msg.type) {
         case 'token':
-          setCurrentStreamingText((prev) => prev + msg.data)
+          setCurrentStreamingText((prev) => {
+            const next = prev + msg.data
+            streamingTextRef.current = next
+            return next
+          })
           break
         case 'reasoning':
           appendStreamingReasoning(msg.data)
@@ -110,13 +128,15 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
           onCellCreated?.(msg.cell_id, msg.position)
           onCellScrollTo?.(msg.cell_id)
           break
-        case 'done':
+        case 'done': {
           setIsStreaming(false)
           updateStreamingReasoning('')
           needsCollapseRef.current = false
-          if (currentStreamingText) {
+          const finalText = streamingTextRef.current
+          if (finalText) {
             const r = (msg as any).data?.reasoning as string | undefined
-            setMessages((prev) => [...prev, { role: 'assistant', content: currentStreamingText, reasoning: r || undefined }])
+            setMessages((prev) => [...prev, { role: 'assistant', content: finalText, reasoning: r || undefined }])
+            streamingTextRef.current = ''
             setCurrentStreamingText('')
           } else if (msg.data && 'content' in msg.data && msg.data.content) {
             const r = (msg as any).data?.reasoning as string | undefined
@@ -125,19 +145,23 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
           }
           setTimeout(() => inputRef.current?.focus(), 50)
           setPendingMessages((prev) => {
-            if (prev.length > 0 && wsRef.current) {
+            if (prev.length > 0 && !processingRef.current && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+              processingRef.current = true
               const next = prev[0]
               setTimeout(() => {
                 setMessages((msgs) => [...msgs, { role: 'user', content: next }])
                 wsRef.current?.send(JSON.stringify({ type: 'message', content: next }))
                 setIsStreaming(true)
+                streamingTextRef.current = ''
                 setCurrentStreamingText('')
-              }, 200)
+                processingRef.current = false
+              }, 100)
               return prev.slice(1)
             }
             return prev
           })
           break
+        }
         case 'error':
           setMessages((prev) => [...prev, { role: 'assistant', content: 'Error: ' + msg.message }])
           setIsStreaming(false)
@@ -169,13 +193,20 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
 
     ws.onclose = () => {
       wsRef.current = null
+      if (reconnectAttemptsRef.current < 5) {
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 15000)
+        reconnectAttemptsRef.current += 1
+        reconnectTimerRef.current = setTimeout(() => {
+          connectWebSocket(sid)
+        }, delay)
+      }
     }
 
     ws.onerror = () => {
       setError('WebSocket connection failed')
       setIsStreaming(false)
     }
-  }, [currentStreamingText, onCellCreated, onCellScrollTo])
+  }, [onCellCreated, onCellScrollTo])
 
   const startSession = async (agent: Agent) => {
     try {
@@ -193,7 +224,11 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
   }
 
   const sendMessage = () => {
-    if (!input.trim() || !wsRef.current) return
+    if (!input.trim()) return
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      setError('Not connected. Attempting to reconnect...')
+      return
+    }
 
     if (isStreaming || pendingMessages.length > 0) {
       setPendingMessages((prev) => [...prev, input])
@@ -213,6 +248,7 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
     wsRef.current.send(JSON.stringify({ type: 'message', content: input }))
     setInput('')
     setIsStreaming(true)
+    streamingTextRef.current = ''
     setCurrentStreamingText('')
   }
 

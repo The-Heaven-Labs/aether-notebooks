@@ -166,7 +166,7 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	_, err = h.server.db.Pool.Exec(r.Context(), `
+	result, err := h.server.db.Pool.Exec(r.Context(), `
 		UPDATE agents SET
 			name = COALESCE($2, name),
 			description = COALESCE($3, description),
@@ -174,10 +174,14 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 			skill_ids = COALESCE($5, skill_ids),
 			model_config_id = COALESCE($6, model_config_id),
 			updated_at = NOW()
-		WHERE id = $1
-	`, agentID, req.Name, req.Description, req.SystemPrompt, req.SkillIDs, req.ModelConfigID)
+		WHERE id = $1 AND org_id = $7
+	`, agentID, req.Name, req.Description, req.SystemPrompt, req.SkillIDs, req.ModelConfigID, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if result.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "agent not found")
 		return
 	}
 
@@ -199,9 +203,13 @@ func (h *agentHandlers) handleDeleteAgent(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	_, err = h.server.db.Pool.Exec(r.Context(), `DELETE FROM agents WHERE id = $1`, agentID)
+	result, err := h.server.db.Pool.Exec(r.Context(), `DELETE FROM agents WHERE id = $1 AND org_id = $2`, agentID, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if result.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "agent not found")
 		return
 	}
 
@@ -397,14 +405,14 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 
 func (h *agentHandlers) handleAgentStats(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
-	_ = claims
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT date, agent_id, user_id, sessions_count, messages_count, tokens_input, tokens_output
-		FROM agent_stats_daily
-		WHERE date >= NOW() - INTERVAL '30 days'
-		ORDER BY date DESC
-	`)
+		SELECT s.date, s.agent_id, s.user_id, s.sessions_count, s.messages_count, s.tokens_input, s.tokens_output
+		FROM agent_stats_daily s
+		JOIN agents a ON a.id = s.agent_id
+		WHERE a.org_id = $1 AND s.date >= NOW() - INTERVAL '30 days'
+		ORDER BY s.date DESC
+	`, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -423,13 +431,15 @@ func (h *agentHandlers) handleAgentStats(w http.ResponseWriter, r *http.Request)
 
 func (h *agentHandlers) handleAgentStatsByAgent(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
+	claims := ClaimsFromContext(r.Context())
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT date, agent_id, user_id, sessions_count, messages_count, tokens_input, tokens_output
-		FROM agent_stats_daily
-		WHERE agent_id = $1 AND date >= NOW() - INTERVAL '30 days'
-		ORDER BY date DESC
-	`, agentID)
+		SELECT s.date, s.agent_id, s.user_id, s.sessions_count, s.messages_count, s.tokens_input, s.tokens_output
+		FROM agent_stats_daily s
+		JOIN agents a ON a.id = s.agent_id
+		WHERE a.id = $1 AND a.org_id = $2 AND s.date >= NOW() - INTERVAL '30 days'
+		ORDER BY s.date DESC
+	`, agentID, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
