@@ -29,6 +29,7 @@ export function SessionHistory({ agentId, onBack }: SessionHistoryProps) {
   const [selectedSession, setSelectedSession] = useState<SessionSummary | null>(null)
   const [messages, setMessages] = useState<SessionMessage[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingMessages, setLoadingMessages] = useState(false)
 
   useEffect(() => {
     api.get<SessionSummary[]>(`/api/v1/agents/${agentId}/sessions`)
@@ -39,10 +40,12 @@ export function SessionHistory({ agentId, onBack }: SessionHistoryProps) {
 
   const loadSession = async (session: SessionSummary) => {
     setSelectedSession(session)
+    setLoadingMessages(true)
     try {
       const msgs = await api.get<SessionMessage[]>(`/api/v1/sessions/${session.id}/messages`)
       setMessages(msgs)
     } catch {}
+    setLoadingMessages(false)
   }
 
   if (selectedSession) {
@@ -57,16 +60,19 @@ export function SessionHistory({ agentId, onBack }: SessionHistoryProps) {
           </span>
         </div>
         <div style={styles.messageList}>
-          {messages.map((msg) => (
-            <div key={msg.id} style={{
-              ...styles.historyMessage,
-              ...(msg.role === 'user' ? styles.userBubble : msg.role === 'assistant' ? styles.assistantBubble : styles.toolBubble),
-            }}>
-              {msg.content || (msg.tool_calls ? 'Tool calls' : '(empty)')}
-            </div>
-          ))}
-          {messages.length === 0 && (
+          {loadingMessages ? (
+            <div style={styles.loadingText}>Loading...</div>
+          ) : messages.length === 0 ? (
             <div style={styles.loadingText}>No messages</div>
+          ) : (
+            messages.map((msg) => (
+              <div key={msg.id} style={{
+                ...styles.historyMessage,
+                ...(msg.role === 'user' ? styles.userBubble : msg.role === 'assistant' ? styles.assistantBubble : styles.toolBubble),
+              }}>
+                {msg.content || (msg.tool_calls ? 'Tool calls' : '(empty)')}
+              </div>
+            ))
           )}
         </div>
       </>
