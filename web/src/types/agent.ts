@@ -7,18 +7,24 @@ export interface Agent {
   subagent_model_config_id?: string
   system_prompt?: string
   skill_ids: string[]
-  mcp_servers: MCPServer[]
+  mcp_server_ids: string[]
+  mcp_servers: MCPServerOrg[]
   folder_id?: string
   created_by: string
   created_at: string
   updated_at: string
 }
 
-export interface MCPServer {
+export interface MCPServerOrg {
+  id: string
+  org_id: string
   name: string
   type: 'stdio' | 'http'
   command: string
   args?: string[]
+  created_by: string
+  created_at: string
+  updated_at: string
 }
 
 export interface ModelConfig {
