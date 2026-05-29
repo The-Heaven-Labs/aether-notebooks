@@ -738,12 +738,19 @@ export function NotebookPage() {
               qc.invalidateQueries({ queryKey: ['notebook', id] })
             }}
             onCellScrollTo={(cellId) => {
-              setTimeout(() => {
+              let attempts = 0
+              const maxAttempts = 50
+              const interval = setInterval(() => {
                 const el = document.getElementById('cell-' + cellId)
-                el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                el?.classList.add('cell-flash')
-                setTimeout(() => el?.classList.remove('cell-flash'), 1500)
-              }, 300)
+                if (el) {
+                  clearInterval(interval)
+                  el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                  el.classList.add('cell-flash')
+                  setTimeout(() => el.classList.remove('cell-flash'), 3000)
+                } else if (++attempts >= maxAttempts) {
+                  clearInterval(interval)
+                }
+              }, 100)
             }}
           />
         </div>

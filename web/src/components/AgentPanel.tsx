@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Bot, Send, Loader2, History } from 'lucide-react'
 import { api, getToken } from '../api/client'
-import type { Agent, WSMessage } from '../types/agent'
+import type { Agent, AgentTaskItem, WSMessage } from '../types/agent'
 import { PanelHeader } from './PanelHeader'
 import { SessionHistory } from './SessionHistory'
 import { SlashCommandPicker } from './SlashCommandPicker'
+import { TaskList } from './TaskList'
 
 interface AgentPanelProps {
   notebookId: string
@@ -21,6 +22,7 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
   const [_sessionId, setSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Array<{ role: string; content: string; reasoning?: string | undefined; params?: string; result?: string }>>([])
+  const [tasks, setTasks] = useState<AgentTaskItem[]>([])
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [currentStreamingText, setCurrentStreamingText] = useState('')
@@ -146,6 +148,21 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
             setSessionId(null)
             setSelectedAgent(null)
           }
+          break
+        case 'tasks_updated':
+          setTasks((prev) => {
+            const incoming = msg.data as AgentTaskItem[]
+            const merged = [...prev]
+            for (const t of incoming) {
+              const idx = merged.findIndex((m) => m.id === t.id)
+              if (idx >= 0) {
+                merged[idx] = { ...merged[idx], ...t }
+              } else {
+                merged.push(t)
+              }
+            }
+            return merged
+          })
           break
       }
     }
@@ -286,6 +303,8 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
               <History size={14} />
             </button>
           </div>
+
+          <TaskList tasks={tasks} />
 
           <div ref={messageListRef} style={styles.messageList}>
             {messages.length === 0 && (
