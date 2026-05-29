@@ -46,7 +46,9 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
   const [showHistory, setShowHistory] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showSlashPicker, setShowSlashPicker] = useState(false)
+  const [_pendingMessages, setPendingMessages] = useState<string[]>([])
   const wsRef = useRef<WebSocket | null>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const messageListRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -119,6 +121,20 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
             const c = (msg.data as any).content as string
             setMessages((prev) => [...prev, { role: 'assistant', content: c, reasoning: r || undefined }])
           }
+          setTimeout(() => inputRef.current?.focus(), 50)
+          setPendingMessages((prev) => {
+            if (prev.length > 0 && wsRef.current) {
+              const next = prev[0]
+              setTimeout(() => {
+                setMessages((msgs) => [...msgs, { role: 'user', content: next }])
+                wsRef.current?.send(JSON.stringify({ type: 'message', content: next }))
+                setIsStreaming(true)
+                setCurrentStreamingText('')
+              }, 200)
+              return prev.slice(1)
+            }
+            return prev
+          })
           break
         case 'error':
           setMessages((prev) => [...prev, { role: 'assistant', content: 'Error: ' + msg.message }])
@@ -160,7 +176,14 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
   }
 
   const sendMessage = () => {
-    if (!input.trim() || isStreaming || !wsRef.current) return
+    if (!input.trim() || !wsRef.current) return
+
+    if (isStreaming) {
+      setPendingMessages((prev) => [...prev, input])
+      setMessages((prev) => [...prev, { role: 'user', content: input }])
+      setInput('')
+      return
+    }
 
     if (input.startsWith('/')) {
       const command = input.slice(1)
@@ -195,6 +218,13 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
       messageListRef.current.scrollTop = messageListRef.current.scrollHeight
     }
   }, [messages, currentStreamingText])
+
+  useEffect(() => {
+    if (selectedAgent) {
+      const timer = setTimeout(() => inputRef.current?.focus(), 100)
+      return () => clearTimeout(timer)
+    }
+  }, [selectedAgent])
 
   return (
     <div style={styles.panel}>
@@ -328,6 +358,7 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
               />
             )}
             <textarea
+              ref={inputRef}
               style={styles.input}
               value={input}
               onChange={(e) => {
@@ -336,12 +367,11 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
               }}
               onKeyDown={handleKeyDown}
               placeholder="Message agent... (/ for commands)"
-              disabled={isStreaming}
             />
             <button
               style={{ ...styles.sendButton, ...(isStreaming ? styles.sendButtonDisabled : {}) }}
               onClick={sendMessage}
-              disabled={isStreaming || !input.trim()}
+              disabled={!input.trim()}
             >
               {isStreaming ? <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> : <Send size={16} />}
             </button>
