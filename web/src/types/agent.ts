@@ -88,6 +88,12 @@ export interface SubagentTask {
   result?: unknown
 }
 
+export interface AgentTaskItem {
+  id: string
+  description: string
+  status: 'pending' | 'in_progress' | 'done'
+}
+
 export type WSMessage =
   | { type: 'token'; data: string }
   | { type: 'reasoning'; data: string }
@@ -100,3 +106,4 @@ export type WSMessage =
   | { type: 'slash_result'; command: string; data: unknown }
   | { type: 'backpressure_warning'; dropped_tokens: number }
   | { type: 'reconnect_sync'; messages: AgentMessage[] }
+  | { type: 'tasks_updated'; data: AgentTaskItem[] }

@@ -307,10 +307,13 @@ h1:hover a, h2:hover a, h3:hover a, h4:hover a, h5:hover a, h6:hover a {
   color: var(--text-badge-on-light);
 }
 
-@keyframes agent-cell-flash {
-  0% { background-color: var(--accent); box-shadow: 0 0 20px var(--accent); }
-  100% { background-color: transparent; box-shadow: none; }
+@keyframes cellFlashPulse {
+  0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); border-left-color: var(--accent); }
+  50% { box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.3); border-left-color: var(--accent); }
+  100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); border-left-color: transparent; }
 }
+
 .cell-flash {
-  animation: agent-cell-flash 1.5s ease-out;
+  animation: cellFlashPulse 1.5s ease-out;
+  border-left: 3px solid var(--accent);
 }
