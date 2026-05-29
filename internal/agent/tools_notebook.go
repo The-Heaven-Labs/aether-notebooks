@@ -7,6 +7,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/heavenlabs/hnb/internal/crypto"
+	"github.com/heavenlabs/hnb/internal/executor"
+	"github.com/heavenlabs/hnb/internal/models"
 )
 
 func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
@@ -86,6 +89,19 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"new_position":{"type":"integer"}},"required":["cell_id","new_position"]}`,
 		},
 		Handler: makeMoveCellHandler(db),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "explore_schema",
+			Description: "Explore the database schema for a connector. Lists all tables and their columns with types. Only works for Postgres and ClickHouse connectors.",
+			Parameters:  `{"type":"object","properties":{"connector_id":{"type":"string","description":"ID of the connector to explore"}},"required":["connector_id"]}`,
+		},
+		Handler: makeExploreSchemaHandler(db),
 	})
 }
 
@@ -331,5 +347,85 @@ func makeMoveCellHandler(db *pgxpool.Pool) ToolHandler {
 		_ = ctx.AuditLog("cell.move", "cell", req.CellID)
 
 		return map[string]any{"cell_id": req.CellID, "position": req.NewPosition + 1}, nil
+	}
+}
+
+func makeExploreSchemaHandler(db *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			ConnectorID string `json:"connector_id"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+
+		if err := ctx.CheckPermission("connector", req.ConnectorID, "view"); err != nil {
+			return nil, err
+		}
+
+		var connType models.ConnectorType
+		var configEnc []byte
+		err := db.QueryRow(ctx.Context,
+			`SELECT type, config_encrypted FROM connectors WHERE id = $1 AND org_id = $2`,
+			req.ConnectorID, ctx.OrgID,
+		).Scan(&connType, &configEnc)
+		if err != nil {
+			return nil, fmt.Errorf("get connector: %w", err)
+		}
+
+		if ctx.MasterKey == nil {
+			return nil, fmt.Errorf("master key not available")
+		}
+
+		plain, err := crypto.Decrypt(configEnc, ctx.MasterKey)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt credentials: %w", err)
+		}
+
+		var cfg models.ConnectorConfig
+		if err := json.Unmarshal(plain, &cfg); err != nil {
+			return nil, fmt.Errorf("unmarshal config: %w", err)
+		}
+
+		var exec executor.Executor
+		switch connType {
+		case models.ConnectorPostgres:
+			exec, err = executor.NewPostgresExecutor(cfg)
+		case models.ConnectorClickHouse:
+			exec, err = executor.NewClickHouseExecutor(cfg)
+		default:
+			return nil, fmt.Errorf("unsupported connector type: %s", connType)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("connect to connector db: %w", err)
+		}
+		defer exec.Close()
+
+		schema, err := exec.Schema(ctx.Context)
+		if err != nil {
+			return nil, fmt.Errorf("query schema: %w", err)
+		}
+
+		var tables []map[string]any
+		for _, t := range schema.Tables {
+			var columns []map[string]any
+			for _, c := range t.Columns {
+				columns = append(columns, map[string]any{
+					"name": c.Name,
+					"type": c.Type,
+				})
+			}
+			fullName := t.Name
+			if t.Schema != "" {
+				fullName = t.Schema + "." + t.Name
+			}
+			tables = append(tables, map[string]any{
+				"table_name":   fullName,
+				"columns":      columns,
+				"column_count": len(columns),
+			})
+		}
+
+		return map[string]any{"tables": tables, "total_tables": len(tables)}, nil
 	}
 }
