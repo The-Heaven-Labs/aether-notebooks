@@ -34,7 +34,7 @@ func NewEngine(pool *pgxpool.Pool) *Engine {
 	}
 }
 
-func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, tools []*ToolDef, masterKey []byte, onToken func(string), onReasoning func(string), onToolCall func(string, string, string), onToolResult func(string, string, string, string)) (string, string, []models.ToolCall, []EngineEvent, error) {
+func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, tools []*ToolDef, masterKey []byte, onToken func(string), onReasoning func(string), onToolCall func(string, string, string), onToolResult func(string, string, string, string), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, error) {
 	var events []EngineEvent
 	session, err := e.session.GetSession(ctx, sessionID)
 	if err != nil {
@@ -219,6 +219,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				TurnCount:  turn,
 				Events:     &events,
 				MasterKey:  masterKey,
+				OnEvent:    onEvent,
 			}
 
 			result, err := toolDef.Handler(json.RawMessage(tc.Function.Arguments), toolCtx)

@@ -21,6 +21,7 @@ type ToolContext struct {
 	CumulativeTokens int
 	Events           *[]EngineEvent
 	MasterKey        []byte
+	OnEvent          func(EngineEvent)
 }
 
 type AgentTask struct {
@@ -37,14 +38,22 @@ type EngineEvent struct {
 }
 
 func (tc *ToolContext) EmitCellCreated(cellID string, position int) {
+	evt := EngineEvent{Type: "cell_created", CellID: cellID, Position: position}
 	if tc.Events != nil {
-		*tc.Events = append(*tc.Events, EngineEvent{Type: "cell_created", CellID: cellID, Position: position})
+		*tc.Events = append(*tc.Events, evt)
+	}
+	if tc.OnEvent != nil {
+		tc.OnEvent(evt)
 	}
 }
 
 func (tc *ToolContext) EmitTasksUpdated(tasks []AgentTask) {
+	evt := EngineEvent{Type: "tasks_updated", Tasks: tasks}
 	if tc.Events != nil {
-		*tc.Events = append(*tc.Events, EngineEvent{Type: "tasks_updated", Tasks: tasks})
+		*tc.Events = append(*tc.Events, evt)
+	}
+	if tc.OnEvent != nil {
+		tc.OnEvent(evt)
 	}
 }
 
