@@ -64,6 +64,7 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
         }
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents, isLoadingAgents])
 
   const connectWebSocket = useCallback((sid: string) => {
