@@ -4,6 +4,7 @@ import { api, getToken } from '../api/client'
 import type { Agent, WSMessage } from '../types/agent'
 import { PanelHeader } from './PanelHeader'
 import { SessionHistory } from './SessionHistory'
+import { SlashCommandPicker } from './SlashCommandPicker'
 
 interface AgentPanelProps {
   notebookId: string
@@ -44,6 +45,7 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
   const [isLoadingAgents, setIsLoadingAgents] = useState(true)
   const [showHistory, setShowHistory] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showSlashPicker, setShowSlashPicker] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const messageListRef = useRef<HTMLDivElement>(null)
 
@@ -177,7 +179,14 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
+      if (showSlashPicker) {
+        setShowSlashPicker(false)
+        return
+      }
       sendMessage()
+    }
+    if (e.key === ' ' && showSlashPicker) {
+      setShowSlashPicker(false)
     }
   }
 
@@ -307,11 +316,24 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
             {error && <div style={styles.error}>{error}</div>}
           </div>
 
-          <div style={styles.inputArea}>
+          <div style={{ ...styles.inputArea, position: 'relative' }}>
+            {showSlashPicker && (
+              <SlashCommandPicker
+                filter={input}
+                onSelect={(cmd) => {
+                  setInput(cmd + ' ')
+                  setShowSlashPicker(false)
+                }}
+                onClose={() => setShowSlashPicker(false)}
+              />
+            )}
             <textarea
               style={styles.input}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value)
+                setShowSlashPicker(e.target.value.startsWith('/') && e.target.value.length <= 15)
+              }}
               onKeyDown={handleKeyDown}
               placeholder="Message agent... (/ for commands)"
               disabled={isStreaming}
