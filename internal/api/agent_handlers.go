@@ -321,7 +321,11 @@ func (h *agentHandlers) handleGetSession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	_ = claims
+	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", s.AgentID, "view")
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
 
 	writeJSON(w, http.StatusOK, s)
 }

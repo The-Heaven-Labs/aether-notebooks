@@ -20,4 +20,14 @@
 
 ## Not Yet Implemented
 
-
+- [ ] In the agent chat, there is no way to access history for past sessions
+- [ ] Pressing "/" in the chat should open a picker for the possible slash commands
+- [ ] Clicking on the AI button should open the chat with a default agent. This default should be configurable
+- [ ] When the LLM is working, I can't right away send a message to be queued, it is blocked
+- [ ] When one message is sent and the chat input is blocked, the form goes out of focus, and I need to click it again to type the next message
+- [ ] There should be native tool calls to list notebooks, connectors, folders and everything the user has access in the platform
+- [ ] When agent panel is opened, the input form should be focused automatically
+- [ ] There should be a native tool call for data schema exploration
+- [ ] There should be native tools for task tracking
+- [ ] When the agent creates a new cell, it should be highlighted and scrolled immediatly, not only when that part of the session/command ends
+- [ ] Instead of MCPs being configured at agent level, they should be configured at application level, and then could be shared between multiple agents
