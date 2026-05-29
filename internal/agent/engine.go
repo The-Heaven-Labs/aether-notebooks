@@ -25,6 +25,7 @@ func NewEngine(pool *pgxpool.Pool) *Engine {
 	RegisterNotebookTools(reg, pool)
 	RegisterChartTools(reg, pool)
 	RegisterAgentTools(reg, pool)
+	RegisterPlatformTools(reg, pool)
 
 	return &Engine{
 		registry: reg,
