@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -166,13 +167,12 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 
 		cellID := uuid.New().String()
 		position := req.Position
-		if position > 0 {
-			position = position - 1
-		}
-		if position == 0 {
+		if position <= 0 {
 			var maxPos int
-			db.QueryRow(ctx.Context, `SELECT COALESCE(MAX(position), 0) FROM cells WHERE notebook_id = $1`, req.NotebookID).Scan(&maxPos)
+			db.QueryRow(ctx.Context, `SELECT COALESCE(MAX(position), -1) FROM cells WHERE notebook_id = $1`, req.NotebookID).Scan(&maxPos)
 			position = maxPos + 1
+		} else {
+			position = position - 1
 		}
 
 		language := "sql"
@@ -220,9 +220,10 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 		_, err = db.Exec(ctx.Context, `
 			UPDATE cells SET source = COALESCE(NULLIF($2, ''), source),
 				title = COALESCE(NULLIF($3, ''), title),
+				description = COALESCE(NULLIF($4, ''), description),
 				updated_at = NOW()
 			WHERE id = $1
-		`, req.CellID, req.Source, req.Title)
+		`, req.CellID, req.Source, req.Title, req.Description)
 		if err != nil {
 			return nil, fmt.Errorf("update cell: %w", err)
 		}
@@ -251,24 +252,81 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 		}
 
 		var cell struct {
-			NotebookID  string `json:"notebook_id"`
-			ConnectorID string `json:"connector_id"`
-			Language    string `json:"language"`
-			Source      string `json:"source"`
+			ConnectorID *string `json:"connector_id"`
+			Language    string  `json:"language"`
+			Source      string  `json:"source"`
+			Limit       int     `json:"limit"`
 		}
 		err = db.QueryRow(ctx.Context, `
-			SELECT notebook_id, connector_id, language, source FROM cells WHERE id = $1
-		`, req.CellID).Scan(&cell.NotebookID, &cell.ConnectorID, &cell.Language, &cell.Source)
+			SELECT connector_id, language, source, COALESCE(limit, 0) FROM cells WHERE id = $1
+		`, req.CellID).Scan(&cell.ConnectorID, &cell.Language, &cell.Source, &cell.Limit)
 		if err != nil {
 			return nil, fmt.Errorf("get cell: %w", err)
+		}
+
+		if cell.ConnectorID == nil || *cell.ConnectorID == "" {
+			return nil, fmt.Errorf("cell has no connector assigned")
+		}
+
+		var connType models.ConnectorType
+		var configEnc []byte
+		err = db.QueryRow(ctx.Context,
+			`SELECT type, config_encrypted FROM connectors WHERE id = $1 AND org_id = $2`,
+			*cell.ConnectorID, ctx.OrgID,
+		).Scan(&connType, &configEnc)
+		if err != nil {
+			return nil, fmt.Errorf("get connector: %w", err)
+		}
+
+		if ctx.MasterKey == nil {
+			return nil, fmt.Errorf("master key not available")
+		}
+
+		plain, err := crypto.Decrypt(configEnc, ctx.MasterKey)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt credentials: %w", err)
+		}
+
+		var cfg models.ConnectorConfig
+		if err := json.Unmarshal(plain, &cfg); err != nil {
+			return nil, fmt.Errorf("unmarshal config: %w", err)
+		}
+
+		var exec executor.Executor
+		switch connType {
+		case models.ConnectorPostgres:
+			exec, err = executor.NewPostgresExecutor(cfg)
+		case models.ConnectorClickHouse:
+			exec, err = executor.NewClickHouseExecutor(cfg)
+		default:
+			return nil, fmt.Errorf("unsupported connector type: %s", connType)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("connect: %w", err)
+		}
+		defer exec.Close()
+
+		query := cell.Source
+		if cell.Limit > 0 && !strings.Contains(strings.ToUpper(query), "LIMIT") {
+			query = strings.TrimRight(query, ";") + fmt.Sprintf(" LIMIT %d", cell.Limit)
+		}
+
+		result, err := exec.Execute(ctx.Context, query, nil, cell.Limit)
+		if err != nil {
+			return map[string]any{
+				"cell_id": req.CellID,
+				"status":  "error",
+				"error":   err.Error(),
+			}, nil
 		}
 
 		_ = ctx.AuditLog("cell.run", "cell", req.CellID)
 
 		return map[string]any{
-			"status":  "queued",
 			"cell_id": req.CellID,
-			"message": "Cell execution queued. Note: actual execution requires the executor subsystem.",
+			"status":  "completed",
+			"rows":    len(result.Rows),
+			"columns": len(result.Columns),
 		}, nil
 	}
 }

@@ -119,18 +119,22 @@ func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusInternalServerError, "failed to encrypt API key")
 			return
 		}
-		_, err = h.server.db.Pool.Exec(r.Context(), `
-			UPDATE model_configs SET api_key_encrypted = $2, updated_at = NOW() WHERE id = $1
-		`, cfgID, encrypted)
+		result, err := h.server.db.Pool.Exec(r.Context(), `
+			UPDATE model_configs SET api_key_encrypted = $2, updated_at = NOW() WHERE id = $1 AND org_id = $3
+		`, cfgID, encrypted, claims.OrgID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if result.RowsAffected() == 0 {
+			writeError(w, http.StatusNotFound, "model config not found")
 			return
 		}
 	}
 
 	defaultParamsJSON, _ := json.Marshal(req.DefaultParams)
 
-	_, err := h.server.db.Pool.Exec(r.Context(), `
+	result, err := h.server.db.Pool.Exec(r.Context(), `
 		UPDATE model_configs SET
 			name = COALESCE($2, name),
 			provider = COALESCE($3, provider),
@@ -139,24 +143,31 @@ func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Reques
 			default_params = COALESCE($6, default_params),
 			context_window = COALESCE($7, context_window),
 			updated_at = NOW()
-		WHERE id = $1
-	`, cfgID, req.Name, req.Provider, req.BaseURL, req.Model, defaultParamsJSON, req.ContextWindow)
+		WHERE id = $1 AND org_id = $8
+	`, cfgID, req.Name, req.Provider, req.BaseURL, req.Model, defaultParamsJSON, req.ContextWindow, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	_ = claims
+	if result.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "model config not found")
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"id": cfgID})
 }
 
 func (h *modelConfigHandlers) handleDelete(w http.ResponseWriter, r *http.Request) {
 	cfgID := r.PathValue("id")
+	claims := ClaimsFromContext(r.Context())
 
-	_, err := h.server.db.Pool.Exec(r.Context(), `DELETE FROM model_configs WHERE id = $1`, cfgID)
+	result, err := h.server.db.Pool.Exec(r.Context(), `DELETE FROM model_configs WHERE id = $1 AND org_id = $2`, cfgID, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if result.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "model config not found")
 		return
 	}
 

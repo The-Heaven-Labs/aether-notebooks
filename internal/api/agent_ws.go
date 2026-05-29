@@ -2,8 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -33,6 +33,8 @@ type WSErrorResponse struct {
 	Message string `json:"message"`
 }
 
+var _ = (*websocket.Conn)(nil)
+
 func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("session_id")
 	claims := ClaimsFromContext(r.Context())
@@ -57,19 +59,14 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
 	defer cancel()
 
-	writeChan := make(chan string, 100)
+	writeChan := make(chan any, 256)
 	done := make(chan struct{})
-	droppedTokens := 0
-
-	var wg sync.WaitGroup
-	wg.Add(2)
 
 	go func() {
-		defer wg.Done()
 		for {
 			select {
-			case token := <-writeChan:
-				if err := conn.WriteJSON(WSResponse{Type: "token", Data: token}); err != nil {
+			case out := <-writeChan:
+				if err := conn.WriteJSON(out); err != nil {
 					return
 				}
 			case <-done:
@@ -79,11 +76,10 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	go func() {
-		defer wg.Done()
+		defer close(done)
 		for {
 			var msg WSMessage
 			if err := conn.ReadJSON(&msg); err != nil {
-				close(done)
 				return
 			}
 
@@ -103,230 +99,81 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 							m.Content = *content
 						}
 						if toolCallsJSON != nil {
-							// tool_calls JSON already stored, just pass through
+							json.Unmarshal(toolCallsJSON, &m.ToolCalls)
 						}
 						messages = append(messages, m)
 					}
 					rows.Close()
-					conn.WriteJSON(WSResponse{Type: "reconnect_sync", Data: map[string]any{"messages": messages}})
+					writeChan <- struct {
+						Type     string               `json:"type"`
+						Messages []models.AgentMessage `json:"messages"`
+					}{Type: "reconnect_sync", Messages: messages}
 				}
 				continue
 			}
 
 			if msg.Type == "message" {
-				resp, reasoning, _, events, err := s.agentEngine.ProcessMessage(ctx, sessionID, msg.Content, s.agentEngine.GetRegistry().List(), s.masterKey,
+				_, reasoning, _, events, err := s.agentEngine.ProcessMessage(ctx, sessionID, msg.Content, s.agentEngine.GetRegistry().List(), s.masterKey,
 					func(token string) {
-						select {
-						case writeChan <- token:
-						default:
-						}
+						writeChan <- WSResponse{Type: "token", Data: token}
 					},
 					func(r string) {
-						conn.WriteJSON(WSResponse{Type: "reasoning", Data: r})
+						writeChan <- WSResponse{Type: "reasoning", Data: r}
 					},
 					func(toolName, toolID, reasoning string) {
-						conn.WriteJSON(struct {
+						writeChan <- struct {
 							Type      string `json:"type"`
 							Tool      string `json:"tool"`
 							Reasoning string `json:"reasoning,omitempty"`
-						}{Type: "tool_call", Tool: toolName, Reasoning: reasoning})
+						}{Type: "tool_call", Tool: toolName, Reasoning: reasoning}
 					},
 					func(toolName, params, result, errMsg string) {
-						conn.WriteJSON(struct {
+						writeChan <- struct {
 							Type   string `json:"type"`
 							Tool   string `json:"tool"`
 							Params string `json:"params"`
 							Result string `json:"result"`
 							Error  string `json:"error,omitempty"`
-						}{Type: "tool_result", Tool: toolName, Params: params, Result: result, Error: errMsg})
+						}{Type: "tool_result", Tool: toolName, Params: params, Result: result, Error: errMsg}
 					},
 					func(evt agent.EngineEvent) {
 						switch evt.Type {
 						case "cell_created":
-							conn.WriteJSON(struct {
+							writeChan <- struct {
 								Type     string `json:"type"`
 								CellID   string `json:"cell_id"`
 								Position int    `json:"position"`
-							}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position})
+							}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position}
 						case "tasks_updated":
-							conn.WriteJSON(struct {
+							writeChan <- struct {
 								Type string            `json:"type"`
 								Data []agent.AgentTask `json:"data"`
-							}{Type: "tasks_updated", Data: evt.Tasks})
+							}{Type: "tasks_updated", Data: evt.Tasks}
 						}
 					},
 				)
 				if err != nil {
-					conn.WriteJSON(WSErrorResponse{Type: "error", Message: err.Error()})
+					writeChan <- WSErrorResponse{Type: "error", Message: err.Error()}
 					return
 				}
 
-				for _, evt := range events {
-					switch evt.Type {
-					case "cell_created":
-						conn.WriteJSON(struct {
-							Type     string `json:"type"`
-							CellID   string `json:"cell_id"`
-							Position int    `json:"position"`
-						}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position})
-					case "tasks_updated":
-						conn.WriteJSON(struct {
-							Type string            `json:"type"`
-							Data []agent.AgentTask `json:"data"`
-						}{Type: "tasks_updated", Data: evt.Tasks})
-					}
+				for range events {
 				}
-				select {
-				case writeChan <- resp:
-				default:
-					droppedTokens++
-					conn.WriteJSON(WSResponse{Type: "backpressure_warning", Data: map[string]any{"dropped_tokens": droppedTokens}})
-				}
-				conn.WriteJSON(WSResponse{Type: "done", Data: map[string]any{"content": resp, "reasoning": reasoning}})
+				writeChan <- WSResponse{Type: "done", Data: map[string]any{"content": "", "reasoning": reasoning}}
 			} else if msg.Type == "slash_command" {
-				result, err := s.agentEngine.HandleSlashCommand(ctx, sessionID, msg.Command, s.masterKey)
+				result, err := s.agentEngine.HandleSlashCommand(ctx, sessionID, msg.Command, claims.OrgID, s.masterKey)
 				if err != nil {
-					conn.WriteJSON(WSErrorResponse{Type: "error", Message: err.Error()})
+					writeChan <- WSErrorResponse{Type: "error", Message: err.Error()}
 					return
 				}
-				conn.WriteJSON(WSResponse{Type: "slash_result", Data: map[string]any{"command": msg.Command, "data": result}})
+				writeChan <- struct {
+					Type    string `json:"type"`
+					Command string `json:"command"`
+					Data    any    `json:"data"`
+				}{Type: "slash_result", Command: msg.Command, Data: result}
 			}
 		}
 	}()
 
-	wg.Wait()
-}
-
-func (s *Server) handleAgentWSWithUpgrader(upgrader websocket.Upgrader) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		sessionID := r.PathValue("session_id")
-		claims := ClaimsFromContext(r.Context())
-
-		if claims == nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-
-		_, err := s.agentEngine.SessionStore().GetSession(r.Context(), sessionID)
-		if err != nil {
-			writeError(w, http.StatusNotFound, "session not found")
-			return
-		}
-
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
-		defer cancel()
-
-		writeChan := make(chan string, 100)
-		done := make(chan struct{})
-
-		var wg sync.WaitGroup
-		wg.Add(2)
-
-		go func() {
-			defer wg.Done()
-			for {
-				select {
-				case token := <-writeChan:
-					if err := conn.WriteJSON(WSResponse{Type: "token", Data: token}); err != nil {
-						return
-					}
-				case <-done:
-					return
-				}
-			}
-		}()
-
-		go func() {
-			defer wg.Done()
-			for {
-				var msg WSMessage
-				if err := conn.ReadJSON(&msg); err != nil {
-					close(done)
-					return
-				}
-
-				if msg.Type == "message" {
-					resp, reasoning, _, events, err := s.agentEngine.ProcessMessage(ctx, sessionID, msg.Content, s.agentEngine.GetRegistry().List(), s.masterKey,
-						func(token string) {
-							select {
-							case writeChan <- token:
-							default:
-							}
-						},
-						func(r string) {
-							conn.WriteJSON(WSResponse{Type: "reasoning", Data: r})
-						},
-						func(toolName, toolID, reasoning string) {
-							conn.WriteJSON(struct {
-								Type      string `json:"type"`
-								Tool      string `json:"tool"`
-								Reasoning string `json:"reasoning,omitempty"`
-							}{Type: "tool_call", Tool: toolName, Reasoning: reasoning})
-						},
-						func(toolName, params, result, errMsg string) {
-							conn.WriteJSON(struct {
-								Type   string `json:"type"`
-								Tool   string `json:"tool"`
-								Params string `json:"params"`
-								Result string `json:"result"`
-								Error  string `json:"error,omitempty"`
-							}{Type: "tool_result", Tool: toolName, Params: params, Result: result, Error: errMsg})
-						},
-						func(evt agent.EngineEvent) {
-							switch evt.Type {
-							case "cell_created":
-								conn.WriteJSON(struct {
-									Type     string `json:"type"`
-									CellID   string `json:"cell_id"`
-									Position int    `json:"position"`
-								}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position})
-							case "tasks_updated":
-								conn.WriteJSON(struct {
-									Type string            `json:"type"`
-									Data []agent.AgentTask `json:"data"`
-								}{Type: "tasks_updated", Data: evt.Tasks})
-							}
-						},
-					)
-					if err != nil {
-						conn.WriteJSON(WSErrorResponse{Type: "error", Message: err.Error()})
-						return
-					}
-
-					for _, evt := range events {
-						switch evt.Type {
-						case "cell_created":
-							conn.WriteJSON(struct {
-								Type     string `json:"type"`
-								CellID   string `json:"cell_id"`
-								Position int    `json:"position"`
-							}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position})
-						case "tasks_updated":
-							conn.WriteJSON(struct {
-								Type string            `json:"type"`
-								Data []agent.AgentTask `json:"data"`
-							}{Type: "tasks_updated", Data: evt.Tasks})
-						}
-					}
-					writeChan <- resp
-					conn.WriteJSON(WSResponse{Type: "done", Data: map[string]any{"content": resp, "reasoning": reasoning}})
-				} else if msg.Type == "slash_command" {
-					result, err := s.agentEngine.HandleSlashCommand(ctx, sessionID, msg.Command, s.masterKey)
-					if err != nil {
-						conn.WriteJSON(WSErrorResponse{Type: "error", Message: err.Error()})
-						return
-					}
-					conn.WriteJSON(WSResponse{Type: "slash_result", Data: map[string]any{"command": msg.Command, "data": result}})
-				}
-			}
-		}()
-
-		wg.Wait()
-	}
+	<-done
 }

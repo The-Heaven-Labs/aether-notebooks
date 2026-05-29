@@ -49,6 +49,14 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
 
+		notebookID, err := ctx.GetNotebookIDForCell(req.CellID)
+		if err != nil {
+			return nil, fmt.Errorf("get cell notebook: %w", err)
+		}
+		if err := ctx.CheckPermission("notebook", notebookID, "edit"); err != nil {
+			return nil, err
+		}
+
 		chartConfig := map[string]any{
 			"type":       req.ChartType,
 			"x_column":   req.XColumn,
@@ -59,7 +67,7 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 
 		configJSON, _ := json.Marshal(chartConfig)
 
-		_, err := db.Exec(ctx.Context, `
+		_, err = db.Exec(ctx.Context, `
 			UPDATE cells SET metadata = jsonb_set(COALESCE(metadata, '{}'), '{chart}', $1), updated_at = NOW()
 			WHERE id = $2
 		`, configJSON, req.CellID)
@@ -84,9 +92,17 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
 
+		notebookID, err := ctx.GetNotebookIDForCell(req.CellID)
+		if err != nil {
+			return nil, fmt.Errorf("get cell notebook: %w", err)
+		}
+		if err := ctx.CheckPermission("notebook", notebookID, "edit"); err != nil {
+			return nil, err
+		}
+
 		var existingConfig map[string]any
 		var metadata []byte
-		err := db.QueryRow(ctx.Context, `SELECT metadata FROM cells WHERE id = $1`, req.CellID).Scan(&metadata)
+		err = db.QueryRow(ctx.Context, `SELECT metadata FROM cells WHERE id = $1`, req.CellID).Scan(&metadata)
 		if err == nil && metadata != nil {
 			json.Unmarshal(metadata, &existingConfig)
 		}
