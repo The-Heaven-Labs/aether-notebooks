@@ -30,27 +30,32 @@ export function SessionHistory({ agentId, onBack }: SessionHistoryProps) {
   const [messages, setMessages] = useState<SessionMessage[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingMessages, setLoadingMessages] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     api.get<SessionSummary[]>(`/api/v1/agents/${agentId}/sessions`)
       .then(setSessions)
-      .catch(() => {})
+      .catch(() => setError('Failed to load sessions'))
       .finally(() => setLoading(false))
   }, [agentId])
 
   const loadSession = async (session: SessionSummary) => {
     setSelectedSession(session)
     setLoadingMessages(true)
+    setError(null)
     try {
       const msgs = await api.get<SessionMessage[]>(`/api/v1/sessions/${session.id}/messages`)
       setMessages(msgs)
-    } catch {}
+    } catch {
+      setError('Failed to load messages')
+    }
     setLoadingMessages(false)
   }
 
   if (selectedSession) {
     return (
       <>
+        {error && <div style={styles.error}>{error}</div>}
         <div style={styles.sessionHeader}>
           <button onClick={() => setSelectedSession(null)} style={styles.backBtn}>
             <ArrowLeft size={14} /> Back to history
@@ -81,6 +86,7 @@ export function SessionHistory({ agentId, onBack }: SessionHistoryProps) {
 
   return (
     <>
+      {error && <div style={styles.error}>{error}</div>}
       <div style={styles.sessionHeader}>
         <button onClick={onBack} style={styles.backBtn}>
           <ArrowLeft size={14} /> Back to chat
@@ -166,4 +172,5 @@ const styles: Record<string, React.CSSProperties> = {
   assistantBubble: { background: 'var(--bg-secondary)', color: 'var(--text-primary)', alignSelf: 'flex-start' },
   toolBubble: { background: 'rgba(var(--accent-rgb, 59, 130, 246), 0.1)', color: 'var(--text-secondary)', alignSelf: 'flex-start', fontSize: 11 },
   loadingText: { textAlign: 'center', padding: 20, color: 'var(--text-muted)', fontSize: 13 },
+  error: { padding: '8px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--error, #ef4444)', borderRadius: 6, color: 'var(--error, #ef4444)', fontSize: 13, margin: 8 },
 }
