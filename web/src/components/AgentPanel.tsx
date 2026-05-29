@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Bot, Send, Loader2, History } from 'lucide-react'
+import { Bot, Send, Loader2, History, Copy, Check } from 'lucide-react'
 import { api, getToken } from '../api/client'
 import type { Agent, AgentTaskItem, WSMessage } from '../types/agent'
 import { PanelHeader } from './PanelHeader'
@@ -48,6 +48,7 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
   const [showHistory, setShowHistory] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showSlashPicker, setShowSlashPicker] = useState(false)
+  const [copied, setCopied] = useState(false)
   const [pendingMessages, setPendingMessages] = useState<string[]>([])
   const wsRef = useRef<WebSocket | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -252,6 +253,30 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
     setCurrentStreamingText('')
   }
 
+  const copyAsMarkdown = () => {
+    if (messages.length === 0) return
+    const lines: string[] = []
+    for (const msg of messages) {
+      if (msg.role === 'user') {
+        lines.push(`**User:** ${msg.content}`)
+      } else if (msg.role === 'assistant') {
+        if (msg.reasoning) {
+          lines.push(`> **Thinking:** ${msg.reasoning}`)
+        }
+        lines.push(`**Assistant:** ${msg.content}`)
+      } else if (msg.role === 'tool') {
+        lines.push(`**Tool: ${msg.content}**`)
+        if (msg.params) lines.push(`  Params: \`${msg.params}\``)
+        if (msg.result) lines.push(`  Result: \`${msg.result.length > 500 ? msg.result.slice(0, 500) + '...' : msg.result}\``)
+      }
+      lines.push('')
+    }
+    navigator.clipboard.writeText(lines.join('\n').trim()).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -336,6 +361,14 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
               title="View chat history"
             >
               <History size={14} />
+            </button>
+            <button
+              style={styles.historyBtn}
+              onClick={copyAsMarkdown}
+              title="Copy conversation as markdown"
+              disabled={messages.length === 0}
+            >
+              {copied ? <Check size={14} style={{ color: 'var(--success, #10b981)' }} /> : <Copy size={14} />}
             </button>
           </div>
 
