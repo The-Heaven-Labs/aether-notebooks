@@ -13,11 +13,12 @@ import (
 )
 
 type Engine struct {
-	registry *ToolRegistry
-	session  *SessionStore
-	llm      *LLMClient
-	pool     *pgxpool.Pool
-	mu       sync.Mutex
+	registry    *ToolRegistry
+	session     *SessionStore
+	llm         *LLMClient
+	pool        *pgxpool.Pool
+	mu          sync.Mutex
+	rateLimiter *RateLimiter
 }
 
 func NewEngine(pool *pgxpool.Pool) *Engine {
@@ -28,9 +29,10 @@ func NewEngine(pool *pgxpool.Pool) *Engine {
 	RegisterPlatformTools(reg, pool)
 
 	return &Engine{
-		registry: reg,
-		session:  NewSessionStore(pool),
-		pool:     pool,
+		registry:    reg,
+		session:     NewSessionStore(pool),
+		pool:        pool,
+		rateLimiter: NewRateLimiter(pool),
 	}
 }
 
@@ -55,6 +57,28 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	}
 	if mcpServers != nil {
 		json.Unmarshal(mcpServers, &agent.MCPServers)
+	}
+
+	ok, err := e.rateLimiter.CheckAndUpdateTokens(ctx, sessionID, 0, 0)
+	if err != nil {
+		return "", "", nil, events, fmt.Errorf("rate limit check: %w", err)
+	}
+	if !ok {
+		return "", "", nil, events, fmt.Errorf("rate limit exceeded: session has reached max turns or tokens")
+	}
+
+	var skillPrompts []string
+	if len(agent.SkillIDs) > 0 {
+		rows, err := e.pool.Query(ctx, `SELECT system_prompt FROM skills WHERE id = ANY($1) AND system_prompt IS NOT NULL AND system_prompt != ''`, agent.SkillIDs)
+		if err == nil {
+			for rows.Next() {
+				var prompt string
+				if err := rows.Scan(&prompt); err == nil && prompt != "" {
+					skillPrompts = append(skillPrompts, prompt)
+				}
+			}
+			rows.Close()
+		}
 	}
 
 	llmClient := e.llm
@@ -101,6 +125,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		}
 		chatMsgs = append(chatMsgs, msg)
 	}
+	for _, sp := range skillPrompts {
+		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: sp})
+	}
 	chatMsgs = append(chatMsgs, ChatMessage{Role: "user", Content: userMessage})
 
 	userMsgID := uuid.New().String()
@@ -112,13 +139,56 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		CreatedAt: time.Now(),
 	})
 
-	toolsList := make([]OpenAITool, len(tools))
-	for i, t := range tools {
+	allTools := make([]*ToolDef, len(tools))
+	copy(allTools, tools)
+
+	if len(agent.MCPServers) > 0 {
+		for _, ms := range agent.MCPServers {
+			if ms.Type == "http" {
+				allTools = append(allTools,
+					&ToolDef{
+						Type: "function",
+						Function: struct {
+							Name        string `json:"name"`
+							Description string `json:"description"`
+							Parameters  any    `json:"parameters"`
+						}{
+							Name:        ms.Name + "_list_tools",
+							Description: fmt.Sprintf("List available tools from MCP server %s", ms.Name),
+							Parameters:  "{}",
+						},
+						Handler: makeMCPToolListHandlerHTTP(ms.Command),
+					},
+					&ToolDef{
+						Type: "function",
+						Function: struct {
+							Name        string `json:"name"`
+							Description string `json:"description"`
+							Parameters  any    `json:"parameters"`
+						}{
+							Name:        ms.Name + "_call_tool",
+							Description: fmt.Sprintf("Call a tool on MCP server %s", ms.Name),
+							Parameters:  `{"type":"object","properties":{"tool":{"type":"string"},"arguments":{"type":"object"}},"required":["tool"]}`,
+						},
+						Handler: makeMCPToolCallHandlerHTTP(ms.Command),
+					},
+				)
+			}
+		}
+	}
+
+	toolsList := make([]OpenAITool, len(allTools))
+	for i, t := range allTools {
 		oat, err := t.ToOpenAITool()
 		if err != nil {
 			return "", "", nil, events, fmt.Errorf("convert tool: %w", err)
 		}
 		toolsList[i] = oat
+	}
+
+	toolLookup := make(map[string]*ToolDef, len(allTools))
+	for _, t := range allTools {
+		toolLookup[t.Function.Name] = t
 	}
 
 	const maxTurns = 15
@@ -202,7 +272,10 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				Name: tc.Function.Name,
 			})
 
-			toolDef, ok := e.registry.Get(tc.Function.Name)
+			toolDef, ok := toolLookup[tc.Function.Name]
+			if !ok {
+				toolDef, ok = e.registry.Get(tc.Function.Name)
+			}
 			if !ok {
 				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name)})
 				continue
@@ -253,12 +326,12 @@ func (e *Engine) SetLLMClient(llm *LLMClient) {
 	e.llm = llm
 }
 
-func (e *Engine) HandleSlashCommand(ctx context.Context, sessionID string, command string, masterKey []byte) (any, error) {
+func (e *Engine) HandleSlashCommand(ctx context.Context, sessionID string, command string, orgID string, masterKey []byte) (any, error) {
 	switch command {
 	case "skills":
-		return e.listSkills(ctx)
+		return e.listSkills(ctx, orgID)
 	case "agents":
-		return e.listAgents(ctx)
+		return e.listAgents(ctx, orgID)
 	case "new":
 		return map[string]string{"session_id": sessionID}, nil
 	case "summarize":
@@ -268,8 +341,8 @@ func (e *Engine) HandleSlashCommand(ctx context.Context, sessionID string, comma
 	}
 }
 
-func (e *Engine) listSkills(ctx context.Context) (map[string]any, error) {
-	rows, err := e.pool.Query(ctx, `SELECT id, name, description FROM skills LIMIT 50`)
+func (e *Engine) listSkills(ctx context.Context, orgID string) (map[string]any, error) {
+	rows, err := e.pool.Query(ctx, `SELECT id, name, description FROM skills WHERE org_id = $1 LIMIT 50`, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -286,13 +359,8 @@ func (e *Engine) listSkills(ctx context.Context) (map[string]any, error) {
 	return map[string]any{"skills": skills}, nil
 }
 
-func (e *Engine) listAgents(ctx context.Context) (map[string]any, error) {
-	session, err := e.session.GetSession(ctx, "")
-	if err != nil {
-		return nil, err
-	}
-
-	rows, err := e.pool.Query(ctx, `SELECT id, name, description FROM agents WHERE org_id = (SELECT org_id FROM agent_sessions WHERE id = $1) LIMIT 50`, session.AgentID)
+func (e *Engine) listAgents(ctx context.Context, orgID string) (map[string]any, error) {
+	rows, err := e.pool.Query(ctx, `SELECT id, name, description FROM agents WHERE org_id = $1 LIMIT 50`, orgID)
 	if err != nil {
 		return nil, err
 	}

@@ -141,7 +141,7 @@ func makeUpdateAgentHandler(pool *pgxpool.Pool) ToolHandler {
 		_, _ = pool.Exec(ctx.Context, `
 			INSERT INTO agent_versions (id, agent_id, version, name, description, system_prompt, skill_ids, changed_by, change_reason, created_at)
 			SELECT $1, $2, $3, name, description, system_prompt, skill_ids, $4, 'agent_self_modification', NOW()
-			FROM agents WHERE id = $1
+			FROM agents WHERE id = $2
 		`, uuid.New().String(), agentID, version, ctx.UserID)
 
 		return map[string]any{"agent_id": agentID, "status": "updated"}, nil

@@ -92,31 +92,38 @@ func (h *skillHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := h.server.db.Pool.Exec(r.Context(), `
+	result, err := h.server.db.Pool.Exec(r.Context(), `
 		UPDATE skills SET
 			name = COALESCE($2, name),
 			description = COALESCE($3, description),
 			system_prompt = COALESCE($4, system_prompt),
 			tool_ids = COALESCE($5, tool_ids),
 			updated_at = NOW()
-		WHERE id = $1
-	`, skillID, req.Name, req.Description, req.SystemPrompt, req.ToolIDs)
+		WHERE id = $1 AND org_id = $6
+	`, skillID, req.Name, req.Description, req.SystemPrompt, req.ToolIDs, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	_ = claims
+	if result.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "skill not found")
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"id": skillID})
 }
 
 func (h *skillHandlers) handleDelete(w http.ResponseWriter, r *http.Request) {
 	skillID := r.PathValue("id")
+	claims := ClaimsFromContext(r.Context())
 
-	_, err := h.server.db.Pool.Exec(r.Context(), `DELETE FROM skills WHERE id = $1`, skillID)
+	result, err := h.server.db.Pool.Exec(r.Context(), `DELETE FROM skills WHERE id = $1 AND org_id = $2`, skillID, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if result.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "skill not found")
 		return
 	}
 
