@@ -48,8 +48,9 @@ export function SessionHistory({ agentId, onBack }: SessionHistoryProps) {
       setMessages(msgs)
     } catch {
       setError('Failed to load messages')
+    } finally {
+      setLoadingMessages(false)
     }
-    setLoadingMessages(false)
   }
 
   if (selectedSession) {
