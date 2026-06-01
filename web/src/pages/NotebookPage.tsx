@@ -16,6 +16,7 @@ import { ShortcutsModal } from '../components/ShortcutsModal'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { AgentPanel } from '../components/AgentPanel'
+import { useNotebookWs } from '../hooks/useNotebookWs'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -124,6 +125,19 @@ export function NotebookPage() {
   const [historyVersions, setHistoryVersions] = useState<CellVersion[]>([])
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showAgent, setShowAgent] = useState(false)
+
+  // Real-time cell output updates via WebSocket
+  useNotebookWs(id, useCallback((cellId: string, outputs: Array<{ type: string; data: unknown }>) => {
+    setLocalCells((prev) =>
+      prev.map((c) => (c.id === cellId ? { ...c, outputs: outputs as Output[] } : c)),
+    )
+    setRunningCells((prev) => {
+      const next = new Set(prev)
+      next.delete(cellId)
+      return next
+    })
+    setCellRunAt((prev) => ({ ...prev, [cellId]: new Date() }))
+  }, []))
 
   const cellsEndRef = useRef<HTMLDivElement>(null)
 
@@ -736,6 +750,17 @@ export function NotebookPage() {
             onClose={() => setShowAgent(false)}
             onCellCreated={() => {
               qc.invalidateQueries({ queryKey: ['notebook', id] })
+            }}
+            onCellOutput={(cellId, outputs) => {
+              setLocalCells((prev) =>
+                prev.map((c) => (c.id === cellId ? { ...c, outputs: outputs as Output[] } : c)),
+              )
+              setRunningCells((prev) => {
+                const next = new Set(prev)
+                next.delete(cellId)
+                return next
+              })
+              setCellRunAt((prev) => ({ ...prev, [cellId]: new Date() }))
             }}
             onCellScrollTo={(cellId) => {
               let attempts = 0

@@ -10,6 +10,7 @@ import { TaskList } from './TaskList'
 interface AgentPanelProps {
   notebookId: string
   onCellCreated?: (cellId: string, position: number) => void
+  onCellOutput?: (cellId: string, outputs: Array<{ type: string; data: unknown }>) => void
   onCellScrollTo?: (cellId: string) => void
   onClose: () => void
 }
@@ -17,7 +18,7 @@ interface AgentPanelProps {
 const WS_URL = (import.meta.env.VITE_WS_URL || 'ws://localhost:8080') + '/api/v1/ws/agents/'
 const LAST_AGENT_KEY = 'hnb:lastAgentId'
 
-export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose }: AgentPanelProps) {
+export function AgentPanel({ notebookId, onCellCreated, onCellOutput, onCellScrollTo, onClose }: AgentPanelProps) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
   const [_sessionId, setSessionId] = useState<string | null>(null)
@@ -128,6 +129,9 @@ export function AgentPanel({ notebookId, onCellCreated, onCellScrollTo, onClose 
         case 'cell_created':
           onCellCreated?.(msg.cell_id, msg.position)
           onCellScrollTo?.(msg.cell_id)
+          break
+        case 'cell_output':
+          onCellOutput?.(msg.cell_id, msg.outputs)
           break
         case 'done': {
           setIsStreaming(false)
