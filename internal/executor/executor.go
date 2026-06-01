@@ -1,6 +1,10 @@
 package executor
 
-import "context"
+import (
+	"context"
+	"strconv"
+	"strings"
+)
 
 type ResultSet struct {
 	Columns []Column        `json:"columns"`
@@ -33,4 +37,17 @@ type TableInfo struct {
 type ColumnInfo struct {
 	Name string `json:"name"`
 	Type string `json:"type"`
+}
+
+// ApplyLimit appends a LIMIT clause to the query if limit > 0 and the query
+// does not already contain LIMIT. It trims trailing whitespace and semicolons
+// before appending to avoid producing invalid SQL like "SELECT 1;\n LIMIT 1000".
+func ApplyLimit(query string, limit int) string {
+	if limit <= 0 {
+		return query
+	}
+	if strings.Contains(strings.ToUpper(query), "LIMIT") {
+		return query
+	}
+	return strings.TrimRight(strings.TrimSpace(query), ";") + " LIMIT " + strconv.Itoa(limit)
 }

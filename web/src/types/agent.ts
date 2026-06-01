@@ -106,6 +106,7 @@ export type WSMessage =
   | { type: 'tool_call'; tool: string; args: unknown; result: unknown; reasoning?: string }
   | { type: 'tool_result'; tool: string; params: string; result: string; error?: string }
   | { type: 'cell_created'; cell_id: string; position: number }
+  | { type: 'cell_output'; cell_id: string; outputs: Array<{ type: string; data: unknown }> }
   | { type: 'subagent_progress'; tasks: SubagentTask[] }
   | { type: 'done'; tokens_used?: number; data?: { content?: string; reasoning?: string } }
   | { type: 'error'; message: string }

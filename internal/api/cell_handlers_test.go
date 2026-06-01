@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -87,6 +88,124 @@ func TestCellCRUD(t *testing.T) {
 
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete cell: expected 204, got %d", rec.Code)
+	}
+}
+
+func TestCreateCellWithPosition(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("cell-pos-%d@example.com", ts)
+	token := registerAndGetToken(t, srv, email, "Cell Pos Org")
+	nbID := createNotebook(t, srv, token, "Cell Pos NB")
+
+	// Create first cell at default position (auto: 0)
+	cell1 := createCell(t, srv, token, nbID, "sql", "SELECT 1", "")
+	// Create second cell at default position (auto: 1)
+	cell2 := createCell(t, srv, token, nbID, "sql", "SELECT 2", "")
+
+	_ = cell1
+	_ = cell2
+
+	// Now insert a cell at position 1 (between the two existing cells)
+	body, _ := json.Marshal(map[string]interface{}{
+		"type":     "code",
+		"language": "sql",
+		"source":   "SELECT 3",
+		"position": 1,
+	})
+	req := httptest.NewRequest("POST", "/api/v1/notebooks/"+nbID+"/cells", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create cell with position: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify positions are unique by checking via the database directly
+	rows, err := srv.DB().Pool.Query(context.Background(), "SELECT id, position FROM cells WHERE notebook_id = $1 ORDER BY position", nbID)
+	if err != nil {
+		t.Fatalf("query cells: %v", err)
+	}
+	defer rows.Close()
+
+	positions := map[int]bool{}
+	cellCount := 0
+	for rows.Next() {
+		var id string
+		var pos int
+		if err := rows.Scan(&id, &pos); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if positions[pos] {
+			t.Fatalf("duplicate position %d found for cell %s", pos, id)
+		}
+		positions[pos] = true
+		cellCount++
+	}
+	if cellCount != 3 {
+		t.Fatalf("expected 3 cells, got %d", cellCount)
+	}
+}
+
+func TestDuplicateCellShiftsPositions(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("dup-shift-%d@example.com", ts)
+	token := registerAndGetToken(t, srv, email, "Dup Shift Org")
+	nbID := createNotebook(t, srv, token, "Dup Shift NB")
+
+	// Create two cells
+	createCell(t, srv, token, nbID, "sql", "SELECT 1", "")
+	createCell(t, srv, token, nbID, "sql", "SELECT 2", "")
+
+	// Get the first cell's ID
+	rows, err := srv.DB().Pool.Query(context.Background(), "SELECT id FROM cells WHERE notebook_id = $1 ORDER BY position LIMIT 1", nbID)
+	if err != nil {
+		t.Fatalf("query cells: %v", err)
+	}
+	var cellID string
+	if rows.Next() {
+		if err := rows.Scan(&cellID); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+	}
+	rows.Close()
+
+	// Duplicate the first cell (should be inserted at position 1, shifting second cell to position 2)
+	dupReq := httptest.NewRequest("POST", "/api/v1/notebooks/"+nbID+"/cells/"+cellID+"/duplicate", nil)
+	dupReq.Header.Set("Authorization", "Bearer "+token)
+	dupRec := httptest.NewRecorder()
+	srv.ServeHTTP(dupRec, dupReq)
+
+	if dupRec.Code != http.StatusCreated {
+		t.Fatalf("duplicate: expected 201, got %d: %s", dupRec.Code, dupRec.Body.String())
+	}
+
+	// Verify positions are unique via the database
+	rows2, err := srv.DB().Pool.Query(context.Background(), "SELECT id, position FROM cells WHERE notebook_id = $1 ORDER BY position", nbID)
+	if err != nil {
+		t.Fatalf("query cells: %v", err)
+	}
+	defer rows2.Close()
+
+	positions := map[int]bool{}
+	cellCount := 0
+	for rows2.Next() {
+		var id string
+		var pos int
+		if err := rows2.Scan(&id, &pos); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if positions[pos] {
+			t.Fatalf("duplicate position %d found after cell duplication", pos)
+		}
+		positions[pos] = true
+		cellCount++
+	}
+	if cellCount != 3 {
+		t.Fatalf("expected 3 cells after duplicate, got %d", cellCount)
 	}
 }
 

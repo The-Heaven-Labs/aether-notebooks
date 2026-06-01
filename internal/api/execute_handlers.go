@@ -3,8 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/crypto"
@@ -123,12 +121,9 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply cell-level LIMIT if set (and query doesn't already have a LIMIT)
-	if cell.Limit != nil && *cell.Limit > 0 {
-		if !strings.Contains(strings.ToUpper(resolvedSource), "LIMIT") {
-			resolvedSource = strings.TrimRight(strings.TrimSpace(resolvedSource), ";")
-			resolvedSource = resolvedSource + " LIMIT " + strconv.Itoa(*cell.Limit)
-		}
+	// Apply cell-level LIMIT
+	if cell.Limit != nil {
+		resolvedSource = executor.ApplyLimit(resolvedSource, *cell.Limit)
 	}
 
 	// Load connector
@@ -194,17 +189,20 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		errOutput := models.Output{Type: "error", Data: map[string]string{"message": err.Error()}}
 		outJSON, _ := json.Marshal([]models.Output{errOutput})
 		s.db.Pool.Exec(ctx, "UPDATE cells SET outputs = $1, updated_at = NOW() WHERE id = $2", outJSON, cellID)
+		s.hub.Broadcast(nbID, map[string]any{"type": "cell_output", "cell_id": cellID, "outputs": []models.Output{errOutput}})
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 
 	// Store table output
 	tableOutput := models.Output{Type: "table", Data: result}
-	outJSON, _ := json.Marshal([]models.Output{tableOutput})
+	cellOutputs := []models.Output{tableOutput}
+	outJSON, _ := json.Marshal(cellOutputs)
 	s.db.Pool.Exec(ctx, "UPDATE cells SET outputs = $1, updated_at = NOW() WHERE id = $2", outJSON, cellID)
+	s.hub.Broadcast(nbID, map[string]any{"type": "cell_output", "cell_id": cellID, "outputs": cellOutputs})
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"outputs": []models.Output{tableOutput},
+		"outputs": cellOutputs,
 	})
 
 	s.audit.Log(ctx, audit.Entry{
