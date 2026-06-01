@@ -186,6 +186,11 @@ tasks:
     cmds:
       - npx playwright test --config=e2e/playwright.config.ts
 
+  test:smoke:
+    desc: Run end-to-end smoke test against live server (requires running dev stack)
+    cmds:
+      - bash scripts/smoke-test.sh
+
   test:e2e:ui:
     desc: Open Playwright UI mode
     cmds:

@@ -64,9 +64,17 @@ func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
 	var insertPos int
 	if req.Position != nil {
 		insertPos = *req.Position
+		// Shift to negative positions first to avoid UNIQUE(notebook_id, position) violations
 		if _, err := s.db.Pool.Exec(ctx,
-			`UPDATE cells SET position=position+1 WHERE notebook_id=$1 AND position>=$2`,
+			`UPDATE cells SET position = -position - 1 WHERE notebook_id = $1 AND position >= $2`,
 			nbID, insertPos,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+		if _, err := s.db.Pool.Exec(ctx,
+			`UPDATE cells SET position = -position WHERE notebook_id = $1 AND position < 0`,
+			nbID,
 		); err != nil {
 			writeError(w, http.StatusInternalServerError, "db error")
 			return
@@ -210,7 +218,7 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 		argN++
 	}
 	if req.Limit != nil {
-		query += fmt.Sprintf(", limit = $%d", argN)
+		query += fmt.Sprintf(", \"limit\" = $%d", argN)
 		args = append(args, *req.Limit)
 		argN++
 	}
@@ -344,9 +352,17 @@ func (s *Server) handleDuplicateCell(w http.ResponseWriter, r *http.Request) {
 	}
 
 	insertPos := src.Position + 1
+	// Shift to negative positions first to avoid UNIQUE(notebook_id, position) violations
 	if _, err := s.db.Pool.Exec(ctx,
-		`UPDATE cells SET position=position+1 WHERE notebook_id=$1 AND position>=$2`,
+		`UPDATE cells SET position = -position - 1 WHERE notebook_id = $1 AND position >= $2`,
 		nbID, insertPos,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	if _, err := s.db.Pool.Exec(ctx,
+		`UPDATE cells SET position = -position WHERE notebook_id = $1 AND position < 0`,
+		nbID,
 	); err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return

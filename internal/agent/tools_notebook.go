@@ -3,13 +3,13 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/heavenlabs/hnb/internal/crypto"
 	"github.com/heavenlabs/hnb/internal/executor"
 	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -35,7 +35,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		}{
 			Name:        "create_cell",
 			Description: "Create a new code or text cell",
-			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"type":{"type":"string","enum":["code","text"]},"source":{"type":"string"},"position":{"type":"integer"}},"required":["notebook_id","type"]}`,
+			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"type":{"type":"string","enum":["code","text"]},"source":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell. Required for code cells if the notebook has no default connector."},"position":{"type":"integer"}},"required":["notebook_id","type"]}`,
 		},
 		Handler: makeCreateCellHandler(db),
 	})
@@ -47,8 +47,8 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "update_cell",
-			Description: "Change a cell's source or metadata",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"source":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"}},"required":["cell_id"]}`,
+			Description: "Change a cell's source, metadata, or connector",
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"source":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell"}},"required":["cell_id"]}`,
 		},
 		Handler: makeUpdateCellHandler(db),
 	})
@@ -148,10 +148,11 @@ func makeReadCellHandler(db *pgxpool.Pool) ToolHandler {
 func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
-			NotebookID string `json:"notebook_id"`
-			Type       string `json:"type"`
-			Source     string `json:"source"`
-			Position   int    `json:"position"`
+			NotebookID  string `json:"notebook_id"`
+			Type        string `json:"type"`
+			Source      string `json:"source"`
+			ConnectorID string `json:"connector_id"`
+			Position    int    `json:"position"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -165,7 +166,7 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, err
 		}
 
-		cellID := uuid.New().String()
+cellID := uuid.New().String()
 		position := req.Position
 		if position <= 0 {
 			var maxPos int
@@ -173,6 +174,12 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 			position = maxPos + 1
 		} else {
 			position = position - 1
+			if _, err := db.Exec(ctx.Context, `UPDATE cells SET position = -position - 1 WHERE notebook_id = $1 AND position >= $2`, req.NotebookID, position); err != nil {
+				return nil, fmt.Errorf("shift cells: %w", err)
+			}
+			if _, err := db.Exec(ctx.Context, `UPDATE cells SET position = -position WHERE notebook_id = $1 AND position < 0`, req.NotebookID); err != nil {
+				return nil, fmt.Errorf("shift cells back: %w", err)
+			}
 		}
 
 		language := "sql"
@@ -180,11 +187,16 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 			language = "markdown"
 		}
 
+		var connID *string
+		if req.ConnectorID != "" {
+			connID = &req.ConnectorID
+		}
+
 		now := time.Now()
 		_, err := db.Exec(ctx.Context, `
-			INSERT INTO cells (id, notebook_id, type, language, source, position, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
-		`, cellID, req.NotebookID, req.Type, language, req.Source, position, now)
+			INSERT INTO cells (id, notebook_id, type, language, connector_id, source, position, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+		`, cellID, req.NotebookID, req.Type, language, connID, req.Source, position, now)
 		if err != nil {
 			return nil, fmt.Errorf("create cell: %w", err)
 		}
@@ -204,6 +216,7 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 			Source      string `json:"source"`
 			Title       string `json:"title"`
 			Description string `json:"description"`
+			ConnectorID string `json:"connector_id"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -217,13 +230,18 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, err
 		}
 
+		var connID *string
+		if req.ConnectorID != "" {
+			connID = &req.ConnectorID
+		}
 		_, err = db.Exec(ctx.Context, `
 			UPDATE cells SET source = COALESCE(NULLIF($2, ''), source),
 				title = COALESCE(NULLIF($3, ''), title),
 				description = COALESCE(NULLIF($4, ''), description),
+				connector_id = COALESCE($5, connector_id),
 				updated_at = NOW()
 			WHERE id = $1
-		`, req.CellID, req.Source, req.Title, req.Description)
+		`, req.CellID, req.Source, req.Title, req.Description, connID)
 		if err != nil {
 			return nil, fmt.Errorf("update cell: %w", err)
 		}
@@ -258,14 +276,23 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 			Limit       int     `json:"limit"`
 		}
 		err = db.QueryRow(ctx.Context, `
-			SELECT connector_id, language, source, COALESCE(limit, 0) FROM cells WHERE id = $1
+			SELECT connector_id, language, source, COALESCE("limit", 0) FROM cells WHERE id = $1
 		`, req.CellID).Scan(&cell.ConnectorID, &cell.Language, &cell.Source, &cell.Limit)
 		if err != nil {
 			return nil, fmt.Errorf("get cell: %w", err)
 		}
 
 		if cell.ConnectorID == nil || *cell.ConnectorID == "" {
-			return nil, fmt.Errorf("cell has no connector assigned")
+			var nbConnID *string
+			if err := db.QueryRow(ctx.Context, "SELECT connector_id FROM notebooks WHERE id = $1", notebookID).Scan(&nbConnID); err != nil && err != pgx.ErrNoRows {
+				return nil, fmt.Errorf("get notebook connector: %w", err)
+			}
+			if nbConnID != nil && *nbConnID != "" {
+				cell.ConnectorID = nbConnID
+			}
+		}
+		if cell.ConnectorID == nil || *cell.ConnectorID == "" {
+			return nil, fmt.Errorf("cell has no connector assigned; set one with create_cell or update_cell")
 		}
 
 		var connType models.ConnectorType
@@ -306,19 +333,27 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 		}
 		defer exec.Close()
 
-		query := cell.Source
-		if cell.Limit > 0 && !strings.Contains(strings.ToUpper(query), "LIMIT") {
-			query = strings.TrimRight(query, ";") + fmt.Sprintf(" LIMIT %d", cell.Limit)
-		}
+		query := executor.ApplyLimit(cell.Source, cell.Limit)
 
 		result, err := exec.Execute(ctx.Context, query, nil, cell.Limit)
 		if err != nil {
+			errOutput := models.Output{Type: "error", Data: map[string]string{"message": err.Error()}}
+			outJSON, _ := json.Marshal([]models.Output{errOutput})
+			db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, updated_at = NOW() WHERE id = $2", outJSON, req.CellID)
+			ctx.EmitCellOutput(req.CellID, []models.Output{errOutput})
+
 			return map[string]any{
 				"cell_id": req.CellID,
 				"status":  "error",
 				"error":   err.Error(),
 			}, nil
 		}
+
+		tableOutput := models.Output{Type: "table", Data: result}
+		outputs := []models.Output{tableOutput}
+		outJSON, _ := json.Marshal(outputs)
+		db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, updated_at = NOW() WHERE id = $2", outJSON, req.CellID)
+		ctx.EmitCellOutput(req.CellID, outputs)
 
 		_ = ctx.AuditLog("cell.run", "cell", req.CellID)
 
