@@ -452,7 +452,30 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
       />
 
       {showHistory && selectedAgent ? (
-        <SessionHistory agentId={selectedAgent.id} onBack={() => setShowHistory(false)} />
+        <SessionHistory
+          agentId={selectedAgent.id}
+          onBack={() => setShowHistory(false)}
+          onResumeSession={async (session) => {
+            closeWS()
+            setSessionId(session.id)
+            setShowHistory(false)
+            try {
+              const msgs = await api.get<Array<{ role: string; content: string; reasoning_content?: string }>>(`/api/v1/sessions/${session.id}/messages`)
+              const formatted = msgs.map((m) => ({
+                role: m.role,
+                content: m.content || '',
+                reasoning: m.reasoning_content,
+              }))
+              setMessages(formatted)
+              if (selectedAgent) {
+                saveChatState(selectedAgent.id, session.id, formatted)
+              }
+            } catch {
+              setMessages([])
+            }
+            connectWebSocket(session.id)
+          }}
+        />
       ) : !selectedAgent ? (
         <div style={styles.agentSelect}>
           {isLoadingAgents ? (
