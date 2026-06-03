@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,7 +26,6 @@ type Engine struct {
 func NewEngine(pool *pgxpool.Pool) *Engine {
 	reg := NewToolRegistry()
 	RegisterNotebookTools(reg, pool)
-	RegisterChartTools(reg, pool)
 	RegisterAgentTools(reg, pool)
 	RegisterPlatformTools(reg, pool)
 
@@ -366,7 +366,8 @@ func (e *Engine) SetLLMClient(llm *LLMClient) {
 }
 
 func (e *Engine) HandleSlashCommand(ctx context.Context, sessionID string, command string, orgID string, masterKey []byte) (any, error) {
-	switch command {
+	cmd := strings.TrimSpace(command)
+	switch cmd {
 	case "skills":
 		return e.listSkills(ctx, orgID)
 	case "agents":
@@ -374,7 +375,7 @@ func (e *Engine) HandleSlashCommand(ctx context.Context, sessionID string, comma
 	case "new":
 		return map[string]string{"session_id": sessionID}, nil
 	case "summarize":
-		return e.summarizeSession(ctx, sessionID, masterKey)
+		return e.summarizeAndNewSession(ctx, sessionID, masterKey)
 	default:
 		return nil, fmt.Errorf("unknown command: %s", command)
 	}
@@ -436,11 +437,40 @@ func (e *Engine) summarizeSession(ctx context.Context, sessionID string, masterK
 		summarizePrompt += fmt.Sprintf("%s: %s\n", m.Role, m.Content)
 	}
 
-	if e.llm == nil {
+	// Initialize LLM client the same way as ProcessMessage
+	session, err := e.session.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("get session: %w", err)
+	}
+
+	var agent struct {
+		ModelConfigID *string
+	}
+	err = e.pool.QueryRow(ctx, `SELECT model_config_id FROM agents WHERE id = $1`, session.AgentID).Scan(&agent.ModelConfigID)
+	if err != nil {
+		return nil, fmt.Errorf("get agent: %w", err)
+	}
+
+	llmClient := e.llm
+	if agent.ModelConfigID != nil && *agent.ModelConfigID != "" {
+		var mc models.ModelConfig
+		var defaultParams []byte
+		err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at FROM model_configs WHERE id = $1`, *agent.ModelConfigID).Scan(
+			&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("get model config: %w", err)
+		}
+		if defaultParams != nil {
+			json.Unmarshal(defaultParams, &mc.DefaultParams)
+		}
+		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted)
+	}
+
+	if llmClient == nil {
 		return map[string]any{"summary": "No LLM client configured"}, nil
 	}
 
-	resp, err := e.llm.Chat(ctx, []ChatMessage{{Role: "user", Content: summarizePrompt}}, nil, masterKey)
+	resp, err := llmClient.Chat(ctx, []ChatMessage{{Role: "user", Content: summarizePrompt}}, nil, masterKey)
 	if err != nil {
 		return nil, err
 	}
@@ -449,6 +479,47 @@ func (e *Engine) summarizeSession(ctx context.Context, sessionID string, masterK
 		return map[string]any{"summary": resp.Choices[0].Message.Content}, nil
 	}
 	return map[string]any{"summary": "Could not generate summary"}, nil
+}
+
+func (e *Engine) summarizeAndNewSession(ctx context.Context, sessionID string, masterKey []byte) (map[string]any, error) {
+	// 1. Get the summary
+	result, err := e.summarizeSession(ctx, sessionID, masterKey)
+	if err != nil {
+		return nil, err
+	}
+	summary, _ := result["summary"].(string)
+	if summary == "" {
+		return result, nil
+	}
+
+	// 2. Get old session details
+	oldSession, err := e.session.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("get old session: %w", err)
+	}
+
+	// 3. Create a new session
+	newSession, err := e.session.CreateSession(ctx, oldSession.AgentID, oldSession.NotebookID, oldSession.UserID, oldSession.MaxTurns, oldSession.MaxTokens)
+	if err != nil {
+		return nil, fmt.Errorf("create new session: %w", err)
+	}
+
+	// 4. Store the summary as a system message in the new session
+	sysMsg := &models.AgentMessage{
+		ID:        uuid.New().String(),
+		SessionID: newSession.ID,
+		Role:      "user",
+		Content:   "Context from previous session summary:\n\n" + summary,
+		CreatedAt: time.Now(),
+	}
+	if err := e.session.AppendMessage(ctx, sysMsg); err != nil {
+		return nil, fmt.Errorf("store summary: %w", err)
+	}
+
+	return map[string]any{
+		"session_id": newSession.ID,
+		"summary":    summary,
+	}, nil
 }
 
 func chunk(s string, size int, fn func(string)) {
