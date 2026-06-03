@@ -335,12 +335,18 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 	claims := ClaimsFromContext(r.Context())
 
 	var req struct {
-		NotebookID string `json:"notebook_id"`
-		MaxTurns   int    `json:"max_turns"`
-		MaxTokens  int    `json:"max_tokens"`
+		NotebookID string  `json:"notebook_id"`
+		MaxTurns   int     `json:"max_turns"`
+		MaxTokens  int     `json:"max_tokens"`
+		Title      *string `json:"title"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	if req.Title != nil && len(*req.Title) > 50 {
+		writeError(w, http.StatusBadRequest, "title must be 50 characters or less")
 		return
 	}
 
@@ -353,13 +359,18 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 
 	sessionID := uuid.New().String()
 	_, err := h.server.db.Pool.Exec(r.Context(), `
-		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, max_tokens, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW())
-	`, sessionID, agentID, req.NotebookID, claims.UserID, req.MaxTurns, req.MaxTokens)
+		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, max_tokens, title, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+	`, sessionID, agentID, req.NotebookID, claims.UserID, req.MaxTurns, req.MaxTokens, req.Title)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	h.server.audit.Log(r.Context(), audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "agent_session.create", ResourceType: "agent_session", ResourceID: sessionID,
+	})
 
 	writeJSON(w, http.StatusCreated, map[string]any{"session_id": sessionID})
 }
@@ -375,7 +386,7 @@ func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Reques
 	}
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT s.id, s.agent_id, s.notebook_id, s.user_id, s.max_turns, s.max_tokens, s.ended_at, s.created_at,
+		SELECT s.id, s.agent_id, s.notebook_id, s.user_id, s.max_turns, s.max_tokens, s.ended_at, s.title, s.created_at,
 			COALESCE(
 				(SELECT content FROM agent_messages WHERE session_id = s.id AND role = 'user' ORDER BY created_at ASC LIMIT 1),
 				''
@@ -400,7 +411,10 @@ func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Reques
 		var firstMsg string
 		var msgCount int
 		var endedAt *time.Time
-		rows.Scan(&s.ID, &s.AgentID, &s.NotebookID, &s.UserID, &s.MaxTurns, &s.MaxTokens, &endedAt, &s.CreatedAt, &firstMsg, &msgCount)
+		var title *string
+		if err := rows.Scan(&s.ID, &s.AgentID, &s.NotebookID, &s.UserID, &s.MaxTurns, &s.MaxTokens, &endedAt, &title, &s.CreatedAt, &firstMsg, &msgCount); err != nil {
+			continue
+		}
 		sessions = append(sessions, map[string]any{
 			"id":            s.ID,
 			"agent_id":      s.AgentID,
@@ -409,6 +423,7 @@ func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Reques
 			"max_turns":     s.MaxTurns,
 			"max_tokens":    s.MaxTokens,
 			"ended_at":      endedAt,
+			"title":         title,
 			"created_at":    s.CreatedAt,
 			"first_message": firstMsg,
 			"message_count": msgCount,
@@ -428,15 +443,19 @@ func (h *agentHandlers) handleGetSession(w http.ResponseWriter, r *http.Request)
 	claims := ClaimsFromContext(r.Context())
 
 	var s models.AgentSession
-	var endedAt *string
+	var endedAt *time.Time
+	var title *string
 	err := h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT id, agent_id, notebook_id, user_id, max_turns, max_tokens, ended_at, created_at
+		SELECT id, agent_id, notebook_id, user_id, max_turns, max_tokens, ended_at, title, created_at
 		FROM agent_sessions WHERE id = $1
-	`, sessionID).Scan(&s.ID, &s.AgentID, &s.NotebookID, &s.UserID, &s.MaxTurns, &s.MaxTokens, &endedAt, &s.CreatedAt)
+	`, sessionID).Scan(&s.ID, &s.AgentID, &s.NotebookID, &s.UserID, &s.MaxTurns, &s.MaxTokens, &endedAt, &title, &s.CreatedAt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
+
+	s.EndedAt = endedAt
+	s.Title = title
 
 	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", s.AgentID, "view")
 	if err != nil || !allowed {
@@ -510,6 +529,51 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 	}
 
 	writeJSON(w, http.StatusOK, messages)
+}
+
+func (h *agentHandlers) handleUpdateSessionTitle(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("session_id")
+	claims := ClaimsFromContext(r.Context())
+
+	var agentID string
+	err := h.server.db.Pool.QueryRow(r.Context(), `
+		SELECT agent_id FROM agent_sessions WHERE id = $1
+	`, sessionID).Scan(&agentID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+
+	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "edit")
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
+	var req struct {
+		Title *string `json:"title"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	if req.Title != nil && len(*req.Title) > 50 {
+		writeError(w, http.StatusBadRequest, "title must be 50 characters or less")
+		return
+	}
+
+	if err := h.server.agentEngine.SessionStore().UpdateTitle(r.Context(), sessionID, req.Title); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	h.server.audit.Log(r.Context(), audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "agent_session.update_title", ResourceType: "agent_session", ResourceID: sessionID,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{"title": req.Title})
 }
 
 func (h *agentHandlers) handleAgentStats(w http.ResponseWriter, r *http.Request) {
