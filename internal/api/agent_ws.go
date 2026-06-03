@@ -67,6 +67,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	// Track cancel function for current message processing
 	var mu sync.Mutex
 	var currentCancel context.CancelFunc
+	var processing bool
 
 	wg.Add(1)
 	go func() {
@@ -98,6 +99,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					currentCancel()
 					currentCancel = nil
 				}
+				processing = false
 				mu.Unlock()
 				writeChan <- WSResponse{Type: "cancelled"}
 				continue
@@ -133,88 +135,97 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if msg.Type == "message" {
+				mu.Lock()
+				if processing {
+					mu.Unlock()
+					continue // drop message if already processing
+				}
+				processing = true
+				mu.Unlock()
+
 				slog.Info("ws: processing message", "session_id", sessionID, "content_len", len(msg.Content))
 
-				// Create cancellable context for this message
-				msgCtx, msgCancel := context.WithCancel(ctx)
-				mu.Lock()
-				currentCancel = msgCancel
-				mu.Unlock()
+				// Run processing in separate goroutine so reader stays free for cancel
+				go func(content string) {
+					msgCtx, msgCancel := context.WithCancel(ctx)
+					mu.Lock()
+					currentCancel = msgCancel
+					mu.Unlock()
 
-				_, reasoning, _, events, err := s.agentEngine.ProcessMessage(msgCtx, sessionID, msg.Content, s.agentEngine.GetRegistry().List(), s.masterKey,
-					func(token string) {
-						writeChan <- WSResponse{Type: "token", Data: token}
-					},
-					func(r string) {
-						writeChan <- WSResponse{Type: "reasoning", Data: r}
-					},
-					func(toolName, toolID, reasoning string) {
-						writeChan <- struct {
-							Type      string `json:"type"`
-							Tool      string `json:"tool"`
-							Reasoning string `json:"reasoning,omitempty"`
-						}{Type: "tool_call", Tool: toolName, Reasoning: reasoning}
-					},
-					func(toolName, params, result, errMsg string) {
-						writeChan <- struct {
-							Type   string `json:"type"`
-							Tool   string `json:"tool"`
-							Params string `json:"params"`
-							Result string `json:"result"`
-							Error  string `json:"error,omitempty"`
-						}{Type: "tool_result", Tool: toolName, Params: params, Result: result, Error: errMsg}
-					},
-					func(evt agent.EngineEvent) {
-						switch evt.Type {
-						case "cell_created":
+					_, reasoning, _, events, err := s.agentEngine.ProcessMessage(msgCtx, sessionID, content, s.agentEngine.GetRegistry().List(), s.masterKey,
+						func(token string) {
+							writeChan <- WSResponse{Type: "token", Data: token}
+						},
+						func(r string) {
+							writeChan <- WSResponse{Type: "reasoning", Data: r}
+						},
+						func(toolName, toolID, reasoning string) {
 							writeChan <- struct {
-								Type     string `json:"type"`
-								CellID   string `json:"cell_id"`
-								Position int    `json:"position"`
-							}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position}
-						case "cell_output":
+								Type      string `json:"type"`
+								Tool      string `json:"tool"`
+								Reasoning string `json:"reasoning,omitempty"`
+							}{Type: "tool_call", Tool: toolName, Reasoning: reasoning}
+						},
+						func(toolName, params, result, errMsg string) {
 							writeChan <- struct {
-								Type    string `json:"type"`
-								CellID  string `json:"cell_id"`
-								Outputs any    `json:"outputs"`
-							}{Type: evt.Type, CellID: evt.CellID, Outputs: evt.Outputs}
-						case "cell_metadata_changed":
-							cellID := evt.CellID
-							metadata := evt.Metadata
-							writeChan <- struct {
-								Type     string `json:"type"`
-								CellID   string `json:"cell_id"`
-								Metadata any    `json:"metadata"`
-							}{Type: evt.Type, CellID: cellID, Metadata: metadata}
-							s.broadcastCellMetadataChanged(ctx, cellID, metadata)
-						case "tasks_updated":
-							writeChan <- struct {
-								Type string            `json:"type"`
-								Data []agent.AgentTask `json:"data"`
-							}{Type: "tasks_updated", Data: evt.Tasks}
-						}
-					},
-				)
+								Type   string `json:"type"`
+								Tool   string `json:"tool"`
+								Params string `json:"params"`
+								Result string `json:"result"`
+								Error  string `json:"error,omitempty"`
+							}{Type: "tool_result", Tool: toolName, Params: params, Result: result, Error: errMsg}
+						},
+						func(evt agent.EngineEvent) {
+							switch evt.Type {
+							case "cell_created":
+								writeChan <- struct {
+									Type     string `json:"type"`
+									CellID   string `json:"cell_id"`
+									Position int    `json:"position"`
+								}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position}
+							case "cell_output":
+								writeChan <- struct {
+									Type    string `json:"type"`
+									CellID  string `json:"cell_id"`
+									Outputs any    `json:"outputs"`
+								}{Type: evt.Type, CellID: evt.CellID, Outputs: evt.Outputs}
+							case "cell_metadata_changed":
+								cellID := evt.CellID
+								metadata := evt.Metadata
+								writeChan <- struct {
+									Type     string `json:"type"`
+									CellID   string `json:"cell_id"`
+									Metadata any    `json:"metadata"`
+								}{Type: evt.Type, CellID: cellID, Metadata: metadata}
+								s.broadcastCellMetadataChanged(ctx, cellID, metadata)
+							case "tasks_updated":
+								writeChan <- struct {
+									Type string            `json:"type"`
+									Data []agent.AgentTask `json:"data"`
+								}{Type: "tasks_updated", Data: evt.Tasks}
+							}
+						},
+					)
 
-				mu.Lock()
-				currentCancel = nil
-				mu.Unlock()
+					mu.Lock()
+					currentCancel = nil
+					processing = false
+					mu.Unlock()
 
-				if err != nil {
-					slog.Error("ws: process message error", "session_id", sessionID, "error", err)
-					writeChan <- WSErrorResponse{Type: "error", Message: err.Error()}
-					// Don't return - let the user continue the session
-					continue
-				}
+					if err != nil {
+						slog.Error("ws: process message error", "session_id", sessionID, "error", err)
+						writeChan <- WSErrorResponse{Type: "error", Message: err.Error()}
+						return
+					}
 
-				_ = events
-				writeChan <- WSResponse{Type: "done", Data: map[string]any{"content": "", "reasoning": reasoning}}
-				slog.Debug("ws: message done", "session_id", sessionID, "reasoning_len", len(reasoning))
+					_ = events
+					writeChan <- WSResponse{Type: "done", Data: map[string]any{"content": "", "reasoning": reasoning}}
+					slog.Debug("ws: message done", "session_id", sessionID, "reasoning_len", len(reasoning))
+				}(msg.Content)
 			} else if msg.Type == "slash_command" {
 				result, err := s.agentEngine.HandleSlashCommand(ctx, sessionID, msg.Command, claims.OrgID, s.masterKey)
 				if err != nil {
 					writeChan <- WSErrorResponse{Type: "error", Message: err.Error()}
-					// Don't return - let the user continue
 					continue
 				}
 				writeChan <- struct {
