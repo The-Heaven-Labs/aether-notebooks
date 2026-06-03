@@ -124,7 +124,9 @@ export function NotebookPage() {
   const [historyCell, setHistoryCell] = useState<string | null>(null)
   const [historyVersions, setHistoryVersions] = useState<CellVersion[]>([])
   const [showShortcuts, setShowShortcuts] = useState(false)
-  const [showAgent, setShowAgent] = useState(false)
+  const [showAgent, setShowAgent] = useState(() => {
+    try { return localStorage.getItem(`hnb:agentPanel:${id}`) === 'true' } catch { return false }
+  })
   const [agentPanelWidth, setAgentPanelWidth] = useState(360)
 
   // Real-time cell output + metadata updates via WebSocket
@@ -194,6 +196,10 @@ export function NotebookPage() {
   useEffect(() => {
     localStorage.setItem(paramStorageKey, JSON.stringify(paramValues))
   }, [paramValues, paramStorageKey])
+
+  useEffect(() => {
+    localStorage.setItem(`hnb:agentPanel:${id}`, String(showAgent))
+  }, [showAgent, id])
 
   useEffect(() => {
     if (notebook) {
