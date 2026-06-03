@@ -62,6 +62,7 @@ export interface AgentSession {
   user_id: string
   max_turns: number
   max_tokens: number
+  title: string | null
   ended_at?: string
   created_at: string
 }
