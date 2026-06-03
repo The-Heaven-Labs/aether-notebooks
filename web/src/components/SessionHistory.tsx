@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { ArrowLeft, MessageSquare, Play } from 'lucide-react'
+import { ArrowLeft, MessageSquare, Play, Edit2 } from 'lucide-react'
 import { api } from '../api/client'
 
 interface SessionSummary {
@@ -8,6 +8,7 @@ interface SessionSummary {
   first_message: string
   message_count: number
   notebook_id: string
+  title: string | null
 }
 
 interface SessionMessage {
@@ -32,6 +33,8 @@ export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHist
   const [loading, setLoading] = useState(true)
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [editingTitle, setEditingTitle] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState('')
 
   useEffect(() => {
     api.get<SessionSummary[]>(`/api/v1/agents/${agentId}/sessions`)
@@ -51,6 +54,16 @@ export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHist
       setError('Failed to load messages')
     } finally {
       setLoadingMessages(false)
+    }
+  }
+
+  const handleSaveTitle = async (sessionId: string, title: string) => {
+    try {
+      await api.patch(`/api/v1/sessions/${sessionId}/title`, { title: title || null })
+      setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, title: title || null } : s))
+      setEditingTitle(null)
+    } catch {
+      setError('Failed to update title')
     }
   }
 
@@ -105,11 +118,33 @@ export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHist
           <div style={styles.loadingText}>No past sessions</div>
         ) : (
           sessions.map((s) => (
-            <button key={s.id} style={styles.sessionItem} onClick={() => loadSession(s)}>
+            <button key={s.id} style={styles.sessionItem} onClick={() => !editingTitle && loadSession(s)}>
               <MessageSquare size={14} style={{ flexShrink: 0, marginTop: 2 }} />
               <div style={styles.sessionInfo}>
-                <div style={styles.sessionPreview}>
-                  {s.first_message || '(empty session)'}
+                <div style={styles.sessionPreview} onClick={(e) => {
+                  e.stopPropagation()
+                  setEditingTitle(s.id)
+                  setEditValue(s.title || s.first_message || '')
+                }}>
+                  {editingTitle === s.id ? (
+                    <input
+                      style={styles.titleInput}
+                      value={editValue}
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onBlur={() => handleSaveTitle(s.id, editValue)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveTitle(s.id, editValue)
+                        if (e.key === 'Escape') setEditingTitle(null)
+                      }}
+                      autoFocus
+                      maxLength={50}
+                    />
+                  ) : (
+                    <>
+                      {s.title || s.first_message || '(empty session)'}
+                      <Edit2 size={12} style={styles.editIcon} />
+                    </>
+                  )}
                 </div>
                 <div style={styles.sessionMeta}>
                   {new Date(s.created_at).toLocaleDateString()} · {s.message_count} messages
@@ -181,6 +216,22 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap' as const,
   },
   sessionMeta: { fontSize: 11, color: 'var(--text-muted)', marginTop: 2 },
+  titleInput: {
+    width: '100%',
+    fontSize: 13,
+    fontWeight: 500,
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--accent)',
+    borderRadius: 3,
+    padding: '2px 4px',
+    color: 'var(--text-primary)',
+    outline: 'none',
+  },
+  editIcon: {
+    marginLeft: 4,
+    opacity: 0.3,
+    color: 'var(--text-muted)',
+  },
   messageList: { flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 8 },
   historyMessage: {
     padding: '8px 12px', borderRadius: 6, fontSize: 13, lineHeight: 1.4,
