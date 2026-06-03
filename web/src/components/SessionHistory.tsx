@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { ArrowLeft, MessageSquare } from 'lucide-react'
+import { ArrowLeft, MessageSquare, Play } from 'lucide-react'
 import { api } from '../api/client'
 
 interface SessionSummary {
@@ -22,9 +22,10 @@ interface SessionMessage {
 interface SessionHistoryProps {
   agentId: string
   onBack: () => void
+  onResumeSession: (session: SessionSummary) => void
 }
 
-export function SessionHistory({ agentId, onBack }: SessionHistoryProps) {
+export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHistoryProps) {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [selectedSession, setSelectedSession] = useState<SessionSummary | null>(null)
   const [messages, setMessages] = useState<SessionMessage[]>([])
@@ -60,6 +61,9 @@ export function SessionHistory({ agentId, onBack }: SessionHistoryProps) {
         <div style={styles.sessionHeader}>
           <button onClick={() => setSelectedSession(null)} style={styles.backBtn}>
             <ArrowLeft size={14} /> Back to history
+          </button>
+          <button onClick={() => onResumeSession(selectedSession)} style={styles.resumeBtn}>
+            <Play size={12} /> Resume
           </button>
           <span style={styles.sessionDate}>
             {new Date(selectedSession.created_at).toLocaleDateString()}
@@ -139,6 +143,19 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     cursor: 'pointer',
     color: 'var(--text-secondary)',
+  },
+  resumeBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    fontSize: 12,
+    padding: '4px 10px',
+    background: 'var(--accent)',
+    border: 'none',
+    borderRadius: 4,
+    cursor: 'pointer',
+    color: 'white',
+    fontWeight: 500,
   },
   headerTitle: { fontSize: 12, fontWeight: 500, color: 'var(--text-muted)' },
   sessionDate: { fontSize: 12, color: 'var(--text-muted)', marginLeft: 'auto' },
