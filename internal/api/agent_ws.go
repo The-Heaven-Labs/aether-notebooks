@@ -213,6 +213,10 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					mu.Unlock()
 
 					if err != nil {
+						if msgCtx.Err() == context.Canceled {
+							// Cancelled by user - cancelled response already sent
+							return
+						}
 						slog.Error("ws: process message error", "session_id", sessionID, "error", err)
 						writeChan <- WSErrorResponse{Type: "error", Message: err.Error()}
 						return
