@@ -58,9 +58,10 @@ export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHist
   }
 
   const handleSaveTitle = async (sessionId: string, title: string) => {
+    const trimmed = title.trim()
     try {
-      await api.patch(`/api/v1/sessions/${sessionId}/title`, { title: title || null })
-      setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, title: title || null } : s))
+      await api.patch(`/api/v1/sessions/${sessionId}/title`, { title: trimmed || null })
+      setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, title: trimmed || null } : s))
       setEditingTitle(null)
     } catch {
       setError('Failed to update title')

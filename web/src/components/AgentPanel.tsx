@@ -267,6 +267,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
         notebook_id: notebookId,
       })
       setSessionId(res.session_id)
+      setSessionTitle(null)
       setSelectedAgent(agent)
       localStorage.setItem(LAST_AGENT_KEY, agent.id)
       setMessages([])
@@ -279,6 +280,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
 
   const connectToSession = (sessionID: string) => {
     setSessionId(sessionID)
+    setSessionTitle(null)
     setMessages([])
     if (selectedAgent) {
       saveChatState(selectedAgent.id, sessionID, [])
@@ -406,6 +408,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
 
   useEffect(() => {
     if (!_sessionId) return
+    setSessionTitle(null)
     api.get<any>(`/api/v1/sessions/${_sessionId}`)
       .then((session) => {
         if (session.title) {
