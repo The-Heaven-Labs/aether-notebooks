@@ -64,6 +64,10 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	writeChan := make(chan any, 256)
 	var wg sync.WaitGroup
 
+	// Track cancel function for current message processing
+	var mu sync.Mutex
+	var currentCancel context.CancelFunc
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -88,6 +92,17 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 
 			slog.Debug("ws: received message", "session_id", sessionID, "type", msg.Type, "content_len", len(msg.Content))
 
+			if msg.Type == "cancel" {
+				mu.Lock()
+				if currentCancel != nil {
+					currentCancel()
+					currentCancel = nil
+				}
+				mu.Unlock()
+				writeChan <- WSResponse{Type: "cancelled"}
+				continue
+			}
+
 			if msg.Type == "reconnect" {
 				rows, err := s.db.Pool.Query(ctx, `
 					SELECT id, role, content, tool_calls FROM agent_messages
@@ -110,7 +125,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					}
 					rows.Close()
 					writeChan <- struct {
-						Type     string               `json:"type"`
+						Type     string                `json:"type"`
 						Messages []models.AgentMessage `json:"messages"`
 					}{Type: "reconnect_sync", Messages: messages}
 				}
@@ -119,7 +134,14 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 
 			if msg.Type == "message" {
 				slog.Info("ws: processing message", "session_id", sessionID, "content_len", len(msg.Content))
-				_, reasoning, _, events, err := s.agentEngine.ProcessMessage(ctx, sessionID, msg.Content, s.agentEngine.GetRegistry().List(), s.masterKey,
+
+				// Create cancellable context for this message
+				msgCtx, msgCancel := context.WithCancel(ctx)
+				mu.Lock()
+				currentCancel = msgCancel
+				mu.Unlock()
+
+				_, reasoning, _, events, err := s.agentEngine.ProcessMessage(msgCtx, sessionID, msg.Content, s.agentEngine.GetRegistry().List(), s.masterKey,
 					func(token string) {
 						writeChan <- WSResponse{Type: "token", Data: token}
 					},
@@ -142,32 +164,47 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 							Error  string `json:"error,omitempty"`
 						}{Type: "tool_result", Tool: toolName, Params: params, Result: result, Error: errMsg}
 					},
-func(evt agent.EngineEvent) {
-					switch evt.Type {
-					case "cell_created":
-						writeChan <- struct {
-							Type     string `json:"type"`
-							CellID   string `json:"cell_id"`
-							Position int    `json:"position"`
-						}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position}
-					case "cell_output":
-						writeChan <- struct {
-							Type    string `json:"type"`
-							CellID  string `json:"cell_id"`
-							Outputs any    `json:"outputs"`
-						}{Type: evt.Type, CellID: evt.CellID, Outputs: evt.Outputs}
-					case "tasks_updated":
-						writeChan <- struct {
-							Type string            `json:"type"`
-							Data []agent.AgentTask `json:"data"`
-						}{Type: "tasks_updated", Data: evt.Tasks}
-					}
-				},
+					func(evt agent.EngineEvent) {
+						switch evt.Type {
+						case "cell_created":
+							writeChan <- struct {
+								Type     string `json:"type"`
+								CellID   string `json:"cell_id"`
+								Position int    `json:"position"`
+							}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position}
+						case "cell_output":
+							writeChan <- struct {
+								Type    string `json:"type"`
+								CellID  string `json:"cell_id"`
+								Outputs any    `json:"outputs"`
+							}{Type: evt.Type, CellID: evt.CellID, Outputs: evt.Outputs}
+						case "cell_metadata_changed":
+							cellID := evt.CellID
+							metadata := evt.Metadata
+							writeChan <- struct {
+								Type     string `json:"type"`
+								CellID   string `json:"cell_id"`
+								Metadata any    `json:"metadata"`
+							}{Type: evt.Type, CellID: cellID, Metadata: metadata}
+							s.broadcastCellMetadataChanged(ctx, cellID, metadata)
+						case "tasks_updated":
+							writeChan <- struct {
+								Type string            `json:"type"`
+								Data []agent.AgentTask `json:"data"`
+							}{Type: "tasks_updated", Data: evt.Tasks}
+						}
+					},
 				)
+
+				mu.Lock()
+				currentCancel = nil
+				mu.Unlock()
+
 				if err != nil {
 					slog.Error("ws: process message error", "session_id", sessionID, "error", err)
 					writeChan <- WSErrorResponse{Type: "error", Message: err.Error()}
-					return
+					// Don't return - let the user continue the session
+					continue
 				}
 
 				_ = events
@@ -177,7 +214,8 @@ func(evt agent.EngineEvent) {
 				result, err := s.agentEngine.HandleSlashCommand(ctx, sessionID, msg.Command, claims.OrgID, s.masterKey)
 				if err != nil {
 					writeChan <- WSErrorResponse{Type: "error", Message: err.Error()}
-					return
+					// Don't return - let the user continue
+					continue
 				}
 				writeChan <- struct {
 					Type    string `json:"type"`
