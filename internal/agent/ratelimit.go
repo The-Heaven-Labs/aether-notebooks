@@ -57,7 +57,7 @@ func (rl *RateLimiter) CreateSummarizedSession(ctx context.Context, sessionID st
 		return "", err
 	}
 
-	newSession, err := rl.sessionStore.CreateSession(ctx, oldSession.AgentID, oldSession.NotebookID, oldSession.UserID, oldSession.MaxTurns, oldSession.MaxTokens)
+	newSession, err := rl.sessionStore.CreateSession(ctx, oldSession.AgentID, oldSession.NotebookID, oldSession.UserID, oldSession.MaxTurns, oldSession.MaxTokens, nil)
 	if err != nil {
 		return "", err
 	}
