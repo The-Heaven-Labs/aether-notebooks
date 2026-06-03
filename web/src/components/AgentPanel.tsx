@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Send, Loader2, History, Copy, Check } from 'lucide-react'
+import { Send, Loader2, History, Copy, Check, Square } from 'lucide-react'
 import { api, getToken } from '../api/client'
 import type { Agent, AgentTaskItem, WSMessage } from '../types/agent'
 import { PanelHeader } from './PanelHeader'
@@ -198,6 +198,21 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
         case 'error':
           setMessages((prev) => [...prev, { role: 'assistant', content: 'Error: ' + msg.message }])
           setIsStreaming(false)
+          setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50)
+          break
+        case 'cancelled':
+          setIsStreaming(false)
+          updateStreamingReasoning('')
+          needsCollapseRef.current = false
+          const cancelledText = streamingTextRef.current
+          if (cancelledText) {
+            setMessages((prev) => [...prev, { role: 'assistant', content: cancelledText + '\n\n*[Cancelled]*' }])
+          } else {
+            setMessages((prev) => [...prev, { role: 'assistant', content: '*[Cancelled]*' }])
+          }
+          streamingTextRef.current = ''
+          setCurrentStreamingText('')
+          setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50)
           break
         case 'slash_result':
           setIsStreaming(false)
@@ -295,6 +310,12 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
     wsRef.current = null
   }
 
+  const cancelExecution = () => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'cancel' }))
+    }
+  }
+
   const sendText = (text: string, skipQueue = false) => {
     if (!text.trim()) return
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -354,6 +375,11 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape' && isStreaming) {
+      e.preventDefault()
+      cancelExecution()
+      return
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       if (showSlashPicker) {
@@ -641,13 +667,23 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
             {pendingMessages.length > 0 && (
               <span style={styles.pendingBadge}>{pendingMessages.length}</span>
             )}
-            <button
-              style={{ ...styles.sendButton, ...(isStreaming ? styles.sendButtonDisabled : {}) }}
-              onClick={sendMessage}
-              disabled={!input.trim()}
-            >
-              {isStreaming ? <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> : <Send size={16} />}
-            </button>
+            {isStreaming ? (
+              <button
+                style={styles.cancelButton}
+                onClick={cancelExecution}
+                title="Cancel (Esc)"
+              >
+                <Square size={16} />
+              </button>
+            ) : (
+              <button
+                style={{ ...styles.sendButton, ...(!input.trim() ? styles.sendButtonDisabled : {}) }}
+                onClick={sendMessage}
+                disabled={!input.trim()}
+              >
+                <Send size={16} />
+              </button>
+            )}
           </div>
         </>
       )}
@@ -840,6 +876,17 @@ const styles: Record<string, React.CSSProperties> = {
   sendButtonDisabled: {
     opacity: 0.5,
     cursor: 'not-allowed',
+  },
+  cancelButton: {
+    padding: '10px 12px',
+    background: 'var(--error, #ef4444)',
+    color: 'white',
+    border: 'none',
+    borderRadius: 6,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   pendingBadge: {
     position: 'absolute',
