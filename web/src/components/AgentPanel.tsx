@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Bot, Send, Loader2, History, Copy, Check } from 'lucide-react'
+import { Send, Loader2, History, Copy, Check } from 'lucide-react'
 import { api, getToken } from '../api/client'
 import type { Agent, AgentTaskItem, WSMessage } from '../types/agent'
 import { PanelHeader } from './PanelHeader'
@@ -457,7 +457,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
         style={styles.resizeHandle}
       />
       <PanelHeader
-        title={selectedAgent ? selectedAgent.name : 'AI Agent'}
+        title={sessionTitle || (selectedAgent ? selectedAgent.name : 'AI Agent')}
         onClose={onClose}
         closeTitle="Close agent panel"
         style={{ borderBottom: '1px solid var(--border)', flexShrink: 0 }}
@@ -516,13 +516,6 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
       ) : (
         <>
           <div style={styles.agentInfo}>
-            <Bot size={14} style={{ color: 'var(--accent)' }} />
-            <span style={styles.agentName}>
-              {sessionTitle || selectedAgent.name}
-            </span>
-            {sessionTitle && (
-              <span style={styles.agentSubName}>{selectedAgent.name}</span>
-            )}
             <button
               style={styles.changeAgentBtn}
               onClick={() => {
@@ -718,20 +711,10 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
-    padding: '10px 16px',
+    padding: '8px 16px',
     borderBottom: '1px solid var(--border-light)',
     background: 'var(--bg-secondary)',
-  },
-  agentName: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: 500,
-    color: 'var(--text-primary)',
-  },
-  agentSubName: {
-    fontSize: 11,
-    color: 'var(--text-muted)',
-    fontWeight: 400,
+    justifyContent: 'flex-end',
   },
   changeAgentBtn: {
     fontSize: 11,
