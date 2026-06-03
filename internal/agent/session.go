@@ -119,9 +119,50 @@ func (s *SessionStore) GetMessageCount(ctx context.Context, sessionID string) (i
 	return count, err
 }
 
+func (s *SessionStore) GetMessagesWithLimit(ctx context.Context, sessionID string, limit int) ([]models.AgentMessage, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, session_id, role, content, tool_call_id, tool_calls, reasoning_content, tokens_input, tokens_output, model_calls, duration_ms, created_at
+		FROM agent_messages WHERE session_id = $1 ORDER BY created_at ASC LIMIT $2
+	`, sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []models.AgentMessage
+	for rows.Next() {
+		var msg models.AgentMessage
+		var content *string
+		var toolCallID *string
+		var toolCallsJSON []byte
+		var reasoningContent *string
+		err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &content, &toolCallID, &toolCallsJSON, &reasoningContent, &msg.TokensInput, &msg.TokensOutput, &msg.ModelCalls, &msg.DurationMs, &msg.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		if content != nil {
+			msg.Content = *content
+		}
+		if reasoningContent != nil {
+			msg.ReasoningContent = *reasoningContent
+		}
+		msg.ToolCallID = toolCallID
+		if toolCallsJSON != nil {
+			json.Unmarshal(toolCallsJSON, &msg.ToolCalls)
+		}
+		messages = append(messages, msg)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return messages, nil
+}
+
 func (s *SessionStore) UpdateTitle(ctx context.Context, sessionID string, title *string) error {
 	_, err := s.pool.Exec(ctx, `
-		UPDATE agent_sessions SET title = $1 WHERE id = $2
+		UPDATE agent_sessions SET title = $1 WHERE id = $2 AND title IS NULL
 	`, title, sessionID)
 	if err != nil {
 		return fmt.Errorf("update title: %w", err)
