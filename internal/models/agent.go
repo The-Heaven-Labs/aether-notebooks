@@ -69,6 +69,7 @@ type AgentSession struct {
 	UserID     string     `json:"user_id"`
 	MaxTurns   int        `json:"max_turns"`
 	MaxTokens  int        `json:"max_tokens"`
+	Title      *string    `json:"title,omitempty"`
 	EndedAt    *time.Time `json:"ended_at,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
 }
