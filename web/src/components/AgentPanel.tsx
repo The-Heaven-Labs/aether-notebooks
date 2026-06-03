@@ -9,6 +9,8 @@ import { TaskList } from './TaskList'
 
 interface AgentPanelProps {
   notebookId: string
+  width: number
+  onResize: (width: number) => void
   onCellCreated?: (cellId: string, position: number) => void
   onCellOutput?: (cellId: string, outputs: Array<{ type: string; data: unknown }>) => void
   onCellScrollTo?: (cellId: string) => void
@@ -18,7 +20,7 @@ interface AgentPanelProps {
 const WS_URL = (import.meta.env.VITE_WS_URL || 'ws://localhost:8080') + '/api/v1/ws/agents/'
 const LAST_AGENT_KEY = 'hnb:lastAgentId'
 
-export function AgentPanel({ notebookId, onCellCreated, onCellOutput, onCellScrollTo, onClose }: AgentPanelProps) {
+export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellOutput, onCellScrollTo, onClose }: AgentPanelProps) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
   const [_sessionId, setSessionId] = useState<string | null>(null)
@@ -58,6 +60,10 @@ export function AgentPanel({ notebookId, onCellCreated, onCellOutput, onCellScro
   const reconnectAttemptsRef = useRef(0)
   const processingRef = useRef(false)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const resizeRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const selectedAgentRef = useRef<Agent | null>(null)
+  selectedAgentRef.current = selectedAgent
 
   useEffect(() => {
     api.get<Agent[]>('/api/v1/agents')
@@ -148,23 +154,7 @@ export function AgentPanel({ notebookId, onCellCreated, onCellOutput, onCellScro
             const c = (msg.data as any).content as string
             setMessages((prev) => [...prev, { role: 'assistant', content: c, reasoning: r || undefined }])
           }
-          setTimeout(() => inputRef.current?.focus(), 50)
-          setPendingMessages((prev) => {
-            if (prev.length > 0 && !processingRef.current && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-              processingRef.current = true
-              const next = prev[0]
-              setTimeout(() => {
-                setMessages((msgs) => [...msgs, { role: 'user', content: next }])
-                wsRef.current?.send(JSON.stringify({ type: 'message', content: next }))
-                setIsStreaming(true)
-                streamingTextRef.current = ''
-                setCurrentStreamingText('')
-                processingRef.current = false
-              }, 100)
-              return prev.slice(1)
-            }
-            return prev
-          })
+          setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50)
           break
         }
         case 'error':
@@ -172,10 +162,24 @@ export function AgentPanel({ notebookId, onCellCreated, onCellOutput, onCellScro
           setIsStreaming(false)
           break
         case 'slash_result':
+          setIsStreaming(false)
           if (msg.command === 'new') {
-            setMessages([])
-            setSessionId(null)
-            setSelectedAgent(null)
+            if (selectedAgentRef.current) {
+              closeWS()
+              startSession(selectedAgentRef.current)
+            }
+          } else if (msg.command === 'summarize' && msg.data) {
+            const data = msg.data as { session_id: string; summary: string }
+            if (data.session_id) {
+              closeWS()
+              connectToSession(data.session_id)
+              setMessages([{ role: 'assistant', content: 'Previous session summary:\n\n' + data.summary }])
+            } else {
+              const s = (msg.data as any).summary
+              setMessages((prev) => [...prev, { role: 'assistant', content: s ? 'Summary: ' + s : JSON.stringify(msg.data) }])
+            }
+          } else if (msg.data) {
+            setMessages((prev) => [...prev, { role: 'assistant', content: JSON.stringify(msg.data, null, 2) }])
           }
           break
         case 'tasks_updated':
@@ -197,11 +201,13 @@ export function AgentPanel({ notebookId, onCellCreated, onCellOutput, onCellScro
     }
 
     ws.onclose = () => {
+      if (reconnectTimerRef.current) return // closed intentionally, skip reconnect
       wsRef.current = null
       if (reconnectAttemptsRef.current < 5) {
         const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 15000)
         reconnectAttemptsRef.current += 1
         reconnectTimerRef.current = setTimeout(() => {
+          reconnectTimerRef.current = null
           connectWebSocket(sid)
         }, delay)
       }
@@ -228,33 +234,51 @@ export function AgentPanel({ notebookId, onCellCreated, onCellOutput, onCellScro
     }
   }
 
-  const sendMessage = () => {
-    if (!input.trim()) return
+  const connectToSession = (sessionID: string) => {
+    setSessionId(sessionID)
+    setMessages([])
+    connectWebSocket(sessionID)
+  }
+
+  const closeWS = () => {
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+    reconnectTimerRef.current = setTimeout(() => {}, 0) // non-null sentinel to suppress reconnect
+    wsRef.current?.close()
+    wsRef.current = null
+  }
+
+  const sendText = (text: string, skipQueue = false) => {
+    if (!text.trim()) return
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       setError('Not connected. Attempting to reconnect...')
       return
     }
 
-    if (isStreaming || pendingMessages.length > 0) {
-      setPendingMessages((prev) => [...prev, input])
-      setMessages((prev) => [...prev, { role: 'user', content: input }])
-      setInput('')
+    if (!skipQueue && (isStreaming || pendingMessages.length > 0)) {
+      setPendingMessages((prev) => [...prev, text])
+      setMessages((prev) => [...prev, { role: 'user', content: text }])
       return
     }
 
-    if (input.startsWith('/')) {
-      const command = input.slice(1)
+    if (text.startsWith('/')) {
+      const command = text.slice(1).trim()
+      setMessages((prev) => [...prev, { role: 'user', content: text }])
+      setIsStreaming(true)
       wsRef.current.send(JSON.stringify({ type: 'slash_command', command }))
-      setInput('')
       return
     }
 
-    setMessages((prev) => [...prev, { role: 'user', content: input }])
-    wsRef.current.send(JSON.stringify({ type: 'message', content: input }))
-    setInput('')
+    setMessages((prev) => [...prev, { role: 'user', content: text }])
+    wsRef.current.send(JSON.stringify({ type: 'message', content: text }))
     setIsStreaming(true)
     streamingTextRef.current = ''
     setCurrentStreamingText('')
+  }
+
+  const sendMessage = () => {
+    const text = input
+    setInput('')
+    sendText(text)
   }
 
   const copyAsMarkdown = () => {
@@ -301,14 +325,74 @@ export function AgentPanel({ notebookId, onCellCreated, onCellOutput, onCellScro
   }, [messages, currentStreamingText])
 
   useEffect(() => {
+    if (isStreaming || pendingMessages.length === 0 || processingRef.current) return
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
+
+    processingRef.current = true
+    const next = pendingMessages[0]
+    const timer = setTimeout(() => {
+      wsRef.current?.send(JSON.stringify({ type: 'message', content: next }))
+      setPendingMessages((prev) => prev.slice(1))
+      setIsStreaming(true)
+      streamingTextRef.current = ''
+      setCurrentStreamingText('')
+      processingRef.current = false
+    }, 100)
+
+    return () => {
+      clearTimeout(timer)
+      processingRef.current = false
+    }
+  }, [isStreaming, pendingMessages])
+
+  useEffect(() => {
     if (selectedAgent) {
-      const timer = setTimeout(() => inputRef.current?.focus(), 100)
+      const timer = setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 100)
       return () => clearTimeout(timer)
     }
   }, [selectedAgent])
 
+  useEffect(() => {
+    const handle = resizeRef.current
+    if (!handle) return
+
+    let startX = 0
+    let startWidth = 0
+
+    const onMouseDown = (e: MouseEvent) => {
+      e.preventDefault()
+      startX = e.clientX
+      startWidth = width
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+
+      const onMouseMove = (e: MouseEvent) => {
+        const delta = startX - e.clientX
+        const newWidth = Math.max(280, Math.min(600, startWidth + delta))
+        onResize(newWidth)
+      }
+
+      const onMouseUp = () => {
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+        document.removeEventListener('mousemove', onMouseMove)
+        document.removeEventListener('mouseup', onMouseUp)
+      }
+
+      document.addEventListener('mousemove', onMouseMove)
+      document.addEventListener('mouseup', onMouseUp)
+    }
+
+    handle.addEventListener('mousedown', onMouseDown)
+    return () => handle.removeEventListener('mousedown', onMouseDown)
+  }, [width, onResize])
+
   return (
-    <div style={styles.panel}>
+    <div ref={panelRef} style={{ ...styles.panel, width }}>
+      <div
+        ref={resizeRef}
+        style={styles.resizeHandle}
+      />
       <PanelHeader
         title={selectedAgent ? selectedAgent.name : 'AI Agent'}
         onClose={onClose}
@@ -351,7 +435,7 @@ export function AgentPanel({ notebookId, onCellCreated, onCellOutput, onCellScro
             <button
               style={styles.changeAgentBtn}
               onClick={() => {
-                wsRef.current?.close()
+                closeWS()
                 setSelectedAgent(null)
                 setSessionId(null)
                 setMessages([])
@@ -422,13 +506,19 @@ export function AgentPanel({ notebookId, onCellCreated, onCellOutput, onCellScro
                  )}
                </div>
              ))}
-            {isStreaming && currentStreamingReasoning && (
-               <details open style={{ ...styles.message, ...styles.reasoningMessage }}>
-                 <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>Thinking</summary>
-                 <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{currentStreamingReasoning}</div>
-               </details>
-             )}
-             {isStreaming && currentStreamingText && (
+             {isStreaming && currentStreamingReasoning && (
+                <details open style={{ ...styles.message, ...styles.reasoningMessage }}>
+                  <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>Thinking</summary>
+                  <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{currentStreamingReasoning}</div>
+                </details>
+              )}
+              {isStreaming && !currentStreamingReasoning && !currentStreamingText && (
+                <div style={{ ...styles.message, ...styles.assistantMessage, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)' }} />
+                  <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>Processing...</span>
+                </div>
+              )}
+              {isStreaming && currentStreamingText && (
               <div style={{ ...styles.message, ...styles.assistantMessage }}>
                 {currentStreamingText}
                 <span style={styles.streamingDot} />
@@ -442,8 +532,9 @@ export function AgentPanel({ notebookId, onCellCreated, onCellOutput, onCellScro
               <SlashCommandPicker
                 filter={input}
                 onSelect={(cmd) => {
-                  setInput(cmd + ' ')
                   setShowSlashPicker(false)
+                  setInput('')
+                  sendText(cmd, true)
                 }}
                 onClose={() => setShowSlashPicker(false)}
               />
@@ -485,13 +576,23 @@ export function AgentPanel({ notebookId, onCellCreated, onCellOutput, onCellScro
 
 const styles: Record<string, React.CSSProperties> = {
   panel: {
-    width: 360,
-    height: '100%',
     borderLeft: '1px solid var(--border)',
     background: 'var(--bg-primary)',
     display: 'flex',
     flexDirection: 'column',
     flexShrink: 0,
+    position: 'relative',
+    minHeight: 0,
+    overflow: 'hidden',
+  },
+  resizeHandle: {
+    position: 'absolute',
+    left: -3,
+    top: 0,
+    bottom: 0,
+    width: 6,
+    cursor: 'col-resize',
+    zIndex: 10,
   },
   agentSelect: {
     padding: 16,

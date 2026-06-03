@@ -1,19 +1,16 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { getToken } from '../api/client'
 
-interface CellOutputEvent {
-  type: 'cell_output'
-  cell_id: string
-  outputs: Array<{ type: string; data: unknown }>
-}
-
 export function useNotebookWs(
   notebookId: string | undefined,
   onCellOutput?: (cellId: string, outputs: Array<{ type: string; data: unknown }>) => void,
+  onCellMetadataChanged?: (cellId: string, metadata: Record<string, unknown>) => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null)
   const onCellOutputRef = useRef(onCellOutput)
   onCellOutputRef.current = onCellOutput
+  const onCellMetadataChangedRef = useRef(onCellMetadataChanged)
+  onCellMetadataChangedRef.current = onCellMetadataChanged
 
   const connect = useCallback(() => {
     if (!notebookId) return
@@ -22,7 +19,9 @@ export function useNotebookWs(
     if (!token) return
 
     const base = import.meta.env.VITE_API_URL || ''
-    const wsBase = base.replace(/^http/, 'ws')
+    const wsBase = base
+      ? base.replace(/^http/, 'ws')
+      : 'ws://localhost:8080'
     const url = `${wsBase}/api/v1/ws/notebooks/${notebookId}?token=${token}`
 
     const ws = new WebSocket(url)
@@ -33,6 +32,8 @@ export function useNotebookWs(
         const msg = JSON.parse(event.data)
         if (msg.type === 'cell_output' && onCellOutputRef.current) {
           onCellOutputRef.current(msg.cell_id, msg.outputs)
+        } else if (msg.type === 'cell_metadata_changed' && onCellMetadataChangedRef.current) {
+          onCellMetadataChangedRef.current(msg.cell_id, msg.metadata)
         }
       } catch {
         // ignore non-JSON messages

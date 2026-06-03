@@ -125,8 +125,23 @@ export function NotebookPage() {
   const [historyVersions, setHistoryVersions] = useState<CellVersion[]>([])
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showAgent, setShowAgent] = useState(false)
+  const [agentPanelWidth, setAgentPanelWidth] = useState(360)
 
-  // Real-time cell output updates via WebSocket
+  // Real-time cell output + metadata updates via WebSocket
+  const flashCell = (cellId: string) => {
+    let attempts = 0
+    const maxAttempts = 20
+    const interval = setInterval(() => {
+      const el = document.getElementById('cell-' + cellId)
+      if (el) {
+        clearInterval(interval)
+        el.classList.add('cell-flash')
+        setTimeout(() => el.classList.remove('cell-flash'), 1500)
+      } else if (++attempts >= maxAttempts) {
+        clearInterval(interval)
+      }
+    }, 50)
+  }
   useNotebookWs(id, useCallback((cellId: string, outputs: Array<{ type: string; data: unknown }>) => {
     setLocalCells((prev) =>
       prev.map((c) => (c.id === cellId ? { ...c, outputs: outputs as Output[] } : c)),
@@ -137,6 +152,12 @@ export function NotebookPage() {
       return next
     })
     setCellRunAt((prev) => ({ ...prev, [cellId]: new Date() }))
+    flashCell(cellId)
+  }, []), useCallback((cellId: string, metadata: Record<string, unknown>) => {
+    setLocalCells((prev) =>
+      prev.map((c) => (c.id === cellId ? { ...c, metadata } : c)),
+    )
+    flashCell(cellId)
   }, []))
 
   const cellsEndRef = useRef<HTMLDivElement>(null)
@@ -687,6 +708,43 @@ export function NotebookPage() {
             />
           )}
         </div>
+        {showAgent && (
+          <AgentPanel
+            notebookId={id!}
+            width={agentPanelWidth}
+            onResize={setAgentPanelWidth}
+            onClose={() => setShowAgent(false)}
+            onCellCreated={() => {
+              qc.invalidateQueries({ queryKey: ['notebook', id] })
+            }}
+            onCellOutput={(cellId, outputs) => {
+              setLocalCells((prev) =>
+                prev.map((c) => (c.id === cellId ? { ...c, outputs: outputs as Output[] } : c)),
+              )
+              setRunningCells((prev) => {
+                const next = new Set(prev)
+                next.delete(cellId)
+                return next
+              })
+              setCellRunAt((prev) => ({ ...prev, [cellId]: new Date() }))
+            }}
+            onCellScrollTo={(cellId) => {
+              let attempts = 0
+              const maxAttempts = 50
+              const interval = setInterval(() => {
+                const el = document.getElementById('cell-' + cellId)
+                if (el) {
+                  clearInterval(interval)
+                  el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                  el.classList.add('cell-flash')
+                  setTimeout(() => el.classList.remove('cell-flash'), 3000)
+                } else if (++attempts >= maxAttempts) {
+                  clearInterval(interval)
+                }
+              }, 100)
+            }}
+          />
+        )}
       </div>
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
 
@@ -743,43 +801,6 @@ export function NotebookPage() {
         </>
       )}
 
-      {showAgent && (
-        <div style={{ position: 'fixed', right: 0, top: 48, bottom: 0, width: 360, zIndex: 100 }}>
-          <AgentPanel
-            notebookId={id!}
-            onClose={() => setShowAgent(false)}
-            onCellCreated={() => {
-              qc.invalidateQueries({ queryKey: ['notebook', id] })
-            }}
-            onCellOutput={(cellId, outputs) => {
-              setLocalCells((prev) =>
-                prev.map((c) => (c.id === cellId ? { ...c, outputs: outputs as Output[] } : c)),
-              )
-              setRunningCells((prev) => {
-                const next = new Set(prev)
-                next.delete(cellId)
-                return next
-              })
-              setCellRunAt((prev) => ({ ...prev, [cellId]: new Date() }))
-            }}
-            onCellScrollTo={(cellId) => {
-              let attempts = 0
-              const maxAttempts = 50
-              const interval = setInterval(() => {
-                const el = document.getElementById('cell-' + cellId)
-                if (el) {
-                  clearInterval(interval)
-                  el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                  el.classList.add('cell-flash')
-                  setTimeout(() => el.classList.remove('cell-flash'), 3000)
-                } else if (++attempts >= maxAttempts) {
-                  clearInterval(interval)
-                }
-              }, 100)
-            }}
-          />
-        </div>
-      )}
     </div>
     </AppShell>
   )
@@ -791,6 +812,8 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--bg-primary)',
     display: 'flex',
     flexDirection: 'column',
+    overflow: 'hidden',
+    minHeight: 0,
   },
 
   // ── Header ──
