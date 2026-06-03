@@ -168,6 +168,30 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		CreatedAt: time.Now(),
 	})
 
+	// Count user messages and trigger title generation on 2nd
+	userMsgCount := 0
+	for _, m := range messages {
+		if m.Role == "user" {
+			userMsgCount++
+		}
+	}
+	if userMsgCount == 1 { // This is the 2nd user message (messages didn't include the one we just appended)
+		mk := make([]byte, len(masterKey))
+		copy(mk, masterKey)
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Warn("engine: panic in title generation", "session_id", sessionID, "recover", r)
+				}
+			}()
+			titleCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			if err := e.generateSessionTitle(titleCtx, sessionID, mk); err != nil {
+				slog.Warn("engine: failed to generate session title", "session_id", sessionID, "error", err)
+			}
+		}()
+	}
+
 	allTools := make([]*ToolDef, len(tools))
 	copy(allTools, tools)
 
@@ -520,6 +544,80 @@ func (e *Engine) summarizeAndNewSession(ctx context.Context, sessionID string, m
 		"session_id": newSession.ID,
 		"summary":    summary,
 	}, nil
+}
+
+func (e *Engine) generateSessionTitle(ctx context.Context, sessionID string, masterKey []byte) error {
+	messages, err := e.session.GetMessagesWithLimit(ctx, sessionID, 5)
+	if err != nil {
+		return fmt.Errorf("get messages: %w", err)
+	}
+
+	if len(messages) < 2 {
+		return nil
+	}
+
+	prompt := "Generate a concise title (max 50 characters) for this conversation. Only return the title, nothing else:\n\n"
+	for _, m := range messages {
+		if m.Role == "user" && m.Content != "" {
+			prompt += fmt.Sprintf("User: %s\n", truncateStr(m.Content, 200))
+		}
+	}
+
+	session, err := e.session.GetSession(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("get session: %w", err)
+	}
+
+	llmClient := e.llm
+	if session.AgentID != "" {
+		var agentModelConfigID *string
+		err = e.pool.QueryRow(ctx, `SELECT model_config_id FROM agents WHERE id = $1`, session.AgentID).Scan(&agentModelConfigID)
+		if err == nil && agentModelConfigID != nil && *agentModelConfigID != "" {
+			var mc models.ModelConfig
+			var defaultParams []byte
+			err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at FROM model_configs WHERE id = $1`, *agentModelConfigID).Scan(
+				&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt)
+			if err == nil {
+				if defaultParams != nil {
+					json.Unmarshal(defaultParams, &mc.DefaultParams)
+				}
+				llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted)
+			}
+		}
+	}
+
+	if llmClient == nil {
+		return nil
+	}
+
+	resp, err := llmClient.Chat(ctx, []ChatMessage{{Role: "user", Content: prompt}}, nil, masterKey)
+	if err != nil {
+		return fmt.Errorf("llm chat: %w", err)
+	}
+
+	if len(resp.Choices) == 0 {
+		return nil
+	}
+
+	title := strings.TrimSpace(resp.Choices[0].Message.Content)
+	if title == "" {
+		return nil
+	}
+
+	runes := []rune(title)
+	if len(runes) > 50 {
+		title = string(runes[:50])
+	}
+
+	return e.session.UpdateTitle(ctx, sessionID, &title)
+}
+
+func truncateStr(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max]) + "..."
 }
 
 func chunk(s string, size int, fn func(string)) {
