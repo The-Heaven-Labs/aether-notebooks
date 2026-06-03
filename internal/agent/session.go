@@ -162,7 +162,7 @@ func (s *SessionStore) GetMessagesWithLimit(ctx context.Context, sessionID strin
 
 func (s *SessionStore) UpdateTitle(ctx context.Context, sessionID string, title *string) error {
 	_, err := s.pool.Exec(ctx, `
-		UPDATE agent_sessions SET title = $1 WHERE id = $2 AND title IS NULL
+		UPDATE agent_sessions SET title = $1 WHERE id = $2
 	`, title, sessionID)
 	if err != nil {
 		return fmt.Errorf("update title: %w", err)

@@ -34,6 +34,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
   const [messages, setMessages] = useState<Array<{ role: string; content: string; reasoning?: string | undefined; params?: string; result?: string }>>([])
   const chatStateKey = CHAT_STATE_KEY + notebookId
   const [tasks, setTasks] = useState<AgentTaskItem[]>([])
+  const [sessionTitle, setSessionTitle] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [currentStreamingText, setCurrentStreamingText] = useState('')
@@ -404,6 +405,17 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
   }, [selectedAgent])
 
   useEffect(() => {
+    if (!_sessionId) return
+    api.get<any>(`/api/v1/sessions/${_sessionId}`)
+      .then((session) => {
+        if (session.title) {
+          setSessionTitle(session.title)
+        }
+      })
+      .catch(() => {})
+  }, [_sessionId])
+
+  useEffect(() => {
     const handle = resizeRef.current
     if (!handle) return
 
@@ -505,7 +517,12 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
         <>
           <div style={styles.agentInfo}>
             <Bot size={14} style={{ color: 'var(--accent)' }} />
-            <span style={styles.agentName}>{selectedAgent.name}</span>
+            <span style={styles.agentName}>
+              {sessionTitle || selectedAgent.name}
+            </span>
+            {sessionTitle && (
+              <span style={styles.agentSubName}>{selectedAgent.name}</span>
+            )}
             <button
               style={styles.changeAgentBtn}
               onClick={() => {
@@ -710,6 +727,11 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     fontWeight: 500,
     color: 'var(--text-primary)',
+  },
+  agentSubName: {
+    fontSize: 11,
+    color: 'var(--text-muted)',
+    fontWeight: 400,
   },
   changeAgentBtn: {
     fontSize: 11,
