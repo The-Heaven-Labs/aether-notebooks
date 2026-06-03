@@ -19,12 +19,20 @@ interface AgentPanelProps {
 
 const WS_URL = (import.meta.env.VITE_WS_URL || 'ws://localhost:8080') + '/api/v1/ws/agents/'
 const LAST_AGENT_KEY = 'hnb:lastAgentId'
+const CHAT_STATE_KEY = 'hnb:agentChat:'
+
+interface AgentChatState {
+  agentId: string
+  sessionId: string
+  messages: Array<{ role: string; content: string; reasoning?: string; params?: string; result?: string }>
+}
 
 export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellOutput, onCellScrollTo, onClose }: AgentPanelProps) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
   const [_sessionId, setSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Array<{ role: string; content: string; reasoning?: string | undefined; params?: string; result?: string }>>([])
+  const chatStateKey = CHAT_STATE_KEY + notebookId
   const [tasks, setTasks] = useState<AgentTaskItem[]>([])
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
@@ -80,6 +88,17 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
 
   useEffect(() => {
     if (!selectedAgent && agents.length > 0 && !isLoadingAgents) {
+      const savedState = loadChatState()
+      if (savedState) {
+        const agent = agents.find((a) => a.id === savedState.agentId)
+        if (agent) {
+          setSelectedAgent(agent)
+          setSessionId(savedState.sessionId)
+          setMessages(savedState.messages)
+          connectWebSocket(savedState.sessionId)
+          return
+        }
+      }
       const lastId = localStorage.getItem(LAST_AGENT_KEY)
       if (lastId) {
         const agent = agents.find((a) => a.id === lastId)
@@ -90,6 +109,24 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents, isLoadingAgents])
+
+  const loadChatState = (): AgentChatState | null => {
+    try {
+      const raw = localStorage.getItem(chatStateKey)
+      if (raw) return JSON.parse(raw)
+    } catch { /* ignore */ }
+    return null
+  }
+
+  const saveChatState = (agentId: string, sessionId: string, msgs: Array<{ role: string; content: string; reasoning?: string; params?: string; result?: string }>) => {
+    try {
+      localStorage.setItem(chatStateKey, JSON.stringify({ agentId, sessionId, messages: msgs }))
+    } catch { /* ignore */ }
+  }
+
+  const clearChatState = () => {
+    try { localStorage.removeItem(chatStateKey) } catch { /* ignore */ }
+  }
 
   const connectWebSocket = useCallback((sid: string) => {
     const token = getToken()
@@ -173,7 +210,11 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
             if (data.session_id) {
               closeWS()
               connectToSession(data.session_id)
-              setMessages([{ role: 'assistant', content: 'Previous session summary:\n\n' + data.summary }])
+              const summaryMsgs = [{ role: 'assistant', content: 'Previous session summary:\n\n' + data.summary }]
+              setMessages(summaryMsgs)
+              if (selectedAgentRef.current) {
+                saveChatState(selectedAgentRef.current.id, data.session_id, summaryMsgs)
+              }
             } else {
               const s = (msg.data as any).summary
               setMessages((prev) => [...prev, { role: 'assistant', content: s ? 'Summary: ' + s : JSON.stringify(msg.data) }])
@@ -228,6 +269,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
       setSelectedAgent(agent)
       localStorage.setItem(LAST_AGENT_KEY, agent.id)
       setMessages([])
+      saveChatState(agent.id, res.session_id, [])
       connectWebSocket(res.session_id)
     } catch {
       setError('Failed to start session')
@@ -237,6 +279,9 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
   const connectToSession = (sessionID: string) => {
     setSessionId(sessionID)
     setMessages([])
+    if (selectedAgent) {
+      saveChatState(selectedAgent.id, sessionID, [])
+    }
     connectWebSocket(sessionID)
   }
 
@@ -323,6 +368,12 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
       messageListRef.current.scrollTop = messageListRef.current.scrollHeight
     }
   }, [messages, currentStreamingText])
+
+  useEffect(() => {
+    if (_sessionId && selectedAgent && messages.length > 0) {
+      saveChatState(selectedAgent.id, _sessionId, messages)
+    }
+  }, [messages, _sessionId, selectedAgent])
 
   useEffect(() => {
     if (isStreaming || pendingMessages.length === 0 || processingRef.current) return
@@ -439,6 +490,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
                 setSelectedAgent(null)
                 setSessionId(null)
                 setMessages([])
+                clearChatState()
               }}
             >
               Change
