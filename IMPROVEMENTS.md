@@ -28,7 +28,9 @@
 - [x] There should be native tools for task tracking
 - [x] When the agent creates a new cell, it should be highlighted and scrolled immediatly, not only when that part of the session/command ends
 - [x] Instead of MCPs being configured at agent level, they should be configured at application level, and then could be shared between multiple agents
+- [x] There should be a way to copy the whole agent conversation as markdown
+- [x] The agent panel should be resizable. When opening it, the things behind (cells) should move to the left, instead of being behind it
+- [x] There is a bug with the queue of next messages, it is sent again and again repeating itself, never ending.
+- [x] Slash commands (/new, /skills, /agents, /summarize) now work. /new starts a fresh session with the same agent. /summarize generates a summary, creates a new session with it as context, and shows a loading indicator during processing.
 
 ## Not Yet Implemented
-
-- [x] There should be a way to copy the whole agent conversation as markdown
