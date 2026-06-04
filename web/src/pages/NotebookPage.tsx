@@ -549,9 +549,9 @@ export function NotebookPage() {
       <div style={styles.header}>
         {/* Row 1: breadcrumb + meta */}
         <div style={styles.headerTopRow}>
-          <Link to="/" style={styles.backBtn} title="Back to notebooks">
+          <Link to="/" style={styles.backBtn} title="Back to Files">
             <ChevronLeft size={14} style={{ flexShrink: 0 }} />
-            <span>Notebooks</span>
+            <span>Files</span>
           </Link>
           <div style={styles.metaInfo}>
             <span style={styles.metaText}>
