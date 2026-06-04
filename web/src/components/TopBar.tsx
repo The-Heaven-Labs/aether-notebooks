@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Keyboard } from 'lucide-react'
+import { Keyboard, Menu } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
+import { openMobileSidebar } from './Sidebar'
 
 function LogoMark() {
   return (
@@ -48,6 +49,14 @@ export function TopBar({ onShowShortcuts }: TopBarProps) {
 
   return (
     <header style={styles.bar}>
+      <button
+        className="hnb-hamburger"
+        style={styles.hamburger}
+        onClick={openMobileSidebar}
+        aria-label="Open navigation menu"
+      >
+        <Menu size={18} />
+      </button>
       <Link to="/" style={styles.brand}>
         <div style={styles.logo}><LogoMark /></div>
         <span style={styles.appName}>HNB</span>
@@ -166,6 +175,17 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '5px 7px',
     cursor: 'pointer',
     color: 'var(--nav-text-muted)',
+  },
+  hamburger: {
+    display: 'none', // shown via CSS media query on mobile
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    color: 'var(--nav-text)',
+    padding: '4px',
+    borderRadius: 4,
   },
   dropdownLink: {
     display: 'block',
