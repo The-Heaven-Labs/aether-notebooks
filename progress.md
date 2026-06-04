@@ -2,44 +2,25 @@
 
 ## Group 6: Responsive & Data Management
 
-### Task 4: Dashboard Editor Mobile Layout ✅
-**Commit:** d7f1fd4
-**Files:** web/src/pages/DashboardEditorPage.tsx
-**Changes:**
-- Added `isMobileLayout` check (containerWidth < 600px)
-- Mobile layout renders widgets as vertical flex column instead of GridLayout
-- Hidden column count selector on mobile
-- Collapsed "Add Widget" to icon-only button on mobile
-- Made sub-header wrap with flexWrap and responsive padding
-- Imported Plus icon from lucide-react
+### Task 1: useMediaQuery hook ✅
+- Created `web/src/hooks/useMediaQuery.ts`
+- Reusable hook wrapping `window.matchMedia` for reactive breakpoint detection
+- Commit: `a97c8bf`
 
-### Task 7: CSV/JSON Export for Query Results ✅
-**Commit:** 5a5abb9
-**Files:** web/src/components/OutputRenderer.tsx
-**Changes:**
-- Added `exportCSV` function with proper escaping (commas, quotes, newlines)
-- Added `exportJSON` function exporting array of objects with column names as keys
-- Added CSV and JSON download buttons in output bar between row count and view toggle
-- Imported Download icon from lucide-react
-- Added exportGroup and exportBtn styles
+### Task 2: Mobile sidebar auto-collapse ✅
+- **Mobile (<768px):** Sidebar renders as fixed drawer overlay with backdrop. Opens via hamburger button in TopBar. Closes on backdrop click, nav link click, or route change.
+- **Tablet (768-1024px):** Sidebar forces collapsed to icon rail only. Collapse toggle hidden.
+- **Desktop (>1024px):** Unchanged behavior.
+- Files: `Sidebar.tsx`, `TopBar.tsx`, `index.css`
+- Commit: `5de804e`
 
-### Task 8: Audit Log Copy Feedback ✅
-**Commit:** 17461ed
-**Files:** web/src/pages/AuditPage.tsx
-**Changes:**
-- Added `copiedId` state with 2-second timeout
-- Added `handleCopyId` function using navigator.clipboard
-- Passed copiedId and onCopy through AuditRow to ResourceCell
-- Show persistent Copy icon (opacity 0.4) next to truncated IDs
-- Switch to green Check icon when copied
-- Update title tooltip to show "Copied!" state
-- Imported Check icon from lucide-react
-- Added copyIcon style
+### Task 3: Connector form responsive grid ✅
+- Form grid uses `repeat(auto-fit, minmax(220px, 1fr))` for fluid columns
+- Body padding uses `clamp(16px, 4vw, 32px)` for responsive spacing
+- Table wrapped in `overflow-x: auto` container for horizontal scroll
+- File: `ConnectorsPage.tsx`
+- Included in commit: `fb79f98`
 
-## Summary
-- **Total Tasks Completed:** 3/3
-- **TypeScript Compilation:** ✅ Passed
-- **Commits:** 3
-- **Files Modified:** 3
-
-All Group 6 tasks completed successfully.
+### Verification
+- `npx tsc --noEmit` passes with zero errors
+- All changes compile cleanly
