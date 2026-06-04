@@ -25,7 +25,7 @@ export function StatusBadge({ status, label, icon }: Props) {
   }
 
   return (
-    <span style={style}>
+    <span style={style} role="status" aria-live="polite">
       {icon}
       {label}
     </span>
