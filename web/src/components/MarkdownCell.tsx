@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
+import { Eye, EyeOff } from 'lucide-react'
 import { getToken } from '../api/client'
 import type { Cell } from '../types'
 import { slugify } from './Cell'
@@ -258,6 +259,7 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
   const [focusedIdx, setFocusedIdx] = useState<number | null>(null)
   const [uploading, setUploading] = useState(false)
   const [selectedBlockIdx, setSelectedBlockIdx] = useState<number | null>(null)
+  const [showPreview, setShowPreview] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const blocksRef = useRef(blocks)
@@ -407,6 +409,24 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
               </svg>
             )}
           </button>
+          <button
+            style={{
+              ...styles.mdToolbarBtn,
+              ...(showPreview ? styles.mdToolbarBtnActive : {}),
+            }}
+            onClick={() => setShowPreview(v => !v)}
+            title="Toggle full preview"
+          >
+            {showPreview ? <EyeOff size={13} /> : <Eye size={13} />}
+            {showPreview ? 'Edit' : 'Preview'}
+          </button>
+        </div>
+      )}
+      {showPreview && focusedIdx !== null && (
+        <div style={styles.mdLivePreview}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>
+            {cell.source}
+          </ReactMarkdown>
         </div>
       )}
       <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileSelect} />
@@ -466,5 +486,22 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 3,
     cursor: 'pointer',
     lineHeight: 1,
+    gap: 4,
+  },
+  mdToolbarBtnActive: {
+    background: 'var(--accent-light)',
+    borderColor: 'var(--accent)',
+    color: 'var(--accent)',
+  },
+  mdLivePreview: {
+    borderTop: '1px solid var(--border-light)',
+    padding: '14px 20px',
+    fontSize: 14,
+    lineHeight: 1.75,
+    color: 'var(--text-primary)',
+    fontFamily: 'var(--font-sans)',
+    background: 'var(--bg-cell-text)',
+    maxHeight: 400,
+    overflowY: 'auto' as const,
   },
 }
