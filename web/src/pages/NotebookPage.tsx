@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ChevronsRight, ChevronLeft, Loader2, X, Bot, Check } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
-import { LoadingPage } from '../components/LoadingPage'
+import { Skeleton } from '../components/Skeleton'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Notebook, Cell, Output, Connector, Parameter, CellVersion, Dashboard, Widget } from '../types'
@@ -533,12 +533,21 @@ export function NotebookPage() {
 
   if (isLoading) return (
     <AppShell noPadding>
-      <LoadingPage />
+      <div style={{ padding: '32px 40px' }}>
+        <Skeleton width={120} height={14} style={{ marginBottom: 16 }} />
+        <Skeleton width={400} height={32} style={{ marginBottom: 8 }} />
+        <Skeleton width={300} height={16} style={{ marginBottom: 32 }} />
+        <Skeleton height={120} style={{ marginBottom: 12 }} />
+        <Skeleton height={120} style={{ marginBottom: 12 }} />
+        <Skeleton height={80} />
+      </div>
     </AppShell>
   )
   if (!notebook) return (
     <AppShell noPadding>
-      <LoadingPage message="Notebook not found" />
+      <div style={{ padding: '40px', color: 'var(--text-muted)', textAlign: 'center' }}>
+        Notebook not found
+      </div>
     </AppShell>
   )
 

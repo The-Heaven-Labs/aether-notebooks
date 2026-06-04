@@ -11,6 +11,7 @@ import { ErrorBanner } from '../components/ErrorBanner'
 import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem, Layout } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
+import { Skeleton } from '../components/Skeleton'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -185,9 +186,14 @@ export function DashboardEditorPage() {
 
   if (isLoading) {
     return (
-      <div style={styles.loadingPage}>
-        <div style={styles.loadingDot} />
-      </div>
+      <AppShell>
+        <div style={{ padding: '40px' }}>
+          <Skeleton width={120} height={14} style={{ marginBottom: 16 }} />
+          <Skeleton width={300} height={28} style={{ marginBottom: 24 }} />
+          <Skeleton height={200} style={{ marginBottom: 16 }} />
+          <Skeleton height={120} />
+        </div>
+      </AppShell>
     )
   }
 
