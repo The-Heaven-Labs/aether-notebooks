@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, X } from 'lucide-react'
+import { ArrowLeft, X, Plus } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -97,6 +97,7 @@ export function DashboardEditorPage() {
   const [gridCols, setGridCols] = useState(12)
 
   const [containerWidth, setContainerWidth] = useState(1200)
+  const isMobileLayout = containerWidth < 600
   const gridRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!gridRef.current) return
@@ -213,11 +214,11 @@ export function DashboardEditorPage() {
   return (
     <AppShell>
       {/* Sub-header */}
-      <header style={styles.subHeader}>
+      <header style={{ ...styles.subHeader, ...(isMobileLayout ? styles.subHeaderMobile : {}) }}>
         <div style={styles.headerLeft}>
           <Link to="/dashboards" style={styles.backLink} title="Back to all dashboards">
             <ArrowLeft size={14} style={{ flexShrink: 0 }} />
-            <span>Dashboards</span>
+            {!isMobileLayout && <span>Dashboards</span>}
           </Link>
           <span style={styles.breadcrumbSep}>/</span>
           {editingTitle ? (
@@ -248,43 +249,46 @@ export function DashboardEditorPage() {
           )}
         </div>
         <div style={styles.headerRight}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }} role="group" aria-label="Grid columns">
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cols</span>
-            {[6, 8, 12, 16, 24].map(c => (
-              <button
-                key={c}
-                type="button"
-                title={`${c} grid columns — ${c <= 8 ? 'compact' : c <= 12 ? 'standard' : 'wide'} layout`}
-                aria-label={`${c} columns`}
-                aria-pressed={gridCols === c}
-                style={{
-                  padding: '3px 8px',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  border: '1px solid var(--border)',
-                  borderRadius: 4,
-                  cursor: 'pointer',
-                  background: gridCols === c ? 'var(--accent)' : 'var(--bg-input)',
-                  color: gridCols === c ? '#fff' : 'var(--text-secondary)',
-                }}
-                onClick={async () => {
-                  setGridCols(c)
-                  await api.put(`/api/v1/dashboards/${id}`, {
-                    settings: { ...dashboard?.settings, grid_cols: c },
-                  })
-                  qc.invalidateQueries({ queryKey: ['dashboard', id] })
-                }}
-              >
-                {c}
-              </button>
-            ))}
-          </div>
+          {!isMobileLayout && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }} role="group" aria-label="Grid columns">
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cols</span>
+              {[6, 8, 12, 16, 24].map(c => (
+                <button
+                  key={c}
+                  type="button"
+                  title={`${c} grid columns — ${c <= 8 ? 'compact' : c <= 12 ? 'standard' : 'wide'} layout`}
+                  aria-label={`${c} columns`}
+                  aria-pressed={gridCols === c}
+                  style={{
+                    padding: '3px 8px',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    border: '1px solid var(--border)',
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                    background: gridCols === c ? 'var(--accent)' : 'var(--bg-input)',
+                    color: gridCols === c ? '#fff' : 'var(--text-secondary)',
+                  }}
+                  onClick={async () => {
+                    setGridCols(c)
+                    await api.put(`/api/v1/dashboards/${id}`, {
+                      settings: { ...dashboard?.settings, grid_cols: c },
+                    })
+                    qc.invalidateQueries({ queryKey: ['dashboard', id] })
+                  }}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          )}
           <button
             type="button"
-            style={styles.addWidgetBtn}
+            style={{ ...styles.addWidgetBtn, ...(isMobileLayout ? styles.addWidgetBtnMobile : {}) }}
             onClick={() => setShowPicker(true)}
+            title="Add Widget"
           >
-            + Add Widget
+            {isMobileLayout ? <Plus size={16} /> : '+ Add Widget'}
           </button>
         </div>
       </header>
@@ -380,6 +384,26 @@ export function DashboardEditorPage() {
             text="Add widgets to display notebook cell outputs in this dashboard."
             action={{ label: '+ Add Widget', onClick: () => setShowPicker(true) }}
           />
+        ) : isMobileLayout ? (
+          <div ref={gridRef} style={styles.mobileGrid}>
+            {dashboard.widgets?.map((widget: Widget) => (
+              <div key={widget.id} style={styles.mobileWidgetCard}>
+                <button
+                  type="button"
+                  style={{ ...styles.deleteWidgetBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  title="Remove widget"
+                  onClick={() => {
+                    if (confirm('Remove this widget?')) {
+                      deleteWidget.mutate(widget.id)
+                    }
+                  }}
+                >
+                  <X size={12} />
+                </button>
+                <WidgetContent widget={widget} />
+              </div>
+            ))}
+          </div>
         ) : (
           <div ref={gridRef}>
             <GridLayout
@@ -593,6 +617,28 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     cursor: 'pointer',
     marginTop: 4,
+  },
+  subHeaderMobile: {
+    height: 'auto',
+    minHeight: 52,
+    padding: '8px 16px',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  addWidgetBtnMobile: {
+    padding: '6px 10px',
+  },
+  mobileGrid: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
+  },
+  mobileWidgetCard: {
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    overflow: 'hidden',
+    position: 'relative',
   },
   body: {
     flex: 1,
