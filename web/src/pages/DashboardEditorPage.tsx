@@ -209,7 +209,7 @@ export function DashboardEditorPage() {
       {/* Sub-header */}
       <header style={styles.subHeader}>
         <div style={styles.headerLeft}>
-          <Link to="/dashboards" style={styles.backLink}>
+          <Link to="/dashboards" style={styles.backLink} title="Back to all dashboards">
             <ArrowLeft size={14} style={{ flexShrink: 0 }} />
             <span>Dashboards</span>
           </Link>
@@ -459,7 +459,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: 5,
-    color: 'var(--text-muted)',
+    color: 'var(--text-secondary)',
     textDecoration: 'none',
     fontSize: 13,
     fontWeight: 500,
