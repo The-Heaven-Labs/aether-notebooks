@@ -204,8 +204,14 @@ export function AgentsPage() {
           })}
           {agents.length === 0 && !isLoading && (
             <tr>
-              <td colSpan={5} style={{ ...cellStyle, textAlign: 'center', color: 'var(--text-muted)', padding: 40 }}>
-                No agents yet. Create one to get started with AI-powered notebooks.
+              <td colSpan={5} style={{ ...cellStyle, textAlign: 'center', padding: '48px 20px' }}>
+                <div style={{ color: 'var(--text-muted)' }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>No agents yet</div>
+                  <div style={{ fontSize: 13, maxWidth: 360, margin: '0 auto', lineHeight: 1.5 }}>
+                    Agents are AI assistants that can run queries, analyze data, and build notebooks for you.
+                    Click &ldquo;+ New Agent&rdquo; to create your first one.
+                  </div>
+                </div>
               </td>
             </tr>
           )}

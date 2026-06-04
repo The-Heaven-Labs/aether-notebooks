@@ -32,5 +32,19 @@
 - [x] The agent panel should be resizable. When opening it, the things behind (cells) should move to the left, instead of being behind it
 - [x] There is a bug with the queue of next messages, it is sent again and again repeating itself, never ending.
 - [x] Slash commands (/new, /skills, /agents, /summarize) now work. /new starts a fresh session with the same agent. /summarize generates a summary, creates a new session with it as context, and shows a loading indicator during processing.
+- [x] UI/UX improvements (2026-06-03):
+  - **Landing Page**: "Continue" button renamed to "Sign In", added "Skip to form" link for keyboard users, password field now has show/hide toggle and strength indicator (Weak/Fair/Strong)
+  - **Create Account**: Added password visibility toggle and strength indicator
+  - **Org Setup**: Placeholder changed to "e.g., Acme Analytics", back button simplified to "Back" (removed unicode arrow)
+  - **Files/Home**: Added `aria-label="More options"` to all context menu buttons for screen readers
+  - **Notebook View**: Description placeholder clarified to "Add a description for this notebook...", connector placeholder changed to "Select a connector", removed leading space from "Run All" button
+  - **Cell**: "no connector" button renamed to "Select connector", added "Row limit:" label before LIMIT dropdown, MD/SQL toggle buttons now have descriptive tooltips ("Convert to Markdown cell" / "Convert to SQL cell")
+  - **Groups**: Replaced "▶" character with ChevronRight icon, added `aria-expanded` to expand button, added ability to select initial members during group creation
+  - **Members**: "No_access" role now displays as "No Access", "YOU" badge changed to "You" (proper casing), added tooltip explaining why self-remove is disabled
+  - **Permissions Panel**: Added `<h2>` heading with resource name + "permissions", added `role="dialog"` and `aria-labelledby`, close button has `aria-label="Close permissions dialog"`, checkbox labels now show full descriptions (e.g., "See notebook content and cell outputs")
+  - **Dashboards**: Layout toggle button text clarified to "Switch to grid view" / "Switch to list view"
+  - **Audit**: Added sortable column headers (Timestamp, Action, Resource Type), added timezone indicator to timestamps (e.g., "BRT"), simplified ID display (clickable to copy, removed redundant copy button), replaced hardcoded "white" with `var(--bg-card)`
+  - **Agents**: Empty state now includes explanation: "Agents are AI assistants that can run queries, analyze data, and build notebooks for you"
+  - **Global**: Fixed settings page flash by moving theme initialization to inline `<script>` in `<head>`, added `aria-expanded` to folder tree toggle buttons
 
 ## Not Yet Implemented

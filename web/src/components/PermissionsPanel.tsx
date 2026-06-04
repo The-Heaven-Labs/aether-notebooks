@@ -275,16 +275,18 @@ export function PermissionsPanel({
       <div style={styles.backdrop} onClick={onClose} />
 
       {/* Drawer */}
-      <div style={styles.drawer}>
+      <div style={styles.drawer} role="dialog" aria-labelledby="permissions-title">
         {/* Header */}
         <div style={styles.header}>
           <div style={styles.headerLeft}>
-            <span style={styles.resourceName}>{resourceName}</span>
+            <h2 id="permissions-title" style={styles.headerTitle}>
+              {resourceName} <span style={styles.headerTitleSuffix}>permissions</span>
+            </h2>
             <span style={{ ...styles.typeBadge, background: typeBadgeColors[resourceType] }} data-type={resourceType} className="permissions-panel-type-badge">
               {resourceType}
             </span>
           </div>
-          <button style={styles.closeBtn} onClick={onClose} title="Close">×</button>
+          <button style={styles.closeBtn} onClick={onClose} title="Close" aria-label="Close permissions dialog">×</button>
         </div>
 
         {/* Inheritance note */}
@@ -335,7 +337,7 @@ export function PermissionsPanel({
                               disabled
                               style={{ marginRight: 3 }}
                             />
-                            <span style={styles.actionLabel}>{action}</span>
+                            <span style={styles.actionLabel}>{action.charAt(0).toUpperCase() + action.slice(1)}</span>
                           </label>
                         ))}
                       </div>
@@ -414,7 +416,7 @@ onClick={() => {
                               disabled={!canEdit}
                               style={{ marginRight: 3 }}
                             />
-                            <span style={styles.actionLabel}>{action}</span>
+                            <span style={styles.actionLabel}>{action.charAt(0).toUpperCase() + action.slice(1)}</span>
                           </label>
                         ))}
                       </div>
@@ -545,6 +547,19 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 10,
     minWidth: 0,
+  },
+  headerTitle: {
+    fontSize: 15,
+    fontWeight: 700,
+    color: 'var(--text-primary)',
+    margin: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  headerTitleSuffix: {
+    fontWeight: 400,
+    color: 'var(--text-secondary)',
   },
   resourceName: {
     fontSize: 15,
