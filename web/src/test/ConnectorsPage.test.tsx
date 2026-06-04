@@ -43,13 +43,13 @@ describe('ConnectorsPage', () => {
   test('shows default badge on the default connector (T4.1)', async () => {
     renderWithProviders(<ConnectorsPage />)
     await screen.findByText('Prod DB')
-    expect(screen.getByText('default')).toBeInTheDocument()
+    expect(screen.getByText('Default')).toBeInTheDocument()
   })
 
   test('only one connector has default badge (T4.2)', async () => {
     renderWithProviders(<ConnectorsPage />)
     await screen.findByText('Prod DB')
-    const badges = screen.getAllByText('default')
+    const badges = screen.getAllByText('Default')
     expect(badges).toHaveLength(1)
   })
 })

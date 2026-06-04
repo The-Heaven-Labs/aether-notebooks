@@ -24,8 +24,11 @@ describe('Root view (T2.1)', () => {
 
   test('shows folders from root contents', async () => {
     renderWithProviders(<HomePage />)
-    expect(await screen.findByText("Alice's Home")).toBeInTheDocument()
-    expect(screen.getByText('Engineering')).toBeInTheDocument()
+    // Folder names appear in both sidebar tree and main content
+    const aliceMatches = await screen.findAllByText("Alice's Home")
+    expect(aliceMatches.length).toBeGreaterThan(0)
+    const engMatches = screen.getAllByText('Engineering')
+    expect(engMatches.length).toBeGreaterThan(0)
   })
 
   test('shows notebooks from root contents', async () => {
@@ -96,24 +99,29 @@ describe('Create folder (T2.2)', () => {
 describe('Folder navigation (T2.3)', () => {
   test('clicking a folder navigates into it and shows its contents', async () => {
     renderWithProviders(<HomePage />)
-    const engBtn = await screen.findByText('Engineering')
-    fireEvent.click(engBtn)
+    const engMatches = await screen.findAllByText('Engineering')
+    // Click the last match (main content area, not sidebar)
+    fireEvent.click(engMatches[engMatches.length - 1])
     expect(await screen.findByText('Q1 Report')).toBeInTheDocument()
   })
 
   test('sub-folder view shows ancestor in breadcrumb', async () => {
     renderWithProviders(<HomePage />, { initialPath: '/?folder=f-eng' })
-    expect(await screen.findByText('Engineering')).toBeInTheDocument()
-    // The breadcrumb shows "Files" and then the ancestor "Engineering"
-    const filesBtn = screen.getByText('Files')
-    expect(filesBtn).toBeInTheDocument()
+    const engMatches = await screen.findAllByText('Engineering')
+    expect(engMatches.length).toBeGreaterThan(0)
+    // The breadcrumb shows "Files" — may appear in sidebar + breadcrumb
+    const filesMatches = screen.getAllByText('Files')
+    expect(filesMatches.length).toBeGreaterThan(0)
   })
 
   test('clicking Files breadcrumb returns to root', async () => {
     renderWithProviders(<HomePage />, { initialPath: '/?folder=f-eng' })
     await screen.findByText('Q1 Report')
-    fireEvent.click(screen.getByText('Files'))
-    expect(await screen.findByText('Root Notebook')).toBeInTheDocument()
+    // Click the Files breadcrumb link (first match)
+    const filesMatches = screen.getAllByText('Files')
+    fireEvent.click(filesMatches[0])
+    const matches = await screen.findAllByText('Root Notebook')
+    expect(matches.length).toBeGreaterThan(0)
   })
 })
 
@@ -150,9 +158,10 @@ describe('Empty state', () => {
 describe('Context menu (T2.6)', () => {
   test('⋯ button opens context menu with Rename, Move to…, Permissions, Delete items', async () => {
     renderWithProviders(<HomePage />)
-    await screen.findByText("Alice's Home")
-    // First ⋯ is Alice's Home (index 0), second is Engineering (index 1)
-    const menuBtns = screen.getAllByText('⋯')
+    await screen.findAllByText("Alice's Home")
+    // ⋯ buttons appear for items in the main content area
+    const menuBtns = screen.getAllByTitle('More options')
+    expect(menuBtns.length).toBeGreaterThan(0)
     fireEvent.click(menuBtns[0])
     expect(screen.getByText('Rename')).toBeInTheDocument()
     expect(screen.getByText('Move to…')).toBeInTheDocument()
@@ -162,8 +171,8 @@ describe('Context menu (T2.6)', () => {
 
   test('clicking outside closes context menu', async () => {
     renderWithProviders(<HomePage />)
-    await screen.findByText("Alice's Home")
-    const menuBtns = screen.getAllByText('⋯')
+    await screen.findAllByText("Alice's Home")
+    const menuBtns = screen.getAllByTitle('More options')
     fireEvent.click(menuBtns[0])
     expect(screen.getByText('Rename')).toBeInTheDocument()
     // Simulate clicking outside by firing mousedown on document
@@ -177,8 +186,8 @@ describe('Context menu (T2.6)', () => {
 describe('Rename (T2.7)', () => {
   test('clicking Rename shows inline input pre-filled with current name', async () => {
     renderWithProviders(<HomePage />)
-    await screen.findByText('Engineering')
-    const menuBtns = screen.getAllByText('⋯')
+    await screen.findAllByText('Engineering')
+    const menuBtns = screen.getAllByTitle('More options')
     // Engineering is the second folder (index 1)
     fireEvent.click(menuBtns[1])
     fireEvent.click(screen.getByText('Rename'))
@@ -188,14 +197,15 @@ describe('Rename (T2.7)', () => {
 
   test('Escape cancels rename', async () => {
     renderWithProviders(<HomePage />)
-    await screen.findByText('Engineering')
-    const menuBtns = screen.getAllByText('⋯')
+    await screen.findAllByText('Engineering')
+    const menuBtns = screen.getAllByTitle('More options')
     fireEvent.click(menuBtns[1])
     fireEvent.click(screen.getByText('Rename'))
     const input = screen.getByDisplayValue('Engineering')
     fireEvent.keyDown(input, { key: 'Escape' })
     expect(screen.queryByDisplayValue('Engineering')).not.toBeInTheDocument()
-    expect(screen.getByText('Engineering')).toBeInTheDocument()
+    const engMatches = screen.getAllByText('Engineering')
+    expect(engMatches.length).toBeGreaterThan(0)
   })
 
   test('Enter triggers PUT /api/v1/folders/:id with new name', async () => {
@@ -207,8 +217,8 @@ describe('Rename (T2.7)', () => {
       })
     )
     renderWithProviders(<HomePage />)
-    await screen.findByText('Engineering')
-    const menuBtns = screen.getAllByText('⋯')
+    await screen.findAllByText('Engineering')
+    const menuBtns = screen.getAllByTitle('More options')
     fireEvent.click(menuBtns[1])
     fireEvent.click(screen.getByText('Rename'))
     const input = screen.getByDisplayValue('Engineering')
@@ -257,8 +267,8 @@ describe('New Dashboard (T2.9)', () => {
 describe('Permissions panel (T7.1)', () => {
   test('clicking Permissions in context menu opens PermissionsPanel', async () => {
     renderWithProviders(<HomePage />)
-    await screen.findByText("Alice's Home")
-    const menuBtns = screen.getAllByText('⋯')
+    await screen.findAllByText("Alice's Home")
+    const menuBtns = screen.getAllByTitle('More options')
     fireEvent.click(menuBtns[0])
     fireEvent.click(screen.getByText('Permissions'))
     expect(await screen.findByTestId('permissions-panel')).toBeInTheDocument()
@@ -266,8 +276,8 @@ describe('Permissions panel (T7.1)', () => {
 
   test('closing PermissionsPanel removes it from DOM', async () => {
     renderWithProviders(<HomePage />)
-    await screen.findByText("Alice's Home")
-    const menuBtns = screen.getAllByText('⋯')
+    await screen.findAllByText("Alice's Home")
+    const menuBtns = screen.getAllByTitle('More options')
     fireEvent.click(menuBtns[0])
     fireEvent.click(screen.getByText('Permissions'))
     const panel = await screen.findByTestId('permissions-panel')

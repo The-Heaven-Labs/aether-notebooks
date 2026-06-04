@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, type MutableRefObject } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -596,7 +596,7 @@ export function GroupsPage() {
                         </>
                       ) : (
                         <div
-                          ref={(el) => { (groupMenuRefs.current as MutableRefObject<Record<string, HTMLDivElement | null>>).current[group.id] = el }}
+                          ref={(el) => { groupMenuRefs.current[group.id] = el }}
                           style={{ position: 'relative' }}
                         >
                           <button
