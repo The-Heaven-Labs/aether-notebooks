@@ -47,7 +47,7 @@ interface ContextMenuProps {
   onRename: (t: RenameTarget) => void
   onMove: (t: MoveTarget) => void
   onPermissions: (t: PermissionsTarget) => void
-  onDelete: (type: ResourceType, id: string) => void
+  onDelete: (type: ResourceType, id: string, name: string) => void
   onEdit: (type: ResourceType, id: string) => void
   onClose: () => void
 }
@@ -92,7 +92,7 @@ function ContextMenu({ target, onRename, onMove, onPermissions, onDelete, onEdit
       )}
       {canDelete ? (
         <button style={{ ...ms.item, color: 'var(--error)' }} onClick={() => {
-          onDelete(target.type, target.id)
+          onDelete(target.type, target.id, target.name)
           onClose()
         }}>Delete</button>
       ) : (
@@ -429,7 +429,9 @@ export function HomePage() {
     setOpenMenu(target)
   }
 
-  function handleDelete(type: ResourceType, id: string) {
+  function handleDelete(type: ResourceType, id: string, name?: string) {
+    const label = name || type
+    if (!confirm(`Delete "${label}"? This cannot be undone.`)) return
     if (type === 'folder') deleteFolder.mutate(id)
     else if (type === 'notebook') deleteNotebook.mutate(id)
     // connectors / dashboards: no-op (TODO: implement via their own pages)
