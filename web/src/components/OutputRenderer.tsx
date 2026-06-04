@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import type React from 'react'
 import type { Output, ResultSet, Column } from '../types'
 import { ChartView } from './ChartView'
-import { ToggleLeft, Calendar, Clock, Fingerprint, Ban, Binary, Table, BarChart2, Timer, Sigma, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, X, Copy, Check } from 'lucide-react'
+import { ToggleLeft, Calendar, Clock, Fingerprint, Ban, Binary, Table, BarChart2, Timer, Sigma, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, X, Copy, Check, Download } from 'lucide-react'
 
 interface Props {
   outputs: Output[]
@@ -205,6 +205,50 @@ function sortRows(rows: unknown[][], colIndex: number, direction: SortDirection,
   return sorted
 }
 
+function escapeCSV(value: string): string {
+  if (value.includes(',') || value.includes('"') || value.includes('\n') || value.includes('\r')) {
+    return '"' + value.replace(/"/g, '""') + '"'
+  }
+  return value
+}
+
+function exportCSV(rs: ResultSet): void {
+  const header = rs.columns.map(c => escapeCSV(c.name)).join(',')
+  const rows = rs.rows.map(row =>
+    (row as unknown[]).map(cell => {
+      if (cell === null || cell === undefined) return ''
+      const str = typeof cell === 'object' ? JSON.stringify(cell) : String(cell)
+      return escapeCSV(str)
+    }).join(',')
+  )
+  const csv = [header, ...rows].join('\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'query-results.csv'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function exportJSON(rs: ResultSet): void {
+  const data = rs.rows.map(row => {
+    const obj: Record<string, unknown> = {}
+    rs.columns.forEach((col, i) => {
+      obj[col.name] = (row as unknown[])[i]
+    })
+    return obj
+  })
+  const json = JSON.stringify(data, null, 2)
+  const blob = new Blob([json], { type: 'application/json;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'query-results.json'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string }) {
   const storageKey = cellId ? `hnb_cell_view_${cellId}` : null
   const [view, setView] = useState<'table' | 'chart'>(() => {
@@ -323,6 +367,14 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
         <span style={styles.rowCount}>
           {rs.rows.length} row{rs.rows.length !== 1 ? 's' : ''} · {rs.columns.length} columns
         </span>
+        <div style={styles.exportGroup}>
+          <button style={styles.exportBtn} onClick={() => exportCSV(rs)} title="Download as CSV" aria-label="Download as CSV">
+            <Download size={12} /> CSV
+          </button>
+          <button style={styles.exportBtn} onClick={() => exportJSON(rs)} title="Download as JSON" aria-label="Download as JSON">
+            <Download size={12} /> JSON
+          </button>
+        </div>
         {!fixedView && (
           <div style={styles.viewToggle}>
             <button
@@ -546,6 +598,26 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '6px 16px',
     background: 'var(--bg-secondary)',
     borderBottom: '1px solid var(--border-light)',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  exportGroup: {
+    display: 'flex',
+    gap: 4,
+  },
+  exportBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    padding: '3px 8px',
+    fontSize: 11,
+    fontWeight: 500,
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    background: 'var(--bg-card)',
+    color: 'var(--text-secondary)',
+    cursor: 'pointer',
+    fontFamily: 'var(--font-sans)',
   },
   rowCount: {
     fontSize: 10,
