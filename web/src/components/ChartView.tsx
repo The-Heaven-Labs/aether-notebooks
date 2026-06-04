@@ -124,7 +124,16 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
   })
 
   if (columns.length < 2) {
-    return <p style={styles.empty}>Need at least 2 columns to chart</p>
+    return (
+      <div style={styles.emptyGuidance}>
+        <div style={styles.emptyIcon}>📊</div>
+        <p style={styles.emptyTitle}>Not enough data to chart</p>
+        <p style={styles.emptyText}>
+          Charts need at least 2 columns — one for the X axis and one or more for Y values.
+          Run a query that returns multiple columns, then switch to chart view.
+        </p>
+      </div>
+    )
   }
 
   const showLegend = effectiveConfig.showLegend ?? true
@@ -279,6 +288,11 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
           <Settings2 size={13} />
           {showConfig ? ' Close' : ' Configure'}
         </button>
+        {!showConfig && !effectiveConfig.chartType && (
+          <span style={styles.configHint}>
+            💡 Click "Configure" to change chart type, axes, and colors
+          </span>
+        )}
         {showConfig && (
           <ChartConfigPanel
             config={effectiveConfig}
@@ -317,4 +331,16 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     textAlign: 'center',
   },
+  emptyGuidance: {
+    padding: '32px 24px',
+    textAlign: 'center',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 8,
+  },
+  emptyIcon: { fontSize: 32, marginBottom: 4 },
+  emptyTitle: { fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', margin: 0 },
+  emptyText: { fontSize: 13, color: 'var(--text-muted)', margin: 0, maxWidth: 360, lineHeight: 1.5 },
+  configHint: { fontSize: 11, color: 'var(--text-muted)', marginLeft: 8, fontStyle: 'italic' },
 }
