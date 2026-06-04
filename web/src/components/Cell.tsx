@@ -412,7 +412,7 @@ export function Cell({
         </div>
 
         {/* Hover toolbar */}
-        <div style={{ ...styles.actions, opacity: hovered ? 1 : 0 }}>
+        <div style={{ ...styles.actions, opacity: hovered ? 1 : 0 }} role="toolbar" aria-label="Cell actions">
           {isCode && (() => {
             const hasConnector = !!(cell.connector_id || connectors.length > 0)
             return (
@@ -421,6 +421,7 @@ export function Cell({
                 onClick={(e) => { e.stopPropagation(); onRun(cell.id) }}
                 disabled={running}
                 title={hasConnector ? 'Run (Ctrl+Enter)' : 'Select a connector first'}
+                aria-label="Run cell (Ctrl+Enter)"
               >
                 {running
                   ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
@@ -432,10 +433,10 @@ export function Cell({
           <button style={styles.actionBtn} onClick={onSwitchType} title={isCode ? 'Convert to Markdown cell' : 'Convert to SQL cell'} aria-label={isCode ? 'Convert to Markdown cell' : 'Convert to SQL cell'}>
             {isCode ? 'MD' : 'SQL'}
           </button>
-          {onMoveUp && <button style={styles.actionBtn} onClick={onMoveUp}><ChevronUp size={11} /></button>}
-          {onMoveDown && <button style={styles.actionBtn} onClick={onMoveDown}><ChevronDown size={11} /></button>}
+          {onMoveUp && <button style={styles.actionBtn} onClick={onMoveUp} aria-label="Move cell up"><ChevronUp size={11} /></button>}
+          {onMoveDown && <button style={styles.actionBtn} onClick={onMoveDown} aria-label="Move cell down"><ChevronDown size={11} /></button>}
           {onDuplicate && (
-            <button style={styles.actionBtn} onClick={onDuplicate} title="Duplicate cell">
+            <button style={styles.actionBtn} onClick={onDuplicate} title="Duplicate cell" aria-label="Duplicate cell">
               <Copy size={12} />
             </button>
           )}
@@ -465,6 +466,7 @@ export function Cell({
                   setTimeout(() => setCopiedId(null), 2000)
                 }}
                 title="Copy link to cell"
+                aria-label="Copy link to cell"
               >
                 <Link size={11} />
               </button>
@@ -474,6 +476,7 @@ export function Cell({
             style={styles.actionBtn}
             onClick={() => onUpdateCellMeta?.({ source_visible: !sourceVisible })}
             title={sourceVisible ? 'Hide source' : 'Show source'}
+            aria-label={sourceVisible ? 'Hide source' : 'Show source'}
           >
             {sourceVisible ? <EyeOff size={11} /> : <Eye size={11} />}
           </button>
@@ -481,10 +484,11 @@ export function Cell({
             style={styles.actionBtn}
             onClick={() => onUpdateCellMeta?.({ cell_collapsed: true })}
             title="Collapse"
+            aria-label="Collapse cell"
           >
             <ChevronRight size={11} />
           </button>
-          <button style={styles.actionBtn} onClick={onShowHistory} title="History">
+          <button style={styles.actionBtn} onClick={onShowHistory} title="History" aria-label="Cell history">
             <Clock size={11} />
           </button>
           {onAddToDashboard && (
@@ -492,6 +496,7 @@ export function Cell({
               style={styles.actionBtn}
               onClick={(e) => { e.stopPropagation(); onAddToDashboard(cell.id) }}
               title="Add to dashboard"
+              aria-label="Add to dashboard"
             >
               <LayoutDashboard size={11} />
             </button>
@@ -513,6 +518,7 @@ export function Cell({
             style={{ ...styles.actionBtn, ...styles.actionBtnDelete }}
             onClick={(e) => { e.stopPropagation(); onDelete(cell.id) }}
             title="Delete"
+            aria-label="Delete cell"
           >
             <X size={11} />
           </button>
