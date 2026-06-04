@@ -169,3 +169,9 @@ The following issues were identified by systematically navigating every page, cl
 
 - [ ] **Dashboard editor is unusable on mobile** — The grid-based dashboard editor with column width buttons makes no sense on mobile viewports. Should switch to a vertical stack layout.
 
+---
+
+#### 🐛 Post-Merge Bug Fixes
+
+- [x] **Schema browser colors don't match dark theme** — The schema browser panel had hardcoded light theme colors (`#fff`, `#e8e8e8`, `#ddd`) that didn't adapt to dark mode. Fixed by replacing with CSS variables (`--bg-primary`, `--border`, `--text-muted`).
+
