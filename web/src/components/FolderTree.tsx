@@ -21,6 +21,23 @@ export function FolderTree({ onSelectFolder, selectedFolderId, onMoveFolder, onP
     }
   })
 
+  const [sectionsCollapsed, setSectionsCollapsed] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('hnb_tree_sections')
+      return saved ? new Set(JSON.parse(saved)) : new Set()
+    } catch { return new Set() }
+  })
+
+  const toggleSection = (name: string) => {
+    setSectionsCollapsed(prev => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      localStorage.setItem('hnb_tree_sections', JSON.stringify([...next]))
+      return next
+    })
+  }
+
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null)
 
@@ -133,10 +150,17 @@ export function FolderTree({ onSelectFolder, selectedFolderId, onMoveFolder, onP
       {/* Home folders section */}
       {homeFolders.length > 0 && (
         <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '0 12px', marginBottom: 8 }}>
+          <div
+            style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '0 12px', marginBottom: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, userSelect: 'none' }}
+            onClick={() => toggleSection('home')}
+          >
+            {sectionsCollapsed.has('home')
+              ? <ChevronRight size={10} style={{ flexShrink: 0 }} />
+              : <ChevronDown size={10} style={{ flexShrink: 0 }} />
+            }
             Home
           </div>
-          {homeFolders.map(f => (
+          {!sectionsCollapsed.has('home') && homeFolders.map(f => (
             <TreeNodeComponent
               key={f.id}
               folder={f}
@@ -161,10 +185,17 @@ export function FolderTree({ onSelectFolder, selectedFolderId, onMoveFolder, onP
       {/* Root folders section */}
       {orgFolders.length > 0 && (
         <div>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '0 12px', marginBottom: 8 }}>
+          <div
+            style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '0 12px', marginBottom: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, userSelect: 'none' }}
+            onClick={() => toggleSection('folders')}
+          >
+            {sectionsCollapsed.has('folders')
+              ? <ChevronRight size={10} style={{ flexShrink: 0 }} />
+              : <ChevronDown size={10} style={{ flexShrink: 0 }} />
+            }
             Folders
           </div>
-          {orgFolders.map(f => (
+          {!sectionsCollapsed.has('folders') && orgFolders.map(f => (
             <TreeNodeComponent
               key={f.id}
               folder={f}
