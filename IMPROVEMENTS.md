@@ -32,7 +32,7 @@
 - [ ] There should be options to import and export notebooks with both their inputs and outputs. Compatibility with .ipynb is important.
 - [ ] The current way of selecting skills and mcps that are available for an agent/mcp, while very beautiful visually, will not escalate well when there are thousands of people in the company and they make it all available for everyone. It should be possible to search and select multiple skills/mcps in an easier way
 - [ ] The mcp config should have a test button to validate the connection to the mcp is successful. If the mcp connects via Oauth, it should connect with the logged user account to do so.
-- [ ] 
+- [ ] It is possible to select the cell (which makes the output value appear in a small right modal) of multiple output cells. With that, if you have more than one cell selected, pressing arrow keys will move the selected result on all the output cells, which is not the desired behavior. It should be possible to have a selection on only one cell at a time.
 - [ ] **No drag-and-drop reordering of cells** — Cells cannot be reordered by drag-and-drop. The only way to move cells is likely through keyboard shortcuts or cut/paste. Drag handles would improve the editing experience.
 - [ ] **Text cell editor doesn't show markdown preview while editing** — Text cells use a plain editor without live markdown preview. Users have to click away to see the rendered output. A split-pane or inline preview would improve the experience.
 - [ ] **No bulk actions on file list** — The home/files page doesn't support multi-select or bulk actions (move, delete, change permissions). For users with many notebooks, this makes management tedious.
