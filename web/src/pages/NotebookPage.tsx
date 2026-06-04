@@ -529,7 +529,7 @@ export function NotebookPage() {
   }, [])
 
   const runningCount = runningCells.size
-  const schemaConnectorId = localCells.find((c) => c.type === 'code' && c.connector_id)?.connector_id ?? null
+  const schemaConnectorId = localCells.find((c) => c.type === 'code' && c.connector_id)?.connector_id ?? (notebookConnectorId || null)
 
   if (isLoading) return (
     <AppShell noPadding>
