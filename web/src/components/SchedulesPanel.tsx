@@ -5,6 +5,31 @@ import { PanelHeader } from './PanelHeader'
 import { ScheduleItem } from './ScheduleItem'
 import type { Schedule, Parameter } from '../types'
 
+const CRON_PRESETS = [
+  { label: 'Every hour', value: '0 * * * *' },
+  { label: 'Daily 9am', value: '0 9 * * *' },
+  { label: 'Weekdays 9am', value: '0 9 * * 1-5' },
+  { label: 'Weekly Monday', value: '0 9 * * 1' },
+  { label: 'Monthly 1st', value: '0 9 1 * *' },
+]
+
+function describeCron(expr: string): string {
+  const parts = expr.trim().split(/\s+/)
+  if (parts.length !== 5) return '⚠ Invalid: expected 5 fields (min hour day month weekday)'
+  const [min, hour, day, month, weekday] = parts
+  if (min === '0' && hour === '9' && day === '*' && month === '*' && weekday === '1-5')
+    return '✓ Runs at 9:00 AM on weekdays'
+  if (min === '0' && hour === '9' && day === '*' && month === '*' && weekday === '1')
+    return '✓ Runs at 9:00 AM every Monday'
+  if (min === '0' && hour === '9' && day === '1' && month === '*')
+    return '✓ Runs at 9:00 AM on the 1st of every month'
+  if (min === '0' && hour === '*' && day === '*')
+    return '✓ Runs at the top of every hour'
+  if (min === '0' && hour !== '*' && day === '*' && month === '*' && weekday === '*')
+    return `✓ Runs at ${hour.padStart(2, '0')}:${min.padStart(2, '0')} every day`
+  return `✓ min=${min} hour=${hour} day=${day} month=${month} weekday=${weekday}`
+}
+
 interface Props {
   notebookId: string
   parameters: Parameter[]
@@ -122,6 +147,23 @@ export function SchedulesPanel({ notebookId, parameters: _parameters }: Props) {
             {createSchedule.isPending ? 'Creating…' : 'Create'}
           </button>
         </div>
+        {cronDraft.trim() && (
+          <div style={styles.cronHelper}>
+            <span style={styles.cronPreviewText}>{describeCron(cronDraft.trim())}</span>
+          </div>
+        )}
+        <div style={styles.cronPresets}>
+          <span style={styles.presetLabel}>Quick:</span>
+          {CRON_PRESETS.map((p) => (
+            <button
+              key={p.value}
+              style={styles.presetBtn}
+              onClick={() => setCronDraft(p.value)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
         {createError && <div style={styles.errorText}>{createError}</div>}
 
         {/* Schedule list */}
@@ -231,5 +273,34 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     gap: 8,
+  },
+  cronHelper: {
+    padding: '4px 0',
+  },
+  cronPreviewText: {
+    fontSize: 12,
+    fontFamily: 'var(--font-mono)',
+    color: 'var(--success)',
+  },
+  cronPresets: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap' as const,
+  },
+  presetLabel: {
+    fontSize: 11,
+    color: 'var(--text-muted)',
+    fontFamily: 'var(--font-sans)',
+  },
+  presetBtn: {
+    padding: '2px 8px',
+    fontSize: 11,
+    fontFamily: 'var(--font-mono)',
+    color: 'var(--text-secondary)',
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--border)',
+    borderRadius: 3,
+    cursor: 'pointer',
   },
 }
