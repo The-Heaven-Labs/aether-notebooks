@@ -408,6 +408,19 @@ export function NotebookPage() {
       const cell = localCells.find((c) => c.id === cellId)
       if (!cell) return
 
+      // Pre-flight: check connector is assigned
+      const effectiveConnectorId = cell.connector_id || notebookConnectorId
+      if (!effectiveConnectorId) {
+        setLocalCells((prev) =>
+          prev.map((c) =>
+            c.id === cellId
+              ? { ...c, outputs: [{ type: 'error', data: 'No connector selected. Assign a connector to this cell or set a default notebook connector.' }] }
+              : c
+          )
+        )
+        return
+      }
+
       await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { source: cell.source })
 
       setRunningCells((s) => new Set(s).add(cellId))
@@ -435,7 +448,7 @@ export function NotebookPage() {
         })
       }
     },
-    [id, localCells, paramValues],
+    [id, localCells, paramValues, notebookConnectorId],
   )
 
   const runAll = useCallback(async () => {
