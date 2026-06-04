@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
+import { ErrorBanner } from '../components/ErrorBanner'
+import { Check } from 'lucide-react'
 import { api } from '../api/client'
 
 interface UserProfile {
@@ -106,17 +108,27 @@ export function ProfilePage() {
               ))}
             </div>
           </div>
+          {saveStatus === 'saved' && (
+            <ErrorBanner message="Profile updated successfully" variant="info" onDismiss={() => setSaveStatus('idle')} />
+          )}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
             <button
               type="button"
-              style={{ ...styles.saveBtn, opacity: saveStatus === 'saving' ? 0.6 : 1 }}
+              style={{
+                ...styles.saveBtn,
+                opacity: saveStatus === 'saving' ? 0.6 : 1,
+                background: saveStatus === 'saved' ? 'var(--success)' : 'var(--accent)',
+                transition: 'background 0.3s',
+              }}
               onClick={handleSave}
               disabled={saveStatus === 'saving'}
             >
               {saveStatus === 'saving' ? 'Saving…' : 'Save'}
             </button>
             {saveStatus === 'saved' && (
-              <span style={{ fontSize: 13, color: 'var(--success)', fontWeight: 500 }}>Saved</span>
+              <span style={{ fontSize: 13, color: 'var(--success)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <Check size={14} /> Saved
+              </span>
             )}
             {saveStatus === 'error' && (
               <span style={{ fontSize: 13, color: 'var(--error)', fontWeight: 500 }}>Save failed</span>
