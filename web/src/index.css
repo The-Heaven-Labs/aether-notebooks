@@ -46,3 +46,10 @@ body {
 .skip-link:focus {
   top: 0;
 }
+
+/* ── Responsive: show hamburger on mobile ── */
+@media (max-width: 767px) {
+  .hnb-hamburger {
+    display: flex !important;
+  }
+}
