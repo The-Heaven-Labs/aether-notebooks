@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
 import { FormCard } from '../components/FormCard'
+import { EmptyState } from '../components/EmptyState'
+import { Brain } from 'lucide-react'
 import { api } from '../api/client'
 import type { ModelConfig } from '../types/agent'
 
@@ -179,38 +181,40 @@ export function ModelsPage() {
 
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
 
-        <StyledTable headers={['Name', 'Provider', 'Endpoint', 'Model', 'Context Window', '']}>
-          {configs.map((c) => (
-            <tr key={c.id} style={rowStyle}>
-              <td style={cellStyle}><strong>{c.name}</strong></td>
-              <td style={cellStyle}><code style={styles.badge}>{c.provider}</code></td>
-              <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{c.base_url}</td>
-              <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{c.model}</td>
-              <td style={{ ...cellStyle, fontSize: 12, color: 'var(--text-muted)' }}>{c.context_window?.toLocaleString() ?? '—'}</td>
-              <td style={styles.tdActions}>
-                <button
-                  type="button"
-                  style={testMutation.isPending && testResult?.id === c.id ? { ...styles.testBtn, opacity: 0.6 } : styles.testBtn}
-                  onClick={() => { setTestResult(null); testMutation.mutate(c.id) }}
-                  disabled={testMutation.isPending}
-                >
-                  {testMutation.isPending && testResult?.id === c.id ? 'Testing…' : 'Test'}
-                </button>
-                <button type="button" style={styles.editBtn} onClick={() => startEdit(c)}>Edit</button>
-                <button type="button" style={styles.deleteBtn} onClick={() => { if (confirm(`Delete "${c.name}"?`)) deleteMutation.mutate(c.id) }}>
-                  Delete
-                </button>
-              </td>
-            </tr>
-          ))}
-          {configs.length === 0 && !isLoading && (
-            <tr>
-              <td colSpan={6} style={{ ...cellStyle, textAlign: 'center', color: 'var(--text-muted)', padding: 40 }}>
-                No model configs yet. Add one to configure AI providers for agents.
-              </td>
-            </tr>
-          )}
-        </StyledTable>
+        {configs.length === 0 && !isLoading ? (
+          <EmptyState
+            icon={<Brain size={28} />}
+            title="No model configs yet"
+            text="Add a model configuration to connect AI providers for your agents."
+            action={{ label: '+ New Model', onClick: () => setCreating(true) }}
+          />
+        ) : (
+          <StyledTable headers={['Name', 'Provider', 'Endpoint', 'Model', 'Context Window', '']}>
+            {configs.map((c) => (
+              <tr key={c.id} style={rowStyle}>
+                <td style={cellStyle}><strong>{c.name}</strong></td>
+                <td style={cellStyle}><code style={styles.badge}>{c.provider}</code></td>
+                <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{c.base_url}</td>
+                <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{c.model}</td>
+                <td style={{ ...cellStyle, fontSize: 12, color: 'var(--text-muted)' }}>{c.context_window?.toLocaleString() ?? '—'}</td>
+                <td style={styles.tdActions}>
+                  <button
+                    type="button"
+                    style={testMutation.isPending && testResult?.id === c.id ? { ...styles.testBtn, opacity: 0.6 } : styles.testBtn}
+                    onClick={() => { setTestResult(null); testMutation.mutate(c.id) }}
+                    disabled={testMutation.isPending}
+                  >
+                    {testMutation.isPending && testResult?.id === c.id ? 'Testing…' : 'Test'}
+                  </button>
+                  <button type="button" style={styles.editBtn} onClick={() => startEdit(c)}>Edit</button>
+                  <button type="button" style={styles.deleteBtn} onClick={() => { if (confirm(`Delete "${c.name}"?`)) deleteMutation.mutate(c.id) }}>
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </StyledTable>
+        )}
 
         {testResult && (
           <div style={{

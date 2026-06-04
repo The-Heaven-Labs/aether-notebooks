@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
 import { FormCard } from '../components/FormCard'
+import { EmptyState } from '../components/EmptyState'
+import { Server } from 'lucide-react'
 import { api } from '../api/client'
 import type { MCPServerOrg } from '../types/agent'
 
@@ -127,29 +129,31 @@ export function MCPPage() {
 
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
 
-        <StyledTable headers={['Name', 'Type', 'Command', 'Args', '']}>
-          {servers.map(s => (
-            <tr key={s.id} style={rowStyle}>
-              <td style={cellStyle}><strong>{s.name}</strong></td>
-              <td style={cellStyle}><code style={styles.badge}>{s.type}</code></td>
-              <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{s.command}</td>
-              <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{s.args?.join(' ') || '—'}</td>
-              <td style={styles.tdActions}>
-                <button type="button" style={styles.editBtn} onClick={() => startEdit(s)}>Edit</button>
-                <button type="button" style={styles.deleteBtn} onClick={() => { if (confirm(`Delete "${s.name}"?`)) deleteMutation.mutate(s.id) }}>
-                  Delete
-                </button>
-              </td>
-            </tr>
-          ))}
-          {servers.length === 0 && !isLoading && (
-            <tr>
-              <td colSpan={5} style={{ ...cellStyle, textAlign: 'center', color: 'var(--text-muted)', padding: 40 }}>
-                No MCP servers configured yet. Create one to extend agent capabilities.
-              </td>
-            </tr>
-          )}
-        </StyledTable>
+        {servers.length === 0 && !isLoading ? (
+          <EmptyState
+            icon={<Server size={28} />}
+            title="No MCP servers configured"
+            text="MCP servers extend agent capabilities with external tools and data sources."
+            action={{ label: '+ New MCP Server', onClick: () => setCreating(true) }}
+          />
+        ) : (
+          <StyledTable headers={['Name', 'Type', 'Command', 'Args', '']}>
+            {servers.map(s => (
+              <tr key={s.id} style={rowStyle}>
+                <td style={cellStyle}><strong>{s.name}</strong></td>
+                <td style={cellStyle}><code style={styles.badge}>{s.type}</code></td>
+                <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{s.command}</td>
+                <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{s.args?.join(' ') || '—'}</td>
+                <td style={styles.tdActions}>
+                  <button type="button" style={styles.editBtn} onClick={() => startEdit(s)}>Edit</button>
+                  <button type="button" style={styles.deleteBtn} onClick={() => { if (confirm(`Delete "${s.name}"?`)) deleteMutation.mutate(s.id) }}>
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </StyledTable>
+        )}
       </div>
     </AppShell>
   )

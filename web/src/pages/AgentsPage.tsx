@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
 import { FormCard } from '../components/FormCard'
+import { EmptyState } from '../components/EmptyState'
+import { Bot } from 'lucide-react'
 import { api } from '../api/client'
 import type { Agent, ModelConfig, Skill, MCPServerOrg } from '../types/agent'
 
@@ -171,51 +173,47 @@ export function AgentsPage() {
 
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
 
-        <StyledTable headers={['Name', 'Model Config', 'Skills', 'MCP Servers', '']}>
-          {agents.map((a) => {
-            const mc = modelConfigs.find(m => m.id === a.model_config_id)
-            return (
-              <tr key={a.id} style={rowStyle}>
-                <td style={cellStyle}>
-                  <strong>{a.name}</strong>
-                  {a.description && <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{a.description}</div>}
-                </td>
-                <td style={cellStyle}>
-                  {mc ? <span style={styles.badge}>{mc.name}</span> : <span style={{ color: 'var(--text-muted)' }}>default</span>}
-                </td>
-                <td style={cellStyle}>
-                  {a.skill_ids?.length
-                    ? a.skill_ids.map(id => skills.find(s => s.id === id)?.name ?? id).filter(Boolean).join(', ') || '—'
-                    : <span style={{ color: 'var(--text-muted)' }}>—</span>}
-                </td>
-                <td style={cellStyle}>
-                  {a.mcp_servers?.length
-                    ? a.mcp_servers.map(m => m.name).join(', ')
-                    : <span style={{ color: 'var(--text-muted)' }}>—</span>}
-                </td>
-                <td style={styles.tdActions}>
-                  <button type="button" style={styles.editBtn} onClick={() => startEdit(a)}>Edit</button>
-                  <button type="button" style={styles.deleteBtn} onClick={() => { if (confirm(`Delete "${a.name}"?`)) deleteMutation.mutate(a.id) }}>
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            )
-          })}
-          {agents.length === 0 && !isLoading && (
-            <tr>
-              <td colSpan={5} style={{ ...cellStyle, textAlign: 'center', padding: '48px 20px' }}>
-                <div style={{ color: 'var(--text-muted)' }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>No agents yet</div>
-                  <div style={{ fontSize: 13, maxWidth: 360, margin: '0 auto', lineHeight: 1.5 }}>
-                    Agents are AI assistants that can run queries, analyze data, and build notebooks for you.
-                    Click &ldquo;+ New Agent&rdquo; to create your first one.
-                  </div>
-                </div>
-              </td>
-            </tr>
-          )}
-        </StyledTable>
+        {agents.length === 0 && !isLoading ? (
+          <EmptyState
+            icon={<Bot size={28} />}
+            title="No agents yet"
+            text="Agents are AI assistants that can run queries, analyze data, and build notebooks for you."
+            action={{ label: '+ New Agent', onClick: () => setCreating(true) }}
+          />
+        ) : (
+          <StyledTable headers={['Name', 'Model Config', 'Skills', 'MCP Servers', '']}>
+            {agents.map((a) => {
+              const mc = modelConfigs.find(m => m.id === a.model_config_id)
+              return (
+                <tr key={a.id} style={rowStyle}>
+                  <td style={cellStyle}>
+                    <strong>{a.name}</strong>
+                    {a.description && <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{a.description}</div>}
+                  </td>
+                  <td style={cellStyle}>
+                    {mc ? <span style={styles.badge}>{mc.name}</span> : <span style={{ color: 'var(--text-muted)' }}>default</span>}
+                  </td>
+                  <td style={cellStyle}>
+                    {a.skill_ids?.length
+                      ? a.skill_ids.map(id => skills.find(s => s.id === id)?.name ?? id).filter(Boolean).join(', ') || '—'
+                      : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                  </td>
+                  <td style={cellStyle}>
+                    {a.mcp_servers?.length
+                      ? a.mcp_servers.map(m => m.name).join(', ')
+                      : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                  </td>
+                  <td style={styles.tdActions}>
+                    <button type="button" style={styles.editBtn} onClick={() => startEdit(a)}>Edit</button>
+                    <button type="button" style={styles.deleteBtn} onClick={() => { if (confirm(`Delete "${a.name}"?`)) deleteMutation.mutate(a.id) }}>
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
+          </StyledTable>
+        )}
       </div>
     </AppShell>
   )
