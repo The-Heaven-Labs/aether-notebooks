@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
-import { Eye, EyeOff } from 'lucide-react'
+import { Loader2, Link, Heading, Code } from 'lucide-react'
 import { getToken } from '../api/client'
 import type { Cell } from '../types'
 import { slugify } from './Cell'
@@ -196,113 +196,49 @@ export interface MarkdownViewProps {
   onSave?: (cellId: string, source: string) => void
 }
 
-interface MarkdownBlockProps {
-  source: string
-  focused: boolean
-  onFocus: () => void
-  onChange: (s: string) => void
-  onBlur: (s: string) => void
-  onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
-  onPaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void
-  onDrop: (e: React.DragEvent<HTMLDivElement>) => void
-  markdownComponents: ReturnType<typeof makeMarkdownComponents>
-  textareaRef?: React.RefObject<HTMLTextAreaElement | null>
-}
 
-function MarkdownBlock({ source, focused, onFocus, onChange, onBlur, onKeyDown, onPaste, onDrop, markdownComponents, textareaRef }: MarkdownBlockProps) {
-  const localRef = useRef<HTMLTextAreaElement>(null)
-  const ref = textareaRef ?? localRef
-
-  useEffect(() => {
-    if (focused && ref.current) {
-      const el = ref.current
-      el.style.height = 'auto'
-      el.style.height = el.scrollHeight + 'px'
-      el.focus()
-    }
-  }, [focused, ref])
-
-  return (
-    <>
-      <textarea
-        ref={ref}
-        style={{ ...styles.mdBlockTextarea, display: focused ? 'block' : 'none' }}
-        value={source}
-        onChange={(e) => {
-          const el = e.target
-          el.style.height = 'auto'
-          el.style.height = el.scrollHeight + 'px'
-          onChange(e.target.value)
-        }}
-        onBlur={(e) => onBlur(e.target.value)}
-        onKeyDown={onKeyDown}
-        onPaste={onPaste}
-        placeholder="Write markdown…"
-      />
-      <div
-        data-testid={!source.trim() ? 'md-empty-block' : undefined}
-        style={{ ...styles.mdBlock, display: focused ? 'none' : 'block', minHeight: source.trim() ? undefined : 24 }}
-        onClick={onFocus}
-        onDragOver={e => e.preventDefault()}
-        onDrop={onDrop}
-      >
-        {source.trim()
-          ? <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>{source}</ReactMarkdown>
-          : null}
-      </div>
-    </>
-  )
-}
 
 export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: MarkdownViewProps) {
-  const [blocks, setBlocks] = useState(() => splitIntoBlocks(cell.source))
-  const [focusedIdx, setFocusedIdx] = useState<number | null>(null)
+  const [source, setSource] = useState(cell.source)
+  const [isFocused, setIsFocused] = useState(false)
   const [uploading, setUploading] = useState(false)
-  const [selectedBlockIdx, setSelectedBlockIdx] = useState<number | null>(null)
-  const [showPreview, setShowPreview] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null)
+  const [dragOver, setDragOver] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const blocksRef = useRef(blocks)
+  const sourceRef = useRef(source)
   const onSaveRef = useRef(onSave)
-  useEffect(() => { blocksRef.current = blocks }, [blocks])
+  useEffect(() => { sourceRef.current = source }, [source])
   useEffect(() => { onSaveRef.current = onSave }, [onSave])
 
   // Sync when source changes externally (history restore, Yjs, etc.) — skip while editing
-  // to prevent cursor jumps and image flicker caused by re-splitting during active typing.
   useEffect(() => {
-    if (focusedIdx !== null) return
-    setBlocks(splitIntoBlocks(cell.source))
-  }, [cell.source, focusedIdx])
+    if (isFocused) return
+    setSource(cell.source)
+  }, [cell.source, isFocused])
 
-  const updateBlock = useCallback((idx: number, s: string) => {
-    setBlocks(prev => {
-      const next = [...prev]; next[idx] = s
-      onSourceChange(cell.id, joinBlocks(next))
-      return next
-    })
+  const updateSource = useCallback((s: string) => {
+    setSource(s)
+    onSourceChange(cell.id, s)
   }, [cell.id, onSourceChange])
 
-  const blurBlock = useCallback((idx: number, s: string) => {
-    setBlocks(prev => {
-      const next = [...prev]; next[idx] = s
-      onSave?.(cell.id, joinBlocks(next))
-      return next
-    })
-    setFocusedIdx(null)
+  const blurEditor = useCallback((s: string) => {
+    setSource(s)
+    onSave?.(cell.id, s)
+    setIsFocused(false)
   }, [cell.id, onSave])
 
   const handleResize = useCallback((imgSrc: string, newWidth: number) => {
     const escaped = imgSrc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const source = joinBlocks(blocksRef.current)
     const imgTagRegex = new RegExp(`<img\\b[^>]*\\bsrc="${escaped}"[^>]*>`, 'i')
-    const match = source.match(imgTagRegex)
+    const match = sourceRef.current.match(imgTagRegex)
     if (!match) return
     const newTag = match[0]
       .replace(/\s+width="[^"]*"/i, '')
       .replace(/(\/?>)$/, ` width="${newWidth}"$1`)
-    const updated = source.replace(imgTagRegex, newTag)
-    if (updated === source) return
-    setBlocks(splitIntoBlocks(updated))
+    const updated = sourceRef.current.replace(imgTagRegex, newTag)
+    if (updated === sourceRef.current) return
+    setSource(updated)
     onSourceChange(cell.id, updated)
     onSaveRef.current?.(cell.id, updated)
   }, [cell.id, onSourceChange])
@@ -321,114 +257,331 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
     return res.json() as Promise<{ id: string; filename: string }>
   }, [notebookId])
 
-  const insertImageTag = useCallback((att: { id: string; filename: string }, idx: number) => {
+  const insertImageTag = useCallback((att: { id: string; filename: string }) => {
     const textarea = textareaRef.current
     const imgTag = `<img src="/api/v1/attachments/${att.id}" alt="${att.filename}" width="100%">`
-    const current = blocksRef.current[idx] ?? ''
-    let nextBlock: string
+    const current = sourceRef.current
+    let nextSource: string
     if (textarea) {
       const start = textarea.selectionStart
       const end = textarea.selectionEnd
-      nextBlock = current.slice(0, start) + imgTag + current.slice(end)
+      nextSource = current.slice(0, start) + imgTag + current.slice(end)
     } else {
-      nextBlock = current + imgTag
+      nextSource = current + (current ? '\n\n' : '') + imgTag
     }
-    const next = [...blocksRef.current]
-    next[idx] = nextBlock
-    const updated = joinBlocks(next)
-    setBlocks(next)
-    onSourceChange(cell.id, updated)
-    onSaveRef.current?.(cell.id, updated)
+    setSource(nextSource)
+    onSourceChange(cell.id, nextSource)
+    onSaveRef.current?.(cell.id, nextSource)
   }, [cell.id, onSourceChange])
 
-  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>, idx: number) => {
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const files = Array.from(e.clipboardData.files).filter(f => f.type.startsWith('image/'))
     if (files.length === 0) return
     e.preventDefault()
     setUploading(true)
-    try { insertImageTag(await uploadImage(files[0]), idx) }
-    catch (err) { console.error('Image upload failed:', err) }
+    setUploadProgress(0)
+    try {
+      // Simulate progress for better UX
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => prev !== null && prev < 90 ? prev + 10 : prev)
+      }, 100)
+      const att = await uploadImage(files[0])
+      clearInterval(progressInterval)
+      setUploadProgress(100)
+      insertImageTag(att)
+      setTimeout(() => setUploadProgress(null), 300)
+    }
+    catch (err) { 
+      console.error('Image upload failed:', err)
+      setUploadProgress(null)
+    }
     finally { setUploading(false) }
   }, [uploadImage, insertImageTag])
 
-  const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>, idx: number) => {
+  const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
     const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'))
     if (files.length === 0) return
     e.preventDefault()
+    setDragOver(false)
     setUploading(true)
-    try { insertImageTag(await uploadImage(files[0]), idx) }
-    catch (err) { console.error('Image upload failed:', err) }
+    setUploadProgress(0)
+    try {
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => prev !== null && prev < 90 ? prev + 10 : prev)
+      }, 100)
+      const att = await uploadImage(files[0])
+      clearInterval(progressInterval)
+      setUploadProgress(100)
+      insertImageTag(att)
+      setTimeout(() => setUploadProgress(null), 300)
+    }
+    catch (err) { 
+      console.error('Image upload failed:', err)
+      setUploadProgress(null)
+    }
     finally { setUploading(false) }
   }, [uploadImage, insertImageTag])
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    const idx = selectedBlockIdx
-    if (!file || idx === null) return
-    setSelectedBlockIdx(null)
+    if (!file) return
     setUploading(true)
-    try { insertImageTag(await uploadImage(file), idx) }
-    catch (err) { console.error('Image upload failed:', err) }
+    setUploadProgress(0)
+    try {
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => prev !== null && prev < 90 ? prev + 10 : prev)
+      }, 100)
+      const att = await uploadImage(file)
+      clearInterval(progressInterval)
+      setUploadProgress(100)
+      insertImageTag(att)
+      setTimeout(() => setUploadProgress(null), 300)
+    }
+    catch (err) { 
+      console.error('Image upload failed:', err)
+      setUploadProgress(null)
+    }
     finally { setUploading(false) }
-  }, [uploadImage, insertImageTag, selectedBlockIdx])
+  }, [uploadImage, insertImageTag])
 
   return (
-    <div style={styles.mdContainer}>
-      {blocks.map((block, idx) => (
-        <MarkdownBlock
-          key={idx}
-          source={block}
-          focused={focusedIdx === idx}
-          onFocus={() => setFocusedIdx(idx)}
-          onChange={s => updateBlock(idx, s)}
-          onBlur={s => blurBlock(idx, s)}
-          onKeyDown={e => { if (e.key === 'Escape') e.currentTarget.blur() }}
-          onPaste={e => handlePaste(e, idx)}
-          onDrop={e => handleDrop(e, idx)}
-          markdownComponents={markdownComponents}
-          textareaRef={focusedIdx === idx ? textareaRef : undefined}
-        />
-      ))}
-      {focusedIdx !== null && (
+    <div 
+      style={{
+        ...styles.mdContainer,
+        ...(dragOver ? styles.mdDragOver : {}),
+      }}
+      onDragOver={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        setDragOver(true)
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        setDragOver(false)
+      }}
+      onDrop={handleDrop}
+    >
+      {dragOver && (
+        <div style={styles.mdDragOverlay}>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <polyline points="21 15 16 10 5 21"/>
+          </svg>
+          <div>Drop image here</div>
+        </div>
+      )}
+      
+      {uploadProgress !== null && (
+        <div style={styles.mdUploadProgress}>
+          <div style={styles.mdUploadProgressBar}>
+            <div style={{...styles.mdUploadProgressFill, width: `${uploadProgress}%`}} />
+          </div>
+          <div style={styles.mdUploadProgressText}>Uploading... {uploadProgress}%</div>
+        </div>
+      )}
+
+      <textarea
+        ref={textareaRef}
+        style={{
+          ...styles.mdTextarea,
+          display: isFocused ? 'block' : 'none',
+        }}
+        value={source}
+        onChange={(e) => {
+          const el = e.target
+          el.style.height = 'auto'
+          el.style.height = el.scrollHeight + 'px'
+          updateSource(e.target.value)
+        }}
+        onBlur={(e) => blurEditor(e.target.value)}
+        onPaste={handlePaste}
+        onFocus={() => {
+          setIsFocused(true)
+          const el = textareaRef.current
+          if (el) {
+            el.style.height = 'auto'
+            el.style.height = el.scrollHeight + 'px'
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.currentTarget.blur()
+          }
+          // Tab key inserts spaces instead of changing focus
+          if (e.key === 'Tab') {
+            e.preventDefault()
+            const el = e.currentTarget
+            const start = el.selectionStart
+            const end = el.selectionEnd
+            const value = el.value
+            el.value = value.substring(0, start) + '  ' + value.substring(end)
+            el.selectionStart = el.selectionEnd = start + 2
+            updateSource(el.value)
+          }
+        }}
+        placeholder="Write markdown… (Ctrl+V to paste images, drag & drop supported)"
+      />
+      
+      <div
+        data-testid={!source.trim() ? 'md-empty-block' : undefined}
+        style={{
+          ...styles.mdPreview,
+          display: isFocused ? 'none' : 'block',
+          minHeight: source.trim() ? undefined : 48,
+        }}
+        onClick={() => {
+          setIsFocused(true)
+          setTimeout(() => textareaRef.current?.focus(), 0)
+        }}
+      >
+        {source.trim()
+          ? <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>{source}</ReactMarkdown>
+          : <span style={styles.mdPlaceholder}>Write markdown… (Ctrl+V to paste images, drag & drop supported)</span>}
+      </div>
+
+      {isFocused && (
         <div style={styles.mdToolbar}>
-          <button
-            style={styles.mdToolbarBtn}
-            disabled={uploading}
-            onMouseDown={e => e.preventDefault()}
-            onClick={() => {
-              setSelectedBlockIdx(focusedIdx)
-              fileInputRef.current?.click()
-            }}
-            title="Upload image"
-          >
-            {uploading ? '...' : (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                <circle cx="8.5" cy="8.5" r="1.5"/>
-                <polyline points="21 15 16 10 5 21"/>
-              </svg>
-            )}
-          </button>
-          <button
-            style={{
-              ...styles.mdToolbarBtn,
-              ...(showPreview ? styles.mdToolbarBtnActive : {}),
-            }}
-            onClick={() => setShowPreview(v => !v)}
-            title="Toggle full preview"
-          >
-            {showPreview ? <EyeOff size={13} /> : <Eye size={13} />}
-            {showPreview ? 'Edit' : 'Preview'}
-          </button>
+          <div style={styles.mdToolbarLeft}>
+            <button
+              style={styles.mdToolbarBtn}
+              disabled={uploading}
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => fileInputRef.current?.click()}
+              title="Upload image (or paste with Ctrl+V)"
+            >
+              {uploading ? (
+                <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                  <circle cx="8.5" cy="8.5" r="1.5"/>
+                  <polyline points="21 15 16 10 5 21"/>
+                </svg>
+              )}
+              <span>Image</span>
+            </button>
+            
+            <div style={styles.mdToolbarDivider} />
+            
+            <button
+              style={styles.mdToolbarBtn}
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => {
+                const textarea = textareaRef.current
+                if (!textarea) return
+                const start = textarea.selectionStart
+                const end = textarea.selectionEnd
+                const value = textarea.value
+                const selected = value.substring(start, end)
+                const replacement = `**${selected || 'bold text'}**`
+                textarea.value = value.substring(0, start) + replacement + value.substring(end)
+                textarea.selectionStart = start + 2
+                textarea.selectionEnd = start + 2 + (selected || 'bold text').length
+                textarea.focus()
+                updateSource(textarea.value)
+              }}
+              title="Bold (Ctrl+B)"
+            >
+              <strong>B</strong>
+            </button>
+            
+            <button
+              style={styles.mdToolbarBtn}
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => {
+                const textarea = textareaRef.current
+                if (!textarea) return
+                const start = textarea.selectionStart
+                const end = textarea.selectionEnd
+                const value = textarea.value
+                const selected = value.substring(start, end)
+                const replacement = `*${selected || 'italic text'}*`
+                textarea.value = value.substring(0, start) + replacement + value.substring(end)
+                textarea.selectionStart = start + 1
+                textarea.selectionEnd = start + 1 + (selected || 'italic text').length
+                textarea.focus()
+                updateSource(textarea.value)
+              }}
+              title="Italic (Ctrl+I)"
+            >
+              <em>I</em>
+            </button>
+            
+            <button
+              style={styles.mdToolbarBtn}
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => {
+                const textarea = textareaRef.current
+                if (!textarea) return
+                const start = textarea.selectionStart
+                const end = textarea.selectionEnd
+                const value = textarea.value
+                const selected = value.substring(start, end)
+                const replacement = `[${selected || 'link text'}](url)`
+                textarea.value = value.substring(0, start) + replacement + value.substring(end)
+                textarea.selectionStart = start + 1
+                textarea.selectionEnd = start + 1 + (selected || 'link text').length
+                textarea.focus()
+                updateSource(textarea.value)
+              }}
+              title="Insert link"
+            >
+              <Link size={13} />
+            </button>
+            
+            <button
+              style={styles.mdToolbarBtn}
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => {
+                const textarea = textareaRef.current
+                if (!textarea) return
+                const start = textarea.selectionStart
+                const value = textarea.value
+                const lineStart = value.lastIndexOf('\n', start - 1) + 1
+                const replacement = value.substring(0, lineStart) + '## ' + value.substring(lineStart)
+                textarea.value = replacement
+                textarea.selectionStart = textarea.selectionEnd = start + 3
+                textarea.focus()
+                updateSource(textarea.value)
+              }}
+              title="Insert heading"
+            >
+              <Heading size={13} />
+            </button>
+            
+            <button
+              style={styles.mdToolbarBtn}
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => {
+                const textarea = textareaRef.current
+                if (!textarea) return
+                const start = textarea.selectionStart
+                const end = textarea.selectionEnd
+                const value = textarea.value
+                const selected = value.substring(start, end)
+                const replacement = `\`${selected || 'code'}\``
+                textarea.value = value.substring(0, start) + replacement + value.substring(end)
+                textarea.selectionStart = start + 1
+                textarea.selectionEnd = start + 1 + (selected || 'code').length
+                textarea.focus()
+                updateSource(textarea.value)
+              }}
+              title="Inline code"
+            >
+              <Code size={13} />
+            </button>
+          </div>
+          
+          <div style={styles.mdToolbarRight}>
+            <span style={styles.mdToolbarHint}>
+              {uploading ? 'Uploading...' : 'Ctrl+V to paste images'}
+            </span>
+          </div>
         </div>
       )}
-      {showPreview && focusedIdx !== null && (
-        <div style={styles.mdLivePreview}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>
-            {cell.source}
-          </ReactMarkdown>
-        </div>
-      )}
+      
       <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileSelect} />
     </div>
   )
@@ -445,10 +598,55 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-sans)',
     cursor: 'text',
     minHeight: 48,
+    position: 'relative',
+    transition: 'background-color 0.2s',
   },
-  mdBlock: {
+  mdDragOver: {
+    backgroundColor: 'var(--accent-light)',
+    borderColor: 'var(--accent)',
   },
-  mdBlockTextarea: {
+  mdDragOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(128, 128, 128, 0.1)',
+    border: '2px dashed var(--accent)',
+    borderRadius: 4,
+    color: 'var(--accent)',
+    fontSize: 16,
+    fontWeight: 600,
+    gap: 8,
+    zIndex: 10,
+    pointerEvents: 'none',
+  },
+  mdUploadProgress: {
+    padding: '8px 0',
+  },
+  mdUploadProgressBar: {
+    height: 4,
+    backgroundColor: 'var(--border)',
+    borderRadius: 2,
+    overflow: 'hidden',
+    marginBottom: 4,
+  },
+  mdUploadProgressFill: {
+    height: '100%',
+    backgroundColor: 'var(--accent)',
+    transition: 'width 0.2s',
+  },
+  mdUploadProgressText: {
+    fontSize: 11,
+    fontFamily: 'var(--font-mono)',
+    color: 'var(--text-muted)',
+    textAlign: 'center',
+  },
+  mdTextarea: {
     display: 'block',
     width: '100%',
     fontFamily: 'var(--font-sans)',
@@ -464,44 +662,59 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
     boxSizing: 'border-box' as const,
     caretColor: 'var(--text-primary)',
+    minHeight: 100,
+  },
+  mdPreview: {
+    minHeight: 48,
+  },
+  mdPlaceholder: {
+    color: 'var(--text-muted)',
+    fontStyle: 'italic',
   },
   mdToolbar: {
     display: 'flex',
     alignItems: 'center',
-    gap: 4,
-    padding: '4px 12px',
+    justifyContent: 'space-between',
+    gap: 8,
+    padding: '8px 12px',
     borderTop: '1px solid var(--border-light)',
     background: 'var(--bg-cell-code)',
+    marginTop: 8,
+  },
+  mdToolbarLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+  },
+  mdToolbarRight: {
+    display: 'flex',
+    alignItems: 'center',
+  },
+  mdToolbarDivider: {
+    width: 1,
+    height: 16,
+    backgroundColor: 'var(--border)',
+    margin: '0 4px',
   },
   mdToolbarBtn: {
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: '3px 6px',
-    fontSize: 11,
-    fontFamily: 'var(--font-mono)',
-    color: 'var(--text-muted)',
+    padding: '4px 8px',
+    fontSize: 12,
+    fontFamily: 'var(--font-sans)',
+    color: 'var(--text-secondary)',
     background: 'none',
     border: '1px solid var(--border)',
-    borderRadius: 3,
+    borderRadius: 4,
     cursor: 'pointer',
     lineHeight: 1,
     gap: 4,
+    transition: 'all 0.15s',
   },
-  mdToolbarBtnActive: {
-    background: 'var(--accent-light)',
-    borderColor: 'var(--accent)',
-    color: 'var(--accent)',
-  },
-  mdLivePreview: {
-    borderTop: '1px solid var(--border-light)',
-    padding: '14px 20px',
-    fontSize: 14,
-    lineHeight: 1.75,
-    color: 'var(--text-primary)',
-    fontFamily: 'var(--font-sans)',
-    background: 'var(--bg-cell-text)',
-    maxHeight: 400,
-    overflowY: 'auto' as const,
+  mdToolbarHint: {
+    fontSize: 11,
+    fontFamily: 'var(--font-mono)',
+    color: 'var(--text-muted)',
   },
 }
