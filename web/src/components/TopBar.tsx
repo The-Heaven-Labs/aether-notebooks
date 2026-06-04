@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
+import { Keyboard } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 
 function LogoMark() {
@@ -20,7 +21,11 @@ function LogoMark() {
   )
 }
 
-export function TopBar() {
+interface TopBarProps {
+  onShowShortcuts?: () => void
+}
+
+export function TopBar({ onShowShortcuts }: TopBarProps) {
   const { user, logout } = useAuth()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -48,6 +53,16 @@ export function TopBar() {
         <span style={styles.appName}>HNB</span>
       </Link>
       <div style={styles.spacer} />
+      {onShowShortcuts && (
+        <button
+          style={styles.shortcutsBtn}
+          onClick={onShowShortcuts}
+          title="Keyboard shortcuts (?)"
+          aria-label="Keyboard shortcuts"
+        >
+          <Keyboard size={14} />
+        </button>
+      )}
       {isPlatformAdmin && (
         <Link to="/admin" style={styles.adminLink}>Admin</Link>
       )}
@@ -140,6 +155,17 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '4px 8px',
     borderRadius: 4,
     border: '1px solid var(--border)',
+  },
+  shortcutsBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'none',
+    border: '1px solid var(--nav-border)',
+    borderRadius: 4,
+    padding: '5px 7px',
+    cursor: 'pointer',
+    color: 'var(--nav-text-muted)',
   },
   dropdownLink: {
     display: 'block',

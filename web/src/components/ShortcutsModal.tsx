@@ -1,43 +1,81 @@
 import type React from 'react'
 import { Modal } from './Modal'
 
-interface Props { onClose: () => void }
+interface ShortcutEntry {
+  key: string
+  action: string
+}
 
-const SHORTCUTS = [
+interface Props {
+  onClose: () => void
+  extraShortcuts?: ShortcutEntry[]
+}
+
+const NOTEBOOK_SHORTCUTS: ShortcutEntry[] = [
   { key: 'Shift+Enter', action: 'Run focused cell' },
-  { key: 'B', action: 'Add code cell' },
-  { key: 'A', action: 'Add code cell' },
+  { key: 'B', action: 'Add code cell below' },
+  { key: 'A', action: 'Add code cell above' },
   { key: 'D D', action: 'Delete cell' },
   { key: 'J / ↓', action: 'Move focus down' },
   { key: 'K / ↑', action: 'Move focus up' },
   { key: 'M', action: 'Convert to markdown' },
   { key: 'Y', action: 'Convert to code' },
-  { key: '?', action: 'Show this modal' },
   { key: 'Ctrl+Enter (in editor)', action: 'Run cell' },
   { key: 'Ctrl+Shift+F (in SQL editor)', action: 'Format SQL' },
   { key: 'Escape (in editor)', action: 'Exit cell edit mode' },
 ]
 
-export function ShortcutsModal({ onClose }: Props) {
+const GLOBAL_SHORTCUTS: ShortcutEntry[] = [
+  { key: '?', action: 'Show keyboard shortcuts' },
+]
+
+export function ShortcutsModal({ onClose, extraShortcuts }: Props) {
   return (
     <Modal title="Keyboard Shortcuts" onClose={onClose}>
-      <table style={styles.table}>
-        <tbody>
-          {SHORTCUTS.map(({ key, action }) => (
-            <tr key={key}>
-              <td style={styles.key}><kbd style={styles.kbd}>{key}</kbd></td>
-              <td style={styles.action}>{action}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div style={styles.body}>
+        <div style={styles.section}>
+          <div style={styles.sectionTitle}>Global</div>
+          <table style={styles.table}>
+            <tbody>
+              {GLOBAL_SHORTCUTS.map(({ key, action }) => (
+                <tr key={key}>
+                  <td style={styles.key}><kbd style={styles.kbd}>{key}</kbd></td>
+                  <td style={styles.action}>{action}</td>
+                </tr>
+              ))}
+              {extraShortcuts?.map(({ key, action }) => (
+                <tr key={`extra-${key}`}>
+                  <td style={styles.key}><kbd style={styles.kbd}>{key}</kbd></td>
+                  <td style={styles.action}>{action}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={styles.section}>
+          <div style={styles.sectionTitle}>Notebook Editor</div>
+          <table style={styles.table}>
+            <tbody>
+              {NOTEBOOK_SHORTCUTS.map(({ key, action }) => (
+                <tr key={key}>
+                  <td style={styles.key}><kbd style={styles.kbd}>{key}</kbd></td>
+                  <td style={styles.action}>{action}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </Modal>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  table: { width: '100%', borderCollapse: 'collapse', padding: '8px 20px' },
-  key: { padding: '8px 20px 8px', width: 160 },
+  body: { padding: '8px 0' },
+  section: { marginBottom: 16 },
+  sectionTitle: { fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '8px 20px 4px' },
+  table: { width: '100%', borderCollapse: 'collapse' },
+  key: { padding: '6px 20px 6px', width: 200 },
   kbd: { fontFamily: 'var(--font-mono)', fontSize: 11, background: '#f5f5f5', border: '1px solid #e8e8e8', borderRadius: 3, padding: '2px 6px' },
-  action: { padding: '8px 20px 8px 0', fontSize: 13, color: 'var(--text-secondary)' },
+  action: { padding: '6px 20px 6px 0', fontSize: 13, color: 'var(--text-secondary)' },
 }

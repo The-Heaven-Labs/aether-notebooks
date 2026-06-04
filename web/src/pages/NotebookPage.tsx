@@ -12,7 +12,6 @@ import { SchemaBrowser } from '../components/SchemaBrowser'
 import { SchedulesPanel } from '../components/SchedulesPanel'
 import { useNotebookKeyboardShortcuts } from '../hooks/useNotebookKeyboardShortcuts'
 import { HistoryPanel } from '../components/HistoryPanel'
-import { ShortcutsModal } from '../components/ShortcutsModal'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { AgentPanel } from '../components/AgentPanel'
@@ -145,7 +144,6 @@ export function NotebookPage() {
   const isEditingCell = false
   const [historyCell, setHistoryCell] = useState<string | null>(null)
   const [historyVersions, setHistoryVersions] = useState<CellVersion[]>([])
-  const [showShortcuts, setShowShortcuts] = useState(false)
   const [showAgent, setShowAgent] = useState(() => {
     try { return localStorage.getItem(`hnb:agentPanel:${id}`) === 'true' } catch { return false }
   })
@@ -511,7 +509,6 @@ export function NotebookPage() {
         const cell = localCells.find((c) => c.id === focusedCellId)
         if (focusedCellId && cell?.type !== 'code') switchCellType(focusedCellId)
       },
-      openShortcutsModal: () => setShowShortcuts(true),
     },
     isEditingCell
   )
@@ -818,7 +815,6 @@ export function NotebookPage() {
           />
         )}
       </div>
-      {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
 
       {/* Add to dashboard modal */}
       {addToDashboardCellId && (
