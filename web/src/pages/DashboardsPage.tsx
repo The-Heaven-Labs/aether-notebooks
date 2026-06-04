@@ -5,7 +5,7 @@ import { api } from '../api/client'
 import type { Dashboard } from '../types'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
-import { LoadingSpinner } from '../components/LoadingSpinner'
+import { Skeleton } from '../components/Skeleton'
 import { SectionHeader } from '../components/SectionHeader'
 import { LayoutGrid, List, LayoutDashboard, X } from 'lucide-react'
 
@@ -90,8 +90,8 @@ export function DashboardsPage() {
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
 
         {isLoading ? (
-          <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 0' }}>
-            <LoadingSpinner />
+          <div style={{ padding: '8px 0' }}>
+            <Skeleton count={4} height={48} />
           </div>
         ) : dashboards.length === 0 ? (
           <EmptyState

@@ -10,6 +10,7 @@ import { ErrorBanner } from '../components/ErrorBanner'
 import { FolderTree } from '../components/FolderTree'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { TwoPanelLayout } from '../components/TwoPanelLayout'
+import { Skeleton } from '../components/Skeleton'
 import { Folder as FolderIcon, BookOpen, LayoutDashboard, Database, Home } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -202,7 +203,7 @@ function MoveModal({ target, onConfirm, onClose }: MoveModalProps) {
         </div>
 
         <div style={ms.folderList}>
-          {isLoading && <div style={ms.loadingText}>Loading…</div>}
+          {isLoading && <Skeleton count={3} height={24} />}
           {!isLoading && data && data.folders.length === 0 && (
             <div style={ms.emptyText}>No subfolders here.</div>
           )}
@@ -595,7 +596,12 @@ export function HomePage() {
 
             {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
 
-            {isLoading && <div style={{ padding: 32, color: 'var(--text-muted)', fontSize: 14 }}>Loading…</div>}
+            {isLoading && (
+              <div style={{ padding: '8px 0' }}>
+                <Skeleton width={200} height={12} style={{ marginBottom: 16 }} />
+                <Skeleton count={4} height={40} />
+              </div>
+            )}
 
             {!isLoading && isEmpty && !creating && (
               <EmptyState
