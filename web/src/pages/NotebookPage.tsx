@@ -687,7 +687,9 @@ export function NotebookPage() {
                       connectors={connectors}
                       notebookId={id!}
                       onRun={permissions?.can_run ? saveAndRun : () => {}}
-                      onDelete={readOnly ? () => {} : (cid) => deleteCell.mutate(cid)}
+                      onDelete={readOnly ? () => {} : (cid) => {
+                        if (confirm('Delete this cell?')) deleteCell.mutate(cid)
+                      }}
                       onSourceChange={readOnly ? () => {} : updateSource}
                       onSave={readOnly ? undefined : saveCellSource}
                       onAssignConnector={readOnly ? () => {} : assignConnector}
