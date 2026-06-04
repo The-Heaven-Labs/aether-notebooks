@@ -1,5 +1,7 @@
+import { useState, useEffect } from 'react'
 import { TopBar } from './TopBar'
 import { Sidebar } from './Sidebar'
+import { ShortcutsModal } from './ShortcutsModal'
 
 interface Props {
   children: React.ReactNode
@@ -7,13 +9,29 @@ interface Props {
 }
 
 export function AppShell({ children, noPadding }: Props) {
+  const [showShortcuts, setShowShortcuts] = useState(false)
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement).isContentEditable) return
+      if (e.key === '?') {
+        e.preventDefault()
+        setShowShortcuts(true)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
   return (
     <div style={styles.root}>
-      <TopBar />
+      <TopBar onShowShortcuts={() => setShowShortcuts(true)} />
       <div style={styles.body}>
         <Sidebar />
         <main style={{ ...styles.main, background: 'var(--bg-primary)', ...(noPadding ? { padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' } : {}) }}>{children}</main>
       </div>
+      {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
     </div>
   )
 }

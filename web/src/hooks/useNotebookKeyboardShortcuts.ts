@@ -9,7 +9,6 @@ export interface ShortcutActions {
   moveFocusUp: () => void
   convertToMarkdown: () => void
   convertToCode: () => void
-  openShortcutsModal: () => void
 }
 
 export function useNotebookKeyboardShortcuts(
@@ -37,7 +36,6 @@ export function useNotebookKeyboardShortcuts(
       if (e.key === 'k' || e.key === 'ArrowUp') { actions.moveFocusUp(); return }
       if (e.key === 'm' || e.key === 'M') { actions.convertToMarkdown(); return }
       if (e.key === 'y' || e.key === 'Y') { actions.convertToCode(); return }
-      if (e.key === '?') { actions.openShortcutsModal(); return }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
