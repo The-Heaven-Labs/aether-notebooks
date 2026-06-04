@@ -23,6 +23,11 @@ export function ParametersBar({ parameters, values, onChange, onSaveDefinitions 
           >
             <Info size={13} />
           </span>
+          {parameters.length === 0 && (
+            <span style={styles.emptyHint}>
+              No parameters defined. Click ⚙ to add variables for your queries.
+            </span>
+          )}
           {parameters.map((p) => (
             <label key={p.name} style={styles.paramField}>
               <span style={styles.paramName}>{p.name}</span>
@@ -48,6 +53,10 @@ export function ParametersBar({ parameters, values, onChange, onSaveDefinitions 
           >
             <Info size={13} />
           </span>
+          <p style={styles.manageDescription}>
+            Define variables referenced in SQL as <code style={{ fontFamily: 'var(--font-mono)', fontSize: 11, background: 'var(--bg-input)', padding: '1px 4px', borderRadius: 2 }}>{'{{param_name}}'}</code>.
+            Useful for dates, filters, and thresholds you want to change without editing queries.
+          </p>
           {draftParams.map((p, i) => (
             <div key={i} style={styles.draftRow}>
               <input
@@ -196,5 +205,18 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     borderRadius: 4,
     cursor: 'pointer',
+  },
+  manageDescription: {
+    width: '100%',
+    fontSize: 11,
+    color: 'var(--text-muted)',
+    margin: '0 0 4px',
+    lineHeight: 1.5,
+    fontFamily: 'var(--font-sans)',
+  },
+  emptyHint: {
+    fontSize: 11,
+    color: 'var(--text-muted)',
+    fontStyle: 'italic',
   },
 }
