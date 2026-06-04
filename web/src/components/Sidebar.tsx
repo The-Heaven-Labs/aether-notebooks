@@ -50,9 +50,14 @@ export function Sidebar() {
             title={title}
             style={({ isActive }) => itemStyle(isActive)}
           >
-            <span style={styles.icon}>{icon}</span>
-            {expanded && (
-              <span style={styles.label}>{title}</span>
+            {({ isActive }) => (
+              <>
+                <span style={styles.icon}>{icon}</span>
+                {expanded && (
+                  <span style={styles.label}>{title}</span>
+                )}
+                {isActive && <span className="sr-only"> (current page)</span>}
+              </>
             )}
           </NavLink>
         ))}
@@ -70,13 +75,18 @@ export function Sidebar() {
           <NavLink
             key={to}
             to={to}
-            end={to === to}
+            end={to === '/'}
             title={title}
             style={({ isActive }) => itemStyle(isActive)}
           >
-            <span style={styles.icon}>{icon}</span>
-            {expanded && (
-              <span style={styles.label}>{title}</span>
+            {({ isActive }) => (
+              <>
+                <span style={styles.icon}>{icon}</span>
+                {expanded && (
+                  <span style={styles.label}>{title}</span>
+                )}
+                {isActive && <span className="sr-only"> (current page)</span>}
+              </>
             )}
           </NavLink>
         ))}

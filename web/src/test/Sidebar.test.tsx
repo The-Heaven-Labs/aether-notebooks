@@ -28,4 +28,19 @@ describe('Sidebar', () => {
     fireEvent.click(toggle)
     expect(localStorage.getItem('hnb_sidebar_expanded')).toBe('false')
   })
+
+  it('active nav link announces current page to screen readers', () => {
+    renderWithProviders(<Sidebar />, { initialPath: '/' })
+    // The Files link is active at "/" — it should contain a sr-only "(current page)" span
+    const filesLink = screen.getByTitle('Files')
+    const anchor = filesLink.closest('a') || filesLink
+    expect(anchor.textContent).toContain('(current page)')
+  })
+
+  it('inactive nav links do not announce current page', () => {
+    renderWithProviders(<Sidebar />, { initialPath: '/' })
+    const dashboardsLink = screen.getByTitle('Dashboards')
+    const anchor = dashboardsLink.closest('a') || dashboardsLink
+    expect(anchor.textContent).not.toContain('(current page)')
+  })
 })
