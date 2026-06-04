@@ -323,6 +323,7 @@ export function ConnectorsPage() {
             action={{ label: '+ New Connector', onClick: () => setCreating(true) }}
           />
         ) : (
+          <div style={{ overflowX: 'auto' }}>
           <StyledTable headers={['Name', 'Type', 'Host', 'Database', 'Status', '']}>
             {connectors.map((c) => {
               const test = testResults[c.id]
@@ -420,6 +421,7 @@ export function ConnectorsPage() {
               )
             })}
           </StyledTable>
+          </div>
         )}
         {permissionsTarget && (
           <PermissionsPanel
@@ -436,8 +438,8 @@ export function ConnectorsPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   newBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  body: { maxWidth: 1100, margin: '0 auto', padding: '32px 40px', width: '100%' },
-  formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 },
+  body: { maxWidth: 1100, margin: '0 auto', padding: 'clamp(16px, 4vw, 32px)', width: '100%' },
+  formGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 16 },
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
   input: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, fontFamily: 'var(--font-mono)', background: 'var(--bg-input)', color: 'var(--text-primary)', marginTop: 2 },
   formActions: { display: 'flex', gap: 8, justifyContent: 'flex-end' },

@@ -189,15 +189,6 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 									CellID  string `json:"cell_id"`
 									Outputs any    `json:"outputs"`
 								}{Type: evt.Type, CellID: evt.CellID, Outputs: evt.Outputs}
-							case "cell_metadata_changed":
-								cellID := evt.CellID
-								metadata := evt.Metadata
-								writeChan <- struct {
-									Type     string `json:"type"`
-									CellID   string `json:"cell_id"`
-									Metadata any    `json:"metadata"`
-								}{Type: evt.Type, CellID: cellID, Metadata: metadata}
-								s.broadcastCellMetadataChanged(ctx, cellID, metadata)
 							case "tasks_updated":
 								writeChan <- struct {
 									Type string            `json:"type"`

@@ -146,6 +146,42 @@ func (l *Logger) Query(ctx context.Context, p QueryParams) ([]Entry, error) {
 	return entries, nil
 }
 
+// Count returns the total number of audit entries matching the given filters
+// (ignoring Limit/Offset).
+func (l *Logger) Count(ctx context.Context, p QueryParams) (int, error) {
+	query := `SELECT COUNT(*) FROM audit_logs WHERE org_id = $1`
+	args := []any{p.OrgID}
+	argN := 2
+
+	if p.UserID != "" {
+		query += fmt.Sprintf(" AND user_id = $%d", argN)
+		args = append(args, p.UserID)
+		argN++
+	}
+	if p.Action != "" {
+		query += fmt.Sprintf(" AND action ILIKE $%d", argN)
+		args = append(args, "%"+p.Action+"%")
+		argN++
+	}
+	if p.ResourceType != "" {
+		query += fmt.Sprintf(" AND resource_type = $%d", argN)
+		args = append(args, p.ResourceType)
+		argN++
+	}
+	if p.ResourceID != "" {
+		query += fmt.Sprintf(" AND resource_id = $%d", argN)
+		args = append(args, p.ResourceID)
+		argN++
+	}
+
+	var count int
+	err := l.db.Pool.QueryRow(ctx, query, args...).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count: %w", err)
+	}
+	return count, nil
+}
+
 func nilIfEmpty(s string) any {
 	if s == "" {
 		return nil

@@ -7,6 +7,11 @@ import (
 	"github.com/heavenlabs/hnb/internal/audit"
 )
 
+type auditListResponse struct {
+	Entries []audit.Entry `json:"entries"`
+	Total   int           `json:"total"`
+}
+
 func (s *Server) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -39,5 +44,15 @@ func (s *Server) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
 	if entries == nil {
 		entries = []audit.Entry{}
 	}
-	writeJSON(w, http.StatusOK, entries)
+
+	total, err := s.audit.Count(ctx, params)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "count failed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, auditListResponse{
+		Entries: entries,
+		Total:   total,
+	})
 }
