@@ -248,12 +248,15 @@ export function DashboardEditorPage() {
           )}
         </div>
         <div style={styles.headerRight}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }} role="group" aria-label="Grid columns">
             <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cols</span>
             {[6, 8, 12, 16, 24].map(c => (
               <button
                 key={c}
                 type="button"
+                title={`${c} grid columns — ${c <= 8 ? 'compact' : c <= 12 ? 'standard' : 'wide'} layout`}
+                aria-label={`${c} columns`}
+                aria-pressed={gridCols === c}
                 style={{
                   padding: '3px 8px',
                   fontSize: 12,
