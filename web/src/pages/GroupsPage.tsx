@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, type MutableRefObject } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -293,6 +293,10 @@ export function GroupsPage() {
   // Add member selection per group
   const [selectedUserId, setSelectedUserId] = useState<Record<string, string>>({})
 
+  // Context menu state: which group's menu is open
+  const [groupMenuOpen, setGroupMenuOpen] = useState<string | null>(null)
+  const groupMenuRefs = useRef<Record<string, HTMLDivElement | null>>({})
+
   const { data: groups = [], isLoading: groupsLoading } = useQuery({
     queryKey: ['groups'],
     queryFn: () => api.get<Group[]>('/api/v1/groups'),
@@ -428,6 +432,19 @@ export function GroupsPage() {
       setCreateError(err instanceof Error ? err.message : 'Failed to create group')
     }
   }
+
+  // Close group context menu on outside click
+  useEffect(() => {
+    if (!groupMenuOpen) return
+    const handler = (e: MouseEvent) => {
+      const container = groupMenuRefs.current[groupMenuOpen]
+      if (container && !container.contains(e.target as Node)) {
+        setGroupMenuOpen(null)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [groupMenuOpen])
 
   const handleAddMemberClick = (groupId: string) => {
     const userId = selectedUserId[groupId]
@@ -578,22 +595,41 @@ export function GroupsPage() {
                           </button>
                         </>
                       ) : (
-                        <button
-                          type="button"
-                          style={styles.actionBtn}
-                          onClick={() => handleRename(group)}
+                        <div
+                          ref={(el) => { (groupMenuRefs.current as MutableRefObject<Record<string, HTMLDivElement | null>>).current[group.id] = el }}
+                          style={{ position: 'relative' }}
                         >
-                          Rename
-                        </button>
+                          <button
+                            type="button"
+                            style={styles.menuTrigger}
+                            onClick={() => setGroupMenuOpen(groupMenuOpen === group.id ? null : group.id)}
+                            aria-haspopup="menu"
+                            aria-expanded={groupMenuOpen === group.id}
+                            title="Group actions"
+                          >
+                            ⋯
+                          </button>
+                          {groupMenuOpen === group.id && (
+                            <div style={styles.contextMenu}>
+                              <button
+                                type="button"
+                                style={styles.contextMenuItem}
+                                onClick={() => { setGroupMenuOpen(null); handleRename(group) }}
+                              >
+                                Rename
+                              </button>
+                              <button
+                                type="button"
+                                style={{ ...styles.contextMenuItem, color: 'var(--error)' }}
+                                onClick={() => { setGroupMenuOpen(null); handleDelete(group) }}
+                                disabled={deleteGroup.isPending}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       )}
-                      <button
-                        type="button"
-                        style={styles.deleteBtn}
-                        onClick={() => handleDelete(group)}
-                        disabled={deleteGroup.isPending}
-                      >
-                        Delete
-                      </button>
                     </div>
                   )}
                 </div>
@@ -747,6 +783,44 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-primary)',
     caretColor: 'var(--text-primary)',
     minWidth: 160,
+  },
+  menuTrigger: {
+    padding: '4px 8px',
+    fontSize: 16,
+    fontWeight: 700,
+    lineHeight: 1,
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    background: 'transparent',
+    cursor: 'pointer',
+    color: 'var(--text-secondary)',
+    letterSpacing: 1,
+  },
+  contextMenu: {
+    position: 'absolute',
+    top: 'calc(100% + 4px)',
+    right: 0,
+    zIndex: 200,
+    minWidth: 120,
+    background: 'var(--bg-elevated)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    boxShadow: 'var(--shadow-md)',
+    overflow: 'hidden',
+    padding: '4px 0',
+  },
+  contextMenuItem: {
+    display: 'block',
+    width: '100%',
+    padding: '6px 14px',
+    fontSize: 13,
+    fontWeight: 500,
+    border: 'none',
+    background: 'transparent',
+    cursor: 'pointer',
+    color: 'var(--text-primary)',
+    textAlign: 'left' as const,
+    whiteSpace: 'nowrap' as const,
   },
   actions: { display: 'flex', gap: 6, flexShrink: 0 },
   actionBtn: {
