@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
 import { FormCard } from '../components/FormCard'
+import { EmptyState } from '../components/EmptyState'
+import { Zap } from 'lucide-react'
 import { api } from '../api/client'
 import type { Skill } from '../types/agent'
 
@@ -140,35 +142,37 @@ export function SkillsPage() {
 
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
 
-        <StyledTable headers={['Name', 'Description', 'Tools', '']}>
-          {skills.map((s) => (
-            <tr key={s.id} style={rowStyle}>
-              <td style={cellStyle}><strong>{s.name}</strong></td>
-              <td style={cellStyle}><span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{s.description || '—'}</span></td>
-              <td style={cellStyle}>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {(s.tool_ids ?? []).map(id => (
-                    <span key={id} style={styles.toolTag}>{TOOL_OPTIONS.find(t => t.id === id)?.label ?? id}</span>
-                  ))}
-                  {(!s.tool_ids || s.tool_ids.length === 0) && <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>}
-                </div>
-              </td>
-              <td style={styles.tdActions}>
-                <button type="button" style={styles.editBtn} onClick={() => startEdit(s)}>Edit</button>
-                <button type="button" style={styles.deleteBtn} onClick={() => { if (confirm(`Delete "${s.name}"?`)) deleteMutation.mutate(s.id) }}>
-                  Delete
-                </button>
-              </td>
-            </tr>
-          ))}
-          {skills.length === 0 && !isLoading && (
-            <tr>
-              <td colSpan={4} style={{ ...cellStyle, textAlign: 'center', color: 'var(--text-muted)', padding: 40 }}>
-                No skills yet. Skills are reusable AI behaviors you can attach to agents.
-              </td>
-            </tr>
-          )}
-        </StyledTable>
+        {skills.length === 0 && !isLoading ? (
+          <EmptyState
+            icon={<Zap size={28} />}
+            title="No skills yet"
+            text="Skills are reusable AI behaviors you can attach to agents to give them specialized capabilities."
+            action={{ label: '+ New Skill', onClick: () => setCreating(true) }}
+          />
+        ) : (
+          <StyledTable headers={['Name', 'Description', 'Tools', '']}>
+            {skills.map((s) => (
+              <tr key={s.id} style={rowStyle}>
+                <td style={cellStyle}><strong>{s.name}</strong></td>
+                <td style={cellStyle}><span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{s.description || '—'}</span></td>
+                <td style={cellStyle}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {(s.tool_ids ?? []).map(id => (
+                      <span key={id} style={styles.toolTag}>{TOOL_OPTIONS.find(t => t.id === id)?.label ?? id}</span>
+                    ))}
+                    {(!s.tool_ids || s.tool_ids.length === 0) && <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>}
+                  </div>
+                </td>
+                <td style={styles.tdActions}>
+                  <button type="button" style={styles.editBtn} onClick={() => startEdit(s)}>Edit</button>
+                  <button type="button" style={styles.deleteBtn} onClick={() => { if (confirm(`Delete "${s.name}"?`)) deleteMutation.mutate(s.id) }}>
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </StyledTable>
+        )}
       </div>
     </AppShell>
   )
