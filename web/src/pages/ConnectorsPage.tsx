@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Connector } from '../types'
 import { AppShell } from '../components/AppShell'
-import { Check, X, Loader2 } from 'lucide-react'
+import { Check, X, Loader2, Star } from 'lucide-react'
 import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
 import { FormCard } from '../components/FormCard'
 import { StatusBadge } from '../components/StatusBadge'
@@ -322,10 +322,21 @@ export function ConnectorsPage() {
                 <td style={cellStyle}>
                   <strong>{c.name}</strong>
                   {c.is_default && (
-                    <span style={{ fontSize: 11, background: 'var(--accent-light)', border: '1px solid var(--border)',
-                      borderRadius: 3, padding: '1px 6px', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)',
-                      marginLeft: 8 }}>
-                      default
+                    <span style={{
+                      fontSize: 11,
+                      background: 'var(--accent-light)',
+                      border: '1px solid var(--accent)',
+                      borderRadius: 10,
+                      padding: '2px 8px',
+                      color: 'var(--accent)',
+                      fontWeight: 600,
+                      marginLeft: 8,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 3,
+                    }}>
+                      <Star size={10} fill="var(--accent)" />
+                      Default
                     </span>
                   )}
                 </td>
@@ -381,6 +392,7 @@ export function ConnectorsPage() {
                   <button type="button" style={styles.actionBtn} onClick={() => setPermissionsTarget({ type: 'connector', id: c.id, name: c.name })}>Permissions</button>
                   {!c.is_default && (
                     <button type="button"
+                      title="Set as default connector for new notebooks"
                       style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4,
                         fontSize: 12, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 }}
                       onClick={() => setDefault.mutate(c.id)}>
