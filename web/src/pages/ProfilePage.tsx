@@ -90,6 +90,15 @@ export function ProfilePage() {
             Status <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span>
             <input style={styles.input} value={status} placeholder="e.g. On vacation"
               onChange={e => setStatus(e.target.value)} maxLength={100} />
+            <span style={{
+              fontSize: 11,
+              color: status.length > 90 ? 'var(--error)' : 'var(--text-muted)',
+              textAlign: 'right',
+              marginTop: 2,
+              display: 'block',
+            }}>
+              {status.length}/100
+            </span>
           </label>
           <label style={styles.label}>
             Email
