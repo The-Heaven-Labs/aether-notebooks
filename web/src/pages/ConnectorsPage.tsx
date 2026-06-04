@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Connector } from '../types'
 import { AppShell } from '../components/AppShell'
-import { Check, X } from 'lucide-react'
+import { Check, X, Loader2 } from 'lucide-react'
 import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
 import { FormCard } from '../components/FormCard'
 import { StatusBadge } from '../components/StatusBadge'
@@ -351,8 +351,17 @@ export function ConnectorsPage() {
                 </td>
                 <td style={styles.tdActions}>
                   <button type="button" style={styles.actionBtn} onClick={() => testConnector(c.id)} disabled={testingId === c.id}>
-                    {testingId === c.id ? 'Testing…' : 'Test'}
+                    {testingId === c.id ? (
+                      <><Loader2 size={11} style={{ animation: 'spin 1s linear infinite', marginRight: 4 }} />Testing…</>
+                    ) : 'Test'}
                   </button>
+                  {test && test !== undefined && (
+                    <StatusBadge
+                      status={test.ok ? 'success' : 'error'}
+                      label={test.ok ? 'Connected' : (test.error ?? 'Failed')}
+                      icon={test.ok ? <Check size={12} /> : <X size={12} />}
+                    />
+                  )}
                   <button type="button" style={styles.editBtn} onClick={() => {
                     setEditing(c.id)
                     setEditForm({
