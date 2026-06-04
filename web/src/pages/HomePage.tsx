@@ -594,8 +594,7 @@ export function HomePage() {
               <EmptyState
                 icon={<FolderIcon size={32} />}
                 title="This folder is empty"
-                text="Create a folder or notebook to get started."
-                action={{ label: '+ New Notebook', onClick: () => setCreating('notebook') }}
+                text="Use the buttons above to create a folder, notebook, or dashboard."
               />
             )}
 
