@@ -346,7 +346,9 @@ export function ConnectorsPage() {
                       icon={test.ok ? <Check size={12} /> : <X size={12} />}
                     />
                   ) : (
-                    <StatusBadge status="neutral" label="—" />
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                      Unknown — click Test
+                    </span>
                   )}
                 </td>
                 <td style={styles.tdActions}>
