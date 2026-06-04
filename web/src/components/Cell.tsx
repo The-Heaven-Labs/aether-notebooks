@@ -246,6 +246,24 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
   return <div ref={editorRef} style={styles.codeEditor} />
 }
 
+function generateTitlePlaceholder(source: string, isCode: boolean): string {
+  if (!source?.trim()) {
+    return isCode ? 'e.g., Monthly active users' : 'e.g., Analysis summary'
+  }
+  const firstLine = source.trim().split('\n')[0].trim()
+  if (!firstLine) {
+    return isCode ? 'e.g., Monthly active users' : 'e.g., Analysis summary'
+  }
+  if (isCode) {
+    if (firstLine.length <= 40) return firstLine
+    return firstLine.slice(0, 37) + '…'
+  } else {
+    const cleaned = firstLine.replace(/^#+\s*/, '').trim()
+    if (cleaned.length > 0) return cleaned.slice(0, 40)
+    return 'e.g., Analysis summary'
+  }
+}
+
 // ── Cell ──────────────────────────────────────────────────────────────────────
 
 export function Cell({
@@ -296,7 +314,7 @@ export function Cell({
           <ChevronRight size={11} />
           <span style={styles.cellTypeTag}>{isCode ? 'SQL' : 'MD'}</span>
           <span style={styles.collapsedTitle}>
-            {cell.title || (isCode ? 'Untitled query' : 'Untitled note')}
+            {cell.title || generateTitlePlaceholder(cell.source, isCode)}
           </span>
         </button>
       </div>
@@ -389,7 +407,7 @@ export function Cell({
             value={cell.title ?? ''}
             onChange={(e) => onUpdateCellMeta?.({ title: e.target.value })}
             onClick={(e) => e.stopPropagation()}
-            placeholder="Untitled"
+            placeholder={generateTitlePlaceholder(cell.source, isCode)}
           />
         </div>
 
