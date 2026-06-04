@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ChevronsRight, ChevronLeft, Loader2, X, Bot, Check } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
 import { AppShell } from '../components/AppShell'
 import { Skeleton } from '../components/Skeleton'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -104,6 +107,7 @@ export function NotebookPage() {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [descDraft, setDescDraft] = useState('')
+  const [editingDesc, setEditingDesc] = useState(false)
   const paramStorageKey = `hnb_params_${id}`
   const [paramValues, setParamValues] = useState<Record<string, string>>(() => {
     try { return JSON.parse(localStorage.getItem(paramStorageKey) ?? '{}') } catch { return {} }
@@ -609,17 +613,37 @@ export function NotebookPage() {
               {notebook.title}
             </h1>
           )}
-          <input
-            style={styles.descInput}
-            value={descDraft}
-            onChange={(e) => setDescDraft(e.target.value)}
-            onBlur={() => {
-              if (descDraft !== (notebook?.description ?? '')) {
-                updateNotebook.mutate({ description: descDraft })
-              }
-            }}
-            placeholder="Add a description for this notebook…"
-          />
+          {editingDesc ? (
+            <input
+              style={styles.descInput}
+              value={descDraft}
+              onChange={(e) => setDescDraft(e.target.value)}
+              onBlur={() => {
+                setEditingDesc(false)
+                if (descDraft !== (notebook?.description ?? '')) {
+                  updateNotebook.mutate({ description: descDraft })
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === 'Escape') (e.target as HTMLInputElement).blur()
+              }}
+              autoFocus
+            />
+          ) : (
+            <div
+              style={styles.descRendered}
+              onClick={() => { setDescDraft(notebook.description ?? ''); setEditingDesc(true) }}
+              title="Click to edit description"
+            >
+              {notebook.description ? (
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                  {notebook.description}
+                </ReactMarkdown>
+              ) : (
+                <span style={styles.descPlaceholder}>Add a description for this notebook…</span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -943,6 +967,20 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'transparent',
     fontFamily: 'var(--font-sans)',
     padding: '1px 0',
+  },
+  descRendered: {
+    fontSize: 14,
+    color: 'var(--text-muted)',
+    fontFamily: 'var(--font-sans)',
+    cursor: 'pointer',
+    lineHeight: 1.6,
+    padding: '2px 0',
+    minHeight: 24,
+  },
+  descPlaceholder: {
+    color: 'var(--text-muted)',
+    opacity: 0.6,
+    fontStyle: 'italic',
   },
   metaInfo: {
     display: 'flex',
