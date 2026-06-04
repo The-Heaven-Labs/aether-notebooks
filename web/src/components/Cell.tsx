@@ -285,7 +285,10 @@ export function Cell({
     return (
       <div
         id={'cell-' + cell.id}
-        style={styles.collapsed}>
+        style={{
+          ...styles.collapsed,
+          borderLeft: `3px solid ${isCode ? 'var(--accent)' : 'var(--success)'}`,
+        }}>
         <button
           style={styles.expandTrigger}
           onClick={() => onUpdateCellMeta?.({ cell_collapsed: false })}
@@ -305,13 +308,19 @@ export function Cell({
   return (
     <div
       id={'cell-' + cell.id}
-      style={styles.cell}
+      style={{
+        ...styles.cell,
+        borderLeft: `3px solid ${isCode ? 'var(--accent)' : 'var(--success)'}`,
+      }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onClick={() => onFocus?.(cell.id)}
     >
       {/* ── Meta bar ── */}
-      <div style={styles.metaBar}>
+      <div style={{
+        ...styles.metaBar,
+        background: isCode ? 'var(--bg-cell-code)' : 'var(--bg-cell-text)',
+      }}>
         <div style={styles.metaLeft}>
           {index !== undefined && <span style={styles.cellNumber}>{index + 1}</span>}
           <span style={styles.cellTypeTag}>{isCode ? 'SQL' : 'MD'}</span>
