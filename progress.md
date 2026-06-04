@@ -10,16 +10,16 @@
 - [x] Task 7: Add global save status indicator to notebook header
 - [x] Task 8: Replace group action buttons with context menu
 
-## Group 2: Navigation & Information Architecture (4/10 tasks) 🔄
+## Group 2: Navigation & Information Architecture (6/10 tasks) 🔄
 - [x] Task 1: Change notebook breadcrumb from "Notebooks" to "Files"
 - [x] Task 2: Add Escape-to-clear on search box
 - [x] Task 3: Remove duplicate "+ New Notebook" button from empty state
 - [x] Task 4: Remove duplicate "+ New Dashboard" button from empty state
+- [x] Task 7: Close context menu on outside click + Escape key support
+- [x] Task 9: Fix dashboard editor back link visibility and add tooltip
 - [ ] Task 5: Add loading skeletons for page transitions
 - [ ] Task 6: Fix folder tree collapse button text
-- [ ] Task 7: Close context menu on outside click
 - [ ] Task 8: Add keyboard shortcut documentation
-- [ ] Task 9: Fix dashboard editor back link (completed in earlier batch)
 - [ ] Task 10: Add breadcrumb to dashboard editor
 
 ## Group 3: Notebook & Cell Experience (0/10 tasks) ⏸️
@@ -65,4 +65,4 @@
 
 **Last updated:** 2026-06-04
 **Branch:** feat/ux-audit-fixes
-**Commits:** 11 (7 from Group 1, 4 from Group 2)
+**Commits:** 14 (7 from Group 1, 7 from Group 2)
