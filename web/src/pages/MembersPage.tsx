@@ -27,6 +27,7 @@ export function MembersPage() {
   const [generatedLink, setGeneratedLink] = useState<string | null>(null)
   const [linkError, setLinkError] = useState<string | null>(null)
   const [linkLoading, setLinkLoading] = useState(false)
+  const [linkCopied, setLinkCopied] = useState(false)
 
   const [roleError, setRoleError] = useState<string | null>(null)
   const [removeError, setRemoveError] = useState<string | null>(null)
@@ -72,6 +73,11 @@ export function MembersPage() {
       setGeneratedLink(data.url)
       setLinkError(null)
       setLinkLoading(false)
+      // Auto-copy to clipboard
+      navigator.clipboard.writeText(data.url).then(() => {
+        setLinkCopied(true)
+        setTimeout(() => setLinkCopied(false), 2000)
+      }).catch(() => {})
     },
     onError: (err: Error) => {
       setLinkError(err.message)
@@ -161,24 +167,33 @@ export function MembersPage() {
               </button>
             </div>
             {generatedLink && (
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input
-                  style={{ ...styles.emailInput, flex: 1 }}
-                  type="text"
-                  value={generatedLink}
-                  readOnly
-                  onClick={(e) => (e.target as HTMLInputElement).select()}
+              <>
+                <ErrorBanner
+                  message="Link generated and copied to clipboard!"
+                  variant="info"
+                  onDismiss={() => {}}
                 />
-                <button
-                  type="button"
-                  style={{ ...styles.inviteBtn, padding: '7px 12px' }}
-                  onClick={() => {
-                    navigator.clipboard.writeText(generatedLink)
-                  }}
-                >
-                  Copy
-                </button>
-              </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+                  <input
+                    style={{ ...styles.emailInput, flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12, background: 'var(--accent-light)', border: '1px solid var(--accent)' }}
+                    type="text"
+                    value={generatedLink}
+                    readOnly
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                  />
+                  <button
+                    type="button"
+                    style={{ ...styles.inviteBtn, padding: '7px 12px' }}
+                    onClick={() => {
+                      navigator.clipboard.writeText(generatedLink)
+                      setLinkCopied(true)
+                      setTimeout(() => setLinkCopied(false), 2000)
+                    }}
+                  >
+                    {linkCopied ? '✓ Copied!' : 'Copy'}
+                  </button>
+                </div>
+              </>
             )}
             {linkError && <ErrorBanner message={linkError} onDismiss={() => setLinkError(null)} />}
           </FormCard>
