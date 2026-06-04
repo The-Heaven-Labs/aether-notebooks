@@ -488,6 +488,12 @@ export function HomePage() {
                 placeholder="Search by name…"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    setSearchQuery('');
+                    (e.target as HTMLInputElement).blur();
+                  }
+                }}
                 aria-label="Search files"
               />
             </div>
