@@ -201,12 +201,16 @@ export function NotebookPage() {
     localStorage.setItem(`hnb:agentPanel:${id}`, String(showAgent))
   }, [showAgent, id])
 
+  const initializedRef = useRef(false)
   useEffect(() => {
-    if (notebook) {
+    initializedRef.current = false
+  }, [id])
+  useEffect(() => {
+    if (notebook && !initializedRef.current) {
+      initializedRef.current = true
       setLocalCells(notebook.cells)
       setTitleDraft(notebook.title)
       setDescDraft(notebook.description ?? '')
-      // Init notebook-level connector from persisted value
       if (notebook.connector_id) setNotebookConnectorId(notebook.connector_id)
       document.title = `${notebook.title} — Heaven's Notebooks`
     }
