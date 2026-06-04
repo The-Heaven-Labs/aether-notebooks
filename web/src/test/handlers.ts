@@ -113,6 +113,11 @@ export const handlers = [
     })
   }),
 
+  // Home (folder tree sidebar)
+  http.get('/api/v1/home', () => HttpResponse.json([
+    { id: 'f-home', name: "Alice's Home", is_home: true, owner_id: 'user-1', sub_folders: [] },
+  ])),
+
   // Folders
   http.get('/api/v1/folders', () => HttpResponse.json(FOLDER_ROOT)),
   http.get('/api/v1/folders/:id', ({ params }) => {

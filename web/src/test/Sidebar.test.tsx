@@ -10,7 +10,7 @@ beforeEach(() => {
 describe('Sidebar', () => {
   it('renders nav items without Profile', () => {
     renderWithProviders(<Sidebar />)
-    expect(screen.getByTitle('Home')).toBeDefined()
+    expect(screen.getByTitle('Files')).toBeDefined()
     expect(screen.getByTitle('Groups')).toBeDefined()
     expect(screen.queryByTitle('Profile')).toBeNull()
   })
