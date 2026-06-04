@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ChevronsRight, ChevronLeft, Loader2, X, Bot } from 'lucide-react'
+import { ChevronsRight, ChevronLeft, Loader2, X, Bot, Check } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { LoadingPage } from '../components/LoadingPage'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -115,6 +115,28 @@ export function NotebookPage() {
   const [notebookConnectorId, setNotebookConnectorId] = useState<string>('')
   const [mutationError, setMutationError] = useState<string | null>(null)
   const [cellSaveState, setCellSaveState] = useState<Record<string, { saving: boolean; savedAt: Date | null; error: string | null }>>({})
+
+  // Derive global save status from per-cell save states
+  const latestCellSave = useMemo(() => {
+    let latest: Date | null = null
+    for (const state of Object.values(cellSaveState)) {
+      if (state.savedAt && (!latest || state.savedAt > latest)) {
+        latest = state.savedAt
+      }
+    }
+    return latest
+  }, [cellSaveState])
+
+  const anyCellSaving = useMemo(() =>
+    Object.values(cellSaveState).some(s => s.saving),
+    [cellSaveState]
+  )
+
+  const anyCellError = useMemo(() =>
+    Object.values(cellSaveState).some(s => s.error),
+    [cellSaveState]
+  )
+
   const [cellRunAt, setCellRunAt] = useState<Record<string, Date>>({})
   const [focusedCellId, setFocusedCellId] = useState<string | null>(null)
   // isEditingCell is intentionally a plain boolean (not useState) — the
@@ -535,6 +557,22 @@ export function NotebookPage() {
             <span style={styles.metaText}>
               Last updated {fmtTime(new Date(notebook.updated_at))}
             </span>
+            {anyCellSaving && (
+              <span style={{ ...styles.metaText, color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} />
+                Saving…
+              </span>
+            )}
+            {!anyCellSaving && latestCellSave && (
+              <span style={{ ...styles.metaText, color: 'var(--success)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                <Check size={11} /> All changes saved
+              </span>
+            )}
+            {!anyCellSaving && anyCellError && (
+              <span style={{ ...styles.metaText, color: 'var(--error-full)' }}>
+                Save error
+              </span>
+            )}
           </div>
         </div>
         {/* Row 2: title + description */}
