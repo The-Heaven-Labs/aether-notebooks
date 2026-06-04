@@ -379,19 +379,22 @@ export function Cell({
 
         {/* Hover toolbar */}
         <div style={{ ...styles.actions, opacity: hovered ? 1 : 0 }}>
-          {isCode && (
-            <button
-              style={styles.actionBtn}
-              onClick={(e) => { e.stopPropagation(); onRun(cell.id) }}
-              disabled={running}
-              title="Run (Ctrl+Enter)"
-            >
-              {running
-                ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
-                : <Play size={11} />
-              }
-            </button>
-          )}
+          {isCode && (() => {
+            const hasConnector = !!(cell.connector_id || connectors.length > 0)
+            return (
+              <button
+                style={{ ...styles.actionBtn, opacity: hasConnector ? 1 : 0.4 }}
+                onClick={(e) => { e.stopPropagation(); onRun(cell.id) }}
+                disabled={running}
+                title={hasConnector ? 'Run (Ctrl+Enter)' : 'Select a connector first'}
+              >
+                {running
+                  ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
+                  : <Play size={11} />
+                }
+              </button>
+            )
+          })()}
           <button style={styles.actionBtn} onClick={onSwitchType} title={isCode ? 'Convert to Markdown cell' : 'Convert to SQL cell'} aria-label={isCode ? 'Convert to Markdown cell' : 'Convert to SQL cell'}>
             {isCode ? 'MD' : 'SQL'}
           </button>
