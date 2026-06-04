@@ -47,7 +47,7 @@ export function ConnectorSelector({
       value={value ?? ''}
       onChange={e => onChange(e.target.value || null)}
     >
-      <option value="">{allowClear && value ? '— None —' : placeholder}</option>
+      <option value="" disabled={!allowClear || !value}>{allowClear && value ? 'Clear selection' : placeholder}</option>
       {connectors.map(c => (
         <option key={c.id} value={c.id}>
           {c.name}

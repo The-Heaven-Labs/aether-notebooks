@@ -330,7 +330,7 @@ export function Cell({
                 onBlur={() => setConnectorOpen(false)}
                 autoFocus
               >
-                <option value="">— inherit from notebook —</option>
+                <option value="">Inherit from notebook</option>
                 {connectors.map((c) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
