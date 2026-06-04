@@ -4,12 +4,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Connector } from '../types'
 import { AppShell } from '../components/AppShell'
-import { Check, X, Loader2, Star } from 'lucide-react'
+import { Check, X, Loader2, Star, Database } from 'lucide-react'
 import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
 import { FormCard } from '../components/FormCard'
 import { StatusBadge } from '../components/StatusBadge'
 import { SectionHeader } from '../components/SectionHeader'
 import { PermissionsPanel } from '../components/PermissionsPanel'
+import { EmptyState } from '../components/EmptyState'
 
 type ConnectorType = 'postgres' | 'clickhouse'
 
@@ -47,7 +48,7 @@ export function ConnectorsPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [permissionsTarget, setPermissionsTarget] = useState<{ type: 'connector'; id: string; name: string } | null>(null)
 
-  const { data: connectors = [] } = useQuery({
+  const { data: connectors = [], isLoading } = useQuery({
     queryKey: ['connectors'],
     queryFn: () => api.get<Connector[]>('/api/v1/connectors'),
   })
@@ -314,110 +315,112 @@ export function ConnectorsPage() {
         )}
 
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
-        <StyledTable headers={['Name', 'Type', 'Host', 'Database', 'Status', '']}>
-          {connectors.map((c) => {
-            const test = testResults[c.id]
-            return (
-              <tr key={c.id} style={rowStyle}>
-                <td style={cellStyle}>
-                  <strong>{c.name}</strong>
-                  {c.is_default && (
-                    <span style={{
-                      fontSize: 11,
-                      background: 'var(--accent-light)',
-                      border: '1px solid var(--accent)',
-                      borderRadius: 10,
-                      padding: '2px 8px',
-                      color: 'var(--accent)',
-                      fontWeight: 600,
-                      marginLeft: 8,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 3,
-                    }}>
-                      <Star size={10} fill="var(--accent)" />
-                      Default
-                    </span>
-                  )}
-                </td>
-                <td style={cellStyle}><code style={styles.badge}>{c.type}</code></td>
-                <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                  {c.config?.host ?? '—'}
-                </td>
-                <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                  {c.config?.database ?? '—'}
-                </td>
-                <td style={cellStyle}>
-                  {testingId === c.id ? (
-                    <StatusBadge status="neutral" label="Testing…" />
-                  ) : test ? (
-                    <StatusBadge
-                      status={test.ok ? 'success' : 'error'}
-                      label={test.ok ? 'Connected' : (test.error ?? 'Failed')}
-                      icon={test.ok ? <Check size={12} /> : <X size={12} />}
-                    />
-                  ) : (
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                      Unknown — click Test
-                    </span>
-                  )}
-                </td>
-                <td style={styles.tdActions}>
-                  <button type="button" style={styles.actionBtn} onClick={() => testConnector(c.id)} disabled={testingId === c.id}>
+        {connectors.length === 0 && !isLoading ? (
+          <EmptyState
+            icon={<Database size={28} />}
+            title="No connectors yet"
+            text="Add a connector to link your databases and start querying."
+            action={{ label: '+ New Connector', onClick: () => setCreating(true) }}
+          />
+        ) : (
+          <StyledTable headers={['Name', 'Type', 'Host', 'Database', 'Status', '']}>
+            {connectors.map((c) => {
+              const test = testResults[c.id]
+              return (
+                <tr key={c.id} style={rowStyle}>
+                  <td style={cellStyle}>
+                    <strong>{c.name}</strong>
+                    {c.is_default && (
+                      <span style={{
+                        fontSize: 11,
+                        background: 'var(--accent-light)',
+                        border: '1px solid var(--accent)',
+                        borderRadius: 10,
+                        padding: '2px 8px',
+                        color: 'var(--accent)',
+                        fontWeight: 600,
+                        marginLeft: 8,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 3,
+                      }}>
+                        <Star size={10} fill="var(--accent)" />
+                        Default
+                      </span>
+                    )}
+                  </td>
+                  <td style={cellStyle}><code style={styles.badge}>{c.type}</code></td>
+                  <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                    {c.config?.host ?? '—'}
+                  </td>
+                  <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                    {c.config?.database ?? '—'}
+                  </td>
+                  <td style={cellStyle}>
                     {testingId === c.id ? (
-                      <><Loader2 size={11} style={{ animation: 'spin 1s linear infinite', marginRight: 4 }} />Testing…</>
-                    ) : 'Test'}
-                  </button>
-                  {test && test !== undefined && (
-                    <StatusBadge
-                      status={test.ok ? 'success' : 'error'}
-                      label={test.ok ? 'Connected' : (test.error ?? 'Failed')}
-                      icon={test.ok ? <Check size={12} /> : <X size={12} />}
-                    />
-                  )}
-                  <button type="button" style={styles.editBtn} onClick={() => {
-                    setEditing(c.id)
-                    setEditForm({
-                      name: c.name,
-                      type: c.type as ConnectorType,
-                      host: c.config?.host ?? '',
-                      port: String(c.config?.port ?? 5432),
-                      database: c.config?.database ?? '',
-                      user: c.config?.user ?? '',
-                      password: '',
-                      ssl_mode: c.config?.ssl_mode ?? 'disable',
-                      is_default: c.is_default ?? false,
-                    })
-                  }}>Edit</button>
-                  <button type="button" style={styles.actionBtn} onClick={() => setPermissionsTarget({ type: 'connector', id: c.id, name: c.name })}>Permissions</button>
-                  {!c.is_default && (
-                    <button type="button"
-                      title="Set as default connector for new notebooks"
-                      style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4,
-                        fontSize: 12, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 }}
-                      onClick={() => setDefault.mutate(c.id)}>
-                      Set default
+                      <StatusBadge status="neutral" label="Testing…" />
+                    ) : test ? (
+                      <StatusBadge
+                        status={test.ok ? 'success' : 'error'}
+                        label={test.ok ? 'Connected' : (test.error ?? 'Failed')}
+                        icon={test.ok ? <Check size={12} /> : <X size={12} />}
+                      />
+                    ) : (
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                        Unknown — click Test
+                      </span>
+                    )}
+                  </td>
+                  <td style={styles.tdActions}>
+                    <button type="button" style={styles.actionBtn} onClick={() => testConnector(c.id)} disabled={testingId === c.id}>
+                      {testingId === c.id ? (
+                        <><Loader2 size={11} style={{ animation: 'spin 1s linear infinite', marginRight: 4 }} />Testing…</>
+                      ) : 'Test'}
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    style={styles.deleteBtn}
-                    onClick={() => { if (confirm(`Delete "${c.name}"?`)) deleteConnector.mutate(c.id) }}
-                  >
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            )
-          })}
-          {connectors.length === 0 && (
-            <tr>
-              <td colSpan={6} style={{ ...cellStyle, textAlign: 'center', color: 'var(--text-muted)', padding: 40 }}>
-                No connectors yet. Add one to connect to your databases.
-              </td>
-            </tr>
-          )}
-        </StyledTable>
+                    {test && test !== undefined && (
+                      <StatusBadge
+                        status={test.ok ? 'success' : 'error'}
+                        label={test.ok ? 'Connected' : (test.error ?? 'Failed')}
+                        icon={test.ok ? <Check size={12} /> : <X size={12} />}
+                      />
+                    )}
+                    <button type="button" style={styles.editBtn} onClick={() => {
+                      setEditing(c.id)
+                      setEditForm({
+                        name: c.name,
+                        type: c.type as ConnectorType,
+                        host: c.config?.host ?? '',
+                        port: String(c.config?.port ?? 5432),
+                        database: c.config?.database ?? '',
+                        user: c.config?.user ?? '',
+                        password: '',
+                        ssl_mode: c.config?.ssl_mode ?? 'disable',
+                        is_default: c.is_default ?? false,
+                      })
+                    }}>Edit</button>
+                    <button type="button" style={styles.actionBtn} onClick={() => setPermissionsTarget({ type: 'connector', id: c.id, name: c.name })}>Permissions</button>
+                    {!c.is_default && (
+                      <button type="button"
+                        title="Set as default connector for new notebooks"
+                        style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4,
+                          fontSize: 12, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 }}
+                        onClick={() => setDefault.mutate(c.id)}>
+                        Set default
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      style={styles.deleteBtn}
+                      onClick={() => { if (confirm(`Delete "${c.name}"?`)) deleteConnector.mutate(c.id) }}
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
+          </StyledTable>
+        )}
         {permissionsTarget && (
           <PermissionsPanel
             resourceType="connector"
