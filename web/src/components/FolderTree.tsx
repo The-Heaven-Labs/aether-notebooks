@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { ChevronRight, ChevronDown, Folder as FolderIcon, FolderOpen } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -26,9 +26,23 @@ export function FolderTree({ onSelectFolder, selectedFolderId, onMoveFolder, onP
 
   useEffect(() => {
     if (!openMenuId) return
-    const close = () => setOpenMenuId(null)
-    setTimeout(() => document.addEventListener('click', close), 0)
-    return () => document.removeEventListener('click', close)
+    function handleClick(e: MouseEvent) {
+      // Check if click is inside the menu portal (fixed-positioned menu)
+      const menus = document.querySelectorAll('[data-folder-menu]')
+      for (const menu of menus) {
+        if (menu.contains(e.target as Node)) return
+      }
+      setOpenMenuId(null)
+    }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpenMenuId(null)
+    }
+    document.addEventListener('mousedown', handleClick)
+    document.addEventListener('keydown', handleKey)
+    return () => {
+      document.removeEventListener('mousedown', handleClick)
+      document.removeEventListener('keydown', handleKey)
+    }
   }, [openMenuId])
 
   const { data: folderData } = useQuery<FolderContents>({
@@ -275,6 +289,7 @@ function TreeNodeComponent({ folder, children, childrenMap, expanded, onToggle, 
       </div>
       {isMenuOpen && menuPos && (
         <div
+          data-folder-menu=""
           style={{
             position: 'fixed',
             top: menuPos.top,
