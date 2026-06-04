@@ -1,6 +1,7 @@
-import { useState } from 'react'
-import { NavLink } from 'react-router-dom'
-import { Home, LayoutDashboard, Database, Users, UsersRound, ClipboardList, ChevronLeft, ChevronRight, Bot, Brain, Wrench, Puzzle } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { NavLink, useLocation } from 'react-router-dom'
+import { Home, LayoutDashboard, Database, Users, UsersRound, ClipboardList, ChevronLeft, ChevronRight, Bot, Brain, Wrench, Puzzle, X } from 'lucide-react'
+import { useMediaQuery } from '../hooks/useMediaQuery'
 
 const NAV_ITEMS = [
   { to: '/',           title: 'Files',       icon: <Home size={16} /> },
@@ -18,29 +19,57 @@ const AGENT_NAV_ITEMS = [
   { to: '/mcps',    title: 'MCPs',    icon: <Puzzle size={16} /> },
 ]
 
+// Custom event to open the mobile drawer from outside (e.g. TopBar hamburger)
+const MOBILE_OPEN_EVENT = 'hnb-sidebar-mobile-open'
+export function openMobileSidebar() {
+  window.dispatchEvent(new CustomEvent(MOBILE_OPEN_EVENT))
+}
+
 export function Sidebar() {
+  const location = useLocation()
+  const isMobile = useMediaQuery(768)
+  const isTablet = useMediaQuery(1024)
+
   const [expanded, setExpanded] = useState(() => {
     return localStorage.getItem('hnb_sidebar_expanded') !== 'false'
   })
+  const [drawerOpen, setDrawerOpen] = useState(false)
+
+  // On mobile: listen for the custom open event
+  useEffect(() => {
+    const handler = () => setDrawerOpen(true)
+    window.addEventListener(MOBILE_OPEN_EVENT, handler)
+    return () => window.removeEventListener(MOBILE_OPEN_EVENT, handler)
+  }, [])
+
+  // On mobile: close drawer when route changes
+  useEffect(() => {
+    if (isMobile) setDrawerOpen(false)
+  }, [location.pathname, isMobile])
+
+  // On tablet: force collapsed (icon rail only)
+  const effectiveExpanded = isTablet ? false : expanded
 
   const toggle = () => {
+    if (isTablet) return // Can't expand on tablet
     const next = !expanded
     setExpanded(next)
     localStorage.setItem('hnb_sidebar_expanded', String(next))
   }
 
-  const width = expanded ? 200 : 48
+  const width = effectiveExpanded ? 200 : 48
 
   const itemStyle = (isActive: boolean) => ({
     ...styles.item,
-    justifyContent: expanded ? 'flex-start' : 'center',
-    padding: expanded ? '8px 12px' : '8px 0',
+    justifyContent: effectiveExpanded ? 'flex-start' : 'center',
+    padding: effectiveExpanded ? '8px 12px' : '8px 0',
     background: isActive ? 'var(--accent-light)' : 'transparent',
     color: isActive ? 'var(--accent)' : 'var(--nav-text-muted)',
   })
 
-  return (
-    <nav style={{ ...styles.sidebar, width }}>
+  // Shared nav content
+  const navContent = (
+    <>
       <div style={styles.items}>
         {NAV_ITEMS.map(({ to, title, icon }) => (
           <NavLink
@@ -53,7 +82,7 @@ export function Sidebar() {
             {({ isActive }) => (
               <>
                 <span style={styles.icon}>{icon}</span>
-                {expanded && (
+                {effectiveExpanded && (
                   <span style={styles.label}>{title}</span>
                 )}
                 {isActive && <span className="sr-only"> (current page)</span>}
@@ -62,7 +91,7 @@ export function Sidebar() {
           </NavLink>
         ))}
         <div style={styles.sectionDivider} />
-        {expanded ? (
+        {effectiveExpanded ? (
           <div style={styles.sectionHeader}>
             <span style={styles.sectionTitle}>AI Agents</span>
           </div>
@@ -82,7 +111,7 @@ export function Sidebar() {
             {({ isActive }) => (
               <>
                 <span style={styles.icon}>{icon}</span>
-                {expanded && (
+                {effectiveExpanded && (
                   <span style={styles.label}>{title}</span>
                 )}
                 {isActive && <span className="sr-only"> (current page)</span>}
@@ -91,9 +120,38 @@ export function Sidebar() {
           </NavLink>
         ))}
       </div>
-      <button style={styles.toggle} onClick={toggle} title={expanded ? 'Collapse sidebar' : 'Expand sidebar'}>
-        {expanded ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
-      </button>
+      {!isTablet && (
+        <button style={styles.toggle} onClick={toggle} title={effectiveExpanded ? 'Collapse sidebar' : 'Expand sidebar'}>
+          {effectiveExpanded ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+        </button>
+      )}
+    </>
+  )
+
+  // Mobile: render as drawer overlay
+  if (isMobile) {
+    return (
+      <>
+        {drawerOpen && (
+          <div style={styles.overlay} onClick={() => setDrawerOpen(false)} />
+        )}
+        <nav style={{ ...styles.sidebar, ...styles.drawer, transform: drawerOpen ? 'translateX(0)' : 'translateX(-100%)' }}>
+          <div style={styles.drawerHeader}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--nav-text)' }}>Menu</span>
+            <button style={styles.drawerCloseBtn} onClick={() => setDrawerOpen(false)} aria-label="Close sidebar">
+              <X size={16} />
+            </button>
+          </div>
+          {navContent}
+        </nav>
+      </>
+    )
+  }
+
+  // Desktop/tablet: normal sidebar
+  return (
+    <nav style={{ ...styles.sidebar, width }}>
+      {navContent}
     </nav>
   )
 }
@@ -107,6 +165,40 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     transition: 'width 0.2s ease',
     overflow: 'hidden',
+  },
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0,0,0,0.4)',
+    zIndex: 998,
+  },
+  drawer: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    bottom: 0,
+    width: 220,
+    zIndex: 999,
+    transition: 'transform 0.25s ease',
+    boxShadow: '4px 0 24px rgba(0,0,0,0.15)',
+  },
+  drawerHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '12px 16px',
+    borderBottom: '1px solid var(--nav-border)',
+  },
+  drawerCloseBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    color: 'var(--nav-text-muted)',
+    padding: 4,
+    borderRadius: 4,
   },
   items: {
     flex: 1,
