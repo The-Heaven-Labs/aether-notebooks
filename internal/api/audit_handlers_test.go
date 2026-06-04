@@ -23,13 +23,19 @@ func TestAuditLogEnrichment(t *testing.T) {
 		t.Fatalf("audit: %d %s", rec.Code, rec.Body.String())
 	}
 
-	var entries []map[string]any
-	json.NewDecoder(rec.Body).Decode(&entries)
-	if len(entries) == 0 {
+	var resp struct {
+		Entries []map[string]any `json:"entries"`
+		Total   int              `json:"total"`
+	}
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if len(resp.Entries) == 0 {
 		t.Fatal("expected audit entries")
 	}
+	if resp.Total == 0 {
+		t.Fatalf("expected total > 0, got %d", resp.Total)
+	}
 	// The notebook.create entry should have resource_name = "My Notebook"
-	for _, e := range entries {
+	for _, e := range resp.Entries {
 		if e["action"] == "notebook.create" {
 			if e["resource_name"] != "My Notebook" {
 				t.Fatalf("expected resource_name 'My Notebook', got %v", e["resource_name"])
