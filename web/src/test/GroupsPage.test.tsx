@@ -149,6 +149,8 @@ describe('Remove member', () => {
         return new HttpResponse(null, { status: 204 })
       })
     )
+    // Mock confirm to accept the removal
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
     renderWithProviders(<GroupsPage />)
     await screen.findByText('Data Team')
     fireEvent.click(screen.getByText('Data Team'))
@@ -156,6 +158,7 @@ describe('Remove member', () => {
     // The remove button has title="Remove from group" (static title on the component)
     fireEvent.click(screen.getByTitle('Remove from group'))
     await waitFor(() => expect(deletedUid).toBe('user-2'))
+    vi.restoreAllMocks()
   })
 })
 
@@ -165,8 +168,11 @@ describe('Rename group', () => {
   test('clicking Rename shows inline input', async () => {
     renderWithProviders(<GroupsPage />)
     await screen.findByText('Data Team')
-    const renameButtons = screen.getAllByText('Rename')
-    fireEvent.click(renameButtons[0])
+    // Click the ⋯ menu button (title="Group actions")
+    const menuButtons = screen.getAllByTitle('Group actions')
+    fireEvent.click(menuButtons[0])
+    // Now click Rename in the context menu
+    fireEvent.click(screen.getByText('Rename'))
     expect(screen.getByDisplayValue('Data Team')).toBeInTheDocument()
   })
 
@@ -182,7 +188,9 @@ describe('Rename group', () => {
     )
     renderWithProviders(<GroupsPage />)
     await screen.findByText('Data Team')
-    fireEvent.click(screen.getAllByText('Rename')[0])
+    const menuButtons = screen.getAllByTitle('Group actions')
+    fireEvent.click(menuButtons[0])
+    fireEvent.click(screen.getByText('Rename'))
     const input = screen.getByDisplayValue('Data Team')
     fireEvent.change(input, { target: { value: 'Eng Team' } })
     fireEvent.keyDown(input, { key: 'Enter' })
@@ -204,7 +212,11 @@ describe('Delete group', () => {
     )
     renderWithProviders(<GroupsPage />)
     await screen.findByText('Data Team')
-    fireEvent.click(screen.getAllByText('Delete')[0])
+    // Click the ⋯ menu button
+    const menuButtons = screen.getAllByTitle('Group actions')
+    fireEvent.click(menuButtons[0])
+    // Click Delete in the context menu
+    fireEvent.click(screen.getByText('Delete'))
     await waitFor(() => expect(deletedId).toBe('g-1'))
   })
 
@@ -219,7 +231,9 @@ describe('Delete group', () => {
     )
     renderWithProviders(<GroupsPage />)
     await screen.findByText('Data Team')
-    fireEvent.click(screen.getAllByText('Delete')[0])
+    const menuButtons = screen.getAllByTitle('Group actions')
+    fireEvent.click(menuButtons[0])
+    fireEvent.click(screen.getByText('Delete'))
     await new Promise(r => setTimeout(r, 50))
     expect(deleteCalled).toBe(false)
   })
