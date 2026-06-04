@@ -10,6 +10,10 @@ import { ErrorBanner } from '../components/ErrorBanner'
 
 const ROLES = ['admin', 'editor', 'viewer', 'no_access'] as const
 
+function formatRole(role: string): string {
+  return role.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
 export function MembersPage() {
   useEffect(() => { document.title = "Members — Heaven's Notebooks" }, [])
   const { user } = useAuth()
@@ -105,7 +109,7 @@ export function MembersPage() {
               onChange={(e) => setInviteRole(e.target.value)}
             >
               {ROLES.map((r) => (
-                <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
+                <option key={r} value={r}>{formatRole(r)}</option>
               ))}
             </select>
             <button
@@ -140,7 +144,7 @@ export function MembersPage() {
                 onChange={(e) => setLinkRole(e.target.value)}
               >
                 {ROLES.map((r) => (
-                  <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
+                  <option key={r} value={r}>{formatRole(r)}</option>
                 ))}
               </select>
               <button
@@ -206,7 +210,7 @@ export function MembersPage() {
               <tr key={m.user_id} style={rowStyle}>
                 <td style={cellStyle}>
                   <strong>{m.name || '—'}</strong>
-                  {isSelf && <span style={styles.selfBadge}>you</span>}
+                  {isSelf && <span style={styles.selfBadge}>You</span>}
                 </td>
                 <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{m.email}</td>
                 <td style={cellStyle}>
@@ -217,7 +221,7 @@ export function MembersPage() {
                     onChange={(e) => updateRole.mutate({ userId: m.user_id, role: e.target.value })}
                   >
                     {ROLES.map((r) => (
-                      <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
+                      <option key={r} value={r}>{formatRole(r)}</option>
                     ))}
                   </select>
                 </td>
@@ -228,6 +232,7 @@ export function MembersPage() {
                     style={isSelf ? styles.removeBtnDisabled : styles.removeBtn}
                     disabled={isSelf || removeMember.isPending}
                     onClick={() => handleRemove(m)}
+                    title={isSelf ? 'You cannot remove yourself from the organization' : undefined}
                   >
                     Remove
                   </button>
@@ -290,8 +295,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid var(--border)',
     padding: '1px 6px',
     borderRadius: 3,
-    letterSpacing: '0.04em',
-    textTransform: 'uppercase' as const,
+    letterSpacing: '0.02em',
   },
   roleSelectInline: {
     padding: '4px 8px',

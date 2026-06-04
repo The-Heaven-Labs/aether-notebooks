@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { Eye, EyeOff } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { ApiError, api } from '../api/client'
 import { ErrorBanner } from '../components/ErrorBanner'
@@ -11,6 +12,18 @@ interface SSOProvider {
   id: string
   name: string
   provider_type: string
+}
+
+function getPasswordStrength(pw: string): { score: number; label: string; color: string } {
+  let score = 0
+  if (pw.length >= 8) score++
+  if (/[A-Z]/.test(pw)) score++
+  if (/[a-z]/.test(pw)) score++
+  if (/[0-9]/.test(pw)) score++
+  if (/[^A-Za-z0-9]/.test(pw)) score++
+  if (score <= 1) return { score, label: 'Weak', color: 'var(--error)' }
+  if (score <= 3) return { score, label: 'Fair', color: 'var(--warning)' }
+  return { score, label: 'Strong', color: 'var(--success)' }
 }
 
 export function LoginPage() {
@@ -27,6 +40,7 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [probing, setProbing] = useState(false)
   const [ssoProviders, setSsoProviders] = useState<SSOProvider[]>([])
+  const [showPassword, setShowPassword] = useState(false)
 
   // Focus password field when it becomes visible and no SSO providers
   const showPasswordStep = mode === 'register' || step === 'password' || step === 'sso_and_password'
@@ -122,6 +136,14 @@ export function LoginPage() {
 
   return (
     <div style={styles.page}>
+      <a
+        href="#login-form"
+        style={styles.skipLink}
+        onFocus={(e) => { e.currentTarget.style.top = '0' }}
+        onBlur={(e) => { e.currentTarget.style.top = '-40px' }}
+      >
+        Skip to form
+      </a>
       {/* Brand panel */}
       <div style={styles.brand}>
         <div style={styles.brandInner}>
@@ -150,7 +172,7 @@ export function LoginPage() {
       </div>
 
       {/* Form panel */}
-      <div style={styles.formPanel}>
+      <div id="login-form" style={styles.formPanel}>
         <div style={styles.formInner}>
           <div style={styles.tabs}>
             <button
@@ -188,7 +210,7 @@ export function LoginPage() {
               </div>
               {error && <ErrorBanner message={error} onDismiss={() => setError('')} />}
               <button type="submit" style={styles.submit} disabled={probing}>
-                {probing ? 'Please wait…' : 'Continue'}
+                {probing ? 'Please wait…' : 'Sign In'}
               </button>
             </form>
           )}
@@ -264,15 +286,40 @@ export function LoginPage() {
               )}
               <div style={styles.field}>
                 <label style={styles.label}>Password</label>
-                <input
-                  ref={passwordRef}
-                  style={styles.input}
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  placeholder="••••••••"
-                />
+                <div style={{ position: 'relative' }}>
+                  <input
+                    ref={passwordRef}
+                    style={{ ...styles.input, paddingRight: 36 }}
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    placeholder="••••••••"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(v => !v)}
+                    style={styles.passwordToggle}
+                    tabIndex={-1}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+                {mode === 'register' && password.length > 0 && (
+                  <div style={styles.strengthRow}>
+                    <div style={styles.strengthBarBg}>
+                      <div style={{
+                        ...styles.strengthBarFill,
+                        width: `${(getPasswordStrength(password).score / 5) * 100}%`,
+                        background: getPasswordStrength(password).color,
+                      }} />
+                    </div>
+                    <span style={{ ...styles.strengthLabel, color: getPasswordStrength(password).color }}>
+                      {getPasswordStrength(password).label}
+                    </span>
+                  </div>
+                )}
               </div>
               {error && <ErrorBanner message={error} onDismiss={() => setError('')} />}
               <button type="submit" style={styles.submit} disabled={loading}>
@@ -290,6 +337,19 @@ const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: '100vh',
     display: 'flex',
+    position: 'relative',
+  },
+  skipLink: {
+    position: 'absolute',
+    top: -40,
+    left: 0,
+    background: 'var(--accent)',
+    color: '#fff',
+    padding: '8px 16px',
+    zIndex: 100,
+    fontSize: 13,
+    borderRadius: '0 0 4px 0',
+    transition: 'top 0.15s',
   },
   brand: {
     flex: '0 0 420px',
@@ -494,6 +554,42 @@ const styles: Record<string, React.CSSProperties> = {
   dividerText: {
     fontSize: 12,
     color: 'var(--text-secondary)',
+    flexShrink: 0,
+  },
+  passwordToggle: {
+    position: 'absolute',
+    right: 8,
+    top: '50%',
+    transform: 'translateY(-50%)',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    color: 'var(--text-muted)',
+    padding: 4,
+    display: 'flex',
+    alignItems: 'center',
+  },
+  strengthRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 2,
+  },
+  strengthBarBg: {
+    flex: 1,
+    height: 4,
+    background: 'var(--border)',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  strengthBarFill: {
+    height: '100%',
+    borderRadius: 2,
+    transition: 'width 0.2s, background 0.2s',
+  },
+  strengthLabel: {
+    fontSize: 11,
+    fontWeight: 600,
     flexShrink: 0,
   },
 }

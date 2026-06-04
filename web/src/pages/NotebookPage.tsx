@@ -561,7 +561,7 @@ export function NotebookPage() {
                 updateNotebook.mutate({ description: descDraft })
               }
             }}
-            placeholder="Add a description…"
+            placeholder="Add a description for this notebook…"
           />
         </div>
       </div>
@@ -573,7 +573,7 @@ export function NotebookPage() {
             style={styles.connectorSelect}
             value={notebookConnectorId || null}
             onChange={applyNotebookConnector}
-            placeholder="Connection…"
+            placeholder="Select a connector"
             allowClear
           />
           {runningCount > 0 && (
@@ -613,7 +613,7 @@ export function NotebookPage() {
             Present
           </button>
           <button type="button" style={styles.runAllBtn} onClick={runAll} disabled={runningCount > 0}>
-            <ChevronsRight size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} /> Run All
+            <ChevronsRight size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />Run All
           </button>
           <button
             type="button"

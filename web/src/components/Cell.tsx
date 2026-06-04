@@ -341,27 +341,30 @@ export function Cell({
                 onClick={(e) => { e.stopPropagation(); setConnectorOpen(true) }}
                 title="Click to change connector"
               >
-                {connector?.name ?? 'no connector'}
+                {connector?.name ?? 'Select connector'}
               </button>
             )
           )}
 
           {/* LIMIT selector for code cells */}
           {isCode && (
-            <select
-              style={styles.limitSelect}
-              value={cell.limit == null ? 'null' : String(cell.limit)}
-              onChange={(e) => {
-                const val = e.target.value
-                onUpdateCellMeta?.({ limit: val === 'null' ? null : parseInt(val) })
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <option value="null">Unlimited</option>
-              <option value="1000">LIMIT 1000</option>
-              <option value="100">LIMIT 100</option>
-              <option value="10">LIMIT 10</option>
-            </select>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>Row limit:</span>
+              <select
+                style={styles.limitSelect}
+                value={cell.limit == null ? 'null' : String(cell.limit)}
+                onChange={(e) => {
+                  const val = e.target.value
+                  onUpdateCellMeta?.({ limit: val === 'null' ? null : parseInt(val) })
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <option value="null">Unlimited</option>
+                <option value="1000">LIMIT 1000</option>
+                <option value="100">LIMIT 100</option>
+                <option value="10">LIMIT 10</option>
+              </select>
+            </span>
           )}
 
           {/* Title */}
@@ -389,7 +392,7 @@ export function Cell({
               }
             </button>
           )}
-          <button style={styles.actionBtn} onClick={onSwitchType} title={isCode ? 'Switch to MD' : 'Switch to SQL'}>
+          <button style={styles.actionBtn} onClick={onSwitchType} title={isCode ? 'Convert to Markdown cell' : 'Convert to SQL cell'} aria-label={isCode ? 'Convert to Markdown cell' : 'Convert to SQL cell'}>
             {isCode ? 'MD' : 'SQL'}
           </button>
           {onMoveUp && <button style={styles.actionBtn} onClick={onMoveUp}><ChevronUp size={11} /></button>}

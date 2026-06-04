@@ -621,6 +621,7 @@ export function HomePage() {
                       <button
                         style={s.menuBtn}
                         title="More options"
+                        aria-label="More options"
                         onClick={(e) => handleMenuOpen(e, { type: 'folder', id: f.id, name: f.name })}
                       >⋯</button>
                       {openMenu?.id === f.id && menuPos && (
@@ -670,6 +671,7 @@ export function HomePage() {
                         <button
                           style={s.menuBtn}
                           title="More options"
+                          aria-label="More options"
                           onClick={(e) => handleMenuOpen(e, { type: 'notebook', id: nb.id, name: nb.title })}
                         >⋯</button>
                         {openMenu?.id === nb.id && menuPos && (
@@ -713,6 +715,7 @@ export function HomePage() {
                         <button
                           style={s.menuBtn}
                           title="More options"
+                          aria-label="More options"
                           onClick={(e) => handleMenuOpen(e, { type: 'connector', id: c.id, name: c.name })}
                         >⋯</button>
                         {openMenu?.id === c.id && menuPos && (
@@ -753,6 +756,7 @@ export function HomePage() {
                         <button
                           style={s.menuBtn}
                           title="More options"
+                          aria-label="More options"
                           onClick={(e) => handleMenuOpen(e, { type: 'dashboard', id: d.id, name: d.title })}
                         >⋯</button>
                         {openMenu?.id === d.id && menuPos && (
