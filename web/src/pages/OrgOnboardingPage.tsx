@@ -85,7 +85,7 @@ export function OrgOnboardingPage() {
               type="text"
               value={orgName}
               onChange={e => setOrgName(e.target.value)}
-              placeholder="Acme Analytics"
+              placeholder="e.g., Acme Analytics"
               autoFocus
             />
             {error && <ErrorBanner message={error} onDismiss={() => setError('')} />}
@@ -93,7 +93,7 @@ export function OrgOnboardingPage() {
               {loading ? 'Creating…' : 'Create organization'}
             </button>
             <button style={styles.backBtn} onClick={() => { setMode('choose'); setError('') }}>
-              ← Back
+              Back
             </button>
           </div>
         )}
@@ -114,7 +114,7 @@ export function OrgOnboardingPage() {
               {loading ? 'Joining…' : 'Join organization'}
             </button>
             <button style={styles.backBtn} onClick={() => { setMode('choose'); setError('') }}>
-              ← Back
+              Back
             </button>
           </div>
         )}

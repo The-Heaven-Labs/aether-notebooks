@@ -1,7 +1,7 @@
 import type React from 'react'
 
 interface Props {
-  headers: string[]
+  headers: React.ReactNode[]
   children: React.ReactNode
   thStyle?: React.CSSProperties
 }
@@ -40,8 +40,8 @@ export function StyledTable({ headers, children, thStyle }: Props) {
       <table style={tableStyle}>
         <thead>
           <tr>
-            {headers.map((h) => (
-              <th key={h} style={{ ...thBase, ...thStyle }}>{h}</th>
+            {headers.map((h, i) => (
+              <th key={i} style={{ ...thBase, ...thStyle }}>{h}</th>
             ))}
           </tr>
         </thead>

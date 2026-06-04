@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { ChevronRight } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -285,6 +286,7 @@ export function GroupsPage() {
 
   // New group form
   const [newGroupName, setNewGroupName] = useState('')
+  const [newGroupMembers, setNewGroupMembers] = useState<string[]>([])
   const [createError, setCreateError] = useState<string | null>(null)
   const [mutateError, setMutateError] = useState<string | null>(null)
 
@@ -407,13 +409,24 @@ export function GroupsPage() {
     deleteGroup.mutate(group.id)
   }
 
-  const handleCreateGroup = () => {
+  const handleCreateGroup = async () => {
     const trimmed = newGroupName.trim()
     if (!trimmed) {
       setCreateError('Group name is required')
       return
     }
-    createGroup.mutate(trimmed)
+    try {
+      const group = await api.post<Group>('/api/v1/groups', { name: trimmed })
+      for (const userId of newGroupMembers) {
+        await api.post(`/api/v1/groups/${group.id}/members`, { user_id: userId })
+      }
+      qc.invalidateQueries({ queryKey: ['groups'] })
+      setNewGroupName('')
+      setNewGroupMembers([])
+      setCreateError(null)
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : 'Failed to create group')
+    }
   }
 
   const handleAddMemberClick = (groupId: string) => {
@@ -432,6 +445,7 @@ export function GroupsPage() {
         <div style={styles.header}>
           <h1 style={styles.title}>Groups</h1>
           {isAdmin && (
+            <>
             <div style={styles.createRow}>
               <input
                 style={styles.input}
@@ -447,16 +461,46 @@ export function GroupsPage() {
                   type="button"
                   style={{
                     ...styles.primaryBtn,
-                    opacity: (!newGroupName.trim() || createGroup.isPending) ? 0.5 : 1,
-                    cursor: (!newGroupName.trim() || createGroup.isPending) ? 'not-allowed' : 'pointer',
+                    opacity: (!newGroupName.trim()) ? 0.5 : 1,
+                    cursor: (!newGroupName.trim()) ? 'not-allowed' : 'pointer',
                   }}
                   title={!newGroupName.trim() ? 'Enter a group name' : undefined}
-                  disabled={!newGroupName.trim() || createGroup.isPending}
+                  disabled={!newGroupName.trim()}
                   onClick={handleCreateGroup}
                 >
-                  {createGroup.isPending ? 'Creating…' : '+ New Group'}
+                  + New Group
                 </button>
             </div>
+            <div style={{ marginTop: 8 }}>
+              <MemberDropdown
+                options={members.filter(m => !newGroupMembers.includes(m.user_id))}
+                value=""
+                onChange={(userId) => {
+                  if (userId && !newGroupMembers.includes(userId)) {
+                    setNewGroupMembers(prev => [...prev, userId])
+                  }
+                }}
+                placeholder="Add initial members…"
+              />
+              {newGroupMembers.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                  {newGroupMembers.map(uid => {
+                    const member = members.find(m => m.user_id === uid)
+                    return (
+                      <span key={uid} style={styles.memberChip}>
+                        {member?.name || member?.email || uid}
+                        <button
+                          type="button"
+                          style={styles.memberChipRemove}
+                          onClick={() => setNewGroupMembers(prev => prev.filter(id => id !== uid))}
+                        >×</button>
+                      </span>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+            </>
           )}
           {createError && <ErrorBanner message={createError} onDismiss={() => setCreateError(null)} />}
           {mutateError && <ErrorBanner message={mutateError} onDismiss={() => setMutateError(null)} />}
@@ -490,10 +534,9 @@ export function GroupsPage() {
                     style={styles.expandBtn}
                     onClick={() => handleToggleExpand(group.id)}
                     title={isExpanded ? 'Collapse' : 'Expand'}
+                    aria-expanded={isExpanded}
                   >
-                    <span style={{ ...styles.chevron, transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
-                      ▶
-                    </span>
+                    <ChevronRight size={14} style={{ ...styles.chevron, transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }} />
                     {isRenaming ? (
                       <input
                         autoFocus
@@ -772,5 +815,25 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 6,
     paddingTop: 8,
     borderTop: '1px solid var(--border)',
+  },
+  memberChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    padding: '2px 8px',
+    fontSize: 12,
+    background: 'var(--accent-light)',
+    color: 'var(--accent)',
+    borderRadius: 12,
+    border: '1px solid var(--border)',
+  },
+  memberChipRemove: {
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    color: 'var(--text-muted)',
+    fontSize: 14,
+    padding: '0 2px',
+    lineHeight: 1,
   },
 }

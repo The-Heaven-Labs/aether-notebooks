@@ -60,7 +60,7 @@ export function DashboardsPage() {
     <AppShell>
       <div style={styles.body}>
         <SectionHeader title="Dashboards" subtitle={dashboards.length > 0 ? `${dashboards.length} dashboard${dashboards.length !== 1 ? 's' : ''}` : ''}>
-          <button type="button" style={styles.layoutBtn} onClick={toggleLayout} title={layout === 'list' ? 'Switch to grid' : 'Switch to list'}>
+          <button type="button" style={styles.layoutBtn} onClick={toggleLayout} title={layout === 'list' ? 'Switch to grid view' : 'Switch to list view'} aria-label={layout === 'list' ? 'Switch to grid view' : 'Switch to list view'}>
             {layout === 'list' ? <LayoutGrid size={14} /> : <List size={14} />}
           </button>
           <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Dashboard</button>

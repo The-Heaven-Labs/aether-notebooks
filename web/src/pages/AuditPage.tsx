@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Copy } from 'lucide-react'
+import { ChevronDown, ChevronUp, Copy } from 'lucide-react'
 import { api } from '../api/client'
 import type { AuditEntry } from '../types'
 import { AppShell } from '../components/AppShell'
@@ -18,6 +18,17 @@ export function AuditPage() {
   const [actionFilter, setActionFilter] = useState('')
   const [resourceTypeFilter, setResourceTypeFilter] = useState('')
   const [hasMore, setHasMore] = useState(true)
+  const [sortCol, setSortCol] = useState<'created_at' | 'action' | 'resource_type' | ''>('')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  function handleSort(col: 'created_at' | 'action' | 'resource_type') {
+    if (sortCol === col) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortCol(col)
+      setSortDir('desc')
+    }
+  }
 
   useEffect(() => { setOffset(0); setEntries([]) }, [resourceTypeFilter, actionFilter])
 
@@ -45,6 +56,15 @@ export function AuditPage() {
   }, [page, offset])
 
   const filtered = entries
+
+  const sorted = [...filtered].sort((a, b) => {
+    if (!sortCol) return 0
+    let cmp = 0
+    if (sortCol === 'created_at') cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    else if (sortCol === 'action') cmp = a.action.localeCompare(b.action)
+    else if (sortCol === 'resource_type') cmp = (a.resource_type || '').localeCompare(b.resource_type || '')
+    return sortDir === 'asc' ? cmp : -cmp
+  })
 
   function handleLoadMore() {
     setOffset((prev) => prev + PAGE_SIZE)
@@ -88,10 +108,16 @@ export function AuditPage() {
             />
           ) : (
             <StyledTable
-              headers={['Timestamp', 'Action', 'Resource Type', 'Resource', 'User']}
+              headers={[
+                <SortHeader key="ts" label="Timestamp" col="created_at" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />,
+                <SortHeader key="action" label="Action" col="action" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />,
+                <SortHeader key="rt" label="Resource Type" col="resource_type" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />,
+                'Resource',
+                'User',
+              ]}
               thStyle={{ fontSize: 12, background: 'var(--bg-primary)', letterSpacing: 'normal', borderBottom: '1px solid var(--border)' }}
             >
-              {filtered.map((entry) => (
+              {sorted.map((entry) => (
                 <AuditRow key={entry.id} entry={entry} />
               ))}
             </StyledTable>
@@ -130,7 +156,7 @@ function ResourceCell({ entry }: { entry: AuditEntry }) {
     const parent = resource_parent_name || null
     const id = resource_id ? truncateId(resource_id) : null
     if (parent && id) {
-      return <span>{parent} <span style={styles.resourceSub}>› {id}</span> <button type="button" onClick={handleCopy} style={styles.copyBtn} title={`Copy ID: ${resource_id}`}><Copy size={12} /></button></span>
+      return <span>{parent} <span style={styles.resourceSub} title={resource_id} onClick={handleCopy} className="cursor-pointer">› {id}</span></span>
     }
     if (parent) return <span>{parent}</span>
     return <span style={styles.mono}>{id || '—'}</span>
@@ -140,12 +166,13 @@ function ResourceCell({ entry }: { entry: AuditEntry }) {
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
       {resource_name && <span>{resource_name}</span>}
       {resource_id && (
-        <span style={resource_name ? styles.resourceSub : styles.mono}>
+        <span
+          style={{ ...(resource_name ? styles.resourceSub : styles.mono), cursor: 'pointer' }}
+          title={`Click to copy: ${resource_id}`}
+          onClick={handleCopy}
+        >
           {truncateId(resource_id)}
         </span>
-      )}
-      {resource_id && (
-        <button type="button" onClick={handleCopy} style={styles.copyBtn} title={`Copy full ID: ${resource_id}`}><Copy size={12} /></button>
       )}
     </span>
   )
@@ -154,7 +181,7 @@ function ResourceCell({ entry }: { entry: AuditEntry }) {
 function AuditRow({ entry }: { entry: AuditEntry }) {
   const ts = new Date(entry.created_at)
   const dateStr = ts.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
-  const timeStr = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const timeStr = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short' })
 
   return (
     <tr style={styles.tr}>
@@ -178,6 +205,35 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
         ) : null}
       </td>
     </tr>
+  )
+}
+
+function SortHeader({ label, col, sortCol, sortDir, onSort }: { label: string; col: 'created_at' | 'action' | 'resource_type'; sortCol: 'created_at' | 'action' | 'resource_type' | ''; sortDir: 'asc' | 'desc'; onSort: (col: 'created_at' | 'action' | 'resource_type') => void }) {
+  const active = sortCol === col
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(col)}
+      style={{
+        background: 'none',
+        border: 'none',
+        cursor: 'pointer',
+        padding: 0,
+        font: 'inherit',
+        color: 'inherit',
+        letterSpacing: 'inherit',
+        textTransform: 'inherit',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        fontWeight: active ? 700 : 600,
+      }}
+    >
+      {label}
+      {active && (
+        sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />
+      )}
+    </button>
   )
 }
 
@@ -255,7 +311,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   loadMoreBtn: {
     padding: '9px 28px',
-    background: 'white',
+    background: 'var(--bg-card)',
     border: '1.5px solid var(--border)',
     borderRadius: 4,
     fontSize: 13,

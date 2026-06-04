@@ -247,6 +247,7 @@ function TreeNodeComponent({ folder, children, childrenMap, expanded, onToggle, 
           <button
             style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', color: 'var(--text-muted)' }}
             onClick={(e) => { e.stopPropagation(); onToggle(folder.id) }}
+            aria-expanded={isExpanded}
             onMouseEnter={(e) => {
               e.stopPropagation()
               e.currentTarget.style.color = 'var(--accent)'
@@ -267,6 +268,7 @@ function TreeNodeComponent({ folder, children, childrenMap, expanded, onToggle, 
           <button
             style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 16, padding: '2px 6px', lineHeight: 1, flexShrink: 0 }}
             title="More options"
+            aria-label="More options"
             onClick={toggleMenu}
           >⋯</button>
         )}
