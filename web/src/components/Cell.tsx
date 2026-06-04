@@ -306,12 +306,19 @@ export function Cell({
   // ── Normal ──────────────────────────────────────────────────────────────────
 
   return (
-    <div
-      id={'cell-' + cell.id}
-      style={{
-        ...styles.cell,
-        borderLeft: `3px solid ${isCode ? 'var(--accent)' : 'var(--success)'}`,
-      }}
+    <>
+      {/* ── Slide break indicator ── */}
+      {cell.slide_break && (
+        <div style={styles.slideBreakIndicator}>
+          <span style={styles.slideBreakLabel}>Slide break</span>
+        </div>
+      )}
+      <div
+        id={'cell-' + cell.id}
+        style={{
+          ...styles.cell,
+          borderLeft: `3px solid ${isCode ? 'var(--accent)' : 'var(--success)'}`,
+        }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onClick={() => onFocus?.(cell.id)}
@@ -473,7 +480,12 @@ export function Cell({
           )}
           <button
             type="button"
-            title={cell.slide_break ? 'Separate into own slide' : 'Join with previous slide'}
+            title={cell.slide_break
+              ? 'Slide break: This cell starts a new presentation slide.\nClick to merge it with the previous slide.'
+              : 'Join with previous slide: This cell continues the previous slide.\nClick to start a new slide from this cell.'}
+            aria-label={cell.slide_break
+              ? 'Remove slide break (merge with previous slide)'
+              : 'Add slide break (start new presentation slide)'}
             style={{ ...styles.actionBtn, color: cell.slide_break ? 'var(--accent)' : 'var(--text-muted)' }}
             onClick={() => onUpdateCellMeta?.({ slide_break: !cell.slide_break })}
           >
@@ -526,6 +538,7 @@ export function Cell({
         </div>
       )}
     </div>
+    </>
   )
 }
 
@@ -711,5 +724,26 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-sans)',
     color: 'var(--text-muted)',
     fontStyle: 'italic',
+  },
+
+  // Slide break indicator
+  slideBreakIndicator: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '4px 0',
+    position: 'relative' as const,
+  },
+  slideBreakLabel: {
+    fontSize: 9,
+    fontFamily: 'var(--font-mono)',
+    fontWeight: 700,
+    letterSpacing: '0.1em',
+    textTransform: 'uppercase' as const,
+    color: 'var(--accent)',
+    background: 'var(--bg-primary)',
+    padding: '0 12px',
+    position: 'relative' as const,
+    zIndex: 1,
   },
 }
