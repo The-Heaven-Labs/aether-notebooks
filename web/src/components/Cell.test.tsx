@@ -361,6 +361,77 @@ describe('MarkdownView image upload', () => {
   })
 })
 
+// ── Accessibility: CodeMirror editor label ────────────────────────────────────
+
+describe('CodeEditorView accessibility', () => {
+  it('CodeMirror editor has an aria-label with cell title', async () => {
+    const cell: CellType = {
+      id: 'cell-aria',
+      notebook_id: 'nb-1',
+      type: 'code',
+      language: 'sql',
+      source: 'SELECT 1',
+      outputs: [],
+      position: 0,
+      created_at: '',
+      updated_at: '',
+      source_visible: true,
+      cell_collapsed: false,
+      title: 'My Query',
+    }
+    const { container } = render(
+      <Cell
+        cell={cell}
+        connectors={[]}
+        notebookId="nb-1"
+        onRun={vi.fn()}
+        onDelete={vi.fn()}
+        onSourceChange={vi.fn()}
+        onAssignConnector={vi.fn()}
+        index={2}
+      />
+    )
+    await waitFor(() => {
+      const cmContent = container.querySelector('.cm-content')
+      expect(cmContent).not.toBeNull()
+      expect(cmContent?.getAttribute('aria-label')).toContain('SQL editor: My Query')
+    })
+  })
+
+  it('CodeMirror editor falls back to cell index when no title', async () => {
+    const cell: CellType = {
+      id: 'cell-notitle',
+      notebook_id: 'nb-1',
+      type: 'code',
+      language: 'sql',
+      source: 'SELECT 1',
+      outputs: [],
+      position: 0,
+      created_at: '',
+      updated_at: '',
+      source_visible: true,
+      cell_collapsed: false,
+    }
+    const { container } = render(
+      <Cell
+        cell={cell}
+        connectors={[]}
+        notebookId="nb-1"
+        onRun={vi.fn()}
+        onDelete={vi.fn()}
+        onSourceChange={vi.fn()}
+        onAssignConnector={vi.fn()}
+        index={4}
+      />
+    )
+    await waitFor(() => {
+      const cmContent = container.querySelector('.cm-content')
+      expect(cmContent).not.toBeNull()
+      expect(cmContent?.getAttribute('aria-label')).toContain('SQL editor cell 5')
+    })
+  })
+})
+
 // ── Markdown image resize ─────────────────────────────────────────────────────
 
 describe('MarkdownView image resize', () => {

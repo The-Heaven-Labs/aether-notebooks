@@ -148,6 +148,7 @@ interface CodeEditorProps {
   onSourceChange: (cellId: string, source: string) => void
   collapsed: boolean
   connector?: Connector
+  index?: number
 }
 
 function languageExtension(cell: Cell, connector?: Connector) {
@@ -160,7 +161,7 @@ function languageExtension(cell: Cell, connector?: Connector) {
   return sql({ dialect: MySQL })
 }
 
-function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, connector }: CodeEditorProps) {
+function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, connector, index }: CodeEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null)
   const onRunRef = useRef(onRun)
   const onSourceChangeRef = useRef(onSourceChange)
@@ -208,6 +209,11 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
             '.cm-gutters': { display: 'none' },
             // Fix cursor visibility: use text color so it's always visible in any theme
             '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--text-primary)' },
+          }),
+          EditorView.contentAttributes.of({
+            'aria-label': cell.title
+              ? `SQL editor: ${cell.title}`
+              : `SQL editor cell ${index !== undefined ? index + 1 : ''}`,
           }),
           compartment.of([]),
           EditorView.updateListener.of((update) => {
@@ -535,6 +541,7 @@ export function Cell({
               onSourceChange={onSourceChange}
               collapsed={false}
               connector={connector}
+              index={index}
             />
           : <MarkdownView cell={cell} notebookId={notebookId} onSourceChange={onSourceChange} onSave={onSave} />
       )}
