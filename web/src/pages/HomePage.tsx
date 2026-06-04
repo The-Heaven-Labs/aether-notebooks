@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -241,6 +241,75 @@ function MetaLine({ createdBy, createdAt, updatedAt }: { createdBy: string; crea
   )
 }
 
+// ─── BulkMoveModal ───────────────────────────────────────────────────────────
+
+function BulkMoveModal({ count, onConfirm, onClose }: { count: number; onConfirm: (destFolderID: string | null) => void; onClose: () => void }) {
+  const [pickerFolderID, setPickerFolderID] = useState<string | null>(null)
+  const [pickerAncestors, setPickerAncestors] = useState<Array<{ id: string; name: string }>>([])
+
+  const { data, isLoading } = useQuery<FolderContents>({
+    queryKey: ['bulk-move-picker', pickerFolderID ?? 'root'],
+    queryFn: () => pickerFolderID
+      ? api.get<FolderContents>(`/api/v1/folders/${pickerFolderID}`)
+      : api.get<FolderContents>('/api/v1/folders'),
+  })
+
+  function navigateTo(folder: { id: string; name: string }) {
+    setPickerAncestors(prev => [...prev, folder])
+    setPickerFolderID(folder.id)
+  }
+
+  function navigateToAncestor(idx: number) {
+    if (idx < 0) {
+      setPickerAncestors([])
+      setPickerFolderID(null)
+    } else {
+      const ancestor = pickerAncestors[idx]
+      setPickerAncestors(prev => prev.slice(0, idx + 1))
+      setPickerFolderID(ancestor.id)
+    }
+  }
+
+  return (
+    <div style={ms.backdrop} onClick={onClose}>
+      <div style={ms.modal} onClick={(e) => e.stopPropagation()}>
+        <div style={ms.modalHeader}>
+          <span style={ms.modalTitle}>Move {count} item(s) to folder</span>
+          <button style={ms.closeBtn} onClick={onClose}>×</button>
+        </div>
+        <div style={ms.pickerCrumb}>
+          <button style={ms.crumbLink} onClick={() => navigateToAncestor(-1)}>Root</button>
+          {pickerAncestors.map((a, idx) => (
+            <span key={a.id} style={{ display: 'flex', alignItems: 'center' }}>
+              <span style={{ color: 'var(--text-muted)', margin: '0 4px' }}>/</span>
+              <button style={ms.crumbLink} onClick={() => navigateToAncestor(idx)}>{a.name}</button>
+            </span>
+          ))}
+        </div>
+        <div style={ms.folderList}>
+          {isLoading && <div style={ms.loadingText}>Loading…</div>}
+          {!isLoading && data && data.folders.length === 0 && (
+            <div style={ms.emptyText}>No subfolders here.</div>
+          )}
+          {data?.folders.map((f) => (
+            <button key={f.id} style={ms.folderRow} onClick={() => navigateTo({ id: f.id, name: f.name })}>
+              <FolderIcon size={14} style={{ color: 'var(--accent)', flexShrink: 0, marginRight: 8 }} />
+              <span style={{ flex: 1, textAlign: 'left', fontSize: 13 }}>{f.name}</span>
+              <span style={ms.drillArrow}>›</span>
+            </button>
+          ))}
+        </div>
+        <div style={ms.modalFooter}>
+          <button style={ms.moveHereBtn} onClick={() => onConfirm(pickerFolderID)}>
+            Move here
+          </button>
+          <button style={s.cancelBtn} onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── HomePage ────────────────────────────────────────────────────────────────
 
 export function HomePage() {
@@ -274,6 +343,11 @@ export function HomePage() {
 
   // Permissions (stub — Task 13 will wire this up)
   const [permissionsTarget, setPermissionsTarget] = useState<PermissionsTarget | null>(null)
+
+  // Bulk selection
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [bulkMoving, setBulkMoving] = useState(false)
 
   const contentsKey = ['folder-contents', folderID ?? 'root']
   const { data, isLoading } = useQuery<FolderContents>({
@@ -475,6 +549,95 @@ export function HomePage() {
     if (type === 'connector') navigate(`/connectors?edit=${id}`)
   }
 
+  // ── Bulk selection helpers ──
+
+  const toggleSelect = useCallback((type: string, id: string) => {
+    const key = `${type}:${id}`
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+    if (!selectionMode) setSelectionMode(true)
+  }, [selectionMode])
+
+  const selectAll = useCallback(() => {
+    const allIds = [
+      ...(data?.folders ?? []).map(f => `folder:${f.id}`),
+      ...(data?.notebooks ?? []).map(nb => `notebook:${nb.id}`),
+      ...(data?.connectors ?? []).map(c => `connector:${c.id}`),
+      ...(data?.dashboards ?? []).map(d => `dashboard:${d.id}`),
+    ]
+    setSelected(new Set(allIds))
+    setSelectionMode(true)
+  }, [data])
+
+  const clearSelection = useCallback(() => {
+    setSelected(new Set())
+    setSelectionMode(false)
+  }, [])
+
+  const isSelected = useCallback((type: string, id: string) => {
+    return selected.has(`${type}:${id}`)
+  }, [selected])
+
+  const selectedItems = Array.from(selected).map(key => {
+    const [type, id] = key.split(':') as [ResourceType, string]
+    return { type, id }
+  })
+
+  // Exit selection mode on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && selectionMode) {
+        clearSelection()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [selectionMode, clearSelection])
+
+  // ── Bulk mutations ──
+
+  const bulkDelete = useMutation({
+    mutationFn: async () => {
+      const promises = selectedItems.map(({ type, id }) => {
+        if (type === 'folder') return api.delete(`/api/v1/folders/${id}?force=true`)
+        if (type === 'notebook') return api.delete(`/api/v1/notebooks/${id}`)
+        return Promise.resolve()
+      })
+      await Promise.all(promises)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['folder-contents'] })
+      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
+      qc.invalidateQueries({ queryKey: ['folder-home'] })
+      clearSelection()
+    },
+    onError: (e: Error) => setError(e.message),
+  })
+
+  const bulkMove = useMutation({
+    mutationFn: async (destFolderID: string | null) => {
+      const promises = selectedItems.map(({ type, id }) => {
+        if (type === 'folder') return api.put(`/api/v1/folders/${id}`, { parent_id: destFolderID })
+        if (type === 'notebook') return api.put(`/api/v1/notebooks/${id}`, { folder_id: destFolderID })
+        if (type === 'connector') return api.put(`/api/v1/connectors/${id}`, { folder_id: destFolderID })
+        if (type === 'dashboard') return api.put(`/api/v1/dashboards/${id}`, { folder_id: destFolderID })
+        return Promise.resolve()
+      })
+      await Promise.all(promises)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['folder-contents'] })
+      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
+      qc.invalidateQueries({ queryKey: ['folder-home'] })
+      clearSelection()
+    },
+    onError: (e: Error) => setError(e.message),
+  })
+
   return (
     <AppShell>
       <TwoPanelLayout
@@ -505,6 +668,55 @@ export function HomePage() {
                 aria-label="Search files"
               />
             </div>
+
+            {/* Bulk selection toolbar */}
+            {selectionMode && (
+              <div style={s.bulkToolbar}>
+                <label style={s.bulkCheckLabel}>
+                  <input
+                    type="checkbox"
+                    checked={selected.size > 0 && selected.size === (
+                      (data?.folders?.length ?? 0) +
+                      (data?.notebooks?.length ?? 0) +
+                      (data?.connectors?.length ?? 0) +
+                      (data?.dashboards?.length ?? 0)
+                    )}
+                    onChange={(e) => e.target.checked ? selectAll() : clearSelection()}
+                  />
+                </label>
+                <span style={s.bulkCount}>
+                  {selected.size} item{selected.size !== 1 ? 's' : ''} selected
+                </span>
+                <div style={{ flex: 1 }} />
+                <button
+                  style={s.bulkBtn}
+                  onClick={() => setBulkMoving(true)}
+                  disabled={selected.size === 0}
+                >
+                  Move to…
+                </button>
+                <button
+                  style={{ ...s.bulkBtn, color: 'var(--error)', borderColor: 'var(--error)' }}
+                  onClick={() => {
+                    if (confirm(`Delete ${selected.size} item(s)? This cannot be undone.`)) {
+                      bulkDelete.mutate()
+                    }
+                  }}
+                  disabled={selected.size === 0 || bulkDelete.isPending}
+                >
+                  {bulkDelete.isPending ? 'Deleting…' : 'Delete'}
+                </button>
+                <button style={s.bulkCancelBtn} onClick={clearSelection}>
+                  Cancel
+                </button>
+              </div>
+            )}
+
+            {!selectionMode && (
+              <button style={s.selectBtn} onClick={() => setSelectionMode(true)}>
+                Select
+              </button>
+            )}
 
             {/* Breadcrumb — only when in a folder */}
             {folderID && (
@@ -617,7 +829,19 @@ export function HomePage() {
                 <div style={s.sectionLabel}>Folders</div>
                 <div style={s.folderGrid}>
                   {searchFolders.map((f) => (
-                    <div key={f.id} style={s.folderCard} className="card-hover">
+                    <div key={f.id} style={{
+                      ...s.folderCard,
+                      ...(isSelected('folder', f.id) ? { borderColor: 'var(--accent)', background: 'var(--accent-light)' } : {}),
+                    }} className="card-hover">
+                      {selectionMode && (
+                        <input
+                          type="checkbox"
+                          checked={isSelected('folder', f.id)}
+                          onChange={() => toggleSelect('folder', f.id)}
+                          style={s.itemCheckbox}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      )}
                       {renaming?.id === f.id ? (
                         <div style={{ flex: 1, padding: '4px 8px' }}>
                           <InlineRename
@@ -669,7 +893,19 @@ export function HomePage() {
                 <div style={s.sectionLabel}>Notebooks</div>
                 <div style={s.list}>
                   {searchNotebooks.map((nb) => (
-                    <div key={nb.id} style={s.item}>
+                    <div key={nb.id} style={{
+                      ...s.item,
+                      ...(isSelected('notebook', nb.id) ? { borderColor: 'var(--accent)', background: 'var(--accent-light)' } : {}),
+                    }}>
+                      {selectionMode && (
+                        <input
+                          type="checkbox"
+                          checked={isSelected('notebook', nb.id)}
+                          onChange={() => toggleSelect('notebook', nb.id)}
+                          style={s.itemCheckbox}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      )}
                       {renaming?.id === nb.id ? (
                         <div style={{ flex: 1 }}>
                           <InlineRename
@@ -720,7 +956,19 @@ export function HomePage() {
                 <div style={s.sectionLabel}>Connectors</div>
                 <div style={s.list}>
                   {searchConnectors.map((c) => (
-                    <div key={c.id} style={s.item}>
+                    <div key={c.id} style={{
+                      ...s.item,
+                      ...(isSelected('connector', c.id) ? { borderColor: 'var(--accent)', background: 'var(--accent-light)' } : {}),
+                    }}>
+                      {selectionMode && (
+                        <input
+                          type="checkbox"
+                          checked={isSelected('connector', c.id)}
+                          onChange={() => toggleSelect('connector', c.id)}
+                          style={s.itemCheckbox}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      )}
                       <Link to={`/connectors?edit=${c.id}`} style={s.itemLink}>
                         <Database size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                         <div style={{ flex: 1, minWidth: 0 }}>
@@ -764,7 +1012,19 @@ export function HomePage() {
                 <div style={s.sectionLabel}>Dashboards</div>
                 <div style={s.list}>
                   {searchDashboards.map((d) => (
-                    <div key={d.id} style={s.item}>
+                    <div key={d.id} style={{
+                      ...s.item,
+                      ...(isSelected('dashboard', d.id) ? { borderColor: 'var(--accent)', background: 'var(--accent-light)' } : {}),
+                    }}>
+                      {selectionMode && (
+                        <input
+                          type="checkbox"
+                          checked={isSelected('dashboard', d.id)}
+                          onChange={() => toggleSelect('dashboard', d.id)}
+                          style={s.itemCheckbox}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      )}
                       <Link to={`/dashboards/${d.id}`} style={s.itemLink}>
                         <LayoutDashboard size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                         <div style={{ flex: 1, minWidth: 0 }}>
@@ -805,6 +1065,18 @@ export function HomePage() {
                 target={moving}
                 onConfirm={handleMoveConfirm}
                 onClose={() => setMoving(null)}
+              />
+            )}
+
+            {/* Bulk move modal */}
+            {bulkMoving && (
+              <BulkMoveModal
+                count={selected.size}
+                onConfirm={(destFolderID) => {
+                  bulkMove.mutate(destFolderID)
+                  setBulkMoving(false)
+                }}
+                onClose={() => setBulkMoving(false)}
               />
             )}
 
@@ -852,6 +1124,62 @@ const s: Record<string, React.CSSProperties> = {
   renameInput: { width: '100%', padding: '5px 8px', border: '1px solid var(--accent)', borderRadius: 3, fontSize: 13, outline: 'none' },
   searchInput: { width: '100%', maxWidth: 320, padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, outline: 'none', background: 'var(--bg-input)', color: 'var(--text-primary)' },
   recentChip: { display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' },
+  bulkToolbar: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    padding: '10px 16px',
+    background: 'var(--accent-light)',
+    border: '1px solid var(--accent)',
+    borderRadius: 4,
+    marginBottom: 16,
+  },
+  bulkCheckLabel: {
+    display: 'flex',
+    alignItems: 'center',
+    cursor: 'pointer',
+  },
+  bulkCount: {
+    fontSize: 13,
+    fontWeight: 600,
+    color: 'var(--text-primary)',
+  },
+  bulkBtn: {
+    padding: '5px 14px',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    background: 'var(--bg-card)',
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: 'pointer',
+    color: 'var(--text-primary)',
+  },
+  bulkCancelBtn: {
+    padding: '5px 14px',
+    border: 'none',
+    borderRadius: 4,
+    background: 'none',
+    fontSize: 12,
+    cursor: 'pointer',
+    color: 'var(--text-muted)',
+  },
+  selectBtn: {
+    padding: '5px 12px',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    background: 'none',
+    fontSize: 12,
+    fontWeight: 500,
+    cursor: 'pointer',
+    color: 'var(--text-secondary)',
+    marginBottom: 12,
+  },
+  itemCheckbox: {
+    marginRight: 8,
+    cursor: 'pointer',
+    flexShrink: 0,
+    accentColor: 'var(--accent)',
+  },
 }
 
 // ─── Context menu + modal styles ─────────────────────────────────────────────
