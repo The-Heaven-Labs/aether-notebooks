@@ -26,10 +26,11 @@ export function AppShell({ children, noPadding }: Props) {
 
   return (
     <div style={styles.root}>
+      <a href="#main-content" className="skip-link">Skip to content</a>
       <TopBar onShowShortcuts={() => setShowShortcuts(true)} />
       <div style={styles.body}>
         <Sidebar />
-        <main style={{ ...styles.main, background: 'var(--bg-primary)', ...(noPadding ? { padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' } : {}) }}>{children}</main>
+        <main id="main-content" style={{ ...styles.main, background: 'var(--bg-primary)', ...(noPadding ? { padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' } : {}) }}>{children}</main>
       </div>
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
     </div>
