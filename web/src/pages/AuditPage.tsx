@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, ChevronUp, Copy, Check } from 'lucide-react'
+import { ChevronDown, ChevronUp } from 'lucide-react'
 import { api } from '../api/client'
 import type { AuditEntry } from '../types'
 import { AppShell } from '../components/AppShell'
@@ -8,26 +8,17 @@ import { EmptyState } from '../components/EmptyState'
 import { SectionHeader } from '../components/SectionHeader'
 import { StyledTable } from '../components/StyledTable'
 import { ErrorBanner } from '../components/ErrorBanner'
+import { Pagination } from '../components/Pagination'
 
 const PAGE_SIZE = 50
 
 export function AuditPage() {
   useEffect(() => { document.title = "Audit — Heaven's Notebooks" }, [])
-  const [offset, setOffset] = useState(0)
-  const [entries, setEntries] = useState<AuditEntry[]>([])
+  const [page, setPage] = useState(0)
   const [actionFilter, setActionFilter] = useState('')
   const [resourceTypeFilter, setResourceTypeFilter] = useState('')
-  const [hasMore, setHasMore] = useState(true)
   const [sortCol, setSortCol] = useState<'created_at' | 'action' | 'resource_type' | ''>('')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
-  const [copiedId, setCopiedId] = useState<string | null>(null)
-
-  const handleCopyId = (id: string) => {
-    navigator.clipboard.writeText(id).then(() => {
-      setCopiedId(id)
-      setTimeout(() => setCopiedId(null), 2000)
-    })
-  }
 
   function handleSort(col: 'created_at' | 'action' | 'resource_type') {
     if (sortCol === col) {
@@ -38,34 +29,25 @@ export function AuditPage() {
     }
   }
 
-  useEffect(() => { setOffset(0); setEntries([]) }, [resourceTypeFilter, actionFilter])
+  useEffect(() => { setPage(0) }, [resourceTypeFilter, actionFilter])
 
-  const { data: page, isFetching, isLoading, error } = useQuery({
-    queryKey: ['audit', offset, resourceTypeFilter, actionFilter],
+  const { data, isFetching, isLoading, error } = useQuery({
+    queryKey: ['audit', page, resourceTypeFilter, actionFilter],
     queryFn: () => {
       const params = new URLSearchParams({
         limit: String(PAGE_SIZE),
-        offset: String(offset),
+        offset: String(page * PAGE_SIZE),
       })
       if (resourceTypeFilter) params.set('resource_type', resourceTypeFilter)
       if (actionFilter.trim()) params.set('action', actionFilter.trim())
-      return api.get<AuditEntry[]>(`/api/v1/audit?${params}`)
+      return api.get<{ entries: AuditEntry[]; total: number }>(`/api/v1/audit?${params}`)
     },
   })
 
-  useEffect(() => {
-    if (!page) return
-    if (offset === 0) {
-      setEntries(page)
-    } else {
-      setEntries((prev) => [...prev, ...page])
-    }
-    setHasMore(page.length === PAGE_SIZE)
-  }, [page, offset])
+  const entries = data?.entries ?? []
+  const totalCount = data?.total ?? 0
 
-  const filtered = entries
-
-  const sorted = [...filtered].sort((a, b) => {
+  const displayEntries = [...entries].sort((a, b) => {
     if (!sortCol) return 0
     let cmp = 0
     if (sortCol === 'created_at') cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
@@ -74,14 +56,10 @@ export function AuditPage() {
     return sortDir === 'asc' ? cmp : -cmp
   })
 
-  function handleLoadMore() {
-    setOffset((prev) => prev + PAGE_SIZE)
-  }
-
   return (
     <AppShell>
         <div style={styles.content}>
-          <SectionHeader title="Audit Log" subtitle={`${filtered.length} entr${filtered.length !== 1 ? 'ies' : 'y'} loaded`}>
+          <SectionHeader title="Audit Log" subtitle={`${totalCount.toLocaleString()} entr${totalCount !== 1 ? 'ies' : 'y'} total`}>
             <select
               style={{ ...styles.filterInput, maxWidth: 160, cursor: 'pointer' }}
               value={resourceTypeFilter}
@@ -108,7 +86,7 @@ export function AuditPage() {
             <div style={styles.state}>
               <p style={styles.stateText}>Loading audit log…</p>
             </div>
-          ) : filtered.length === 0 ? (
+          ) : entries.length === 0 ? (
             <EmptyState
               icon={<span>▦</span>}
               title="No entries found"
@@ -125,23 +103,19 @@ export function AuditPage() {
               ]}
               thStyle={{ fontSize: 12, background: 'var(--bg-primary)', letterSpacing: 'normal', borderBottom: '1px solid var(--border)' }}
             >
-              {sorted.map((entry) => (
-                <AuditRow key={entry.id} entry={entry} copiedId={copiedId} onCopy={handleCopyId} />
+              {displayEntries.map((entry) => (
+                <AuditRow key={entry.id} entry={entry} />
               ))}
             </StyledTable>
           )}
 
-          {!isLoading && hasMore && !actionFilter && !resourceTypeFilter && (
-            <div style={styles.loadMoreWrap}>
-              <button
-                type="button"
-                style={styles.loadMoreBtn}
-                onClick={handleLoadMore}
-                disabled={isFetching}
-              >
-                {isFetching ? 'Loading…' : 'Load more'}
-              </button>
-            </div>
+          {!isLoading && totalCount > PAGE_SIZE && (
+            <Pagination
+              page={page}
+              pageSize={PAGE_SIZE}
+              total={totalCount}
+              onPageChange={setPage}
+            />
           )}
         </div>
     </AppShell>
@@ -152,20 +126,19 @@ function truncateId(id: string) {
   return id.length > 8 ? `${id.slice(0, 8)}…` : id
 }
 
-function ResourceCell({ entry, copiedId, onCopy }: { entry: AuditEntry; copiedId: string | null; onCopy: (id: string) => void }) {
+function ResourceCell({ entry }: { entry: AuditEntry }) {
   const { resource_type, resource_id, resource_name, resource_parent_name } = entry
-  const isCopied = resource_id ? copiedId === resource_id : false
 
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (resource_id) onCopy(resource_id)
+    if (resource_id) navigator.clipboard.writeText(resource_id)
   }
 
   if (resource_type === 'cell') {
     const parent = resource_parent_name || null
     const id = resource_id ? truncateId(resource_id) : null
     if (parent && id) {
-      return <span>{parent} <span style={styles.resourceSub} title={isCopied ? 'Copied!' : resource_id} onClick={handleCopy} className="cursor-pointer">› {id} {isCopied ? <Check size={11} style={{ color: 'var(--success, #10b981)', verticalAlign: 'middle' }} /> : <Copy size={11} style={styles.copyIcon} />}</span></span>
+      return <span>{parent} <span style={styles.resourceSub} title={resource_id} onClick={handleCopy} className="cursor-pointer">› {id}</span></span>
     }
     if (parent) return <span>{parent}</span>
     return <span style={styles.mono}>{id || '—'}</span>
@@ -176,19 +149,18 @@ function ResourceCell({ entry, copiedId, onCopy }: { entry: AuditEntry; copiedId
       {resource_name && <span>{resource_name}</span>}
       {resource_id && (
         <span
-          style={{ ...(resource_name ? styles.resourceSub : styles.mono), cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3 }}
-          title={isCopied ? 'Copied!' : `Click to copy: ${resource_id}`}
+          style={{ ...(resource_name ? styles.resourceSub : styles.mono), cursor: 'pointer' }}
+          title={`Click to copy: ${resource_id}`}
           onClick={handleCopy}
         >
           {truncateId(resource_id)}
-          {isCopied ? <Check size={11} style={{ color: 'var(--success, #10b981)' }} /> : <Copy size={11} style={styles.copyIcon} />}
         </span>
       )}
     </span>
   )
 }
 
-function AuditRow({ entry, copiedId, onCopy }: { entry: AuditEntry; copiedId: string | null; onCopy: (id: string) => void }) {
+function AuditRow({ entry }: { entry: AuditEntry }) {
   const ts = new Date(entry.created_at)
   const dateStr = ts.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
   const timeStr = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short' })
@@ -205,8 +177,8 @@ function AuditRow({ entry, copiedId, onCopy }: { entry: AuditEntry; copiedId: st
       <td style={styles.td}>
         <span style={styles.mono}>{entry.resource_type || '—'}</span>
       </td>
-      <td style={styles.td}>
-        <ResourceCell entry={entry} copiedId={copiedId} onCopy={onCopy} />
+      <td style={styles.td} title={entry.resource_id}>
+        <ResourceCell entry={entry} />
       </td>
       <td style={styles.td} title={entry.user_id}>
         <span>{entry.user_email || entry.user_id || '—'}</span>
@@ -313,36 +285,5 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'monospace',
     fontSize: 11,
     color: 'var(--text-muted)',
-  },
-  loadMoreWrap: {
-    marginTop: 20,
-    display: 'flex',
-    justifyContent: 'center',
-  },
-  loadMoreBtn: {
-    padding: '9px 28px',
-    background: 'var(--bg-card)',
-    border: '1.5px solid var(--border)',
-    borderRadius: 4,
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: 'pointer',
-    color: 'var(--text-primary)',
-    transition: 'border-color 0.15s',
-  },
-  copyBtn: {
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    padding: '2px',
-    verticalAlign: 'middle',
-    opacity: 0.5,
-    display: 'inline-flex',
-    alignItems: 'center',
-    color: 'var(--text-muted)',
-  },
-  copyIcon: {
-    opacity: 0.4,
-    verticalAlign: 'middle',
   },
 }
