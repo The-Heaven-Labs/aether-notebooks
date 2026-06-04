@@ -96,8 +96,7 @@ export function DashboardsPage() {
         ) : dashboards.length === 0 ? (
           <EmptyState
             title="No dashboards yet"
-            text="Create a dashboard to display notebook cell outputs in a shared view."
-            action={{ label: '+ New Dashboard', onClick: () => setCreating(true) }}
+            text="Use the button above to create a dashboard and display notebook cell outputs in a shared view."
           />
         ) : (
           <div style={layout === 'grid' ? styles.grid : styles.list}>
