@@ -21,6 +21,7 @@ import { AgentsPage } from './pages/AgentsPage'
 import { ModelsPage } from './pages/ModelsPage'
 import { SkillsPage } from './pages/SkillsPage'
 import { MCPPage } from './pages/MCPPage'
+import { JoinPage } from './pages/JoinPage'
 import './styles/theme.css'
 
 const queryClient = new QueryClient({
@@ -38,6 +39,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/join" element={<JoinPage />} />
       <Route path="/" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
       <Route
         path="/notebooks/:id"
