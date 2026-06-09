@@ -12,7 +12,7 @@ import { SectionHeader } from '../components/SectionHeader'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { EmptyState } from '../components/EmptyState'
 
-type ConnectorType = 'postgres' | 'clickhouse'
+type ConnectorType = 'postgres' | 'clickhouse' | 'opensearch'
 
 interface ConnectorForm {
   name: string
@@ -23,12 +23,14 @@ interface ConnectorForm {
   user: string
   password: string
   ssl_mode: string
+  use_tls: boolean
   is_default: boolean
 }
 
 const defaultForm = (): ConnectorForm => ({
   name: '', type: 'postgres', host: 'localhost', port: '5432',
-  database: '', user: '', password: '', ssl_mode: 'disable', is_default: false,
+  database: '', user: '', password: '', ssl_mode: 'disable',
+  use_tls: false, is_default: false,
 })
 
 export function ConnectorsPage() {
@@ -68,6 +70,7 @@ export function ConnectorsPage() {
           user: c.config?.user ?? '',
           password: '',
           ssl_mode: c.config?.ssl_mode ?? 'disable',
+          use_tls: c.config?.use_tls ?? false,
           is_default: c.is_default ?? false,
         })
         setSearchParams({})
@@ -85,6 +88,7 @@ export function ConnectorsPage() {
         user: editForm.user,
         ...(editForm.password !== '' ? { password: editForm.password } : {}),
         ssl_mode: editForm.ssl_mode,
+        ...(editForm.type === 'opensearch' ? { use_tls: editForm.use_tls } : {}),
       },
       ...(editForm.is_default ? { is_default: true } : {}),
     }),
@@ -109,6 +113,7 @@ export function ConnectorsPage() {
         user: form.user,
         password: form.password,
         ssl_mode: form.ssl_mode,
+        ...(form.type === 'opensearch' ? { use_tls: form.use_tls } : {}),
       },
     }),
     onSuccess: (connector) => {
@@ -190,10 +195,11 @@ export function ConnectorsPage() {
               <label style={styles.label}>Type
                 <select style={styles.input} value={form.type} onChange={(e) => setForm((f) => ({
                   ...f, type: e.target.value as ConnectorType,
-                  port: e.target.value === 'clickhouse' ? '9000' : '5432',
+                  port: e.target.value === 'clickhouse' ? '9000' : e.target.value === 'opensearch' ? '9200' : '5432',
                 }))}>
                   <option value="postgres">PostgreSQL</option>
                   <option value="clickhouse">ClickHouse</option>
+                  <option value="opensearch">OpenSearch</option>
                 </select>
               </label>
               <label style={styles.label}>Host
@@ -202,22 +208,33 @@ export function ConnectorsPage() {
               <label style={styles.label}>Port
                 <input style={styles.input} type="number" min={1} max={65535} value={form.port} onChange={setField('port')} />
               </label>
-              <label style={styles.label}>Database
-                <input style={styles.input} value={form.database} onChange={setField('database')} />
-              </label>
+              {(form.type === 'postgres' || form.type === 'clickhouse') && (
+                <label style={styles.label}>Database
+                  <input style={styles.input} value={form.database} onChange={setField('database')} />
+                </label>
+              )}
               <label style={styles.label}>User
                 <input style={styles.input} value={form.user} onChange={setField('user')} />
               </label>
               <label style={styles.label}>Password
                 <input style={styles.input} type="password" value={form.password} onChange={setField('password')} />
               </label>
-              <label style={styles.label}>SSL Mode
-                <select style={styles.input} value={form.ssl_mode} onChange={setField('ssl_mode')}>
-                  <option value="disable">disable</option>
-                  <option value="require">require</option>
-                  <option value="verify-full">verify-full</option>
-                </select>
-              </label>
+              {form.type === 'opensearch' && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
+                  <input type="checkbox" checked={form.use_tls}
+                    onChange={e => setForm(f => ({ ...f, use_tls: e.target.checked }))} />
+                  Use TLS (HTTPS)
+                </label>
+              )}
+              {(form.type === 'postgres' || form.type === 'clickhouse') && (
+                <label style={styles.label}>SSL Mode
+                  <select style={styles.input} value={form.ssl_mode} onChange={setField('ssl_mode')}>
+                    <option value="disable">disable</option>
+                    <option value="require">require</option>
+                    <option value="verify-full">verify-full</option>
+                  </select>
+                </label>
+              )}
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)', gridColumn: '1 / -1' }}>
                 <input type="checkbox" checked={form.is_default ?? false}
                   onChange={e => setForm(f => ({ ...f, is_default: e.target.checked }))} />
@@ -229,7 +246,7 @@ export function ConnectorsPage() {
                 type="button"
                 style={styles.testBtn}
                 onClick={testFormConnection}
-                disabled={!form.host || !form.database || formTesting}
+                disabled={!form.host || (form.type !== 'opensearch' && !form.database) || formTesting}
               >
                 {formTesting ? 'Testing…' : 'Test Connection'}
               </button>
@@ -246,7 +263,7 @@ export function ConnectorsPage() {
                 type="button"
                 style={styles.saveBtn}
                 onClick={() => createConnector.mutate()}
-                disabled={!form.name || !form.host || !form.database || createConnector.isPending}
+                disabled={!form.name || !form.host || (form.type !== 'opensearch' && !form.database) || createConnector.isPending}
               >
                 {createConnector.isPending ? 'Creating…' : 'Create'}
               </button>
@@ -264,10 +281,11 @@ export function ConnectorsPage() {
               <label style={styles.label}>Type
                 <select style={styles.input} value={editForm.type} onChange={(e) => setEditForm((f) => ({
                   ...f, type: e.target.value as ConnectorType,
-                  port: e.target.value === 'clickhouse' ? '9000' : '5432',
+                  port: e.target.value === 'clickhouse' ? '9000' : e.target.value === 'opensearch' ? '9200' : '5432',
                 }))}>
                   <option value="postgres">PostgreSQL</option>
                   <option value="clickhouse">ClickHouse</option>
+                  <option value="opensearch">OpenSearch</option>
                 </select>
               </label>
               <label style={styles.label}>Host
@@ -276,22 +294,33 @@ export function ConnectorsPage() {
               <label style={styles.label}>Port
                 <input style={styles.input} type="number" min={1} max={65535} value={editForm.port} onChange={(e) => setEditForm(f => ({ ...f, port: e.target.value }))} />
               </label>
-              <label style={styles.label}>Database
-                <input style={styles.input} value={editForm.database} onChange={(e) => setEditForm(f => ({ ...f, database: e.target.value }))} />
-              </label>
+              {(editForm.type === 'postgres' || editForm.type === 'clickhouse') && (
+                <label style={styles.label}>Database
+                  <input style={styles.input} value={editForm.database} onChange={(e) => setEditForm(f => ({ ...f, database: e.target.value }))} />
+                </label>
+              )}
               <label style={styles.label}>User
                 <input style={styles.input} value={editForm.user} onChange={(e) => setEditForm(f => ({ ...f, user: e.target.value }))} />
               </label>
               <label style={styles.label}>Password <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(leave blank to keep current)</span>
                 <input style={styles.input} type="password" value={editForm.password} onChange={(e) => setEditForm(f => ({ ...f, password: e.target.value }))} />
               </label>
-              <label style={styles.label}>SSL Mode
-                <select style={styles.input} value={editForm.ssl_mode} onChange={(e) => setEditForm(f => ({ ...f, ssl_mode: e.target.value }))}>
-                  <option value="disable">disable</option>
-                  <option value="require">require</option>
-                  <option value="verify-full">verify-full</option>
-                </select>
-              </label>
+              {editForm.type === 'opensearch' && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
+                  <input type="checkbox" checked={editForm.use_tls}
+                    onChange={e => setEditForm(f => ({ ...f, use_tls: e.target.checked }))} />
+                  Use TLS (HTTPS)
+                </label>
+              )}
+              {(editForm.type === 'postgres' || editForm.type === 'clickhouse') && (
+                <label style={styles.label}>SSL Mode
+                  <select style={styles.input} value={editForm.ssl_mode} onChange={(e) => setEditForm(f => ({ ...f, ssl_mode: e.target.value }))}>
+                    <option value="disable">disable</option>
+                    <option value="require">require</option>
+                    <option value="verify-full">verify-full</option>
+                  </select>
+                </label>
+              )}
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)', gridColumn: '1 / -1' }}>
                 <input type="checkbox" checked={editForm.is_default ?? false}
                   onChange={e => setEditForm(f => ({ ...f, is_default: e.target.checked }))} />
@@ -305,7 +334,7 @@ export function ConnectorsPage() {
                 type="button"
                 style={styles.saveBtn}
                 onClick={() => updateConnector.mutate(editing!)}
-                disabled={!editForm.name || !editForm.host || !editForm.database || updateConnector.isPending}
+                disabled={!editForm.name || !editForm.host || (editForm.type !== 'opensearch' && !editForm.database) || updateConnector.isPending}
               >
                 {updateConnector.isPending ? 'Saving…' : 'Save'}
               </button>
@@ -396,6 +425,7 @@ export function ConnectorsPage() {
                         user: c.config?.user ?? '',
                         password: '',
                         ssl_mode: c.config?.ssl_mode ?? 'disable',
+                        use_tls: c.config?.use_tls ?? false,
                         is_default: c.is_default ?? false,
                       })
                     }}>Edit</button>

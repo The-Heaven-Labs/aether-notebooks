@@ -81,6 +81,7 @@ export interface Connector {
     database?: string
     user?: string
     ssl_mode?: string
+    use_tls?: boolean
   }
 }
 
