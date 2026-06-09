@@ -69,6 +69,30 @@ func TestApplyLimit(t *testing.T) {
 			limit: 5,
 			want:  "SELECT country, SUM(revenue)\nFROM analytics.events\nGROUP BY country\nORDER BY total_revenue DESC LIMIT 5",
 		},
+		{
+			name:  "SHOW TABLES not modified",
+			query: "SHOW TABLES LIKE %",
+			limit: 1000,
+			want:  "SHOW TABLES LIKE %",
+		},
+		{
+			name:  "SHOW TABLES lowercase not modified",
+			query: "show tables like %",
+			limit: 1000,
+			want:  "show tables like %",
+		},
+		{
+			name:  "DESCRIBE not modified",
+			query: "DESCRIBE ecommerce",
+			limit: 1000,
+			want:  "DESCRIBE ecommerce",
+		},
+		{
+			name:  "describe lowercase not modified",
+			query: "describe logs",
+			limit: 500,
+			want:  "describe logs",
+		},
 	}
 
 	for _, tt := range tests {
