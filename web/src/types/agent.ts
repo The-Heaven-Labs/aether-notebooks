@@ -10,6 +10,7 @@ export interface Agent {
   mcp_server_ids: string[]
   mcp_servers: MCPServerOrg[]
   folder_id?: string
+  max_turns?: number
   created_by: string
   created_at: string
   updated_at: string
