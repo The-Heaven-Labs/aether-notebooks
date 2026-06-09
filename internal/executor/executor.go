@@ -43,12 +43,19 @@ type ColumnInfo struct {
 // ApplyLimit appends a LIMIT clause to the query if limit > 0 and the query
 // does not already contain LIMIT. It trims trailing whitespace and semicolons
 // before appending to avoid producing invalid SQL like "SELECT 1;\n LIMIT 1000".
+// Metadata commands (SHOW, DESCRIBE) are not modified as they don't support LIMIT.
 func ApplyLimit(query string, limit int) string {
 	if limit <= 0 {
 		return query
 	}
-	if strings.Contains(strings.ToUpper(query), "LIMIT") {
+	trimmed := strings.TrimSpace(query)
+	upper := strings.ToUpper(trimmed)
+	// Skip metadata commands that don't support LIMIT
+	if strings.HasPrefix(upper, "SHOW ") || strings.HasPrefix(upper, "DESCRIBE ") {
 		return query
 	}
-	return strings.TrimRight(strings.TrimSpace(query), ";") + " LIMIT " + strconv.Itoa(limit)
+	if strings.Contains(upper, "LIMIT") {
+		return query
+	}
+	return strings.TrimRight(trimmed, ";") + " LIMIT " + strconv.Itoa(limit)
 }
