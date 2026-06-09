@@ -180,27 +180,51 @@ func (e *OpenSearchExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
 			continue
 		}
 
-		// Describe each index - index name must be quoted
-		descRS, err := e.Execute(ctx, fmt.Sprintf("DESCRIBE '%s'", indexName), nil, 10000)
+		// Describe each index - use DESCRIBE TABLES LIKE syntax (required by OpenSearch 2.x SQL plugin)
+		descRS, err := e.Execute(ctx, fmt.Sprintf("DESCRIBE TABLES LIKE '%s'", indexName), nil, 10000)
 		if err != nil {
 			continue // skip indices that fail to describe
 		}
 
-		columns := make([]ColumnInfo, len(descRS.Rows))
-		for i, dRow := range descRS.Rows {
+		// DESCRIBE returns JDBC-style metadata columns. Use the response schema
+		// to find the correct indices for COLUMN_NAME and TYPE_NAME rather than
+		// hardcoding positions (which vary across OpenSearch versions).
+		colNameIdx := -1
+		colTypeIdx := -1
+		for i, col := range descRS.Columns {
+			switch strings.ToUpper(col.Name) {
+			case "COLUMN_NAME":
+				colNameIdx = i
+			case "TYPE_NAME":
+				colTypeIdx = i
+			}
+		}
+		// Fallback to common positions if schema lookup fails
+		if colNameIdx == -1 {
+			colNameIdx = 3 // COLUMN_NAME is typically at index 3
+		}
+		if colTypeIdx == -1 {
+			colTypeIdx = 5 // TYPE_NAME is typically at index 5
+		}
+
+		var columns []ColumnInfo
+		for _, dRow := range descRS.Rows {
 			colName := ""
 			colType := ""
-			if len(dRow) > 0 {
-				if s, ok := dRow[0].(string); ok {
+			if colNameIdx < len(dRow) {
+				if s, ok := dRow[colNameIdx].(string); ok {
 					colName = s
 				}
 			}
-			if len(dRow) > 1 {
-				if s, ok := dRow[1].(string); ok {
+			if colTypeIdx < len(dRow) {
+				if s, ok := dRow[colTypeIdx].(string); ok {
 					colType = s
 				}
 			}
-			columns[i] = ColumnInfo{Name: colName, Type: colType}
+			if colName == "" {
+				continue // skip rows without a column name
+			}
+			columns = append(columns, ColumnInfo{Name: colName, Type: colType})
 		}
 
 		tables = append(tables, TableInfo{

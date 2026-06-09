@@ -181,29 +181,44 @@ func TestOpenSearchExecutor_Schema(t *testing.T) {
 				Size:   3,
 				Status: 200,
 			}
-		} else if req.Query == "DESCRIBE 'logs'" {
+		} else if req.Query == "DESCRIBE TABLES LIKE 'logs'" {
+			// DESCRIBE returns JDBC-style metadata columns
 			resp = sqlResponse{
 				Schema: []sqlColumn{
-					{Name: "col_name", Type: "keyword"},
-					{Name: "col_type", Type: "keyword"},
+					{Name: "TABLE_CAT", Type: "keyword"},
+					{Name: "TABLE_SCHEM", Type: "keyword"},
+					{Name: "TABLE_NAME", Type: "keyword"},
+					{Name: "COLUMN_NAME", Type: "keyword"},
+					{Name: "DATA_TYPE", Type: "integer"},
+					{Name: "TYPE_NAME", Type: "keyword"},
+					{Name: "COLUMN_SIZE", Type: "integer"},
+					{Name: "NULLABLE", Type: "integer"},
+					{Name: "IS_NULLABLE", Type: "keyword"},
 				},
 				DataRows: [][]interface{}{
-					{"timestamp", "date"},
-					{"message", "text"},
+					{"docker-cluster", "", "logs", "timestamp", 93, "date", 0, 1, "YES"},
+					{"docker-cluster", "", "logs", "message", 12, "text", 0, 1, "YES"},
 				},
 				Total:  2,
 				Size:   2,
 				Status: 200,
 			}
-		} else if req.Query == "DESCRIBE 'metrics'" {
+		} else if req.Query == "DESCRIBE TABLES LIKE 'metrics'" {
 			resp = sqlResponse{
 				Schema: []sqlColumn{
-					{Name: "col_name", Type: "keyword"},
-					{Name: "col_type", Type: "keyword"},
+					{Name: "TABLE_CAT", Type: "keyword"},
+					{Name: "TABLE_SCHEM", Type: "keyword"},
+					{Name: "TABLE_NAME", Type: "keyword"},
+					{Name: "COLUMN_NAME", Type: "keyword"},
+					{Name: "DATA_TYPE", Type: "integer"},
+					{Name: "TYPE_NAME", Type: "keyword"},
+					{Name: "COLUMN_SIZE", Type: "integer"},
+					{Name: "NULLABLE", Type: "integer"},
+					{Name: "IS_NULLABLE", Type: "keyword"},
 				},
 				DataRows: [][]interface{}{
-					{"cpu", "float"},
-					{"memory", "long"},
+					{"docker-cluster", "", "metrics", "cpu", 6, "float", 0, 1, "YES"},
+					{"docker-cluster", "", "metrics", "memory", 15, "long", 0, 1, "YES"},
 				},
 				Total:  2,
 				Size:   2,
