@@ -20,6 +20,10 @@ type clickhouseConfig struct {
 // ClickHouseDriver implements ConnectorDriver for ClickHouse.
 type ClickHouseDriver struct{}
 
+func init() {
+	RegisterDriver(&ClickHouseDriver{})
+}
+
 func (d *ClickHouseDriver) Type() models.ConnectorType {
 	return models.ConnectorClickHouse
 }
