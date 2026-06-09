@@ -68,7 +68,7 @@ export function MembersPage() {
   })
 
   const generateInviteLink = useMutation({
-    mutationFn: () => api.post<{ token: string; url: string }>('/api/v1/organizations/invite-link', { role: linkRole }),
+    mutationFn: () => api.post<{ token: string; url: string }>('/api/v1/members/invite-link', { role: linkRole }),
     onSuccess: (data) => {
       setGeneratedLink(data.url)
       setLinkError(null)
