@@ -150,11 +150,6 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to decrypt connector config")
 		return
 	}
-	var cfg models.ConnectorConfig
-	if err := json.Unmarshal(plain, &cfg); err != nil {
-		writeError(w, http.StatusInternalServerError, "invalid connector config")
-		return
-	}
 
 	// Apply cell parameter defaults for any keys not already set at runtime
 	var cellParams []models.Parameter
@@ -166,16 +161,12 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build executor
-	var exec executor.Executor
-	switch connType {
-	case models.ConnectorPostgres:
-		exec, err = executor.NewPostgresExecutor(cfg)
-	case models.ConnectorClickHouse:
-		exec, err = executor.NewClickHouseExecutor(cfg)
-	default:
+	driver, ok := executor.GetDriver(connType)
+	if !ok {
 		writeError(w, http.StatusBadRequest, "unsupported connector type")
 		return
 	}
+	exec, err := driver.NewExecutor(plain)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "failed to connect to database")
 		return
