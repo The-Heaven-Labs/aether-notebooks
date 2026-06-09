@@ -1,14 +1,14 @@
 import { useState, useEffect } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Home, LayoutDashboard, Database, Users, UsersRound, ClipboardList, ChevronLeft, ChevronRight, Bot, Brain, Wrench, Puzzle, X } from 'lucide-react'
+import { Home, LayoutDashboard, Database, Users, UserCircle, ClipboardList, ChevronLeft, ChevronRight, Bot, Brain, Wrench, Puzzle, X } from 'lucide-react'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 
 const NAV_ITEMS = [
   { to: '/',           title: 'Files',       icon: <Home size={16} /> },
   { to: '/dashboards', title: 'Dashboards',  icon: <LayoutDashboard size={16} /> },
   { to: '/connectors', title: 'Connectors',  icon: <Database size={16} /> },
-  { to: '/members',    title: 'Members',     icon: <Users size={16} /> },
-  { to: '/groups',     title: 'Groups',      icon: <UsersRound size={16} /> },
+  { to: '/members',    title: 'Members',     icon: <UserCircle size={16} /> },
+  { to: '/groups',     title: 'Groups',      icon: <Users size={16} /> },
   { to: '/audit',      title: 'Audit',       icon: <ClipboardList size={16} /> },
 ]
 

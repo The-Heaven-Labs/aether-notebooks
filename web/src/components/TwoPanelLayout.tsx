@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { ChevronLeft, Menu } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Menu } from 'lucide-react'
 
 interface TwoPanelLayoutProps {
   leftPanel: React.ReactNode
@@ -49,7 +49,7 @@ export function TwoPanelLayout({ leftPanel, rightPanel, leftWidth = 240 }: TwoPa
         <button
           style={{
             position: 'fixed',
-            left: 240,
+            left: collapsed ? 8 : 240,
             top: '50%',
             transform: 'translateY(-50%)',
             background: 'var(--bg-secondary)',
@@ -61,9 +61,9 @@ export function TwoPanelLayout({ leftPanel, rightPanel, leftWidth = 240 }: TwoPa
             display: 'flex',
           }}
           onClick={toggle}
-          title="Collapse folder tree"
+          title={collapsed ? 'Expand folder tree' : 'Collapse folder tree'}
         >
-          <ChevronLeft size={14} />
+          {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
         </button>
       )}
 
