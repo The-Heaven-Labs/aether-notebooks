@@ -437,5 +437,17 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "schema fetch failed")
 		return
 	}
+
+	// Filter by database if specified
+	if db := r.URL.Query().Get("database"); db != "" {
+		var filtered []executor.TableInfo
+		for _, t := range schema.Tables {
+			if t.Schema == db || t.Name == db {
+				filtered = append(filtered, t)
+			}
+		}
+		schema.Tables = filtered
+	}
+
 	writeJSON(w, http.StatusOK, schema)
 }
