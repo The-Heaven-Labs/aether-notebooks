@@ -143,6 +143,7 @@ export function NotebookPage() {
 
   const [cellRunAt, setCellRunAt] = useState<Record<string, Date>>({})
   const [focusedCellId, setFocusedCellId] = useState<string | null>(null)
+  const [allCollapsed, setAllCollapsed] = useState(false)
   // isEditingCell is intentionally a plain boolean (not useState) — the
   // useNotebookKeyboardShortcuts hook already guards against CodeMirror editors
   // via isContentEditable checks, so no reactive state is needed here.
@@ -265,6 +266,10 @@ export function NotebookPage() {
       qc.setQueryData<NotebookWithCells>(['notebook', id], (old) =>
         old ? { ...old, cells: [...(old.cells ?? []), withConnector].sort((a, b) => a.position - b.position) } : old
       )
+      setTimeout(() => {
+        const el = document.getElementById('cell-' + cell.id)
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 100)
     },
     onError: (err: Error) => setMutationError(err.message),
   })
@@ -497,6 +502,22 @@ export function NotebookPage() {
     }
   }, [localCells, saveAndRun])
 
+  const toggleCollapseAll = useCallback(async () => {
+    const newCollapsed = !allCollapsed
+    setAllCollapsed(newCollapsed)
+    for (const cell of localCells) {
+      await api.put(`/api/v1/notebooks/${id}/cells/${cell.id}`, {
+        source_visible: !newCollapsed,
+        cell_collapsed: newCollapsed,
+      })
+    }
+    setLocalCells(prev => prev.map(c => ({
+      ...c,
+      source_visible: !newCollapsed,
+      cell_collapsed: newCollapsed,
+    })))
+  }, [allCollapsed, localCells, id])
+
   useNotebookKeyboardShortcuts(
     {
       runFocusedCell: () => { if (focusedCellId) saveAndRun(focusedCellId) },
@@ -708,6 +729,13 @@ export function NotebookPage() {
             onClick={() => window.open(`/notebooks/${id}/present`, '_blank')}
           >
             Present
+          </button>
+          <button
+            type="button"
+            style={styles.schemaBtn}
+            onClick={toggleCollapseAll}
+          >
+            {allCollapsed ? 'Show All' : 'Collapse All'}
           </button>
           <button type="button" style={styles.runAllBtn} onClick={runAll} disabled={runningCount > 0}>
             <ChevronsRight size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />Run All
@@ -1087,7 +1115,7 @@ const styles: Record<string, React.CSSProperties> = {
   cellsArea: {
     flex: 1,
     overflowY: 'auto',
-    padding: '32px 0 64px',
+    padding: '32px 0 80px',
   },
   bodyInner: {
     maxWidth: 1200,
