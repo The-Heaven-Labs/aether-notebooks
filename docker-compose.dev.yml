@@ -61,6 +61,23 @@ services:
       timeout: 5s
       retries: 20
 
+  hnb-opensearch:
+    image: opensearchproject/opensearch:2.19.0
+    environment:
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true
+      - plugins.sql.enabled=true
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - osdata:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
   # ── CloudTrail log loader (one-shot, runs on first startup) ────────────
 
   cloudtrail-loader:
@@ -83,6 +100,15 @@ services:
     entrypoint: ["python3", "/app/load-cloudtrail.py"]
     # Service exits after loading; use `docker compose up cloudtrail-loader`
     # to re-run if you change MAX_FILES or reset the ClickHouse volume.
+
+  opensearch-loader:
+    image: alpine:3.20
+    depends_on:
+      hnb-opensearch:
+        condition: service_healthy
+    volumes:
+      - ./dev/opensearch-seed.sh:/seed.sh:ro
+    entrypoint: ["sh", "/seed.sh"]
 
   # ── API server (Go + Air hot-reload) ─────────────────────────────────────
 
@@ -173,6 +199,7 @@ services:
 volumes:
   pgdata:
   chdata:
+  osdata:
   go-build-cache:
   go-mod-cache:
   relay-node-modules:
