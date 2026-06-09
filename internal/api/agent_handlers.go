@@ -20,7 +20,7 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
 		SELECT id, org_id, name, description, model_config_id, subagent_model_config_id,
-			   system_prompt, skill_ids, folder_id, created_by, created_at, updated_at
+			   system_prompt, skill_ids, folder_id, max_turns, created_by, created_at, updated_at
 		FROM agents WHERE org_id = $1 ORDER BY created_at DESC
 	`, claims.OrgID)
 	if err != nil {
@@ -35,7 +35,7 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 		var a models.Agent
 		var desc, sysPrompt *string
 		if err := rows.Scan(&a.ID, &a.OrgID, &a.Name, &desc, &a.ModelConfigID, &a.SubagentModelConfigID,
-			&sysPrompt, &a.SkillIDs, &a.FolderID, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			&sysPrompt, &a.SkillIDs, &a.FolderID, &a.MaxTurns, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			continue
 		}
 		if desc != nil {
@@ -110,6 +110,7 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 		SkillIDs              []string `json:"skill_ids"`
 		MCPServerIDs          []string `json:"mcp_server_ids"`
 		FolderID              *string  `json:"folder_id"`
+		MaxTurns              *int     `json:"max_turns"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -131,10 +132,10 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 
 	_, err := h.server.db.Pool.Exec(r.Context(), `
 		INSERT INTO agents (id, org_id, name, description, model_config_id, subagent_model_config_id,
-			system_prompt, skill_ids, folder_id, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+			system_prompt, skill_ids, folder_id, max_turns, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
 	`, agentID, claims.OrgID, req.Name, req.Description, req.ModelConfigID, req.SubagentModelConfigID,
-		req.SystemPrompt, skillIDs, req.FolderID, claims.UserID)
+		req.SystemPrompt, skillIDs, req.FolderID, req.MaxTurns, claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -185,10 +186,10 @@ func (h *agentHandlers) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 	var desc, sysPrompt *string
 	err = h.server.db.Pool.QueryRow(r.Context(), `
 		SELECT id, org_id, name, description, model_config_id, subagent_model_config_id,
-			   system_prompt, skill_ids, folder_id, created_by, created_at, updated_at
+			   system_prompt, skill_ids, folder_id, max_turns, created_by, created_at, updated_at
 		FROM agents WHERE id = $1 AND org_id = $2
 	`, agentID, claims.OrgID).Scan(&a.ID, &a.OrgID, &a.Name, &desc, &a.ModelConfigID, &a.SubagentModelConfigID,
-		&sysPrompt, &a.SkillIDs, &a.FolderID, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt)
+		&sysPrompt, &a.SkillIDs, &a.FolderID, &a.MaxTurns, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
@@ -227,6 +228,7 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 		ModelConfigID         *string  `json:"model_config_id"`
 		SubagentModelConfigID *string  `json:"subagent_model_config_id"`
 		MCPServerIDs          []string `json:"mcp_server_ids"`
+		MaxTurns              *int     `json:"max_turns"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -241,9 +243,10 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 			skill_ids = COALESCE($5, skill_ids),
 			model_config_id = COALESCE($6, model_config_id),
 			subagent_model_config_id = COALESCE($7, subagent_model_config_id),
+			max_turns = COALESCE($8, max_turns),
 			updated_at = NOW()
-		WHERE id = $1 AND org_id = $8
-	`, agentID, req.Name, req.Description, req.SystemPrompt, req.SkillIDs, req.ModelConfigID, req.SubagentModelConfigID, claims.OrgID)
+		WHERE id = $1 AND org_id = $9
+	`, agentID, req.Name, req.Description, req.SystemPrompt, req.SkillIDs, req.ModelConfigID, req.SubagentModelConfigID, req.MaxTurns, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
