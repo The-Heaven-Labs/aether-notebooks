@@ -353,7 +353,7 @@ func (s *Server) handleCreateInviteLink(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusCreated, map[string]string{
 		"id":    linkID,
 		"token": token,
-		"url":   fmt.Sprintf("/join?token=%s", token),
+		"url":   fmt.Sprintf("%s/join?token=%s", s.frontendURL, token),
 	})
 }
 
