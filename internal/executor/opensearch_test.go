@@ -164,14 +164,18 @@ func TestOpenSearchExecutor_Schema(t *testing.T) {
 
 		var resp sqlResponse
 		if req.Query == "SHOW TABLES LIKE '%'" {
+			// SHOW TABLES returns: TABLE_CAT, TABLE_SCHEM, TABLE_NAME, TABLE_TYPE, ...
 			resp = sqlResponse{
 				Schema: []sqlColumn{
+					{Name: "TABLE_CAT", Type: "keyword"},
+					{Name: "TABLE_SCHEM", Type: "keyword"},
 					{Name: "TABLE_NAME", Type: "keyword"},
+					{Name: "TABLE_TYPE", Type: "keyword"},
 				},
 				DataRows: [][]interface{}{
-					{"logs"},
-					{"metrics"},
-					{".kibana"},
+					{"docker-cluster", nil, "logs", "BASE TABLE"},
+					{"docker-cluster", nil, "metrics", "BASE TABLE"},
+					{"docker-cluster", nil, ".kibana", "BASE TABLE"},
 				},
 				Total:  3,
 				Size:   3,
@@ -234,14 +238,18 @@ func TestOpenSearchExecutor_Schema(t *testing.T) {
 
 func TestOpenSearchExecutor_Databases(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// SHOW TABLES returns: TABLE_CAT, TABLE_SCHEM, TABLE_NAME, TABLE_TYPE, ...
 		resp := sqlResponse{
 			Schema: []sqlColumn{
+				{Name: "TABLE_CAT", Type: "keyword"},
+				{Name: "TABLE_SCHEM", Type: "keyword"},
 				{Name: "TABLE_NAME", Type: "keyword"},
+				{Name: "TABLE_TYPE", Type: "keyword"},
 			},
 			DataRows: [][]interface{}{
-				{"logs"},
-				{"metrics"},
-				{".opendistro"},
+				{"docker-cluster", nil, "logs", "BASE TABLE"},
+				{"docker-cluster", nil, "metrics", "BASE TABLE"},
+				{"docker-cluster", nil, ".opendistro", "BASE TABLE"},
 			},
 			Total:  3,
 			Size:   3,
