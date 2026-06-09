@@ -99,7 +99,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "explore_schema",
-			Description: "Explore the database schema for a connector. Lists all tables and their columns with types.",
+			Description: "Explore the database schema for a connector. Returns all tables/indices and their columns with types. Use this to understand what data is available before writing queries.",
 			Parameters:  `{"type":"object","properties":{"connector_id":{"type":"string","description":"ID of the connector to explore"}},"required":["connector_id"]}`,
 		},
 		Handler: makeExploreSchemaHandler(db),
