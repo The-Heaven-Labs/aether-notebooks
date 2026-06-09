@@ -9,6 +9,7 @@ import (
 type ResultSet struct {
 	Columns []Column        `json:"columns"`
 	Rows    [][]interface{} `json:"rows"`
+	Note    string          `json:"note,omitempty"`
 }
 
 type Column struct {
