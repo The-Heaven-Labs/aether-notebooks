@@ -21,6 +21,7 @@ type ConnectorType string
 const (
 	ConnectorPostgres   ConnectorType = "postgres"
 	ConnectorClickHouse ConnectorType = "clickhouse"
+	ConnectorOpenSearch ConnectorType = "opensearch"
 )
 
 type ConnectorConfig struct {
