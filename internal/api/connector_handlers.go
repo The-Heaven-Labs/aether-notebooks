@@ -32,8 +32,8 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name and type are required")
 		return
 	}
-	if req.Type != models.ConnectorPostgres && req.Type != models.ConnectorClickHouse {
-		writeError(w, http.StatusBadRequest, "type must be 'postgres' or 'clickhouse'")
+	if _, ok := executor.GetDriver(req.Type); !ok {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("unsupported connector type: %s", req.Type))
 		return
 	}
 
@@ -331,18 +331,11 @@ func (s *Server) buildExecutor(connType models.ConnectorType, configEnc []byte) 
 	if err != nil {
 		return nil, fmt.Errorf("decrypt: %w", err)
 	}
-	var cfg models.ConnectorConfig
-	if err := json.Unmarshal(plain, &cfg); err != nil {
-		return nil, fmt.Errorf("unmarshal config: %w", err)
-	}
-	switch connType {
-	case models.ConnectorPostgres:
-		return executor.NewPostgresExecutor(cfg)
-	case models.ConnectorClickHouse:
-		return executor.NewClickHouseExecutor(cfg)
-	default:
+	driver, ok := executor.GetDriver(connType)
+	if !ok {
 		return nil, fmt.Errorf("unsupported connector type: %s", connType)
 	}
+	return driver.NewExecutor(plain)
 }
 
 // handleTestConnectorConfig tests a connection using raw config (before saving).
@@ -353,24 +346,17 @@ func (s *Server) handleTestConnectorConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var exec executor.Executor
-	var err error
-	switch req.Type {
-	case models.ConnectorPostgres:
-		exec, err = executor.NewPostgresExecutor(req.Config)
-	case models.ConnectorClickHouse:
-		exec, err = executor.NewClickHouseExecutor(req.Config)
-	default:
+	driver, ok := executor.GetDriver(req.Type)
+	if !ok {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "unsupported connector type"})
 		return
 	}
+	configJSON, err := json.Marshal(req.Config)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "invalid config"})
 		return
 	}
-	defer exec.Close()
-
-	if err := exec.TestConnection(r.Context()); err != nil {
+	if err := driver.TestConfig(r.Context(), configJSON); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
