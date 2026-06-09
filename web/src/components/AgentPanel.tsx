@@ -176,6 +176,10 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
           break
         case 'cell_output':
           onCellOutput?.(msg.cell_id, msg.outputs)
+          onCellScrollTo?.(msg.cell_id)
+          break
+        case 'cell_updated':
+          onCellScrollTo?.(msg.cell_id)
           break
         case 'done': {
           setIsStreaming(false)

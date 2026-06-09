@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type Notebook struct {
 	ID          string      `json:"id"`
@@ -37,9 +40,10 @@ type Cell struct {
 	Title         string      `json:"title,omitempty"`
 	Description   string      `json:"description,omitempty"`
 	Slug          string      `json:"slug,omitempty"`
-	Limit         *int        `json:"limit,omitempty"`
-	CreatedAt     time.Time   `json:"created_at"`
-	UpdatedAt     time.Time   `json:"updated_at"`
+	Limit         *int            `json:"limit,omitempty"`
+	Metadata      json.RawMessage `json:"metadata,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
 }
 
 type CellType string

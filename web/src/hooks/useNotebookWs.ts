@@ -5,12 +5,15 @@ export function useNotebookWs(
   notebookId: string | undefined,
   onCellOutput?: (cellId: string, outputs: Array<{ type: string; data: unknown }>) => void,
   onCellMetadataChanged?: (cellId: string, metadata: Record<string, unknown>) => void,
+  onCellUpdated?: (cellId: string) => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null)
   const onCellOutputRef = useRef(onCellOutput)
   onCellOutputRef.current = onCellOutput
   const onCellMetadataChangedRef = useRef(onCellMetadataChanged)
   onCellMetadataChangedRef.current = onCellMetadataChanged
+  const onCellUpdatedRef = useRef(onCellUpdated)
+  onCellUpdatedRef.current = onCellUpdated
 
   const connect = useCallback(() => {
     if (!notebookId) return
@@ -34,6 +37,8 @@ export function useNotebookWs(
           onCellOutputRef.current(msg.cell_id, msg.outputs)
         } else if (msg.type === 'cell_metadata_changed' && onCellMetadataChangedRef.current) {
           onCellMetadataChangedRef.current(msg.cell_id, msg.metadata)
+        } else if (msg.type === 'cell_updated' && onCellUpdatedRef.current) {
+          onCellUpdatedRef.current(msg.cell_id)
         }
       } catch {
         // ignore non-JSON messages
