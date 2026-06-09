@@ -11,11 +11,11 @@ import (
 )
 
 type opensearchConfig struct {
-	Host     string
-	Port     int
-	User     string
-	Password string
-	UseTLS   bool
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	User     string `json:"user"`
+	Password string `json:"password"`
+	UseTLS   bool   `json:"use_tls"`
 }
 
 type OpenSearchExecutor struct {
