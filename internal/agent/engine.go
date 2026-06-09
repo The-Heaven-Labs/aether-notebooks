@@ -141,7 +141,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	}
 
 	chatMsgs := make([]ChatMessage, 0)
-	notebookCtx := fmt.Sprintf("Current notebook: %s", session.NotebookID)
+	notebookCtx := e.buildNotebookContext(session.NotebookID)
 	if systemPrompt != "" {
 		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: systemPrompt + "\n\n" + notebookCtx})
 	} else {
@@ -629,4 +629,36 @@ func chunk(s string, size int, fn func(string)) {
 		}
 		fn(string(runes[i:end]))
 	}
+}
+
+// buildNotebookContext fetches notebook and connector info to build a context string
+// that tells the agent what it's working with.
+func (e *Engine) buildNotebookContext(notebookID string) string {
+	if notebookID == "" {
+		return "No notebook selected."
+	}
+
+	var title string
+	var connectorID *string
+	err := e.pool.QueryRow(context.Background(),
+		`SELECT title, connector_id FROM notebooks WHERE id = $1`, notebookID).
+		Scan(&title, &connectorID)
+	if err != nil {
+		return fmt.Sprintf("Current notebook: %s", notebookID)
+	}
+
+	ctx := fmt.Sprintf("Current notebook: %s (title: %q)", notebookID, title)
+
+	if connectorID != nil && *connectorID != "" {
+		var connName, connType string
+		err := e.pool.QueryRow(context.Background(),
+			`SELECT name, type FROM connectors WHERE id = $1`, *connectorID).
+			Scan(&connName, &connType)
+		if err == nil {
+			ctx += fmt.Sprintf("\nConnector: %q (type: %s, id: %s)", connName, connType, *connectorID)
+			ctx += "\nNotebook cells: type 'code' with language 'sql' for database queries, type 'text' with language 'markdown' for documentation."
+		}
+	}
+
+	return ctx
 }

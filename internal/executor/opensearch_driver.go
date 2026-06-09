@@ -11,6 +11,10 @@ import (
 // OpenSearchDriver implements ConnectorDriver for OpenSearch.
 type OpenSearchDriver struct{}
 
+func init() {
+	RegisterDriver(&OpenSearchDriver{})
+}
+
 func (d *OpenSearchDriver) Type() models.ConnectorType {
 	return models.ConnectorOpenSearch
 }

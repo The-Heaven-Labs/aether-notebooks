@@ -21,7 +21,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "read_cell",
-			Description: "Get a cell's source and outputs",
+			Description: "Get a cell's complete information including source, outputs, type, language, connector, and metadata",
 			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"Cell identifier"}},"required":["cell_id"]}`,
 		},
 		Handler: makeReadCellHandler(db),
@@ -34,8 +34,8 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "create_cell",
-			Description: "Create a new code or text cell",
-			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"type":{"type":"string","enum":["code","text"]},"source":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell. Required for code cells if the notebook has no default connector."},"position":{"type":"integer"}},"required":["notebook_id","type"]}`,
+			Description: "Create a new cell. Use type 'code' with language 'sql' for database queries, or type 'text' with language 'markdown' for documentation and notes.",
+			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"type":{"type":"string","enum":["code","text"],"description":"Cell type: 'code' for executable queries, 'text' for markdown documentation"},"language":{"type":"string","enum":["sql","markdown"],"description":"Cell language. Defaults to 'sql' for code cells, 'markdown' for text cells. Currently only SQL and markdown are supported."},"source":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell. Required for code cells if the notebook has no default connector."},"position":{"type":"integer"}},"required":["notebook_id","type"]}`,
 		},
 		Handler: makeCreateCellHandler(db),
 	})
@@ -47,7 +47,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "update_cell",
-			Description: "Change a cell's source, metadata, or connector",
+			Description: "Change a cell's source, title, description, connector, or other properties",
 			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"source":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell"}},"required":["cell_id"]}`,
 		},
 		Handler: makeUpdateCellHandler(db),
@@ -60,7 +60,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "run_cell",
-			Description: "Execute a cell's query",
+			Description: "Execute a code cell's SQL query against the database connector. Only works on cells with type 'code' and language 'sql'. Returns tabular results. Use for SELECT, SHOW, DESCRIBE queries.",
 			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"}},"required":["cell_id"]}`,
 		},
 		Handler: makeRunCellHandler(db),
@@ -73,7 +73,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "list_cells",
-			Description: "List all cells in the notebook with summary",
+			Description: "List all cells in the notebook showing id, type (code/text), language (sql/markdown), position, and title",
 			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"}},"required":["notebook_id"]}`,
 		},
 		Handler: makeListCellsHandler(db),
@@ -86,7 +86,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "move_cell",
-			Description: "Reorder a cell",
+			Description: "Change a cell's position in the notebook",
 			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"new_position":{"type":"integer"}},"required":["cell_id","new_position"]}`,
 		},
 		Handler: makeMoveCellHandler(db),
@@ -99,7 +99,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "explore_schema",
-			Description: "Explore the database schema for a connector. Lists all tables and their columns with types. Only works for Postgres and ClickHouse connectors.",
+			Description: "Explore the database schema for a connector. Lists all tables and their columns with types.",
 			Parameters:  `{"type":"object","properties":{"connector_id":{"type":"string","description":"ID of the connector to explore"}},"required":["connector_id"]}`,
 		},
 		Handler: makeExploreSchemaHandler(db),
@@ -124,19 +124,39 @@ func makeReadCellHandler(db *pgxpool.Pool) ToolHandler {
 		}
 
 		var cell struct {
-			ID       string          `json:"id"`
-			Type     string          `json:"type"`
-			Language string          `json:"language"`
-			Source   string          `json:"source"`
-			Outputs  json.RawMessage `json:"outputs"`
-			Position int             `json:"position"`
-			Title    *string         `json:"title"`
+			ID            string          `json:"id"`
+			NotebookID    string          `json:"notebook_id"`
+			Position      int             `json:"position"`
+			Type          string          `json:"type"`
+			Language      *string         `json:"language"`
+			ConnectorID   *string         `json:"connector_id"`
+			Source        string          `json:"source"`
+			Outputs       json.RawMessage `json:"outputs"`
+			Limit         *int            `json:"limit"`
+			CreatedAt     time.Time       `json:"created_at"`
+			UpdatedAt     time.Time       `json:"updated_at"`
+			SourceVisible bool            `json:"source_visible"`
+			CellCollapsed bool            `json:"cell_collapsed"`
+			Title         *string         `json:"title"`
+			Description   *string         `json:"description"`
+			Slug          *string         `json:"slug"`
+			Parameters    json.RawMessage `json:"parameters"`
+			SlideBreak    bool            `json:"slide_break"`
+			Metadata      json.RawMessage `json:"metadata"`
 		}
 
 		err = db.QueryRow(ctx.Context, `
-			SELECT id, type, language, source, outputs, position, title
+			SELECT id, notebook_id, position, type, language, connector_id, source, outputs, 
+			       "limit", created_at, updated_at, source_visible, cell_collapsed, title, 
+			       description, slug, parameters, slide_break, metadata
 			FROM cells WHERE id = $1
-		`, req.CellID).Scan(&cell.ID, &cell.Type, &cell.Language, &cell.Source, &cell.Outputs, &cell.Position, &cell.Title)
+		`, req.CellID).Scan(
+			&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &cell.Language,
+			&cell.ConnectorID, &cell.Source, &cell.Outputs, &cell.Limit,
+			&cell.CreatedAt, &cell.UpdatedAt, &cell.SourceVisible, &cell.CellCollapsed,
+			&cell.Title, &cell.Description, &cell.Slug, &cell.Parameters,
+			&cell.SlideBreak, &cell.Metadata,
+		)
 		if err != nil {
 			return nil, fmt.Errorf("read cell: %w", err)
 		}
@@ -150,6 +170,7 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 		var req struct {
 			NotebookID  string `json:"notebook_id"`
 			Type        string `json:"type"`
+			Language    string `json:"language"`
 			Source      string `json:"source"`
 			ConnectorID string `json:"connector_id"`
 			Position    int    `json:"position"`
@@ -182,9 +203,12 @@ cellID := uuid.New().String()
 			}
 		}
 
-		language := "sql"
-		if req.Type == "text" {
-			language = "markdown"
+		language := req.Language
+		if language == "" {
+			language = "sql"
+			if req.Type == "text" {
+				language = "markdown"
+			}
 		}
 
 		var connID *string
@@ -314,20 +338,11 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("decrypt credentials: %w", err)
 		}
 
-		var cfg models.ConnectorConfig
-		if err := json.Unmarshal(plain, &cfg); err != nil {
-			return nil, fmt.Errorf("unmarshal config: %w", err)
-		}
-
-		var exec executor.Executor
-		switch connType {
-		case models.ConnectorPostgres:
-			exec, err = executor.NewPostgresExecutor(cfg)
-		case models.ConnectorClickHouse:
-			exec, err = executor.NewClickHouseExecutor(cfg)
-		default:
+		driver, ok := executor.GetDriver(connType)
+		if !ok {
 			return nil, fmt.Errorf("unsupported connector type: %s", connType)
 		}
+		exec, err := driver.NewExecutor(plain)
 		if err != nil {
 			return nil, fmt.Errorf("connect: %w", err)
 		}
@@ -475,20 +490,11 @@ func makeExploreSchemaHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("decrypt credentials: %w", err)
 		}
 
-		var cfg models.ConnectorConfig
-		if err := json.Unmarshal(plain, &cfg); err != nil {
-			return nil, fmt.Errorf("unmarshal config: %w", err)
-		}
-
-		var exec executor.Executor
-		switch connType {
-		case models.ConnectorPostgres:
-			exec, err = executor.NewPostgresExecutor(cfg)
-		case models.ConnectorClickHouse:
-			exec, err = executor.NewClickHouseExecutor(cfg)
-		default:
+		driver, ok := executor.GetDriver(connType)
+		if !ok {
 			return nil, fmt.Errorf("unsupported connector type: %s", connType)
 		}
+		exec, err := driver.NewExecutor(plain)
 		if err != nil {
 			return nil, fmt.Errorf("connect to connector db: %w", err)
 		}

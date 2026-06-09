@@ -21,6 +21,10 @@ type postgresConfig struct {
 // PostgresDriver implements ConnectorDriver for PostgreSQL.
 type PostgresDriver struct{}
 
+func init() {
+	RegisterDriver(&PostgresDriver{})
+}
+
 func (d *PostgresDriver) Type() models.ConnectorType {
 	return models.ConnectorPostgres
 }
