@@ -166,10 +166,12 @@ func (e *OpenSearchExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
 
 	var tables []TableInfo
 	for _, row := range rs.Rows {
-		if len(row) == 0 {
+		// SHOW TABLES returns: TABLE_CAT, TABLE_SCHEM, TABLE_NAME, TABLE_TYPE, ...
+		// We need TABLE_NAME which is at index 2
+		if len(row) < 3 {
 			continue
 		}
-		indexName, ok := row[0].(string)
+		indexName, ok := row[2].(string)
 		if !ok {
 			continue
 		}
@@ -218,10 +220,12 @@ func (e *OpenSearchExecutor) Databases(ctx context.Context) ([]string, error) {
 
 	var dbs []string
 	for _, row := range rs.Rows {
-		if len(row) == 0 {
+		// SHOW TABLES returns: TABLE_CAT, TABLE_SCHEM, TABLE_NAME, TABLE_TYPE, ...
+		// We need TABLE_NAME which is at index 2
+		if len(row) < 3 {
 			continue
 		}
-		name, ok := row[0].(string)
+		name, ok := row[2].(string)
 		if !ok {
 			continue
 		}
