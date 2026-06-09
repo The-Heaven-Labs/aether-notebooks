@@ -657,6 +657,7 @@ func (e *Engine) buildNotebookContext(notebookID string) string {
 		if err == nil {
 			ctx += fmt.Sprintf("\nConnector: %q (type: %s, id: %s)", connName, connType, *connectorID)
 			ctx += "\nNotebook cells: type 'code' with language 'sql' for database queries, type 'text' with language 'markdown' for documentation."
+			ctx += "\nCharts are rendered by the frontend UI, not via SQL. You cannot create charts directly. Users can switch cell output to chart view in the UI."
 		}
 	}
 

@@ -158,8 +158,8 @@ func (e *OpenSearchExecutor) TestConnection(ctx context.Context) error {
 }
 
 func (e *OpenSearchExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
-	// Get all indices
-	rs, err := e.Execute(ctx, "SHOW TABLES LIKE %", nil, 10000)
+	// Get all indices - pattern must be quoted for OpenSearch SQL plugin
+	rs, err := e.Execute(ctx, "SHOW TABLES LIKE '%'", nil, 10000)
 	if err != nil {
 		return nil, fmt.Errorf("list tables: %w", err)
 	}
@@ -178,8 +178,8 @@ func (e *OpenSearchExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
 			continue
 		}
 
-		// Describe each index
-		descRS, err := e.Execute(ctx, fmt.Sprintf("DESCRIBE %s", indexName), nil, 10000)
+		// Describe each index - index name must be quoted
+		descRS, err := e.Execute(ctx, fmt.Sprintf("DESCRIBE '%s'", indexName), nil, 10000)
 		if err != nil {
 			continue // skip indices that fail to describe
 		}
@@ -211,7 +211,7 @@ func (e *OpenSearchExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
 }
 
 func (e *OpenSearchExecutor) Databases(ctx context.Context) ([]string, error) {
-	rs, err := e.Execute(ctx, "SHOW TABLES LIKE %", nil, 10000)
+	rs, err := e.Execute(ctx, "SHOW TABLES LIKE '%'", nil, 10000)
 	if err != nil {
 		return nil, fmt.Errorf("list databases: %w", err)
 	}
