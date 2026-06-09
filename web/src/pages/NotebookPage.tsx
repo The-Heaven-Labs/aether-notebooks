@@ -9,6 +9,7 @@ import { Skeleton } from '../components/Skeleton'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Notebook, Cell, Output, Connector, Parameter, CellVersion, Dashboard, Widget } from '../types'
+import type { ChartConfig } from '../components/ChartConfigPanel'
 import { Cell as NotebookCell } from '../components/Cell'
 import { ParametersBar } from '../components/ParametersBar'
 import { SchemaBrowser } from '../components/SchemaBrowser'
@@ -161,6 +162,7 @@ export function NotebookPage() {
       const el = document.getElementById('cell-' + cellId)
       if (el) {
         clearInterval(interval)
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
         el.classList.add('cell-flash')
         setTimeout(() => el.classList.remove('cell-flash'), 1500)
       } else if (++attempts >= maxAttempts) {
@@ -184,7 +186,10 @@ export function NotebookPage() {
       prev.map((c) => (c.id === cellId ? { ...c, metadata } : c)),
     )
     flashCell(cellId)
-  }, []))
+  }, []), useCallback((cellId: string) => {
+    qc.invalidateQueries({ queryKey: ['notebook', id] })
+    flashCell(cellId)
+  }, [id, qc]))
 
   const cellsEndRef = useRef<HTMLDivElement>(null)
 
@@ -338,6 +343,17 @@ export function NotebookPage() {
       setMutationError(err instanceof Error ? err.message : 'Failed to update cell')
     }
   }, [id])
+
+  const updateCellChartConfig = useCallback(async (cellId: string, config: ChartConfig) => {
+    try {
+      setLocalCells((prev) => prev.map((c) => c.id === cellId ? { ...c, metadata: { ...c.metadata, chart: config } } : c))
+      const cell = localCells.find((c) => c.id === cellId)
+      const metadata = { ...cell?.metadata, chart: config }
+      await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { metadata })
+    } catch (err) {
+      setMutationError(err instanceof Error ? err.message : 'Failed to update chart config')
+    }
+  }, [id, localCells])
 
   const fetchHistory = useCallback(async (cellId: string) => {
     const versions = await api.get<CellVersion[]>(`/api/v1/notebooks/${id}/cells/${cellId}/versions`)
@@ -770,6 +786,7 @@ export function NotebookPage() {
                       saveState={cellSaveState[cell.id]}
                       runAt={cellRunAt[cell.id]}
                       onUpdateCellMeta={readOnly ? undefined : (updates) => updateCellMeta(cell.id, updates)}
+                      onChartConfigChange={readOnly ? undefined : updateCellChartConfig}
                       onShowHistory={readOnly ? undefined : () => fetchHistory(cell.id)}
                       onFocus={(cid) => setFocusedCellId(cid)}
                       onAddToDashboard={readOnly ? undefined : (cid) => setAddToDashboardCellId(cid)}

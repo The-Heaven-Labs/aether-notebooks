@@ -272,6 +272,17 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 
 		_ = ctx.AuditLog("cell.update", "cell", req.CellID)
 
+		// Notify agent panel via event
+		ctx.EmitCellUpdated(req.CellID)
+
+		// Broadcast to all notebook viewers via WebSocket
+		if ctx.BroadcastFunc != nil {
+			ctx.BroadcastFunc(notebookID, map[string]any{
+				"type":    "cell_updated",
+				"cell_id": req.CellID,
+			})
+		}
+
 		return map[string]any{"cell_id": req.CellID}, nil
 	}
 }

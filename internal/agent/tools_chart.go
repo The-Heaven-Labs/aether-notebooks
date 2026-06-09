@@ -58,9 +58,9 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 		}
 
 		chartConfig := map[string]any{
-			"type":       req.ChartType,
-			"x_column":   req.XColumn,
-			"y_columns":  req.YColumns,
+			"chartType":  req.ChartType,
+			"xAxis":      req.XColumn,
+			"yAxis":      req.YColumns,
 			"title":      req.Title,
 			"created_at": time.Now().Format(time.RFC3339),
 		}
@@ -73,6 +73,21 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 		`, configJSON, req.CellID)
 		if err != nil {
 			return nil, fmt.Errorf("create chart: %w", err)
+		}
+
+		// Broadcast to all notebook viewers via WebSocket
+		if ctx.BroadcastFunc != nil {
+			var updatedMetadata []byte
+			db.QueryRow(ctx.Context, `SELECT metadata FROM cells WHERE id = $1`, req.CellID).Scan(&updatedMetadata)
+			var metadataMap map[string]any
+			if updatedMetadata != nil {
+				json.Unmarshal(updatedMetadata, &metadataMap)
+			}
+			ctx.BroadcastFunc(notebookID, map[string]any{
+				"type":     "cell_metadata_changed",
+				"cell_id":  req.CellID,
+				"metadata": metadataMap,
+			})
 		}
 
 		return map[string]any{"cell_id": req.CellID, "chart_type": req.ChartType}, nil
@@ -101,23 +116,23 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 		}
 
 		var existingConfig map[string]any
-		var metadata []byte
-		err = db.QueryRow(ctx.Context, `SELECT metadata FROM cells WHERE id = $1`, req.CellID).Scan(&metadata)
-		if err == nil && metadata != nil {
-			json.Unmarshal(metadata, &existingConfig)
+		var chartJSON []byte
+		err = db.QueryRow(ctx.Context, `SELECT metadata->'chart' FROM cells WHERE id = $1`, req.CellID).Scan(&chartJSON)
+		if err == nil && chartJSON != nil {
+			json.Unmarshal(chartJSON, &existingConfig)
 		}
 		if existingConfig == nil {
 			existingConfig = make(map[string]any)
 		}
 
 		if req.ChartType != "" {
-			existingConfig["type"] = req.ChartType
+			existingConfig["chartType"] = req.ChartType
 		}
 		if req.XColumn != "" {
-			existingConfig["x_column"] = req.XColumn
+			existingConfig["xAxis"] = req.XColumn
 		}
 		if req.YColumns != nil {
-			existingConfig["y_columns"] = req.YColumns
+			existingConfig["yAxis"] = req.YColumns
 		}
 		if req.Title != "" {
 			existingConfig["title"] = req.Title
@@ -130,6 +145,21 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 		`, configJSON, req.CellID)
 		if err != nil {
 			return nil, fmt.Errorf("update chart: %w", err)
+		}
+
+		// Broadcast to all notebook viewers via WebSocket
+		if ctx.BroadcastFunc != nil {
+			var updatedMetadata []byte
+			db.QueryRow(ctx.Context, `SELECT metadata FROM cells WHERE id = $1`, req.CellID).Scan(&updatedMetadata)
+			var metadataMap map[string]any
+			if updatedMetadata != nil {
+				json.Unmarshal(updatedMetadata, &metadataMap)
+			}
+			ctx.BroadcastFunc(notebookID, map[string]any{
+				"type":     "cell_metadata_changed",
+				"cell_id":  req.CellID,
+				"metadata": metadataMap,
+			})
 		}
 
 		return map[string]any{"cell_id": req.CellID}, nil

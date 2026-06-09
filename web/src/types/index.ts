@@ -42,6 +42,7 @@ export interface Cell {
   slug?: string
   parameters?: Parameter[]
   limit?: number | null
+  metadata?: Record<string, unknown>
 }
 
 export interface CellVersion {

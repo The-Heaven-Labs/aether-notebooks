@@ -15,12 +15,13 @@ import (
 )
 
 type Engine struct {
-	registry    *ToolRegistry
-	session     *SessionStore
-	llm         *LLMClient
-	pool        *pgxpool.Pool
-	mu          sync.Mutex
-	rateLimiter *RateLimiter
+	registry      *ToolRegistry
+	session       *SessionStore
+	llm           *LLMClient
+	pool          *pgxpool.Pool
+	mu            sync.Mutex
+	rateLimiter   *RateLimiter
+	BroadcastFunc func(notebookID string, msg any)
 }
 
 func NewEngine(pool *pgxpool.Pool) *Engine {
@@ -28,6 +29,7 @@ func NewEngine(pool *pgxpool.Pool) *Engine {
 	RegisterNotebookTools(reg, pool)
 	RegisterAgentTools(reg, pool)
 	RegisterPlatformTools(reg, pool)
+	RegisterChartTools(reg, pool)
 
 	return &Engine{
 		registry:    reg,
@@ -345,17 +347,18 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			}
 
 			toolCtx := &ToolContext{
-				Context:    ctx,
-				UserID:     session.UserID,
-				OrgID:      agent.OrgID,
-				OrgRole:    orgRole,
-				NotebookID: session.NotebookID,
-				SessionID:  sessionID,
-				DB:         e.pool,
-				TurnCount:  turn,
-				Events:     &events,
-				MasterKey:  masterKey,
-				OnEvent:    onEvent,
+				Context:       ctx,
+				UserID:        session.UserID,
+				OrgID:         agent.OrgID,
+				OrgRole:       orgRole,
+				NotebookID:    session.NotebookID,
+				SessionID:     sessionID,
+				DB:            e.pool,
+				TurnCount:     turn,
+				Events:        &events,
+				MasterKey:     masterKey,
+				OnEvent:       onEvent,
+				BroadcastFunc: e.BroadcastFunc,
 			}
 
 			result, err := toolDef.Handler(json.RawMessage(tc.Function.Arguments), toolCtx)
@@ -657,7 +660,7 @@ func (e *Engine) buildNotebookContext(notebookID string) string {
 		if err == nil {
 			ctx += fmt.Sprintf("\nConnector: %q (type: %s, id: %s)", connName, connType, *connectorID)
 			ctx += "\nNotebook cells: type 'code' with language 'sql' for database queries, type 'text' with language 'markdown' for documentation."
-			ctx += "\nCharts are rendered by the frontend UI, not via SQL. You cannot create charts directly. Users can switch cell output to chart view in the UI."
+			ctx += "\nCharts: Use create_chart to turn a cell's table output into a chart (bar, line, scatter, pie). Use update_chart to modify an existing chart's config. The frontend will render the chart automatically from the saved config."
 		}
 	}
 
