@@ -49,6 +49,7 @@ services:
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     volumes:
       - ./dev/clickhouse-seed.sql:/docker-entrypoint-initdb.d/seed.sql:ro
+      - ./dev/clickhouse-seed-cloudtrail.sql:/docker-entrypoint-initdb.d/seed-cloudtrail.sql:ro
       - chdata:/var/lib/clickhouse
     ulimits:
       nofile:
@@ -59,6 +60,29 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  # ── CloudTrail log loader (one-shot, runs on first startup) ────────────
+
+  cloudtrail-loader:
+    image: python:3-alpine
+    volumes:
+      - ./dev/cloudtrail-logs:/logs:ro
+      - ./dev/scripts/load-cloudtrail.py:/app/load-cloudtrail.py:ro
+    environment:
+      CLICKHOUSE_HOST: hnb-clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_USER: dev
+      CLICKHOUSE_PASSWORD: dev
+      LOGS_DIR: /logs
+      BATCH_SIZE: "5000"
+      # MAX_FILES: "3"   # Uncomment to limit number of files processed
+    depends_on:
+      hnb-clickhouse:
+        condition: service_healthy
+    entrypoint: ["python3", "/app/load-cloudtrail.py"]
+    # Service exits after loading; use `docker compose up cloudtrail-loader`
+    # to re-run if you change MAX_FILES or reset the ClickHouse volume.
 
   # ── API server (Go + Air hot-reload) ─────────────────────────────────────
 
