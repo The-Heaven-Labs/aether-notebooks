@@ -163,7 +163,7 @@ func TestOpenSearchExecutor_Schema(t *testing.T) {
 		json.NewDecoder(r.Body).Decode(&req)
 
 		var resp sqlResponse
-		if req.Query == "SHOW TABLES LIKE %" {
+		if req.Query == "SHOW TABLES LIKE '%'" {
 			resp = sqlResponse{
 				Schema: []sqlColumn{
 					{Name: "TABLE_NAME", Type: "keyword"},
@@ -177,7 +177,7 @@ func TestOpenSearchExecutor_Schema(t *testing.T) {
 				Size:   3,
 				Status: 200,
 			}
-		} else if req.Query == "DESCRIBE logs" {
+		} else if req.Query == "DESCRIBE 'logs'" {
 			resp = sqlResponse{
 				Schema: []sqlColumn{
 					{Name: "col_name", Type: "keyword"},
@@ -191,7 +191,7 @@ func TestOpenSearchExecutor_Schema(t *testing.T) {
 				Size:   2,
 				Status: 200,
 			}
-		} else if req.Query == "DESCRIBE metrics" {
+		} else if req.Query == "DESCRIBE 'metrics'" {
 			resp = sqlResponse{
 				Schema: []sqlColumn{
 					{Name: "col_name", Type: "keyword"},
