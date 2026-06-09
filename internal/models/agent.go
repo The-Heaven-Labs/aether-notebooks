@@ -57,6 +57,7 @@ type Agent struct {
 	MCPServerIDs         []string       `json:"mcp_server_ids"`
 	MCPServers            []MCPServerOrg `json:"mcp_servers"`
 	FolderID              *string        `json:"folder_id,omitempty"`
+	MaxTurns              *int           `json:"max_turns,omitempty"`
 	CreatedBy             string         `json:"created_by"`
 	CreatedAt             time.Time      `json:"created_at"`
 	UpdatedAt             time.Time      `json:"updated_at"`

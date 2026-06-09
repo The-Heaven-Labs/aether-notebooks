@@ -51,8 +51,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	var agent models.Agent
 	var systemPrompt string
 	var skillIDs []byte
-	err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, description, model_config_id, subagent_model_config_id, system_prompt, array_to_json(skill_ids)::text, folder_id, created_by, created_at, updated_at FROM agents WHERE id = $1`, session.AgentID).Scan(
-		&agent.ID, &agent.OrgID, &agent.Name, &agent.Description, &agent.ModelConfigID, &agent.SubagentModelConfigID, &systemPrompt, &skillIDs, &agent.FolderID, &agent.CreatedBy, &agent.CreatedAt, &agent.UpdatedAt)
+	err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, description, model_config_id, subagent_model_config_id, system_prompt, array_to_json(skill_ids)::text, folder_id, max_turns, created_by, created_at, updated_at FROM agents WHERE id = $1`, session.AgentID).Scan(
+		&agent.ID, &agent.OrgID, &agent.Name, &agent.Description, &agent.ModelConfigID, &agent.SubagentModelConfigID, &systemPrompt, &skillIDs, &agent.FolderID, &agent.MaxTurns, &agent.CreatedBy, &agent.CreatedAt, &agent.UpdatedAt)
 	if err != nil {
 		return "", "", nil, events, fmt.Errorf("get agent: %w", err)
 	}
@@ -250,7 +250,10 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		toolLookup[t.Function.Name] = t
 	}
 
-	const maxTurns = 15
+	maxTurns := 90
+	if agent.MaxTurns != nil && *agent.MaxTurns > 0 {
+		maxTurns = *agent.MaxTurns
+	}
 	var allToolCalls []models.ToolCall
 	totalTokensInput := 0
 	totalTokensOutput := 0

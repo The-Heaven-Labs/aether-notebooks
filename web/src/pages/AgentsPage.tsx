@@ -16,6 +16,7 @@ interface AgentForm {
   subagent_model_config_id: string
   skill_ids: string[]
   mcp_server_ids: string[]
+  max_turns: number
 }
 
 const emptyForm = (): AgentForm => ({
@@ -26,6 +27,7 @@ const emptyForm = (): AgentForm => ({
   subagent_model_config_id: '',
   skill_ids: [],
   mcp_server_ids: [],
+  max_turns: 90,
 })
 
 export function AgentsPage() {
@@ -67,6 +69,7 @@ export function AgentsPage() {
       subagent_model_config_id: form.subagent_model_config_id || undefined,
       skill_ids: form.skill_ids,
       mcp_server_ids: form.mcp_server_ids,
+      max_turns: form.max_turns || undefined,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agents'] })
@@ -86,6 +89,7 @@ export function AgentsPage() {
       subagent_model_config_id: form.subagent_model_config_id || undefined,
       skill_ids: form.skill_ids,
       mcp_server_ids: form.mcp_server_ids,
+      max_turns: form.max_turns || undefined,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agents'] })
@@ -112,6 +116,7 @@ export function AgentsPage() {
       subagent_model_config_id: agent.subagent_model_config_id ?? '',
       skill_ids: agent.skill_ids ?? [],
       mcp_server_ids: agent.mcp_server_ids ?? [],
+      max_turns: agent.max_turns ?? 90,
     })
   }
 
@@ -255,6 +260,17 @@ function AgentFormFields({ form, setForm, modelConfigs, skills, mcpServers, togg
           <option value="">— Default —</option>
           {modelConfigs.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
         </select>
+      </label>
+      <label style={styles.label}>Max Tool Turns
+        <input
+          type="number"
+          style={styles.input}
+          value={form.max_turns}
+          min={1}
+          max={200}
+          onChange={e => setForm(f => ({ ...f, max_turns: parseInt(e.target.value) || 90 }))}
+        />
+        <span style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Default: 90, Max: 200</span>
       </label>
       <label style={{ ...styles.label, gridColumn: '1 / -1' }}>
         Skills
