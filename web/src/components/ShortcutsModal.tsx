@@ -76,6 +76,6 @@ const styles: Record<string, React.CSSProperties> = {
   sectionTitle: { fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '8px 20px 4px' },
   table: { width: '100%', borderCollapse: 'collapse' },
   key: { padding: '6px 20px 6px', width: 200 },
-  kbd: { fontFamily: 'var(--font-mono)', fontSize: 11, background: '#f5f5f5', border: '1px solid #e8e8e8', borderRadius: 3, padding: '2px 6px' },
+  kbd: { fontFamily: 'var(--font-mono)', fontSize: 11, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 3, padding: '2px 6px', color: 'var(--text-primary)' },
   action: { padding: '6px 20px 6px 0', fontSize: 13, color: 'var(--text-secondary)' },
 }
