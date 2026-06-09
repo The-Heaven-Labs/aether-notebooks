@@ -42,6 +42,9 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 		upgrader:  websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
 	}
 	s.agentEngine = agent.NewEngine(db.Pool)
+	s.agentEngine.BroadcastFunc = func(notebookID string, msg any) {
+		s.hub.Broadcast(notebookID, msg)
+	}
 	s.routes()
 	return s
 }

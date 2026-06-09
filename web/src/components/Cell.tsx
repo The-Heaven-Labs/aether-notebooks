@@ -14,6 +14,24 @@ import { yCollab } from 'y-codemirror.next'
 import { OutputRenderer } from './OutputRenderer'
 import { MarkdownView } from './MarkdownCell'
 import type { Cell, Connector } from '../types'
+import type { ChartConfig } from './ChartConfigPanel'
+
+// Normalize chart config from backend (handles legacy key names from earlier create_chart calls)
+function normalizeChartConfig(raw: unknown): ChartConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const obj = raw as Record<string, unknown>
+  return {
+    chartType: (obj.chartType ?? obj.type) as ChartConfig['chartType'] | undefined,
+    xAxis: (obj.xAxis ?? obj.x_column) as string | undefined,
+    yAxis: (obj.yAxis ?? obj.y_columns) as string[] | undefined,
+    title: obj.title as string | undefined,
+    showLegend: obj.showLegend as boolean | undefined,
+    showGrid: obj.showGrid as boolean | undefined,
+    showLabels: obj.showLabels as boolean | undefined,
+    skipEmpty: obj.skipEmpty as boolean | undefined,
+    seriesColors: obj.seriesColors as Record<string, string> | undefined,
+  }
+}
 
 const sqlHighlight = HighlightStyle.define([
   { tag: tags.keyword, class: 'cm-keyword' },
@@ -121,6 +139,7 @@ interface Props {
   saveState?: SaveState
   runAt?: Date
   onUpdateCellMeta?: (updates: Partial<Pick<Cell, 'source_visible' | 'cell_collapsed' | 'slide_break' | 'title' | 'description' | 'slug' | 'limit'>>) => void
+  onChartConfigChange?: (cellId: string, config: ChartConfig) => void
   onShowHistory?: () => void
   onFocus?: (cellId: string) => void
   onAddToDashboard?: (cellId: string) => void
@@ -290,6 +309,7 @@ export function Cell({
   saveState,
   runAt,
   onUpdateCellMeta,
+  onChartConfigChange,
   onShowHistory,
   onFocus,
   onAddToDashboard,
@@ -549,7 +569,12 @@ export function Cell({
       {/* ── Output ── */}
       {isCode && cell.outputs.length > 0 && (
         <div style={styles.outputWrap}>
-          <OutputRenderer outputs={cell.outputs} cellId={cell.id ?? undefined} />
+          <OutputRenderer
+            outputs={cell.outputs}
+            cellId={cell.id ?? undefined}
+            chartConfig={normalizeChartConfig(cell.metadata?.chart)}
+            onChartConfigChange={onChartConfigChange ? (cfg) => onChartConfigChange(cell.id, cfg) : undefined}
+          />
         </div>
       )}
 

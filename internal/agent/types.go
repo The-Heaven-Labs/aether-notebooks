@@ -22,6 +22,7 @@ type ToolContext struct {
 	Events           *[]EngineEvent
 	MasterKey        []byte
 	OnEvent          func(EngineEvent)
+	BroadcastFunc    func(notebookID string, msg any)
 }
 
 type AgentTask struct {
@@ -60,6 +61,16 @@ func (tc *ToolContext) EmitTasksUpdated(tasks []AgentTask) {
 
 func (tc *ToolContext) EmitCellOutput(cellID string, outputs any) {
 	evt := EngineEvent{Type: "cell_output", CellID: cellID, Outputs: outputs}
+	if tc.Events != nil {
+		*tc.Events = append(*tc.Events, evt)
+	}
+	if tc.OnEvent != nil {
+		tc.OnEvent(evt)
+	}
+}
+
+func (tc *ToolContext) EmitCellUpdated(cellID string) {
+	evt := EngineEvent{Type: "cell_updated", CellID: cellID}
 	if tc.Events != nil {
 		*tc.Events = append(*tc.Events, evt)
 	}

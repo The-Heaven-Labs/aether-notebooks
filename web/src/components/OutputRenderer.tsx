@@ -2,27 +2,30 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import type React from 'react'
 import type { Output, ResultSet, Column } from '../types'
 import { ChartView } from './ChartView'
+import type { ChartConfig } from './ChartConfigPanel'
 import { ToggleLeft, Calendar, Clock, Fingerprint, Ban, Binary, Table, BarChart2, Timer, Sigma, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, X, Copy, Check, Download } from 'lucide-react'
 
 interface Props {
   outputs: Output[]
   fixedView?: 'table' | 'chart'
   cellId?: string
+  chartConfig?: ChartConfig
+  onChartConfigChange?: (config: ChartConfig) => void
 }
 
-export function OutputRenderer({ outputs, fixedView, cellId }: Props) {
+export function OutputRenderer({ outputs, fixedView, cellId, chartConfig, onChartConfigChange }: Props) {
   if (!outputs || outputs.length === 0) return null
 
   return (
     <div style={styles.container}>
       {outputs.map((out, i) => (
-        <OutputItem key={i} output={out} fixedView={fixedView} cellId={cellId} />
+        <OutputItem key={i} output={out} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} />
       ))}
     </div>
   )
 }
 
-function OutputItem({ output, fixedView, cellId }: { output: Output; fixedView?: 'table' | 'chart'; cellId?: string }) {
+function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChange }: { output: Output; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void }) {
   if (output.type === 'error') {
     return (
       <div style={styles.errorWrap}>
@@ -39,7 +42,7 @@ function OutputItem({ output, fixedView, cellId }: { output: Output; fixedView?:
   if (output.type === 'table') {
     const rs = output.data as ResultSet
     if (!rs?.columns?.length) return <p style={styles.empty}>No results returned</p>
-    return <TableOutput rs={rs} fixedView={fixedView} cellId={cellId} />
+    return <TableOutput rs={rs} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} />
   }
 
   return null
@@ -249,10 +252,13 @@ function exportJSON(rs: ResultSet): void {
   URL.revokeObjectURL(url)
 }
 
-function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string }) {
+function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void }) {
   const storageKey = cellId ? `hnb_cell_view_${cellId}` : null
+  const hasChartConfig = !!chartConfig?.chartType
   const [view, setView] = useState<'table' | 'chart'>(() => {
     if (fixedView) return fixedView
+    // If chart config was set (by agent or user), default to chart view
+    if (hasChartConfig) return 'chart'
     if (storageKey) {
       const saved = localStorage.getItem(storageKey)
       if (saved === 'chart' || saved === 'table') return saved
@@ -533,8 +539,7 @@ function TableOutput({ rs, fixedView, cellId }: { rs: ResultSet; fixedView?: 'ta
           )}
         </div>
       ) : (
-        // TODO: pass onConfigChange to persist chart config to backend (PUT /cells/:id output)
-        <ChartView rs={rs} cellId={cellId} />
+        <ChartView rs={rs} cellId={cellId} onConfigChange={onChartConfigChange} output={{ type: 'table', data: { columns: rs.columns, rows: rs.rows }, config: chartConfig }} />
       )}
 
       <div
