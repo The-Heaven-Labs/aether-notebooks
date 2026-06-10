@@ -13,13 +13,6 @@ const ACTION_LABELS: Record<ResourceType, string[]> = {
   dashboard: ['view', 'edit', 'share', 'delete'],
 }
 
-const PRESETS: Record<ResourceType, Record<string, string[]>> = {
-  folder:    { none: [], viewer: ['view'], editor: ['view', 'create', 'edit'], admin: ['view', 'create', 'edit', 'manage', 'delete'] },
-  notebook:  { none: [], viewer: ['view'], editor: ['view', 'run', 'edit'], admin: ['view', 'run', 'edit', 'share', 'delete'] },
-  connector: { none: [], viewer: ['view'], editor: ['view', 'use', 'edit'], admin: ['view', 'use', 'edit', 'share', 'delete'] },
-  dashboard: { none: [], viewer: ['view'], editor: ['view', 'edit'], admin: ['view', 'edit', 'share', 'delete'] },
-}
-
 const ACTION_DESCRIPTIONS: Record<ResourceType, Record<string, string>> = {
   connector: {
     view:   'See connector name, type, host, and status',
@@ -214,20 +207,6 @@ export function PermissionsPanel({
     setDraft(current.filter((_, i) => i !== entryIndex))
   }
 
-  function applyPreset(entryIndex: number, preset: 'none' | 'viewer' | 'editor' | 'admin') {
-    const current = draft ?? aclData ?? []
-    const actions = PRESETS[resourceType][preset]
-    const updated = current.map((e, i) =>
-      i === entryIndex ? { ...e, actions } : e
-    )
-    setDraft(updated)
-    setExpandedRows(prev => {
-      const next = new Set(prev)
-      next.add(entryIndex)
-      return next
-    })
-  }
-
   function handleAddEntry() {
     if (!newSubjectKey || newActions.length === 0) return
     const [subjectType, subjectId] = newSubjectKey.split(':') as ['user' | 'group', string]
@@ -381,29 +360,7 @@ export function PermissionsPanel({
                       >
                         ×
                       </button>
-                      <div style={styles.presetRow}>
-                        {(['none', 'viewer', 'editor', 'admin'] as const).map((preset) => {
-                          const presetActions = PRESETS[resourceType][preset]
-                          const isSelected = presetActions.length === entry.actions.length &&
-                            presetActions.every(a => entry.actions.includes(a))
-                          return (
-                            <button
-                              key={preset}
-onClick={() => {
-                                if (canEdit) applyPreset(idx, preset)
-                              }}
-                              disabled={!canEdit}
-                              style={{
-                                ...styles.presetBtn,
-                                ...(isSelected ? styles.presetBtnSelected : {}),
-                                opacity: canEdit ? 1 : 0.4,
-                              }}
-                            >
-                              {preset}
-                            </button>
-                          )
-                        })}
-                      </div>
+
                       <div style={styles.checkboxGroup}>
                         {actions.map((action) => (
                           <label key={action} style={styles.checkLabel} title={ACTION_DESCRIPTIONS[resourceType][action]}>
@@ -645,11 +602,6 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     marginTop: 4,
   },
-  presetBtnSelected: {
-    background: 'var(--accent)',
-    color: '#fff',
-    border: '1px solid var(--accent)',
-  },
   avatar: {
     width: 32,
     height: 32,
@@ -694,24 +646,6 @@ entryInfo: {
     flex: 1,
     maxWidth: '100%',
     overflow: 'hidden',
-  },
-  presetRow: {
-    display: 'flex',
-    gap: 4,
-    marginTop: 4,
-    flexShrink: 0,
-    overflowX: 'auto',
-  },
-  presetBtn: {
-    padding: '2px 8px',
-    fontSize: 10,
-    fontWeight: 600,
-    borderRadius: 3,
-    border: '1px solid var(--border)',
-    background: 'transparent',
-    color: 'var(--text-muted)',
-    cursor: 'pointer',
-    textTransform: 'capitalize' as const,
   },
   checkLabel: {
     display: 'flex',
