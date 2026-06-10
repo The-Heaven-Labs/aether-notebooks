@@ -470,12 +470,12 @@ export function NotebookPage() {
 
       setRunningCells((s) => new Set(s).add(cellId))
       try {
-        const result = await api.post<{ outputs: Output[] }>(
+        const result = await api.post<{ outputs: Output[]; metrics?: { connect_time_ms: number; query_time_ms: number; render_time_ms: number; total_time_ms: number } }>(
           `/api/v1/notebooks/${id}/cells/${cellId}/execute`,
           { parameters: paramValues },
         )
         setLocalCells((prev) =>
-          prev.map((c) => (c.id === cellId ? { ...c, outputs: result.outputs } : c)),
+          prev.map((c) => (c.id === cellId ? { ...c, outputs: result.outputs, metrics: result.metrics } : c)),
         )
         setCellRunAt((prev) => ({ ...prev, [cellId]: new Date() }))
       } catch (err: unknown) {

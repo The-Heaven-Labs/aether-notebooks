@@ -138,6 +138,7 @@ interface Props {
   running?: boolean
   saveState?: SaveState
   runAt?: Date
+  metrics?: { connect_time_ms: number; query_time_ms: number; render_time_ms: number; total_time_ms: number }
   onUpdateCellMeta?: (updates: Partial<Pick<Cell, 'source_visible' | 'cell_collapsed' | 'slide_break' | 'title' | 'description' | 'slug' | 'limit'>>) => void
   onChartConfigChange?: (cellId: string, config: ChartConfig) => void
   onShowHistory?: () => void
@@ -308,6 +309,7 @@ export function Cell({
   running = false,
   saveState,
   runAt,
+  metrics,
   onUpdateCellMeta,
   onChartConfigChange,
   onShowHistory,
@@ -439,6 +441,14 @@ export function Cell({
 
         {/* Hover toolbar */}
         <div style={{ ...styles.actions, opacity: hovered ? 1 : 0 }} role="toolbar" aria-label="Cell actions">
+          {metrics && (
+            <span
+              style={styles.timing}
+              title={`Connect: ${metrics.connect_time_ms}ms, Query: ${metrics.query_time_ms}ms, Render: ${metrics.render_time_ms}ms`}
+            >
+              ⏱ {(metrics.total_time_ms / 1000).toFixed(1)}s
+            </span>
+          )}
           {isCode && (() => {
             const hasConnector = !!(cell.connector_id || connectors.length > 0)
             return (
@@ -725,6 +735,16 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--success-light)',
     border: '1px solid var(--success)',
     borderRadius: 3,
+    whiteSpace: 'nowrap',
+  },
+  timing: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '3px 6px',
+    fontSize: 10,
+    fontFamily: 'var(--font-mono)',
+    fontWeight: 600,
+    color: 'var(--text-muted)',
     whiteSpace: 'nowrap',
   },
 

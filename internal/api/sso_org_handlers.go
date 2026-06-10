@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -330,6 +331,73 @@ func (s *Server) handleOrgUpdateSSOSettings(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSON(w, http.StatusOK, ssoSettingsResponse{SSOPasswordLogin: req.SSOPasswordLogin})
+}
+
+// handleOrgTestSSOProvider tests an OIDC provider configuration by fetching its discovery document.
+func (s *Server) handleOrgTestSSOProvider(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DiscoveryURL string `json:"discovery_url"`
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.DiscoveryURL == "" {
+		writeError(w, http.StatusBadRequest, "discovery_url is required")
+		return
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(req.DiscoveryURL)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"error":   "Failed to reach discovery URL: " + err.Error(),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"error":   fmt.Sprintf("Discovery URL returned status %d", resp.StatusCode),
+		})
+		return
+	}
+
+	var discovery struct {
+		Issuer                string `json:"issuer"`
+		AuthorizationEndpoint string `json:"authorization_endpoint"`
+		TokenEndpoint         string `json:"token_endpoint"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&discovery); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"error":   "Invalid OIDC discovery document: " + err.Error(),
+		})
+		return
+	}
+
+	if discovery.Issuer == "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"error":   "Discovery document missing required 'issuer' field",
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"issuer":  discovery.Issuer,
+		"provider_info": map[string]string{
+			"issuer":                 discovery.Issuer,
+			"authorization_endpoint": discovery.AuthorizationEndpoint,
+			"token_endpoint":         discovery.TokenEndpoint,
+		},
+	})
 }
 
 // invalidateSSOOrgCache deletes the org-specific SSO provider cache key.

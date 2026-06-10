@@ -124,6 +124,11 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/users/me", authMW(http.HandlerFunc(s.handleGetCurrentUser)))
 	s.mux.Handle("PUT /api/v1/users/me", authMW(http.HandlerFunc(s.handleUpdateCurrentUser)))
 
+	// Personal access token routes
+	s.mux.Handle("POST /api/v1/tokens", authMW(http.HandlerFunc(s.handleCreateToken)))
+	s.mux.Handle("GET /api/v1/tokens", authMW(http.HandlerFunc(s.handleListTokens)))
+	s.mux.Handle("DELETE /api/v1/tokens/{id}", authMW(http.HandlerFunc(s.handleDeleteToken)))
+
 	// Notebook routes
 	s.mux.Handle("POST /api/v1/notebooks", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateNotebook))))
 	s.mux.Handle("GET /api/v1/notebooks", authMW(http.HandlerFunc(s.handleListNotebooks)))
@@ -244,6 +249,7 @@ func (s *Server) routes() {
 	s.mux.Handle("DELETE /api/v1/sso/platform-providers/{id}/enable", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgDisablePlatformProvider))))
 	s.mux.Handle("GET /api/v1/sso/settings", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgGetSSOSettings))))
 	s.mux.Handle("PUT /api/v1/sso/settings", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgUpdateSSOSettings))))
+	s.mux.Handle("POST /api/v1/sso/providers/test", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgTestSSOProvider))))
 
 	// Audit routes
 	s.mux.Handle("GET /api/v1/audit", authMW(RequireRole("admin")(http.HandlerFunc(s.handleListAuditLogs))))
@@ -286,6 +292,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/mcp-servers/{id}", authMW(http.HandlerFunc(mh.handleGet)))
 	s.mux.Handle("PUT /api/v1/mcp-servers/{id}", authMW(RequireRole("admin")(http.HandlerFunc(mh.handleUpdate))))
 	s.mux.Handle("DELETE /api/v1/mcp-servers/{id}", authMW(RequireRole("admin")(http.HandlerFunc(mh.handleDelete))))
+	s.mux.Handle("POST /api/v1/mcp-servers/{id}/test", authMW(http.HandlerFunc(mh.handleTestMCPServer)))
 
 	// Agent WebSocket route
 	s.mux.Handle("GET /api/v1/ws/agents/{session_id}", authMW(http.HandlerFunc(s.handleAgentWS)))

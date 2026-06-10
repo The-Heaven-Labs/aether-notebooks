@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/heavenlabs/hnb/internal/audit"
@@ -183,6 +184,50 @@ func (h *mcpServerHandlers) handleDelete(w http.ResponseWriter, r *http.Request)
 	})
 
 	writeJSON(w, http.StatusNoContent, nil)
+}
+
+// handleTestMCPServer tests connectivity to an MCP server.
+// For HTTP servers, it attempts to reach the server's base URL.
+// For stdio servers, testing is not supported.
+func (h *mcpServerHandlers) handleTestMCPServer(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	claims := ClaimsFromContext(r.Context())
+
+	var serverType, command string
+	err := h.server.db.Pool.QueryRow(r.Context(),
+		`SELECT type, command FROM mcp_servers WHERE id = $1 AND org_id = $2`,
+		id, claims.OrgID,
+	).Scan(&serverType, &command)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "MCP server not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if serverType == "http" {
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Get(command)
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"error":   err.Error(),
+			})
+			return
+		}
+		defer resp.Body.Close()
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success":     resp.StatusCode < 400,
+			"status_code": resp.StatusCode,
+		})
+	} else {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"error":   "testing not supported for stdio MCP servers",
+		})
+	}
 }
 
 func isUniqueViolation(err error) bool {

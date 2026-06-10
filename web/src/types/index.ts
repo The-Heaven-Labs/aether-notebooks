@@ -43,6 +43,12 @@ export interface Cell {
   parameters?: Parameter[]
   limit?: number | null
   metadata?: Record<string, unknown>
+  metrics?: {
+    connect_time_ms: number
+    query_time_ms: number
+    render_time_ms: number
+    total_time_ms: number
+  }
 }
 
 export interface CellVersion {
