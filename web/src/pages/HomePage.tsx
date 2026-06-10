@@ -865,16 +865,15 @@ export function HomePage() {
                     <div key={f.id} style={{
                       ...s.folderCard,
                       ...(isSelected('folder', f.id) ? { borderColor: 'var(--accent)', background: 'var(--accent-light)' } : {}),
-                    }} className="card-hover">
-                      {selectionMode && (
+                    }} className="card-hover file-list-item">
+                      <div className={`file-checkbox${isSelected('folder', f.id) ? ' checked' : ''}`} style={s.hoverCheckbox}>
                         <input
                           type="checkbox"
                           checked={isSelected('folder', f.id)}
                           onChange={() => toggleSelect('folder', f.id)}
-                          style={s.itemCheckbox}
                           onClick={(e) => e.stopPropagation()}
                         />
-                      )}
+                      </div>
                       {renaming?.id === f.id ? (
                         <div style={{ flex: 1, padding: '4px 8px' }}>
                           <InlineRename
@@ -929,16 +928,15 @@ export function HomePage() {
                     <div key={nb.id} style={{
                       ...s.item,
                       ...(isSelected('notebook', nb.id) ? { borderColor: 'var(--accent)', background: 'var(--accent-light)' } : {}),
-                    }}>
-                      {selectionMode && (
+                    }} className="file-list-item">
+                      <div className={`file-checkbox${isSelected('notebook', nb.id) ? ' checked' : ''}`} style={s.hoverCheckbox}>
                         <input
                           type="checkbox"
                           checked={isSelected('notebook', nb.id)}
                           onChange={() => toggleSelect('notebook', nb.id)}
-                          style={s.itemCheckbox}
                           onClick={(e) => e.stopPropagation()}
                         />
-                      )}
+                      </div>
                       {renaming?.id === nb.id ? (
                         <div style={{ flex: 1 }}>
                           <InlineRename
@@ -992,16 +990,15 @@ export function HomePage() {
                     <div key={c.id} style={{
                       ...s.item,
                       ...(isSelected('connector', c.id) ? { borderColor: 'var(--accent)', background: 'var(--accent-light)' } : {}),
-                    }}>
-                      {selectionMode && (
+                    }} className="file-list-item">
+                      <div className={`file-checkbox${isSelected('connector', c.id) ? ' checked' : ''}`} style={s.hoverCheckbox}>
                         <input
                           type="checkbox"
                           checked={isSelected('connector', c.id)}
                           onChange={() => toggleSelect('connector', c.id)}
-                          style={s.itemCheckbox}
                           onClick={(e) => e.stopPropagation()}
                         />
-                      )}
+                      </div>
                       <Link to={`/connectors?edit=${c.id}`} style={s.itemLink}>
                         <Database size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                         <div style={{ flex: 1, minWidth: 0 }}>
@@ -1048,16 +1045,15 @@ export function HomePage() {
                     <div key={d.id} style={{
                       ...s.item,
                       ...(isSelected('dashboard', d.id) ? { borderColor: 'var(--accent)', background: 'var(--accent-light)' } : {}),
-                    }}>
-                      {selectionMode && (
+                    }} className="file-list-item">
+                      <div className={`file-checkbox${isSelected('dashboard', d.id) ? ' checked' : ''}`} style={s.hoverCheckbox}>
                         <input
                           type="checkbox"
                           checked={isSelected('dashboard', d.id)}
                           onChange={() => toggleSelect('dashboard', d.id)}
-                          style={s.itemCheckbox}
                           onClick={(e) => e.stopPropagation()}
                         />
-                      )}
+                      </div>
                       <Link to={`/dashboards/${d.id}`} style={s.itemLink}>
                         <LayoutDashboard size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                         <div style={{ flex: 1, minWidth: 0 }}>
