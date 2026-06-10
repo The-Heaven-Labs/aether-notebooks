@@ -1,14 +1,29 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool) {
+func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "list_skills",
+			Description: "List all available skills in the organization. Returns skill names, descriptions, and capabilities.",
+			Parameters:  `{"type":"object","properties":{},"required":[]}`,
+		},
+		Handler: makeListSkillsHandler(pool),
+	})
+
 	reg.Register(&ToolDef{
 		Function: struct {
 			Name        string `json:"name"`
@@ -45,7 +60,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Description: "Fork parallel exploration tasks",
 			Parameters:  `{"type":"object","properties":{"tasks":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"goal":{"type":"string"},"context":{"type":"object"},"agent_id":{"type":"string"}}}}},"required":["tasks"]}`,
 		},
-		Handler: makeSpawnSubagentsHandler(pool),
+		Handler: makeSpawnSubagentsHandler(pool, engine),
 	})
 
 	reg.Register(&ToolDef{
@@ -99,6 +114,33 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 		},
 		Handler: makeGetTasksHandler(),
 	})
+}
+
+func makeListSkillsHandler(pool *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		rows, err := pool.Query(ctx.Context, `SELECT id, name, description, system_prompt FROM skills WHERE org_id = $1`, ctx.OrgID)
+		if err != nil {
+			return nil, fmt.Errorf("list skills: %w", err)
+		}
+		defer rows.Close()
+		var skills []map[string]string
+		for rows.Next() {
+			var id, name, desc, prompt string
+			if err := rows.Scan(&id, &name, &desc, &prompt); err != nil {
+				return nil, fmt.Errorf("scan skill: %w", err)
+			}
+			skills = append(skills, map[string]string{
+				"id":           id,
+				"name":         name,
+				"description":  desc,
+				"capabilities": prompt,
+			})
+		}
+		if skills == nil {
+			skills = []map[string]string{}
+		}
+		return map[string]any{"skills": skills}, nil
+	}
 }
 
 func makeUpdateAgentHandler(pool *pgxpool.Pool) ToolHandler {
@@ -176,7 +218,7 @@ func makeCreateSkillHandler(pool *pgxpool.Pool) ToolHandler {
 	}
 }
 
-func makeSpawnSubagentsHandler(pool *pgxpool.Pool) ToolHandler {
+func makeSpawnSubagentsHandler(pool *pgxpool.Pool, engine *Engine) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
 			Tasks []struct {
@@ -211,6 +253,27 @@ func makeSpawnSubagentsHandler(pool *pgxpool.Pool) ToolHandler {
 				return nil, fmt.Errorf("create subagent task: %w", err)
 			}
 		}
+
+		// Launch subagent execution in background goroutine
+		// Copy masterKey so the goroutine has its own slice
+		mk := make([]byte, len(ctx.MasterKey))
+		copy(mk, ctx.MasterKey)
+
+		sessionID := ctx.SessionID
+		notebookID := ctx.NotebookID
+		broadcastFn := ctx.BroadcastFunc
+		idsCopy := make([]string, len(taskIDs))
+		copy(idsCopy, taskIDs)
+
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Warn("spawn_subagents: panic in background goroutine", "recover", r)
+				}
+			}()
+			bgCtx := context.Background()
+			engine.RunQueuedTasks(bgCtx, sessionID, idsCopy, mk, broadcastFn, notebookID)
+		}()
 
 		return map[string]any{"task_ids": taskIDs, "status": "spawned"}, nil
 	}
