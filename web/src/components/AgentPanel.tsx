@@ -8,7 +8,7 @@ import { SlashCommandPicker } from './SlashCommandPicker'
 import { TaskList } from './TaskList'
 
 interface AgentPanelProps {
-  notebookId: string
+  notebookId?: string
   width: number
   onResize: (width: number) => void
   onCellCreated?: (cellId: string, position: number) => void
@@ -32,7 +32,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
   const [_sessionId, setSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Array<{ role: string; content: string; reasoning?: string | undefined; params?: string; result?: string }>>([])
-  const chatStateKey = CHAT_STATE_KEY + notebookId
+  const chatStateKey = CHAT_STATE_KEY + (notebookId || '__global__')
   const [tasks, setTasks] = useState<AgentTaskItem[]>([])
   const [sessionTitle, setSessionTitle] = useState<string | null>(null)
   const [input, setInput] = useState('')
@@ -283,7 +283,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
   const startSession = async (agent: Agent) => {
     try {
       const res = await api.post<{ session_id: string }>('/api/v1/agents/' + agent.id + '/session', {
-        notebook_id: notebookId,
+        notebook_id: notebookId || '',
       })
       setSessionId(res.session_id)
       setSessionTitle(null)
@@ -583,7 +583,9 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
           <div ref={messageListRef} style={styles.messageList}>
             {messages.length === 0 && (
               <div style={styles.emptyState}>
-                Ask me anything about this notebook. I can read cells, create new ones, run queries, and make charts.
+                {notebookId
+                  ? 'Ask me anything about this notebook. I can read cells, create new ones, run queries, and make charts.'
+                  : 'Ask me anything. I can help with notebooks, queries, analysis, and more.'}
               </div>
             )}
              {messages.map((msg, i) => (

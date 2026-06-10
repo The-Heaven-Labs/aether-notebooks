@@ -26,9 +26,12 @@ type Entry struct {
 type QueryParams struct {
 	OrgID        string
 	UserID       string
+	UserEmail    string
 	Action       string
 	ResourceType string
 	ResourceID   string
+	DateFrom     string // RFC3339 or date string (YYYY-MM-DD)
+	DateTo       string // RFC3339 or date string (YYYY-MM-DD)
 	Limit        int
 	Offset       int
 }
@@ -117,6 +120,21 @@ func (l *Logger) Query(ctx context.Context, p QueryParams) ([]Entry, error) {
 		args = append(args, p.ResourceID)
 		argN++
 	}
+	if p.UserEmail != "" {
+		query += fmt.Sprintf(" AND u.email ILIKE $%d", argN)
+		args = append(args, "%"+p.UserEmail+"%")
+		argN++
+	}
+	if p.DateFrom != "" {
+		query += fmt.Sprintf(" AND al.created_at >= $%d::timestamptz", argN)
+		args = append(args, p.DateFrom)
+		argN++
+	}
+	if p.DateTo != "" {
+		query += fmt.Sprintf(" AND al.created_at <= $%d::timestamptz", argN)
+		args = append(args, p.DateTo+"T23:59:59Z")
+		argN++
+	}
 
 	query += fmt.Sprintf(" ORDER BY al.created_at DESC LIMIT $%d OFFSET $%d", argN, argN+1)
 	args = append(args, p.Limit, p.Offset)
@@ -149,28 +167,57 @@ func (l *Logger) Query(ctx context.Context, p QueryParams) ([]Entry, error) {
 // Count returns the total number of audit entries matching the given filters
 // (ignoring Limit/Offset).
 func (l *Logger) Count(ctx context.Context, p QueryParams) (int, error) {
-	query := `SELECT COUNT(*) FROM audit_logs WHERE org_id = $1`
+	// Use JOINed version when we need user email or date filtering
+	needsJoin := p.UserEmail != "" || p.DateFrom != "" || p.DateTo != ""
+
+	var query string
+	if needsJoin {
+		query = `SELECT COUNT(*) FROM audit_logs al LEFT JOIN users u ON u.id = al.user_id WHERE al.org_id = $1`
+	} else {
+		query = `SELECT COUNT(*) FROM audit_logs WHERE org_id = $1`
+	}
+
+	prefix := ""
+	if needsJoin {
+		prefix = "al."
+	}
+
 	args := []any{p.OrgID}
 	argN := 2
 
 	if p.UserID != "" {
-		query += fmt.Sprintf(" AND user_id = $%d", argN)
+		query += fmt.Sprintf(" AND %suser_id = $%d", prefix, argN)
 		args = append(args, p.UserID)
 		argN++
 	}
 	if p.Action != "" {
-		query += fmt.Sprintf(" AND action ILIKE $%d", argN)
+		query += fmt.Sprintf(" AND %saction ILIKE $%d", prefix, argN)
 		args = append(args, "%"+p.Action+"%")
 		argN++
 	}
 	if p.ResourceType != "" {
-		query += fmt.Sprintf(" AND resource_type = $%d", argN)
+		query += fmt.Sprintf(" AND %sresource_type = $%d", prefix, argN)
 		args = append(args, p.ResourceType)
 		argN++
 	}
 	if p.ResourceID != "" {
-		query += fmt.Sprintf(" AND resource_id = $%d", argN)
+		query += fmt.Sprintf(" AND %sresource_id = $%d", prefix, argN)
 		args = append(args, p.ResourceID)
+		argN++
+	}
+	if p.UserEmail != "" {
+		query += fmt.Sprintf(" AND u.email ILIKE $%d", argN)
+		args = append(args, "%"+p.UserEmail+"%")
+		argN++
+	}
+	if p.DateFrom != "" {
+		query += fmt.Sprintf(" AND %screated_at >= $%d::timestamptz", prefix, argN)
+		args = append(args, p.DateFrom)
+		argN++
+	}
+	if p.DateTo != "" {
+		query += fmt.Sprintf(" AND %screated_at <= $%d::timestamptz", prefix, argN)
+		args = append(args, p.DateTo+"T23:59:59Z")
 		argN++
 	}
 

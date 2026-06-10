@@ -1,4 +1,6 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, memo } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard } from 'lucide-react'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
@@ -139,7 +141,7 @@ interface Props {
   saveState?: SaveState
   runAt?: Date
   metrics?: { connect_time_ms: number; query_time_ms: number; render_time_ms: number; total_time_ms: number }
-  onUpdateCellMeta?: (updates: Partial<Pick<Cell, 'source_visible' | 'cell_collapsed' | 'slide_break' | 'title' | 'description' | 'slug' | 'limit'>>) => void
+  onUpdateCellMeta?: (updates: Partial<Pick<Cell, 'source_visible' | 'cell_collapsed' | 'slide_break' | 'title' | 'slug' | 'limit'>>) => void
   onChartConfigChange?: (cellId: string, config: ChartConfig) => void
   onShowHistory?: () => void
   onFocus?: (cellId: string) => void
@@ -292,7 +294,7 @@ function generateTitlePlaceholder(source: string, isCode: boolean): string {
 
 // ── Cell ──────────────────────────────────────────────────────────────────────
 
-export function Cell({
+export const Cell = memo(function Cell({
   cell,
   connectors,
   notebookId,
@@ -320,6 +322,8 @@ export function Cell({
   const [hovered, setHovered] = useState(false)
   const [connectorOpen, setConnectorOpen] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleDraft, setTitleDraft] = useState(cell.title ?? '')
 
   const isCode = cell.type === 'code'
   const sourceVisible = cell.source_visible ?? true
@@ -430,13 +434,41 @@ export function Cell({
           )}
 
           {/* Title */}
-          <input
-            style={styles.titleInput}
-            value={cell.title ?? ''}
-            onChange={(e) => onUpdateCellMeta?.({ title: e.target.value })}
-            onClick={(e) => e.stopPropagation()}
-            placeholder={generateTitlePlaceholder(cell.source, isCode)}
-          />
+          {editingTitle ? (
+            <input
+              style={styles.titleInput}
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onBlur={() => {
+                setEditingTitle(false)
+                if (titleDraft !== (cell.title ?? '')) {
+                  onUpdateCellMeta?.({ title: titleDraft })
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                if (e.key === 'Escape') { setTitleDraft(cell.title ?? ''); setEditingTitle(false) }
+              }}
+              onClick={(e) => e.stopPropagation()}
+              autoFocus
+            />
+          ) : cell.title ? (
+            <div
+              style={styles.titleRendered}
+              onClick={(e) => { e.stopPropagation(); setTitleDraft(cell.title ?? ''); setEditingTitle(true) }}
+              title="Click to edit title (supports markdown)"
+            >
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{cell.title}</ReactMarkdown>
+            </div>
+          ) : (
+            <input
+              style={styles.titleInput}
+              value={cell.title ?? ''}
+              onChange={(e) => onUpdateCellMeta?.({ title: e.target.value })}
+              onClick={(e) => e.stopPropagation()}
+              placeholder={generateTitlePlaceholder(cell.source, isCode)}
+            />
+          )}
         </div>
 
         {/* Hover toolbar */}
@@ -606,7 +638,7 @@ export function Cell({
     </div>
     </>
   )
-}
+})
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
@@ -695,6 +727,22 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-sans)',
     minWidth: 0,
     caretColor: 'var(--text-primary)',
+  },
+  titleRendered: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: 500,
+    color: 'var(--text-primary)',
+    fontFamily: 'var(--font-sans)',
+    minWidth: 0,
+    cursor: 'pointer',
+    lineHeight: 1.4,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap' as const,
+    '& p': { margin: 0, display: 'inline' },
+    '& strong': { fontWeight: 700 },
+    '& em': { fontStyle: 'italic' },
   },
 
   // Hover toolbar

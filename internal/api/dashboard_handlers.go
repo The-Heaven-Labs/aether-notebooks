@@ -118,6 +118,17 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
+
+	// Check view permission
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "view")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "you don't have permission to view this dashboard")
+		return
+	}
 	json.Unmarshal(settingsOut, &dash.Settings)
 
 	widgets, err := s.loadWidgets(ctx, dashID)
@@ -133,10 +144,43 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dashboardWithWidgets{Dashboard: dash, Widgets: widgets})
 }
 
+func (s *Server) handleGetDashboardPermissions(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	dashID := r.PathValue("id")
+	ctx := r.Context()
+
+	viewOK, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "view")
+	if err != nil || !viewOK {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
+	editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "edit")
+	deleteOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "delete")
+	shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "share")
+
+	writeJSON(w, http.StatusOK, map[string]bool{
+		"can_edit":   editOK,
+		"can_delete": deleteOK,
+		"can_share":  shareOK,
+	})
+}
+
 func (s *Server) handleDeleteDashboard(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	dashID := r.PathValue("id")
 	ctx := r.Context()
+
+	// Check delete permission
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "delete")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "you don't have permission to delete this dashboard")
+		return
+	}
 
 	result, err := s.db.Pool.Exec(ctx,
 		`DELETE FROM dashboards WHERE id = $1 AND org_id = $2`,
@@ -170,6 +214,17 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+
+	// Check edit permission
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "edit")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "you don't have permission to edit this dashboard")
+		return
+	}
 
 	var exists bool
 	s.db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM dashboards WHERE id=$1 AND org_id=$2)", dashID, claims.OrgID).Scan(&exists)
@@ -207,6 +262,17 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	dashID := r.PathValue("id")
 	widgetID := r.PathValue("widget_id")
+
+	// Check edit permission
+	allowed, err := s.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "edit")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "you don't have permission to edit this dashboard")
+		return
+	}
 
 	var req struct {
 		Layout *struct {
@@ -251,6 +317,17 @@ func (s *Server) handleDeleteWidget(w http.ResponseWriter, r *http.Request) {
 	dashID := r.PathValue("id")
 	widgetID := r.PathValue("widget_id")
 	ctx := r.Context()
+
+	// Check edit permission
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "edit")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "you don't have permission to edit this dashboard")
+		return
+	}
 
 	result, err := s.db.Pool.Exec(ctx,
 		`DELETE FROM widgets WHERE id = $1 AND dashboard_id = $2

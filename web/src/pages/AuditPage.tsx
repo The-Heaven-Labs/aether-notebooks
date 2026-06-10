@@ -160,10 +160,33 @@ function ResourceCell({ entry }: { entry: AuditEntry }) {
   )
 }
 
+function CellExecuteMeta({ metadata }: { metadata: Record<string, unknown> }) {
+  const query = typeof metadata.query === 'string' ? metadata.query : ''
+  const rowCount = metadata.row_count != null ? String(metadata.row_count) : null
+  const durationMs = metadata.duration_ms != null ? String(metadata.duration_ms) : null
+  const queryPreview = query.length > 200 ? query.slice(0, 200) + '…' : query
+
+  return (
+    <div style={styles.cellMeta}>
+      {queryPreview && (
+        <div style={styles.cellMetaQuery} title={query}>
+          <code>{queryPreview}</code>
+        </div>
+      )}
+      <div style={styles.cellMetaStats}>
+        {rowCount && <span>{rowCount} rows</span>}
+        {rowCount && durationMs && <span> · </span>}
+        {durationMs && <span>{durationMs}ms</span>}
+      </div>
+    </div>
+  )
+}
+
 function AuditRow({ entry }: { entry: AuditEntry }) {
   const ts = new Date(entry.created_at)
   const dateStr = ts.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
   const timeStr = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short' })
+  const isCellExecute = entry.action === 'cell.execute' && entry.metadata
 
   return (
     <tr style={styles.tr}>
@@ -179,6 +202,7 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
       </td>
       <td style={styles.td} title={entry.resource_id}>
         <ResourceCell entry={entry} />
+        {isCellExecute && <CellExecuteMeta metadata={entry.metadata!} />}
       </td>
       <td style={styles.td} title={entry.user_id}>
         <span>{entry.user_email || entry.user_id || '—'}</span>
@@ -285,5 +309,23 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'monospace',
     fontSize: 11,
     color: 'var(--text-muted)',
+  },
+  cellMeta: {
+    marginTop: 4,
+    fontSize: 11,
+    lineHeight: 1.4,
+  },
+  cellMetaQuery: {
+    color: 'var(--text-secondary)',
+    maxWidth: 400,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap' as const,
+  },
+  cellMetaStats: {
+    color: 'var(--text-muted)',
+    fontFamily: 'monospace',
+    fontSize: 10,
+    marginTop: 2,
   },
 }
