@@ -25,18 +25,19 @@ type Engine struct {
 }
 
 func NewEngine(pool *pgxpool.Pool) *Engine {
-	reg := NewToolRegistry()
-	RegisterNotebookTools(reg, pool)
-	RegisterAgentTools(reg, pool)
-	RegisterPlatformTools(reg, pool)
-	RegisterChartTools(reg, pool)
-
-	return &Engine{
-		registry:    reg,
+	engine := &Engine{
+		registry:    NewToolRegistry(),
 		session:     NewSessionStore(pool),
 		pool:        pool,
 		rateLimiter: NewRateLimiter(pool),
 	}
+
+	RegisterNotebookTools(engine.registry, pool)
+	RegisterAgentTools(engine.registry, pool, engine)
+	RegisterPlatformTools(engine.registry, pool)
+	RegisterChartTools(engine.registry, pool)
+
+	return engine
 }
 
 func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, tools []*ToolDef, masterKey []byte, onToken func(string), onReasoning func(string), onToolCall func(string, string, string), onToolResult func(string, string, string, string), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, error) {
@@ -190,7 +191,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		ID:        userMsgID,
 		SessionID: sessionID,
 		Role:      "user",
-		Content:   userMessage,
+		Content:   effectiveMessage,
 		CreatedAt: time.Now(),
 	})
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/google/uuid"
@@ -109,6 +110,152 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 			`, choice.Message.Content, resp.Usage.PromptTokens, resp.Usage.CompletionTokens, taskID)
 
 			return result
+		}
+
+		for _, tc := range choice.ToolCalls {
+			toolDef, ok := e.registry.Get(tc.Function.Name)
+			if !ok {
+				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name)})
+				continue
+			}
+
+			result, err := toolDef.Handler(json.RawMessage(tc.Function.Arguments), &ToolContext{
+				Context:    ctx,
+				UserID:     parentUserID,
+				OrgID:      parentOrgID,
+				OrgRole:    "editor",
+				NotebookID: taskID,
+				SessionID:  parentSessionID,
+				DB:         e.pool,
+				MasterKey:  masterKey,
+			})
+
+			if err != nil {
+				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: err.Error()})
+			} else {
+				resultJSON, _ := json.Marshal(result)
+				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: string(resultJSON)})
+			}
+		}
+	}
+
+	return SubagentResult{TaskID: taskID, Status: "completed", Result: "max turns reached"}
+}
+
+// RunQueuedTasks runs subagent tasks that were already inserted into the DB
+// (status 'queued'). It updates each task's status as it progresses and
+// broadcasts events via broadcastFn so the frontend can track progress.
+func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, taskIDs []string, masterKey []byte, broadcastFn func(notebookID string, msg any), notebookID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Warn("RunQueuedTasks: panic", "recover", r)
+		}
+	}()
+
+	var parentUserID, parentAgentID string
+	if err := e.pool.QueryRow(ctx, `SELECT user_id, agent_id FROM agent_sessions WHERE id = $1`, parentSessionID).Scan(&parentUserID, &parentAgentID); err != nil {
+		slog.Error("RunQueuedTasks: get parent session", "error", err)
+		return
+	}
+	var orgID string
+	if err := e.pool.QueryRow(ctx, `SELECT org_id FROM agents WHERE id = $1`, parentAgentID).Scan(&orgID); err != nil {
+		slog.Error("RunQueuedTasks: get agent org", "error", err)
+		return
+	}
+
+	sem := make(chan struct{}, MaxSubagentParallelism)
+	var wg sync.WaitGroup
+
+	for _, taskID := range taskIDs {
+		// Fetch task details from DB
+		var goal string
+		var contextJSON []byte
+		err := e.pool.QueryRow(ctx, `SELECT goal, context FROM subagent_tasks WHERE id = $1`, taskID).Scan(&goal, &contextJSON)
+		if err != nil {
+			slog.Error("RunQueuedTasks: fetch task", "task_id", taskID, "error", err)
+			continue
+		}
+
+		var taskCtx map[string]any
+		if contextJSON != nil {
+			json.Unmarshal(contextJSON, &taskCtx)
+		}
+
+		sem <- struct{}{}
+		wg.Add(1)
+
+		go func(tid string, g string, tc map[string]any) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			// Update status to running
+			_, _ = e.pool.Exec(ctx, `UPDATE subagent_tasks SET status = 'running' WHERE id = $1`, tid)
+			if broadcastFn != nil {
+				broadcastFn(notebookID, map[string]any{
+					"type":    "subagent_status",
+					"task_id": tid,
+					"status":  "running",
+				})
+			}
+
+			// Run the subagent LLM loop
+			result := e.runSubagentLoop(ctx, parentSessionID, tid, g, parentUserID, orgID, masterKey)
+
+			// Update final status
+			status := "completed"
+			if result.Error != "" {
+				status = "failed"
+			}
+			_, _ = e.pool.Exec(ctx, `
+				UPDATE subagent_tasks SET status = $1, result = $2, tokens_input = $3, tokens_output = $4, completed_at = NOW()
+				WHERE id = $5
+			`, status, result.Result, result.TokensIn, result.TokensOut, tid)
+
+			if broadcastFn != nil {
+				broadcastFn(notebookID, map[string]any{
+					"type":    "subagent_status",
+					"task_id": tid,
+					"status":  status,
+					"result":  result.Result,
+				})
+			}
+		}(taskID, goal, taskCtx)
+	}
+
+	wg.Wait()
+}
+
+// runSubagentLoop runs the LLM loop for a subagent task that already exists in the DB.
+// Unlike runSubagent, it does NOT insert the task record.
+func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, taskID string, goal string, parentUserID, parentOrgID string, masterKey []byte) SubagentResult {
+	messages := []ChatMessage{
+		{Role: "user", Content: goal},
+	}
+
+	for turn := 0; turn < MaxSubagentTurns; turn++ {
+		if e.llm == nil {
+			return SubagentResult{TaskID: taskID, Status: "failed", Error: "no LLM client configured"}
+		}
+
+		resp, err := e.llm.Chat(ctx, messages, nil, masterKey)
+		if err != nil {
+			return SubagentResult{TaskID: taskID, Status: "failed", Error: err.Error()}
+		}
+
+		if len(resp.Choices) == 0 {
+			return SubagentResult{TaskID: taskID, Status: "failed", Error: "no choices in response"}
+		}
+
+		choice := resp.Choices[0]
+
+		if choice.Message.Content != "" {
+			return SubagentResult{
+				TaskID:    taskID,
+				Status:    "completed",
+				Result:    choice.Message.Content,
+				TokensIn:  resp.Usage.PromptTokens,
+				TokensOut: resp.Usage.CompletionTokens,
+			}
 		}
 
 		for _, tc := range choice.ToolCalls {
