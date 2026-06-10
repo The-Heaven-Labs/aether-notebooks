@@ -169,6 +169,7 @@ func (s *Server) routes() {
 	s.mux.Handle("PUT /api/v1/dashboards/{id}/widgets/{widget_id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleUpdateWidget))))
 	s.mux.Handle("DELETE /api/v1/dashboards/{id}/widgets/{widget_id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDeleteWidget))))
 	s.mux.Handle("POST /api/v1/dashboards/{id}/share", authMW(RequireRole("editor")(http.HandlerFunc(s.handleShareDashboard))))
+	s.mux.Handle("GET /api/v1/dashboards/{id}/permissions", authMW(http.HandlerFunc(s.handleGetDashboardPermissions)))
 	s.mux.HandleFunc("GET /api/v1/public/dashboards/{token}", s.handlePublicDashboard)
 
 	// WebSocket routes

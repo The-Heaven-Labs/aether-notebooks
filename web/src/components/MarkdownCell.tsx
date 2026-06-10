@@ -2,16 +2,18 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
-import { Loader2, Link, Heading, Code } from 'lucide-react'
+import { Loader2, Link, Heading, Code, Maximize2 } from 'lucide-react'
 import { getToken } from '../api/client'
 import type { Cell } from '../types'
 import { slugify } from './Cell'
+import { ImageViewer } from './ImageViewer'
 
 export interface ResizableImageProps {
   src: string
   alt?: string
   width?: string
   onResize?: (src: string, newWidth: number) => void
+  onExpand?: (src: string) => void
   readOnly?: boolean
 }
 
@@ -42,7 +44,7 @@ function setCachedBlobUrl(src: string, url: string) {
   }
 }
 
-export function ResizableImage({ src, alt, width, onResize, readOnly }: ResizableImageProps) {
+export function ResizableImage({ src, alt, width, onResize, onExpand, readOnly }: ResizableImageProps) {
   const imgRef = useRef<HTMLImageElement>(null)
   const [blobUrl, setBlobUrl] = useState<string | null>(() => getCachedBlobUrl(src) ?? null)
 
@@ -78,8 +80,22 @@ export function ResizableImage({ src, alt, width, onResize, readOnly }: Resizabl
   }
 
   return (
-    <span style={{ display: 'inline-block', position: 'relative' }} onClick={e => e.stopPropagation()}>
+    <span style={{ display: 'inline-block', position: 'relative' }} className="md-image-wrapper" onClick={e => e.stopPropagation()}>
       <img ref={imgRef} src={blobUrl ?? ''} alt={alt} width={width} style={{ display: 'block', maxWidth: '100%', background: blobUrl ? undefined : 'var(--border)', minHeight: blobUrl ? undefined : 80 }} />
+      {onExpand && (
+        <button
+          className="md-image-expand-btn"
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); onExpand(blobUrl ?? src) }}
+          title="View full screen"
+          style={{
+            position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+            background: 'rgba(0,0,0,0.5)', color: '#fff', border: 'none', borderRadius: 4,
+            padding: '6px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          <Maximize2 size={16} />
+        </button>
+      )}
       {!readOnly && (
         <span
           className="img-resize-handle"
@@ -100,10 +116,10 @@ export function ResizableImage({ src, alt, width, onResize, readOnly }: Resizabl
   )
 }
 
-export function makeMarkdownComponents(onResize: (src: string, newWidth: number) => void, readOnly = false) {
+export function makeMarkdownComponents(onResize: (src: string, newWidth: number) => void, readOnly = false, onExpand?: (src: string) => void) {
   return {
     img: ({ src, alt, width }: React.ImgHTMLAttributes<HTMLImageElement>) => (
-      <ResizableImage src={src ?? ''} alt={alt} width={width?.toString()} onResize={onResize} readOnly={readOnly} />
+      <ResizableImage src={src ?? ''} alt={alt} width={width?.toString()} onResize={onResize} onExpand={onExpand} readOnly={readOnly} />
     ),
     h1: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
       const text = children?.toString() || ''
@@ -243,7 +259,9 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
     onSaveRef.current?.(cell.id, updated)
   }, [cell.id, onSourceChange])
 
-  const markdownComponents = useMemo(() => makeMarkdownComponents(handleResize), [handleResize])
+  const [viewingImage, setViewingImage] = useState<string | null>(null)
+  const handleImageExpand = useCallback((imgSrc: string) => setViewingImage(imgSrc), [])
+  const markdownComponents = useMemo(() => makeMarkdownComponents(handleResize, false, handleImageExpand), [handleResize, handleImageExpand])
 
   const uploadImage = useCallback(async (file: File) => {
     const form = new FormData()
@@ -583,6 +601,14 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
       )}
       
       <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileSelect} />
+
+      {viewingImage && <ImageViewer src={viewingImage} onClose={() => setViewingImage(null)} />}
+
+      <style>{`
+        .md-image-wrapper { position: relative; }
+        .md-image-expand-btn { opacity: 0; transition: opacity 0.2s ease; }
+        .md-image-wrapper:hover .md-image-expand-btn { opacity: 1; }
+      `}</style>
     </div>
   )
 }

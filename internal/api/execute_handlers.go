@@ -233,5 +233,13 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "cell.execute", ResourceType: "cell", ResourceID: cellID,
+		Metadata: map[string]any{
+			"notebook_id":  nbID,
+			"cell_id":      cellID,
+			"connector_id": cell.ConnectorID,
+			"query":        cell.Source,
+			"row_count":    rowCount,
+			"duration_ms":  totalTime,
+		},
 	})
 }
