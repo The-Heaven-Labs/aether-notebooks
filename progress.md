@@ -1,7 +1,7 @@
 # Progress
 
 ## Status
-In Progress — 24/41 items completed
+In Progress — 26/41 items completed
 
 ## Completed Items
 
@@ -40,20 +40,22 @@ In Progress — 24/41 items completed
 - ✅ Item 34: MCP test connection button
 - ✅ Item 42: OIDC provider test/validate button
 - ✅ Item 32: Import/export notebooks with .ipynb support
+- ✅ Item 33: Scalable skill/MCP selector UI (searchable checkbox grid + chips)
+- ✅ Item 40: Bulk actions on file list (hover checkboxes, permissions button)
+
+### Wave 6 (Admin)
+- ✅ Item 23: Admin MOTD configuration (migration 057, CRUD handlers, AppShell banner)
 
 ## Remaining Items
 - Item 9: Audit cell execution logging (partial - backend done)
 - Item 11: Dashboard permission system (partial - backend done)
 - Item 13: Cell execution metrics (partial - backend done)
 - Item 21: OpenAPI documentation with swagger
-- Item 23: Admin MOTD configuration ✅ COMPLETE - migration 057, CRUD handlers, routes, AppShell banner with dismiss, AdminPage MOTD tab
-- Item 33: Scalable skill/MCP selector UI
 - Item 35: Single-cell selection enforcement
 - Item 39: Markdown split preview mode
-- Item 40: Bulk actions on file list
 
 ## Notes
 - All Go code compiles clean
 - All TypeScript code compiles clean
 - Branch: feat/all-improvements-2026-06-09
-- 24 commits total
+- 26 commits total
