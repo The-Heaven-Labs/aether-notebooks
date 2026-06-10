@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
+import { ArrowLeft, Play, Loader2, Pencil, Settings } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
@@ -244,7 +244,28 @@ const queryWidgetStyles: Record<string, React.CSSProperties> = {
   markdown: { padding: '16px', fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.6, overflow: 'auto', height: '100%' },
 }
 
-function WidgetCard({ widget, qc }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient> }) {
+function WidgetCard({ widget, qc, onEdit }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; onEdit?: () => void }) {
+  const [loading, setLoading] = useState(false)
+
+  const handleRun = useCallback(async () => {
+    if (loading || !widget.notebook_id || !widget.cell_id) return
+    setLoading(true)
+    try {
+      const token = localStorage.getItem('hnb_token')
+      await fetch(`/api/v1/notebooks/${widget.notebook_id}/cells/${widget.cell_id}/execute`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ parameters: {} }),
+      })
+      qc.invalidateQueries({ queryKey: ['notebook', widget.notebook_id] })
+    } finally {
+      setLoading(false)
+    }
+  }, [widget.notebook_id, widget.cell_id, qc, loading])
+
   if (INPUT_WIDGET_TYPES.has(widget.type)) {
     return (
       <div style={styles.inputWidgetCard}>
@@ -254,6 +275,27 @@ function WidgetCard({ widget, qc }: { widget: AnyWidget; qc: ReturnType<typeof u
   }
   return (
     <div style={styles.widgetCard}>
+      <div style={styles.widgetPlayBar}>
+        <button
+          style={styles.widgetPlayBtn}
+          onClick={handleRun}
+          disabled={loading}
+          title="Refresh widget data"
+        >
+          {loading
+            ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} />
+            : <Play size={12} />}
+        </button>
+        {onEdit && (
+          <button
+            style={styles.widgetEditBtn}
+            onClick={onEdit}
+            title="Edit widget"
+          >
+            <Pencil size={11} />
+          </button>
+        )}
+      </div>
       <QueryWidget widget={widget} qc={qc} />
     </div>
   )
@@ -374,8 +416,21 @@ function DashboardContent({ id }: { id: string }) {
             onClick={() => executeAllWidgets(widgets)}
             title="Execute all widget cells"
           >
-            {isRefreshing ? 'Running…' : '▶ Run all'}
+            {isRefreshing ? 'Running…' : 'Run all'}
           </button>
+          <Link
+            to={`/dashboards/${id}`}
+            style={{
+              padding: '5px 12px', fontSize: 12, fontWeight: 600,
+              background: 'none', color: 'var(--text-secondary)',
+              border: '1px solid var(--border)', borderRadius: 4,
+              textDecoration: 'none', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 4,
+            }}
+            title="Edit dashboard layout"
+          >
+            <Settings size={12} /> Edit
+          </Link>
 
           <select
             style={{
@@ -542,5 +597,39 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     overflow: 'hidden',
     position: 'relative',
+  },
+  widgetPlayBar: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    display: 'flex',
+    gap: 4,
+    zIndex: 2,
+  },
+  widgetPlayBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 24,
+    height: 24,
+    borderRadius: 4,
+    border: '1px solid var(--border)',
+    background: 'var(--bg-card)',
+    color: 'var(--text-muted)',
+    cursor: 'pointer',
+    padding: 0,
+  },
+  widgetEditBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 24,
+    height: 24,
+    borderRadius: 4,
+    border: '1px solid var(--border)',
+    background: 'var(--bg-card)',
+    color: 'var(--text-muted)',
+    cursor: 'pointer',
+    padding: 0,
   },
 }
