@@ -241,7 +241,7 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 
 	var widget models.Widget
 	var layoutOut, configOut []byte
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`INSERT INTO widgets (dashboard_id, notebook_id, cell_id, type, layout, config)
 		 VALUES ($1, $2, $3, $4, $5, $6)
 		 RETURNING id, dashboard_id, notebook_id, cell_id, type, layout, config, created_at, updated_at`,
