@@ -1,0 +1,126 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "hnb API",
+    "description": "Heaven's Notebooks API — collaborative SQL/data notebook platform",
+    "version": "1.0.0"
+  },
+  "servers": [{"url": "/api/v1"}],
+  "security": [{"BearerAuth": []}],
+  "paths": {
+    "/auth/login": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Login with email and password",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "properties": {"email": {"type": "string"}, "password": {"type": "string"}}, "required": ["email", "password"]}}}},
+        "responses": {"200": {"description": "JWT token and user info"}}
+      }
+    },
+    "/auth/register": {
+      "post": {"tags": ["auth"], "summary": "Register new user", "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "properties": {"email": {"type": "string"}, "password": {"type": "string"}, "name": {"type": "string"}}, "required": ["email", "password"]}}}}, "responses": {"201": {"description": "JWT token and user info"}}}
+    },
+    "/users/me": {
+      "get": {"tags": ["users"], "summary": "Get current user", "responses": {"200": {"description": "User object"}}},
+      "put": {"tags": ["users"], "summary": "Update current user", "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"name": {"type": "string"}, "status": {"type": "string"}}}}}}, "responses": {"200": {"description": "Updated user"}}}
+    },
+    "/notebooks": {
+      "get": {"tags": ["notebooks"], "summary": "List notebooks", "responses": {"200": {"description": "Array of notebooks"}}},
+      "post": {"tags": ["notebooks"], "summary": "Create notebook", "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "properties": {"title": {"type": "string"}, "folder_id": {"type": "string"}}, "required": ["title"]}}}}, "responses": {"201": {"description": "Created notebook"}}}
+    },
+    "/notebooks/{id}": {
+      "get": {"tags": ["notebooks"], "summary": "Get notebook with cells", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Notebook with cells array"}}},
+      "put": {"tags": ["notebooks"], "summary": "Update notebook", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"title": {"type": "string"}, "description": {"type": "string"}, "connector_id": {"type": "string"}}}}}}, "responses": {"200": {"description": "Updated notebook"}}},
+      "delete": {"tags": ["notebooks"], "summary": "Delete notebook", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Deleted"}}}
+    },
+    "/notebooks/{id}/export": {
+      "get": {"tags": ["notebooks"], "summary": "Export notebook as .ipynb", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Jupyter notebook JSON file"}}}
+    },
+    "/notebooks/import": {
+      "post": {"tags": ["notebooks"], "summary": "Import .ipynb notebook", "requestBody": {"required": true, "content": {"multipart/form-data": {"schema": {"type": "object", "properties": {"file": {"type": "string", "format": "binary"}}, "required": ["file"]}}}}, "responses": {"201": {"description": "Created notebook with id and title"}}}
+    },
+    "/notebooks/{notebook_id}/cells": {
+      "post": {"tags": ["cells"], "summary": "Create cell", "parameters": [{"name": "notebook_id", "in": "path", "required": true, "schema": {"type": "string"}}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "properties": {"type": {"type": "string", "enum": ["code", "text"]}, "language": {"type": "string"}, "source": {"type": "string"}, "position": {"type": "integer"}}, "required": ["type"]}}}}, "responses": {"201": {"description": "Created cell"}}}
+    },
+    "/notebooks/{notebook_id}/cells/{cell_id}": {
+      "put": {"tags": ["cells"], "summary": "Update cell", "parameters": [{"name": "notebook_id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "cell_id", "in": "path", "required": true, "schema": {"type": "string"}}], "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"source": {"type": "string"}, "type": {"type": "string"}, "connector_id": {"type": "string"}, "metadata": {"type": "object"}}}}}}, "responses": {"200": {"description": "Updated cell"}}},
+      "delete": {"tags": ["cells"], "summary": "Delete cell", "parameters": [{"name": "notebook_id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "cell_id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Deleted"}}}
+    },
+    "/notebooks/{notebook_id}/cells/{cell_id}/execute": {
+      "post": {"tags": ["cells"], "summary": "Execute cell", "parameters": [{"name": "notebook_id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "cell_id", "in": "path", "required": true, "schema": {"type": "string"}}], "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"parameters": {"type": "object"}}}}}}, "responses": {"200": {"description": "Execution results with outputs and metrics"}}}
+    },
+    "/connectors": {
+      "get": {"tags": ["connectors"], "summary": "List connectors", "responses": {"200": {"description": "Array of connectors"}}},
+      "post": {"tags": ["connectors"], "summary": "Create connector", "responses": {"201": {"description": "Created connector"}}}
+    },
+    "/connectors/{id}": {
+      "put": {"tags": ["connectors"], "summary": "Update connector", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Updated"}}, "requestBody": {"content": {"application/json": {"schema": {"type": "object"}}}}},
+      "delete": {"tags": ["connectors"], "summary": "Delete connector", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Deleted"}}}
+    },
+    "/dashboards": {
+      "get": {"tags": ["dashboards"], "summary": "List dashboards", "responses": {"200": {"description": "Array of dashboards"}}},
+      "post": {"tags": ["dashboards"], "summary": "Create dashboard", "responses": {"201": {"description": "Created dashboard"}}}
+    },
+    "/dashboards/{id}": {
+      "get": {"tags": ["dashboards"], "summary": "Get dashboard with widgets", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Dashboard with widgets"}}},
+      "delete": {"tags": ["dashboards"], "summary": "Delete dashboard", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Deleted"}}}
+    },
+    "/members": {
+      "get": {"tags": ["members"], "summary": "List org members", "responses": {"200": {"description": "Array of members"}}},
+      "post": {"tags": ["members"], "summary": "Invite member", "responses": {"201": {"description": "Invited"}}}
+    },
+    "/members/invite-link": {
+      "post": {"tags": ["members"], "summary": "Generate invite link", "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"role": {"type": "string"}}}}}}, "responses": {"201": {"description": "Token and URL"}}}
+    },
+    "/groups": {
+      "get": {"tags": ["groups"], "summary": "List groups", "responses": {"200": {"description": "Array of groups"}}},
+      "post": {"tags": ["groups"], "summary": "Create group", "responses": {"201": {"description": "Created group"}}}
+    },
+    "/acl/{resource_type}/{resource_id}": {
+      "get": {"tags": ["permissions"], "summary": "Get ACL for resource", "parameters": [{"name": "resource_type", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "resource_id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "ACL entries"}}},
+      "put": {"tags": ["permissions"], "summary": "Update ACL for resource", "parameters": [{"name": "resource_type", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "resource_id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Updated"}}}
+    },
+    "/tokens": {
+      "get": {"tags": ["tokens"], "summary": "List personal access tokens", "responses": {"200": {"description": "Array of token metadata"}}},
+      "post": {"tags": ["tokens"], "summary": "Create personal access token", "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"name": {"type": "string"}, "expires_at": {"type": "string", "format": "date-time"}}, "required": ["name"]}}}}, "responses": {"201": {"description": "Token (shown once)"}}}
+    },
+    "/tokens/{id}": {
+      "delete": {"tags": ["tokens"], "summary": "Revoke token", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Revoked"}}}
+    },
+    "/agents": {
+      "get": {"tags": ["agents"], "summary": "List agents", "responses": {"200": {"description": "Array of agents"}}},
+      "post": {"tags": ["agents"], "summary": "Create agent", "responses": {"201": {"description": "Created agent"}}}
+    },
+    "/agents/{id}/session": {
+      "post": {"tags": ["agents"], "summary": "Create agent session", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"201": {"description": "Session created"}}}
+    },
+    "/skills": {
+      "get": {"tags": ["skills"], "summary": "List skills", "responses": {"200": {"description": "Array of skills"}}},
+      "post": {"tags": ["skills"], "summary": "Create skill", "responses": {"201": {"description": "Created skill"}}}
+    },
+    "/mcp-servers": {
+      "get": {"tags": ["mcp"], "summary": "List MCP servers", "responses": {"200": {"description": "Array of MCP servers"}}}
+    },
+    "/audit": {
+      "get": {"tags": ["audit"], "summary": "List audit logs", "parameters": [{"name": "limit", "in": "query", "schema": {"type": "integer"}}, {"name": "offset", "in": "query", "schema": {"type": "integer"}}, {"name": "resource_type", "in": "query", "schema": {"type": "string"}}, {"name": "action", "in": "query", "schema": {"type": "string"}}], "responses": {"200": {"description": "Audit entries with total count"}}}
+    },
+    "/folders": {
+      "get": {"tags": ["folders"], "summary": "List root folder contents", "responses": {"200": {"description": "Folder contents"}}},
+      "post": {"tags": ["folders"], "summary": "Create folder", "responses": {"201": {"description": "Created folder"}}}
+    },
+    "/motd": {
+      "get": {"tags": ["admin"], "summary": "List active MOTD messages", "responses": {"200": {"description": "Array of MOTD messages"}}}
+    },
+    "/admin/motd": {
+      "post": {"tags": ["admin"], "summary": "Create MOTD message (admin)", "responses": {"201": {"description": "Created"}}}
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "JWT token or personal access token (hnb_tok_...)"
+      }
+    }
+  }
+}
