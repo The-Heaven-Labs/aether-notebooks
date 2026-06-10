@@ -4,17 +4,17 @@
 **Started:** 2026-06-09
 **Total items:** 43 (minus Item 5 already done, Item 41 already done = 41 to implement)
 
-## Wave 1 - Quick Wins & Isolated Fixes (IN PROGRESS)
-| Item | Description | Agent | Status |
-|------|-------------|-------|--------|
-| 2 | Keyboard shortcuts dark mode | A1 | ⬜ |
-| 3 | Folder tree collapse button | A1 | ⬜ |
-| 28 | Sidebar icon swap | A1 | ⬜ |
-| 1 | Invite link fix | A2 | ⬜ |
-| 35 | Single-cell selection | A3 | ⬜ |
-| 36 | New cell scroll into view | A3 | ⬜ |
-| 6 | ConfirmDialog component | A4 | ⬜ |
-| 19 | Image fullscreen viewer | A5 | ⬜ |
+## Wave 1 - Quick Wins & Isolated Fixes ✅ COMPLETE
+| Item | Description | Status |
+|------|-------------|--------|
+| 2 | Keyboard shortcuts dark mode | ✅ |
+| 3 | Folder tree collapse button | ✅ |
+| 28 | Sidebar icon swap | ✅ |
+| 1 | Invite link fix | ✅ |
+| 25 | Collapse/show all | ✅ |
+| 36 | New cell scroll into view | ✅ |
+| 6 | ConfirmDialog component | ✅ |
+| 18 | Agent max_turns configurable | ✅ |
 
 ## Wave 2 - Backend & Dashboard (PENDING)
 | Item | Description | Status |

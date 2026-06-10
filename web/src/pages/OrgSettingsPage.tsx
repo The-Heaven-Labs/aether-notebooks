@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
 import { api } from '../api/client'
+import { Loader2, CheckCircle2, XCircle } from 'lucide-react'
 import type { SSOProvider, PlatformSSOProvider, SSOSettings } from '../types'
 
 // ─── Provider form state ────────────────────────────────────────────────────
@@ -54,6 +55,8 @@ function ProviderForm({
   error: string | null
 }) {
   const [values, setValues] = useState<ProviderFormValues>(initial)
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [testing, setTesting] = useState(false)
 
   const set = (field: keyof ProviderFormValues) =>
     (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -104,6 +107,17 @@ function ProviderForm({
         </label>
       </div>
       {error && <div style={formStyles.error}>{error}</div>}
+      {testResult && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          marginTop: 12, padding: '8px 12px', borderRadius: 4, fontSize: 12,
+          background: testResult.success ? 'var(--success-light, #d1fae5)' : 'var(--error-light, #fef2f2)',
+          color: testResult.success ? 'var(--success, #059669)' : 'var(--error-full)',
+        }}>
+          {testResult.success ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+          {testResult.message}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
         <button
           style={{ ...formStyles.btn, opacity: saving ? 0.6 : 1 }}
@@ -111,6 +125,38 @@ function ProviderForm({
           disabled={saving}
         >
           {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Provider'}
+        </button>
+        <button
+          style={{
+            ...formStyles.cancelBtn,
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            opacity: testing || !values.discovery_url ? 0.6 : 1,
+          }}
+          onClick={async () => {
+            if (!values.discovery_url) return
+            setTesting(true)
+            setTestResult(null)
+            try {
+              const result = await api.post<{ success: boolean; error?: string; issuer?: string; provider_info?: Record<string, string> }>('/api/v1/sso/providers/test', {
+                discovery_url: values.discovery_url,
+                client_id: values.client_id,
+                client_secret: values.client_secret,
+              })
+              if (result.success) {
+                setTestResult({ success: true, message: `Connected! Provider: ${result.issuer ?? 'unknown'}` })
+              } else {
+                setTestResult({ success: false, message: result.error ?? 'Connection failed' })
+              }
+            } catch (e: unknown) {
+              setTestResult({ success: false, message: String(e) })
+            } finally {
+              setTesting(false)
+            }
+          }}
+          disabled={testing || !values.discovery_url}
+        >
+          {testing ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : null}
+          Test Connection
         </button>
         <button style={formStyles.cancelBtn} onClick={onCancel} disabled={saving}>
           Cancel
