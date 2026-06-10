@@ -93,6 +93,8 @@ func (s *Server) routes() {
 
 	// Public routes
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.HandleFunc("GET /swagger.json", s.handleSwaggerJSON)
+	s.mux.HandleFunc("GET /docs", s.handleSwaggerUI)
 	s.mux.HandleFunc("GET /api/v1/_diagnose/master-key", func(w http.ResponseWriter, r *http.Request) {
 		test := []byte("diagnostic-ping")
 		enc, err := crypto.Encrypt(test, s.masterKey)
