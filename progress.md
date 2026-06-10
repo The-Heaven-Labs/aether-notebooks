@@ -1,7 +1,7 @@
 # Progress
 
 ## Status
-In Progress — Wave 3 complete (Items 34, 42)
+In Progress — Wave 3 complete (Items 22, 34, 42)
 
 ## Branch
 `feat/all-improvements-2026-06-09`
@@ -30,7 +30,8 @@ In Progress — Wave 3 complete (Items 34, 42)
 - Item 8: Edit already placed widgets (pencil icon)
 - Item 10: Per-widget play button with loading state
 
-### Wave 3 (Test Connection Buttons)
+### Wave 3 (Test Connection + Tokens)
+- Item 22: Personal access tokens (CRUD API, auth middleware, ProfilePage UI)
 - Item 34: MCP config test button (backend + frontend)
 - Item 42: OIDC provider form test/validate button (backend + frontend)
 
@@ -40,7 +41,6 @@ In Progress — Wave 3 complete (Items 34, 42)
 - Item 13: Cell execution metrics
 - Item 19: Full-screen image viewer with zoom
 - Item 21: OpenAPI documentation with swagger
-- Item 22: Personal access tokens
 - Item 23: Admin MOTD configuration
 - Item 27: Trigger agent modal from outside notebooks
 - Item 29: Audit page filter improvements
@@ -54,6 +54,8 @@ In Progress — Wave 3 complete (Items 34, 42)
 - Item 43: Cell title markdown support + remove description field
 
 ## Recent Commits
+- `30c7492` feat: personal access tokens - full CRUD UI in ProfilePage (item 22)
+- `36e4d53` chore: stage personal access token middleware + progress updates
 - `4c2f6a8` feat: MCP test connection button and OIDC provider validation (items 34, 42)
 - `fd436ec` fix: subagent spawning now launches background execution (item 30)
 - `7d012d6` feat: add get_notebook_context tool with safeguards (item 31)
