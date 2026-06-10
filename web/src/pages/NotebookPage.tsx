@@ -793,6 +793,28 @@ export function NotebookPage() {
           <button
             type="button"
             style={styles.schemaBtn}
+            onClick={() => {
+              const token = localStorage.getItem('hnb_token')
+              fetch(`/api/v1/notebooks/${id}/export`, { headers: { Authorization: `Bearer ${token}` } })
+                .then(r => r.blob())
+                .then(blob => {
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = `${notebook.title}.ipynb`
+                  document.body.appendChild(a)
+                  a.click()
+                  document.body.removeChild(a)
+                  URL.revokeObjectURL(url)
+                })
+            }}
+            title="Export as .ipynb"
+          >
+            Export
+          </button>
+          <button
+            type="button"
+            style={styles.schemaBtn}
             onClick={toggleCollapseAll}
           >
             {allCollapsed ? 'Show All' : 'Collapse All'}

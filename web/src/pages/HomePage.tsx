@@ -317,6 +317,7 @@ export function HomePage() {
   const folderID = searchParams.get('folder')
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const importRef = useRef<HTMLInputElement>(null)
   useAuth()
   const [searchQuery, setSearchQuery] = useState('')
 
@@ -346,8 +347,8 @@ export function HomePage() {
 
   // Bulk selection
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [selectionMode, setSelectionMode] = useState(false)
   const [bulkMoving, setBulkMoving] = useState(false)
+  const [bulkPermissions, setBulkPermissions] = useState(false)
 
   const contentsKey = ['folder-contents', folderID ?? 'root']
   const { data, isLoading } = useQuery<FolderContents>({
@@ -559,8 +560,7 @@ export function HomePage() {
       else next.add(key)
       return next
     })
-    if (!selectionMode) setSelectionMode(true)
-  }, [selectionMode])
+  }, [])
 
   const selectAll = useCallback(() => {
     const allIds = [
@@ -570,12 +570,10 @@ export function HomePage() {
       ...(data?.dashboards ?? []).map(d => `dashboard:${d.id}`),
     ]
     setSelected(new Set(allIds))
-    setSelectionMode(true)
   }, [data])
 
   const clearSelection = useCallback(() => {
     setSelected(new Set())
-    setSelectionMode(false)
   }, [])
 
   const isSelected = useCallback((type: string, id: string) => {
@@ -587,16 +585,16 @@ export function HomePage() {
     return { type, id }
   })
 
-  // Exit selection mode on Escape
+  // Clear selection on Escape
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && selectionMode) {
+      if (e.key === 'Escape' && selected.size > 0) {
         clearSelection()
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [selectionMode, clearSelection])
+  }, [selected.size, clearSelection])
 
   // ── Bulk mutations ──
 
@@ -669,8 +667,15 @@ export function HomePage() {
               />
             </div>
 
+            {/* Hover-visible checkbox style */}
+            <style>{`
+              .file-list-item .file-checkbox { opacity: 0; transition: opacity 0.15s; }
+              .file-list-item:hover .file-checkbox { opacity: 1; }
+              .file-list-item .file-checkbox.checked { opacity: 1; }
+            `}</style>
+
             {/* Bulk selection toolbar */}
-            {selectionMode && (
+            {selected.size > 0 && (
               <div style={s.bulkToolbar}>
                 <label style={s.bulkCheckLabel}>
                   <input
@@ -690,8 +695,13 @@ export function HomePage() {
                 <div style={{ flex: 1 }} />
                 <button
                   style={s.bulkBtn}
+                  onClick={() => setBulkPermissions(true)}
+                >
+                  Permissions
+                </button>
+                <button
+                  style={s.bulkBtn}
                   onClick={() => setBulkMoving(true)}
-                  disabled={selected.size === 0}
                 >
                   Move to…
                 </button>
@@ -702,20 +712,14 @@ export function HomePage() {
                       bulkDelete.mutate()
                     }
                   }}
-                  disabled={selected.size === 0 || bulkDelete.isPending}
+                  disabled={bulkDelete.isPending}
                 >
                   {bulkDelete.isPending ? 'Deleting…' : 'Delete'}
                 </button>
                 <button style={s.bulkCancelBtn} onClick={clearSelection}>
-                  Cancel
+                  Clear
                 </button>
               </div>
-            )}
-
-            {!selectionMode && (
-              <button style={s.selectBtn} onClick={() => setSelectionMode(true)}>
-                Select
-              </button>
             )}
 
             {/* Breadcrumb — only when in a folder */}
@@ -780,6 +784,35 @@ export function HomePage() {
               </button>
               <button style={s.newBtn} onClick={() => { setCreating('dashboard'); setNewName('') }}>
                 + New Dashboard
+              </button>
+              <input
+                ref={importRef}
+                type="file"
+                accept=".ipynb"
+                style={{ display: 'none' }}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0]
+                  if (!file) return
+                  const form = new FormData()
+                  form.append('file', file)
+                  try {
+                    const token = localStorage.getItem('hnb_token')
+                    const res = await fetch('/api/v1/notebooks/import', {
+                      method: 'POST',
+                      headers: { Authorization: `Bearer ${token}` },
+                      body: form,
+                    })
+                    if (!res.ok) throw new Error('Import failed')
+                    const result = await res.json()
+                    navigate(`/notebooks/${result.id}`)
+                  } catch (err) {
+                    console.error('Import failed:', err)
+                  }
+                  e.target.value = ''
+                }}
+              />
+              <button style={s.newBtn} onClick={() => importRef.current?.click()}>
+                Import .ipynb
               </button>
             </div>
 
