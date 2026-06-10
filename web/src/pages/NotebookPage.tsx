@@ -207,14 +207,6 @@ export function NotebookPage() {
     })
   }, [])
 
-  // Stable handlers for Cell memoization
-  const stableFocusHandler = useCallback((cid: string) => setFocusedCellId(cid), [])
-  const stableDeleteHandler = useCallback((cid: string) => {
-    if (confirm('Delete this cell?')) deleteCell.mutate(cid)
-  }, [deleteCell])
-  const stableDashboardHandler = useCallback((cid: string) => setAddToDashboardCellId(cid), [])
-  const stableHistoryHandler = useCallback((cid: string) => fetchHistory(cid), [fetchHistory])
-
   // Real-time cell output + metadata updates via WebSocket
   const flashCell = (cellId: string) => {
     let attempts = 0
@@ -425,6 +417,14 @@ export function NotebookPage() {
     setHistoryVersions(versions)
     setHistoryCell(cellId)
   }, [id])
+
+  // Stable handlers for Cell memoization (must be after all referenced functions)
+  const stableFocusHandler = useCallback((cid: string) => setFocusedCellId(cid), [])
+  const stableDeleteHandler = useCallback((cid: string) => {
+    if (confirm('Delete this cell?')) deleteCell.mutate(cid)
+  }, [deleteCell])
+  const stableDashboardHandler = useCallback((cid: string) => setAddToDashboardCellId(cid), [])
+  const stableHistoryHandler = useCallback((cid: string) => fetchHistory(cid), [fetchHistory])
 
   const restoreVersion = useCallback(async (cellId: string, versionId: string) => {
     try {

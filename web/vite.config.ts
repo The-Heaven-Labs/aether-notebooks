@@ -16,6 +16,9 @@ const apiTarget = process.env.API_URL ?? 'http://localhost:8080';
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  optimizeDeps: {
+    include: ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities']
+  },
   server: {
     host: '0.0.0.0',
     proxy: {
