@@ -142,6 +142,27 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		return "", "", nil, events, fmt.Errorf("get messages: %w", err)
 	}
 
+	// Handle /skill:<name> prefix — inject skill prompt for this turn only
+	var skillOverridePrompt string
+	effectiveMessage := userMessage
+	if strings.HasPrefix(userMessage, "/skill:") {
+		parts := strings.SplitN(userMessage, " ", 2)
+		skillName := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(parts[0], "/skill:")))
+		skillName = strings.ReplaceAll(skillName, " ", "-")
+
+		var skillPrompt string
+		err = e.pool.QueryRow(ctx, `SELECT system_prompt FROM skills WHERE org_id = $1 AND LOWER(REPLACE(name, ' ', '-')) = $2`, agent.OrgID, skillName).Scan(&skillPrompt)
+		if err != nil {
+			return "", "", nil, events, fmt.Errorf("skill '%s' not found", skillName)
+		}
+		skillOverridePrompt = skillPrompt
+		if len(parts) > 1 && strings.TrimSpace(parts[1]) != "" {
+			effectiveMessage = strings.TrimSpace(parts[1])
+		} else {
+			effectiveMessage = "Use the skill instructions above."
+		}
+	}
+
 	chatMsgs := make([]ChatMessage, 0)
 	notebookCtx := e.buildNotebookContext(session.NotebookID)
 	if systemPrompt != "" {
@@ -159,7 +180,10 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	for _, sp := range skillPrompts {
 		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: sp})
 	}
-	chatMsgs = append(chatMsgs, ChatMessage{Role: "user", Content: userMessage})
+	if skillOverridePrompt != "" {
+		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: "# Active Skill\n\n" + skillOverridePrompt})
+	}
+	chatMsgs = append(chatMsgs, ChatMessage{Role: "user", Content: effectiveMessage})
 
 	userMsgID := uuid.New().String()
 	e.session.AppendMessage(ctx, &models.AgentMessage{
@@ -665,6 +689,16 @@ func (e *Engine) buildNotebookContext(notebookID string) string {
 			ctx += "\nNotebook cells: type 'code' with language 'sql' for database queries, type 'text' with language 'markdown' for documentation."
 			ctx += "\nCharts: Use create_chart to turn a cell's table output into a chart (bar, line, scatter, pie). Use update_chart to modify an existing chart's config. The frontend will render the chart automatically from the saved config."
 		}
+	}
+
+	// Add cell count information
+	var cellCount int
+	var codeCellCount int
+	e.pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM cells WHERE notebook_id = $1`, notebookID).Scan(&cellCount)
+	e.pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM cells WHERE notebook_id = $1 AND type = 'code'`, notebookID).Scan(&codeCellCount)
+	if cellCount > 0 {
+		ctx += fmt.Sprintf("\nCells: %d total (code: %d)", cellCount, codeCellCount)
+		ctx += "\nUse get_notebook_context tool to read full cell contents."
 	}
 
 	return ctx

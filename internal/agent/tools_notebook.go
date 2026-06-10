@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -103,6 +104,19 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"connector_id":{"type":"string","description":"ID of the connector to explore"}},"required":["connector_id"]}`,
 		},
 		Handler: makeExploreSchemaHandler(db),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "get_notebook_context",
+			Description: "Get the full content of a notebook including all cell sources and optionally outputs. Use this to understand the complete notebook structure and content.",
+			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string","description":"The notebook ID to read"},"max_cells":{"type":"integer","description":"Maximum number of cells to return (default 50)"},"include_outputs":{"type":"boolean","description":"Include cell outputs (default false, truncates to first 10 rows if true)"}},"required":["notebook_id"]}`,
+		},
+		Handler: makeGetNotebookContextHandler(db),
 	})
 }
 
@@ -537,5 +551,75 @@ func makeExploreSchemaHandler(db *pgxpool.Pool) ToolHandler {
 		}
 
 		return map[string]any{"tables": tables, "total_tables": len(tables)}, nil
+	}
+}
+
+func makeGetNotebookContextHandler(db *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var params struct {
+			NotebookID     string `json:"notebook_id"`
+			MaxCells       int    `json:"max_cells"`
+			IncludeOutputs bool   `json:"include_outputs"`
+		}
+		if err := json.Unmarshal(args, &params); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if params.NotebookID == "" {
+			params.NotebookID = ctx.NotebookID
+		}
+		if params.MaxCells <= 0 {
+			params.MaxCells = 50
+		}
+		if params.MaxCells > 50 {
+			params.MaxCells = 50
+		}
+
+		if err := ctx.CheckPermission("notebook", params.NotebookID, "view"); err != nil {
+			return nil, err
+		}
+
+		// Get notebook info
+		var title string
+		err := db.QueryRow(ctx.Context, `SELECT title FROM notebooks WHERE id = $1`, params.NotebookID).Scan(&title)
+		if err != nil {
+			return nil, fmt.Errorf("notebook not found: %w", err)
+		}
+
+		// Get cells
+		rows, err := db.Query(ctx.Context, `SELECT id, type, language, source, position FROM cells WHERE notebook_id = $1 ORDER BY position LIMIT $2`, params.NotebookID, params.MaxCells)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		var result strings.Builder
+		result.WriteString(fmt.Sprintf("Notebook: %q\n", title))
+		result.WriteString(fmt.Sprintf("Cells (showing up to %d):\n\n", params.MaxCells))
+
+		cellNum := 0
+		for rows.Next() {
+			cellNum++
+			var id, cellType, lang, source string
+			var pos int
+			if err := rows.Scan(&id, &cellType, &lang, &source, &pos); err != nil {
+				continue
+			}
+
+			result.WriteString(fmt.Sprintf("--- Cell %d (%s, %s) ---\n", cellNum, cellType, lang))
+			if len(source) > 2000 {
+				result.WriteString(source[:2000] + "\n... (truncated)\n\n")
+			} else {
+				result.WriteString(source + "\n\n")
+			}
+		}
+
+		// Check if there are more cells
+		var totalCount int
+		db.QueryRow(ctx.Context, `SELECT COUNT(*) FROM cells WHERE notebook_id = $1`, params.NotebookID).Scan(&totalCount)
+		if totalCount > params.MaxCells {
+			result.WriteString(fmt.Sprintf("\n... and %d more cells (truncated)\n", totalCount-params.MaxCells))
+		}
+
+		return map[string]string{"content": result.String()}, nil
 	}
 }
