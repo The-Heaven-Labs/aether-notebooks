@@ -445,7 +445,7 @@ const ssoStyles: Record<string, React.CSSProperties> = {
 
 export function AdminPage() {
   useEffect(() => { document.title = "Platform Admin — Heaven's Notebooks" }, [])
-  const [tab, setTab] = useState<'orgs' | 'users' | 'sso'>('orgs')
+  const [tab, setTab] = useState<'orgs' | 'users' | 'sso' | 'motd'>('orgs')
   const [orgs, setOrgs] = useState<Org[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
@@ -496,6 +496,14 @@ export function AdminPage() {
           onClick={() => setTab('sso')}
         >
           SSO Providers
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'motd'}
+          style={tab === 'motd' ? styles.tabActive : styles.tab}
+          onClick={() => setTab('motd')}
+        >
+          MOTD
         </button>
       </div>
 
@@ -557,6 +565,7 @@ export function AdminPage() {
       )}
 
       {tab === 'sso' && <SSOProvidersTab />}
+      {tab === 'motd' && <MOTDTab />}
     </div>
   )
 }

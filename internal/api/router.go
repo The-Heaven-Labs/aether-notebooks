@@ -136,6 +136,8 @@ func (s *Server) routes() {
 	s.mux.Handle("DELETE /api/v1/notebooks/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDeleteNotebook))))
 	s.mux.Handle("PUT /api/v1/notebooks/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleUpdateNotebook))))
 	s.mux.Handle("GET /api/v1/notebooks/{id}/permissions", authMW(http.HandlerFunc(s.handleGetNotebookPermissions)))
+	s.mux.Handle("GET /api/v1/notebooks/{id}/export", authMW(http.HandlerFunc(s.handleExportNotebook)))
+	s.mux.Handle("POST /api/v1/notebooks/import", authMW(RequireRole("editor")(http.HandlerFunc(s.handleImportNotebook))))
 
 	// Cell routes
 	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/cells", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateCell))))
@@ -301,6 +303,12 @@ func (s *Server) routes() {
 	// Agent stats routes
 	s.mux.Handle("GET /api/v1/agents/stats", authMW(RequireRole("admin")(http.HandlerFunc(ah.handleAgentStats))))
 	s.mux.Handle("GET /api/v1/agents/{id}/stats", authMW(RequireRole("admin")(http.HandlerFunc(ah.handleAgentStatsByAgent))))
+
+	// MOTD routes
+	s.mux.Handle("GET /api/v1/motd", authMW(http.HandlerFunc(s.handleListMOTD)))
+	s.mux.Handle("POST /api/v1/admin/motd", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateMOTD))))
+	s.mux.Handle("PUT /api/v1/admin/motd/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateMOTD))))
+	s.mux.Handle("DELETE /api/v1/admin/motd/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleDeleteMOTD))))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
