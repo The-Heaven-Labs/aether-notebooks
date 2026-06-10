@@ -310,6 +310,114 @@ function BulkMoveModal({ count, onConfirm, onClose }: { count: number; onConfirm
   )
 }
 
+// ─── BulkPermissionsModal ────────────────────────────────────────────────────
+
+const BULK_PRESETS: Record<string, string[]> = {
+  folder: { viewer: ['view'], editor: ['view', 'create', 'edit'], admin: ['view', 'create', 'edit', 'manage', 'delete'] } as unknown as string[],
+  notebook: { viewer: ['view'], editor: ['view', 'run', 'edit'], admin: ['view', 'run', 'edit', 'share', 'delete'] } as unknown as string[],
+  connector: { viewer: ['view'], editor: ['view', 'use', 'edit'], admin: ['view', 'use', 'edit', 'share', 'delete'] } as unknown as string[],
+  dashboard: { viewer: ['view'], editor: ['view', 'edit'], admin: ['view', 'edit', 'share', 'delete'] } as unknown as string[],
+}
+
+function BulkPermissionsModal({ count, items, onClose, onApplied }: {
+  count: number
+  items: Array<{ type: ResourceType; id: string }>
+  onClose: () => void
+  onApplied: () => void
+}) {
+  const [role, setRole] = useState<'viewer' | 'editor' | 'admin'>('viewer')
+  const [applying, setApplying] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const presets: Record<string, string[]> = {
+    folder: ['view', 'create', 'edit', 'manage', 'delete'],
+    notebook: ['view', 'run', 'edit', 'share', 'delete'],
+    connector: ['view', 'use', 'edit', 'share', 'delete'],
+    dashboard: ['view', 'edit', 'share', 'delete'],
+  }
+
+  const roleActions: Record<string, string[]> = {
+    viewer: ['view'],
+    editor: {
+      folder: ['view', 'create', 'edit'],
+      notebook: ['view', 'run', 'edit'],
+      connector: ['view', 'use', 'edit'],
+      dashboard: ['view', 'edit'],
+    } as unknown as string[],
+    admin: {
+      folder: ['view', 'create', 'edit', 'manage', 'delete'],
+      notebook: ['view', 'run', 'edit', 'share', 'delete'],
+      connector: ['view', 'use', 'edit', 'share', 'delete'],
+      dashboard: ['view', 'edit', 'share', 'delete'],
+    } as unknown as string[],
+  }
+
+  async function handleApply() {
+    setApplying(true)
+    setError(null)
+    try {
+      await Promise.all(items.map(async ({ type, id }) => {
+        let actions: string[]
+        if (role === 'viewer') {
+          actions = ['view']
+        } else if (role === 'editor') {
+          const p = presets[type] ?? ['view']
+          actions = p.filter(a => a !== 'delete' && a !== 'manage' && a !== 'share')
+        } else {
+          actions = presets[type] ?? ['view']
+        }
+        await api.put(`/api/v1/acl/${type}/${id}`, {
+          entries: [{ subject_type: 'org_role', subject_id: 'editor', actions }],
+        })
+      }))
+      onApplied()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to apply permissions')
+    } finally {
+      setApplying(false)
+    }
+  }
+
+  return (
+    <div style={ms.backdrop} onClick={onClose}>
+      <div style={{ ...ms.modal, width: 380 }} onClick={(e) => e.stopPropagation()}>
+        <div style={ms.modalHeader}>
+          <span style={ms.modalTitle}>Set permissions for {count} item(s)</span>
+          <button style={ms.closeBtn} onClick={onClose}>×</button>
+        </div>
+        <div style={{ padding: '20px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0 }}>
+            This will set permissions for all {count} selected items. Existing permissions will be replaced.
+          </p>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
+            Permission level
+            <select
+              style={{ width: '100%', padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, marginTop: 4, background: 'var(--bg-input)', color: 'var(--text-primary)' }}
+              value={role}
+              onChange={e => setRole(e.target.value as 'viewer' | 'editor' | 'admin')}
+            >
+              <option value="viewer">Viewer — can view only</option>
+              <option value="editor">Editor — can view and edit</option>
+              <option value="admin">Admin — full access including delete</option>
+            </select>
+          </label>
+          {error && <p style={{ color: 'var(--error)', fontSize: 12, margin: 0 }}>{error}</p>}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 18px', borderTop: '1px solid var(--border)' }}>
+          <button style={s.cancelBtn} onClick={onClose}>Cancel</button>
+          <button
+            style={{ ...s.newBtn, opacity: applying ? 0.6 : 1 }}
+            onClick={handleApply}
+            disabled={applying}
+          >
+            {applying ? 'Applying…' : 'Apply'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── HomePage ────────────────────────────────────────────────────────────────
 
 export function HomePage() {
@@ -1109,6 +1217,19 @@ export function HomePage() {
               />
             )}
 
+            {/* Bulk permissions modal */}
+            {bulkPermissions && (
+              <BulkPermissionsModal
+                count={selected.size}
+                items={selectedItems}
+                onClose={() => setBulkPermissions(false)}
+                onApplied={() => {
+                  setBulkPermissions(false)
+                  clearSelection()
+                }}
+              />
+            )}
+
             {/* Permissions panel */}
             {permissionsTarget && (
               <PermissionsPanel
@@ -1192,22 +1313,11 @@ const s: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     color: 'var(--text-muted)',
   },
-  selectBtn: {
-    padding: '5px 12px',
-    border: '1px solid var(--border)',
-    borderRadius: 4,
-    background: 'none',
-    fontSize: 12,
-    fontWeight: 500,
-    cursor: 'pointer',
-    color: 'var(--text-secondary)',
-    marginBottom: 12,
-  },
-  itemCheckbox: {
-    marginRight: 8,
-    cursor: 'pointer',
+  hoverCheckbox: {
     flexShrink: 0,
-    accentColor: 'var(--accent)',
+    display: 'flex',
+    alignItems: 'center',
+    paddingLeft: 4,
   },
 }
 
