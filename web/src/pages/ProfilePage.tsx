@@ -42,12 +42,38 @@ export function ProfilePage() {
     queryFn: () => api.get('/api/v1/groups?member=me'),
   })
 
+  const { data: tokens = [], refetch: refetchTokens } = useQuery<ApiToken[]>({
+    queryKey: ['api-tokens'],
+    queryFn: () => api.get('/api/v1/tokens'),
+  })
+
+  const createToken = useMutation({
+    mutationFn: (name: string) => api.post<CreatedToken>('/api/v1/tokens', { name }),
+    onSuccess: (data) => {
+      setCreatedToken(data)
+      setNewTokenName('')
+      setShowTokenForm(false)
+      refetchTokens()
+    },
+  })
+
+  const deleteToken = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/tokens/${id}`),
+    onSuccess: () => refetchTokens(),
+  })
+
   const [name, setName] = useState('')
   const [status, setStatus] = useState('')
   const [theme, setTheme] = useState<'light' | 'dark'>(
     (localStorage.getItem('hnb_theme') ?? 'light') as 'light' | 'dark'
   )
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+
+  // Token management state
+  const [showTokenForm, setShowTokenForm] = useState(false)
+  const [newTokenName, setNewTokenName] = useState('')
+  const [createdToken, setCreatedToken] = useState<CreatedToken | null>(null)
+  const [tokenCopied, setTokenCopied] = useState(false)
 
   const timeoutRef = useRef<number | null>(null)
 
@@ -171,6 +197,116 @@ export function ProfilePage() {
               </div>
             )}
           </div>
+
+          {/* Personal Access Tokens */}
+          <div style={{ marginTop: 32, borderTop: '1px solid var(--border-light)', paddingTop: 24 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Personal Access Tokens</div>
+              <button
+                type="button"
+                style={styles.tokenCreateBtn}
+                onClick={() => { setShowTokenForm(true); setCreatedToken(null) }}
+              >
+                <Plus size={12} /> Create Token
+              </button>
+            </div>
+
+            {/* Newly created token — show ONCE */}
+            {createdToken && (
+              <div style={styles.tokenAlert}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <AlertTriangle size={14} style={{ color: 'var(--warning, #f59e0b)', flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                    Copy your token now — you won't see it again!
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    style={{ ...styles.input, flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12 }}
+                    value={createdToken.token}
+                    readOnly
+                    onClick={e => (e.target as HTMLInputElement).select()}
+                  />
+                  <button
+                    type="button"
+                    style={styles.tokenCopyBtn}
+                    onClick={() => {
+                      navigator.clipboard.writeText(createdToken.token)
+                      setTokenCopied(true)
+                      setTimeout(() => setTokenCopied(false), 2000)
+                    }}
+                  >
+                    {tokenCopied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Create token form */}
+            {showTokenForm && !createdToken && (
+              <div style={styles.tokenForm}>
+                <input
+                  style={styles.input}
+                  placeholder="Token name (e.g. CI pipeline)"
+                  value={newTokenName}
+                  onChange={e => setNewTokenName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && newTokenName.trim()) createToken.mutate(newTokenName.trim())
+                    if (e.key === 'Escape') setShowTokenForm(false)
+                  }}
+                  autoFocus
+                />
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    style={styles.tokenCreateBtn}
+                    disabled={!newTokenName.trim() || createToken.isPending}
+                    onClick={() => createToken.mutate(newTokenName.trim())}
+                  >
+                    {createToken.isPending ? 'Creating…' : 'Create'}
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.tokenCancelBtn}
+                    onClick={() => setShowTokenForm(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Token list */}
+            {tokens.length === 0 && !showTokenForm ? (
+              <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No personal access tokens.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                {tokens.map(t => (
+                  <div key={t.id} style={styles.tokenRow}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{t.name}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                        Created {new Date(t.created_at).toLocaleDateString()}
+                        {t.last_used_at && <> · Last used {new Date(t.last_used_at).toLocaleDateString()}</>}
+                        {t.expires_at && <> · Expires {new Date(t.expires_at).toLocaleDateString()}</>}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      style={styles.tokenDeleteBtn}
+                      title="Revoke token"
+                      onClick={() => {
+                        if (confirm(`Revoke token "${t.name}"?`)) deleteToken.mutate(t.id)
+                      }}
+                      disabled={deleteToken.isPending}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </AppShell>
@@ -184,4 +320,11 @@ const styles: Record<string, React.CSSProperties> = {
   themeBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   themeActive: { padding: '6px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, cursor: 'pointer' },
   groupTag: { padding: '3px 10px', background: 'var(--accent-light)', color: 'var(--accent)', borderRadius: 12, fontSize: 12, fontWeight: 500 },
+  tokenCreateBtn: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', fontSize: 11, fontWeight: 600, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' },
+  tokenCancelBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text-secondary)' },
+  tokenCopyBtn: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 12px', fontSize: 11, fontWeight: 600, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap' as const },
+  tokenAlert: { padding: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, marginBottom: 12 },
+  tokenForm: { display: 'flex', flexDirection: 'column' as const, gap: 8, padding: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, marginBottom: 8 },
+  tokenRow: { display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderBottom: '1px solid var(--border-light)' },
+  tokenDeleteBtn: { display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px 6px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--error, #ef4444)' },
 }
