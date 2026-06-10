@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ChevronsRight, ChevronLeft, Loader2, X, Bot, Check } from 'lucide-react'
+import { ChevronsRight, ChevronLeft, Loader2, X, Bot, Check, GripVertical } from 'lucide-react'
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
@@ -100,6 +103,41 @@ const addBarStyles: Record<string, React.CSSProperties> = {
   },
 }
 
+// Stable noop function to avoid creating new references each render
+const noop = () => {}
+const noopAsync = async () => {}
+
+function SortableCellWrapper({ children, id }: { children: React.ReactNode; id: string }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    position: 'relative',
+  }
+  return (
+    <div ref={setNodeRef} style={style} {...attributes}>
+      <div
+        {...listeners}
+        style={{
+          position: 'absolute',
+          left: -28,
+          top: 12,
+          cursor: 'grab',
+          color: 'var(--text-muted)',
+          opacity: 0.4,
+          display: 'flex',
+          zIndex: 5,
+        }}
+        title="Drag to reorder"
+      >
+        <GripVertical size={16} />
+      </div>
+      {children}
+    </div>
+  )
+}
+
 export function NotebookPage() {
   const { id } = useParams<{ id: string }>()
   const qc = useQueryClient()
@@ -154,6 +192,28 @@ export function NotebookPage() {
     try { return localStorage.getItem(`hnb:agentPanel:${id}`) === 'true' } catch { return false }
   })
   const [agentPanelWidth, setAgentPanelWidth] = useState(360)
+
+  // Drag-and-drop sensors
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    setLocalCells((prev) => {
+      const oldIndex = prev.findIndex(c => c.id === active.id)
+      const newIndex = prev.findIndex(c => c.id === over.id)
+      if (oldIndex < 0 || newIndex < 0) return prev
+      return arrayMove(prev, oldIndex, newIndex)
+    })
+  }, [])
+
+  // Stable handlers for Cell memoization
+  const stableFocusHandler = useCallback((cid: string) => setFocusedCellId(cid), [])
+  const stableDeleteHandler = useCallback((cid: string) => {
+    if (confirm('Delete this cell?')) deleteCell.mutate(cid)
+  }, [deleteCell])
+  const stableDashboardHandler = useCallback((cid: string) => setAddToDashboardCellId(cid), [])
+  const stableHistoryHandler = useCallback((cid: string) => fetchHistory(cid), [fetchHistory])
 
   // Real-time cell output + metadata updates via WebSocket
   const flashCell = (cellId: string) => {
@@ -340,7 +400,7 @@ export function NotebookPage() {
     )
   }, [id, localCells, qc])
 
-  const updateCellMeta = useCallback(async (cellId: string, updates: Partial<Pick<Cell, 'source_visible' | 'cell_collapsed' | 'slide_break' | 'title' | 'description' | 'slug'>>) => {
+  const updateCellMeta = useCallback(async (cellId: string, updates: Partial<Pick<Cell, 'source_visible' | 'cell_collapsed' | 'slide_break' | 'title' | 'slug'>>) => {
     try {
       await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, updates)
       setLocalCells((prev) => prev.map((c) => c.id === cellId ? { ...c, ...updates } : c))
@@ -776,57 +836,61 @@ export function NotebookPage() {
           <div style={styles.cellsArea}>
             <div style={styles.bodyInner}>
               <div style={styles.cells}>
-                {localCells.map((cell, i) => (
-                  <div key={cell.id}>
-                    {cell.type === 'code' && cell.parameters && cell.parameters.length > 0 && (
-                      <div style={styles.cellParams}>
-                        <span style={styles.cellParamsLabel}>Cell params:</span>
-                        {cell.parameters.map((p) => (
-                          <div key={p.name} style={styles.cellParam}>
-                            <span style={styles.cellParamName}>{p.name}</span>
-                            <span style={styles.cellParamEq}>=</span>
-                            <input
-                              style={styles.cellParamInput}
-                              value={p.default}
-                              onChange={(e) => updateCellParam(cell.id, p.name, e.target.value)}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <NotebookCell
-                      cell={cell}
-                      connectors={connectors}
-                      notebookId={id!}
-                      onRun={permissions?.can_run ? saveAndRun : () => {}}
-                      onDelete={readOnly ? () => {} : (cid) => {
-                        if (confirm('Delete this cell?')) deleteCell.mutate(cid)
-                      }}
-                      onSourceChange={readOnly ? () => {} : updateSource}
-                      onSave={readOnly ? undefined : saveCellSource}
-                      onAssignConnector={readOnly ? () => {} : assignConnector}
-                      onClearConnector={readOnly ? undefined : clearCellConnector}
-                      onMoveUp={readOnly || i === 0 ? undefined : () => moveCell(cell.id, -1)}
-                      onMoveDown={readOnly || i === localCells.length - 1 ? undefined : () => moveCell(cell.id, 1)}
-                      onSwitchType={readOnly ? undefined : () => switchCellType(cell.id)}
-                      onDuplicate={readOnly ? undefined : () => duplicateCell.mutate(cell.id)}
-                      running={runningCells.has(cell.id)}
-                      saveState={cellSaveState[cell.id]}
-                      runAt={cellRunAt[cell.id]}
-                      metrics={cell.metrics}
-                      onUpdateCellMeta={readOnly ? undefined : (updates) => updateCellMeta(cell.id, updates)}
-                      onChartConfigChange={readOnly ? undefined : updateCellChartConfig}
-                      onShowHistory={readOnly ? undefined : () => fetchHistory(cell.id)}
-                      onFocus={(cid) => setFocusedCellId(cid)}
-                      onAddToDashboard={readOnly ? undefined : (cid) => setAddToDashboardCellId(cid)}
-                      index={i}
-                    />
-                    <AddCellBar
-                      onAddCode={readOnly ? () => {} : () => createCell.mutate({ type: 'code', position: cell.position + 1 })}
-                      onAddText={readOnly ? () => {} : () => createCell.mutate({ type: 'text', position: cell.position + 1 })}
-                    />
-                  </div>
-                ))}
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                  <SortableContext items={localCells.map(c => c.id)} strategy={verticalListSortingStrategy}>
+                    {localCells.map((cell, i) => (
+                      <SortableCellWrapper key={cell.id} id={cell.id}>
+                        <div>
+                          {cell.type === 'code' && cell.parameters && cell.parameters.length > 0 && (
+                            <div style={styles.cellParams}>
+                              <span style={styles.cellParamsLabel}>Cell params:</span>
+                              {cell.parameters.map((p) => (
+                                <div key={p.name} style={styles.cellParam}>
+                                  <span style={styles.cellParamName}>{p.name}</span>
+                                  <span style={styles.cellParamEq}>=</span>
+                                  <input
+                                    style={styles.cellParamInput}
+                                    value={p.default}
+                                    onChange={(e) => updateCellParam(cell.id, p.name, e.target.value)}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <NotebookCell
+                            cell={cell}
+                            connectors={connectors}
+                            notebookId={id!}
+                            onRun={permissions?.can_run ? saveAndRun : noop}
+                            onDelete={readOnly ? noop : stableDeleteHandler}
+                            onSourceChange={readOnly ? noop : updateSource}
+                            onSave={readOnly ? undefined : saveCellSource}
+                            onAssignConnector={readOnly ? noop as any : assignConnector}
+                            onClearConnector={readOnly ? undefined : clearCellConnector}
+                            onMoveUp={readOnly || i === 0 ? undefined : () => moveCell(cell.id, -1)}
+                            onMoveDown={readOnly || i === localCells.length - 1 ? undefined : () => moveCell(cell.id, 1)}
+                            onSwitchType={readOnly ? undefined : () => switchCellType(cell.id)}
+                            onDuplicate={readOnly ? undefined : () => duplicateCell.mutate(cell.id)}
+                            running={runningCells.has(cell.id)}
+                            saveState={cellSaveState[cell.id]}
+                            runAt={cellRunAt[cell.id]}
+                            metrics={cell.metrics}
+                            onUpdateCellMeta={readOnly ? undefined : (updates) => updateCellMeta(cell.id, updates)}
+                            onChartConfigChange={readOnly ? undefined : updateCellChartConfig}
+                            onShowHistory={readOnly ? undefined : () => stableHistoryHandler(cell.id)}
+                            onFocus={stableFocusHandler}
+                            onAddToDashboard={readOnly ? undefined : stableDashboardHandler}
+                            index={i}
+                          />
+                          <AddCellBar
+                            onAddCode={readOnly ? noop : () => createCell.mutate({ type: 'code', position: cell.position + 1 })}
+                            onAddText={readOnly ? noop : () => createCell.mutate({ type: 'text', position: cell.position + 1 })}
+                          />
+                        </div>
+                      </SortableCellWrapper>
+                    ))}
+                  </SortableContext>
+                </DndContext>
 
                 <div style={styles.addRow}>
                   <button type="button" style={styles.addBtn} onClick={readOnly ? () => {} : () => createCell.mutate({ type: 'code' })} disabled={readOnly}>

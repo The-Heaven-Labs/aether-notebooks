@@ -38,7 +38,6 @@ export interface Cell {
   cell_collapsed: boolean
   slide_break?: boolean
   title?: string
-  description?: string
   slug?: string
   parameters?: Parameter[]
   limit?: number | null
