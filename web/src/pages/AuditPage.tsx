@@ -17,6 +17,9 @@ export function AuditPage() {
   const [page, setPage] = useState(0)
   const [actionFilter, setActionFilter] = useState('')
   const [resourceTypeFilter, setResourceTypeFilter] = useState('')
+  const [userFilter, setUserFilter] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [sortCol, setSortCol] = useState<'created_at' | 'action' | 'resource_type' | ''>('')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
@@ -29,10 +32,10 @@ export function AuditPage() {
     }
   }
 
-  useEffect(() => { setPage(0) }, [resourceTypeFilter, actionFilter])
+  useEffect(() => { setPage(0) }, [resourceTypeFilter, actionFilter, userFilter, dateFrom, dateTo])
 
   const { data, isFetching, isLoading, error } = useQuery({
-    queryKey: ['audit', page, resourceTypeFilter, actionFilter],
+    queryKey: ['audit', page, resourceTypeFilter, actionFilter, userFilter, dateFrom, dateTo],
     queryFn: () => {
       const params = new URLSearchParams({
         limit: String(PAGE_SIZE),
@@ -40,6 +43,9 @@ export function AuditPage() {
       })
       if (resourceTypeFilter) params.set('resource_type', resourceTypeFilter)
       if (actionFilter.trim()) params.set('action', actionFilter.trim())
+      if (userFilter.trim()) params.set('user', userFilter.trim())
+      if (dateFrom) params.set('from', dateFrom)
+      if (dateTo) params.set('to', dateTo)
       return api.get<{ entries: AuditEntry[]; total: number }>(`/api/v1/audit?${params}`)
     },
   })
@@ -78,6 +84,28 @@ export function AuditPage() {
               value={actionFilter}
               onChange={(e) => setActionFilter(e.target.value)}
               placeholder="Filter by action…"
+            />
+            <input
+              style={{ ...styles.filterInput, width: 180 }}
+              value={userFilter}
+              onChange={(e) => setUserFilter(e.target.value)}
+              placeholder="Search user email…"
+            />
+            <input
+              type="date"
+              style={{ ...styles.filterInput, width: 150 }}
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              placeholder="From date"
+              title="From date"
+            />
+            <input
+              type="date"
+              style={{ ...styles.filterInput, width: 150 }}
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              placeholder="To date"
+              title="To date"
             />
           </SectionHeader>
 
