@@ -4,7 +4,7 @@ import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
 import { FormCard } from '../components/FormCard'
 import { EmptyState } from '../components/EmptyState'
-import { Server } from 'lucide-react'
+import { Server, Loader2, CheckCircle2, XCircle } from 'lucide-react'
 import { api } from '../api/client'
 import type { MCPServerOrg } from '../types/agent'
 
@@ -31,6 +31,8 @@ export function MCPPage() {
   const [form, setForm] = useState<MCPForm>(emptyForm())
   const [formError, setFormError] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string }>>({})
+  const [testingIds, setTestingIds] = useState<Set<string>>(new Set())
 
   const { data: servers = [], isLoading } = useQuery<MCPServerOrg[]>({
     queryKey: ['mcp-servers'],
@@ -83,6 +85,23 @@ export function MCPPage() {
       command: s.command,
       args: s.args?.join(' ') ?? '',
     })
+  }
+
+  const testServer = async (id: string) => {
+    setTestingIds(prev => new Set(prev).add(id))
+    setTestResults(prev => { const next = { ...prev }; delete next[id]; return next })
+    try {
+      const result = await api.post<{ success: boolean; error?: string; status_code?: number }>(`/api/v1/mcp-servers/${id}/test`, {})
+      if (result.success) {
+        setTestResults(prev => ({ ...prev, [id]: { success: true, message: `Connected! (status ${result.status_code ?? 'ok'})` } }))
+      } else {
+        setTestResults(prev => ({ ...prev, [id]: { success: false, message: result.error ?? 'Connection failed' } } }))
+      }
+    } catch (e: unknown) {
+      setTestResults(prev => ({ ...prev, [id]: { success: false, message: String(e) } } }))
+    } finally {
+      setTestingIds(prev => { const next = new Set(prev); next.delete(id); return next })
+    }
   }
 
   return (
@@ -145,10 +164,23 @@ export function MCPPage() {
                 <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{s.command}</td>
                 <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{s.args?.join(' ') || '—'}</td>
                 <td style={styles.tdActions}>
+                  <button type="button" style={styles.testBtn} onClick={() => testServer(s.id)} disabled={testingIds.has(s.id)}>
+                    {testingIds.has(s.id) ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : 'Test'}
+                  </button>
                   <button type="button" style={styles.editBtn} onClick={() => startEdit(s)}>Edit</button>
                   <button type="button" style={styles.deleteBtn} onClick={() => { if (confirm(`Delete "${s.name}"?`)) deleteMutation.mutate(s.id) }}>
                     Delete
                   </button>
+                  {testResults[s.id] && (
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                      fontSize: 11, marginLeft: 6,
+                      color: testResults[s.id].success ? 'var(--success, #059669)' : 'var(--error-full)',
+                    }}>
+                      {testResults[s.id].success ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+                      {testResults[s.id].message}
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}
@@ -192,7 +224,7 @@ const styles: Record<string, React.CSSProperties> = {
   cancelBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   saveBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   newBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  editBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--accent)', marginRight: 6 },
+  testBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6, display: 'inline-flex', alignItems: 'center', gap: 4 },
   deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--error-full)' },
   tdActions: { padding: '8px 16px', textAlign: 'right' as const },
 }

@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/crypto"
@@ -16,6 +18,7 @@ type executeRequest struct {
 }
 
 func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("notebook_id")
 	cellID := r.PathValue("cell_id")
@@ -166,14 +169,18 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unsupported connector type")
 		return
 	}
+
+	connectStart := time.Now()
 	exec, err := driver.NewExecutor(plain)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "failed to connect to database")
 		return
 	}
 	defer exec.Close()
+	connectTime := time.Since(connectStart).Milliseconds()
 
 	// Execute
+	queryStart := time.Now()
 	result, err := exec.Execute(ctx, resolvedSource, req.Parameters, maxRows)
 	if err != nil {
 		// Store error output
@@ -184,16 +191,45 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	queryTime := time.Since(queryStart).Milliseconds()
 
 	// Store table output
+	renderStart := time.Now()
 	tableOutput := models.Output{Type: "table", Data: result}
 	cellOutputs := []models.Output{tableOutput}
 	outJSON, _ := json.Marshal(cellOutputs)
 	s.db.Pool.Exec(ctx, "UPDATE cells SET outputs = $1, updated_at = NOW() WHERE id = $2", outJSON, cellID)
 	s.hub.Broadcast(nbID, map[string]any{"type": "cell_output", "cell_id": cellID, "outputs": cellOutputs})
+	renderTime := time.Since(renderStart).Milliseconds()
+
+	totalTime := time.Since(startTime).Milliseconds()
+
+	// Count rows if result is a map with rows
+	rowCount := 0
+	if resultMap, ok := result.(map[string]interface{}); ok {
+		if rows, ok := resultMap["rows"].([]interface{}); ok {
+			rowCount = len(rows)
+		}
+	}
+
+	// Store execution log asynchronously
+	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.db.Pool.Exec(bgCtx,
+			`INSERT INTO cell_execution_logs (cell_id, notebook_id, connector_id, connect_time_ms, query_time_ms, render_time_ms, total_time_ms, row_count)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			cellID, nbID, cell.ConnectorID, connectTime, queryTime, renderTime, totalTime, rowCount)
+	}()
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"outputs": cellOutputs,
+		"metrics": map[string]interface{}{
+			"connect_time_ms": connectTime,
+			"query_time_ms":   queryTime,
+			"render_time_ms":  renderTime,
+			"total_time_ms":   totalTime,
+		},
 	})
 
 	s.audit.Log(ctx, audit.Entry{
