@@ -1,7 +1,7 @@
 # Progress
 
 ## Status
-In Progress — Wave 3 complete (Items 22, 34, 42)
+In Progress — Wave 3 complete (Items 13, 22, 34, 42)
 
 ## Branch
 `feat/all-improvements-2026-06-09`
@@ -30,7 +30,8 @@ In Progress — Wave 3 complete (Items 22, 34, 42)
 - Item 8: Edit already placed widgets (pencil icon)
 - Item 10: Per-widget play button with loading state
 
-### Wave 3 (Test Connection + Tokens)
+### Wave 3 (Test Connection + Tokens + Metrics)
+- Item 13: Cell execution metrics (timing display, database logging, backend + frontend)
 - Item 22: Personal access tokens (CRUD API, auth middleware, ProfilePage UI)
 - Item 34: MCP config test button (backend + frontend)
 - Item 42: OIDC provider form test/validate button (backend + frontend)
@@ -38,7 +39,6 @@ In Progress — Wave 3 complete (Items 22, 34, 42)
 ## Remaining Items
 - Item 9: Audit page cell execution logging
 - Item 11: Dashboard permission system
-- Item 13: Cell execution metrics
 - Item 19: Full-screen image viewer with zoom
 - Item 21: OpenAPI documentation with swagger
 - Item 23: Admin MOTD configuration
