@@ -89,7 +89,7 @@ func (s *Server) MasterKey() []byte {
 }
 
 func (s *Server) routes() {
-	authMW := AuthMiddleware(s.jwt)
+	authMW := AuthMiddleware(s.jwt, s.db.Pool)
 
 	// Public routes
 	s.mux.HandleFunc("GET /health", s.handleHealth)

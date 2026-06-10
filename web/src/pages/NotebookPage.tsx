@@ -813,6 +813,7 @@ export function NotebookPage() {
                       running={runningCells.has(cell.id)}
                       saveState={cellSaveState[cell.id]}
                       runAt={cellRunAt[cell.id]}
+                      metrics={cell.metrics}
                       onUpdateCellMeta={readOnly ? undefined : (updates) => updateCellMeta(cell.id, updates)}
                       onChartConfigChange={readOnly ? undefined : updateCellChartConfig}
                       onShowHistory={readOnly ? undefined : () => fetchHistory(cell.id)}

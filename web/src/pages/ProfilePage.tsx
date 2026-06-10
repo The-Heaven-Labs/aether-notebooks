@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
 import { ErrorBanner } from '../components/ErrorBanner'
-import { Check } from 'lucide-react'
+import { Check, Copy, Trash2, Plus, AlertTriangle } from 'lucide-react'
 import { api } from '../api/client'
 
 interface UserProfile {
@@ -12,6 +12,22 @@ interface UserProfile {
   name: string
   status?: string
   theme: string
+}
+
+interface ApiToken {
+  id: string
+  name: string
+  last_used_at: string | null
+  expires_at: string | null
+  created_at: string
+}
+
+interface CreatedToken {
+  id: string
+  name: string
+  token: string
+  expires_at: string | null
+  created_at: string
 }
 
 export function ProfilePage() {
