@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, X, Plus } from 'lucide-react'
+import { ArrowLeft, X, Plus, Eye, Pencil } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -282,6 +282,19 @@ export function DashboardEditorPage() {
               ))}
             </div>
           )}
+          <Link
+            to={`/dashboards/${id}/view`}
+            style={{
+              padding: '5px 12px', fontSize: 12, fontWeight: 600,
+              background: 'none', color: 'var(--text-secondary)',
+              border: '1px solid var(--border)', borderRadius: 4,
+              textDecoration: 'none', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 4,
+            }}
+            title="View dashboard"
+          >
+            <Eye size={12} /> View
+          </Link>
           <button
             type="button"
             style={{ ...styles.addWidgetBtn, ...(isMobileLayout ? styles.addWidgetBtnMobile : {}) }}
@@ -430,6 +443,19 @@ export function DashboardEditorPage() {
                     title="Drag to move"
                   />
                   <div style={styles.widgetCard}>
+                    <button
+                      type="button"
+                      style={{ ...styles.editWidgetBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      title="Edit widget"
+                      onClick={() => {
+                        setPickerNotebookId(widget.notebook_id)
+                        setPickerCellId(widget.cell_id)
+                        setPickerType(widget.type === 'chart' ? 'chart' : 'table')
+                        setShowPicker(true)
+                      }}
+                    >
+                      <Pencil size={11} />
+                    </button>
                     <button
                       type="button"
                       style={{ ...styles.deleteWidgetBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
@@ -659,7 +685,22 @@ const styles: Record<string, React.CSSProperties> = {
     position: 'absolute',
     top: 8,
     right: 8,
-    background: 'white',
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    fontSize: 12,
+    cursor: 'pointer',
+    color: 'var(--text-muted)',
+    padding: '2px 6px',
+    lineHeight: 1,
+    zIndex: 2,
+    opacity: 0.7,
+  },
+  editWidgetBtn: {
+    position: 'absolute',
+    top: 8,
+    right: 36,
+    background: 'var(--bg-card)',
     border: '1px solid var(--border)',
     borderRadius: 4,
     fontSize: 12,
