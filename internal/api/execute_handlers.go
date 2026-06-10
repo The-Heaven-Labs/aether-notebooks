@@ -204,12 +204,10 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 
 	totalTime := time.Since(startTime).Milliseconds()
 
-	// Count rows if result is a map with rows
+	// Count rows
 	rowCount := 0
-	if resultMap, ok := result.(map[string]interface{}); ok {
-		if rows, ok := resultMap["rows"].([]interface{}); ok {
-			rowCount = len(rows)
-		}
+	if result != nil {
+		rowCount = len(result.Rows)
 	}
 
 	// Store execution log asynchronously
