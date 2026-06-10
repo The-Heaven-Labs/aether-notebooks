@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, X, Plus, Eye, Pencil } from 'lucide-react'
+import { ArrowLeft, X, Plus, Eye, Pencil, Shield } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -12,6 +12,7 @@ import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem, Layout } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
 import { Skeleton } from '../components/Skeleton'
+import { PermissionsPanel } from '../components/PermissionsPanel'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -89,6 +90,7 @@ export function DashboardEditorPage() {
   const [mutationError, setMutationError] = useState<string | null>(null)
 
   const [showPicker, setShowPicker] = useState(false)
+  const [showPermissions, setShowPermissions] = useState(false)
   const [pickerNotebookId, setPickerNotebookId] = useState('')
   const [pickerCellId, setPickerCellId] = useState('')
   const [pickerType, setPickerType] = useState<'table' | 'chart'>('table')
@@ -297,6 +299,19 @@ export function DashboardEditorPage() {
           </Link>
           <button
             type="button"
+            style={{
+              padding: '5px 12px', fontSize: 12, fontWeight: 600,
+              background: 'none', color: 'var(--text-secondary)',
+              border: '1px solid var(--border)', borderRadius: 4,
+              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
+            }}
+            onClick={() => setShowPermissions(true)}
+            title="Manage permissions"
+          >
+            <Shield size={12} /> {!isMobileLayout && 'Permissions'}
+          </button>
+          <button
+            type="button"
             style={{ ...styles.addWidgetBtn, ...(isMobileLayout ? styles.addWidgetBtnMobile : {}) }}
             onClick={() => setShowPicker(true)}
             title="Add Widget"
@@ -476,6 +491,15 @@ export function DashboardEditorPage() {
           </div>
         )}
       </div>
+      {showPermissions && (
+        <PermissionsPanel
+          resourceType="dashboard"
+          resourceId={id!}
+          resourceName={dashboard.title}
+          parentFolderId={null}
+          onClose={() => setShowPermissions(false)}
+        />
+      )}
     </AppShell>
   )
 }
