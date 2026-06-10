@@ -95,10 +95,10 @@ export function MCPPage() {
       if (result.success) {
         setTestResults(prev => ({ ...prev, [id]: { success: true, message: `Connected! (status ${result.status_code ?? 'ok'})` } }))
       } else {
-        setTestResults(prev => ({ ...prev, [id]: { success: false, message: result.error ?? 'Connection failed' } } }))
+        setTestResults(prev => ({ ...prev, [id]: { success: false, message: result.error ?? 'Connection failed' } }))
       }
     } catch (e: unknown) {
-      setTestResults(prev => ({ ...prev, [id]: { success: false, message: String(e) } } }))
+      setTestResults(prev => ({ ...prev, [id]: { success: false, message: String(e) } }))
     } finally {
       setTestingIds(prev => { const next = new Set(prev); next.delete(id); return next })
     }

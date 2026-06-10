@@ -30,7 +30,7 @@ function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChang
     return (
       <div style={styles.errorWrap}>
         <span style={styles.errorLabel}>Error</span>
-        <pre style={styles.error}>{String(output.data)}</pre>
+        <pre style={styles.error}>{typeof output.data === 'string' ? output.data : JSON.stringify(output.data, null, 2)}</pre>
       </div>
     )
   }
