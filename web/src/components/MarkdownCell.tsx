@@ -217,6 +217,7 @@ export interface MarkdownViewProps {
 export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: MarkdownViewProps) {
   const [source, setSource] = useState(cell.source)
   const [isFocused, setIsFocused] = useState(false)
+  const [splitMode, setSplitMode] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<number | null>(null)
   const [dragOver, setDragOver] = useState(false)
@@ -400,11 +401,13 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
         </div>
       )}
 
+      <div style={{ display: splitMode ? 'flex' : 'block', gap: splitMode ? 16 : 0 }}>
       <textarea
         ref={textareaRef}
         style={{
           ...styles.mdTextarea,
-          display: isFocused ? 'block' : 'none',
+          display: (isFocused || splitMode) ? 'block' : 'none',
+          flex: splitMode ? '0 0 50%' : undefined,
         }}
         value={source}
         onChange={(e) => {
@@ -446,17 +449,24 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
         data-testid={!source.trim() ? 'md-empty-block' : undefined}
         style={{
           ...styles.mdPreview,
-          display: isFocused ? 'none' : 'block',
+          display: (isFocused && !splitMode) ? 'none' : 'block',
           minHeight: source.trim() ? undefined : 48,
+          flex: splitMode ? '0 0 50%' : undefined,
+          borderLeft: splitMode ? '1px solid var(--border-light)' : undefined,
+          paddingLeft: splitMode ? 16 : undefined,
+          overflow: splitMode ? 'auto' : undefined,
         }}
         onClick={() => {
-          setIsFocused(true)
-          setTimeout(() => textareaRef.current?.focus(), 0)
+          if (!splitMode) {
+            setIsFocused(true)
+            setTimeout(() => textareaRef.current?.focus(), 0)
+          }
         }}
       >
         {source.trim()
           ? <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>{source}</ReactMarkdown>
           : <span style={styles.mdPlaceholder}>Write markdown… (Ctrl+V to paste images, drag & drop supported)</span>}
+      </div>
       </div>
 
       {isFocused && (
@@ -589,6 +599,18 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
               title="Inline code"
             >
               <Code size={13} />
+            </button>
+
+            <div style={styles.mdToolbarDivider} />
+
+            <button
+              style={{...styles.mdToolbarBtn, ...(splitMode ? { background: 'var(--accent-light)', borderColor: 'var(--accent)', color: 'var(--accent)' } : {})}}
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => setSplitMode(v => !v)}
+              title="Toggle split view"
+            >
+              <Maximize2 size={13} />
+              Split
             </button>
           </div>
           
