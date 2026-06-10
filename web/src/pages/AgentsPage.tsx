@@ -233,6 +233,17 @@ function AgentFormFields({ form, setForm, modelConfigs, skills, mcpServers, togg
   toggleSkill: (id: string) => void
   toggleMCPServer: (id: string) => void
 }) {
+  const [skillSearch, setSkillSearch] = useState('')
+  const [mcpSearch, setMcpSearch] = useState('')
+
+  const filteredSkills = skills.filter(s =>
+    s.name.toLowerCase().includes(skillSearch.toLowerCase()) ||
+    (s.description ?? '').toLowerCase().includes(skillSearch.toLowerCase())
+  )
+  const filteredMCPs = mcpServers.filter(m =>
+    m.name.toLowerCase().includes(mcpSearch.toLowerCase())
+  )
+
   return (
     <div style={styles.formGrid}>
       <label style={styles.label}>Name
@@ -272,50 +283,84 @@ function AgentFormFields({ form, setForm, modelConfigs, skills, mcpServers, togg
         />
         <span style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Default: 90, Max: 200</span>
       </label>
-      <label style={{ ...styles.label, gridColumn: '1 / -1' }}>
-        Skills
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+
+      {/* Skills — searchable checkbox grid */}
+      <div style={{ gridColumn: '1 / -1' }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>Skills</div>
+        <input
+          style={styles.searchInput}
+          placeholder="Search skills..."
+          value={skillSearch}
+          onChange={e => setSkillSearch(e.target.value)}
+        />
+        <div style={styles.selectorGrid}>
           {skills.length === 0 && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No skills yet</span>}
-          {skills.map(s => (
-            <button
-              key={s.id}
-              type="button"
-              style={{
-                padding: '3px 10px', fontSize: 12, borderRadius: 12, cursor: 'pointer',
-                background: form.skill_ids.includes(s.id) ? 'var(--accent)' : 'var(--bg-input)',
-                color: form.skill_ids.includes(s.id) ? '#fff' : 'var(--text-secondary)',
-                border: `1px solid ${form.skill_ids.includes(s.id) ? 'var(--accent)' : 'var(--border)'}`,
-                fontWeight: 500,
-              }}
-              onClick={() => toggleSkill(s.id)}
-            >
-              {s.name}
-            </button>
+          {skills.length > 0 && filteredSkills.length === 0 && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No skills match "{skillSearch}"</span>}
+          {filteredSkills.map(s => (
+            <label key={s.id} style={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={form.skill_ids.includes(s.id)}
+                onChange={() => toggleSkill(s.id)}
+              />
+              <span style={styles.checkboxText}>{s.name}</span>
+            </label>
           ))}
         </div>
-      </label>
-      <label style={{ ...styles.label, gridColumn: '1 / -1' }}>
-        MCP Servers
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+        {form.skill_ids.length > 0 && (
+          <div style={styles.chipsRow}>
+            {form.skill_ids.map(id => {
+              const skill = skills.find(s => s.id === id)
+              if (!skill) return null
+              return (
+                <span key={id} style={styles.chip}>
+                  {skill.name}
+                  <button type="button" onClick={() => toggleSkill(id)} style={styles.chipRemove}>×</button>
+                </span>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* MCP Servers — searchable checkbox grid */}
+      <div style={{ gridColumn: '1 / -1' }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>MCP Servers</div>
+        <input
+          style={styles.searchInput}
+          placeholder="Search MCP servers..."
+          value={mcpSearch}
+          onChange={e => setMcpSearch(e.target.value)}
+        />
+        <div style={styles.selectorGrid}>
           {mcpServers.length === 0 && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No MCP servers configured — <a href="/mcps" style={{ color: 'var(--accent)' }}>create one</a></span>}
-          {mcpServers.map(m => (
-            <button
-              key={m.id}
-              type="button"
-              style={{
-                padding: '3px 10px', fontSize: 12, borderRadius: 12, cursor: 'pointer',
-                background: form.mcp_server_ids.includes(m.id) ? 'var(--accent)' : 'var(--bg-input)',
-                color: form.mcp_server_ids.includes(m.id) ? '#fff' : 'var(--text-secondary)',
-                border: `1px solid ${form.mcp_server_ids.includes(m.id) ? 'var(--accent)' : 'var(--border)'}`,
-                fontWeight: 500,
-              }}
-              onClick={() => toggleMCPServer(m.id)}
-            >
-              {m.name} <span style={{ opacity: 0.7, fontSize: 10 }}>{m.type}</span>
-            </button>
+          {mcpServers.length > 0 && filteredMCPs.length === 0 && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No servers match "{mcpSearch}"</span>}
+          {filteredMCPs.map(m => (
+            <label key={m.id} style={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={form.mcp_server_ids.includes(m.id)}
+                onChange={() => toggleMCPServer(m.id)}
+              />
+              <span style={styles.checkboxText}>{m.name} <span style={{ opacity: 0.6, fontSize: 10 }}>({m.type})</span></span>
+            </label>
           ))}
         </div>
-      </label>
+        {form.mcp_server_ids.length > 0 && (
+          <div style={styles.chipsRow}>
+            {form.mcp_server_ids.map(id => {
+              const srv = mcpServers.find(m => m.id === id)
+              if (!srv) return null
+              return (
+                <span key={id} style={styles.chip}>
+                  {srv.name}
+                  <button type="button" onClick={() => toggleMCPServer(id)} style={styles.chipRemove}>×</button>
+                </span>
+              )
+            })}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -333,6 +378,13 @@ const styles: Record<string, React.CSSProperties> = {
   deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--error-full)' },
   tdActions: { padding: '8px 16px', textAlign: 'right' as const },
   badge: { fontSize: 11, fontFamily: 'var(--font-mono)', background: 'var(--accent-light)', color: 'var(--text-secondary)', padding: '2px 7px', borderRadius: 3 },
+  searchInput: { width: '100%', padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 12, background: 'var(--bg-input)', color: 'var(--text-primary)', outline: 'none', marginBottom: 6 },
+  selectorGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 4, maxHeight: 200, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 4, padding: 8, background: 'var(--bg-input)' },
+  checkboxLabel: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer', padding: '3px 4px', borderRadius: 3 },
+  checkboxText: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)' },
+  chipsRow: { display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 },
+  chip: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', background: 'var(--accent-light)', border: '1px solid var(--accent)', borderRadius: 12, fontSize: 11, color: 'var(--text-primary)' },
+  chipRemove: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, fontSize: 13, lineHeight: 1 },
 }
 
 const rowStyle: React.CSSProperties = { borderBottom: '1px solid var(--border)' }

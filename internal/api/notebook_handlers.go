@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/models"
@@ -348,4 +349,165 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusOK, nb)
+}
+
+func (s *Server) handleExportNotebook(w http.ResponseWriter, r *http.Request) {
+	notebookID := r.PathValue("id")
+	claims := ClaimsFromContext(r.Context())
+
+	var title string
+	err := s.db.Pool.QueryRow(r.Context(), `SELECT title FROM notebooks WHERE id = $1 AND org_id = $2`, notebookID, claims.OrgID).Scan(&title)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "notebook not found")
+		return
+	}
+
+	rows, err := s.db.Pool.Query(r.Context(), `SELECT type, language, source, position FROM cells WHERE notebook_id = $1 ORDER BY position`, notebookID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get cells")
+		return
+	}
+	defer rows.Close()
+
+	type jupyterCell struct {
+		CellType       string         `json:"cell_type"`
+		Source         []string       `json:"source"`
+		Metadata       map[string]any `json:"metadata"`
+		Outputs        []any          `json:"outputs"`
+		ExecutionCount *int           `json:"execution_count,omitempty"`
+	}
+
+	var cells []jupyterCell
+	for rows.Next() {
+		var cellType, lang, source string
+		var pos int
+		if err := rows.Scan(&cellType, &lang, &source, &pos); err != nil {
+			continue
+		}
+		lines := strings.Split(source, "\n")
+		// Add newline to all but last line (Jupyter format)
+		for i := 0; i < len(lines)-1; i++ {
+			lines[i] += "\n"
+		}
+		jc := jupyterCell{
+			CellType: cellType,
+			Source:   lines,
+			Metadata: map[string]any{},
+			Outputs:  []any{},
+		}
+		if cellType == "code" {
+			jc.Metadata["language"] = lang
+			ec := 0
+			jc.ExecutionCount = &ec
+		}
+		cells = append(cells, jc)
+	}
+	if cells == nil {
+		cells = []jupyterCell{}
+	}
+
+	notebook := map[string]any{
+		"nbformat":       4,
+		"nbformat_minor": 5,
+		"metadata": map[string]any{
+			"title": title,
+			"kernelspec": map[string]any{
+				"display_name": "SQL",
+				"language":     "sql",
+				"name":         "sql",
+			},
+		},
+		"cells": cells,
+	}
+
+	safeTitle := strings.Map(func(r rune) rune {
+		if r == '"' || r == '/' || r == '\\' {
+			return '_'
+		}
+		return r
+	}, title)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.ipynb"`, safeTitle))
+	json.NewEncoder(w).Encode(notebook)
+}
+
+func (s *Server) handleImportNotebook(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "failed to parse multipart form")
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "file is required")
+		return
+	}
+	defer file.Close()
+
+	var jupyter struct {
+		Metadata struct {
+			Title string `json:"title"`
+		} `json:"metadata"`
+		Cells []struct {
+			CellType string         `json:"cell_type"`
+			Source   any            `json:"source"` // can be string or []string
+			Metadata map[string]any `json:"metadata"`
+		} `json:"cells"`
+	}
+	if err := json.NewDecoder(file).Decode(&jupyter); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid .ipynb file: "+err.Error())
+		return
+	}
+
+	title := jupyter.Metadata.Title
+	if title == "" {
+		title = "Imported Notebook"
+	}
+
+	ctx := r.Context()
+	var notebookID string
+	err = s.db.Pool.QueryRow(ctx, `INSERT INTO notebooks (org_id, title, created_by) VALUES ($1, $2, $3) RETURNING id`,
+		claims.OrgID, title, claims.UserID).Scan(&notebookID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create notebook")
+		return
+	}
+
+	for i, jc := range jupyter.Cells {
+		cellType := jc.CellType
+		if cellType == "" {
+			cellType = "code"
+		}
+
+		var source string
+		switch src := jc.Source.(type) {
+		case string:
+			source = src
+		case []any:
+			for _, line := range src {
+				if str, ok := line.(string); ok {
+					source += str
+				}
+			}
+		}
+		// Remove trailing newlines from joined lines
+		source = strings.TrimRight(source, "\n")
+
+		lang := "sql"
+		if jc.Metadata != nil {
+			if l, ok := jc.Metadata["language"].(string); ok {
+				lang = l
+			}
+		}
+		if cellType == "markdown" {
+			lang = "markdown"
+		}
+
+		s.db.Pool.Exec(ctx, `INSERT INTO cells (notebook_id, type, language, source, position) VALUES ($1, $2, $3, $4, $5)`,
+			notebookID, cellType, lang, source, i)
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]string{"id": notebookID, "title": title})
 }
