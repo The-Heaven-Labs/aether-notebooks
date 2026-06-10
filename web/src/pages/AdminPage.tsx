@@ -441,6 +441,208 @@ const ssoStyles: Record<string, React.CSSProperties> = {
   },
 }
 
+// ─── MOTD Tab ──────────────────────────────────────────────────────────────────
+
+interface MOTDMessage {
+  id: string
+  title: string
+  content: string
+  priority: number
+  visibility: string
+  pages: string[]
+  show_on_login: boolean
+  created_at: string
+  expires_at: string | null
+}
+
+function MOTDTab() {
+  const qc = useQueryClient()
+
+  const { data: motds = [], isLoading } = useQuery<MOTDMessage[]>({
+    queryKey: ['admin', 'motd'],
+    queryFn: () => api.get('/api/v1/admin/motd'),
+  })
+
+  const [showForm, setShowForm] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [formData, setFormData] = useState({
+    title: '',
+    content: '',
+    priority: 0,
+    visibility: 'all',
+    show_on_login: false,
+    expires_at: '',
+  })
+  const [formError, setFormError] = useState<string | null>(null)
+
+  const createMotd = useMutation({
+    mutationFn: (body: Record<string, unknown>) => api.post('/api/v1/admin/motd', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'motd'] })
+      resetForm()
+    },
+    onError: (e: unknown) => setFormError(String(e)),
+  })
+
+  const updateMotd = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) =>
+      api.put(`/api/v1/admin/motd/${id}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'motd'] })
+      resetForm()
+    },
+    onError: (e: unknown) => setFormError(String(e)),
+  })
+
+  const deleteMotd = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/admin/motd/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'motd'] }),
+  })
+
+  function resetForm() {
+    setFormData({ title: '', content: '', priority: 0, visibility: 'all', show_on_login: false, expires_at: '' })
+    setShowForm(false)
+    setEditingId(null)
+    setFormError(null)
+  }
+
+  function handleEdit(m: MOTDMessage) {
+    setFormData({
+      title: m.title || '',
+      content: m.content,
+      priority: m.priority,
+      visibility: m.visibility,
+      show_on_login: m.show_on_login,
+      expires_at: m.expires_at ? m.expires_at.slice(0, 16) : '',
+    })
+    setEditingId(m.id)
+    setShowForm(true)
+    setFormError(null)
+  }
+
+  function handleSubmit() {
+    if (!formData.content.trim()) {
+      setFormError('Content is required')
+      return
+    }
+    const body: Record<string, unknown> = {
+      title: formData.title,
+      content: formData.content,
+      priority: formData.priority,
+      visibility: formData.visibility,
+      show_on_login: formData.show_on_login,
+    }
+    if (formData.expires_at) {
+      body.expires_at = new Date(formData.expires_at).toISOString()
+    }
+    if (editingId) {
+      updateMotd.mutate({ id: editingId, body })
+    } else {
+      createMotd.mutate(body)
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <p style={ssoStyles.desc}>
+          Message of the Day banners shown to all users. Higher priority messages appear first.
+        </p>
+        {!showForm && (
+          <button style={ssoStyles.addBtn} onClick={() => { setShowForm(true); setFormError(null) }}>
+            + Add MOTD
+          </button>
+        )}
+      </div>
+
+      {showForm && (
+        <div style={formStyles.container}>
+          <div style={formStyles.grid}>
+            <label style={formStyles.label}>
+              Title
+              <input style={formStyles.input} value={formData.title} onChange={e => setFormData(f => ({ ...f, title: e.target.value }))} placeholder="System Update" />
+            </label>
+            <label style={formStyles.label}>
+              Content <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(supports \n for line breaks)</span>
+              <textarea
+                style={{ ...formStyles.input, minHeight: 80, resize: 'vertical', fontFamily: 'var(--font-sans)' }}
+                value={formData.content}
+                onChange={e => setFormData(f => ({ ...f, content: e.target.value }))}
+                placeholder="Scheduled maintenance at 3pm..."
+              />
+            </label>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <label style={{ ...formStyles.label, flex: 1 }}>
+                Priority
+                <input style={formStyles.input} type="number" value={formData.priority} onChange={e => setFormData(f => ({ ...f, priority: parseInt(e.target.value) || 0 }))} />
+              </label>
+              <label style={{ ...formStyles.label, flex: 1 }}>
+                Visibility
+                <select style={formStyles.input} value={formData.visibility} onChange={e => setFormData(f => ({ ...f, visibility: e.target.value }))}>
+                  <option value="all">All pages</option>
+                  <option value="specific">Specific pages</option>
+                </select>
+              </label>
+            </div>
+            <label style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <input type="checkbox" checked={formData.show_on_login} onChange={e => setFormData(f => ({ ...f, show_on_login: e.target.checked }))} />
+              Show on login page
+            </label>
+            <label style={formStyles.label}>
+              Expires at <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(leave empty for no expiry)</span>
+              <input style={formStyles.input} type="datetime-local" value={formData.expires_at} onChange={e => setFormData(f => ({ ...f, expires_at: e.target.value }))} />
+            </label>
+          </div>
+          {formError && <div style={formStyles.error}>{formError}</div>}
+          <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+            <button
+              style={{ ...formStyles.btn, opacity: (createMotd.isPending || updateMotd.isPending) ? 0.6 : 1 }}
+              onClick={handleSubmit}
+              disabled={createMotd.isPending || updateMotd.isPending}
+            >
+              {(createMotd.isPending || updateMotd.isPending) ? 'Saving…' : editingId ? 'Save Changes' : 'Create MOTD'}
+            </button>
+            <button style={formStyles.cancelBtn} onClick={resetForm} disabled={createMotd.isPending || updateMotd.isPending}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div style={ssoStyles.empty}>Loading…</div>
+      ) : motds.length === 0 && !showForm ? (
+        <div style={ssoStyles.empty}>No MOTD messages configured.</div>
+      ) : (
+        <div style={{ ...ssoStyles.list, marginTop: showForm ? 16 : 0 }}>
+          {motds.map(m => (
+            <div key={m.id} style={ssoStyles.row}>
+              <div style={ssoStyles.rowInfo}>
+                <span style={ssoStyles.rowName}>{m.title || '(untitled)'}</span>
+                <span style={ssoStyles.rowMeta}>
+                  {m.content.slice(0, 80)}{m.content.length > 80 ? '…' : ''}
+                  {' · '}Priority: {m.priority}
+                  {m.expires_at && ` · Expires: ${new Date(m.expires_at).toLocaleDateString()}`}
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button style={ssoStyles.iconBtn} onClick={() => handleEdit(m)}>Edit</button>
+                <button
+                  style={{ ...ssoStyles.iconBtn, color: 'var(--error)', borderColor: 'var(--error)' }}
+                  onClick={() => { if (confirm('Delete this MOTD?')) deleteMotd.mutate(m.id) }}
+                  disabled={deleteMotd.isPending}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export function AdminPage() {
