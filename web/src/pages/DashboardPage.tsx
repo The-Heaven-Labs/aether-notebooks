@@ -432,6 +432,31 @@ function DashboardContent({ id }: { id: string }) {
             <Settings size={12} /> Edit
           </Link>
 
+          {/* Column count selector */}
+          <div style={{ display: 'flex', gap: 2, background: 'var(--border-light)', padding: 2, borderRadius: 4 }}>
+            {[6, 8, 12, 16, 24].map(cols => (
+              <button
+                key={cols}
+                style={{
+                  padding: '3px 8px', fontSize: 11, fontWeight: 500,
+                  border: '1px solid transparent', borderRadius: 4,
+                  background: (dashboard?.settings?.grid_cols ?? 12) === cols ? 'var(--bg-card)' : 'none',
+                  color: (dashboard?.settings?.grid_cols ?? 12) === cols ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  cursor: 'pointer',
+                }}
+                onClick={async () => {
+                  await api.put(`/api/v1/dashboards/${id}`, {
+                    settings: { ...dashboard?.settings, grid_cols: cols },
+                  })
+                  qc.invalidateQueries({ queryKey: ['dashboard', id] })
+                }}
+                title={`${cols} columns`}
+              >
+                {cols}
+              </button>
+            ))}
+          </div>
+
           <select
             style={{
               fontSize: 12, padding: '4px 8px', border: '1px solid var(--border)',

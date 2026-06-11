@@ -6,6 +6,7 @@ import { api } from '../api/client'
 import type { Group, GroupMember, Member } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { ErrorBanner } from '../components/ErrorBanner'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 
 // ─── MemberDropdown ──────────────────────────────────────────────────────────
 
@@ -408,9 +409,11 @@ export function GroupsPage() {
     updateGroup.mutate({ id, name: trimmed })
   }
 
+  const [deleteGroupConfirm, setDeleteGroupConfirm] = useState<Group | null>(null)
+  const [removeMemberConfirm, setRemoveMemberConfirm] = useState<{ groupId: string; member: GroupMember } | null>(null)
+
   const handleDelete = (group: Group) => {
-    if (!window.confirm(`Delete group "${group.name}"? This cannot be undone.`)) return
-    deleteGroup.mutate(group.id)
+    setDeleteGroupConfirm(group)
   }
 
   const handleCreateGroup = async () => {
@@ -653,8 +656,7 @@ export function GroupsPage() {
                           style={styles.removeBtn}
                           title="Remove from group"
                           onClick={() => {
-                            if (!window.confirm(`Remove ${m.name || m.email} from this group?`)) return
-                            removeMember.mutate({ groupId: group.id, userId: m.user_id })
+                            setRemoveMemberConfirm({ groupId: group.id, member: m })
                           }}
                           disabled={removeMember.isPending}
                         >
@@ -695,6 +697,29 @@ export function GroupsPage() {
           })}
         </div>
       </div>
+
+      {/* Confirm dialogs */}
+      <ConfirmDialog
+        open={!!deleteGroupConfirm}
+        title="Delete group"
+        message={`Delete group "${deleteGroupConfirm?.name}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => { if (deleteGroupConfirm) deleteGroup.mutate(deleteGroupConfirm.id); setDeleteGroupConfirm(null) }}
+        onCancel={() => setDeleteGroupConfirm(null)}
+      />
+      <ConfirmDialog
+        open={!!removeMemberConfirm}
+        title="Remove member"
+        message={`Remove ${removeMemberConfirm?.member.name || removeMemberConfirm?.member.email} from this group?`}
+        confirmLabel="Remove"
+        destructive
+        onConfirm={() => {
+          if (removeMemberConfirm) removeMember.mutate({ groupId: removeMemberConfirm.groupId, userId: removeMemberConfirm.member.user_id })
+          setRemoveMemberConfirm(null)
+        }}
+        onCancel={() => setRemoveMemberConfirm(null)}
+      />
     </AppShell>
   )
 }

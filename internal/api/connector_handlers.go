@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/crypto"
@@ -13,11 +14,13 @@ import (
 )
 
 type createConnectorRequest struct {
-	Name      string                 `json:"name"`
-	Type      models.ConnectorType   `json:"type"`
-	Config    models.ConnectorConfig `json:"config"`
-	IsDefault bool                   `json:"is_default"`
-	FolderID  *string                `json:"folder_id,omitempty"`
+	Name            string                 `json:"name"`
+	Type            models.ConnectorType   `json:"type"`
+	Config          models.ConnectorConfig `json:"config"`
+	IsDefault       bool                   `json:"is_default"`
+	FolderID        *string                `json:"folder_id,omitempty"`
+	TableAllowlist  []string               `json:"table_allowlist,omitempty"`
+	TableDenylist   []string               `json:"table_denylist,omitempty"`
 }
 
 func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
@@ -71,10 +74,10 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		err = tx.QueryRow(ctx,
-			`INSERT INTO connectors (org_id, name, type, config_encrypted, is_default, folder_id, created_by)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)
+			`INSERT INTO connectors (org_id, name, type, config_encrypted, is_default, folder_id, created_by, table_allowlist, table_denylist)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 			 RETURNING id, org_id, name, type, max_rows, timeout_seconds, is_default, folder_id`,
-			claims.OrgID, req.Name, req.Type, encrypted, true, req.FolderID, claims.UserID,
+			claims.OrgID, req.Name, req.Type, encrypted, true, req.FolderID, claims.UserID, req.TableAllowlist, req.TableDenylist,
 		).Scan(&id, &orgID, &name, &connType, &maxRows, &timeout, &isDefault, &folderID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create connector")
@@ -86,10 +89,10 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		err = s.db.Pool.QueryRow(ctx,
-			`INSERT INTO connectors (org_id, name, type, config_encrypted, folder_id, created_by)
-			 VALUES ($1, $2, $3, $4, $5, $6)
+			`INSERT INTO connectors (org_id, name, type, config_encrypted, folder_id, created_by, table_allowlist, table_denylist)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 			 RETURNING id, org_id, name, type, max_rows, timeout_seconds, is_default, folder_id`,
-			claims.OrgID, req.Name, req.Type, encrypted, req.FolderID, claims.UserID,
+			claims.OrgID, req.Name, req.Type, encrypted, req.FolderID, claims.UserID, req.TableAllowlist, req.TableDenylist,
 		).Scan(&id, &orgID, &name, &connType, &maxRows, &timeout, &isDefault, &folderID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create connector")
@@ -118,7 +121,7 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id
+		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, table_allowlist, table_denylist
 		 FROM connectors WHERE org_id = $1 ORDER BY name ASC`,
 		claims.OrgID,
 	)
@@ -133,7 +136,7 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 		var c models.Connector
 		var encryptedConfig []byte
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
-			&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID); err != nil {
+			&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.TableAllowlist, &c.TableDenylist); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
@@ -153,9 +156,11 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateConnectorRequest struct {
-	Name      *string                 `json:"name,omitempty"`
-	Config    *models.ConnectorConfig `json:"config,omitempty"`
-	IsDefault *bool                   `json:"is_default,omitempty"`
+	Name            *string                 `json:"name,omitempty"`
+	Config          *models.ConnectorConfig `json:"config,omitempty"`
+	IsDefault       *bool                   `json:"is_default,omitempty"`
+	TableAllowlist  []string                `json:"table_allowlist,omitempty"`
+	TableDenylist   []string                `json:"table_denylist,omitempty"`
 }
 
 func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
@@ -227,14 +232,38 @@ func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if req.TableAllowlist != nil || req.TableDenylist != nil {
+		allowlist := req.TableAllowlist
+		denylist := req.TableDenylist
+		if allowlist == nil {
+			// Keep existing allowlist if not provided
+			var existingAllowlist []string
+			s.db.Pool.QueryRow(ctx, `SELECT table_allowlist FROM connectors WHERE id=$1`, id).Scan(&existingAllowlist)
+			allowlist = existingAllowlist
+		}
+		if denylist == nil {
+			// Keep existing denylist if not provided
+			var existingDenylist []string
+			s.db.Pool.QueryRow(ctx, `SELECT table_denylist FROM connectors WHERE id=$1`, id).Scan(&existingDenylist)
+			denylist = existingDenylist
+		}
+		if _, err := s.db.Pool.Exec(ctx,
+			`UPDATE connectors SET table_allowlist=$1, table_denylist=$2, updated_at=NOW() WHERE id=$3 AND org_id=$4`,
+			allowlist, denylist, id, claims.OrgID,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+	}
+
 	var c models.Connector
 	var encryptedConfig []byte
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id
+		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, table_allowlist, table_denylist
 		 FROM connectors WHERE id=$1`,
 		id,
 	).Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
-		&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID)
+		&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.TableAllowlist, &c.TableDenylist)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
@@ -323,6 +352,18 @@ func (s *Server) loadConnectorRow(ctx context.Context, connID, orgID string) (mo
 		connID, orgID,
 	).Scan(&connType, &configEnc)
 	return connType, configEnc, err
+}
+
+// loadConnectorWithFilters fetches the connector type, encrypted config, and table filters.
+func (s *Server) loadConnectorWithFilters(ctx context.Context, connID, orgID string) (models.ConnectorType, []byte, []string, []string, error) {
+	var configEnc []byte
+	var connType models.ConnectorType
+	var allowlist, denylist []string
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT type, config_encrypted, table_allowlist, table_denylist FROM connectors WHERE id = $1 AND org_id = $2`,
+		connID, orgID,
+	).Scan(&connType, &configEnc, &allowlist, &denylist)
+	return connType, configEnc, allowlist, denylist, err
 }
 
 // buildExecutor decrypts connector config and constructs the appropriate executor.
@@ -420,7 +461,7 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 	connID := r.PathValue("id")
 	ctx := r.Context()
 
-	connType, configEnc, err := s.loadConnectorRow(ctx, connID, claims.OrgID)
+	connType, configEnc, allowlist, denylist, err := s.loadConnectorWithFilters(ctx, connID, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "connector not found")
 		return
@@ -445,6 +486,46 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 			if t.Schema == db || t.Name == db {
 				filtered = append(filtered, t)
 			}
+		}
+		schema.Tables = filtered
+	}
+
+	// Apply table allowlist/denylist filters
+	if len(allowlist) > 0 || len(denylist) > 0 {
+		var filtered []executor.TableInfo
+		for _, t := range schema.Tables {
+			tableName := t.Name
+			if t.Schema != "" {
+				tableName = t.Schema + "." + t.Name
+			}
+
+			// Check denylist first (deny takes precedence)
+			denied := false
+			for _, pattern := range denylist {
+				if matched, _ := regexp.MatchString(pattern, tableName); matched {
+					denied = true
+					break
+				}
+			}
+			if denied {
+				continue
+			}
+
+			// Check allowlist (if specified, table must match at least one pattern)
+			if len(allowlist) > 0 {
+				allowed := false
+				for _, pattern := range allowlist {
+					if matched, _ := regexp.MatchString(pattern, tableName); matched {
+						allowed = true
+						break
+					}
+				}
+				if !allowed {
+					continue
+				}
+			}
+
+			filtered = append(filtered, t)
 		}
 		schema.Tables = filtered
 	}

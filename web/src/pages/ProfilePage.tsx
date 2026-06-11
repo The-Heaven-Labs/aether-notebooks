@@ -5,6 +5,7 @@ import { SectionHeader } from '../components/SectionHeader'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { Check, Copy, Trash2, Plus, AlertTriangle } from 'lucide-react'
 import { api } from '../api/client'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 
 interface UserProfile {
   id: string
@@ -48,10 +49,11 @@ export function ProfilePage() {
   })
 
   const createToken = useMutation({
-    mutationFn: (name: string) => api.post<CreatedToken>('/api/v1/tokens', { name }),
+    mutationFn: (body: { name: string; expires_at?: string }) => api.post<CreatedToken>('/api/v1/tokens', body),
     onSuccess: (data) => {
       setCreatedToken(data)
       setNewTokenName('')
+      setTokenExpiry('never')
       setShowTokenForm(false)
       refetchTokens()
     },
@@ -72,8 +74,10 @@ export function ProfilePage() {
   // Token management state
   const [showTokenForm, setShowTokenForm] = useState(false)
   const [newTokenName, setNewTokenName] = useState('')
+  const [tokenExpiry, setTokenExpiry] = useState<'never' | '7d' | '30d' | '90d' | '1y'>('never')
   const [createdToken, setCreatedToken] = useState<CreatedToken | null>(null)
   const [tokenCopied, setTokenCopied] = useState(false)
+  const [revokeTokenConfirm, setRevokeTokenConfirm] = useState<ApiToken | null>(null)
 
   const timeoutRef = useRef<number | null>(null)
 
@@ -103,6 +107,18 @@ export function ProfilePage() {
       timeoutRef.current = window.setTimeout(() => setSaveStatus('idle'), 3000)
     },
   })
+
+  const handleCreateToken = () => {
+    if (!newTokenName.trim()) return
+    const body: { name: string; expires_at?: string } = { name: newTokenName.trim() }
+    if (tokenExpiry !== 'never') {
+      const now = new Date()
+      const days = tokenExpiry === '7d' ? 7 : tokenExpiry === '30d' ? 30 : tokenExpiry === '90d' ? 90 : 365
+      now.setDate(now.getDate() + days)
+      body.expires_at = now.toISOString()
+    }
+    createToken.mutate(body)
+  }
 
   const handleThemeToggle = (newTheme: 'light' | 'dark') => {
     setTheme(newTheme)
@@ -251,24 +267,38 @@ export function ProfilePage() {
                   value={newTokenName}
                   onChange={e => setNewTokenName(e.target.value)}
                   onKeyDown={e => {
-                    if (e.key === 'Enter' && newTokenName.trim()) createToken.mutate(newTokenName.trim())
+                    if (e.key === 'Enter' && newTokenName.trim()) handleCreateToken()
                     if (e.key === 'Escape') setShowTokenForm(false)
                   }}
                   autoFocus
                 />
+                <label style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
+                  Expires
+                  <select
+                    style={{ ...styles.input, marginTop: 4, fontSize: 12, padding: '4px 8px' }}
+                    value={tokenExpiry}
+                    onChange={e => setTokenExpiry(e.target.value as typeof tokenExpiry)}
+                  >
+                    <option value="never">Never</option>
+                    <option value="7d">7 days</option>
+                    <option value="30d">30 days</option>
+                    <option value="90d">90 days</option>
+                    <option value="1y">1 year</option>
+                  </select>
+                </label>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button
                     type="button"
                     style={styles.tokenCreateBtn}
                     disabled={!newTokenName.trim() || createToken.isPending}
-                    onClick={() => createToken.mutate(newTokenName.trim())}
+                    onClick={handleCreateToken}
                   >
                     {createToken.isPending ? 'Creating…' : 'Create'}
                   </button>
                   <button
                     type="button"
                     style={styles.tokenCancelBtn}
-                    onClick={() => setShowTokenForm(false)}
+                    onClick={() => { setShowTokenForm(false); setTokenExpiry('never') }}
                   >
                     Cancel
                   </button>
@@ -295,9 +325,7 @@ export function ProfilePage() {
                       type="button"
                       style={styles.tokenDeleteBtn}
                       title="Revoke token"
-                      onClick={() => {
-                        if (confirm(`Revoke token "${t.name}"?`)) deleteToken.mutate(t.id)
-                      }}
+                      onClick={() => setRevokeTokenConfirm(t)}
                       disabled={deleteToken.isPending}
                     >
                       <Trash2 size={12} />
@@ -309,6 +337,16 @@ export function ProfilePage() {
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={!!revokeTokenConfirm}
+        title="Revoke token"
+        message={`Revoke token "${revokeTokenConfirm?.name}"? This action cannot be undone.`}
+        confirmLabel="Revoke"
+        destructive
+        onConfirm={() => { if (revokeTokenConfirm) deleteToken.mutate(revokeTokenConfirm.id); setRevokeTokenConfirm(null) }}
+        onCancel={() => setRevokeTokenConfirm(null)}
+      />
     </AppShell>
   )
 }

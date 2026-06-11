@@ -341,7 +341,7 @@ export const Cell = memo(function Cell({
         }}>
         <button
           style={styles.expandTrigger}
-          onClick={() => onUpdateCellMeta?.({ cell_collapsed: false })}
+          onClick={() => onUpdateCellMeta?.({ cell_collapsed: false, source_visible: true })}
         >
           <ChevronRight size={11} />
           <span style={styles.cellTypeTag}>{isCode ? 'SQL' : 'MD'}</span>
@@ -473,14 +473,6 @@ export const Cell = memo(function Cell({
 
         {/* Hover toolbar */}
         <div style={{ ...styles.actions, opacity: hovered ? 1 : 0 }} role="toolbar" aria-label="Cell actions">
-          {metrics && (
-            <span
-              style={styles.timing}
-              title={`Connect: ${metrics.connect_time_ms}ms, Query: ${metrics.query_time_ms}ms, Render: ${metrics.render_time_ms}ms`}
-            >
-              ⏱ {(metrics.total_time_ms / 1000).toFixed(1)}s
-            </span>
-          )}
           {isCode && (() => {
             const hasConnector = !!(cell.connector_id || connectors.length > 0)
             return (
@@ -609,7 +601,7 @@ export const Cell = memo(function Cell({
       )}
 
       {/* ── Output ── */}
-      {isCode && cell.outputs.length > 0 && (
+      {isCode && cell.outputs.length > 0 && !(cell as any).outputs_hidden && (
         <div style={styles.outputWrap}>
           <OutputRenderer
             outputs={cell.outputs}
@@ -621,7 +613,7 @@ export const Cell = memo(function Cell({
       )}
 
       {/* ── Footer ── */}
-      {(saveState || runAt) && (
+      {(saveState || runAt || metrics) && (
         <div style={styles.footer}>
           <span style={saveState?.error ? styles.footerError : styles.footerMuted}>
             {saveState?.saving
@@ -632,7 +624,17 @@ export const Cell = memo(function Cell({
                   ? `Saved ${fmtTime(saveState.savedAt)}`
                   : ''}
           </span>
-          {runAt && <span style={styles.footerMuted}>Ran {fmtTime(runAt)}</span>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {metrics && (
+              <span
+                style={styles.footerMuted}
+                title={`Connect: ${metrics.connect_time_ms}ms, Query: ${metrics.query_time_ms}ms, Render: ${metrics.render_time_ms}ms`}
+              >
+                ⏱ {(metrics.total_time_ms / 1000).toFixed(1)}s
+              </span>
+            )}
+            {runAt && <span style={styles.footerMuted}>Ran {fmtTime(runAt)}</span>}
+          </div>
         </div>
       )}
     </div>

@@ -1,8 +1,16 @@
 import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { api } from '../api/client'
 
 interface Command {
   command: string
   description: string
+}
+
+interface Skill {
+  id: string
+  name: string
+  description?: string
 }
 
 const COMMANDS: Command[] = [
@@ -20,9 +28,36 @@ interface Props {
 
 export function SlashCommandPicker({ filter, onSelect, onClose }: Props) {
   const [selectedIndex, setSelectedIndex] = useState(0)
-  const filtered = COMMANDS.filter((c) =>
-    c.command.toLowerCase().includes(filter.toLowerCase())
-  )
+
+  // Fetch skills for autocomplete
+  const { data: skills = [] } = useQuery<Skill[]>({
+    queryKey: ['skills'],
+    queryFn: () => api.get<Skill[]>('/api/v1/skills'),
+    staleTime: 5 * 60 * 1000,
+  })
+
+  // Check if user is typing a skill command: /skill: or /skill:something
+  const skillMatch = filter.match(/^\/skill:?(.*)$/i)
+  const isSkillAutocomplete = skillMatch !== null
+  const skillSearchTerm = skillMatch ? skillMatch[1].toLowerCase() : ''
+
+  // Build filtered list based on context
+  let filtered: Command[]
+  if (isSkillAutocomplete) {
+    // Show skills that match the search term
+    const matchedSkills = skills.filter((s) =>
+      s.name.toLowerCase().includes(skillSearchTerm)
+    )
+    filtered = matchedSkills.map((s) => ({
+      command: `/skill:${s.name.toLowerCase().replace(/\s+/g, '-')}`,
+      description: s.description || s.name,
+    }))
+  } else {
+    // Show regular commands filtered by the input
+    filtered = COMMANDS.filter((c) =>
+      c.command.toLowerCase().includes(filter.toLowerCase())
+    )
+  }
 
   useEffect(() => {
     setSelectedIndex(0)
