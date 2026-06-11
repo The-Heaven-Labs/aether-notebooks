@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { api } from '../api/client'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import type { SSOProvider } from '../types'
 
 interface Org {
@@ -193,6 +194,8 @@ function SSOProvidersTab() {
   const [addFormError, setAddFormError] = useState<string | null>(null)
   const [editFormError, setEditFormError] = useState<string | null>(null)
   const [togglingId, setTogglingId] = useState<string | null>(null)
+  const [testingId, setTestingId] = useState<string | null>(null)
+  const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string }>>({})
 
   const createProvider = useMutation({
     mutationFn: (body: Record<string, unknown>) => api.post('/api/v1/admin/sso/providers', body),
@@ -223,6 +226,28 @@ function SSOProvidersTab() {
       setConfirmDeleteId(null)
     },
   })
+
+  const testProvider = useMutation({
+    mutationFn: (id: string) => api.post<{ success: boolean; error?: string; message?: string; status_code?: number }>(`/api/v1/admin/sso/providers/${id}/test`, {}),
+    onSuccess: (result, id) => {
+      if (result.success) {
+        setTestResults(prev => ({ ...prev, [id]: { success: true, message: result.message ?? 'Connection successful' } }))
+      } else {
+        setTestResults(prev => ({ ...prev, [id]: { success: false, message: result.error ?? 'Connection failed' } }))
+      }
+      setTestingId(null)
+    },
+    onError: (e: unknown, id) => {
+      setTestResults(prev => ({ ...prev, [id as string]: { success: false, message: String(e) } }))
+      setTestingId(null)
+    },
+  })
+
+  function handleTest(id: string) {
+    setTestingId(id)
+    setTestResults(prev => { const next = { ...prev }; delete next[id]; return next })
+    testProvider.mutate(id)
+  }
 
   function handleCreate(values: ProviderFormValues) {
     const body: Record<string, unknown> = {
@@ -310,6 +335,22 @@ function SSOProvidersTab() {
                   >
                     Edit
                   </button>
+                  <button
+                    style={ssoStyles.iconBtn}
+                    onClick={() => handleTest(p.id)}
+                    disabled={testingId === p.id}
+                  >
+                    {testingId === p.id ? 'Testing...' : 'Test'}
+                  </button>
+                  {testResults[p.id] && (
+                    <span style={{
+                      fontSize: 11,
+                      color: testResults[p.id].success ? 'var(--success)' : 'var(--error)',
+                      marginRight: 6,
+                    }}>
+                      {testResults[p.id].success ? '✓' : '✗'} {testResults[p.id].message}
+                    </span>
+                  )}
                   {confirmDeleteId === p.id ? (
                     <>
                       <button
@@ -457,6 +498,7 @@ interface MOTDMessage {
 
 function MOTDTab() {
   const qc = useQueryClient()
+  const [deleteMotdConfirm, setDeleteMotdConfirm] = useState<string | null>(null)
 
   const { data: motds = [], isLoading } = useQuery<MOTDMessage[]>({
     queryKey: ['admin', 'motd'],
@@ -629,7 +671,7 @@ function MOTDTab() {
                 <button style={ssoStyles.iconBtn} onClick={() => handleEdit(m)}>Edit</button>
                 <button
                   style={{ ...ssoStyles.iconBtn, color: 'var(--error)', borderColor: 'var(--error)' }}
-                  onClick={() => { if (confirm('Delete this MOTD?')) deleteMotd.mutate(m.id) }}
+                  onClick={() => setDeleteMotdConfirm(m.id)}
                   disabled={deleteMotd.isPending}
                 >
                   Delete
@@ -639,6 +681,16 @@ function MOTDTab() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!deleteMotdConfirm}
+        title="Delete MOTD"
+        message="Delete this MOTD message?"
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => { if (deleteMotdConfirm) deleteMotd.mutate(deleteMotdConfirm); setDeleteMotdConfirm(null) }}
+        onCancel={() => setDeleteMotdConfirm(null)}
+      />
     </div>
   )
 }

@@ -17,6 +17,7 @@ type Dashboard struct {
 type DashboardSettings struct {
 	AutoRefreshSeconds int               `json:"auto_refresh_seconds,omitempty"`
 	ParameterOverrides map[string]string `json:"parameter_overrides,omitempty"`
+	GridCols           int               `json:"grid_cols,omitempty"`
 }
 
 type Widget struct {

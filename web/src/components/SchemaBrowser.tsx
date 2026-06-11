@@ -1,10 +1,8 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
-import { DatabasePicker } from './DatabasePicker'
 import { PanelHeader } from './PanelHeader'
 import { TreeItem } from './TreeItem'
-import type { Connector } from '../types'
 
 interface SchemaColumn {
   name: string
@@ -22,23 +20,19 @@ interface SchemaResponse {
 
 interface Props {
   connectorId: string | null
-  connector?: Connector | null
   onClose: () => void
 }
 
-export function SchemaBrowser({ connectorId, connector, onClose }: Props) {
+export function SchemaBrowser({ connectorId, onClose }: Props) {
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set())
-  const [activeDatabase, setActiveDatabase] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
 
-  const hasFixedDatabase = !!connector?.config?.database
   const schemaUrl = connectorId
-    ? activeDatabase && !hasFixedDatabase
-      ? `/api/v1/connectors/${connectorId}/schema?database=${encodeURIComponent(activeDatabase)}`
-      : `/api/v1/connectors/${connectorId}/schema`
+    ? `/api/v1/connectors/${connectorId}/schema`
     : ''
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['connector-schema', connectorId, activeDatabase],
+    queryKey: ['connector-schema', connectorId],
     queryFn: () => api.get<SchemaResponse>(schemaUrl),
     enabled: !!connectorId,
   })
@@ -55,16 +49,29 @@ export function SchemaBrowser({ connectorId, connector, onClose }: Props) {
     })
   }
 
+  const filteredTables = data?.tables?.filter(table =>
+    table.name.toLowerCase().includes(searchQuery.toLowerCase())
+  ) ?? []
+
   return (
     <div style={styles.sidebar}>
       <PanelHeader title="Schema Browser" onClose={onClose} closeTitle="Close schema browser" />
 
-      {connectorId && !hasFixedDatabase && (
-        <DatabasePicker
-          connectorId={connectorId}
-          value={activeDatabase}
-          onChange={setActiveDatabase}
-        />
+      {connectorId && (
+        <div style={styles.searchContainer}>
+          <input
+            type="text"
+            placeholder="Filter tables..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setSearchQuery('')
+              }
+            }}
+            style={styles.searchInput}
+          />
+        </div>
       )}
 
       <div style={styles.content}>
@@ -82,13 +89,15 @@ export function SchemaBrowser({ connectorId, connector, onClose }: Props) {
           <div style={styles.errorArea}>
             <span style={styles.errorText}>Failed to load schema</span>
           </div>
-        ) : !data || !data.tables || data.tables.length === 0 ? (
+        ) : filteredTables.length === 0 ? (
           <div style={styles.placeholder}>
-            <p style={styles.placeholderText}>No tables found</p>
+            <p style={styles.placeholderText}>
+              {searchQuery ? 'No tables match your search' : 'No tables found'}
+            </p>
           </div>
         ) : (
           <div style={styles.tree}>
-            {data.tables.map((table) => (
+            {filteredTables.map((table) => (
               <TreeItem
                 key={table.name}
                 name={table.name}
@@ -113,6 +122,21 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
+  },
+  searchContainer: {
+    padding: '8px 12px',
+    borderBottom: '1px solid var(--border)',
+  },
+  searchInput: {
+    width: '100%',
+    fontSize: 12,
+    background: 'var(--bg-primary)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    padding: '6px 10px',
+    color: 'var(--text-primary)',
+    outline: 'none',
+    boxSizing: 'border-box',
   },
   content: {
     flex: 1,

@@ -12,6 +12,8 @@ type Connector struct {
 	TimeoutSeconds int             `json:"timeout_seconds"`
 	IsDefault      bool            `json:"is_default"`
 	FolderID       *string         `json:"folder_id,omitempty"`
+	TableAllowlist []string        `json:"table_allowlist,omitempty"`
+	TableDenylist  []string        `json:"table_denylist,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
 }

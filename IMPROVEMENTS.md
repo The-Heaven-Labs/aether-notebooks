@@ -1,43 +1,44 @@
 ## Implemented
 
-## Not implemented 
+- [x] Invite link generation and flow (fixed redirect for new users via sessionStorage)
+- [x] Keyboard shortcuts modal displays correctly in dark theme
+- [x] Folder tree collapse button positioning and contrast improved
+- [x] Dashboards support editing placed widgets (onEdit prop in WidgetCard)
+- [x] Run all widgets button on dashboards page
+- [x] Widgets have play button with spinning icon while query runs
+- [x] Permission profiles removed; using direct role-based access (Admin/Editor/Viewer/No Access)
+- [x] Audit page tracks cell execution actions with cell_execution_logs
+- [x] Cell execution metrics displayed in footer (connect, query, render, total time)
+- [x] Files page defaults to user's home folder
+- [x] Dashboard permission system implemented
+- [x] Skills usable via /skill: autocomplete in agent chat
+- [x] Maximum tool turns configurable per agent (MaxTurns field)
+- [x] OpenAPI/Swagger documentation available at /swagger
+- [x] Personal access tokens with configurable expiration
+- [x] MOTD admin configuration with dismissable banners
+- [x] App-styled confirmation dialogs (replaced OS confirm())
+- [x] Members and Groups have different sidebar icons (UserCircle vs Users)
+- [x] Audit page filters work for action, user, resource_type
+- [x] Subagent spawning implemented for agent chats
+- [x] Notebook content tool for agents (GetNotebookContext with max_cells safeguard)
+- [x] Import/export notebooks with .ipynb compatibility
+- [x] Drag-and-drop reordering of cells
+- [x] Bulk actions on file list (multi-select, move, delete, permissions)
+- [x] Profile status field has character limit indicator (100 chars)
 
-- [ ] Invite link is not working in the members page. Clicking to generate a link returns a toast with "Not Found"
-- [ ] Keyboard shortcuts modal in dark theme has hardcoded light colors
-- [ ] The button to collapse folder tree is barely visibile in dark theme, contrast is not good. Clicking it should make it mirror to the other side so the arrow point to open, but it stays always pointing to the left.
-- [ ] Dashboards should have a way to edit already placed widgets
-- [ ] There should be a button to run all widgets on the dashboards page
-- [ ] All widgets should have a play button to force reload it. This button should change to a spinning icon while the query is running
-- [ ] The predefined "profiles" for permissions are not working in any resource, remove it entirely
-- [ ] The audit page has no action for cell execution. It should also include what was executed.
-- [ ] Notebook code cells should have some kind of metrics, e.g., what time did it take to execute the query? What time was spent connecting to the connector, executing query, printing output, in queue for the connector?
-- [ ] The default folder when in the files Home should be the user's own home. It should not be possible to create notebooks at "/", only folders
-- [ ] There is no permission system for dashboards
-- [ ] The skills are not usable, it seems the agent is not capable of checking what skills are available and it's content. Same goes for mcps.
-- [ ] It should be possible to trigger skills via "/skill:<skill-name>", so skill names should be normalized to lowercase-separated-by-dashes
-- [ ] Maximum tool turns should be configurable in the agent level, with a default of 90
+## Not implemented
+
+- [x] The predefined "profiles" for permissions are not working in any resource, remove it entirely
 - [ ] There should be a /mcp server that lists available mcp servers. We'll have to think about how to implement authentication here aswell. Will it be individual by user via Oauth, configured with api token in the mcp config?
-- [ ] For images in markdown cells, there should be a button in the middle of them to open in full screen and have configurable zoom in this view
-- [ ] There should be an OpenAPI documentation with swagger and spec. It should be easy for agents and humans to understand what is available and how to use it.
-- [ ] There should be a menu to create personal access tokens in the web UI. These tokens should be available to use to authenticate to APIs and receive the same access as the user it is tied to.
-- [ ] There should be an admin configuration for "MOTD", which would be a dismissable banner on the top of the screen. It should support both markdown and \n for line breaks (or other thing if there is something). It should be possible to have more than one at a time. Each should have a configuration to be shown either in every page (including login) or only in specific pages (with configurations for it).
-- [ ] Confirmation dialogs (e.g. when deleting a cell, removing an user from a group etc) should not use the OS default ones, but rather have an app stylized one
-- [ ] In the notebooks page there should be buttons to hide all code, hide all outputs, and the show equivalents for them.
-- [ ] Markdown cells should have a configuration (with given security disclaimer) to enable rendering of HTML directly, e.g., embedding HTMLs from other systems
-- [ ] It should be possible to trigger the agent modal from outside of notebooks. The use case would be actions that are not specific to only one notebook, e.g., analyzing all notebooks in a given folder, listing how many notebooks were created in a given period, help finding a given notebook etc
-- [ ] The sidebar icon for members and groups are the same. One of them must change.
-- [ ] The filter on the audit page is not able to filter on every column. e.g., selection user and searching for a user doesnt work. Having it on "All types" and searching doesnt work either.
-- [ ] Subagent spawning is not working for agent chats
-- [ ] There should be a tool that gives all the content of a notebook to the agent. We should think of a way to have safeguards for notebooks that are too big
-- [ ] There should be options to import and export notebooks with both their inputs and outputs. Compatibility with .ipynb is important.
-- [ ] The current way of selecting skills and mcps that are available for an agent/mcp, while very beautiful visually, will not escalate well when there are thousands of people in the company and they make it all available for everyone. It should be possible to search and select multiple skills/mcps in an easier way
-- [ ] The mcp config should have a test button to validate the connection to the mcp is successful. If the mcp connects via Oauth, it should connect with the logged user account to do so.
-- [ ] It is possible to select the cell (which makes the output value appear in a small right modal) of multiple output cells. With that, if you have more than one cell selected, pressing arrow keys will move the selected result on all the output cells, which is not the desired behavior. It should be possible to have a selection on only one cell at a time.
-- [ ] When clicking to create a new code cell and the button to create code cell is already near the bottom of the page, the new cell is created visually "cut" by the bottom. When creating a new cell, is should slight scroll up so it is all visible up to the create cell buttons
+- [x] For images in markdown cells, there should be a button in the middle of them to open in full screen and have configurable zoom in this view
+- [x] In the notebooks page there should be buttons to hide all code, hide all outputs, and the show equivalents for them. — Implemented "Hide Code" and "Hide Outputs" toggle buttons in the notebook toolbar
+- [x] Markdown cells should have a configuration (with given security disclaimer) to enable rendering of HTML directly, e.g., embedding HTMLs from other systems
+- [x] It should be possible to trigger the agent modal from outside of notebooks. The use case would be actions that are not specific to only one notebook, e.g., analyzing all notebooks in a given folder, listing how many notebooks were created in a given period, help finding a given notebook etc
+- [x] The mcp config should have a test button to validate the connection to the mcp is successful. If the mcp connects via Oauth, it should connect with the logged user account to do so. — Implemented test button for HTTP MCP servers (stdio not supported)
+- [x] It is possible to select the cell (which makes the output value appear in a small right modal) of multiple output cells. With that, if you have more than one cell selected, pressing arrow keys will move the selected result on all the output cells, which is not the desired behavior. It should be possible to have a selection on only one cell at a time.
+- [x] When clicking to create a new code cell and the button to create code cell is already near the bottom of the page, the new cell is created visually "cut" by the bottom. When creating a new cell, is should slight scroll up so it is all visible up to the create cell buttons
 - [ ] There is certain situation (which needs deeper troubleshooting) where typing into new code cells gets pretty slow. Typing is the only thing that is slow, navigating the page, scrolling through results, clicking buttons is all good, but typing, which takes a good 2 seconds to appear after a character is typed. It may have something to do with lots of rows returned, in this particular scenario I had 1000 results with 20 columns displayed when the slow-down happened (from the clickhouse connector, cloudtrail_events table). Truncating the row number to 10 made typing be fast again.
-- [ ] **No drag-and-drop reordering of cells** — Cells cannot be reordered by drag-and-drop. The only way to move cells is likely through keyboard shortcuts or cut/paste. Drag handles would improve the editing experience.
-- [ ] **Text cell editor doesn't show markdown preview while editing** — Text cells use a plain editor without live markdown preview. Users have to click away to see the rendered output. A split-pane or inline preview would improve the experience.
-- [ ] **No bulk actions on file list** — The home/files page doesn't support multi-select or bulk actions (move, delete, change permissions). For users with many notebooks, this makes management tedious.
-- [ ] **Profile status field has no character limit indicator** — The "Status (optional)" field on the Profile page has no indication of maximum length or current character count.
-- [ ] **OIDC provider form has no "Test" or "Validate" button** — When adding an OIDC provider in Settings, there's no way to test the configuration before saving. Users have to save and then try logging in to verify it works.
-- [ ] **Notebook description field doesn't support markdown** — The notebook description is a plain text input. Users might expect to format it with markdown since the rest of the app supports it.
+- [x] **Text cell editor doesn't show markdown preview while editing** — Text cells use a plain editor without live markdown preview. Users have to click away to see the rendered output. A split-pane or inline preview would improve the experience.
+- [x] **OIDC provider form has no "Test" or "Validate" button** — When adding an OIDC provider in Settings, there's no way to test the configuration before saving. Users have to save and then try logging in to verify it works. — Implemented test button that validates the discovery URL
+- [x] **Notebook description field doesn't support markdown** — The notebook description is a plain text input. Users might expect to format it with markdown since the rest of the app supports it.
+- [x] **Connector schema browser table allowlist/denylist** — Added regex-based table filtering to connectors. Configure which tables appear in the schema browser using allowlist/denylist patterns (one regex per line). Denylist takes precedence.

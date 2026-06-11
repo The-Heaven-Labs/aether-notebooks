@@ -9,7 +9,7 @@ import { slugify } from './Cell'
 import { ImageViewer } from './ImageViewer'
 
 export interface ResizableImageProps {
-  src: string
+  src: string | null
   alt?: string
   width?: string
   onResize?: (src: string, newWidth: number) => void
@@ -46,9 +46,10 @@ function setCachedBlobUrl(src: string, url: string) {
 
 export function ResizableImage({ src, alt, width, onResize, onExpand, readOnly }: ResizableImageProps) {
   const imgRef = useRef<HTMLImageElement>(null)
-  const [blobUrl, setBlobUrl] = useState<string | null>(() => getCachedBlobUrl(src) ?? null)
+  const [blobUrl, setBlobUrl] = useState<string | null>(() => src ? getCachedBlobUrl(src) ?? null : null)
 
   useEffect(() => {
+    if (!src) return
     const cached = getCachedBlobUrl(src)
     if (cached) { setBlobUrl(cached); return }
     fetch(src, { headers: { Authorization: `Bearer ${getToken()}` } })
@@ -72,7 +73,7 @@ export function ResizableImage({ src, alt, width, onResize, onExpand, readOnly }
       document.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('mouseup', onMouseUp)
       const newWidth = Math.max(50, startWidth + (ev.clientX - startX))
-      onResize?.(src, Math.round(newWidth))
+      if (src) onResize?.(src, Math.round(newWidth))
     }
 
     document.addEventListener('mousemove', onMouseMove)
@@ -81,11 +82,11 @@ export function ResizableImage({ src, alt, width, onResize, onExpand, readOnly }
 
   return (
     <span style={{ display: 'inline-block', position: 'relative' }} className="md-image-wrapper" onClick={e => e.stopPropagation()}>
-      <img ref={imgRef} src={blobUrl ?? ''} alt={alt} width={width} style={{ display: 'block', maxWidth: '100%', background: blobUrl ? undefined : 'var(--border)', minHeight: blobUrl ? undefined : 80 }} />
+      <img ref={imgRef} src={blobUrl ?? undefined} alt={alt} width={width} style={{ display: 'block', maxWidth: '100%', background: blobUrl ? undefined : 'var(--border)', minHeight: blobUrl ? undefined : 80 }} />
       {onExpand && (
         <button
           className="md-image-expand-btn"
-          onClick={(e) => { e.stopPropagation(); e.preventDefault(); onExpand(blobUrl ?? src) }}
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); if (blobUrl ?? src) onExpand(blobUrl ?? src!) }}
           title="View full screen"
           style={{
             position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
@@ -119,7 +120,7 @@ export function ResizableImage({ src, alt, width, onResize, onExpand, readOnly }
 export function makeMarkdownComponents(onResize: (src: string, newWidth: number) => void, readOnly = false, onExpand?: (src: string) => void) {
   return {
     img: ({ src, alt, width }: React.ImgHTMLAttributes<HTMLImageElement>) => (
-      <ResizableImage src={src ?? ''} alt={alt} width={width?.toString()} onResize={onResize} onExpand={onExpand} readOnly={readOnly} />
+      <ResizableImage src={src ?? null} alt={alt} width={width?.toString()} onResize={onResize} onExpand={onExpand} readOnly={readOnly} />
     ),
     h1: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
       const text = children?.toString() || ''

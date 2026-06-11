@@ -1,0 +1,17 @@
+- [ ] There is now no way to collapse the filetree as there was in the past (at least I dont see it in the UI)
+- [ ] The Edit button on the MCPs page has strange colors on the dark theme
+- [ ] Logged as Demon, when I go to the files page, I'm in the Angel's Home (which is the first that appears in the filetree) instead of the Demon's one. Also, I didnt gave permission to Demon on Angels home, why can I see notebooks there?
+- [ ] The problem on dashboards where changing the column size on Edit mode resets to 12 columns in view mode still happens
+- [ ] Clicking the generated invite links with a new user still wont work, the token in the url will be lost after clicking to create the account, which shows the selection to create or join orgs
+- [ ] Still can't see any docs/swagger in the UI
+- [ ] When typing a few things in the code cell, there should be some kind of auto complete for both table and columns
+- [ ] Postgres and clickhouse support some type of comment/description for tables and columns, these should appear in the schema browser aswell
+- [ ] The agent skills part seem to be providing more than the selected skill to the agent each time
+- [ ] When the agent uses update_cell to change the cell source, it is not being reflected dinamically in the screen right away, I need to manually refresh the page for it to appear.
+- [ ] There should be a "Data" item in the left menu. This page should be essentially a big "Schema browser", that shows all the tables across all the connectors available for the logged user, along with the columns, comment/descriptions for them etc. It should have a way to look at a sample of selected tables.
+- [ ] There are still some confirmation dialogs that are using the operating system default instead of an app's stylized one. Place I found it: notebook's delete cell. Look for every place that might have this still and update it to use a custom app stylized modal instead.
+- [ ] Notebook presentation mode support only cell output for code cells. It should support both source and output. To hide any of these, should use the hide source. There should also be a hide output/reset output for code cells aswell.
+- [ ] The Last updated x time ago in the top right corner of notebooks doesnt seem to be updating correctly when changes happen to notebook cells
+- [ ] Not every keyboard shortcut works in notebooks. Also, the behavior for navigation specifically between cells, how to enter/leave the source form them, change cell type etc is not working. I want this part to be the very same as it is in JupyterLab
+- [ ] When using SHOW TABLES LIKE '%' in the opensearch connector, 10 columns appear, but the only ones that have data are TABLE_CAT (which always has docker-cluster in it) and TABLE_NAME (which actually has the table names). We need to improve this (either by removing these columns with no data, or adding more relevant data there if possible). Before doind any action here, I'd like an explanation as to why this is the current behavior.
+- [ ]

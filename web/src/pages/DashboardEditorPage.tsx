@@ -496,7 +496,8 @@ export function DashboardEditorPage() {
           resourceType="dashboard"
           resourceId={id!}
           resourceName={dashboard.title}
-          parentFolderId={null}
+          parentFolderId={undefined}
+          resourceOwnerId={dashboard.created_by}
           onClose={() => setShowPermissions(false)}
         />
       )}

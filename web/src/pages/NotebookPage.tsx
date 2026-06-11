@@ -182,6 +182,8 @@ export function NotebookPage() {
   const [cellRunAt, setCellRunAt] = useState<Record<string, Date>>({})
   const [focusedCellId, setFocusedCellId] = useState<string | null>(null)
   const [allCollapsed, setAllCollapsed] = useState(false)
+  const [allCodeHidden, setAllCodeHidden] = useState(false)
+  const [allOutputsHidden, setAllOutputsHidden] = useState(false)
   // isEditingCell is intentionally a plain boolean (not useState) — the
   // useNotebookKeyboardShortcuts hook already guards against CodeMirror editors
   // via isContentEditable checks, so no reactive state is needed here.
@@ -578,6 +580,30 @@ export function NotebookPage() {
     })))
   }, [allCollapsed, localCells, id])
 
+  const toggleAllCode = useCallback(async () => {
+    const newHidden = !allCodeHidden
+    setAllCodeHidden(newHidden)
+    for (const cell of localCells) {
+      if (cell.type === 'code') {
+        await api.put(`/api/v1/notebooks/${id}/cells/${cell.id}`, {
+          source_visible: !newHidden,
+        })
+      }
+    }
+    setLocalCells(prev => prev.map(c =>
+      c.type === 'code' ? { ...c, source_visible: !newHidden } : c
+    ))
+  }, [allCodeHidden, localCells, id])
+
+  const toggleAllOutputs = useCallback(async () => {
+    const newHidden = !allOutputsHidden
+    setAllOutputsHidden(newHidden)
+    setLocalCells(prev => prev.map(c => ({
+      ...c,
+      outputs_hidden: newHidden,
+    })))
+  }, [allOutputsHidden, localCells])
+
   useNotebookKeyboardShortcuts(
     {
       runFocusedCell: () => { if (focusedCellId) saveAndRun(focusedCellId) },
@@ -627,7 +653,7 @@ export function NotebookPage() {
   }, [])
 
   const runningCount = runningCells.size
-  const schemaConnectorId = localCells.find((c) => c.type === 'code' && c.connector_id)?.connector_id ?? (notebookConnectorId || null)
+  const schemaConnectorId = notebookConnectorId || null
 
   if (isLoading) return (
     <AppShell noPadding>
@@ -819,6 +845,22 @@ export function NotebookPage() {
           >
             {allCollapsed ? 'Show All' : 'Collapse All'}
           </button>
+          <button
+            type="button"
+            style={styles.schemaBtn}
+            onClick={toggleAllCode}
+            title="Hide/show all code cells"
+          >
+            {allCodeHidden ? 'Show Code' : 'Hide Code'}
+          </button>
+          <button
+            type="button"
+            style={styles.schemaBtn}
+            onClick={toggleAllOutputs}
+            title="Hide/show all outputs"
+          >
+            {allOutputsHidden ? 'Show Outputs' : 'Hide Outputs'}
+          </button>
           <button type="button" style={styles.runAllBtn} onClick={runAll} disabled={runningCount > 0}>
             <ChevronsRight size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />Run All
           </button>
@@ -850,7 +892,6 @@ export function NotebookPage() {
         {showSchema && (
           <SchemaBrowser
             connectorId={schemaConnectorId}
-            connector={connectors.find(c => c.id === schemaConnectorId) ?? null}
             onClose={() => setShowSchema(false)}
           />
         )}

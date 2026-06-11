@@ -56,7 +56,10 @@ FROM (
             END AS final_name,
             ms->>'type' AS type,
             ms->>'command' AS command,
-            COALESCE(ms->'args', '[]'::jsonb) AS args,
+            COALESCE(
+                (SELECT ARRAY(SELECT jsonb_array_elements_text(ms->'args'))),
+                '{}'::text[]
+            ) AS args,
             a.created_by
         FROM agents a
         CROSS JOIN LATERAL jsonb_array_elements(a.mcp_servers) AS ms

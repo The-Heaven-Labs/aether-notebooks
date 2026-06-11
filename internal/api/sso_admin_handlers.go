@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -164,4 +165,51 @@ func (s *Server) invalidateSSOPlatformCache(r *http.Request) {
 	if s.Cache != nil {
 		s.Cache.Client().Del(r.Context(), "sso:providers:platform")
 	}
+}
+
+// handleAdminTestSSOProvider tests connectivity to an OIDC provider by fetching its discovery document.
+func (s *Server) handleAdminTestSSOProvider(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	// Get the provider from database
+	var discoveryURL string
+	err := s.db.Pool.QueryRow(r.Context(),
+		`SELECT discovery_url FROM sso_providers WHERE id = $1`,
+		id,
+	).Scan(&discoveryURL)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "provider not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to get provider")
+		return
+	}
+
+	// Try to fetch the discovery document
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(discoveryURL)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success":     false,
+			"error":       fmt.Sprintf("HTTP %d: %s", resp.StatusCode, resp.Status),
+			"status_code": resp.StatusCode,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":     true,
+		"message":     "Discovery document fetched successfully",
+		"status_code": resp.StatusCode,
+	})
 }

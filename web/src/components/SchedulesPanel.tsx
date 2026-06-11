@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { PanelHeader } from './PanelHeader'
 import { ScheduleItem } from './ScheduleItem'
+import { ConfirmDialog } from './ConfirmDialog'
 import type { Schedule, Parameter } from '../types'
 
 const CRON_PRESETS = [
@@ -40,6 +41,7 @@ export function SchedulesPanel({ notebookId, parameters: _parameters }: Props) {
   const [cronDraft, setCronDraft] = useState('')
   const [createError, setCreateError] = useState<string | null>(null)
   const [mutationErrors, setMutationErrors] = useState<Record<string, string>>({})
+  const [deleteScheduleId, setDeleteScheduleId] = useState<string | null>(null)
 
   const { data: schedules = [], isLoading, isError } = useQuery({
     queryKey: ['schedules', notebookId],
@@ -100,13 +102,18 @@ export function SchedulesPanel({ notebookId, parameters: _parameters }: Props) {
   }
 
   const handleDelete = (id: string) => {
-    if (!window.confirm('Delete this schedule?')) return
+    setDeleteScheduleId(id)
+  }
+
+  const confirmDeleteSchedule = () => {
+    if (!deleteScheduleId) return
     setMutationErrors((prev) => {
       const next = { ...prev }
-      delete next[id]
+      delete next[deleteScheduleId]
       return next
     })
-    deleteSchedule.mutate(id)
+    deleteSchedule.mutate(deleteScheduleId)
+    setDeleteScheduleId(null)
   }
 
   const handleToggle = (schedule: Schedule) => {
@@ -192,6 +199,16 @@ export function SchedulesPanel({ notebookId, parameters: _parameters }: Props) {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={!!deleteScheduleId}
+        title="Delete schedule"
+        message="Delete this schedule? This cannot be undone."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={confirmDeleteSchedule}
+        onCancel={() => setDeleteScheduleId(null)}
+      />
     </div>
   )
 }
