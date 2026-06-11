@@ -5,6 +5,25 @@ import { ChartView } from './ChartView'
 import type { ChartConfig } from './ChartConfigPanel'
 import { ToggleLeft, Calendar, Clock, Fingerprint, Ban, Binary, Table, BarChart2, Timer, Sigma, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, X, Copy, Check, Download } from 'lucide-react'
 
+// Global state to ensure only one detail panel is open at a time across all cells
+let activeDetailCellId: string | null = null
+const detailListeners = new Set<(cellId: string | null) => void>()
+
+function setActiveDetailCell(cellId: string | null) {
+  activeDetailCellId = cellId
+  detailListeners.forEach(listener => listener(cellId))
+}
+
+function useActiveDetailCell() {
+  const [isActive, setIsActive] = useState(activeDetailCellId)
+  useEffect(() => {
+    const listener = (cellId: string | null) => setIsActive(cellId)
+    detailListeners.add(listener)
+    return () => { detailListeners.delete(listener) }
+  }, [])
+  return isActive
+}
+
 interface Props {
   outputs: Output[]
   fixedView?: 'table' | 'chart'
@@ -270,6 +289,8 @@ function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange }
   const dragStartHeight = useRef<number>(OUTPUT_DEFAULT_HEIGHT)
   const [sort, setSort] = useState<SortState>({ column: null, direction: 'none' })
   const [detail, setDetail] = useState<DetailPanel | null>(null)
+  const activeDetailCell = useActiveDetailCell()
+  const isDetailActive = cellId ? activeDetailCell === cellId : false
   const activeCellRef = useRef<HTMLTableCellElement | null>(null)
   const theadRef = useRef<HTMLTableSectionElement | null>(null)
   const [copied, setCopied] = useState(false)
@@ -326,9 +347,13 @@ function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange }
 
   const openDetail = (rowIndex: number, colIndex: number, value: string) => {
     setDetail({ rowIndex, colIndex, value, colName: rs.columns[colIndex].name })
+    if (cellId) setActiveDetailCell(cellId)
   }
 
-  const closeDetail = () => setDetail(null)
+  const closeDetail = () => {
+    setDetail(null)
+    if (cellId && activeDetailCellId === cellId) setActiveDetailCell(null)
+  }
 
   const navigateDetail = useCallback((rowDelta: number, colDelta: number) => {
     if (!detail) return
@@ -354,7 +379,7 @@ function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange }
   }, [detail?.rowIndex, detail?.colIndex])
 
   useEffect(() => {
-    if (!detail) return
+    if (!detail || !isDetailActive) return
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { closeDetail(); return }
       if (e.key === 'ArrowDown') { e.preventDefault(); navigateDetail(1, 0) }
@@ -365,7 +390,7 @@ function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [detail, navigateDetail, copyDetail])
+  }, [detail, isDetailActive, navigateDetail, copyDetail])
 
   return (
     <div style={styles.tableSection}>
@@ -373,14 +398,16 @@ function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange }
         <span style={styles.rowCount}>
           {rs.rows.length} row{rs.rows.length !== 1 ? 's' : ''} · {rs.columns.length} columns
         </span>
-        <div style={styles.exportGroup}>
-          <button style={styles.exportBtn} onClick={() => exportCSV(rs)} title="Download as CSV" aria-label="Download as CSV">
-            <Download size={12} /> CSV
-          </button>
-          <button style={styles.exportBtn} onClick={() => exportJSON(rs)} title="Download as JSON" aria-label="Download as JSON">
-            <Download size={12} /> JSON
-          </button>
-        </div>
+        {!fixedView && (
+          <div style={styles.exportGroup}>
+            <button style={styles.exportBtn} onClick={() => exportCSV(rs)} title="Download as CSV" aria-label="Download as CSV">
+              <Download size={12} /> CSV
+            </button>
+            <button style={styles.exportBtn} onClick={() => exportJSON(rs)} title="Download as JSON" aria-label="Download as JSON">
+              <Download size={12} /> JSON
+            </button>
+          </div>
+        )}
         {!fixedView && (
           <div style={styles.viewToggle}>
             <button
@@ -472,7 +499,7 @@ function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange }
             </table>
           </div>
 
-          {detail && (
+          {detail && isDetailActive && (
             <div style={styles.detailPanel}>
               <div style={styles.detailHeader}>
                 <div style={styles.detailHeaderLeft}>

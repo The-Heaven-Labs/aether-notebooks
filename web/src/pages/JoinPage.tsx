@@ -12,7 +12,10 @@ export function JoinPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!token) {
+    // If no token in URL, check sessionStorage for a pending join token
+    // (set before redirecting to login from a previous visit)
+    const effectiveToken = token || sessionStorage.getItem('hnb_pending_join_token')
+    if (!effectiveToken) {
       setError('No invite token provided')
       setLoading(false)
       return
@@ -24,14 +27,18 @@ export function JoinPage() {
         if (!isAuthenticated) {
           const userRes = await api.get('/api/v1/users/me').catch(() => null)
           if (!userRes) {
-            navigate(`/login?redirect=/join?token=${token}`)
+            // Store the token in sessionStorage so it survives the login redirect
+            sessionStorage.setItem('hnb_pending_join_token', effectiveToken)
+            navigate('/login')
             return
           }
         }
         const result = await api.post<{ token: string }>('/api/v1/auth/org/join', {
-          invite_link_token: token,
+          invite_link_token: effectiveToken,
         })
         loginWithToken(result.token)
+        // Clear the pending token after successful join
+        sessionStorage.removeItem('hnb_pending_join_token')
         navigate('/')
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to join organization')

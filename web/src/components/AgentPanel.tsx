@@ -333,7 +333,10 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
       return
     }
 
-    if (text.startsWith('/')) {
+    // /skill: prefix is handled as a regular message by the backend engine,
+    // not as a slash command. Only send actual slash commands (/new, /summarize, etc.)
+    // as slash_command type.
+    if (text.startsWith('/') && !text.toLowerCase().startsWith('/skill:')) {
       const command = text.slice(1).trim()
       setMessages((prev) => [...prev, { role: 'user', content: text }])
       setIsStreaming(true)
@@ -665,7 +668,10 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
               value={input}
               onChange={(e) => {
                 setInput(e.target.value)
-                setShowSlashPicker(e.target.value.startsWith('/') && e.target.value.length <= 15)
+                const val = e.target.value
+                // Show picker for any / command, allow longer inputs for /skill: autocomplete
+                const isSkillCommand = val.toLowerCase().startsWith('/skill:')
+                setShowSlashPicker(val.startsWith('/') && (isSkillCommand || val.length <= 15))
               }}
               onKeyDown={handleKeyDown}
               placeholder="Message agent... (/ for commands)"

@@ -80,7 +80,10 @@ export interface Connector {
   type: string
   is_default?: boolean
   folder_id?: string
+  created_by?: string
   created_at: string
+  table_allowlist?: string[]
+  table_denylist?: string[]
   config?: {
     host?: string
     port?: number

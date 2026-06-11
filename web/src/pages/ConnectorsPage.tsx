@@ -25,12 +25,15 @@ interface ConnectorForm {
   ssl_mode: string
   use_tls: boolean
   is_default: boolean
+  table_allowlist: string
+  table_denylist: string
 }
 
 const defaultForm = (): ConnectorForm => ({
   name: '', type: 'postgres', host: 'localhost', port: '5432',
   database: '', user: '', password: '', ssl_mode: 'disable',
   use_tls: false, is_default: false,
+  table_allowlist: '', table_denylist: '',
 })
 
 export function ConnectorsPage() {
@@ -72,6 +75,8 @@ export function ConnectorsPage() {
           ssl_mode: c.config?.ssl_mode ?? 'disable',
           use_tls: c.config?.use_tls ?? false,
           is_default: c.is_default ?? false,
+          table_allowlist: (c.table_allowlist ?? []).join('\n'),
+          table_denylist: (c.table_denylist ?? []).join('\n'),
         })
         setSearchParams({})
       }
@@ -91,6 +96,8 @@ export function ConnectorsPage() {
         ...(editForm.type === 'opensearch' ? { use_tls: editForm.use_tls } : {}),
       },
       ...(editForm.is_default ? { is_default: true } : {}),
+      table_allowlist: editForm.table_allowlist.split('\n').filter(s => s.trim()),
+      table_denylist: editForm.table_denylist.split('\n').filter(s => s.trim()),
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['connectors'] })
@@ -321,6 +328,24 @@ export function ConnectorsPage() {
                   </select>
                 </label>
               )}
+              <label style={{ ...styles.label, gridColumn: '1 / -1' }}>
+                Table Allowlist (regex patterns, one per line, empty = all tables)
+                <textarea
+                  style={{ ...styles.input, minHeight: 60, fontFamily: 'var(--font-mono)', fontSize: 12, resize: 'vertical' }}
+                  value={editForm.table_allowlist}
+                  onChange={(e) => setEditForm(f => ({ ...f, table_allowlist: e.target.value }))}
+                  placeholder="e.g.,^public\\..*\\n^analytics\\..*"
+                />
+              </label>
+              <label style={{ ...styles.label, gridColumn: '1 / -1' }}>
+                Table Denylist (regex patterns, one per line)
+                <textarea
+                  style={{ ...styles.input, minHeight: 60, fontFamily: 'var(--font-mono)', fontSize: 12, resize: 'vertical' }}
+                  value={editForm.table_denylist}
+                  onChange={(e) => setEditForm(f => ({ ...f, table_denylist: e.target.value }))}
+                  placeholder="e.g.,.*_src$\\n^temp\\..*"
+                />
+              </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)', gridColumn: '1 / -1' }}>
                 <input type="checkbox" checked={editForm.is_default ?? false}
                   onChange={e => setEditForm(f => ({ ...f, is_default: e.target.checked }))} />
@@ -427,6 +452,8 @@ export function ConnectorsPage() {
                         ssl_mode: c.config?.ssl_mode ?? 'disable',
                         use_tls: c.config?.use_tls ?? false,
                         is_default: c.is_default ?? false,
+                        table_allowlist: (c.table_allowlist ?? []).join('\n'),
+                        table_denylist: (c.table_denylist ?? []).join('\n'),
                       })
                     }}>Edit</button>
                     <button type="button" style={styles.actionBtn} onClick={() => setPermissionsTarget({ type: 'connector', id: c.id, name: c.name })}>Permissions</button>
@@ -458,6 +485,7 @@ export function ConnectorsPage() {
             resourceType="connector"
             resourceId={permissionsTarget.id}
             resourceName={permissionsTarget.name}
+            resourceOwnerId={connectors.find(c => c.id === permissionsTarget.id)?.created_by}
             onClose={() => setPermissionsTarget(null)}
           />
         )}

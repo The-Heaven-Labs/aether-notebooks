@@ -12,6 +12,7 @@ import { PermissionsPanel } from '../components/PermissionsPanel'
 import { TwoPanelLayout } from '../components/TwoPanelLayout'
 import { Skeleton } from '../components/Skeleton'
 import { Folder as FolderIcon, BookOpen, LayoutDashboard, Database, Home } from 'lucide-react'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -457,6 +458,7 @@ export function HomePage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkMoving, setBulkMoving] = useState(false)
   const [bulkPermissions, setBulkPermissions] = useState(false)
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false)
 
   const contentsKey = ['folder-contents', folderID ?? 'root']
   const { data, isLoading } = useQuery<FolderContents>({
@@ -465,6 +467,21 @@ export function HomePage() {
       ? api.get<FolderContents>(`/api/v1/folders/${folderID}`)
       : api.get<FolderContents>('/api/v1/folders'),
   })
+
+  // Default to user's home folder if no folder param is set
+  const { data: homeFolders } = useQuery<Array<{ id: string; name: string; is_home: boolean; owner_id: string }>>({
+    queryKey: ['folder-home'],
+    queryFn: () => api.get('/api/v1/home'),
+  })
+
+  useEffect(() => {
+    if (!folderID && homeFolders && homeFolders.length > 0) {
+      const myHome = homeFolders.find(h => h.is_home)
+      if (myHome) {
+        setSearchParams({ folder: myHome.id })
+      }
+    }
+  }, [folderID, homeFolders, setSearchParams])
 
   
 
@@ -620,12 +637,18 @@ export function HomePage() {
     setOpenMenu(target)
   }
 
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: ResourceType; id: string; name: string } | null>(null)
+
   function handleDelete(type: ResourceType, id: string, name?: string) {
-    const label = name || type
-    if (!confirm(`Delete "${label}"? This cannot be undone.`)) return
+    setDeleteConfirm({ type, id, name: name || type })
+  }
+
+  function confirmDelete() {
+    if (!deleteConfirm) return
+    const { type, id } = deleteConfirm
     if (type === 'folder') deleteFolder.mutate(id)
     else if (type === 'notebook') deleteNotebook.mutate(id)
-    // connectors / dashboards: no-op (TODO: implement via their own pages)
+    setDeleteConfirm(null)
   }
 
   function handleRenameConfirm(newValue: string) {
@@ -815,11 +838,7 @@ export function HomePage() {
                 </button>
                 <button
                   style={{ ...s.bulkBtn, color: 'var(--error)', borderColor: 'var(--error)' }}
-                  onClick={() => {
-                    if (confirm(`Delete ${selected.size} item(s)? This cannot be undone.`)) {
-                      bulkDelete.mutate()
-                    }
-                  }}
+                  onClick={() => setBulkDeleteConfirm(true)}
                   disabled={bulkDelete.isPending}
                 >
                   {bulkDelete.isPending ? 'Deleting…' : 'Delete'}
@@ -1237,9 +1256,36 @@ export function HomePage() {
                 resourceId={permissionsTarget.id}
                 resourceName={permissionsTarget.name}
                 parentFolderId={folderID ?? undefined}
+                resourceOwnerId={
+                  permissionsTarget.type === 'folder' ? data?.folder?.created_by :
+                  permissionsTarget.type === 'notebook' ? data?.notebooks?.find(nb => nb.id === permissionsTarget.id)?.created_by :
+                  permissionsTarget.type === 'connector' ? data?.connectors?.find(c => c.id === permissionsTarget.id)?.created_by :
+                  permissionsTarget.type === 'dashboard' ? data?.dashboards?.find(d => d.id === permissionsTarget.id)?.created_by :
+                  undefined
+                }
                 onClose={() => setPermissionsTarget(null)}
               />
             )}
+
+            {/* Delete confirm dialogs */}
+            <ConfirmDialog
+              open={!!deleteConfirm}
+              title="Delete item"
+              message={`Delete "${deleteConfirm?.name}"? This cannot be undone.`}
+              confirmLabel="Delete"
+              destructive
+              onConfirm={confirmDelete}
+              onCancel={() => setDeleteConfirm(null)}
+            />
+            <ConfirmDialog
+              open={bulkDeleteConfirm}
+              title="Delete items"
+              message={`Delete ${selected.size} item(s)? This cannot be undone.`}
+              confirmLabel="Delete"
+              destructive
+              onConfirm={() => { bulkDelete.mutate(); setBulkDeleteConfirm(false) }}
+              onCancel={() => setBulkDeleteConfirm(false)}
+            />
           </div>
         }
       />

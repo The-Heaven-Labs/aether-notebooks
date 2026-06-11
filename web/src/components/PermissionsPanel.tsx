@@ -52,7 +52,7 @@ interface AclEntry {
 }
 
 interface Member {
-  id: string
+  user_id: string
   name: string
   email: string
   role: string
@@ -69,6 +69,7 @@ export interface PermissionsPanelProps {
   resourceName: string
   parentFolderId?: string
   canEdit?: boolean
+  resourceOwnerId?: string
   onClose: () => void
 }
 
@@ -99,6 +100,7 @@ export function PermissionsPanel({
   resourceName,
   parentFolderId,
   canEdit = true,
+  resourceOwnerId,
   onClose,
 }: PermissionsPanelProps) {
   const qc = useQueryClient()
@@ -177,8 +179,8 @@ export function PermissionsPanel({
 
   function subjectName(entry: AclEntry): string {
     if (entry.subject_type === 'user') {
-      const m = members.find((m) => m.id === entry.subject_id)
-      return m ? m.name || m.email : entry.subject_id
+      const m = members.find((m) => m.user_id === entry.subject_id)
+      return m ? (m.name || m.email) : entry.subject_id
     } else {
       const g = groups.find((g) => g.id === entry.subject_id)
       return g ? g.name : entry.subject_id
@@ -418,11 +420,13 @@ export function PermissionsPanel({
                   <option value="">Select user or group…</option>
                   {members.length > 0 && (
                     <optgroup label="Users">
-                      {members.map((m) => (
-                        <option key={m.id} value={`user:${m.id}`}>
-                          {m.name || m.email}
-                        </option>
-                      ))}
+                      {members
+                        .filter(m => m.user_id !== resourceOwnerId)
+                        .map((m) => (
+                          <option key={m.user_id} value={`user:${m.user_id}`}>
+                            {m.name || m.email}
+                          </option>
+                        ))}
                     </optgroup>
                   )}
                   {groups.length > 0 && (
