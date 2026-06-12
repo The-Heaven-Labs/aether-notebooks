@@ -35,6 +35,7 @@ type EngineEvent struct {
 	Type     string      `json:"type"`
 	CellID   string      `json:"cell_id,omitempty"`
 	Position int         `json:"position,omitempty"`
+	Source   string      `json:"source,omitempty"`
 	Tasks    []AgentTask `json:"tasks,omitempty"`
 	Outputs  any         `json:"outputs,omitempty"`
 }
@@ -69,8 +70,8 @@ func (tc *ToolContext) EmitCellOutput(cellID string, outputs any) {
 	}
 }
 
-func (tc *ToolContext) EmitCellUpdated(cellID string) {
-	evt := EngineEvent{Type: "cell_updated", CellID: cellID}
+func (tc *ToolContext) EmitCellUpdated(cellID string, source string) {
+	evt := EngineEvent{Type: "cell_updated", CellID: cellID, Source: source}
 	if tc.Events != nil {
 		*tc.Events = append(*tc.Events, evt)
 	}

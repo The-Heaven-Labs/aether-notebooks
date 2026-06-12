@@ -55,7 +55,7 @@ interface NotebookCollab {
 }
 const collabCache = new Map<string, NotebookCollab>()
 
-function getOrCreateCollab(notebookId: string): NotebookCollab {
+export function getOrCreateCollab(notebookId: string): NotebookCollab {
   const existing = collabCache.get(notebookId)
   if (existing) { existing.refCount++; return existing }
 
@@ -247,10 +247,18 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
     })
 
     const attachCollab = () => {
-      if (ytext.length === 0) {
-        collab.doc.transact(() => ytext.insert(0, view.state.doc.toString()))
-      } else if (ytext.toString() !== view.state.doc.toString()) {
-        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: ytext.toString() } })
+      const editorContent = view.state.doc.toString()
+      const yjsContent = ytext.toString()
+      if (yjsContent.length === 0) {
+        // Yjs is empty, initialize from editor (database source)
+        collab.doc.transact(() => ytext.insert(0, editorContent))
+      } else if (yjsContent !== editorContent) {
+        // Conflict: Yjs and editor differ. Database source (editor) is authoritative
+        // when it differs from Yjs — agent may have updated it directly.
+        collab.doc.transact(() => {
+          ytext.delete(0, ytext.length)
+          ytext.insert(0, editorContent)
+        })
       }
       view.dispatch({ effects: compartment.reconfigure(yCollab(ytext, collab.provider.awareness)) })
     }
@@ -270,6 +278,22 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cell.id, notebookId, collapsed])
+
+  // Sync external source changes (e.g. from agent update_cell) into Yjs
+  const lastSourceRef = useRef(cell.source)
+  useEffect(() => {
+    if (cell.source !== lastSourceRef.current && cell.source !== undefined) {
+      lastSourceRef.current = cell.source
+      const collab = getOrCreateCollab(notebookId)
+      const ytext = collab.doc.getText(`cell:${cell.id}`)
+      if (ytext.toString() !== cell.source) {
+        collab.doc.transact(() => {
+          ytext.delete(0, ytext.length)
+          ytext.insert(0, cell.source)
+        })
+      }
+    }
+  }, [cell.source, cell.id, notebookId])
 
   return <div ref={editorRef} style={styles.codeEditor} />
 }

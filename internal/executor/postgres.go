@@ -85,11 +85,23 @@ func (p *PostgresExecutor) TestConnection(ctx context.Context) error {
 }
 
 func (p *PostgresExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
+	// Query to get table and column info with comments
+	// PostgreSQL stores comments in pg_catalog.pg_description:
+	//   - objsubid = 0 → table/view comment
+	//   - objsubid > 0 → column comment (objsubid = column ordinal position)
 	rows, err := p.pool.Query(ctx,
-		`SELECT table_schema, table_name, column_name, data_type
-		 FROM information_schema.columns
-		 WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
-		 ORDER BY table_schema, table_name, ordinal_position`)
+		`SELECT 
+		    c.table_schema,
+		    c.table_name,
+		    c.column_name,
+		    c.data_type,
+		    COALESCE(col_description(
+		        (c.table_schema || '.' || c.table_name)::regclass,
+		        c.ordinal_position), ''
+		    ) AS column_comment
+		FROM information_schema.columns c
+		WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema')
+		ORDER BY c.table_schema, c.table_name, c.ordinal_position`)
 	if err != nil {
 		return nil, err
 	}
@@ -99,16 +111,22 @@ func (p *PostgresExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
 	var tableOrder []string
 
 	for rows.Next() {
-		var schema, table, col, dtype string
-		if err := rows.Scan(&schema, &table, &col, &dtype); err != nil {
+		var schema, table, col, dtype, comment string
+		if err := rows.Scan(&schema, &table, &col, &dtype, &comment); err != nil {
 			return nil, err
 		}
 		key := schema + "." + table
 		if _, ok := tableMap[key]; !ok {
-			tableMap[key] = &TableInfo{Schema: schema, Name: table}
+			// Get table-level comment
+			var tableComment string
+			_ = p.pool.QueryRow(ctx,
+				`SELECT COALESCE(obj_description(
+				    ($1 || '.' || $2)::regclass
+				), '')`, schema, table).Scan(&tableComment)
+			tableMap[key] = &TableInfo{Schema: schema, Name: table, Description: tableComment}
 			tableOrder = append(tableOrder, key)
 		}
-		tableMap[key].Columns = append(tableMap[key].Columns, ColumnInfo{Name: col, Type: dtype})
+		tableMap[key].Columns = append(tableMap[key].Columns, ColumnInfo{Name: col, Type: dtype, Description: comment})
 	}
 
 	tables := make([]TableInfo, 0, len(tableOrder))

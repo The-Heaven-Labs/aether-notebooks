@@ -193,7 +193,8 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 								writeChan <- struct {
 									Type   string `json:"type"`
 									CellID string `json:"cell_id"`
-								}{Type: "cell_updated", CellID: evt.CellID}
+						Source string `json:"source,omitempty"`
+								}{Type: "cell_updated", CellID: evt.CellID, Source: evt.Source}
 							case "tasks_updated":
 								writeChan <- struct {
 									Type string            `json:"type"`

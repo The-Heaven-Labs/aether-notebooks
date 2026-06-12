@@ -3,31 +3,47 @@ import { ChevronDown, ChevronRight, Table2, Columns } from 'lucide-react'
 interface Column {
   name: string
   type: string
+  description?: string
 }
 
 interface Props {
   name: string
+  description?: string
   columns: Column[]
   isExpanded: boolean
   onToggle: (name: string) => void
 }
 
-export function TreeItem({ name, columns, isExpanded, onToggle }: Props) {
+export function TreeItem({ name, description, columns, isExpanded, onToggle }: Props) {
+  const tableTitle = description ? `${name} — ${description}` : name
+  
   return (
     <div style={styles.tableItem}>
-      <button style={styles.tableRow} onClick={() => onToggle(name)} title={name}>
+      <button style={styles.tableRow} onClick={() => onToggle(name)} title={tableTitle}>
         <span style={styles.tableChevron}>{isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</span>
         <span style={styles.tableIcon}><Table2 size={12} /></span>
         <span style={styles.tableName}>{name}</span>
         <span style={styles.columnCount}>{columns.length}</span>
       </button>
+      {description && isExpanded && (
+        <div style={styles.descriptionRow}>
+          <span style={styles.descriptionText}>{description}</span>
+        </div>
+      )}
       {isExpanded && (
         <div style={styles.columnList}>
           {columns.map((col) => (
-            <div key={col.name} style={styles.columnRow}>
-              <span style={{ ...styles.columnIcon, display: 'flex', alignItems: 'center' }}><Columns size={12} /></span>
-              <span style={styles.columnName}>{col.name}</span>
-              <span style={styles.columnType}>{col.type}</span>
+            <div key={col.name} style={styles.columnItem}>
+              <div style={styles.columnRow}>
+                <span style={{ ...styles.columnIcon, display: 'flex', alignItems: 'center' }}><Columns size={12} /></span>
+                <span style={styles.columnName}>{col.name}</span>
+                <span style={styles.columnType}>{col.type}</span>
+              </div>
+              {col.description && (
+                <div style={styles.columnDescriptionRow}>
+                  <span style={styles.columnDescription}>{col.description}</span>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -87,11 +103,33 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     paddingBottom: 4,
   },
+  descriptionRow: {
+    padding: '2px 12px 2px 36px',
+  },
+  descriptionText: {
+    fontSize: 11,
+    color: 'var(--text-muted)',
+    fontStyle: 'italic',
+    lineHeight: 1.4,
+  },
+  columnItem: {
+    display: 'flex',
+    flexDirection: 'column',
+  },
   columnRow: {
     display: 'flex',
     alignItems: 'center',
     gap: 6,
-    padding: '3px 12px 3px 36px',
+    padding: '3px 12px 1px 36px',
+  },
+  columnDescriptionRow: {
+    padding: '0px 12px 2px 36px',
+  },
+  columnDescription: {
+    fontSize: 10,
+    color: 'var(--text-muted)',
+    fontStyle: 'italic',
+    lineHeight: 1.3,
   },
   columnIcon: {
     fontSize: 10,
