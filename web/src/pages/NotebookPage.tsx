@@ -474,11 +474,24 @@ export function NotebookPage() {
       if (cell && cell.source === source) return prev
       return prev.map((c) => (c.id === cellId ? { ...c, source } : c))
     })
+
+    // Check if agent just updated this cell — suppress auto-save
+    const cell = localCells.find(c => c.id === cellId)
+    if (cell?.agent_updated_at) {
+      const elapsed = Date.now() - new Date(cell.agent_updated_at).getTime()
+      if (elapsed < 5000) {
+        // Agent update is recent (< 5s), don't trigger auto-save
+        // The agent already updated Yjs, no need to save again
+        return
+      }
+    }
+
+    // Normal auto-save flow
     clearTimeout(saveTimers.current[cellId])
     saveTimers.current[cellId] = setTimeout(() => {
       saveCellSource(cellId, source)
     }, 1500)
-  }, [saveCellSource])
+  }, [saveCellSource, localCells])
 
   const assignConnector = useCallback(async (cellId: string, connectorId: string) => {
     await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, {
