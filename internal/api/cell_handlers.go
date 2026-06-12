@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/heavenlabs/hnb/internal/agent"
 	"github.com/heavenlabs/hnb/internal/audit"
@@ -258,17 +259,18 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 
 	query += fmt.Sprintf(" WHERE id = $%d AND notebook_id = $%d", argN, argN+1)
 	args = append(args, cellID, nbID)
-	query += " RETURNING id, notebook_id, position, type, language, connector_id, source, outputs, source_visible, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), \"limit\", COALESCE(metadata, '{}'), created_at, updated_at"
+	query += " RETURNING id, notebook_id, position, type, language, connector_id, source, outputs, source_visible, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), \"limit\", COALESCE(metadata, '{}'), created_at, updated_at, agent_updated_at"
 
 	var cell models.Cell
 	var lang, connID *string
 	var outputs, cellParams []byte
 	var limit *int
+	var agentUpdatedAt *time.Time
 	err := s.db.Pool.QueryRow(ctx, query, args...).Scan(
 		&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &lang, &connID,
 		&cell.Source, &outputs, &cell.SourceVisible, &cell.CellCollapsed, &cell.SlideBreak, &cellParams,
 		&cell.Title, &cell.Description, &cell.Slug, &limit, &cell.Metadata,
-		&cell.CreatedAt, &cell.UpdatedAt,
+		&cell.CreatedAt, &cell.UpdatedAt, &agentUpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "cell not found")
@@ -287,6 +289,7 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 	if limit != nil {
 		cell.Limit = limit
 	}
+	cell.AgentUpdatedAt = agentUpdatedAt
 	json.Unmarshal(outputs, &cell.Outputs)
 	json.Unmarshal(cellParams, &cell.Parameters)
 
