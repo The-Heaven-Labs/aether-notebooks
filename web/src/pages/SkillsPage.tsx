@@ -6,6 +6,7 @@ import { FormCard } from '../components/FormCard'
 import { EmptyState } from '../components/EmptyState'
 import { Zap } from 'lucide-react'
 import { api } from '../api/client'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import type { Skill } from '../types/agent'
 
 interface SkillForm {
@@ -45,6 +46,7 @@ export function SkillsPage() {
   const [selectedTools, setSelectedTools] = useState<string[]>([])
   const [formError, setFormError] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
 
   const { data: skills = [], isLoading } = useQuery<Skill[]>({
     queryKey: ['skills'],
@@ -165,7 +167,7 @@ export function SkillsPage() {
                 </td>
                 <td style={styles.tdActions}>
                   <button type="button" style={styles.editBtn} onClick={() => startEdit(s)}>Edit</button>
-                  <button type="button" style={styles.deleteBtn} onClick={() => { if (confirm(`Delete "${s.name}"?`)) deleteMutation.mutate(s.id) }}>
+                  <button type="button" style={styles.deleteBtn} onClick={() => setDeleteTarget({ id: s.id, name: s.name })}>
                     Delete
                   </button>
                 </td>
@@ -174,6 +176,15 @@ export function SkillsPage() {
           </StyledTable>
         )}
       </div>
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete skill"
+        message={`Delete "${deleteTarget?.name}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null) }}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </AppShell>
   )
 }

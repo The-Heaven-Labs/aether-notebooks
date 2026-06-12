@@ -22,18 +22,61 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const cancelRef = useRef<HTMLButtonElement>(null)
   const confirmRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (open) {
-      confirmRef.current?.focus()
+      // Default focus on Cancel (safer — prevents accidental destructive actions)
+      cancelRef.current?.focus()
       const handleKey = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') onCancel()
+        if (e.key === 'Escape') {
+          onCancel()
+          return
+        }
+        // Left/Right arrows to switch between buttons
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          e.preventDefault()
+          const active = document.activeElement
+          if (active === cancelRef.current) {
+            confirmRef.current?.focus()
+          } else {
+            cancelRef.current?.focus()
+          }
+          return
+        }
+        // Tab trap: cycle between the two buttons
+        if (e.key === 'Tab') {
+          const active = document.activeElement
+          if (e.shiftKey) {
+            // Shift+Tab: if on cancel, wrap to confirm
+            if (active === cancelRef.current) {
+              e.preventDefault()
+              confirmRef.current?.focus()
+            }
+          } else {
+            // Tab: if on confirm, wrap to cancel
+            if (active === confirmRef.current) {
+              e.preventDefault()
+              cancelRef.current?.focus()
+            }
+          }
+          return
+        }
+        // Enter to activate focused button
+        if (e.key === 'Enter') {
+          const active = document.activeElement
+          if (active === cancelRef.current) {
+            onCancel()
+          } else {
+            onConfirm()
+          }
+        }
       }
       document.addEventListener('keydown', handleKey)
       return () => document.removeEventListener('keydown', handleKey)
     }
-  }, [open, onCancel])
+  }, [open, onCancel, onConfirm])
 
   if (!open) return null
 
@@ -49,7 +92,7 @@ export function ConfirmDialog({
           </div>
         )}
         <div style={styles.footer}>
-          <button style={styles.cancelBtn} onClick={onCancel}>
+          <button ref={cancelRef} style={styles.cancelBtn} onClick={onCancel}>
             {cancelLabel}
           </button>
           <button

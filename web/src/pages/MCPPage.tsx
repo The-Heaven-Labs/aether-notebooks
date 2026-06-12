@@ -6,6 +6,7 @@ import { FormCard } from '../components/FormCard'
 import { EmptyState } from '../components/EmptyState'
 import { Server, Loader2, CheckCircle2, XCircle } from 'lucide-react'
 import { api } from '../api/client'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import type { MCPServerOrg } from '../types/agent'
 
 interface MCPForm {
@@ -33,6 +34,7 @@ export function MCPPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string }>>({})
   const [testingIds, setTestingIds] = useState<Set<string>>(new Set())
+  const [deleteTarget, setDeleteTarget] = useState<MCPServerOrg | null>(null)
 
   const { data: servers = [], isLoading } = useQuery<MCPServerOrg[]>({
     queryKey: ['mcp-servers'],
@@ -168,7 +170,7 @@ export function MCPPage() {
                     {testingIds.has(s.id) ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : 'Test'}
                   </button>
                   <button type="button" style={styles.editBtn} onClick={() => startEdit(s)}>Edit</button>
-                  <button type="button" style={styles.deleteBtn} onClick={() => { if (confirm(`Delete "${s.name}"?`)) deleteMutation.mutate(s.id) }}>
+                  <button type="button" style={styles.deleteBtn} onClick={() => setDeleteTarget(s)}>
                     Delete
                   </button>
                   {testResults[s.id] && (
@@ -187,6 +189,15 @@ export function MCPPage() {
           </StyledTable>
         )}
       </div>
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete MCP server"
+        message={`Delete "${deleteTarget?.name}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null) }}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </AppShell>
   )
 }

@@ -14,6 +14,11 @@ function setActiveDetailCell(cellId: string | null) {
   detailListeners.forEach(listener => listener(cellId))
 }
 
+/** Returns true if any cell's detail panel is open (for keyboard shortcut gating) */
+export function isAnyDetailActive() {
+  return activeDetailCellId !== null
+}
+
 function useActiveDetailCell() {
   const [isActive, setIsActive] = useState(activeDetailCellId)
   useEffect(() => {
