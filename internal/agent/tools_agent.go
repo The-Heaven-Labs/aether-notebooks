@@ -30,6 +30,19 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Description string `json:"description"`
 			Parameters  any    `json:"parameters"`
 		}{
+			Name:        "load_skill",
+			Description: "Load a skill's full instructions. Use this when a task matches a skill's description to get the detailed workflow.",
+			Parameters:  `{"type":"object","properties":{"name":{"type":"string","description":"Name of the skill to load"}},"required":["name"]}`,
+		},
+		Handler: makeLoadSkillHandler(pool),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
 			Name:        "update_agent",
 			Description: "Modify this agent's own config",
 			Parameters:  `{"type":"object","properties":{"name":{"type":"string"},"description":{"type":"string"},"system_prompt":{"type":"string"},"skill_ids":{"type":"array","items":{"type":"string"}}}}`,
@@ -140,6 +153,50 @@ func makeListSkillsHandler(pool *pgxpool.Pool) ToolHandler {
 			skills = []map[string]string{}
 		}
 		return map[string]any{"skills": skills}, nil
+	}
+}
+
+func makeLoadSkillHandler(pool *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+
+		if req.Name == "" {
+			return nil, fmt.Errorf("skill name is required")
+		}
+
+		// Look up skill by name (case-insensitive, handle spaces/hyphens)
+		var systemPrompt string
+		var description string
+		err := pool.QueryRow(ctx.Context, `
+			SELECT system_prompt, description FROM skills 
+			WHERE org_id = $1 AND (
+				LOWER(REPLACE(name, ' ', '-')) = LOWER(REPLACE($2, ' ', '-'))
+				OR LOWER(name) = LOWER($2)
+			)
+			LIMIT 1
+		`, ctx.OrgID, req.Name).Scan(&systemPrompt, &description)
+		if err != nil {
+			return nil, fmt.Errorf("skill '%s' not found", req.Name)
+		}
+
+		if systemPrompt == "" {
+			return map[string]any{
+				"name":        req.Name,
+				"description": description,
+				"content":     "(no instructions defined for this skill)",
+			}, nil
+		}
+
+		return map[string]any{
+			"name":        req.Name,
+			"description": description,
+			"content":     systemPrompt,
+		}, nil
 	}
 }
 

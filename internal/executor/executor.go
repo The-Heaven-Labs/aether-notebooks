@@ -30,14 +30,16 @@ type SchemaInfo struct {
 }
 
 type TableInfo struct {
-	Schema  string       `json:"schema"`
-	Name    string       `json:"name"`
-	Columns []ColumnInfo `json:"columns"`
+	Schema      string       `json:"schema"`
+	Name        string       `json:"name"`
+	Description string       `json:"description,omitempty"`
+	Columns     []ColumnInfo `json:"columns"`
 }
 
 type ColumnInfo struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Description string `json:"description,omitempty"`
 }
 
 // ApplyLimit appends a LIMIT clause to the query if limit > 0 and the query

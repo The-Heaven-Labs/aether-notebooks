@@ -287,13 +287,14 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 		_ = ctx.AuditLog("cell.update", "cell", req.CellID)
 
 		// Notify agent panel via event
-		ctx.EmitCellUpdated(req.CellID)
+		ctx.EmitCellUpdated(req.CellID, req.Source)
 
 		// Broadcast to all notebook viewers via WebSocket
 		if ctx.BroadcastFunc != nil {
 			ctx.BroadcastFunc(notebookID, map[string]any{
 				"type":    "cell_updated",
 				"cell_id": req.CellID,
+				"source":  req.Source,
 			})
 		}
 
@@ -534,20 +535,28 @@ func makeExploreSchemaHandler(db *pgxpool.Pool) ToolHandler {
 		for _, t := range schema.Tables {
 			var columns []map[string]any
 			for _, c := range t.Columns {
-				columns = append(columns, map[string]any{
+				col := map[string]any{
 					"name": c.Name,
 					"type": c.Type,
-				})
+				}
+				if c.Description != "" {
+					col["description"] = c.Description
+				}
+				columns = append(columns, col)
 			}
 			fullName := t.Name
 			if t.Schema != "" {
 				fullName = t.Schema + "." + t.Name
 			}
-			tables = append(tables, map[string]any{
+			table := map[string]any{
 				"table_name":   fullName,
 				"columns":      columns,
 				"column_count": len(columns),
-			})
+			}
+			if t.Description != "" {
+				table["description"] = t.Description
+			}
+			tables = append(tables, table)
 		}
 
 		return map[string]any{"tables": tables, "total_tables": len(tables)}, nil
