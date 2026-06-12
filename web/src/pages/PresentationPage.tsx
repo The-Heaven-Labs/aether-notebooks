@@ -74,10 +74,13 @@ export function PresentationPage() {
                   ...(i > 0 ? { marginTop: '2rem' } : {}),
                 }}
               >
-                {(cell.outputs ?? []).length > 0 ? (
-                  <OutputRenderer outputs={cell.outputs as Output[]} cellId={cell.id} />
-                ) : (
+                {/* Source: shown unless source_visible is explicitly false */}
+                {cell.source_visible !== false && (
                   <pre style={styles.codePre}>{cell.source}</pre>
+                )}
+                {/* Output: shown unless outputs_hidden is explicitly true */}
+                {cell.outputs_hidden !== true && (cell.outputs ?? []).length > 0 && (
+                  <OutputRenderer outputs={cell.outputs as Output[]} cellId={cell.id} />
                 )}
               </div>
             )

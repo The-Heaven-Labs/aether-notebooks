@@ -6,6 +6,7 @@ import { FormCard } from '../components/FormCard'
 import { EmptyState } from '../components/EmptyState'
 import { Brain } from 'lucide-react'
 import { api } from '../api/client'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import type { ModelConfig } from '../types/agent'
 
 interface ModelConfigForm {
@@ -118,6 +119,7 @@ export function ModelsPage() {
   })
 
   const [testResult, setTestResult] = useState<{ id: string; ok: boolean; message: string } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<ModelConfig | null>(null)
   const testMutation = useMutation({
     mutationFn: async (id: string) => {
       const res = await api.post<{ status: string; response: string; model: string }>(`/api/v1/model-configs/${id}/test`, {})
@@ -207,7 +209,7 @@ export function ModelsPage() {
                     {testMutation.isPending && testResult?.id === c.id ? 'Testing…' : 'Test'}
                   </button>
                   <button type="button" style={styles.editBtn} onClick={() => startEdit(c)}>Edit</button>
-                  <button type="button" style={styles.deleteBtn} onClick={() => { if (confirm(`Delete "${c.name}"?`)) deleteMutation.mutate(c.id) }}>
+                  <button type="button" style={styles.deleteBtn} onClick={() => setDeleteTarget(c)}>
                     Delete
                   </button>
                 </td>
@@ -230,6 +232,15 @@ export function ModelsPage() {
           </div>
         )}
       </div>
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete model config"
+        message={`Delete "${deleteTarget?.name}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null) }}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </AppShell>
   )
 }

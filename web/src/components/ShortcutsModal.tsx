@@ -12,17 +12,22 @@ interface Props {
 }
 
 const NOTEBOOK_SHORTCUTS: ShortcutEntry[] = [
+  { key: 'Enter', action: 'Enter edit mode (cursor at end)' },
+  { key: 'Escape', action: 'Exit edit mode / close modal' },
   { key: 'Shift+Enter', action: 'Run focused cell' },
+  { key: 'Ctrl+Enter (in editor)', action: 'Run cell' },
+  { key: 'J / ↓', action: 'Move focus down' },
+  { key: 'K / ↑', action: 'Move focus up' },
+  { key: 'Ctrl+↑', action: 'Move cell up' },
+  { key: 'Ctrl+↓', action: 'Move cell down' },
   { key: 'B', action: 'Add code cell below' },
   { key: 'A', action: 'Add code cell above' },
   { key: 'D D', action: 'Delete cell' },
-  { key: 'J / ↓', action: 'Move focus down' },
-  { key: 'K / ↑', action: 'Move focus up' },
+  { key: 'Shift+D', action: 'Duplicate cell' },
   { key: 'M', action: 'Convert to markdown' },
   { key: 'Y', action: 'Convert to code' },
-  { key: 'Ctrl+Enter (in editor)', action: 'Run cell' },
+  { key: 'Shift+M', action: 'Toggle slide break' },
   { key: 'Ctrl+Shift+F (in SQL editor)', action: 'Format SQL' },
-  { key: 'Escape (in editor)', action: 'Exit cell edit mode' },
 ]
 
 const GLOBAL_SHORTCUTS: ShortcutEntry[] = [

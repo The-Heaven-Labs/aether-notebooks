@@ -13,7 +13,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Notebook, Cell, Output, Connector, Parameter, CellVersion, Dashboard, Widget } from '../types'
 import type { ChartConfig } from '../components/ChartConfigPanel'
-import { Cell as NotebookCell } from '../components/Cell'
+import { Cell as NotebookCell, focusCellEditorEnd } from '../components/Cell'
 import { ParametersBar } from '../components/ParametersBar'
 import { SchemaBrowser } from '../components/SchemaBrowser'
 import { SchedulesPanel } from '../components/SchedulesPanel'
@@ -23,6 +23,7 @@ import { ConnectorSelector } from '../components/ConnectorSelector'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { AgentPanel } from '../components/AgentPanel'
 import { useNotebookWs } from '../hooks/useNotebookWs'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -184,10 +185,14 @@ export function NotebookPage() {
   const [allCollapsed, setAllCollapsed] = useState(false)
   const [allCodeHidden, setAllCodeHidden] = useState(false)
   const [allOutputsHidden, setAllOutputsHidden] = useState(false)
-  // isEditingCell is intentionally a plain boolean (not useState) — the
-  // useNotebookKeyboardShortcuts hook already guards against CodeMirror editors
-  // via isContentEditable checks, so no reactive state is needed here.
-  const isEditingCell = false
+  const [, setTick] = useState(0) // forces re-render to update "X minutes ago" text
+
+  // Refresh the "Last updated" relative time every 30 seconds
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 30_000)
+    return () => clearInterval(id)
+  }, [])
+  const [isEditingCell, setIsEditingCell] = useState(false)
   const [historyCell, setHistoryCell] = useState<string | null>(null)
   const [historyVersions, setHistoryVersions] = useState<CellVersion[]>([])
   const [showAgent, setShowAgent] = useState(() => {
@@ -253,6 +258,7 @@ export function NotebookPage() {
   // Add-to-dashboard modal
   const [addToDashboardCellId, setAddToDashboardCellId] = useState<string | null>(null)
   const [addToDashboardToast, setAddToDashboardToast] = useState<string | null>(null)
+  const [deleteCellTarget, setDeleteCellTarget] = useState<string | null>(null)
 
   const { data: notebook, isLoading } = useQuery({
     queryKey: ['notebook', id],
@@ -315,6 +321,13 @@ export function NotebookPage() {
       })
     }
     return () => { document.title = "Heaven's Notebooks" }
+  }, [notebook])
+
+  // Auto-focus first cell when notebook loads
+  useEffect(() => {
+    if (notebook && notebook.cells.length > 0 && !focusedCellId) {
+      setFocusedCellId(notebook.cells[0].id)
+    }
   }, [notebook])
 
   const createCell = useMutation({
@@ -410,7 +423,7 @@ export function NotebookPage() {
     )
   }, [id, localCells, qc])
 
-  const updateCellMeta = useCallback(async (cellId: string, updates: Partial<Pick<Cell, 'source_visible' | 'cell_collapsed' | 'slide_break' | 'title' | 'slug'>>) => {
+  const updateCellMeta = useCallback(async (cellId: string, updates: Partial<Pick<Cell, 'source_visible' | 'outputs_hidden' | 'cell_collapsed' | 'slide_break' | 'title' | 'slug'>>) => {
     try {
       await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, updates)
       setLocalCells((prev) => prev.map((c) => c.id === cellId ? { ...c, ...updates } : c))
@@ -439,8 +452,8 @@ export function NotebookPage() {
   // Stable handlers for Cell memoization (must be after all referenced functions)
   const stableFocusHandler = useCallback((cid: string) => setFocusedCellId(cid), [])
   const stableDeleteHandler = useCallback((cid: string) => {
-    if (confirm('Delete this cell?')) deleteCell.mutate(cid)
-  }, [deleteCell])
+    setDeleteCellTarget(cid)
+  }, [])
   const stableDashboardHandler = useCallback((cid: string) => setAddToDashboardCellId(cid), [])
   const stableHistoryHandler = useCallback((cid: string) => fetchHistory(cid), [fetchHistory])
 
@@ -632,11 +645,17 @@ export function NotebookPage() {
   const toggleAllOutputs = useCallback(async () => {
     const newHidden = !allOutputsHidden
     setAllOutputsHidden(newHidden)
-    setLocalCells(prev => prev.map(c => ({
-      ...c,
-      outputs_hidden: newHidden,
-    })))
-  }, [allOutputsHidden, localCells])
+    for (const cell of localCells) {
+      if (cell.type === 'code') {
+        await api.put(`/api/v1/notebooks/${id}/cells/${cell.id}`, {
+          outputs_hidden: newHidden,
+        })
+      }
+    }
+    setLocalCells(prev => prev.map(c =>
+      c.type === 'code' ? { ...c, outputs_hidden: newHidden } : c
+    ))
+  }, [allOutputsHidden, localCells, id])
 
   useNotebookKeyboardShortcuts(
     {
@@ -655,13 +674,29 @@ export function NotebookPage() {
       moveFocusDown: () => {
         if (!focusedCellId) return
         const idx = localCells.findIndex((c) => c.id === focusedCellId)
-        if (idx < localCells.length - 1) setFocusedCellId(localCells[idx + 1].id)
+        if (idx < localCells.length - 1) {
+          const nextId = localCells[idx + 1].id
+          setFocusedCellId(nextId)
+          requestAnimationFrame(() => {
+            const el = document.getElementById('cell-' + nextId)
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+          })
+        }
       },
       moveFocusUp: () => {
         if (!focusedCellId) return
         const idx = localCells.findIndex((c) => c.id === focusedCellId)
-        if (idx > 0) setFocusedCellId(localCells[idx - 1].id)
+        if (idx > 0) {
+          const prevId = localCells[idx - 1].id
+          setFocusedCellId(prevId)
+          requestAnimationFrame(() => {
+            const el = document.getElementById('cell-' + prevId)
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+          })
+        }
       },
+      moveCellUp: () => { if (focusedCellId) moveCell(focusedCellId, -1) },
+      moveCellDown: () => { if (focusedCellId) moveCell(focusedCellId, 1) },
       convertToMarkdown: () => {
         const cell = localCells.find((c) => c.id === focusedCellId)
         if (focusedCellId && cell?.type !== 'text') switchCellType(focusedCellId)
@@ -669,6 +704,24 @@ export function NotebookPage() {
       convertToCode: () => {
         const cell = localCells.find((c) => c.id === focusedCellId)
         if (focusedCellId && cell?.type !== 'code') switchCellType(focusedCellId)
+      },
+      enterEditMode: () => {
+        if (!focusedCellId) return
+        setIsEditingCell(true)
+        requestAnimationFrame(() => {
+          focusCellEditorEnd(focusedCellId)
+        })
+      },
+      exitEditMode: () => {
+        setIsEditingCell(false)
+        // Blur the active element to exit CodeMirror
+        const active = document.activeElement as HTMLElement | null
+        if (active?.closest('.cm-editor')) active.blur()
+      },
+      duplicateCell: () => { if (focusedCellId) duplicateCell.mutate(focusedCellId) },
+      toggleSlideBreak: () => {
+        const cell = localCells.find((c) => c.id === focusedCellId)
+        if (focusedCellId && cell) updateCellMeta(focusedCellId, { slide_break: !cell.slide_break })
       },
     },
     isEditingCell
@@ -976,7 +1029,10 @@ export function NotebookPage() {
                             onChartConfigChange={readOnly ? undefined : updateCellChartConfig}
                             onShowHistory={readOnly ? undefined : () => stableHistoryHandler(cell.id)}
                             onFocus={stableFocusHandler}
+                            onEditStart={() => setIsEditingCell(true)}
+                            onEditEnd={() => setIsEditingCell(false)}
                             onAddToDashboard={readOnly ? undefined : stableDashboardHandler}
+                            focused={cell.id === focusedCellId}
                             index={i}
                           />
                           <AddCellBar
@@ -1101,6 +1157,15 @@ export function NotebookPage() {
       )}
 
     </div>
+    <ConfirmDialog
+      open={!!deleteCellTarget}
+      title="Delete cell"
+      message="Delete this cell? This cannot be undone."
+      confirmLabel="Delete"
+      destructive
+      onConfirm={() => { if (deleteCellTarget) deleteCell.mutate(deleteCellTarget); setDeleteCellTarget(null) }}
+      onCancel={() => setDeleteCellTarget(null)}
+    />
     </AppShell>
   )
 }

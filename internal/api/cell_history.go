@@ -180,11 +180,11 @@ func (s *Server) handleRestoreCellVersion(w http.ResponseWriter, r *http.Request
 		`UPDATE cells SET source=$1, updated_at=NOW()
 		 WHERE id=$2 AND notebook_id=$3
 		 RETURNING id, notebook_id, position, type, language, connector_id, source, outputs,
-		           source_visible, cell_collapsed, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''),
+		           source_visible, outputs_hidden, cell_collapsed, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''),
 		           created_at, updated_at`,
 		source, cellID, nbID,
 	).Scan(&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &lang, &connID,
-		&cell.Source, &outputs, &cell.SourceVisible, &cell.CellCollapsed,
+		&cell.Source, &outputs, &cell.SourceVisible, &cell.OutputsHidden, &cell.CellCollapsed,
 		&cell.Title, &cell.Description, &cell.Slug,
 		&cell.CreatedAt, &cell.UpdatedAt)
 	if err != nil {

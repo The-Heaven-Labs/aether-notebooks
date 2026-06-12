@@ -8,6 +8,7 @@ import { EmptyState } from '../components/EmptyState'
 import { Skeleton } from '../components/Skeleton'
 import { SectionHeader } from '../components/SectionHeader'
 import { LayoutGrid, List, LayoutDashboard, X } from 'lucide-react'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 
 const fmtDate = (d: string) => {
   const date = new Date(d)
@@ -49,6 +50,7 @@ export function DashboardsPage() {
   })
 
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Dashboard | null>(null)
 
   const deleteDashboard = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/dashboards/${id}`),
@@ -110,19 +112,28 @@ export function DashboardsPage() {
                       <div style={styles.cardMeta}>Updated {fmtDate(d.updated_at)}</div>
                       {d.public_token && <div style={styles.publicBadge}>Public</div>}
                     </Link>
-                    <button type="button" style={styles.deleteBtn} onClick={() => { if (confirm(`Delete "${d.title}"?`)) deleteDashboard.mutate(d.id) }} title="Delete dashboard"><X size={13} /></button>
+                    <button type="button" style={styles.deleteBtn} onClick={() => setDeleteTarget(d)} title="Delete dashboard"><X size={13} /></button>
                   </div>
                 )
-                : <DashboardRow key={d.id} dashboard={d} onDelete={() => deleteDashboard.mutate(d.id)} />
+                : <DashboardRow key={d.id} dashboard={d} onRequestDelete={() => setDeleteTarget(d)} />
             )}
           </div>
         )}
       </div>
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete dashboard"
+        message={`Delete "${deleteTarget?.title}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => { if (deleteTarget) deleteDashboard.mutate(deleteTarget.id); setDeleteTarget(null) }}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </AppShell>
   )
 }
 
-function DashboardRow({ dashboard, onDelete }: { dashboard: Dashboard; onDelete: () => void }) {
+function DashboardRow({ dashboard, onRequestDelete }: { dashboard: Dashboard; onRequestDelete: () => void }) {
   return (
     <div style={rowStyles.row} className="card-hover">
       <Link to={`/dashboards/${dashboard.id}`} style={rowStyles.link}>
@@ -133,7 +144,7 @@ function DashboardRow({ dashboard, onDelete }: { dashboard: Dashboard; onDelete:
         </div>
         <span style={rowStyles.date}>{fmtDate(dashboard.updated_at)}</span>
       </Link>
-      <button type="button" style={rowStyles.del} onClick={(e) => { e.preventDefault(); if (confirm(`Delete "${dashboard.title}"?`)) onDelete() }}>Delete</button>
+      <button type="button" style={rowStyles.del} onClick={(e) => { e.preventDefault(); onRequestDelete() }}>Delete</button>
     </div>
   )
 }

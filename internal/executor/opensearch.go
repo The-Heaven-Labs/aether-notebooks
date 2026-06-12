@@ -81,6 +81,15 @@ func NewOpenSearchExecutor(cfg opensearchConfig) *OpenSearchExecutor {
 }
 
 func (e *OpenSearchExecutor) Execute(ctx context.Context, query string, params map[string]string, maxRows int) (*ResultSet, error) {
+	return e.execute(ctx, query, params, maxRows, true)
+}
+
+// executeInternal runs a query without column filtering (for Schema/Databases).
+func (e *OpenSearchExecutor) executeInternal(ctx context.Context, query string, params map[string]string, maxRows int) (*ResultSet, error) {
+	return e.execute(ctx, query, params, maxRows, false)
+}
+
+func (e *OpenSearchExecutor) execute(ctx context.Context, query string, params map[string]string, maxRows int, applyFilter bool) (*ResultSet, error) {
 	resolved := ResolveParams(query, params)
 
 	body, err := json.Marshal(sqlRequest{Query: resolved})
@@ -124,6 +133,11 @@ func (e *OpenSearchExecutor) Execute(ctx context.Context, query string, params m
 		rows = [][]interface{}{}
 	}
 
+	// Filter SHOW TABLES results to only meaningful columns (for user queries)
+	if applyFilter && isShowTables(query) {
+		columns, rows = filterShowTables(columns, rows)
+	}
+
 	note := ""
 	if maxRows > 0 && len(rows) > maxRows {
 		rows = rows[:maxRows]
@@ -159,7 +173,7 @@ func (e *OpenSearchExecutor) TestConnection(ctx context.Context) error {
 
 func (e *OpenSearchExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
 	// Get all indices - pattern must be quoted for OpenSearch SQL plugin
-	rs, err := e.Execute(ctx, "SHOW TABLES LIKE '%'", nil, 10000)
+	rs, err := e.executeInternal(ctx, "SHOW TABLES LIKE '%'", nil, 10000)
 	if err != nil {
 		return nil, fmt.Errorf("list tables: %w", err)
 	}
@@ -237,7 +251,7 @@ func (e *OpenSearchExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
 }
 
 func (e *OpenSearchExecutor) Databases(ctx context.Context) ([]string, error) {
-	rs, err := e.Execute(ctx, "SHOW TABLES LIKE '%'", nil, 10000)
+	rs, err := e.executeInternal(ctx, "SHOW TABLES LIKE '%'", nil, 10000)
 	if err != nil {
 		return nil, fmt.Errorf("list databases: %w", err)
 	}
@@ -281,4 +295,44 @@ func mapOpenSearchType(osType string) string {
 	default:
 		return "text"
 	}
+}
+
+// isShowTables returns true if the query is a SHOW TABLES statement.
+func isShowTables(query string) bool {
+	q := strings.TrimSpace(strings.ToUpper(query))
+	return strings.HasPrefix(q, "SHOW TABLES")
+}
+
+// showTablesColumns are the meaningful columns to keep from SHOW TABLES results.
+var showTablesColumns = []string{"TABLE_CAT", "TABLE_NAME", "TABLE_TYPE"}
+
+// filterShowTables reduces the SHOW TABLES result to only meaningful columns.
+func filterShowTables(columns []Column, rows [][]interface{}) ([]Column, [][]interface{}) {
+	// Find indices of columns we want to keep
+	keepIdx := make([]int, 0, len(showTablesColumns))
+	keepCols := make([]Column, 0, len(showTablesColumns))
+	for _, wanted := range showTablesColumns {
+		for i, col := range columns {
+			if col.Name == wanted {
+				keepIdx = append(keepIdx, i)
+				keepCols = append(keepCols, col)
+				break
+			}
+		}
+	}
+	if len(keepIdx) == len(columns) {
+		return columns, rows // nothing to filter
+	}
+
+	filtered := make([][]interface{}, len(rows))
+	for r, row := range rows {
+		filteredRow := make([]interface{}, len(keepIdx))
+		for i, idx := range keepIdx {
+			if idx < len(row) {
+				filteredRow[i] = row[idx]
+			}
+		}
+		filtered[r] = filteredRow
+	}
+	return keepCols, filtered
 }

@@ -13,6 +13,7 @@ import type { LayoutItem, Layout } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
 import { Skeleton } from '../components/Skeleton'
 import { PermissionsPanel } from '../components/PermissionsPanel'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -99,6 +100,7 @@ export function DashboardEditorPage() {
   const [gridCols, setGridCols] = useState(12)
 
   const [containerWidth, setContainerWidth] = useState(1200)
+  const [deleteWidgetTarget, setDeleteWidgetTarget] = useState<string | null>(null)
   const isMobileLayout = containerWidth < 600
   const gridRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -420,11 +422,7 @@ export function DashboardEditorPage() {
                   type="button"
                   style={{ ...styles.deleteWidgetBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                   title="Remove widget"
-                  onClick={() => {
-                    if (confirm('Remove this widget?')) {
-                      deleteWidget.mutate(widget.id)
-                    }
-                  }}
+                  onClick={() => setDeleteWidgetTarget(widget.id)}
                 >
                   <X size={12} />
                 </button>
@@ -475,11 +473,7 @@ export function DashboardEditorPage() {
                       type="button"
                       style={{ ...styles.deleteWidgetBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                       title="Remove widget"
-                      onClick={() => {
-                        if (confirm('Remove this widget?')) {
-                          deleteWidget.mutate(widget.id)
-                        }
-                      }}
+                      onClick={() => setDeleteWidgetTarget(widget.id)}
                     >
                       <X size={12} />
                     </button>
@@ -501,6 +495,15 @@ export function DashboardEditorPage() {
           onClose={() => setShowPermissions(false)}
         />
       )}
+      <ConfirmDialog
+        open={!!deleteWidgetTarget}
+        title="Remove widget"
+        message="Remove this widget from the dashboard?"
+        confirmLabel="Remove"
+        destructive
+        onConfirm={() => { if (deleteWidgetTarget) deleteWidget.mutate(deleteWidgetTarget); setDeleteWidgetTarget(null) }}
+        onCancel={() => setDeleteWidgetTarget(null)}
+      />
     </AppShell>
   )
 }

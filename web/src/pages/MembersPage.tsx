@@ -7,6 +7,7 @@ import { useAuth } from '../hooks/useAuth'
 import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
 import { FormCard } from '../components/FormCard'
 import { ErrorBanner } from '../components/ErrorBanner'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 
 const ROLES = ['admin', 'editor', 'viewer', 'no_access'] as const
 
@@ -31,6 +32,7 @@ export function MembersPage() {
 
   const [roleError, setRoleError] = useState<string | null>(null)
   const [removeError, setRemoveError] = useState<string | null>(null)
+  const [removeTarget, setRemoveTarget] = useState<Member | null>(null)
 
   const { data: members = [], isLoading } = useQuery({
     queryKey: ['members'],
@@ -91,8 +93,7 @@ export function MembersPage() {
   }
 
   const handleRemove = (member: Member) => {
-    if (!confirm(`Remove ${member.email} from the organization?`)) return
-    removeMember.mutate(member.user_id)
+    setRemoveTarget(member)
   }
 
   return (
@@ -258,6 +259,15 @@ export function MembersPage() {
           </StyledTable>
         </div>
       </div>
+      <ConfirmDialog
+        open={!!removeTarget}
+        title="Remove member"
+        message={`Remove ${removeTarget?.email} from the organization?`}
+        confirmLabel="Remove"
+        destructive
+        onConfirm={() => { if (removeTarget) removeMember.mutate(removeTarget.user_id); setRemoveTarget(null) }}
+        onCancel={() => setRemoveTarget(null)}
+      />
     </AppShell>
   )
 }

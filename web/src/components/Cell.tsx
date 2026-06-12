@@ -141,11 +141,14 @@ interface Props {
   saveState?: SaveState
   runAt?: Date
   metrics?: { connect_time_ms: number; query_time_ms: number; render_time_ms: number; total_time_ms: number }
-  onUpdateCellMeta?: (updates: Partial<Pick<Cell, 'source_visible' | 'cell_collapsed' | 'slide_break' | 'title' | 'slug' | 'limit'>>) => void
+  onUpdateCellMeta?: (updates: Partial<Pick<Cell, 'source_visible' | 'outputs_hidden' | 'cell_collapsed' | 'slide_break' | 'title' | 'slug' | 'limit'>>) => void
   onChartConfigChange?: (cellId: string, config: ChartConfig) => void
   onShowHistory?: () => void
   onFocus?: (cellId: string) => void
+  onEditStart?: () => void
+  onEditEnd?: () => void
   onAddToDashboard?: (cellId: string) => void
+  focused?: boolean
   index?: number
 }
 
@@ -163,6 +166,19 @@ function fmtTime(date: Date): string {
 // ── CodeEditorView ────────────────────────────────────────────────────────────
 // Embeds the full CodeMirror + Yjs editor (behaviour identical to former CodeCell)
 
+// Module-level store for EditorView instances, keyed by cell ID
+const editorViews = new Map<string, EditorView>()
+
+/** Move cursor to end of document for a given cell's editor */
+export function focusCellEditorEnd(cellId: string) {
+  const view = editorViews.get(cellId)
+  if (view) {
+    const len = view.state.doc.length
+    view.dispatch({ selection: { anchor: len, head: len } })
+    view.focus()
+  }
+}
+
 interface CodeEditorProps {
   cell: Cell
   notebookId: string
@@ -171,6 +187,8 @@ interface CodeEditorProps {
   collapsed: boolean
   connector?: Connector
   index?: number
+  onEditStart?: () => void
+  onEditEnd?: () => void
 }
 
 function languageExtension(cell: Cell, connector?: Connector) {
@@ -183,12 +201,16 @@ function languageExtension(cell: Cell, connector?: Connector) {
   return sql({ dialect: MySQL })
 }
 
-function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, connector, index }: CodeEditorProps) {
+function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, connector, index, onEditStart, onEditEnd }: CodeEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null)
   const onRunRef = useRef(onRun)
   const onSourceChangeRef = useRef(onSourceChange)
+  const onEditStartRef = useRef(onEditStart)
+  const onEditEndRef = useRef(onEditEnd)
   onRunRef.current = onRun
   onSourceChangeRef.current = onSourceChange
+  onEditStartRef.current = onEditStart
+  onEditEndRef.current = onEditEnd
   const collabCompartment = useRef(new Compartment())
 
   useEffect(() => {
@@ -245,6 +267,14 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
       }),
       parent: editorRef.current,
     })
+    editorViews.set(cell.id, view)
+
+    // Detect CodeMirror focus/blur for edit mode tracking
+    const cmEditor = view.dom
+    const handleFocus = () => onEditStartRef.current?.()
+    const handleBlur = () => onEditEndRef.current?.()
+    cmEditor.addEventListener('focusin', handleFocus)
+    cmEditor.addEventListener('focusout', handleBlur)
 
     const attachCollab = () => {
       const editorContent = view.state.doc.toString()
@@ -272,6 +302,9 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
     }
 
     return () => {
+      editorViews.delete(cell.id)
+      cmEditor.removeEventListener('focusin', handleFocus)
+      cmEditor.removeEventListener('focusout', handleBlur)
       if (onSynced) collab.provider.off('synced', onSynced)
       view.destroy()
       releaseCollab(notebookId)
@@ -340,7 +373,10 @@ export const Cell = memo(function Cell({
   onChartConfigChange,
   onShowHistory,
   onFocus,
+  onEditStart,
+  onEditEnd,
   onAddToDashboard,
+  focused = false,
   index,
 }: Props) {
   const [hovered, setHovered] = useState(false)
@@ -351,6 +387,7 @@ export const Cell = memo(function Cell({
 
   const isCode = cell.type === 'code'
   const sourceVisible = cell.source_visible ?? true
+  const outputHidden = cell.outputs_hidden ?? false
   const connector = connectors.find((c) => c.id === cell.connector_id)
 
   // ── Collapsed ───────────────────────────────────────────────────────────────
@@ -392,6 +429,9 @@ export const Cell = memo(function Cell({
         style={{
           ...styles.cell,
           borderLeft: `3px solid ${isCode ? 'var(--accent)' : 'var(--success)'}`,
+          ...(focused ? {
+            boxShadow: `0 0 0 1px ${isCode ? 'var(--accent)' : 'var(--success)'}, 0 2px 8px ${isCode ? 'rgba(99,102,241,0.15)' : 'rgba(34,197,94,0.15)'}`,
+          } : {}),
         }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -564,6 +604,16 @@ export const Cell = memo(function Cell({
           >
             {sourceVisible ? <EyeOff size={11} /> : <Eye size={11} />}
           </button>
+          {isCode && (
+            <button
+              style={styles.actionBtn}
+              onClick={() => onUpdateCellMeta?.({ outputs_hidden: !outputHidden })}
+              title={outputHidden ? 'Show output' : 'Hide output'}
+              aria-label={outputHidden ? 'Show output' : 'Hide output'}
+            >
+              {outputHidden ? <EyeOff size={11} /> : <Eye size={11} />}
+            </button>
+          )}
           <button
             style={styles.actionBtn}
             onClick={() => onUpdateCellMeta?.({ cell_collapsed: true })}
@@ -620,6 +670,8 @@ export const Cell = memo(function Cell({
               collapsed={false}
               connector={connector}
               index={index}
+              onEditStart={onEditStart}
+              onEditEnd={onEditEnd}
             />
           : <MarkdownView cell={cell} notebookId={notebookId} onSourceChange={onSourceChange} onSave={onSave} />
       )}

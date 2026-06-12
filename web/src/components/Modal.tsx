@@ -1,4 +1,5 @@
 import type React from 'react'
+import { useEffect } from 'react'
 import { X } from 'lucide-react'
 
 interface Props {
@@ -9,6 +10,14 @@ interface Props {
 }
 
 export function Modal({ title, onClose, children, minWidth }: Props) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); onClose() }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [onClose])
+
   return (
     <div style={styles.overlay} onClick={onClose}>
       <div style={{ ...styles.modal, minWidth: minWidth ?? 400 }} onClick={(e) => e.stopPropagation()}>
