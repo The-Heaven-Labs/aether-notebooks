@@ -15,6 +15,14 @@ type modelConfigHandlers struct {
 	server *Server
 }
 
+// @Summary List model configs
+// @Description List all model configurations for the organization
+// @Tags model-configs
+// @Produce json
+// @Success 200 {array} object
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /model-configs [get]
 func (h *modelConfigHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
@@ -46,6 +54,16 @@ func (h *modelConfigHandlers) handleList(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, configs)
 }
 
+// @Summary Create a model config
+// @Description Create a new model configuration
+// @Tags model-configs
+// @Accept json
+// @Produce json
+// @Param request body object true "Model config details"
+// @Success 201 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /model-configs [post]
 func (h *modelConfigHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req struct {
@@ -95,6 +113,18 @@ func (h *modelConfigHandlers) handleCreate(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusCreated, map[string]string{"id": cfgID})
 }
 
+// @Summary Update a model config
+// @Description Update a model configuration
+// @Tags model-configs
+// @Accept json
+// @Produce json
+// @Param id path string true "Model Config ID"
+// @Param request body object true "Model config updates"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /model-configs/{id} [put]
 func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	cfgID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())

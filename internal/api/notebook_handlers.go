@@ -18,6 +18,16 @@ type createNotebookRequest struct {
 	FolderID    *string            `json:"folder_id,omitempty"`
 }
 
+// @Summary Create a notebook
+// @Description Create a new notebook
+// @Tags notebooks
+// @Accept json
+// @Produce json
+// @Param request body object true "Notebook details"
+// @Success 201 {object} models.Notebook
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks [post]
 func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req createNotebookRequest
@@ -76,6 +86,14 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, nb)
 }
 
+// @Summary List notebooks
+// @Description List all notebooks for the current organization
+// @Tags notebooks
+// @Produce json
+// @Success 200 {array} models.Notebook
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks [get]
 func (s *Server) handleListNotebooks(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -116,6 +134,15 @@ func (s *Server) handleListNotebooks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, notebooks)
 }
 
+// @Summary Get a notebook
+// @Description Get a notebook with all its cells
+// @Tags notebooks
+// @Produce json
+// @Param id path string true "Notebook ID"
+// @Success 200 {object} object
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{id} [get]
 func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("id")
@@ -226,6 +253,14 @@ func (s *Server) handleGetNotebookPermissions(w http.ResponseWriter, r *http.Req
 	})
 }
 
+// @Summary Delete a notebook
+// @Description Delete a notebook by ID
+// @Tags notebooks
+// @Param id path string true "Notebook ID"
+// @Success 200
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{id} [delete]
 func (s *Server) handleDeleteNotebook(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("id")
@@ -260,6 +295,18 @@ type updateNotebookRequest struct {
 	FolderID    json.RawMessage    `json:"folder_id"`
 }
 
+// @Summary Update a notebook
+// @Description Update a notebook's title, description, or connector
+// @Tags notebooks
+// @Accept json
+// @Produce json
+// @Param id path string true "Notebook ID"
+// @Param request body object true "Updates"
+// @Success 200 {object} models.Notebook
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{id} [put]
 func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("id")
@@ -351,6 +398,15 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, nb)
 }
 
+// @Summary Export a notebook
+// @Description Export a notebook as .ipynb format
+// @Tags notebooks
+// @Produce application/json
+// @Param id path string true "Notebook ID"
+// @Success 200 {string} string "Jupyter notebook JSON"
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{id}/export [get]
 func (s *Server) handleExportNotebook(w http.ResponseWriter, r *http.Request) {
 	notebookID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
@@ -432,6 +488,16 @@ func (s *Server) handleExportNotebook(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(notebook)
 }
 
+// @Summary Import a notebook
+// @Description Import a notebook from .ipynb format
+// @Tags notebooks
+// @Accept multipart/form-data
+// @Produce json
+// @Param file formData file true "Jupyter notebook file"
+// @Success 201 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/import [post]
 func (s *Server) handleImportNotebook(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 

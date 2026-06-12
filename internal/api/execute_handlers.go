@@ -17,6 +17,19 @@ type executeRequest struct {
 	Parameters map[string]string `json:"parameters,omitempty"`
 }
 
+// @Summary Execute a cell
+// @Description Execute a cell's SQL query and return results
+// @Tags cells
+// @Accept json
+// @Produce json
+// @Param notebook_id path string true "Notebook ID"
+// @Param cell_id path string true "Cell ID"
+// @Param request body object false "Execution parameters"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{notebook_id}/cells/{cell_id}/execute [post]
 func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
 	claims := ClaimsFromContext(r.Context())

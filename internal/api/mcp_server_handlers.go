@@ -16,6 +16,14 @@ type mcpServerHandlers struct {
 	server *Server
 }
 
+// @Summary List MCP servers
+// @Description List all MCP servers for the organization
+// @Tags mcp-servers
+// @Produce json
+// @Success 200 {array} object
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /mcp-servers [get]
 func (h *mcpServerHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
@@ -46,6 +54,16 @@ func (h *mcpServerHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, servers)
 }
 
+// @Summary Create an MCP server
+// @Description Create a new MCP server configuration
+// @Tags mcp-servers
+// @Accept json
+// @Produce json
+// @Param request body object true "MCP server details"
+// @Success 201 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /mcp-servers [post]
 func (h *mcpServerHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
@@ -94,6 +112,15 @@ func (h *mcpServerHandlers) handleCreate(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id})
 }
 
+// @Summary Get an MCP server
+// @Description Get an MCP server by ID
+// @Tags mcp-servers
+// @Produce json
+// @Param id path string true "MCP Server ID"
+// @Success 200 {object} object
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /mcp-servers/{id} [get]
 func (h *mcpServerHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
@@ -114,6 +141,18 @@ func (h *mcpServerHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s)
 }
 
+// @Summary Update an MCP server
+// @Description Update an MCP server configuration
+// @Tags mcp-servers
+// @Accept json
+// @Produce json
+// @Param id path string true "MCP Server ID"
+// @Param request body object true "MCP server updates"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /mcp-servers/{id} [put]
 func (h *mcpServerHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
@@ -164,6 +203,14 @@ func (h *mcpServerHandlers) handleUpdate(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
 
+// @Summary Delete an MCP server
+// @Description Delete an MCP server configuration
+// @Tags mcp-servers
+// @Param id path string true "MCP Server ID"
+// @Success 200
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /mcp-servers/{id} [delete]
 func (h *mcpServerHandlers) handleDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())

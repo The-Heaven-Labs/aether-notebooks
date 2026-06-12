@@ -427,7 +427,7 @@ export function HomePage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const importRef = useRef<HTMLInputElement>(null)
-  useAuth()
+  const { user } = useAuth()
   const [searchQuery, setSearchQuery] = useState('')
 
   const { data: recentItems = [] } = useQuery<Array<{
@@ -476,12 +476,13 @@ export function HomePage() {
 
   useEffect(() => {
     if (!folderID && homeFolders && homeFolders.length > 0) {
-      const myHome = homeFolders.find(h => h.is_home)
+      // Find the current user's home folder by matching owner_id with user_id
+      const myHome = homeFolders.find(h => h.owner_id === user?.user_id)
       if (myHome) {
         setSearchParams({ folder: myHome.id })
       }
     }
-  }, [folderID, homeFolders, setSearchParams])
+  }, [folderID, homeFolders, setSearchParams, user?.user_id])
 
   
 

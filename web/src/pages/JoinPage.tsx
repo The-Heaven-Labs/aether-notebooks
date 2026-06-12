@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { api } from '../api/client'
+import { api, setToken } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 
 export function JoinPage() {
@@ -24,7 +24,9 @@ export function JoinPage() {
     const joinOrg = async () => {
       try {
         // Check if user is already authenticated
-        if (!isAuthenticated) {
+        // Also check for onboarding_token which is set after registration
+        const onboardingToken = localStorage.getItem('hnb_onboarding_token')
+        if (!isAuthenticated && !onboardingToken) {
           const userRes = await api.get('/api/v1/users/me').catch(() => null)
           if (!userRes) {
             // Store the token in sessionStorage so it survives the login redirect
@@ -33,12 +35,17 @@ export function JoinPage() {
             return
           }
         }
+        // If we have an onboarding token but no auth token, set it for the API call
+        if (onboardingToken && !isAuthenticated) {
+          setToken(onboardingToken)
+        }
         const result = await api.post<{ token: string }>('/api/v1/auth/org/join', {
           invite_link_token: effectiveToken,
         })
         loginWithToken(result.token)
         // Clear the pending token after successful join
         sessionStorage.removeItem('hnb_pending_join_token')
+        localStorage.removeItem('hnb_onboarding_token')
         navigate('/')
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to join organization')
