@@ -1,9 +1,15 @@
 # Design: Yjs as Single Source of Truth for Cell Content
 
-**Status:** Draft  
+**Status:** ✅ Implemented  
 **Author:** AI Assistant  
 **Date:** 2026-06-12  
 **Related Issue:** Agent `update_cell` changes not reflected dynamically
+
+## Implementation Summary
+
+**Completed:** 2026-06-12  
+**Commits:** 10 commits (85b7742..fb6b928)  
+**Review:** E2E browser testing passed — see `docs/reviews/yjs-sot/REVIEW.md`
 
 ---
 
