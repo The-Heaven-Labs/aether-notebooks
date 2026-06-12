@@ -44,6 +44,7 @@ type Cell struct {
 	Metadata      json.RawMessage `json:"metadata,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
 	UpdatedAt     time.Time       `json:"updated_at"`
+	AgentUpdatedAt *time.Time     `json:"agent_updated_at,omitempty"`
 }
 
 type CellType string
