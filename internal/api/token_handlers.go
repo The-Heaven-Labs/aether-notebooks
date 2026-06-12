@@ -14,6 +14,16 @@ type createTokenRequest struct {
 	ExpiresAt string `json:"expires_at,omitempty"`
 }
 
+// @Summary Create a token
+// @Description Create a new personal access token
+// @Tags tokens
+// @Accept json
+// @Produce json
+// @Param request body object true "Token details"
+// @Success 201 {object} object
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /tokens [post]
 func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	if claims == nil {
@@ -75,6 +85,14 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// @Summary List tokens
+// @Description List all personal access tokens
+// @Tags tokens
+// @Produce json
+// @Success 200 {array} object
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /tokens [get]
 func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	if claims == nil {
@@ -110,6 +128,14 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tokens)
 }
 
+// @Summary Delete a token
+// @Description Revoke a personal access token
+// @Tags tokens
+// @Param id path string true "Token ID"
+// @Success 200
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /tokens/{id} [delete]
 func (s *Server) handleDeleteToken(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	if claims == nil {

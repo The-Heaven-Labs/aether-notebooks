@@ -10,6 +10,83 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// permissionCheckSQL returns a SQL fragment that checks if the user has access to a resource.
+// The resource is referenced by the alias in resourceAlias (e.g., 'f' for folders).
+func permissionCheckSQL(resourceType, resourceAlias, userIDVar string, groupIDsVar string) string {
+	return fmt.Sprintf(`(
+		%s.owner_id = %s
+		OR EXISTS (
+			SELECT 1 FROM acl_entries 
+			WHERE resource_type = '%s' AND resource_id = %s.id 
+			AND subject_type = 'user' AND subject_id = %s::text
+		)
+		OR EXISTS (
+			SELECT 1 FROM acl_entries ae 
+			WHERE resource_type = '%s' AND resource_id = %s.id 
+			AND ae.subject_type = 'group' AND ae.subject_id = ANY(%s::text[])
+		)
+		OR EXISTS (
+			SELECT 1 FROM acl_entries 
+			WHERE resource_type = '%s' AND resource_id = %s.id 
+			AND subject_type = 'org_role' AND subject_id = 'everyone'
+		)
+	)`, resourceType, userIDVar, resourceType, resourceAlias, userIDVar, resourceType, resourceAlias, groupIDsVar, resourceType, resourceAlias)
+}
+
+// hasAccessibleContentSQL returns a SQL fragment that checks if a folder has any accessible content.
+func hasAccessibleContentSQL(folderAlias, userIDVar string, groupIDsVar string) string {
+	return fmt.Sprintf(`(
+		-- Has accessible subfolder
+		EXISTS (
+			SELECT 1 FROM folders sub 
+			WHERE sub.parent_id = %s.id 
+			AND sub.org_id = %s.org_id
+			AND (
+				sub.owner_id = %s
+				OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = sub.id AND subject_type = 'user' AND subject_id = %s::text)
+				OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = sub.id AND ae.subject_type = 'group' AND ae.subject_id = ANY(%s::text[]))
+				OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = sub.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+			)
+		)
+		OR
+		-- Has accessible notebook
+		EXISTS (
+			SELECT 1 FROM notebooks nb 
+			WHERE nb.folder_id = %s.id 
+			AND nb.org_id = %s.org_id
+			AND (
+				EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'user' AND subject_id = %s::text)
+				OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'notebook' AND resource_id = nb.id AND ae.subject_type = 'group' AND ae.subject_id = ANY(%s::text[]))
+				OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+			)
+		)
+		OR
+		-- Has accessible connector
+		EXISTS (
+			SELECT 1 FROM connectors c 
+			WHERE c.folder_id = %s.id 
+			AND c.org_id = %s.org_id
+			AND (
+				EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'user' AND subject_id = %s::text)
+				OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'connector' AND resource_id = c.id AND ae.subject_type = 'group' AND ae.subject_id = ANY(%s::text[]))
+				OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+			)
+		)
+		OR
+		-- Has accessible dashboard
+		EXISTS (
+			SELECT 1 FROM dashboards d 
+			WHERE d.folder_id = %s.id 
+			AND d.org_id = %s.org_id
+			AND (
+				EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d.id AND subject_type = 'user' AND subject_id = %s::text)
+				OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'dashboard' AND resource_id = d.id AND ae.subject_type = 'group' AND ae.subject_id = ANY(%s::text[]))
+				OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+			)
+		)
+	)`, folderAlias, folderAlias, userIDVar, userIDVar, groupIDsVar, folderAlias, folderAlias, userIDVar, groupIDsVar, folderAlias, folderAlias, userIDVar, groupIDsVar, folderAlias, folderAlias, userIDVar, groupIDsVar)
+}
+
 type folderContents struct {
 	Folder     *models.Folder     `json:"folder,omitempty"`
 	Folders    []models.Folder    `json:"folders"`
@@ -31,6 +108,14 @@ type folderConnector struct {
 
 // handleListHomeFolders returns all home folders for the org, grouped by owner.
 // Each entry includes the home folder info and a list of sub-folders the user can access.
+// @Summary List home folders
+// @Description List all home folders for the current user
+// @Tags folders
+// @Produce json
+// @Success 200 {array} object
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /home [get]
 func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -86,20 +171,81 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, e)
 	}
 
-	// For each home folder, get sub-folders the user can access
-	for i := range entries {
+	// Filter home folders: show if user owns it OR has access to any content inside
+	var filteredEntries []homeFolderEntry
+	for _, entry := range entries {
+		// Check if user owns this home folder
+		if entry.OwnerID != nil && *entry.OwnerID == claims.UserID {
+			filteredEntries = append(filteredEntries, entry)
+			continue
+		}
+
+		// Check if user has access to any content inside this home folder
+		var hasAccess bool
+		err = s.db.Pool.QueryRow(ctx,
+			`SELECT EXISTS (
+				SELECT 1 FROM folders f
+				WHERE f.parent_id = $1 AND f.org_id = $2
+				AND (
+					f.owner_id = $3
+					OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'user' AND subject_id = $3::text)
+					OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = f.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
+					OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+				)
+				LIMIT 1
+			) OR EXISTS (
+				SELECT 1 FROM notebooks nb
+				WHERE nb.folder_id = $1 AND nb.org_id = $2
+				AND (
+					EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'user' AND subject_id = $3::text)
+					OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'notebook' AND resource_id = nb.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
+					OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+				)
+				LIMIT 1
+			) OR EXISTS (
+				SELECT 1 FROM connectors c
+				WHERE c.folder_id = $1 AND c.org_id = $2
+				AND (
+					EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'user' AND subject_id = $3::text)
+					OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'connector' AND resource_id = c.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
+					OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+				)
+				LIMIT 1
+			) OR EXISTS (
+				SELECT 1 FROM dashboards d
+				WHERE d.folder_id = $1 AND d.org_id = $2
+				AND (
+					EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d.id AND subject_type = 'user' AND subject_id = $3::text)
+					OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'dashboard' AND resource_id = d.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
+					OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+				)
+				LIMIT 1
+			)
+			)`,
+			entry.ID, claims.OrgID, claims.UserID, groupIDs,
+		).Scan(&hasAccess)
+		if err != nil {
+			continue
+		}
+		if hasAccess {
+			filteredEntries = append(filteredEntries, entry)
+		}
+	}
+
+	// For each filtered home folder, get sub-folders the user can access
+	for i := range filteredEntries {
 		subRows, err := s.db.Pool.Query(ctx,
 			`SELECT f.id, f.org_id, f.parent_id, f.name, f.is_home, f.owner_id, f.created_by, f.created_at, f.updated_at
 			 FROM folders f
-			 WHERE f.parent_id = $1
+			 WHERE f.parent_id = $1 AND f.org_id = $2
 			 AND (
-			   f.owner_id = $2
-			   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'user' AND subject_id = $2::text)
-			   OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = f.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
+			   f.owner_id = $3
+			   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'user' AND subject_id = $3::text)
+			   OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = f.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
 			   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'org_role' AND subject_id = 'everyone')
 			 )
 			 ORDER BY f.name`,
-			entries[i].ID, claims.UserID, groupIDs,
+			filteredEntries[i].ID, claims.OrgID, claims.UserID, groupIDs,
 		)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "query failed")
@@ -113,18 +259,27 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "scan failed")
 				return
 			}
-			entries[i].SubFolders = append(entries[i].SubFolders, sub)
+			filteredEntries[i].SubFolders = append(filteredEntries[i].SubFolders, sub)
 		}
 		subRows.Close()
 	}
 
-	if entries == nil {
-		entries = []homeFolderEntry{}
+	if filteredEntries == nil {
+		filteredEntries = []homeFolderEntry{}
 	}
 
-	writeJSON(w, http.StatusOK, entries)
+	writeJSON(w, http.StatusOK, filteredEntries)
 }
 
+
+// @Summary List root contents
+// @Description List folders and resources at the root level
+// @Tags folders
+// @Produce json
+// @Success 200 {object} object
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /folders [get]
 func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -154,7 +309,7 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 	}
 	groupRows.Close()
 
-	// Folders at root: include folders user can access, but EXCLUDE is_home folders (those appear under /home)
+	// Folders at root: include folders user can access AND has content inside, EXCLUDE is_home folders
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT f.id, f.org_id, f.parent_id, f.name, f.is_home, f.owner_id, f.created_by, f.created_at, f.updated_at
 		 FROM folders f
@@ -164,6 +319,60 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'user' AND subject_id = $2::text)
 		   OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = f.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
 		   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+		 )
+		 AND (
+		   -- Has accessible subfolder
+		   EXISTS (
+				SELECT 1 FROM folders sub 
+				WHERE sub.parent_id = f.id 
+				AND sub.org_id = f.org_id
+				AND (
+					sub.owner_id = $2
+					OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = sub.id AND subject_type = 'user' AND subject_id = $2::text)
+					OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = sub.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
+					OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = sub.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+				)
+				LIMIT 1
+		   )
+		   OR
+		   -- Has accessible notebook
+		   EXISTS (
+				SELECT 1 FROM notebooks nb 
+				WHERE nb.folder_id = f.id 
+				AND nb.org_id = f.org_id
+				AND (
+					EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'user' AND subject_id = $2::text)
+					OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'notebook' AND resource_id = nb.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
+					OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+				)
+				LIMIT 1
+		   )
+		   OR
+		   -- Has accessible connector
+		   EXISTS (
+				SELECT 1 FROM connectors c 
+				WHERE c.folder_id = f.id 
+				AND c.org_id = f.org_id
+				AND (
+					EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'user' AND subject_id = $2::text)
+					OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'connector' AND resource_id = c.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
+					OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+				)
+				LIMIT 1
+		   )
+		   OR
+		   -- Has accessible dashboard
+		   EXISTS (
+				SELECT 1 FROM dashboards d 
+				WHERE d.folder_id = f.id 
+				AND d.org_id = f.org_id
+				AND (
+					EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d.id AND subject_type = 'user' AND subject_id = $2::text)
+					OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'dashboard' AND resource_id = d.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
+					OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+				)
+				LIMIT 1
+		   )
 		 )
 		 ORDER BY f.name`,
 		claims.OrgID, claims.UserID, groupIDs,
@@ -187,7 +396,7 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Notebooks at root
+	// Notebooks at root (no folder) - filter by permission
 	nbRows, err := s.db.Pool.Query(ctx,
 		`SELECT id, org_id, title, description, connector_id, parameters, created_by, created_at, updated_at
 		 FROM notebooks WHERE org_id = $1 AND folder_id IS NULL`,
@@ -198,24 +407,24 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer nbRows.Close()
-	var allNotebooks []models.Notebook
 	for nbRows.Next() {
 		nb, err := scanNotebook(nbRows)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		allNotebooks = append(allNotebooks, nb)
-	}
-	nbRows.Close()
-	for _, nb := range allNotebooks {
+		// Check permission
 		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "view")
 		if err == nil && ok {
 			contents.Notebooks = append(contents.Notebooks, nb)
 		}
 	}
+	if err := nbRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
 
-	// Connectors at root
+	// Connectors at root (no folder) - filter by permission
 	cRows, err := s.db.Pool.Query(ctx,
 		`SELECT id, name, type, is_default, folder_id, COALESCE(created_by::text, ''), created_at::text FROM connectors WHERE org_id = $1 AND folder_id IS NULL`,
 		claims.OrgID,
@@ -225,24 +434,24 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer cRows.Close()
-	var allConnectors []folderConnector
 	for cRows.Next() {
 		var c folderConnector
 		if err := cRows.Scan(&c.ID, &c.Name, &c.Type, &c.IsDefault, &c.FolderID, &c.CreatedBy, &c.CreatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		allConnectors = append(allConnectors, c)
-	}
-	cRows.Close()
-	for _, c := range allConnectors {
+		// Check permission
 		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "view")
 		if err == nil && ok {
 			contents.Connectors = append(contents.Connectors, c)
 		}
 	}
+	if err := cRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
 
-	// Dashboards at root
+	// Dashboards at root (no folder) - filter by permission
 	dRows, err := s.db.Pool.Query(ctx,
 		`SELECT id, org_id, title, settings, public_token, created_by, created_at, updated_at
 		 FROM dashboards WHERE org_id = $1 AND folder_id IS NULL`,
@@ -253,25 +462,36 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer dRows.Close()
-	var allDashboards []models.Dashboard
 	for dRows.Next() {
 		d, err := scanDashboard(dRows)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		allDashboards = append(allDashboards, d)
-	}
-	for _, d := range allDashboards {
+		// Check permission
 		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "view")
 		if err == nil && ok {
 			contents.Dashboards = append(contents.Dashboards, d)
 		}
 	}
+	if err := dRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
 
 	writeJSON(w, http.StatusOK, contents)
 }
 
+
+// @Summary Get folder contents
+// @Description Get all items in a folder (subfolders, notebooks, connectors, dashboards)
+// @Tags folders
+// @Produce json
+// @Param id path string true "Folder ID"
+// @Success 200 {object} object
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /folders/{id} [get]
 func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	folderID := r.PathValue("id")
@@ -472,6 +692,16 @@ func (s *Server) handleGetFolderAncestors(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, ancestors)
 }
 
+// @Summary Create a folder
+// @Description Create a new folder
+// @Tags folders
+// @Accept json
+// @Produce json
+// @Param request body object true "Folder details"
+// @Success 201 {object} object
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /folders [post]
 func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -505,6 +735,18 @@ func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, folder)
 }
 
+// @Summary Update a folder
+// @Description Update a folder's name or parent
+// @Tags folders
+// @Accept json
+// @Produce json
+// @Param id path string true "Folder ID"
+// @Param request body object true "Folder updates"
+// @Success 200 {object} object
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /folders/{id} [put]
 func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	folderID := r.PathValue("id")
@@ -641,6 +883,14 @@ func (s *Server) handleEnsureHomeFolder(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusCreated, map[string]string{"id": folderID})
 }
 
+// @Summary Delete a folder
+// @Description Delete a folder and all its contents
+// @Tags folders
+// @Param id path string true "Folder ID"
+// @Success 200
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /folders/{id} [delete]
 func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	folderID := r.PathValue("id")

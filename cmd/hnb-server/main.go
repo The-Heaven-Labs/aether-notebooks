@@ -1,5 +1,15 @@
 package main
 
+// @title hnb API
+// @version 1.0.0
+// @description Heaven's Notebooks API — collaborative SQL/data notebook platform
+// @host localhost:8080
+// @BasePath /api/v1
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description Enter "Bearer {token}"
+
 import (
 	"context"
 	"log"

@@ -23,7 +23,9 @@ export default defineConfig({
     host: '0.0.0.0',
     proxy: {
       '/api': apiTarget,
-      '/internal': apiTarget
+      '/internal': apiTarget,
+      '/docs': apiTarget,
+      '/swagger.json': apiTarget
     }
   },
   test: {

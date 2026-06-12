@@ -11,6 +11,14 @@ type createGroupRequest struct {
 	Name string `json:"name"`
 }
 
+// @Summary List groups
+// @Description List all groups in the organization
+// @Tags groups
+// @Produce json
+// @Success 200 {array} object
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups [get]
 func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -59,6 +67,16 @@ func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, groups)
 }
 
+// @Summary Create a group
+// @Description Create a new group
+// @Tags groups
+// @Accept json
+// @Produce json
+// @Param request body object true "Group details"
+// @Success 201 {object} object
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups [post]
 func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -86,6 +104,18 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, g)
 }
 
+// @Summary Update a group
+// @Description Update a group's name
+// @Tags groups
+// @Accept json
+// @Produce json
+// @Param id path string true "Group ID"
+// @Param request body object true "Group updates"
+// @Success 200 {object} object
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups/{id} [put]
 func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	groupID := r.PathValue("id")
@@ -114,6 +144,14 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, g)
 }
 
+// @Summary Delete a group
+// @Description Delete a group
+// @Tags groups
+// @Param id path string true "Group ID"
+// @Success 200
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups/{id} [delete]
 func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	groupID := r.PathValue("id")
@@ -134,6 +172,15 @@ func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// @Summary List group members
+// @Description List all members of a group
+// @Tags groups
+// @Produce json
+// @Param id path string true "Group ID"
+// @Success 200 {array} object
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups/{id}/members [get]
 func (s *Server) handleListGroupMembers(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	groupID := r.PathValue("id")
@@ -182,6 +229,18 @@ type addGroupMemberRequest struct {
 	UserID string `json:"user_id"`
 }
 
+// @Summary Add group member
+// @Description Add a user to a group
+// @Tags groups
+// @Accept json
+// @Produce json
+// @Param id path string true "Group ID"
+// @Param request body object true "Member details"
+// @Success 201
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups/{id}/members [post]
 func (s *Server) handleAddGroupMember(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	groupID := r.PathValue("id")
@@ -223,6 +282,15 @@ func (s *Server) handleAddGroupMember(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]string{"user_id": req.UserID})
 }
 
+// @Summary Remove group member
+// @Description Remove a user from a group
+// @Tags groups
+// @Param id path string true "Group ID"
+// @Param user_id path string true "User ID"
+// @Success 200
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups/{id}/members/{user_id} [delete]
 func (s *Server) handleRemoveGroupMember(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	groupID := r.PathValue("id")

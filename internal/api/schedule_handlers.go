@@ -16,6 +16,17 @@ type createScheduleRequest struct {
 	ParameterOverrides map[string]string `json:"parameter_overrides,omitempty"`
 }
 
+// @Summary Create a schedule
+// @Description Create a new schedule for a notebook
+// @Tags schedules
+// @Accept json
+// @Produce json
+// @Param notebook_id path string true "Notebook ID"
+// @Param request body object true "Schedule details"
+// @Success 201 {object} object
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{notebook_id}/schedules [post]
 func (s *Server) handleCreateSchedule(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("notebook_id")
@@ -74,6 +85,15 @@ func (s *Server) handleCreateSchedule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, sched)
 }
 
+// @Summary List schedules
+// @Description List all schedules for a notebook
+// @Tags schedules
+// @Produce json
+// @Param notebook_id path string true "Notebook ID"
+// @Success 200 {array} object
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{notebook_id}/schedules [get]
 func (s *Server) handleListSchedules(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("notebook_id")
@@ -116,6 +136,14 @@ func (s *Server) handleListSchedules(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, schedules)
 }
 
+// @Summary Delete a schedule
+// @Description Delete a schedule
+// @Tags schedules
+// @Param id path string true "Schedule ID"
+// @Success 200
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /schedules/{id} [delete]
 func (s *Server) handleDeleteSchedule(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	schedID := r.PathValue("id")
@@ -221,6 +249,15 @@ func (s *Server) handleUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sched)
 }
 
+// @Summary Get a schedule
+// @Description Get a schedule by ID
+// @Tags schedules
+// @Produce json
+// @Param id path string true "Schedule ID"
+// @Success 200 {object} object
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /schedules/{id} [get]
 func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	schedID := r.PathValue("id")

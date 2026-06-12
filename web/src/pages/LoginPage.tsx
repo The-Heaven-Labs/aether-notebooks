@@ -110,10 +110,20 @@ export function LoginPage() {
     try {
       if (mode === 'login') {
         await login(email, password)
-        navigate('/')
+        // Check if there's a pending join token from an invite link
+        const pendingJoinToken = sessionStorage.getItem('hnb_pending_join_token')
+        if (pendingJoinToken) {
+          navigate('/join')
+        } else {
+          navigate('/')
+        }
       } else {
         const onboardingToken = await register(email, password, name)
-        if (onboardingToken) {
+        // Check if there's a pending join token from an invite link
+        const pendingJoinToken = sessionStorage.getItem('hnb_pending_join_token')
+        if (pendingJoinToken) {
+          navigate('/join')
+        } else if (onboardingToken) {
           navigate('/onboarding')
         } else {
           navigate('/')

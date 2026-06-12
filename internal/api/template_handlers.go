@@ -15,6 +15,16 @@ type createTemplateRequest struct {
 	Content     json.RawMessage `json:"content"`
 }
 
+// @Summary Create a template
+// @Description Create a new notebook template
+// @Tags templates
+// @Accept json
+// @Produce json
+// @Param request body object true "Template details"
+// @Success 201 {object} object
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /templates [post]
 func (s *Server) handleCreateTemplate(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req createTemplateRequest
@@ -44,6 +54,14 @@ func (s *Server) handleCreateTemplate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id})
 }
 
+// @Summary List templates
+// @Description List all notebook templates
+// @Tags templates
+// @Produce json
+// @Success 200 {array} object
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /templates [get]
 func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -99,6 +117,14 @@ func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"templates": templates})
 }
 
+// @Summary Delete a template
+// @Description Delete a notebook template
+// @Tags templates
+// @Param id path string true "Template ID"
+// @Success 200
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /templates/{id} [delete]
 func (s *Server) handleDeleteTemplate(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	id := r.PathValue("id")

@@ -44,6 +44,16 @@ type authResponse struct {
 	} `json:"org"`
 }
 
+// @Summary Register a new user
+// @Description Create a new user account
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body registerRequest true "Registration details"
+// @Success 201 {object} authResponse
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Router /auth/register [post]
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -280,6 +290,16 @@ func emailDomain(email string) string {
 	return ""
 }
 
+// @Summary Login with email and password
+// @Description Authenticate a user and return a JWT token
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body loginRequest true "Login credentials"
+// @Success 200 {object} authResponse
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Router /auth/login [post]
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -386,12 +406,34 @@ type querier interface {
 // createHomeFolder inserts a home folder for userID in orgID and seeds its ACL entry.
 // userName is used to generate the folder name (e.g. "Alice's Home").
 func createHomeFolder(ctx context.Context, q querier, orgID, userID, userName string) error {
-	var folderID string
+	// Check if home folder already exists for this user in this org
+	var existingID string
 	err := q.QueryRow(ctx,
+		`SELECT id FROM folders WHERE org_id = $1 AND owner_id = $2 AND is_home = true LIMIT 1`,
+		orgID, userID,
+	).Scan(&existingID)
+	if err == nil {
+		// Home folder already exists, return its ID
+		return nil
+	}
+	if err != pgx.ErrNoRows {
+		return fmt.Errorf("check existing home folder: %w", err)
+	}
+
+	// Get user email for folder name
+	var userEmail string
+	err = q.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, userID).Scan(&userEmail)
+	if err != nil {
+		return fmt.Errorf("get user email: %w", err)
+	}
+
+	// Create new home folder using email as the name
+	var folderID string
+	err = q.QueryRow(ctx,
 		`INSERT INTO folders (org_id, name, is_home, owner_id, created_by)
 		 VALUES ($1, $2, true, $3, $3)
 		 RETURNING id`,
-		orgID, userName+"'s Home", userID,
+		orgID, userEmail, userID,
 	).Scan(&folderID)
 	if err != nil {
 		return fmt.Errorf("create home folder: %w", err)
@@ -442,6 +484,14 @@ func slugify(name string) string {
 	return slug
 }
 
+// @Summary Get current user
+// @Description Get the currently authenticated user's information
+// @Tags users
+// @Produce json
+// @Success 200 {object} models.User
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /users/me [get]
 func (s *Server) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -459,6 +509,17 @@ func (s *Server) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, u)
 }
 
+// @Summary Update current user
+// @Description Update the currently authenticated user's information
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param request body object true "User updates"
+// @Success 200 {object} models.User
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /users/me [put]
 func (s *Server) handleUpdateCurrentUser(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 

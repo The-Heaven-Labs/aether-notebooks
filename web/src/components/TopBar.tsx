@@ -102,6 +102,15 @@ export function TopBar({ onShowShortcuts }: TopBarProps) {
                 Settings
               </Link>
             )}
+            <a
+              href="/docs"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={styles.dropdownLink}
+              onClick={() => setOpen(false)}
+            >
+              API Documentation
+            </a>
             <button style={styles.signOut} onClick={() => { logout(); setOpen(false) }}>
               Sign out
             </button>

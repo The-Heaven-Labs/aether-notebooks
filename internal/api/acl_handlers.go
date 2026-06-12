@@ -25,6 +25,16 @@ func slicesEqual(a, b []string) bool {
 	return true
 }
 
+// @Summary Get ACL
+// @Description Get access control list for a resource
+// @Tags permissions
+// @Produce json
+// @Param resource_type path string true "Resource type"
+// @Param resource_id path string true "Resource ID"
+// @Success 200 {array} object
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /acl/{resource_type}/{resource_id} [get]
 func (s *Server) handleGetACL(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	resourceType := r.PathValue("resource_type")
@@ -67,6 +77,19 @@ func (s *Server) handleGetACL(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, entries)
 }
 
+// @Summary Update ACL
+// @Description Update access control list for a resource
+// @Tags permissions
+// @Accept json
+// @Produce json
+// @Param resource_type path string true "Resource type"
+// @Param resource_id path string true "Resource ID"
+// @Param request body object true "ACL entries"
+// @Success 200
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /acl/{resource_type}/{resource_id} [put]
 func (s *Server) handlePutACL(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	resourceType := r.PathValue("resource_type")
