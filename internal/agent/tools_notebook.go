@@ -268,6 +268,14 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, err
 		}
 
+		// 1. Update Yjs document (source of truth) if source is changing
+		if req.Source != "" {
+			if err := UpdateCellInYjs(ctx.Context, db, notebookID, req.CellID, req.Source); err != nil {
+				return nil, fmt.Errorf("update yjs: %w", err)
+			}
+		}
+
+		// 2. Update database cache (for API queries, search, exports)
 		var connID *string
 		if req.ConnectorID != "" {
 			connID = &req.ConnectorID
@@ -277,11 +285,12 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 				title = COALESCE(NULLIF($3, ''), title),
 				description = COALESCE(NULLIF($4, ''), description),
 				connector_id = COALESCE($5, connector_id),
+				agent_updated_at = NOW(),
 				updated_at = NOW()
 			WHERE id = $1
 		`, req.CellID, req.Source, req.Title, req.Description, connID)
 		if err != nil {
-			return nil, fmt.Errorf("update cell: %w", err)
+			return nil, fmt.Errorf("update cache: %w", err)
 		}
 
 		_ = ctx.AuditLog("cell.update", "cell", req.CellID)
