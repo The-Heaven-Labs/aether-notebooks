@@ -11,6 +11,7 @@ import { StatusBadge } from '../components/StatusBadge'
 import { SectionHeader } from '../components/SectionHeader'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { EmptyState } from '../components/EmptyState'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 
 type ConnectorType = 'postgres' | 'clickhouse' | 'opensearch'
 
@@ -52,6 +53,7 @@ export function ConnectorsPage() {
   const [formTesting, setFormTesting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [permissionsTarget, setPermissionsTarget] = useState<{ type: 'connector'; id: string; name: string } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Connector | null>(null)
 
   const { data: connectors = [], isLoading } = useQuery({
     queryKey: ['connectors'],
@@ -469,7 +471,7 @@ export function ConnectorsPage() {
                     <button
                       type="button"
                       style={styles.deleteBtn}
-                      onClick={() => { if (confirm(`Delete "${c.name}"?`)) deleteConnector.mutate(c.id) }}
+                      onClick={() => setDeleteTarget(c)}
                     >
                       Delete
                     </button>
@@ -490,6 +492,15 @@ export function ConnectorsPage() {
           />
         )}
       </div>
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete connector"
+        message={`Delete "${deleteTarget?.name}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => { if (deleteTarget) deleteConnector.mutate(deleteTarget.id); setDeleteTarget(null) }}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </AppShell>
   )
 }

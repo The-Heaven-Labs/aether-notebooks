@@ -27,6 +27,7 @@ type updateCellRequest struct {
 	ConnectorID   *string            `json:"connector_id,omitempty"`
 	Type          *string            `json:"type,omitempty"`
 	SourceVisible *bool              `json:"source_visible,omitempty"`
+	OutputsHidden *bool              `json:"outputs_hidden,omitempty"`
 	CellCollapsed *bool              `json:"cell_collapsed,omitempty"`
 	SlideBreak    *bool              `json:"slide_break,omitempty"`
 	Parameters    []models.Parameter `json:"parameters,omitempty"`
@@ -118,11 +119,11 @@ func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
 		`INSERT INTO cells (notebook_id, position, type, language, connector_id, source, outputs)
 		 VALUES ($1, $2, $3, $4, $5, $6, '[]')
 		 RETURNING id, notebook_id, position, type, language, connector_id, source, outputs,
-		           source_visible, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), "limit",
+		           source_visible, outputs_hidden, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), "limit",
 		           COALESCE(metadata, '{}'), created_at, updated_at`,
 		nbID, insertPos, req.Type, lang, connID, req.Source,
 	).Scan(&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &lang, &connID, &cell.Source, &outputs,
-		&cell.SourceVisible, &cell.CellCollapsed, &cell.SlideBreak, &cellParams, &cell.Title, &cell.Description, &cell.Slug,
+		&cell.SourceVisible, &cell.OutputsHidden, &cell.CellCollapsed, &cell.SlideBreak, &cellParams, &cell.Title, &cell.Description, &cell.Slug,
 		&limit, &cell.Metadata, &cell.CreatedAt, &cell.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create cell")
@@ -139,6 +140,8 @@ func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
 	}
 	json.Unmarshal(outputs, &cell.Outputs)
 	json.Unmarshal(cellParams, &cell.Parameters)
+	// Touch notebook timestamp so "Last updated" reflects cell creation
+	s.db.Pool.Exec(ctx, `UPDATE notebooks SET updated_at = NOW() WHERE id = $1`, nbID)
 
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
@@ -214,6 +217,11 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 		args = append(args, *req.SourceVisible)
 		argN++
 	}
+	if req.OutputsHidden != nil {
+		query += fmt.Sprintf(", outputs_hidden = $%d", argN)
+		args = append(args, *req.OutputsHidden)
+		argN++
+	}
 	if req.CellCollapsed != nil {
 		query += fmt.Sprintf(", cell_collapsed = $%d", argN)
 		args = append(args, *req.CellCollapsed)
@@ -259,7 +267,7 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 
 	query += fmt.Sprintf(" WHERE id = $%d AND notebook_id = $%d", argN, argN+1)
 	args = append(args, cellID, nbID)
-	query += " RETURNING id, notebook_id, position, type, language, connector_id, source, outputs, source_visible, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), \"limit\", COALESCE(metadata, '{}'), created_at, updated_at, agent_updated_at"
+	query += " RETURNING id, notebook_id, position, type, language, connector_id, source, outputs, source_visible, outputs_hidden, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), \"limit\", COALESCE(metadata, '{}'), created_at, updated_at, agent_updated_at"
 
 	var cell models.Cell
 	var lang, connID *string
@@ -268,7 +276,7 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 	var agentUpdatedAt *time.Time
 	err := s.db.Pool.QueryRow(ctx, query, args...).Scan(
 		&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &lang, &connID,
-		&cell.Source, &outputs, &cell.SourceVisible, &cell.CellCollapsed, &cell.SlideBreak, &cellParams,
+		&cell.Source, &outputs, &cell.SourceVisible, &cell.OutputsHidden, &cell.CellCollapsed, &cell.SlideBreak, &cellParams,
 		&cell.Title, &cell.Description, &cell.Slug, &limit, &cell.Metadata,
 		&cell.CreatedAt, &cell.UpdatedAt, &agentUpdatedAt,
 	)
@@ -280,6 +288,8 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "update failed")
 		return
 	}
+	// Touch notebook timestamp so "Last updated" reflects cell changes
+	s.db.Pool.Exec(ctx, `UPDATE notebooks SET updated_at = NOW() WHERE id = $1`, nbID)
 	if lang != nil {
 		cell.Language = *lang
 	}
@@ -364,6 +374,8 @@ func (s *Server) handleDeleteCell(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "cell not found")
 		return
 	}
+	// Touch notebook timestamp so "Last updated" reflects cell deletion
+	s.db.Pool.Exec(ctx, `UPDATE notebooks SET updated_at = NOW() WHERE id = $1`, nbID)
 
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
@@ -400,14 +412,14 @@ func (s *Server) handleDuplicateCell(w http.ResponseWriter, r *http.Request) {
 	var limit *int
 	err := s.db.Pool.QueryRow(ctx,
 		`SELECT id, notebook_id, position, type, language, connector_id, source, outputs,
-		        source_visible, cell_collapsed, slide_break, parameters,
+		        source_visible, outputs_hidden, cell_collapsed, slide_break, parameters,
 		        COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), "limit",
 		        COALESCE(metadata, '{}')
 		 FROM cells WHERE id=$1 AND notebook_id=$2`,
 		cellID, nbID,
 	).Scan(&src.ID, &src.NotebookID, &src.Position, &src.Type,
 		&lang, &connID, &src.Source, &outputs,
-		&src.SourceVisible, &src.CellCollapsed, &src.SlideBreak, &params,
+		&src.SourceVisible, &src.OutputsHidden, &src.CellCollapsed, &src.SlideBreak, &params,
 		&title, &desc, &slug, &limit, &src.Metadata)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "cell not found")
@@ -443,17 +455,17 @@ func (s *Server) handleDuplicateCell(w http.ResponseWriter, r *http.Request) {
 	var newLimit *int
 	err = s.db.Pool.QueryRow(ctx,
 		`INSERT INTO cells (notebook_id, position, type, language, connector_id, source, outputs,
-		                    source_visible, cell_collapsed, slide_break, parameters, title, description, slug, "limit", metadata)
-		 VALUES ($1,$2,$3,$4,$5,$6,'[]',$7,$8,$9,$10,$11,$12,$13,$14,$15)
+		                    source_visible, outputs_hidden, cell_collapsed, slide_break, parameters, title, description, slug, "limit", metadata)
+		 VALUES ($1,$2,$3,$4,$5,$6,'[]',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		 RETURNING id, notebook_id, position, type, language, connector_id, source, outputs,
-		           source_visible, cell_collapsed, slide_break, parameters,
+		           source_visible, outputs_hidden, cell_collapsed, slide_break, parameters,
 		           COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), "limit",
 		           COALESCE(metadata, '{}'), created_at, updated_at`,
 		nbID, insertPos, src.Type, lang, connID, src.Source,
-		src.SourceVisible, src.CellCollapsed, src.SlideBreak, params, title, desc, slug, limit, src.Metadata,
+		src.SourceVisible, src.OutputsHidden, src.CellCollapsed, src.SlideBreak, params, title, desc, slug, limit, src.Metadata,
 	).Scan(&newCell.ID, &newCell.NotebookID, &newCell.Position, &newCell.Type,
 		&lang, &connID, &newCell.Source, &newOutputs,
-		&newCell.SourceVisible, &newCell.CellCollapsed, &newCell.SlideBreak, &newParams,
+		&newCell.SourceVisible, &newCell.OutputsHidden, &newCell.CellCollapsed, &newCell.SlideBreak, &newParams,
 		&newCell.Title, &newCell.Description, &newCell.Slug, &newLimit,
 		&newCell.Metadata, &newCell.CreatedAt, &newCell.UpdatedAt)
 	if err != nil {
@@ -474,6 +486,8 @@ func (s *Server) handleDuplicateCell(w http.ResponseWriter, r *http.Request) {
 	if newCell.Outputs == nil {
 		newCell.Outputs = []models.Output{}
 	}
+	// Touch notebook timestamp so "Last updated" reflects cell duplication
+	s.db.Pool.Exec(ctx, `UPDATE notebooks SET updated_at = NOW() WHERE id = $1`, nbID)
 
 	writeJSON(w, http.StatusCreated, newCell)
 }

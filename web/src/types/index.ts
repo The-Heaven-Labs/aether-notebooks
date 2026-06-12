@@ -35,6 +35,7 @@ export interface Cell {
   created_at: string
   updated_at: string
   source_visible: boolean
+  outputs_hidden?: boolean
   cell_collapsed: boolean
   slide_break?: boolean
   title?: string

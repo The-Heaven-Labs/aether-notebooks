@@ -8,6 +8,7 @@ export function useNotebookWs(
   onCellUpdated?: (cellId: string, source?: string) => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null)
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const onCellOutputRef = useRef(onCellOutput)
   onCellOutputRef.current = onCellOutput
   const onCellMetadataChangedRef = useRef(onCellMetadataChanged)
@@ -48,7 +49,7 @@ export function useNotebookWs(
     ws.onclose = () => {
       wsRef.current = null
       // Reconnect after 3 seconds if still mounted
-      setTimeout(() => {
+      reconnectTimer.current = setTimeout(() => {
         if (!wsRef.current && notebookId) {
           connect()
         }
@@ -61,8 +62,15 @@ export function useNotebookWs(
   }, [notebookId])
 
   useEffect(() => {
-    connect()
+    // Defer connection so React 18 Strict Mode cleanup runs before the
+    // WebSocket is created — prevents "closed before established" error.
+    const timer = setTimeout(() => connect(), 0)
     return () => {
+      clearTimeout(timer)
+      if (reconnectTimer.current) {
+        clearTimeout(reconnectTimer.current)
+        reconnectTimer.current = null
+      }
       if (wsRef.current) {
         wsRef.current.onclose = null
         wsRef.current.close()

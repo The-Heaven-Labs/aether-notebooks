@@ -33,8 +33,9 @@ type Cell struct {
 	ConnectorID   string      `json:"connector_id,omitempty"`
 	Source        string      `json:"source"`
 	Outputs       []Output    `json:"outputs"`
-	SourceVisible bool        `json:"source_visible"`
-	CellCollapsed bool        `json:"cell_collapsed"`
+	SourceVisible  bool            `json:"source_visible"`
+	OutputsHidden  bool            `json:"outputs_hidden"`
+	CellCollapsed  bool            `json:"cell_collapsed"`
 	SlideBreak    bool        `json:"slide_break"`
 	Parameters    []Parameter `json:"parameters"`
 	Title         string      `json:"title,omitempty"`
