@@ -302,6 +302,13 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 			// (agent updates are the primary path)
 			log.Printf("WARNING: yjs update failed for cell %s: %v", cellID, err)
 		}
+
+		// Broadcast to connected clients so they see the update
+		s.hub.Broadcast(nbID, map[string]any{
+			"type":    "cell_updated",
+			"cell_id": cellID,
+			"source":  *req.Source,
+		})
 	}
 
 	// Log cell type change in version history and audit trail
