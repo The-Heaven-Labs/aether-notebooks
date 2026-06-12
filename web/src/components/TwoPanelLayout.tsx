@@ -49,7 +49,7 @@ export function TwoPanelLayout({ leftPanel, rightPanel, leftWidth = 240 }: TwoPa
         <button
           style={{
             position: 'absolute',
-            right: collapsed ? -14 : -14,
+            left: collapsed ? -7 : leftWidth - 7,
             top: '50%',
             transform: 'translateY(-50%)',
             background: 'var(--bg-card)',

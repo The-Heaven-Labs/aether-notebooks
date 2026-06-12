@@ -34,6 +34,17 @@ type updateCellRequest struct {
 	Metadata      json.RawMessage    `json:"metadata,omitempty"`
 }
 
+// @Summary Create a cell
+// @Description Create a new cell in a notebook
+// @Tags cells
+// @Accept json
+// @Produce json
+// @Param notebook_id path string true "Notebook ID"
+// @Param request body object true "Cell details"
+// @Success 201 {object} object
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{notebook_id}/cells [post]
 func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("notebook_id")
@@ -134,6 +145,19 @@ func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, cell)
 }
 
+// @Summary Update a cell
+// @Description Update a cell's source, type, or metadata
+// @Tags cells
+// @Accept json
+// @Produce json
+// @Param notebook_id path string true "Notebook ID"
+// @Param cell_id path string true "Cell ID"
+// @Param request body object true "Cell updates"
+// @Success 200 {object} object
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{notebook_id}/cells/{cell_id} [put]
 func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("notebook_id")
@@ -288,6 +312,15 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, cell)
 }
 
+// @Summary Delete a cell
+// @Description Delete a cell from a notebook
+// @Tags cells
+// @Param notebook_id path string true "Notebook ID"
+// @Param cell_id path string true "Cell ID"
+// @Success 200
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{notebook_id}/cells/{cell_id} [delete]
 func (s *Server) handleDeleteCell(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("notebook_id")
@@ -321,6 +354,16 @@ func (s *Server) handleDeleteCell(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// @Summary Duplicate a cell
+// @Description Create a copy of a cell
+// @Tags cells
+// @Produce json
+// @Param notebook_id path string true "Notebook ID"
+// @Param cell_id path string true "Cell ID"
+// @Success 201 {object} object
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{notebook_id}/cells/{cell_id}/duplicate [post]
 func (s *Server) handleDuplicateCell(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("notebook_id")

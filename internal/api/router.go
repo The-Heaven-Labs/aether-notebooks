@@ -168,6 +168,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/dashboards", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateDashboard))))
 	s.mux.Handle("GET /api/v1/dashboards", authMW(http.HandlerFunc(s.handleListDashboards)))
 	s.mux.Handle("GET /api/v1/dashboards/{id}", authMW(http.HandlerFunc(s.handleGetDashboard)))
+	s.mux.Handle("PUT /api/v1/dashboards/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleUpdateDashboard))))
 	s.mux.Handle("DELETE /api/v1/dashboards/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDeleteDashboard))))
 	s.mux.Handle("POST /api/v1/dashboards/{id}/widgets", authMW(RequireRole("editor")(http.HandlerFunc(s.handleAddWidget))))
 	s.mux.Handle("PUT /api/v1/dashboards/{id}/widgets/{widget_id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleUpdateWidget))))

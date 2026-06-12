@@ -15,6 +15,14 @@ type memberResponse struct {
 	JoinedAt time.Time `json:"joined_at"`
 }
 
+// @Summary List members
+// @Description List all members of the current organization
+// @Tags members
+// @Produce json
+// @Success 200 {array} object
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /members [get]
 func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -127,6 +135,16 @@ type inviteMemberRequest struct {
 	Role  string `json:"role"`
 }
 
+// @Summary Invite a member
+// @Description Invite a new member to the organization
+// @Tags members
+// @Accept json
+// @Produce json
+// @Param request body object true "Invitation details"
+// @Success 201
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /members/invite [post]
 func (s *Server) handleInviteMember(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req inviteMemberRequest

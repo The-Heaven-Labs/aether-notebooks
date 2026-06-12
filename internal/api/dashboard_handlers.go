@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/models"
@@ -18,6 +20,12 @@ type createDashboardRequest struct {
 	FolderID *string                  `json:"folder_id,omitempty"`
 }
 
+type updateDashboardRequest struct {
+	Title    *string                  `json:"title,omitempty"`
+	Settings *models.DashboardSettings `json:"settings,omitempty"`
+	FolderID *string                  `json:"folder_id,omitempty"`
+}
+
 type addWidgetRequest struct {
 	NotebookID *string                `json:"notebook_id"`
 	CellID     *string                `json:"cell_id"`
@@ -26,6 +34,16 @@ type addWidgetRequest struct {
 	Config     map[string]interface{} `json:"config,omitempty"`
 }
 
+// @Summary Create a dashboard
+// @Description Create a new dashboard
+// @Tags dashboards
+// @Accept json
+// @Produce json
+// @Param request body object true "Dashboard details"
+// @Success 201 {object} models.Dashboard
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /dashboards [post]
 func (s *Server) handleCreateDashboard(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req createDashboardRequest
@@ -64,6 +82,90 @@ func (s *Server) handleCreateDashboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, dash)
 }
 
+func (s *Server) handleUpdateDashboard(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	dashID := r.PathValue("id")
+	var req updateDashboardRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	ctx := r.Context()
+
+	// Check edit permission
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "edit")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "you don't have permission to edit this dashboard")
+		return
+	}
+
+	// Build dynamic UPDATE query
+	updates := []string{}
+	args := []interface{}{}
+	argIdx := 1
+
+	if req.Title != nil {
+		updates = append(updates, fmt.Sprintf("title=$%d", argIdx))
+		args = append(args, *req.Title)
+		argIdx++
+	}
+	if req.Settings != nil {
+		settingsJSON, _ := json.Marshal(req.Settings)
+		updates = append(updates, fmt.Sprintf("settings=$%d", argIdx))
+		args = append(args, settingsJSON)
+		argIdx++
+	}
+	if req.FolderID != nil {
+		updates = append(updates, fmt.Sprintf("folder_id=$%d", argIdx))
+		args = append(args, *req.FolderID)
+		argIdx++
+	}
+
+	if len(updates) == 0 {
+		writeError(w, http.StatusBadRequest, "no fields to update")
+		return
+	}
+
+	updates = append(updates, "updated_at=NOW()")
+	query := fmt.Sprintf("UPDATE dashboards SET %s WHERE id=$%d AND org_id=$%d RETURNING id, org_id, title, settings, public_token, folder_id, created_by, created_at, updated_at",
+		strings.Join(updates, ", "), argIdx, argIdx+1)
+	args = append(args, dashID, claims.OrgID)
+
+	var dash models.Dashboard
+	var settingsOut []byte
+	err = s.db.Pool.QueryRow(ctx, query, args...).Scan(
+		&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.PublicToken, &dash.FolderID,
+		&dash.CreatedBy, &dash.CreatedAt, &dash.UpdatedAt)
+	if err == pgx.ErrNoRows {
+		writeError(w, http.StatusNotFound, "dashboard not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "update failed")
+		return
+	}
+	json.Unmarshal(settingsOut, &dash.Settings)
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "dashboard.update", ResourceType: "dashboard", ResourceID: dashID,
+	})
+
+	writeJSON(w, http.StatusOK, dash)
+}
+
+// @Summary List dashboards
+// @Description List all dashboards for the current organization
+// @Tags dashboards
+// @Produce json
+// @Success 200 {array} models.Dashboard
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /dashboards [get]
 func (s *Server) handleListDashboards(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -97,6 +199,15 @@ func (s *Server) handleListDashboards(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dashboards)
 }
 
+// @Summary Get a dashboard
+// @Description Get a dashboard with its widgets
+// @Tags dashboards
+// @Produce json
+// @Param id path string true "Dashboard ID"
+// @Success 200 {object} object
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /dashboards/{id} [get]
 func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	dashID := r.PathValue("id")
@@ -166,6 +277,14 @@ func (s *Server) handleGetDashboardPermissions(w http.ResponseWriter, r *http.Re
 	})
 }
 
+// @Summary Delete a dashboard
+// @Description Delete a dashboard by ID
+// @Tags dashboards
+// @Param id path string true "Dashboard ID"
+// @Success 200
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /dashboards/{id} [delete]
 func (s *Server) handleDeleteDashboard(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	dashID := r.PathValue("id")
@@ -203,6 +322,17 @@ func (s *Server) handleDeleteDashboard(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// @Summary Add a widget
+// @Description Add a widget to a dashboard
+// @Tags dashboards
+// @Accept json
+// @Produce json
+// @Param id path string true "Dashboard ID"
+// @Param request body object true "Widget details"
+// @Success 201 {object} models.Widget
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /dashboards/{id}/widgets [post]
 func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	dashID := r.PathValue("id")
@@ -258,6 +388,19 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, widget)
 }
 
+// @Summary Update a widget
+// @Description Update a widget's layout or configuration
+// @Tags dashboards
+// @Accept json
+// @Produce json
+// @Param id path string true "Dashboard ID"
+// @Param widget_id path string true "Widget ID"
+// @Param request body object true "Widget updates"
+// @Success 200
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /dashboards/{id}/widgets/{widget_id} [put]
 func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	dashID := r.PathValue("id")
@@ -312,6 +455,15 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// @Summary Delete a widget
+// @Description Delete a widget from a dashboard
+// @Tags dashboards
+// @Param id path string true "Dashboard ID"
+// @Param widget_id path string true "Widget ID"
+// @Success 200
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /dashboards/{id}/widgets/{widget_id} [delete]
 func (s *Server) handleDeleteWidget(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	dashID := r.PathValue("id")
