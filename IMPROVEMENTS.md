@@ -25,6 +25,7 @@
 - [x] Drag-and-drop reordering of cells
 - [x] Bulk actions on file list (multi-select, move, delete, permissions)
 - [x] Profile status field has character limit indicator (100 chars)
+- [x] Yjs as single source of truth for cell content — agent updates via `update_cell` are immediately reflected in the collaborative editor without being reverted by auto-save
 
 ## Not implemented
 

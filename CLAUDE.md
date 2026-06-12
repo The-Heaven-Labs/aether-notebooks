@@ -152,6 +152,8 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 
 **Hocuspocus relay** fetches/stores Yjs document state via `/internal/yjs/{notebook_id}` on the Go backend (binary `application/octet-stream`). JWT auth is passed inside the Hocuspocus auth message, not as a URL param.
 
+**Yjs as single source of truth** for cell content: Agent `update_cell` writes to Yjs first (via `ygo` Go library), then updates `cells.source` as a derived cache. The `agent_updated_at` column on `cells` suppresses frontend auto-save after agent updates. See `docs/designs/yjs-source-of-truth.md` for full architecture.
+
 **SQL executor LIMIT behavior**: When a cell has a `limit` value > 0 and the query doesn't already contain `LIMIT`, the executor trims any trailing semicolon before appending ` LIMIT N`. This prevents `SELECT 1; LIMIT 1000` (broken) vs `SELECT 1 LIMIT 1000` (correct).
 
 **CodeMirror caret/cursor in dark theme**: The caret color is set globally via CSS at the `.cm-editor` and `.cm-editor .cm-content` level using `caret-color: var(--text-primary) !important` in `theme.css`. The CodeMirror `EditorView.theme()` extension should NOT set `caretColor` inline (inline values get `!important` injected by CodeMirror and override stylesheet rules). Use only `borderLeftColor` in the theme extension; use the stylesheet for `caret-color`.
@@ -163,9 +165,10 @@ OIDC providers are configured at startup and stored in `Server.oidcProviders`. T
 ## Frontend
 
 - React + React Query (`@tanstack/react-query`) for data fetching
-- Cell sources auto-save with 1.5s debounce after keystroke
+- Cell sources auto-save with 1.5s debounce after keystroke (suppressed for 5s after agent updates via `agent_updated_at` check)
 - Markdown cells persist on blur via `PUT /cells/:id`
 - Real-time collaboration: `HocuspocusProvider` in `CodeCell` connects to relay on `:3001`
+- Yjs document key convention: `cell:{cellID}` for each cell's text content
 
 ### Debugging with agent-browser
 
