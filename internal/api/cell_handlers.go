@@ -3,8 +3,10 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 
+	"github.com/heavenlabs/hnb/internal/agent"
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/models"
 	"github.com/jackc/pgx/v5"
@@ -290,6 +292,13 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 
 	if req.Source != nil {
 		s.upsertCellVersion(ctx, cellID, *req.Source, claims.UserID)
+
+		// Write to Yjs (source of truth) if source changed
+		if err := agent.UpdateCellInYjs(ctx, s.db.Pool, nbID, cellID, *req.Source); err != nil {
+			// Log but don't fail — Yjs write is best-effort for API updates
+			// (agent updates are the primary path)
+			log.Printf("WARNING: yjs update failed for cell %s: %v", cellID, err)
+		}
 	}
 
 	// Log cell type change in version history and audit trail
