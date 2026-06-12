@@ -96,14 +96,19 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		return "", "", nil, events, fmt.Errorf("rate limit exceeded: session has reached max turns or tokens")
 	}
 
-	var skillPrompts []string
+	// Build skill catalog (name + description only, not full content)
+	type skillCatalogEntry struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	var skillCatalog []skillCatalogEntry
 	if len(agent.SkillIDs) > 0 {
-		rows, err := e.pool.Query(ctx, `SELECT system_prompt FROM skills WHERE id = ANY($1) AND system_prompt IS NOT NULL AND system_prompt != ''`, agent.SkillIDs)
+		rows, err := e.pool.Query(ctx, `SELECT name, description FROM skills WHERE id = ANY($1) AND description IS NOT NULL AND description != ''`, agent.SkillIDs)
 		if err == nil {
 			for rows.Next() {
-				var prompt string
-				if err := rows.Scan(&prompt); err == nil && prompt != "" {
-					skillPrompts = append(skillPrompts, prompt)
+				var entry skillCatalogEntry
+				if err := rows.Scan(&entry.Name, &entry.Description); err == nil {
+					skillCatalog = append(skillCatalog, entry)
 				}
 			}
 			rows.Close()
@@ -164,12 +169,26 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		}
 	}
 
+	// Build skill catalog for system prompt (YAML format)
+	skillCatalogStr := ""
+	if len(skillCatalog) > 0 {
+		var sb strings.Builder
+		sb.WriteString("\n\nThe following skills provide specialized instructions for specific tasks.")
+		sb.WriteString("\nWhen a task matches a skill description, use the `load_skill` tool to load the full instructions before proceeding.")
+		sb.WriteString("\n\navailable_skills:")
+		for _, skill := range skillCatalog {
+			sb.WriteString(fmt.Sprintf("\n  - name: %s", skill.Name))
+			sb.WriteString(fmt.Sprintf("\n    description: %s", skill.Description))
+		}
+		skillCatalogStr = sb.String()
+	}
+
 	chatMsgs := make([]ChatMessage, 0)
 	notebookCtx := e.buildNotebookContext(session.NotebookID)
 	if systemPrompt != "" {
-		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: systemPrompt + "\n\n" + notebookCtx})
+		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: systemPrompt + notebookCtx + skillCatalogStr})
 	} else {
-		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: notebookCtx})
+		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: notebookCtx + skillCatalogStr})
 	}
 	for _, m := range messages {
 		msg := ChatMessage{Role: m.Role, Content: m.Content}
@@ -177,9 +196,6 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			msg.ReasoningContent = m.ReasoningContent
 		}
 		chatMsgs = append(chatMsgs, msg)
-	}
-	for _, sp := range skillPrompts {
-		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: sp})
 	}
 	if skillOverridePrompt != "" {
 		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: "# Active Skill\n\n" + skillOverridePrompt})
@@ -360,9 +376,12 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			if onToolCall != nil {
 				onToolCall(tc.Function.Name, tc.ID, reasoningContent)
 			}
+			var args map[string]any
+			json.Unmarshal([]byte(tc.Function.Arguments), &args)
 			allToolCalls = append(allToolCalls, models.ToolCall{
-				ID:   tc.ID,
-				Name: tc.Function.Name,
+				ID:        tc.ID,
+				Name:      tc.Function.Name,
+				Arguments: args,
 			})
 
 			toolDef, ok := toolLookup[tc.Function.Name]
@@ -389,7 +408,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				BroadcastFunc: e.BroadcastFunc,
 			}
 
-			result, err := toolDef.Handler(json.RawMessage(tc.Function.Arguments), toolCtx)
+			result, err := toolDef.Handler([]byte(tc.Function.Arguments), toolCtx)
 			if err != nil {
 				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: fmt.Sprintf("error: %s", err.Error())})
 				if onToolResult != nil {

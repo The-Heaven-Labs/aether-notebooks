@@ -320,8 +320,10 @@ func (c *ClickHouseExecutor) TestConnection(ctx context.Context) error {
 }
 
 func (c *ClickHouseExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
+	// ClickHouse stores column comments in system.columns.comment
+	// and table comments in system.tables.metadata_comment
 	rows, err := c.conn.Query(ctx,
-		`SELECT database, table, name, type
+		`SELECT database, table, name, type, comment
 		 FROM system.columns
 		 WHERE database NOT IN ('system', 'information_schema', 'INFORMATION_SCHEMA')
 		 ORDER BY database, table, position`)
@@ -334,8 +336,8 @@ func (c *ClickHouseExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
 	var tableOrder []string
 
 	for rows.Next() {
-		var db, table, col, dtype string
-		if err := rows.Scan(&db, &table, &col, &dtype); err != nil {
+		var db, table, col, dtype, comment string
+		if err := rows.Scan(&db, &table, &col, &dtype, &comment); err != nil {
 			return nil, err
 		}
 		key := db + "." + table
@@ -343,7 +345,19 @@ func (c *ClickHouseExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
 			tableMap[key] = &TableInfo{Schema: db, Name: table}
 			tableOrder = append(tableOrder, key)
 		}
-		tableMap[key].Columns = append(tableMap[key].Columns, ColumnInfo{Name: col, Type: dtype})
+		tableMap[key].Columns = append(tableMap[key].Columns, ColumnInfo{Name: col, Type: dtype, Description: comment})
+	}
+
+	// Fetch table-level comments
+	for _, key := range tableOrder {
+		t := tableMap[key]
+		var tableComment string
+		if err := c.conn.QueryRow(ctx,
+			`SELECT comment FROM system.tables 
+			 WHERE database = $1 AND name = $2`,
+			t.Schema, t.Name).Scan(&tableComment); err == nil {
+			t.Description = tableComment
+		}
 	}
 
 	tables := make([]TableInfo, 0, len(tableOrder))

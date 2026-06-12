@@ -7,10 +7,12 @@ import { TreeItem } from './TreeItem'
 interface SchemaColumn {
   name: string
   type: string
+  description?: string
 }
 
 interface SchemaTable {
   name: string
+  description?: string
   columns: SchemaColumn[]
 }
 
@@ -101,6 +103,7 @@ export function SchemaBrowser({ connectorId, onClose }: Props) {
               <TreeItem
                 key={table.name}
                 name={table.name}
+                description={table.description}
                 columns={table.columns}
                 isExpanded={expandedTables.has(table.name)}
                 onToggle={toggleTable}

@@ -241,7 +241,9 @@ export function NotebookPage() {
       prev.map((c) => (c.id === cellId ? { ...c, metadata } : c)),
     )
     flashCell(cellId)
-  }, []), useCallback((cellId: string) => {
+  }, []), useCallback((cellId: string, _source?: string) => {
+    // cell_updated event received - invalidate query so fresh source from
+    // DB flows into Cell props, and the new useEffect in Cell syncs it to Yjs
     qc.invalidateQueries({ queryKey: ['notebook', id] })
     flashCell(cellId)
   }, [id, qc]))
@@ -292,11 +294,25 @@ export function NotebookPage() {
   useEffect(() => {
     if (notebook && !initializedRef.current) {
       initializedRef.current = true
-      setLocalCells(notebook.cells)
       setTitleDraft(notebook.title)
       setDescDraft(notebook.description ?? '')
       if (notebook.connector_id) setNotebookConnectorId(notebook.connector_id)
       document.title = `${notebook.title} — Heaven's Notebooks`
+    }
+    // Always sync localCells with notebook data (for agent updates)
+    if (notebook) {
+      setLocalCells(prev => {
+        const merged = notebook.cells.map(nbCell => {
+          const local = prev.find(c => c.id === nbCell.id)
+          // Always use notebook source (database is authoritative)
+          // Create new object to trigger memoized Cell re-render
+          if (local && local.source !== nbCell.source) {
+            return { ...nbCell }
+          }
+          return nbCell
+        })
+        return merged
+      })
     }
     return () => { document.title = "Heaven's Notebooks" }
   }, [notebook])
@@ -452,7 +468,12 @@ export function NotebookPage() {
   }, [id])
 
   const updateSource = useCallback((cellId: string, source: string) => {
-    setLocalCells((prev) => prev.map((c) => (c.id === cellId ? { ...c, source } : c)))
+    setLocalCells((prev) => {
+      const cell = prev.find(c => c.id === cellId)
+      // If source is the same as what we already have, skip (no save needed)
+      if (cell && cell.source === source) return prev
+      return prev.map((c) => (c.id === cellId ? { ...c, source } : c))
+    })
     clearTimeout(saveTimers.current[cellId])
     saveTimers.current[cellId] = setTimeout(() => {
       saveCellSource(cellId, source)
