@@ -50,6 +50,12 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height 
       chartRef.current = echarts.init(containerRef.current)
     }
     chartRef.current.setOption(option, { notMerge: true })
+
+    const ro = new ResizeObserver(() => {
+      chartRef.current?.resize()
+    })
+    ro.observe(containerRef.current)
+    return () => ro.disconnect()
   }, [option])
 
   useEffect(() => {
