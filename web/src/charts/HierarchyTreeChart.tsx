@@ -1,6 +1,7 @@
 import type React from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
 import { EChartsContainer, CHART_COLORS, getTooltipStyle } from './common'
+import { ALL_CHART_TYPES } from './index'
 
 interface TreeNode {
   name: string
@@ -132,6 +133,20 @@ function HierarchyTreeConfigPanel({ config, columns, onChange }: ConfigPanelProp
 
   return (
     <div style={styles.panel}>
+      {/* Chart Type Selector */}
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Chart type</div>
+        <select
+          aria-label="Chart type"
+          style={styles.select}
+          value={config.chartType ?? 'hierarchy_tree'}
+          onChange={e => onChange({ ...config, chartType: e.target.value as any })}
+        >
+          {ALL_CHART_TYPES.map(t => (
+            <option key={t.value} value={t.value}>{t.symbol} {t.label}</option>
+          ))}
+        </select>
+      </div>
       <div style={styles.row}>
         <div style={styles.section}>
           <div style={styles.sectionLabel}>ID column</div>
