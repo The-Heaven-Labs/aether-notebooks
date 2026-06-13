@@ -147,11 +147,13 @@ function TimelineChartComponent({ data, config }: ChartProps) {
         scale: 1.5,
         label: { show: true, fontSize: 12, fontWeight: 'bold' as const }
       },
-      data: groupData.map((d) => [
-        new Date(String(d[timeCol])).getTime(), 
-        group, 
-        labelCol ? d[labelCol] : null,
-      ]),
+      data: chartData
+        .filter(d => groupByCol ? String(d[groupByCol] ?? 'Unknown') === group : true)
+        .map(d => [
+          new Date(String(d[timeCol])).getTime(), 
+          group, 
+          labelCol ? d[labelCol] : null,
+        ]),
       animation: false,
     })),
   }
