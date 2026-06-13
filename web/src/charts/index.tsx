@@ -80,6 +80,7 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
   }
 
   const mod = CHART_MODULES[chartType]
+  console.log('[ChartView] chartType:', chartType, 'mod:', mod ? mod.constructor.name : 'null')
   if (!mod) {
     return <div style={{ padding: 16, color: 'var(--text-muted)' }}>Unknown chart type: {chartType}</div>
   }
