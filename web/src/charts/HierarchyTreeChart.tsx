@@ -1,6 +1,6 @@
 import type React from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, tooltipStyle } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle } from './common'
 
 interface TreeNode {
   name: string
