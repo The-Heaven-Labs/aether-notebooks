@@ -1,11 +1,19 @@
 import type React from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, tooltipStyle, detectAxisColumns } from './common'
+import { EChartsContainer, CHART_COLORS, tooltipStyle, detectAxisColumns, isNumericType } from './common'
 
 function PieChartComponent({ data, config }: ChartProps) {
   const columns = data.columns.map(c => c.name)
-  const xAxis = config.xAxis ?? columns[0] ?? ''
-  const yAxes = config.yAxis?.length ? config.yAxis : columns.slice(1, 2)
+  
+  // Smart defaults: detect columns if not configured
+  const detected = (!config.xAxis && !config.yAxis?.length) 
+    ? detectAxisColumns(data.columns) 
+    : { xAxis: config.xAxis, yAxis: config.yAxis }
+  
+  const xAxis = config.xAxis ?? detected.xAxis ?? columns[0] ?? ''
+  const yAxes = config.yAxis?.length 
+    ? config.yAxis 
+    : (detected.yAxis?.length ? detected.yAxis : columns.filter((_, i) => i > 0 && isNumericType(data.columns[i]?.type)).slice(0, 1))
   const valueKey = yAxes[0] ?? columns[1] ?? ''
   const isDonut = config.chartType === 'donut'
 
