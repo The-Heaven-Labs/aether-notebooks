@@ -96,9 +96,6 @@ function TimelineChartComponent({ data, config }: ChartProps) {
   }
 
   // Point-in-time events - enhanced with labels and colors
-  // Pre-compute label positions for all data points
-  const labelPositions: ('top' | 'bottom')[] = chartData.map((_, i) => getLabelPosition(i, chartData))
-
   const option = {
     tooltip: {
       ...getTooltipStyle(),
@@ -122,47 +119,46 @@ function TimelineChartComponent({ data, config }: ChartProps) {
       axisLabel: { ...getAxisStyle().axisLabel, width: 60, overflow: 'truncate' as const }
     },
     dataZoom: [{ type: 'slider' as const, xAxisIndex: 0, bottom: 0, height: 20 }],
-    series: groups.map((group, gi) => {
-      const groupData = chartData
-        .filter(d => groupByCol ? String(d[groupByCol] ?? 'Unknown') === group : true)
-      
-      return {
-        name: group,
-        type: 'scatter' as const,
-        symbolSize: 14,
-        itemStyle: { 
-          color: config.seriesColors?.[group] ?? CHART_COLORS[gi % CHART_COLORS.length],
-          borderColor: colors.text,
-          borderWidth: 1,
-          shadowBlur: 4,
-          shadowColor: 'rgba(0,0,0,0.3)'
+    // Label layout to avoid overlaps
+    labelLayout: showLabels ? {
+      hideOverlap: true,
+      moveOverlap: 'shiftY' as const,
+    } : undefined,
+    series: groups.map((group, gi) => ({
+      name: group,
+      type: 'scatter' as const,
+      symbolSize: 14,
+      itemStyle: { 
+        color: config.seriesColors?.[group] ?? CHART_COLORS[gi % CHART_COLORS.length],
+        borderColor: colors.text,
+        borderWidth: 1,
+        shadowBlur: 4,
+        shadowColor: 'rgba(0,0,0,0.3)'
+      },
+      label: showLabels ? {
+        show: true,
+        position: 'top' as const,
+        formatter: (params: { data: unknown[] }) => {
+          const d = params.data as unknown[]
+          return d[2] ? truncateLabel(d[2]) : ''
         },
-        label: showLabels ? {
-          show: true,
-          position: 'top' as const,
-          formatter: (params: { data: unknown[]; dataIndex: number }) => {
-            const d = params.data as unknown[]
-            return d[2] ? truncateLabel(d[2]) : ''
-          },
-          fontSize: 10,
-          color: colors.textMuted,
-          distance: 8,
-          // Alternate positions for close points
-          positionCallback: undefined, // ECharts doesn't support this directly
-        } : undefined,
-        emphasis: {
-          scale: 1.5,
-          label: { show: true, fontSize: 12, fontWeight: 'bold' as const }
-        },
-        data: groupData.map((d, i) => [
-          new Date(String(d[timeCol])).getTime(), 
-          group, 
-          labelCol ? d[labelCol] : null,
-          labelPositions[chartData.indexOf(d)] // Store position info
-        ]),
-        animation: false,
-      }
-    }),
+        fontSize: 10,
+        color: colors.textMuted,
+        distance: 8,
+        overflow: 'truncate' as const,
+        ellipsis: '…',
+      } : undefined,
+      emphasis: {
+        scale: 1.5,
+        label: { show: true, fontSize: 12, fontWeight: 'bold' as const }
+      },
+      data: groupData.map((d) => [
+        new Date(String(d[timeCol])).getTime(), 
+        group, 
+        labelCol ? d[labelCol] : null,
+      ]),
+      animation: false,
+    })),
   }
 
   return <EChartsContainer option={option} height={350} />
