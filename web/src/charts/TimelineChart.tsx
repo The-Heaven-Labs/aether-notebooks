@@ -119,11 +119,6 @@ function TimelineChartComponent({ data, config }: ChartProps) {
       axisLabel: { ...getAxisStyle().axisLabel, width: 60, overflow: 'truncate' as const }
     },
     dataZoom: [{ type: 'slider' as const, xAxisIndex: 0, bottom: 0, height: 20 }],
-    // Label layout to avoid overlaps
-    labelLayout: showLabels ? {
-      hideOverlap: true,
-      moveOverlap: 'shiftY' as const,
-    } : undefined,
     series: groups.map((group, gi) => ({
       name: group,
       type: 'scatter' as const,
