@@ -169,6 +169,7 @@ function TimelineChartComponent({ data, config }: ChartProps) {
 }
 
 function TimelineConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
+  const showLabels = config.showLabels ?? true
   const timeCols = columns.filter(c => {
     const lower = c.toLowerCase()
     return lower.includes('time') || lower.includes('date') || lower.includes('timestamp') || lower === 'ts'
