@@ -16,7 +16,7 @@ import { yCollab } from 'y-codemirror.next'
 import { OutputRenderer } from './OutputRenderer'
 import { MarkdownView } from './MarkdownCell'
 import type { Cell, Connector } from '../types'
-import type { ChartConfig } from './ChartConfigPanel'
+import type { ChartConfig } from '../charts'
 
 // Normalize chart config from backend (handles legacy key names from earlier create_chart calls)
 function normalizeChartConfig(raw: unknown): ChartConfig | undefined {

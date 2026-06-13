@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type React from 'react'
 import type { Output, ResultSet, Column } from '../types'
-import { ChartView } from './ChartView'
-import type { ChartConfig } from './ChartConfigPanel'
+import { ChartView } from '../charts'
+import type { ChartConfig } from '../charts'
 import { ToggleLeft, Calendar, Clock, Fingerprint, Ban, Binary, Table, BarChart2, Timer, Sigma, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, X, Copy, Check, Download } from 'lucide-react'
 
 // Global state to ensure only one detail panel is open at a time across all cells
