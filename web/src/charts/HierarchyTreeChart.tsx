@@ -89,7 +89,7 @@ function HierarchyTreeComponent({ data, config }: ChartProps) {
   const treeData = buildTree(chartData, idCol, parentCol, labelCol, metricCols, config.seriesColors ?? {})
 
   const option = {
-    tooltip: { ...tooltipStyle, trigger: 'item' as const },
+    tooltip: { ...getTooltipStyle(), trigger: 'item' as const },
     series: [{
       type: 'tree' as const,
       data: treeData,

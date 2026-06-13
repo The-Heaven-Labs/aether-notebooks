@@ -62,6 +62,22 @@ export function detectAxisColumns(columns: { name: string; type?: string }[]): {
   }
 }
 
+// Detect dark mode and provide explicit colors for ECharts (canvas doesn't support CSS vars)
+function isDarkMode(): boolean {
+  return document.documentElement.getAttribute('data-theme') === 'dark'
+}
+
+export function getChartColors() {
+  const dark = isDarkMode()
+  return {
+    text: dark ? '#e8e8e8' : '#111',
+    textMuted: dark ? '#888' : '#6e6e6e',
+    border: dark ? '#2e2e2e' : '#e8e8e8',
+    bgCard: dark ? '#1c1c1c' : '#ffffff',
+    shadow: dark ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)',
+  }
+}
+
 export const tooltipStyle = {
   backgroundColor: 'var(--bg-card)',
   borderColor: 'var(--border)',
@@ -70,11 +86,34 @@ export const tooltipStyle = {
   extraCssText: 'box-shadow: var(--shadow-md);',
 }
 
+// Tooltip style with explicit colors for ECharts canvas
+export function getTooltipStyle() {
+  const c = getChartColors()
+  return {
+    backgroundColor: c.bgCard,
+    borderColor: c.border,
+    borderRadius: 4,
+    textStyle: { fontSize: 12, color: c.text },
+    extraCssText: `box-shadow: 0 2px 16px ${c.shadow};`,
+  }
+}
+
 export const axisStyle = {
   axisLine: { show: false },
   axisTick: { show: false },
   axisLabel: { fontSize: 11, color: 'var(--text-muted)' },
   splitLine: { lineStyle: { color: 'var(--border)', type: 'dashed' as const } },
+}
+
+// Axis style with explicit colors for ECharts canvas
+export function getAxisStyle() {
+  const c = getChartColors()
+  return {
+    axisLine: { show: false },
+    axisTick: { show: false },
+    axisLabel: { fontSize: 11, color: c.textMuted },
+    splitLine: { lineStyle: { color: c.border, type: 'dashed' as const } },
+  }
 }
 
 interface EChartsContainerProps {
