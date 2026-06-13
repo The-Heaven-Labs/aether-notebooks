@@ -1,6 +1,6 @@
 import type React from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, tooltipStyle, axisStyle } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors } from './common'
 
 // Detect time-like columns from column types
 function isTimeType(colType?: string): boolean {
@@ -39,11 +39,11 @@ function TimelineChartComponent({ data, config }: ChartProps) {
   if (isRangeMode) {
     // Gantt-style range bars
     const option = {
-      tooltip: { ...tooltipStyle, trigger: 'axis' as const },
+      tooltip: { ...getTooltipStyle(), trigger: 'axis' as const },
       legend: groups.length > 1 ? { top: 0, textStyle: { fontSize: 11, color: 'var(--text-muted)' } } : undefined,
       grid: { top: groups.length > 1 ? 30 : 8, right: 16, bottom: 30, left: 16, containLabel: true },
-      xAxis: { type: 'time' as const, ...axisStyle },
-      yAxis: { type: 'category' as const, data: groups, inverse: true, ...axisStyle },
+      xAxis: { type: 'time' as const, ...getAxisStyle() },
+      yAxis: { type: 'category' as const, data: groups, inverse: true, ...getAxisStyle() },
       dataZoom: [{ type: 'slider' as const, xAxisIndex: 0, bottom: 0, height: 20 }],
       series: groups.map((group, gi) => ({
         name: group,
@@ -74,7 +74,7 @@ function TimelineChartComponent({ data, config }: ChartProps) {
   // Point-in-time events
   const option = {
     tooltip: {
-      ...tooltipStyle,
+      ...getTooltipStyle(),
       trigger: 'item' as const,
       formatter: (params: { data: unknown[] }) => {
         const d = params.data as unknown[]
@@ -85,8 +85,8 @@ function TimelineChartComponent({ data, config }: ChartProps) {
     },
     legend: groups.length > 1 ? { top: 0, textStyle: { fontSize: 11, color: 'var(--text-muted)' } } : undefined,
     grid: { top: groups.length > 1 ? 30 : 8, right: 16, bottom: 30, left: 16, containLabel: true },
-    xAxis: { type: 'time' as const, ...axisStyle },
-    yAxis: { type: 'category' as const, data: groups, ...axisStyle, show: groups.length > 1 },
+    xAxis: { type: 'time' as const, ...getAxisStyle() },
+    yAxis: { type: 'category' as const, data: groups, ...getAxisStyle(), show: groups.length > 1 },
     dataZoom: [{ type: 'slider' as const, xAxisIndex: 0, bottom: 0, height: 20 }],
     series: groups.map((group, gi) => ({
       name: group,

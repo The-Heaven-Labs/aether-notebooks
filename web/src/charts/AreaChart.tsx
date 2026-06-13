@@ -1,5 +1,5 @@
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, tooltipStyle, axisStyle, detectAxisColumns, isNumericType } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, detectAxisColumns, isNumericType } from './common'
 import { AxisConfigPanel } from './AxisConfigPanel'
 
 function AreaChartComponent({ data, config }: ChartProps) {
@@ -22,11 +22,11 @@ function AreaChartComponent({ data, config }: ChartProps) {
   })
 
   const option = {
-    tooltip: { trigger: 'axis' as const, ...tooltipStyle },
-    legend: config.showLegend !== false ? { top: 0, textStyle: { fontSize: 11, color: 'var(--text-muted)' } } : undefined,
+    tooltip: { trigger: 'axis' as const, ...getTooltipStyle() },
+    legend: config.showLegend !== false ? { top: 0, textStyle: { fontSize: 11, color: getChartColors().textMuted } } : undefined,
     grid: { top: config.showLegend !== false ? 30 : 8, right: 16, bottom: 8, left: 16, containLabel: true },
-    xAxis: { type: 'category' as const, data: chartData.map(d => d[xAxis]), boundaryGap: false, ...axisStyle },
-    yAxis: { type: 'value' as const, ...axisStyle },
+    xAxis: { type: 'category' as const, data: chartData.map(d => d[xAxis]), boundaryGap: false, ...getAxisStyle() },
+    yAxis: { type: 'value' as const, ...getAxisStyle() },
     series: yAxes.map((y, i) => ({
       name: y,
       type: 'line' as const,
