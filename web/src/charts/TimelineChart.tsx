@@ -20,6 +20,7 @@ function TimelineChartComponent({ data, config }: ChartProps) {
   const labelCol = config.labelColumn
   const groupByCol = config.groupBy
   const showLabels = config.showLabels ?? true
+  const maxLabelLength = (config as any).maxLabelLength ?? 15
   const colors = getChartColors()
 
   const chartData = data.rows.map(row => {
@@ -30,6 +31,27 @@ function TimelineChartComponent({ data, config }: ChartProps) {
 
   // Sort by time
   chartData.sort((a, b) => new Date(String(a[timeCol])).getTime() - new Date(String(b[timeCol])).getTime())
+
+  // Helper to truncate label
+  const truncateLabel = (label: unknown): string => {
+    if (!label) return ''
+    const str = String(label)
+    return str.length > maxLabelLength ? str.substring(0, maxLabelLength) + '…' : str
+  }
+
+  // Helper to alternate label positions for close points
+  const getLabelPosition = (index: number, data: typeof chartData): 'top' | 'bottom' => {
+    if (index === 0) return 'top'
+    const currentTime = new Date(String(data[index][timeCol])).getTime()
+    const prevTime = new Date(String(data[index - 1][timeCol])).getTime()
+    const diff = currentTime - prevTime
+    // If points are close (within 10% of total time range), alternate
+    const totalTime = new Date(String(data[data.length - 1][timeCol])).getTime() - new Date(String(data[0][timeCol])).getTime()
+    if (totalTime > 0 && diff < totalTime * 0.1) {
+      return index % 2 === 0 ? 'top' : 'bottom'
+    }
+    return 'top'
+  }
 
   // Build groups if groupBy is set
   const groups = groupByCol
@@ -74,6 +96,9 @@ function TimelineChartComponent({ data, config }: ChartProps) {
   }
 
   // Point-in-time events - enhanced with labels and colors
+  // Pre-compute label positions for all data points
+  const labelPositions: ('top' | 'bottom')[] = chartData.map((_, i) => getLabelPosition(i, chartData))
+
   const option = {
     tooltip: {
       ...getTooltipStyle(),
@@ -94,40 +119,50 @@ function TimelineChartComponent({ data, config }: ChartProps) {
       data: groups, 
       ...getAxisStyle(), 
       show: groups.length > 1,
-      axisLabel: { ...getAxisStyle().axisLabel, width: 60, overflow: 'truncate' }
+      axisLabel: { ...getAxisStyle().axisLabel, width: 60, overflow: 'truncate' as const }
     },
     dataZoom: [{ type: 'slider' as const, xAxisIndex: 0, bottom: 0, height: 20 }],
-    series: groups.map((group, gi) => ({
-      name: group,
-      type: 'scatter' as const,
-      symbolSize: 14,
-      itemStyle: { 
-        color: config.seriesColors?.[group] ?? CHART_COLORS[gi % CHART_COLORS.length],
-        borderColor: colors.text,
-        borderWidth: 1,
-        shadowBlur: 4,
-        shadowColor: 'rgba(0,0,0,0.3)'
-      },
-      label: showLabels ? {
-        show: true,
-        position: 'right' as const,
-        formatter: (params: { data: unknown[] }) => {
-          const d = params.data as unknown[]
-          return d[2] ? String(d[2]).substring(0, 20) : ''
-        },
-        fontSize: 10,
-        color: colors.textMuted,
-        distance: 8,
-      } : undefined,
-      emphasis: {
-        scale: 1.5,
-        label: { show: true, fontSize: 12, fontWeight: 'bold' as const }
-      },
-      data: chartData
+    series: groups.map((group, gi) => {
+      const groupData = chartData
         .filter(d => groupByCol ? String(d[groupByCol] ?? 'Unknown') === group : true)
-        .map(d => [new Date(String(d[timeCol])).getTime(), group, labelCol ? d[labelCol] : null]),
-      animation: false,
-    })),
+      
+      return {
+        name: group,
+        type: 'scatter' as const,
+        symbolSize: 14,
+        itemStyle: { 
+          color: config.seriesColors?.[group] ?? CHART_COLORS[gi % CHART_COLORS.length],
+          borderColor: colors.text,
+          borderWidth: 1,
+          shadowBlur: 4,
+          shadowColor: 'rgba(0,0,0,0.3)'
+        },
+        label: showLabels ? {
+          show: true,
+          position: 'top' as const,
+          formatter: (params: { data: unknown[]; dataIndex: number }) => {
+            const d = params.data as unknown[]
+            return d[2] ? truncateLabel(d[2]) : ''
+          },
+          fontSize: 10,
+          color: colors.textMuted,
+          distance: 8,
+          // Alternate positions for close points
+          positionCallback: undefined, // ECharts doesn't support this directly
+        } : undefined,
+        emphasis: {
+          scale: 1.5,
+          label: { show: true, fontSize: 12, fontWeight: 'bold' as const }
+        },
+        data: groupData.map((d, i) => [
+          new Date(String(d[timeCol])).getTime(), 
+          group, 
+          labelCol ? d[labelCol] : null,
+          labelPositions[chartData.indexOf(d)] // Store position info
+        ]),
+        animation: false,
+      }
+    }),
   }
 
   return <EChartsContainer option={option} height={350} />
@@ -209,6 +244,23 @@ function TimelineConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
           Legend
         </label>
       </div>
+      {showLabels && (
+        <div style={styles.section}>
+          <div style={styles.sectionLabel}>Max label length</div>
+          <select
+            aria-label="Max label length"
+            style={styles.select}
+            value={(config as any).maxLabelLength ?? 15}
+            onChange={e => onChange({ ...config, maxLabelLength: Number(e.target.value) } as any)}
+          >
+            <option value={10}>10 characters</option>
+            <option value={15}>15 characters</option>
+            <option value={20}>20 characters</option>
+            <option value={30}>30 characters</option>
+            <option value={50}>50 characters</option>
+          </select>
+        </div>
+      )}
     </div>
   )
 }
