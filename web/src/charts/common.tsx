@@ -20,6 +20,48 @@ export const CHART_COLORS = [
   '#f43f5e', '#8b5cf6', '#0ea5e9', '#84cc16',
 ]
 
+// Detect numeric column types
+const NUMERIC_TYPES = new Set([
+  'int', 'int2', 'int4', 'int8', 'bigint', 'smallint', 'serial', 'bigserial',
+  'float', 'float4', 'float8', 'double', 'decimal', 'numeric', 'real',
+  'int16', 'int32', 'int64', 'int128', 'int256',
+  'uint8', 'uint16', 'uint32', 'uint64', 'uint128', 'uint256',
+  'float32', 'float64',
+])
+
+export function isNumericType(type?: string): boolean {
+  if (!type) return false
+  const t = type.toLowerCase()
+  
+  // Check base type (strip params like Decimal(10,2))
+  const base = t.replace(/\(.*\)/, '').trim()
+  if (NUMERIC_TYPES.has(base)) return true
+  
+  // Handle wrappers like Nullable(Int64), LowCardinality(Float64)
+  for (const wrapper of ['nullable', 'lowcardinality']) {
+    if (t.startsWith(wrapper + '(') && t.endsWith(')')) {
+      const inner = t.slice(wrapper.length + 1, -1).trim()
+      // Check inner type (may have its own params)
+      const innerBase = inner.replace(/\(.*\)/, '').trim()
+      if (NUMERIC_TYPES.has(innerBase)) return true
+    }
+  }
+  return false
+}
+
+// Auto-detect: first text-like column for xAxis, first numeric columns for yAxis
+export function detectAxisColumns(columns: { name: string; type?: string }[]): { xAxis?: string; yAxis?: string[] } {
+  const textCol = columns.find(c => {
+    const t = (c.type ?? '').toLowerCase()
+    return t.includes('text') || t.includes('varchar') || t.includes('char') || t.includes('date') || t.includes('time') || !c.type
+  })
+  const numericCols = columns.filter(c => isNumericType(c.type)).map(c => c.name)
+  return {
+    xAxis: textCol?.name ?? columns[0]?.name,
+    yAxis: numericCols.length > 0 ? numericCols : columns.slice(1, 2).map(c => c.name),
+  }
+}
+
 export const tooltipStyle = {
   backgroundColor: 'var(--bg-card)',
   borderColor: 'var(--border)',
