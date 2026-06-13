@@ -1,6 +1,6 @@
 import type React from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, tooltipStyle } from './common'
+import { EChartsContainer, CHART_COLORS, tooltipStyle, detectAxisColumns } from './common'
 
 function PieChartComponent({ data, config }: ChartProps) {
   const columns = data.columns.map(c => c.name)
@@ -85,6 +85,6 @@ export const PieChartModule: ChartModule = {
   Component: PieChartComponent,
   ConfigPanel: PieConfigPanel,
   defaultConfig: { chartType: 'pie', showLegend: true, showLabels: true, skipEmpty: true },
-  detectColumns: (columns) => ({ xAxis: columns[0]?.name, yAxis: columns.slice(1, 2).map(c => c.name) }),
+  detectColumns: (columns) => detectAxisColumns(columns),
   requirements: { minColumns: 2 },
 }

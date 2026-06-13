@@ -1,5 +1,5 @@
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, tooltipStyle, axisStyle } from './common'
+import { EChartsContainer, CHART_COLORS, tooltipStyle, axisStyle, detectAxisColumns } from './common'
 import { AxisConfigPanel } from './AxisConfigPanel'
 
 function ScatterChartComponent({ data, config }: ChartProps) {
@@ -16,7 +16,7 @@ function ScatterChartComponent({ data, config }: ChartProps) {
   const option = {
     tooltip: { ...tooltipStyle },
     legend: config.showLegend !== false && yAxes.length > 1 ? { top: 0, textStyle: { fontSize: 11, color: 'var(--text-muted)' } } : undefined,
-    grid: { top: config.showLegend !== false && yAxes.length > 1 ? 30 : 8, right: 16, bottom: 8, left: 0, containLabel: true },
+    grid: { top: config.showLegend !== false && yAxes.length > 1 ? 30 : 8, right: 16, bottom: 8, left: 16, containLabel: true },
     xAxis: { type: 'value' as const, name: xAxis, ...axisStyle },
     yAxis: { type: 'value' as const, ...axisStyle },
     series: yAxes.map((y, i) => ({
@@ -40,6 +40,6 @@ export const ScatterChartModule: ChartModule = {
   Component: ScatterChartComponent,
   ConfigPanel: ScatterConfigPanel,
   defaultConfig: { chartType: 'scatter', showLegend: true, showGrid: true, showLabels: false, skipEmpty: true },
-  detectColumns: (columns) => ({ xAxis: columns[0]?.name, yAxis: columns.slice(1, 2).map(c => c.name) }),
+  detectColumns: (columns) => detectAxisColumns(columns),
   requirements: { minColumns: 2 },
 }
