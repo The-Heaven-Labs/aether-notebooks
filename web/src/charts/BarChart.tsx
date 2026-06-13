@@ -1,11 +1,19 @@
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, tooltipStyle, axisStyle } from './common'
+import { EChartsContainer, CHART_COLORS, tooltipStyle, axisStyle, detectAxisColumns, isNumericType } from './common'
 import { AxisConfigPanel } from './AxisConfigPanel'
 
 function BarChartComponent({ data, config }: ChartProps) {
   const columns = data.columns.map(c => c.name)
-  const xAxis = config.xAxis ?? columns[0] ?? ''
-  const yAxes = config.yAxis?.length ? config.yAxis : columns.slice(1, 2)
+  
+  // Smart defaults: detect numeric columns for yAxis if not configured
+  const detected = (!config.xAxis && !config.yAxis?.length) 
+    ? detectAxisColumns(data.columns) 
+    : { xAxis: config.xAxis, yAxis: config.yAxis }
+  
+  const xAxis = config.xAxis ?? detected.xAxis ?? columns[0] ?? ''
+  const yAxes = config.yAxis?.length 
+    ? config.yAxis 
+    : (detected.yAxis?.length ? detected.yAxis : columns.filter((_, i) => i > 0 && isNumericType(data.columns[i]?.type)).slice(0, 1))
   const isStacked = config.chartType === 'stacked_bar'
 
   const chartData = data.rows.map(row => {
@@ -17,7 +25,7 @@ function BarChartComponent({ data, config }: ChartProps) {
   const option = {
     tooltip: { trigger: 'axis' as const, ...tooltipStyle },
     legend: config.showLegend !== false ? { top: 0, textStyle: { fontSize: 11, color: 'var(--text-muted)' } } : undefined,
-    grid: { top: config.showLegend !== false ? 30 : 8, right: 16, bottom: 8, left: 0, containLabel: true },
+    grid: { top: config.showLegend !== false ? 30 : 8, right: 16, bottom: 8, left: 16, containLabel: true },
     xAxis: { type: 'category' as const, data: chartData.map(d => d[xAxis]), ...axisStyle },
     yAxis: { type: 'value' as const, ...axisStyle },
     series: yAxes.map((y, i) => ({
@@ -45,6 +53,6 @@ export const BarChartModule: ChartModule = {
   Component: BarChartComponent,
   ConfigPanel: BarConfigPanel,
   defaultConfig: { chartType: 'bar', showLegend: true, showGrid: true, showLabels: false, skipEmpty: true },
-  detectColumns: (columns) => ({ xAxis: columns[0]?.name, yAxis: columns.slice(1, 2).map(c => c.name) }),
+  detectColumns: (columns) => detectAxisColumns(columns),
   requirements: { minColumns: 2 },
 }
