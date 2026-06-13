@@ -1,5 +1,5 @@
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, tooltipStyle, axisStyle, detectAxisColumns, isNumericType } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, detectAxisColumns, isNumericType } from './common'
 import { AxisConfigPanel } from './AxisConfigPanel'
 
 function LineChartComponent({ data, config }: ChartProps) {
@@ -22,11 +22,11 @@ function LineChartComponent({ data, config }: ChartProps) {
   })
 
   const option = {
-    tooltip: { trigger: 'axis' as const, ...tooltipStyle },
-    legend: config.showLegend !== false ? { top: 0, textStyle: { fontSize: 11, color: 'var(--text-muted)' } } : undefined,
+    tooltip: { trigger: 'axis' as const, ...getTooltipStyle() },
+    legend: config.showLegend !== false ? { top: 0, textStyle: { fontSize: 11, color: getChartColors().textMuted } } : undefined,
     grid: { top: config.showLegend !== false ? 30 : 8, right: 16, bottom: 8, left: 16, containLabel: true },
-    xAxis: { type: 'category' as const, data: chartData.map(d => d[xAxis]), ...axisStyle },
-    yAxis: { type: 'value' as const, ...axisStyle },
+    xAxis: { type: 'category' as const, data: chartData.map(d => d[xAxis]), ...getAxisStyle() },
+    yAxis: { type: 'value' as const, ...getAxisStyle() },
     series: yAxes.map((y, i) => ({
       name: y,
       type: 'line' as const,
@@ -36,7 +36,7 @@ function LineChartComponent({ data, config }: ChartProps) {
       symbolSize: 6,
       itemStyle: { color: config.seriesColors?.[y] ?? CHART_COLORS[i % CHART_COLORS.length] },
       lineStyle: { width: 2 },
-      label: config.showLabels ? { show: true, position: 'top' as const, fontSize: 10, color: 'var(--text-muted)' } : undefined,
+      label: config.showLabels ? { show: true, position: 'top' as const, fontSize: 10, color: getChartColors().textMuted } : undefined,
       animation: false,
     })),
   }

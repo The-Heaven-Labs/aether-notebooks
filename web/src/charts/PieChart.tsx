@@ -1,6 +1,6 @@
 import type React from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, tooltipStyle, detectAxisColumns, isNumericType } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getChartColors, detectAxisColumns, isNumericType } from './common'
 
 function PieChartComponent({ data, config }: ChartProps) {
   const columns = data.columns.map(c => c.name)
@@ -24,7 +24,7 @@ function PieChartComponent({ data, config }: ChartProps) {
   })
 
   const option = {
-    tooltip: { trigger: 'item' as const, ...tooltipStyle, formatter: '{b}: {c} ({d}%)' },
+    tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: '{b}: {c} ({d}%)' },
     legend: config.showLegend !== false ? { orient: 'vertical' as const, right: 10, top: 'center', textStyle: { fontSize: 11, color: 'var(--text-muted)' } } : undefined,
     series: [{
       type: 'pie' as const,
