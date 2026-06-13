@@ -707,7 +707,7 @@ func (e *Engine) buildNotebookContext(notebookID string) string {
 		if err == nil {
 			ctx += fmt.Sprintf("\nConnector: %q (type: %s, id: %s)", connName, connType, *connectorID)
 			ctx += "\nNotebook cells: type 'code' with language 'sql' for database queries, type 'text' with language 'markdown' for documentation."
-			ctx += "\nCharts: Use create_chart to turn a cell's table output into a chart (bar, line, scatter, pie). Use update_chart to modify an existing chart's config. The frontend will render the chart automatically from the saved config."
+			ctx += "\nCharts: Use create_chart to turn a cell's table output into a chart. Types: bar, stacked_bar, line, area, scatter, pie, donut, timeline, hierarchy_tree. For timeline: use time_column, end_time_column (optional), label_column. For hierarchy_tree: use id_column, parent_id_column, label_column. Use update_chart to modify an existing chart's config. The frontend renders automatically from saved config."
 		}
 	}
 
