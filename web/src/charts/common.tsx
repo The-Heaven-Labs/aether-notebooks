@@ -1,5 +1,4 @@
-import { memo } from 'react'
-import ReactEChartsCore from 'echarts-for-react/lib/core'
+import { memo, useRef, useEffect } from 'react'
 import * as echarts from 'echarts/core'
 import { BarChart, LineChart, ScatterChart, PieChart, TreeChart } from 'echarts/charts'
 import {
@@ -42,15 +41,23 @@ interface EChartsContainerProps {
 }
 
 export const EChartsContainer = memo(function EChartsContainer({ option, height = 300 }: EChartsContainerProps) {
-  return (
-    <div data-testid="chart-container">
-      <ReactEChartsCore
-        echarts={echarts}
-        option={option}
-        style={{ height, width: '100%' }}
-        notMerge
-        lazyUpdate
-      />
-    </div>
-  )
+  const containerRef = useRef<HTMLDivElement>(null)
+  const chartRef = useRef<echarts.ECharts | null>(null)
+
+  useEffect(() => {
+    if (!containerRef.current) return
+    if (!chartRef.current) {
+      chartRef.current = echarts.init(containerRef.current)
+    }
+    chartRef.current.setOption(option, { notMerge: true })
+  }, [option])
+
+  useEffect(() => {
+    return () => {
+      chartRef.current?.dispose()
+      chartRef.current = null
+    }
+  }, [])
+
+  return <div data-testid="chart-container" ref={containerRef} style={{ height, width: '100%' }} />
 })
