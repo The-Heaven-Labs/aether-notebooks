@@ -32,6 +32,16 @@ function normalizeChartConfig(raw: unknown): ChartConfig | undefined {
     showLabels: obj.showLabels as boolean | undefined,
     skipEmpty: obj.skipEmpty as boolean | undefined,
     seriesColors: obj.seriesColors as Record<string, string> | undefined,
+    // Timeline fields
+    timeColumn: obj.timeColumn as string | undefined,
+    endTimeColumn: obj.endTimeColumn as string | undefined,
+    labelColumn: obj.labelColumn as string | undefined,
+    groupBy: obj.groupBy as string | undefined,
+    // Hierarchy tree fields
+    idColumn: obj.idColumn as string | undefined,
+    parentIdColumn: obj.parentIdColumn as string | undefined,
+    metricColumns: obj.metricColumns as string[] | undefined,
+    layout: obj.layout as 'top-down' | 'left-to-right' | undefined,
   }
 }
 
