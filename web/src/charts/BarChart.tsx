@@ -46,7 +46,8 @@ function BarChartComponent({ data, config }: ChartProps) {
 }
 
 function BarConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
-  return <AxisConfigPanel config={config} columns={columns} onChange={onChange} showStack />
+  const isPie = config.chartType === 'pie' || config.chartType === 'donut'
+  return <AxisConfigPanel config={config} columns={columns} onChange={onChange} showStack={!isPie} showPieOptions={isPie} />
 }
 
 export const BarChartModule: ChartModule = {
