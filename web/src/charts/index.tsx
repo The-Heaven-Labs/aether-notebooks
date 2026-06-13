@@ -87,13 +87,28 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
 
   if (!data || columns.length < (mod.requirements.minColumns ?? 2)) {
     return (
-      <div style={styles.emptyGuidance}>
-        <div style={styles.emptyIcon}>📊</div>
-        <p style={styles.emptyTitle}>Not enough data to chart</p>
-        <p style={styles.emptyText}>
-          This chart needs at least {mod.requirements.minColumns} column(s).
-          Run a query that returns the right data, then switch to chart view.
-        </p>
+      <div style={styles.wrap}>
+        <div style={styles.emptyGuidance}>
+          <div style={styles.emptyIcon}>📊</div>
+          <p style={styles.emptyTitle}>Not enough data to chart</p>
+          <p style={styles.emptyText}>
+            This chart needs at least {mod.requirements.minColumns} column(s).
+            Switch to a different chart type or run a query with more columns.
+          </p>
+        </div>
+        <div>
+          <button
+            style={styles.configBtn}
+            onClick={() => setShowConfig(v => !v)}
+            aria-label={showConfig ? 'Close chart config' : 'Configure chart'}
+          >
+            <Settings2 size={13} />
+            {showConfig ? ' Close' : ' Configure'}
+          </button>
+          {showConfig && (
+            <mod.ConfigPanel config={effectiveConfig} columns={columns} onChange={handleConfigChange} />
+          )}
+        </div>
       </div>
     )
   }
