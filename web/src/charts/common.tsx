@@ -89,9 +89,16 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height 
   useEffect(() => {
     if (!containerRef.current) return
     if (!chartRef.current) {
-      chartRef.current = echarts.init(containerRef.current)
+      chartRef.current = echarts.init(containerRef.current, undefined, {
+        renderer: 'canvas',
+      })
     }
-    chartRef.current.setOption(option, { notMerge: true })
+    // Merge transparent background for theme compatibility
+    const themedOption = {
+      ...option,
+      backgroundColor: 'transparent',
+    }
+    chartRef.current.setOption(themedOption, { notMerge: true })
 
     const ro = new ResizeObserver(() => {
       chartRef.current?.resize()

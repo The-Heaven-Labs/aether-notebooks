@@ -1,5 +1,6 @@
 import type React from 'react'
-import type { ChartConfig } from './types'
+import type { ChartConfig, ChartType } from './types'
+import { ALL_CHART_TYPES } from './index'
 
 interface AxisConfigPanelProps {
   config: ChartConfig
@@ -9,8 +10,28 @@ interface AxisConfigPanelProps {
 }
 
 export function AxisConfigPanel({ config, columns, onChange, showStack }: AxisConfigPanelProps) {
+  // Filter to axis-based chart types only
+  const axisChartTypes = ALL_CHART_TYPES.filter(t => 
+    ['bar', 'stacked_bar', 'line', 'area', 'scatter'].includes(t.value)
+  )
+  
   return (
     <div style={styles.panel}>
+      <div style={styles.row}>
+        <div style={styles.section}>
+          <div style={styles.sectionLabel}>Chart type</div>
+          <select
+            aria-label="Chart type"
+            style={styles.select}
+            value={config.chartType ?? 'bar'}
+            onChange={e => onChange({ ...config, chartType: e.target.value as ChartType })}
+          >
+            {axisChartTypes.map(t => (
+              <option key={t.value} value={t.value}>{t.symbol} {t.label}</option>
+            ))}
+          </select>
+        </div>
+      </div>
       <div style={styles.row}>
         <div style={styles.section}>
           <div style={styles.sectionLabel}>X axis</div>
