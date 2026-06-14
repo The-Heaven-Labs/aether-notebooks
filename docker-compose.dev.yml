@@ -51,6 +51,7 @@ services:
       - ./dev/clickhouse-seed.sql:/docker-entrypoint-initdb.d/seed.sql:ro
       - ./dev/clickhouse-seed-cloudtrail.sql:/docker-entrypoint-initdb.d/seed-cloudtrail.sql:ro
       - ./dev/clickhouse-seed-linux-processes.sql:/docker-entrypoint-initdb.d/seed-linux-processes.sql:ro
+      - ./dev/clickhouse-seed-timeline.sql:/docker-entrypoint-initdb.d/seed-timeline.sql:ro
       - chdata:/var/lib/clickhouse
     ulimits:
       nofile:

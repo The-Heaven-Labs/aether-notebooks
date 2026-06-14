@@ -398,6 +398,39 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
     setDetail({ rowIndex: newRow, colIndex: newCol, value, colName: rs.columns[newCol].name })
   }, [detail, displayRows, rs.columns])
 
+  const memoizedTbody = useMemo(() => (
+    <tbody>
+      {displayRows.map((row, i) => (
+        <tr key={i}>
+          <td style={{ ...styles.td, ...styles.rowNumTd }}>
+            <span style={styles.rowNum}>{i + 1}</span>
+          </td>
+          {(row as unknown[]).map((cell, j) => {
+            const strValue = typeof cell === 'object' ? JSON.stringify(cell) : String(cell)
+            const isTruncated = strValue.length > MAX_CELL_DISPLAY
+            const displayValue = isTruncated ? strValue.slice(0, MAX_CELL_DISPLAY) + '…' : strValue
+            const isObj = typeof cell === 'object'
+            return (
+              <td key={j} data-row={i} data-col={j} style={styles.td}>
+                <span
+                  style={isTruncated ? styles.truncatedCell : styles.clickableCell}
+                  onClick={() => openDetail(i, j, strValue)}
+                  title={isTruncated ? 'Click to view full value' : undefined}
+                >
+                  {cell === null ? (
+                    <span style={styles.null}>null</span>
+                  ) : (
+                    <span style={isObj ? styles.json : undefined}>{displayValue}</span>
+                  )}
+                </span>
+              </td>
+            )
+          })}
+        </tr>
+      ))}
+    </tbody>
+  ), [displayRows, rs.columns, openDetail])
+
   useEffect(() => {
     if (activeCellRef.current) {
       const headerHeight = theadRef.current?.offsetHeight ?? 0
@@ -490,38 +523,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
                   })}
                 </tr>
               </thead>
-              {useMemo(() => (
-              <tbody>
-                {displayRows.map((row, i) => (
-                  <tr key={i}>
-                    <td style={{ ...styles.td, ...styles.rowNumTd }}>
-                      <span style={styles.rowNum}>{i + 1}</span>
-                    </td>
-                    {(row as unknown[]).map((cell, j) => {
-                      const strValue = typeof cell === 'object' ? JSON.stringify(cell) : String(cell)
-                      const isTruncated = strValue.length > MAX_CELL_DISPLAY
-                      const displayValue = isTruncated ? strValue.slice(0, MAX_CELL_DISPLAY) + '…' : strValue
-                      const isObj = typeof cell === 'object'
-                      return (
-                        <td key={j} data-row={i} data-col={j} style={styles.td}>
-                          <span
-                            style={isTruncated ? styles.truncatedCell : styles.clickableCell}
-                            onClick={() => openDetail(i, j, strValue)}
-                            title={isTruncated ? 'Click to view full value' : undefined}
-                          >
-                            {cell === null ? (
-                              <span style={styles.null}>null</span>
-                            ) : (
-                              <span style={isObj ? styles.json : undefined}>{displayValue}</span>
-                            )}
-                          </span>
-                        </td>
-                      )
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-              ), [displayRows, rs.columns, openDetail])}
+              {memoizedTbody}
             </table>
           </div>
 
