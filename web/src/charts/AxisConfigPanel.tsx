@@ -8,13 +8,11 @@ interface AxisConfigPanelProps {
   onChange: (config: ChartConfig) => void
   showStack?: boolean
   showPieOptions?: boolean
-  showTimelineOptions?: boolean
-  showTreeOptions?: boolean
 }
 
 export function AxisConfigPanel({ 
   config, columns, onChange, 
-  showStack, showPieOptions, showTimelineOptions, showTreeOptions 
+  showStack, showPieOptions 
 }: AxisConfigPanelProps) {
   return (
     <div style={styles.panel}>
@@ -35,188 +33,54 @@ export function AxisConfigPanel({
         </div>
       </div>
 
-      {/* Timeline-specific options */}
-      {showTimelineOptions && (
-        <>
-          <div style={styles.row}>
-            <div style={styles.section}>
-              <div style={styles.sectionLabel}>Time column</div>
-              <select
-                aria-label="Time column"
-                style={styles.select}
-                value={config.timeColumn ?? ''}
-                onChange={e => onChange({ ...config, timeColumn: e.target.value })}
-              >
-                {columns.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            <div style={styles.section}>
-              <div style={styles.sectionLabel}>End time column <span style={{ fontWeight: 400, textTransform: 'none' }}>(optional)</span></div>
-              <select
-                aria-label="End time column"
-                style={styles.select}
-                value={config.endTimeColumn ?? ''}
-                onChange={e => onChange({ ...config, endTimeColumn: e.target.value || undefined })}
-              >
-                <option value="">None (point events)</option>
-                {columns.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
+      {/* Axis-based options */}
+      <div style={styles.row}>
+        <div style={styles.section}>
+          <div style={styles.sectionLabel}>{showPieOptions ? 'Name column' : 'X axis'}</div>
+          <select
+            aria-label={showPieOptions ? 'Name column' : 'X axis'}
+            style={styles.select}
+            value={config.xAxis ?? ''}
+            onChange={e => onChange({ ...config, xAxis: e.target.value })}
+          >
+            {columns.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div style={styles.section}>
+          <div style={styles.sectionLabel}>{showPieOptions ? 'Value column' : 'Y axis'} <span style={{ fontWeight: 400, textTransform: 'none' }}>(Ctrl+click multi)</span></div>
+          <select
+            aria-label={showPieOptions ? 'Value column' : 'Y axis'}
+            style={{ ...styles.select, minHeight: 56 }}
+            multiple={!showPieOptions}
+            value={showPieOptions ? (config.yAxis?.[0] ?? '') : (config.yAxis ?? [])}
+            onChange={e => {
+              if (showPieOptions) {
+                onChange({ ...config, yAxis: [e.target.value] })
+              } else {
+                const selected = Array.from(e.target.selectedOptions).map(o => o.value)
+                onChange({ ...config, yAxis: selected })
+              }
+            }}
+          >
+            {columns.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+      </div>
+      {showStack && (
+        <div style={styles.row}>
+          <div style={styles.section}>
+            <div style={styles.sectionLabel}>Stack</div>
+            <select
+              aria-label="Stack"
+              style={styles.select}
+              value={config.chartType === 'stacked_bar' ? 'yes' : 'no'}
+              onChange={e => onChange({ ...config, chartType: e.target.value === 'yes' ? 'stacked_bar' : 'bar' })}
+            >
+              <option value="no">No</option>
+              <option value="yes">Yes</option>
+            </select>
           </div>
-          <div style={styles.row}>
-            <div style={styles.section}>
-              <div style={styles.sectionLabel}>Label column</div>
-              <select
-                aria-label="Label column"
-                style={styles.select}
-                value={config.labelColumn ?? ''}
-                onChange={e => onChange({ ...config, labelColumn: e.target.value || undefined })}
-              >
-                <option value="">None</option>
-                {columns.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            <div style={styles.section}>
-              <div style={styles.sectionLabel}>Group by</div>
-              <select
-                aria-label="Group by"
-                style={styles.select}
-                value={config.groupBy ?? ''}
-                onChange={e => onChange({ ...config, groupBy: e.target.value || undefined })}
-              >
-                <option value="">No grouping</option>
-                {columns.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Tree-specific options */}
-      {showTreeOptions && (
-        <>
-          <div style={styles.row}>
-            <div style={styles.section}>
-              <div style={styles.sectionLabel}>ID column</div>
-              <select
-                aria-label="ID column"
-                style={styles.select}
-                value={config.idColumn ?? ''}
-                onChange={e => onChange({ ...config, idColumn: e.target.value })}
-              >
-                {columns.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            <div style={styles.section}>
-              <div style={styles.sectionLabel}>Parent ID column</div>
-              <select
-                aria-label="Parent ID column"
-                style={styles.select}
-                value={config.parentIdColumn ?? ''}
-                onChange={e => onChange({ ...config, parentIdColumn: e.target.value })}
-              >
-                {columns.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-          </div>
-          <div style={styles.row}>
-            <div style={styles.section}>
-              <div style={styles.sectionLabel}>Label column</div>
-              <select
-                aria-label="Label column"
-                style={styles.select}
-                value={config.labelColumn ?? ''}
-                onChange={e => onChange({ ...config, labelColumn: e.target.value || undefined })}
-              >
-                <option value="">Use ID</option>
-                {columns.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            <div style={styles.section}>
-              <div style={styles.sectionLabel}>Layout</div>
-              <select
-                aria-label="Layout direction"
-                style={styles.select}
-                value={config.layout ?? 'top-down'}
-                onChange={e => onChange({ ...config, layout: e.target.value as 'top-down' | 'left-to-right' })}
-              >
-                <option value="top-down">Top-down</option>
-                <option value="left-to-right">Left-to-right</option>
-              </select>
-            </div>
-          </div>
-          <div style={styles.row}>
-            <div style={styles.section}>
-              <div style={styles.sectionLabel}>Metrics <span style={{ fontWeight: 400, textTransform: 'none' }}>(Ctrl+click multi)</span></div>
-              <select
-                aria-label="Metrics"
-                style={{ ...styles.select, minHeight: 56 }}
-                multiple
-                value={config.metricColumns ?? []}
-                onChange={e => {
-                  const selected = Array.from(e.target.selectedOptions).map(o => o.value)
-                  onChange({ ...config, metricColumns: selected })
-                }}
-              >
-                {columns.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Axis-based options (bar, line, area, scatter, pie) */}
-      {!showTimelineOptions && !showTreeOptions && (
-        <>
-          <div style={styles.row}>
-            <div style={styles.section}>
-              <div style={styles.sectionLabel}>{showPieOptions ? 'Name column' : 'X axis'}</div>
-              <select
-                aria-label={showPieOptions ? 'Name column' : 'X axis'}
-                style={styles.select}
-                value={config.xAxis ?? ''}
-                onChange={e => onChange({ ...config, xAxis: e.target.value })}
-              >
-                {columns.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            <div style={styles.section}>
-              <div style={styles.sectionLabel}>{showPieOptions ? 'Value column' : 'Y axis'} <span style={{ fontWeight: 400, textTransform: 'none' }}>(Ctrl+click multi)</span></div>
-              <select
-                aria-label={showPieOptions ? 'Value column' : 'Y axis'}
-                style={{ ...styles.select, minHeight: 56 }}
-                multiple={!showPieOptions}
-                value={showPieOptions ? (config.yAxis?.[0] ?? '') : (config.yAxis ?? [])}
-                onChange={e => {
-                  if (showPieOptions) {
-                    onChange({ ...config, yAxis: [e.target.value] })
-                  } else {
-                    const selected = Array.from(e.target.selectedOptions).map(o => o.value)
-                    onChange({ ...config, yAxis: selected })
-                  }
-                }}
-              >
-                {columns.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-          </div>
-          {showStack && (
-            <div style={styles.row}>
-              <div style={styles.section}>
-                <div style={styles.sectionLabel}>Stack</div>
-                <select
-                  aria-label="Stack"
-                  style={styles.select}
-                  value={config.chartType === 'stacked_bar' ? 'yes' : 'no'}
-                  onChange={e => onChange({ ...config, chartType: e.target.value === 'yes' ? 'stacked_bar' : 'bar' })}
-                >
-                  <option value="no">No</option>
-                  <option value="yes">Yes</option>
-                </select>
-              </div>
-            </div>
-          )}
-        </>
+        </div>
       )}
 
       {/* Title */}
