@@ -42,6 +42,7 @@ function normalizeChartConfig(raw: unknown): ChartConfig | undefined {
     parentIdColumn: obj.parentIdColumn as string | undefined,
     metricColumns: obj.metricColumns as string[] | undefined,
     layout: obj.layout as 'top-down' | 'left-to-right' | undefined,
+    nodeSpacing: obj.nodeSpacing as number | undefined,
   }
 }
 
