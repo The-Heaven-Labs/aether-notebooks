@@ -1,14 +1,6 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors } from './common'
-import { ALL_CHART_TYPES } from './index'
-
-// Detect time-like columns from column types
-function isTimeType(colType?: string): boolean {
-  if (!colType) return false
-  const t = colType.toLowerCase()
-  return t.includes('date') || t.includes('time') || t.includes('timestamp') || t === 'ts'
-}
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, useRowsAsObjects, isTimeType } from './common'
 
 function detectTimeColumns(columns: { name: string; type?: string }[]): string[] {
   return columns.filter(c => isTimeType(c.type)).map(c => c.name)
@@ -21,18 +13,15 @@ function TimelineChartComponent({ data, config }: ChartProps) {
   const labelCol = config.labelColumn
   const groupByCol = config.groupBy
   const showLabels = config.showLabels ?? true
-  const maxLabelLength = (config as any).maxLabelLength ?? 15
+  const maxLabelLength = config.maxLabelLength ?? 15
   const colors = useMemo(() => getChartColors(), [])
 
+  const rowsAsObjects = useRowsAsObjects(data)
   const chartData = useMemo(() => {
-    const mapped = data.rows.map(row => {
-      const obj: Record<string, unknown> = {}
-      columns.forEach((col, i) => { obj[col] = row[i] })
-      return obj
-    }).filter(d => d[timeCol] != null)
+    const mapped = rowsAsObjects.filter(d => d[timeCol] != null)
     mapped.sort((a, b) => new Date(String(a[timeCol])).getTime() - new Date(String(b[timeCol])).getTime())
     return mapped
-  }, [data.rows, columns, timeCol])
+  }, [rowsAsObjects, timeCol])
 
   const groups = useMemo(() => {
     return groupByCol
@@ -163,20 +152,6 @@ function TimelineConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
 
   return (
     <div style={styles.panel}>
-      {/* Chart Type Selector */}
-      <div style={styles.section}>
-        <div style={styles.sectionLabel}>Chart type</div>
-        <select
-          aria-label="Chart type"
-          style={styles.select}
-          value={config.chartType ?? 'timeline'}
-          onChange={e => onChange({ ...config, chartType: e.target.value as any })}
-        >
-          {ALL_CHART_TYPES.map(t => (
-            <option key={t.value} value={t.value}>{t.symbol} {t.label}</option>
-          ))}
-        </select>
-      </div>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Time column</div>
         <select
@@ -251,8 +226,8 @@ function TimelineConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
           <select
             aria-label="Max label length"
             style={styles.select}
-            value={(config as any).maxLabelLength ?? 15}
-            onChange={e => onChange({ ...config, maxLabelLength: Number(e.target.value) } as any)}
+            value={config.maxLabelLength ?? 15}
+            onChange={e => onChange({ ...config, maxLabelLength: Number(e.target.value) })}
           >
             <option value={10}>10 characters</option>
             <option value={15}>15 characters</option>

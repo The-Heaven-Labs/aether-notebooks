@@ -1,7 +1,6 @@
 import { useRef, useCallback, useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getChartColors, walkTree, applyCollapsedToTree } from './common'
-import { ALL_CHART_TYPES } from './index'
+import { EChartsContainer, CHART_COLORS, getChartColors, useRowsAsObjects, walkTree, applyCollapsedToTree } from './common'
 import type { ECharts } from 'echarts/core'
 
 interface TreeNode {
@@ -11,7 +10,6 @@ interface TreeNode {
   collapsed?: boolean
 }
 
-// Detect parent-child ID columns
 function detectParentChild(columns: { name: string; type?: string }[], rows: unknown[][]): { idCol: string; parentCol: string } | null {
   const idCols = columns.filter(c => {
     const t = (c.type ?? '').toLowerCase()
@@ -35,7 +33,6 @@ function detectParentChild(columns: { name: string; type?: string }[], rows: unk
   return { idCol: idCols[0].name, parentCol: idCols[1].name }
 }
 
-// Build tree from flat rows
 function buildTree(
   rows: Record<string, unknown>[],
   idCol: string,
@@ -75,15 +72,6 @@ function buildTree(
   return roots
 }
 
-// Apply collapsed state to tree nodes
-function applyCollapsedState(nodes: TreeNode[], collapsedSet: Set<string>): TreeNode[] {
-  return nodes.map(node => ({
-    ...node,
-    collapsed: collapsedSet.has(node.name),
-    children: node.children ? applyCollapsedState(node.children, collapsedSet) : undefined,
-  }))
-}
-
 function HierarchyTreeComponent({ data, config }: ChartProps) {
   const chartColors = useMemo(() => getChartColors(), [])
   const chartInstance = useRef<echarts.ECharts | null>(null)
@@ -101,10 +89,8 @@ function HierarchyTreeComponent({ data, config }: ChartProps) {
         const data = Array.isArray(series.data) ? series.data : [series.data]
         walkTree(data, n => { if (n.collapsed) collapsed.add(n.name) })
 
-        // Restore resets zoom/pan (but also expands all nodes)
         chart.dispatchAction({ type: 'restore' })
 
-        // Re-apply collapsed state after restore
         if (collapsed.size > 0) {
           const after = chart.getOption() as any
           const afterSeries = after?.series?.[0]
@@ -126,17 +112,8 @@ function HierarchyTreeComponent({ data, config }: ChartProps) {
   const isHorizontal = config.layout === 'left-to-right'
   const nodeSpacing = config.nodeSpacing ?? 50
 
-  // Memoize chartData to avoid recreating on every render
-  const chartData = useMemo(
-    () => data.rows.map(row => {
-      const obj: Record<string, unknown> = {}
-      columns.forEach((col, i) => { obj[col] = row[i] })
-      return obj
-    }),
-    [data.rows, columns]
-  )
+  const chartData = useRowsAsObjects(data)
 
-  // Memoize treeData to avoid rebuilding on every render
   const treeData = useMemo(
     () => buildTree(chartData, idCol, parentCol, labelCol, metricCols, config.seriesColors ?? {}),
     [chartData, idCol, parentCol, labelCol, metricCols, config.seriesColors]
@@ -145,7 +122,6 @@ function HierarchyTreeComponent({ data, config }: ChartProps) {
   const rowCount = data.rows.length
   const hasMetrics = metricCols.length > 0
 
-  // nodeSpacing controls horizontal spacing — higher = more room between nodes
   const horizontalMargin = isHorizontal ? 15 : Math.max(5, 25 - nodeSpacing / 5)
   const rightMargin = isHorizontal ? 20 : Math.max(5, 25 - nodeSpacing / 5)
   const bottomMargin = isHorizontal ? '8%' : (hasMetrics ? '30%' : '12%')
@@ -186,8 +162,8 @@ function HierarchyTreeComponent({ data, config }: ChartProps) {
       expandAndCollapse: true,
       animationDuration: 200,
       animationDurationUpdate: 200,
-      lineStyle: { color: 'var(--border)', width: 1.5, curveness: 0.5 },
-      itemStyle: { borderColor: 'var(--bg-card)' },
+      lineStyle: { color: chartColors.border, width: 1.5, curveness: 0.5 },
+      itemStyle: { borderColor: chartColors.bgCard },
     }],
   }), [treeDataWithState, isHorizontal, horizontalMargin, rightMargin, bottomMargin])
 
@@ -216,20 +192,6 @@ function HierarchyTreeConfigPanel({ config, columns, onChange }: ConfigPanelProp
 
   return (
     <div style={styles.panel}>
-      {/* Chart Type Selector */}
-      <div style={styles.section}>
-        <div style={styles.sectionLabel}>Chart type</div>
-        <select
-          aria-label="Chart type"
-          style={styles.select}
-          value={config.chartType ?? 'hierarchy_tree'}
-          onChange={e => onChange({ ...config, chartType: e.target.value as any })}
-        >
-          {ALL_CHART_TYPES.map(t => (
-            <option key={t.value} value={t.value}>{t.symbol} {t.label}</option>
-          ))}
-        </select>
-      </div>
       <div style={styles.row}>
         <div style={styles.section}>
           <div style={styles.sectionLabel}>ID column</div>
