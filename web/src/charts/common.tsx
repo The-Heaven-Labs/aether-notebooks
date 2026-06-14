@@ -119,9 +119,35 @@ export function getAxisStyle() {
 interface EChartsContainerProps {
   option: echarts.EChartsOption
   height?: number
+  onChartReady?: (chart: echarts.ECharts) => void
+  notMerge?: boolean
 }
 
-export const EChartsContainer = memo(function EChartsContainer({ option, height = 300 }: EChartsContainerProps) {
+// Walk tree nodes to collect collapsed names or apply state
+export function walkTree(nodes: any[], fn: (node: any) => void) {
+  for (const node of nodes) {
+    fn(node)
+    if (node.children) walkTree(node.children, fn)
+  }
+}
+
+export function applyCollapsedToTree(data: any, collapsed: Set<string>): any {
+  if (Array.isArray(data)) {
+    return data.map(n => applyCollapsedToTree(n, collapsed))
+  }
+  const node = { ...data }
+  if (collapsed.has(data.name)) {
+    node.collapsed = true
+  } else {
+    delete node.collapsed
+  }
+  if (data.children) {
+    node.children = applyCollapsedToTree(data.children, collapsed)
+  }
+  return node
+}
+
+export const EChartsContainer = memo(function EChartsContainer({ option, height = 300, onChartReady, notMerge = false }: EChartsContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
 
@@ -131,13 +157,36 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height 
       chartRef.current = echarts.init(containerRef.current, undefined, {
         renderer: 'canvas',
       })
+      onChartReady?.(chartRef.current)
     }
     // Merge transparent background for theme compatibility
     const themedOption = {
       ...option,
       backgroundColor: 'transparent',
     }
-    chartRef.current.setOption(themedOption, { notMerge: true })
+
+    // Preserve tree node collapsed state across updates
+    let finalOption: any = themedOption
+    if (chartRef.current) {
+      try {
+        const currentOpt = chartRef.current.getOption() as any
+        const curSeries = currentOpt?.series?.[0]
+        const newSeries = (themedOption as any)?.series?.[0]
+        if (curSeries?.type === 'tree' && newSeries?.type === 'tree' && curSeries.data && newSeries.data) {
+          const collapsed = new Set<string>()
+          const curData = Array.isArray(curSeries.data) ? curSeries.data : [curSeries.data]
+          walkTree(curData, n => { if (n.collapsed) collapsed.add(n.name) })
+          if (collapsed.size > 0) {
+            finalOption = {
+              ...themedOption,
+              series: [{ ...newSeries, data: applyCollapsedToTree(newSeries.data, collapsed) }],
+            }
+          }
+        }
+      } catch { /* ignore — best-effort preservation */ }
+    }
+
+    chartRef.current.setOption(finalOption, { notMerge })
 
     const ro = new ResizeObserver(() => {
       chartRef.current?.resize()

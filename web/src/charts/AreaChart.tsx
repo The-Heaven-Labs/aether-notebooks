@@ -1,10 +1,11 @@
+import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
 import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, detectAxisColumns, isNumericType } from './common'
 import { AxisConfigPanel } from './AxisConfigPanel'
 
 function AreaChartComponent({ data, config }: ChartProps) {
-  const columns = data.columns.map(c => c.name)
-  
+  const columns = useMemo(() => data.columns.map(c => c.name), [data.columns])
+
   // Smart defaults: detect numeric columns for yAxis if not configured
   const detected = (!config.xAxis && !config.yAxis?.length) 
     ? detectAxisColumns(data.columns) 
@@ -15,13 +16,15 @@ function AreaChartComponent({ data, config }: ChartProps) {
     ? config.yAxis 
     : (detected.yAxis?.length ? detected.yAxis : columns.filter((_, i) => i > 0 && isNumericType(data.columns[i]?.type)).slice(0, 1))
 
-  const chartData = data.rows.map(row => {
-    const obj: Record<string, unknown> = {}
-    columns.forEach((col, i) => { obj[col] = row[i] })
-    return obj
-  })
+  const chartData = useMemo(() => {
+    return data.rows.map(row => {
+      const obj: Record<string, unknown> = {}
+      columns.forEach((col, i) => { obj[col] = row[i] })
+      return obj
+    })
+  }, [data.rows, columns])
 
-  const option = {
+  const option = useMemo(() => ({
     tooltip: { trigger: 'axis' as const, ...getTooltipStyle() },
     legend: config.showLegend !== false ? { top: 0, textStyle: { fontSize: 11, color: getChartColors().textMuted } } : undefined,
     grid: { top: config.showLegend !== false ? 30 : 8, right: 16, bottom: 8, left: 16, containLabel: true },
@@ -38,7 +41,7 @@ function AreaChartComponent({ data, config }: ChartProps) {
       lineStyle: { width: 2 },
       animation: false,
     })),
-  }
+  }), [chartData, xAxis, yAxes, config.seriesColors, config.showLegend])
 
   return <EChartsContainer option={option} />
 }
