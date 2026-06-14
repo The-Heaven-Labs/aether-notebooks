@@ -32,6 +32,8 @@ export interface ChartConfig {
   seriesColors?: Record<string, string>
   // Timeline-specific
   maxLabelLength?: number
+  showConnectors?: boolean
+  showTimeDeltas?: boolean
 }
 
 export interface ChartProps {

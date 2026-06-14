@@ -73,3 +73,36 @@ test('config panel renders time column selector', () => {
   expect(screen.getAllByRole('combobox').length).toBeGreaterThanOrEqual(4)
   expect(screen.getByText('Time column')).toBeInTheDocument()
 })
+
+test('renders point events with connectors and time deltas enabled', () => {
+  render(
+    <TimelineModule.Component
+      data={timeData}
+      config={{ chartType: 'timeline', timeColumn: 'ts', labelColumn: 'msg', showConnectors: true, showTimeDeltas: true }}
+    />
+  )
+  expect(screen.getByTestId('chart-container')).toBeInTheDocument()
+})
+
+test('config panel shows connector and time delta toggles', () => {
+  const onChange = vi.fn()
+  render(
+    <TimelineModule.ConfigPanel
+      config={{ chartType: 'timeline', showConnectors: true, showTimeDeltas: true }}
+      columns={['ts', 'msg', 'level']}
+      onChange={onChange}
+    />
+  )
+  expect(screen.getByText('Show connectors')).toBeInTheDocument()
+  expect(screen.getByText('Show time deltas')).toBeInTheDocument()
+})
+
+test('renders in single-group layout (value y-axis)', () => {
+  render(
+    <TimelineModule.Component
+      data={timeData}
+      config={{ chartType: 'timeline', timeColumn: 'ts', labelColumn: 'msg' }}
+    />
+  )
+  expect(screen.getByTestId('chart-container')).toBeInTheDocument()
+})
