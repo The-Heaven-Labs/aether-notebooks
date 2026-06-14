@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, memo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard } from 'lucide-react'
@@ -144,17 +144,17 @@ interface Props {
   onSave?: (cellId: string, source: string) => void
   onAssignConnector: (cellId: string, connectorId: string) => void
   onClearConnector?: (cellId: string) => void
-  onMoveUp?: () => void
-  onMoveDown?: () => void
-  onSwitchType?: () => void
-  onDuplicate?: () => void
+  onMoveUp?: (cellId: string) => void
+  onMoveDown?: (cellId: string) => void
+  onSwitchType?: (cellId: string) => void
+  onDuplicate?: (cellId: string) => void
   running?: boolean
   saveState?: SaveState
   runAt?: Date
   metrics?: { connect_time_ms: number; query_time_ms: number; render_time_ms: number; total_time_ms: number }
-  onUpdateCellMeta?: (updates: Partial<Pick<Cell, 'source_visible' | 'outputs_hidden' | 'cell_collapsed' | 'slide_break' | 'title' | 'slug' | 'limit'>>) => void
+  onUpdateCellMeta?: (cellId: string, updates: Partial<Pick<Cell, 'source_visible' | 'outputs_hidden' | 'cell_collapsed' | 'slide_break' | 'title' | 'slug' | 'limit'>>) => void
   onChartConfigChange?: (cellId: string, config: ChartConfig) => void
-  onShowHistory?: () => void
+  onShowHistory?: (cellId: string) => void
   onFocus?: (cellId: string) => void
   onEditStart?: () => void
   onEditEnd?: () => void
@@ -400,6 +400,11 @@ export const Cell = memo(function Cell({
   const sourceVisible = cell.source_visible ?? true
   const outputHidden = cell.outputs_hidden ?? false
   const connector = connectors.find((c) => c.id === cell.connector_id)
+  const chartConfig = useMemo(() => normalizeChartConfig(cell.metadata?.chart), [cell.metadata?.chart])
+  const handleChartConfigChange = useCallback(
+    (cfg: ChartConfig) => onChartConfigChange?.(cell.id, cfg),
+    [cell.id, onChartConfigChange],
+  )
 
   // ── Collapsed ───────────────────────────────────────────────────────────────
 
@@ -413,7 +418,7 @@ export const Cell = memo(function Cell({
         }}>
         <button
           style={styles.expandTrigger}
-          onClick={() => onUpdateCellMeta?.({ cell_collapsed: false, source_visible: true })}
+          onClick={() => onUpdateCellMeta?.(cell.id, { cell_collapsed: false, source_visible: true })}
         >
           <ChevronRight size={11} />
           <span style={styles.cellTypeTag}>{isCode ? 'SQL' : 'MD'}</span>
@@ -496,7 +501,7 @@ export const Cell = memo(function Cell({
                 value={cell.limit == null ? 'null' : String(cell.limit)}
                 onChange={(e) => {
                   const val = e.target.value
-                  onUpdateCellMeta?.({ limit: val === 'null' ? null : parseInt(val) })
+                  onUpdateCellMeta?.(cell.id, { limit: val === 'null' ? null : parseInt(val) })
                 }}
                 onClick={(e) => e.stopPropagation()}
               >
@@ -517,7 +522,7 @@ export const Cell = memo(function Cell({
               onBlur={() => {
                 setEditingTitle(false)
                 if (titleDraft !== (cell.title ?? '')) {
-                  onUpdateCellMeta?.({ title: titleDraft })
+                  onUpdateCellMeta?.(cell.id, { title: titleDraft })
                 }
               }}
               onKeyDown={(e) => {
@@ -539,7 +544,7 @@ export const Cell = memo(function Cell({
             <input
               style={styles.titleInput}
               value={cell.title ?? ''}
-              onChange={(e) => onUpdateCellMeta?.({ title: e.target.value })}
+              onChange={(e) => onUpdateCellMeta?.(cell.id, { title: e.target.value })}
               onClick={(e) => e.stopPropagation()}
               placeholder={generateTitlePlaceholder(cell.source, isCode)}
             />
@@ -565,13 +570,13 @@ export const Cell = memo(function Cell({
               </button>
             )
           })()}
-          <button style={styles.actionBtn} onClick={onSwitchType} title={isCode ? 'Convert to Markdown cell' : 'Convert to SQL cell'} aria-label={isCode ? 'Convert to Markdown cell' : 'Convert to SQL cell'}>
+          <button style={styles.actionBtn} onClick={() => onSwitchType(cell.id)} title={isCode ? 'Convert to Markdown cell' : 'Convert to SQL cell'} aria-label={isCode ? 'Convert to Markdown cell' : 'Convert to SQL cell'}>
             {isCode ? 'MD' : 'SQL'}
           </button>
-          {onMoveUp && <button style={styles.actionBtn} onClick={onMoveUp} aria-label="Move cell up"><ChevronUp size={11} /></button>}
-          {onMoveDown && <button style={styles.actionBtn} onClick={onMoveDown} aria-label="Move cell down"><ChevronDown size={11} /></button>}
+          {onMoveUp && <button style={styles.actionBtn} onClick={() => onMoveUp(cell.id)} aria-label="Move cell up"><ChevronUp size={11} /></button>}
+          {onMoveDown && <button style={styles.actionBtn} onClick={() => onMoveDown(cell.id)} aria-label="Move cell down"><ChevronDown size={11} /></button>}
           {onDuplicate && (
-            <button style={styles.actionBtn} onClick={onDuplicate} title="Duplicate cell" aria-label="Duplicate cell">
+            <button style={styles.actionBtn} onClick={() => onDuplicate(cell.id)} title="Duplicate cell" aria-label="Duplicate cell">
               <Copy size={12} />
             </button>
           )}
@@ -609,7 +614,7 @@ export const Cell = memo(function Cell({
           })()}
           <button
             style={styles.actionBtn}
-            onClick={() => onUpdateCellMeta?.({ source_visible: !sourceVisible })}
+            onClick={() => onUpdateCellMeta?.(cell.id, { source_visible: !sourceVisible })}
             title={sourceVisible ? 'Hide source' : 'Show source'}
             aria-label={sourceVisible ? 'Hide source' : 'Show source'}
           >
@@ -618,7 +623,7 @@ export const Cell = memo(function Cell({
           {isCode && (
             <button
               style={styles.actionBtn}
-              onClick={() => onUpdateCellMeta?.({ outputs_hidden: !outputHidden })}
+              onClick={() => onUpdateCellMeta?.(cell.id, { outputs_hidden: !outputHidden })}
               title={outputHidden ? 'Show output' : 'Hide output'}
               aria-label={outputHidden ? 'Show output' : 'Hide output'}
             >
@@ -627,13 +632,13 @@ export const Cell = memo(function Cell({
           )}
           <button
             style={styles.actionBtn}
-            onClick={() => onUpdateCellMeta?.({ cell_collapsed: true })}
+            onClick={() => onUpdateCellMeta?.(cell.id, { cell_collapsed: true })}
             title="Collapse"
             aria-label="Collapse cell"
           >
             <ChevronRight size={11} />
           </button>
-          <button style={styles.actionBtn} onClick={onShowHistory} title="History" aria-label="Cell history">
+          <button style={styles.actionBtn} onClick={() => onShowHistory(cell.id)} title="History" aria-label="Cell history">
             <Clock size={11} />
           </button>
           {onAddToDashboard && (
@@ -655,7 +660,7 @@ export const Cell = memo(function Cell({
               ? 'Remove slide break (merge with previous slide)'
               : 'Add slide break (start new presentation slide)'}
             style={{ ...styles.actionBtn, color: cell.slide_break ? 'var(--accent)' : 'var(--text-muted)' }}
-            onClick={() => onUpdateCellMeta?.({ slide_break: !cell.slide_break })}
+            onClick={() => onUpdateCellMeta?.(cell.id, { slide_break: !cell.slide_break })}
           >
             {cell.slide_break ? <Link size={13} /> : <SeparatorHorizontal size={13} />}
           </button>
@@ -693,8 +698,8 @@ export const Cell = memo(function Cell({
           <OutputRenderer
             outputs={cell.outputs}
             cellId={cell.id ?? undefined}
-            chartConfig={normalizeChartConfig(cell.metadata?.chart)}
-            onChartConfigChange={onChartConfigChange ? (cfg) => onChartConfigChange(cell.id, cfg) : undefined}
+            chartConfig={chartConfig}
+            onChartConfigChange={handleChartConfigChange}
           />
         </div>
       )}

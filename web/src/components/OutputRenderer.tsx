@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo, memo } from 'react'
 import type React from 'react'
 import type { Output, ResultSet, Column } from '../types'
 import { ChartView } from '../charts'
@@ -37,7 +37,7 @@ interface Props {
   onChartConfigChange?: (config: ChartConfig) => void
 }
 
-export function OutputRenderer({ outputs, fixedView, cellId, chartConfig, onChartConfigChange }: Props) {
+export const OutputRenderer = memo(function OutputRenderer({ outputs, fixedView, cellId, chartConfig, onChartConfigChange }: Props) {
   if (!outputs || outputs.length === 0) return null
 
   return (
@@ -47,7 +47,7 @@ export function OutputRenderer({ outputs, fixedView, cellId, chartConfig, onChar
       ))}
     </div>
   )
-}
+})
 
 function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChange }: { output: Output; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void }) {
   if (output.type === 'error') {
@@ -276,7 +276,7 @@ function exportJSON(rs: ResultSet): void {
   URL.revokeObjectURL(url)
 }
 
-function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void }) {
+const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void }) {
   const storageKey = cellId ? `hnb_cell_view_${cellId}` : null
   const hasChartConfig = !!chartConfig?.chartType
   const [view, setView] = useState<'table' | 'chart'>(() => {
@@ -299,6 +299,26 @@ function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange }
   const activeCellRef = useRef<HTMLTableCellElement | null>(null)
   const theadRef = useRef<HTMLTableSectionElement | null>(null)
   const [copied, setCopied] = useState(false)
+
+  // Imperative cell highlighting to avoid re-rendering all rows on detail change
+  useEffect(() => {
+    document.querySelectorAll<HTMLElement>('.output-scroll-area [data-row][data-col]').forEach(el => {
+      el.style.background = ''
+      el.style.outline = ''
+      el.style.outlineOffset = ''
+    })
+    if (detail && isDetailActive) {
+      const cell = document.querySelector<HTMLElement>(
+        `.output-scroll-area [data-row="${detail.rowIndex}"][data-col="${detail.colIndex}"]`,
+      )
+      if (cell) {
+        cell.style.background = 'var(--accent-light)'
+        cell.style.outline = '1px solid var(--accent)'
+        cell.style.outlineOffset = '-1px'
+        activeCellRef.current = cell
+      }
+    }
+  }, [detail, isDetailActive])
 
   const copyDetail = useCallback(() => {
     if (!detail) return
@@ -346,19 +366,22 @@ function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange }
 
   const sortColIndex = sort.column !== null ? rs.columns.findIndex((c) => c.name === sort.column) : -1
   const sortType = sortColIndex >= 0 ? getColumnSortType(rs.columns[sortColIndex]) : 'string'
-  const displayRows = sortColIndex >= 0 && sort.direction !== 'none'
-    ? sortRows(rs.rows, sortColIndex, sort.direction, sortType)
-    : rs.rows
+  const displayRows = useMemo(
+    () => sortColIndex >= 0 && sort.direction !== 'none'
+      ? sortRows(rs.rows, sortColIndex, sort.direction, sortType)
+      : rs.rows,
+    [rs.rows, sortColIndex, sort.direction, sortType],
+  )
 
-  const openDetail = (rowIndex: number, colIndex: number, value: string) => {
+  const openDetail = useCallback((rowIndex: number, colIndex: number, value: string) => {
     setDetail({ rowIndex, colIndex, value, colName: rs.columns[colIndex].name })
     if (cellId) setActiveDetailCell(cellId)
-  }
+  }, [cellId, rs.columns])
 
-  const closeDetail = () => {
+  const closeDetail = useCallback(() => {
     setDetail(null)
     if (cellId && activeDetailCellId === cellId) setActiveDetailCell(null)
-  }
+  }, [cellId])
 
   const navigateDetail = useCallback((rowDelta: number, colDelta: number) => {
     if (!detail) return
@@ -467,6 +490,7 @@ function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange }
                   })}
                 </tr>
               </thead>
+              {useMemo(() => (
               <tbody>
                 {displayRows.map((row, i) => (
                   <tr key={i}>
@@ -474,26 +498,22 @@ function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange }
                       <span style={styles.rowNum}>{i + 1}</span>
                     </td>
                     {(row as unknown[]).map((cell, j) => {
-                      const isActiveCell = detail?.rowIndex === i && detail?.colIndex === j
-                      if (cell === null) {
-                        return (
-                          <td key={j} ref={isActiveCell ? activeCellRef : undefined} style={{ ...styles.td, ...(isActiveCell ? styles.tdActive : {}) }}>
-                            <span style={styles.null}>null</span>
-                          </td>
-                        )
-                      }
                       const strValue = typeof cell === 'object' ? JSON.stringify(cell) : String(cell)
                       const isTruncated = strValue.length > MAX_CELL_DISPLAY
                       const displayValue = isTruncated ? strValue.slice(0, MAX_CELL_DISPLAY) + '…' : strValue
                       const isObj = typeof cell === 'object'
                       return (
-                        <td key={j} ref={isActiveCell ? activeCellRef : undefined} style={{ ...styles.td, ...(isActiveCell ? styles.tdActive : {}) }}>
+                        <td key={j} data-row={i} data-col={j} style={styles.td}>
                           <span
                             style={isTruncated ? styles.truncatedCell : styles.clickableCell}
                             onClick={() => openDetail(i, j, strValue)}
                             title={isTruncated ? 'Click to view full value' : undefined}
                           >
-                            <span style={isObj ? styles.json : undefined}>{displayValue}</span>
+                            {cell === null ? (
+                              <span style={styles.null}>null</span>
+                            ) : (
+                              <span style={isObj ? styles.json : undefined}>{displayValue}</span>
+                            )}
                           </span>
                         </td>
                       )
@@ -501,6 +521,7 @@ function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange }
                   </tr>
                 ))}
               </tbody>
+              ), [displayRows, rs.columns, openDetail])}
             </table>
           </div>
 
@@ -583,7 +604,7 @@ function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange }
       </div>
     </div>
   )
-}
+})
 
 const styles: Record<string, React.CSSProperties> = {
   container: {},
@@ -688,6 +709,7 @@ const styles: Record<string, React.CSSProperties> = {
   tableWrap: {
     overflowX: 'auto',
     overflowY: 'auto',
+    overflowAnchor: 'none',
   },
   resizeHandle: {
     display: 'flex',
