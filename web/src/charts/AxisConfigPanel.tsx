@@ -185,7 +185,7 @@ export function AxisConfigPanel({
               <select
                 aria-label={showPieOptions ? 'Value column' : 'Y axis'}
                 style={{ ...styles.select, minHeight: 56 }}
-                multiple={!!showPieOptions}
+                multiple={!showPieOptions}
                 value={showPieOptions ? (config.yAxis?.[0] ?? '') : (config.yAxis ?? [])}
                 onChange={e => {
                   if (showPieOptions) {
