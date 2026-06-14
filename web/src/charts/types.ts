@@ -22,6 +22,7 @@ export interface ChartConfig {
   parentIdColumn?: string
   metricColumns?: string[]
   layout?: 'top-down' | 'left-to-right'
+  nodeSpacing?: number
   // Shared
   title?: string
   showLegend?: boolean

@@ -10,7 +10,6 @@ import { ScatterChartModule } from './ScatterChart'
 import { PieChartModule } from './PieChart'
 import { TimelineModule } from './TimelineChart'
 import { HierarchyTreeModule } from './HierarchyTreeChart'
-
 // Registry
 export const CHART_MODULES: Record<string, ChartModule> = {
   bar: BarChartModule,
