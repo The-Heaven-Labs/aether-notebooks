@@ -1,33 +1,17 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getChartColors, detectAxisColumns, isNumericType } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns } from './common'
 
 function PieChartComponent({ data, config }: ChartProps) {
-  const columns = useMemo(() => data.columns.map(c => c.name), [data.columns])
-
-  // Smart defaults: detect columns if not configured
-  const detected = (!config.xAxis && !config.yAxis?.length) 
-    ? detectAxisColumns(data.columns) 
-    : { xAxis: config.xAxis, yAxis: config.yAxis }
-  
-  const xAxis = config.xAxis ?? detected.xAxis ?? columns[0] ?? ''
-  const yAxes = config.yAxis?.length 
-    ? config.yAxis 
-    : (detected.yAxis?.length ? detected.yAxis : columns.filter((_, i) => i > 0 && isNumericType(data.columns[i]?.type)).slice(0, 1))
-  const valueKey = yAxes[0] ?? columns[1] ?? ''
+  const { xAxis, yAxes } = useAxisColumns(data, config)
+  const chartData = useRowsAsObjects(data)
+  const colors = useMemo(() => getChartColors(), [])
+  const valueKey = yAxes[0] ?? data.columns[1]?.name ?? ''
   const isDonut = config.chartType === 'donut'
-
-  const chartData = useMemo(() => {
-    return data.rows.map(row => {
-      const obj: Record<string, unknown> = {}
-      columns.forEach((col, i) => { obj[col] = row[i] })
-      return obj
-    })
-  }, [data.rows, columns])
 
   const option = useMemo(() => ({
     tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: '{b}: {c} ({d}%)' },
-    legend: config.showLegend !== false ? { orient: 'vertical' as const, right: 10, top: 'center', textStyle: { fontSize: 11, color: 'var(--text-muted)' } } : undefined,
+    legend: config.showLegend !== false ? { orient: 'vertical' as const, right: 10, top: 'center', textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
     series: [{
       type: 'pie' as const,
       radius: isDonut ? ['40%', '70%'] as [string, string] : ['0%', '70%'] as [string, string],
@@ -37,11 +21,11 @@ function PieChartComponent({ data, config }: ChartProps) {
         value: d[valueKey],
         itemStyle: { color: config.seriesColors?.[String(d[xAxis])] ?? CHART_COLORS[i % CHART_COLORS.length] },
       })),
-      label: config.showLabels !== false ? { fontSize: 11, color: 'var(--text-primary)' } : { show: false },
+      label: config.showLabels !== false ? { fontSize: 11, color: colors.text } : { show: false },
       emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.2)' } },
       animation: false,
     }],
-  }), [chartData, xAxis, valueKey, isDonut, config.seriesColors, config.showLegend, config.showLabels])
+  }), [chartData, xAxis, valueKey, isDonut, config.seriesColors, config.showLegend, config.showLabels, colors])
 
   return <EChartsContainer option={option} />
 }

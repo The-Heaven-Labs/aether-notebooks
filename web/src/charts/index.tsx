@@ -1,8 +1,8 @@
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import type React from 'react'
 import { Settings2 } from 'lucide-react'
 import type { ResultSet } from '../types'
-import type { ChartConfig, ChartModule, ConfigPanelProps } from './types'
+import type { ChartConfig, ChartModule } from './types'
 import { BarChartModule } from './BarChart'
 import { LineChartModule } from './LineChart'
 import { AreaChartModule } from './AreaChart'
@@ -39,47 +39,26 @@ interface ChartViewProps {
   output?: { type: string; data?: ResultSet; config?: Partial<ChartConfig> }
   rs?: ResultSet
   onConfigChange?: (config: ChartConfig) => void
-  cellId?: string
 }
 
-export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps) {
+export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
   const data = output?.data ?? (rs ? { columns: rs.columns, rows: rs.rows } : undefined)
   const columns = data?.columns?.map(c => c.name) ?? []
 
   const cfg = (output?.config ?? {}) as ChartConfig
   const chartType = cfg.chartType ?? 'bar'
 
-  // Load saved config from localStorage (legacy mode)
-  const savedConfig = useMemo(() => {
-    if (!onConfigChange && cellId) {
-      try {
-        const saved = localStorage.getItem(`hnb_chart_config_${cellId}`)
-        return saved ? (JSON.parse(saved) as ChartConfig) : null
-      } catch { /* ignore */ }
-    }
-    return null
-  }, [cellId, onConfigChange])
-
   const [showConfig, setShowConfig] = useState(false)
 
-  const effectiveConfig: ChartConfig = onConfigChange
-    ? cfg
-    : { ...cfg, ...savedConfig }
+  const effectiveConfig: ChartConfig = cfg
 
   const handleConfigChange = (newCfg: ChartConfig) => {
     if (onConfigChange) {
       onConfigChange(newCfg)
-    } else if (cellId) {
-      try {
-        localStorage.setItem(`hnb_chart_config_${cellId}`, JSON.stringify(newCfg))
-      } catch { /* ignore */ }
-      // Force re-render for legacy mode
-      setShowConfig(v => v)
     }
   }
 
   const mod = CHART_MODULES[chartType]
-  console.log('[ChartView] chartType:', chartType, 'mod:', mod ? mod.constructor.name : 'null')
   if (!mod) {
     return <div style={{ padding: 16, color: 'var(--text-muted)' }}>Unknown chart type: {chartType}</div>
   }
@@ -134,7 +113,7 @@ export function ChartView({ output, rs, onConfigChange, cellId }: ChartViewProps
 
 // Re-export types and defaults
 export type { ChartConfig, ChartModule, ChartType } from './types'
-export { CHART_COLORS, tooltipStyle, axisStyle, EChartsContainer } from './common'
+export { CHART_COLORS, EChartsContainer } from './common'
 
 const styles: Record<string, React.CSSProperties> = {
   wrap: { display: 'flex', flexDirection: 'column' },

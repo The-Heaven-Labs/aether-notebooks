@@ -30,6 +30,8 @@ export interface ChartConfig {
   showLabels?: boolean
   skipEmpty?: boolean
   seriesColors?: Record<string, string>
+  // Timeline-specific
+  maxLabelLength?: number
 }
 
 export interface ChartProps {

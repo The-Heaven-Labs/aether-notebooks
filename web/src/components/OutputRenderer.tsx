@@ -571,7 +571,7 @@ function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange }
           )}
         </div>
       ) : (
-        <ChartView rs={rs} cellId={cellId} onConfigChange={onChartConfigChange} output={{ type: 'table', data: { columns: rs.columns, rows: rs.rows }, config: chartConfig }} />
+        <ChartView rs={rs} onConfigChange={onChartConfigChange} output={{ type: 'table', data: { columns: rs.columns, rows: rs.rows }, config: chartConfig }} />
       )}
 
       <div

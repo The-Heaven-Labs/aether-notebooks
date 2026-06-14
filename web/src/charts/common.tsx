@@ -1,4 +1,4 @@
-import { memo, useRef, useEffect } from 'react'
+import { memo, useRef, useEffect, useMemo } from 'react'
 import * as echarts from 'echarts/core'
 import { BarChart, LineChart, ScatterChart, PieChart, TreeChart } from 'echarts/charts'
 import {
@@ -6,6 +6,7 @@ import {
   DataZoomComponent, ToolboxComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
+import type { ResultSet } from '../types'
 
 // Register only what we use
 echarts.use([
@@ -33,15 +34,12 @@ export function isNumericType(type?: string): boolean {
   if (!type) return false
   const t = type.toLowerCase()
   
-  // Check base type (strip params like Decimal(10,2))
   const base = t.replace(/\(.*\)/, '').trim()
   if (NUMERIC_TYPES.has(base)) return true
   
-  // Handle wrappers like Nullable(Int64), LowCardinality(Float64)
   for (const wrapper of ['nullable', 'lowcardinality']) {
     if (t.startsWith(wrapper + '(') && t.endsWith(')')) {
       const inner = t.slice(wrapper.length + 1, -1).trim()
-      // Check inner type (may have its own params)
       const innerBase = inner.replace(/\(.*\)/, '').trim()
       if (NUMERIC_TYPES.has(innerBase)) return true
     }
@@ -62,6 +60,46 @@ export function detectAxisColumns(columns: { name: string; type?: string }[]): {
   }
 }
 
+export function isTimeType(colType?: string): boolean {
+  if (!colType) return false
+  const t = colType.toLowerCase()
+  return t.includes('date') || t.includes('time') || t.includes('timestamp') || t === 'ts'
+}
+
+// Shareable hook: maps rows to Record objects (used by every chart component)
+export function useRowsAsObjects(data: ResultSet): Record<string, unknown>[] {
+  const columns = useMemo(() => data.columns.map(c => c.name), [data.columns])
+  return useMemo(
+    () => data.rows.map(row => {
+      const obj: Record<string, unknown> = {}
+      columns.forEach((col, i) => { obj[col] = row[i] })
+      return obj
+    }),
+    [data.rows, columns]
+  )
+}
+
+// Shareable hook: resolves axis columns with smart defaults for axis-based charts
+export function useAxisColumns(
+  data: ResultSet,
+  config: { xAxis?: string; yAxis?: string[] }
+): { xAxis: string; yAxes: string[] } {
+  const columns = useMemo(() => data.columns.map(c => c.name), [data.columns])
+  return useMemo(() => {
+    const detected = (!config.xAxis && !config.yAxis?.length)
+      ? detectAxisColumns(data.columns)
+      : { xAxis: config.xAxis, yAxis: config.yAxis }
+
+    const xAxis = config.xAxis ?? detected.xAxis ?? columns[0] ?? ''
+    const yAxes = config.yAxis?.length
+      ? config.yAxis
+      : (detected.yAxis?.length
+        ? detected.yAxis
+        : columns.filter((_, i) => i > 0 && isNumericType(data.columns[i]?.type)).slice(0, 1))
+    return { xAxis, yAxes }
+  }, [data.columns, data.rows, config.xAxis, config.yAxis, columns])
+}
+
 // Detect dark mode and provide explicit colors for ECharts (canvas doesn't support CSS vars)
 function isDarkMode(): boolean {
   return document.documentElement.getAttribute('data-theme') === 'dark'
@@ -78,15 +116,6 @@ export function getChartColors() {
   }
 }
 
-export const tooltipStyle = {
-  backgroundColor: 'var(--bg-card)',
-  borderColor: 'var(--border)',
-  borderRadius: 4,
-  textStyle: { fontSize: 12, color: 'var(--text-primary)' },
-  extraCssText: 'box-shadow: var(--shadow-md);',
-}
-
-// Tooltip style with explicit colors for ECharts canvas
 export function getTooltipStyle() {
   const c = getChartColors()
   return {
@@ -98,14 +127,6 @@ export function getTooltipStyle() {
   }
 }
 
-export const axisStyle = {
-  axisLine: { show: false },
-  axisTick: { show: false },
-  axisLabel: { fontSize: 11, color: 'var(--text-muted)' },
-  splitLine: { lineStyle: { color: 'var(--border)', type: 'dashed' as const } },
-}
-
-// Axis style with explicit colors for ECharts canvas
 export function getAxisStyle() {
   const c = getChartColors()
   return {
