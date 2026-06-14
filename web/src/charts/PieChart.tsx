@@ -1,10 +1,10 @@
-import type React from 'react'
+import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
 import { EChartsContainer, CHART_COLORS, getTooltipStyle, getChartColors, detectAxisColumns, isNumericType } from './common'
 
 function PieChartComponent({ data, config }: ChartProps) {
-  const columns = data.columns.map(c => c.name)
-  
+  const columns = useMemo(() => data.columns.map(c => c.name), [data.columns])
+
   // Smart defaults: detect columns if not configured
   const detected = (!config.xAxis && !config.yAxis?.length) 
     ? detectAxisColumns(data.columns) 
@@ -17,13 +17,15 @@ function PieChartComponent({ data, config }: ChartProps) {
   const valueKey = yAxes[0] ?? columns[1] ?? ''
   const isDonut = config.chartType === 'donut'
 
-  const chartData = data.rows.map(row => {
-    const obj: Record<string, unknown> = {}
-    columns.forEach((col, i) => { obj[col] = row[i] })
-    return obj
-  })
+  const chartData = useMemo(() => {
+    return data.rows.map(row => {
+      const obj: Record<string, unknown> = {}
+      columns.forEach((col, i) => { obj[col] = row[i] })
+      return obj
+    })
+  }, [data.rows, columns])
 
-  const option = {
+  const option = useMemo(() => ({
     tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: '{b}: {c} ({d}%)' },
     legend: config.showLegend !== false ? { orient: 'vertical' as const, right: 10, top: 'center', textStyle: { fontSize: 11, color: 'var(--text-muted)' } } : undefined,
     series: [{
@@ -39,7 +41,7 @@ function PieChartComponent({ data, config }: ChartProps) {
       emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.2)' } },
       animation: false,
     }],
-  }
+  }), [chartData, xAxis, valueKey, isDonut, config.seriesColors, config.showLegend, config.showLabels])
 
   return <EChartsContainer option={option} />
 }

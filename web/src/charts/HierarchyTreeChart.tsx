@@ -1,12 +1,14 @@
-import type React from 'react'
+import { useRef, useCallback, useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getChartColors, walkTree, applyCollapsedToTree } from './common'
 import { ALL_CHART_TYPES } from './index'
+import type { ECharts } from 'echarts/core'
 
 interface TreeNode {
   name: string
   children?: TreeNode[]
   itemStyle?: { color: string }
+  collapsed?: boolean
 }
 
 // Detect parent-child ID columns
@@ -73,56 +75,137 @@ function buildTree(
   return roots
 }
 
+// Apply collapsed state to tree nodes
+function applyCollapsedState(nodes: TreeNode[], collapsedSet: Set<string>): TreeNode[] {
+  return nodes.map(node => ({
+    ...node,
+    collapsed: collapsedSet.has(node.name),
+    children: node.children ? applyCollapsedState(node.children, collapsedSet) : undefined,
+  }))
+}
+
 function HierarchyTreeComponent({ data, config }: ChartProps) {
-  const columns = data.columns.map(c => c.name)
+  const chartColors = useMemo(() => getChartColors(), [])
+  const chartInstance = useRef<echarts.ECharts | null>(null)
+  const handleChartReady = useCallback((chart: echarts.ECharts) => {
+    chartInstance.current = chart
+  }, [])
+  const handleReset = useCallback(() => {
+    const chart = chartInstance.current
+    if (!chart) return
+    try {
+      const opt = chart.getOption() as any
+      const series = opt?.series?.[0]
+      if (series?.type === 'tree' && series.data) {
+        const collapsed = new Set<string>()
+        const data = Array.isArray(series.data) ? series.data : [series.data]
+        walkTree(data, n => { if (n.collapsed) collapsed.add(n.name) })
+
+        // Restore resets zoom/pan (but also expands all nodes)
+        chart.dispatchAction({ type: 'restore' })
+
+        // Re-apply collapsed state after restore
+        if (collapsed.size > 0) {
+          const after = chart.getOption() as any
+          const afterSeries = after?.series?.[0]
+          if (afterSeries?.type === 'tree' && afterSeries.data) {
+            chart.setOption({
+              series: [{ ...afterSeries, data: applyCollapsedToTree(afterSeries.data, collapsed) }],
+            }, { notMerge: false })
+          }
+        }
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  const columns = useMemo(() => data.columns.map(c => c.name), [data.columns])
   const idCol = config.idColumn ?? columns[0]
   const parentCol = config.parentIdColumn ?? columns[1]
   const labelCol = config.labelColumn ?? columns.find(c => !c.includes('id') && !c.includes('parent') && c !== idCol && c !== parentCol) ?? idCol
-  const metricCols = config.metricColumns ?? []
+  const metricCols = useMemo(() => config.metricColumns ?? [], [config.metricColumns])
   const isHorizontal = config.layout === 'left-to-right'
+  const nodeSpacing = config.nodeSpacing ?? 50
 
-  const chartData = data.rows.map(row => {
-    const obj: Record<string, unknown> = {}
-    columns.forEach((col, i) => { obj[col] = row[i] })
-    return obj
-  })
+  // Memoize chartData to avoid recreating on every render
+  const chartData = useMemo(
+    () => data.rows.map(row => {
+      const obj: Record<string, unknown> = {}
+      columns.forEach((col, i) => { obj[col] = row[i] })
+      return obj
+    }),
+    [data.rows, columns]
+  )
 
-  const treeData = buildTree(chartData, idCol, parentCol, labelCol, metricCols, config.seriesColors ?? {})
+  // Memoize treeData to avoid rebuilding on every render
+  const treeData = useMemo(
+    () => buildTree(chartData, idCol, parentCol, labelCol, metricCols, config.seriesColors ?? {}),
+    [chartData, idCol, parentCol, labelCol, metricCols, config.seriesColors]
+  )
+  const treeDataWithState = treeData
+  const rowCount = data.rows.length
+  const hasMetrics = metricCols.length > 0
 
-  const option = {
-    tooltip: { ...getTooltipStyle(), trigger: 'item' as const },
+  // nodeSpacing controls horizontal spacing — higher = more room between nodes
+  const horizontalMargin = isHorizontal ? 15 : Math.max(5, 25 - nodeSpacing / 5)
+  const rightMargin = isHorizontal ? 20 : Math.max(5, 25 - nodeSpacing / 5)
+  const bottomMargin = isHorizontal ? '8%' : (hasMetrics ? '30%' : '12%')
+
+  const option = useMemo(() => ({
+    tooltip: { show: false },
     series: [{
       type: 'tree' as const,
-      data: treeData,
+      data: treeDataWithState,
       orient: isHorizontal ? 'LR' as const : 'TB' as const,
-      top: isHorizontal ? '5%' : '10%',
-      bottom: isHorizontal ? '5%' : '25%',
-      left: isHorizontal ? '15%' : '5%',
-      right: isHorizontal ? '20%' : '5%',
-      symbolSize: 10,
+      top: '8%',
+      bottom: bottomMargin,
+      left: `${horizontalMargin}%`,
+      right: `${rightMargin}%`,
+      roam: true,
+      initialTreeDepth: -1,
+      symbolSize: 12,
+      edgeShape: 'curve' as const,
       label: {
         position: isHorizontal ? 'right' as const : 'top' as const,
         verticalAlign: 'middle' as const,
         fontSize: 11,
-        color: 'var(--text-primary)',
+        color: chartColors.text,
         formatter: (params: { name: string }) => params.name,
+        overflow: 'truncate' as const,
+        width: 100,
       },
       leaves: {
         label: {
           position: isHorizontal ? 'right' as const : 'bottom' as const,
           verticalAlign: 'middle' as const,
+          fontSize: 11,
+          color: chartColors.text,
+          overflow: 'truncate' as const,
+          width: 120,
         },
       },
       expandAndCollapse: true,
       animationDuration: 200,
       animationDurationUpdate: 200,
-      lineStyle: { color: 'var(--border)', width: 1.5 },
+      lineStyle: { color: 'var(--border)', width: 1.5, curveness: 0.5 },
       itemStyle: { borderColor: 'var(--bg-card)' },
     }],
-  }
+  }), [treeDataWithState, isHorizontal, horizontalMargin, rightMargin, bottomMargin])
 
-  const height = Math.max(300, treeData.length * 60)
-  return <EChartsContainer option={option} height={height} />
+  const height = isHorizontal ? 500 : Math.min(600, 250 + rowCount * (nodeSpacing * 0.6))
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <EChartsContainer option={option} height={height} onChartReady={handleChartReady} notMerge={true} />
+      <button
+        type="button"
+        onClick={handleReset}
+        style={styles.resetButton}
+        title="Reset zoom and pan"
+      >
+        ⟲ Reset view
+      </button>
+    </div>
+  )
 }
 
 function HierarchyTreeConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
@@ -191,18 +274,30 @@ function HierarchyTreeConfigPanel({ config, columns, onChange }: ConfigPanelProp
       </div>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Metrics <span style={{ fontWeight: 400, textTransform: 'none' }}>(Ctrl+click multi)</span></div>
-        <select
-          aria-label="Metrics"
-          style={{ ...styles.select, minHeight: 56 }}
-          multiple
-          value={config.metricColumns ?? []}
-          onChange={e => {
-            const selected = Array.from(e.target.selectedOptions).map(o => o.value)
-            onChange({ ...config, metricColumns: selected })
-          }}
-        >
-          {columns.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
+        <div style={{ position: 'relative' }}>
+          <select
+            aria-label="Metrics"
+            style={{ ...styles.select, minHeight: 56 }}
+            multiple
+            value={config.metricColumns ?? []}
+            onChange={e => {
+              const selected = Array.from(e.target.selectedOptions).map(o => o.value)
+              onChange({ ...config, metricColumns: selected })
+            }}
+          >
+            {columns.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          {(config.metricColumns ?? []).length > 0 && (
+            <button
+              type="button"
+              onClick={() => onChange({ ...config, metricColumns: [] })}
+              style={styles.clearButton}
+              title="Clear all metrics"
+            >
+              ✕ Clear
+            </button>
+          )}
+        </div>
       </div>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Layout</div>
@@ -216,6 +311,25 @@ function HierarchyTreeConfigPanel({ config, columns, onChange }: ConfigPanelProp
           <option value="left-to-right">Left-to-right</option>
         </select>
       </div>
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Horizontal spacing</div>
+        <select
+          aria-label="Horizontal spacing"
+          style={styles.select}
+          value={String(config.nodeSpacing ?? 50)}
+          onChange={e => {
+            const val = Number(e.target.value)
+            const newConfig = { ...config, nodeSpacing: val }
+            onChange(newConfig)
+          }}
+        >
+          <option value="20">Tight</option>
+          <option value="35">Compact</option>
+          <option value="50">Normal</option>
+          <option value="70">Wide</option>
+          <option value="100">Very wide</option>
+        </select>
+      </div>
     </div>
   )
 }
@@ -225,7 +339,9 @@ const styles: Record<string, React.CSSProperties> = {
   row: { display: 'flex', gap: 10 },
   section: { flex: 1, display: 'flex', flexDirection: 'column', gap: 4 },
   sectionLabel: { fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' as const, letterSpacing: 0.5 },
-  select: { fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4 },
+  select: { fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4, width: '100%', boxSizing: 'border-box' as const },
+  clearButton: { position: 'absolute', top: 4, right: 4, fontSize: 10, padding: '2px 6px', background: 'var(--bg-hover)', color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer', lineHeight: 1 },
+  resetButton: { position: 'absolute', bottom: 8, right: 8, fontSize: 11, padding: '4px 10px', background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', boxShadow: 'var(--shadow-sm)' },
 }
 
 export const HierarchyTreeModule: ChartModule = {
