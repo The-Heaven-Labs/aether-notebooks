@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useCallback } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
 import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, useRowsAsObjects, isTimeType } from './common'
 
@@ -31,10 +31,19 @@ function TimelineChartComponent({ data, config }: ChartProps) {
 
   const isRangeMode = !!endTimeCol
 
-  const truncateLabel = (label: unknown): string => {
+  const truncateLabel = useCallback((label: unknown): string => {
     if (!label) return ''
     const str = String(label)
     return str.length > maxLabelLength ? str.substring(0, maxLabelLength) + '…' : str
+  }, [maxLabelLength])
+
+  function formatDuration(ms: number): string {
+    const seconds = Math.floor(ms / 1000)
+    const minutes = Math.floor(seconds / 60)
+    const hours = Math.floor(minutes / 60)
+    if (hours > 0) return `${hours}h ${minutes % 60}m ${seconds % 60}s`
+    if (minutes > 0) return `${minutes}m ${seconds % 60}s`
+    return `${seconds}s`
   }
 
   const { option, height } = useMemo(() => {
@@ -43,10 +52,17 @@ function TimelineChartComponent({ data, config }: ChartProps) {
         option: {
           tooltip: { ...getTooltipStyle(), trigger: 'axis' as const },
           legend: groups.length > 1 ? { top: 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
-          grid: { top: groups.length > 1 ? 40 : 16, right: 16, bottom: 40, left: 16, containLabel: true },
+          grid: { top: groups.length > 1 ? 30 : 12, right: 16, bottom: 16, left: 16, containLabel: true },
           xAxis: { type: 'time' as const, ...getAxisStyle() },
           yAxis: { type: 'category' as const, data: groups, inverse: true, ...getAxisStyle() },
-          dataZoom: [{ type: 'slider' as const, xAxisIndex: 0, bottom: 0, height: 20 }],
+          dataZoom: [{
+            type: 'slider' as const,
+            xAxisIndex: 0,
+            bottom: 0,
+            height: 8,
+            zoomOnMouseWheel: true,
+            moveOnMouseMove: true,
+          }],
           series: groups.map((group, gi) => ({
             name: group,
             type: 'custom' as const,
@@ -56,10 +72,10 @@ function TimelineChartComponent({ data, config }: ChartProps) {
               const endTime = api.value(1)
               const start = api.coord([startTime, groupIndex])
               const end = api.coord([endTime, groupIndex])
-              const height = api.size([0, 1])[1] * 0.6
+              const barHeight = api.size([0, 1])[1] * 0.6
               return {
                 type: 'rect' as const,
-                shape: { x: start[0], y: start[1] - height / 2, width: end[0] - start[0], height },
+                shape: { x: start[0], y: start[1] - barHeight / 2, width: end[0] - start[0], height: barHeight },
                 style: { fill: config.seriesColors?.[group] ?? CHART_COLORS[gi % CHART_COLORS.length], opacity: 0.85 },
               }
             },
@@ -70,77 +86,157 @@ function TimelineChartComponent({ data, config }: ChartProps) {
             animation: false,
           })),
         },
-        height: Math.max(200, groups.length * 50 + 80),
+        height: Math.max(200, groups.length * 36 + 60),
       }
     }
+
+    const singleGroup = groups.length === 1
+
+    const yAxisConfig = singleGroup ? {
+      yAxis: {
+        type: 'value' as const,
+        show: false,
+        min: 0,
+        max: 1,
+        splitLine: { show: false },
+      }
+    } : {
+      yAxis: {
+        type: 'category' as const,
+        data: groups,
+        ...getAxisStyle(),
+        show: true,
+        axisLabel: { ...getAxisStyle().axisLabel, width: 60, overflow: 'truncate' as const },
+      }
+    }
+
+    const gridConfig = singleGroup
+      ? { top: 50, right: 16, bottom: 60, left: 16 }
+      : { top: groups.length > 1 ? 40 : 12, right: 16, bottom: 16, left: 16, containLabel: true }
+
+    const dataZoomConfig = [
+      { type: 'inside' as const, xAxisIndex: 0 },
+      { type: 'slider' as const, xAxisIndex: 0, bottom: 0, height: 8 },
+    ]
+
+    const connectorSeries = (config.showConnectors !== false && singleGroup)
+      ? [{
+          name: '__connector',
+          type: 'line' as const,
+          data: chartData
+            .filter(d => groupByCol ? String(d[groupByCol] ?? 'Unknown') === groups[0] : true)
+            .map(d => [new Date(String(d[timeCol])).getTime(), 0.2]),
+          lineStyle: { color: colors.textMuted, width: 1, type: 'dashed' as const, opacity: 0.25 },
+          symbol: 'none',
+          animation: false,
+          silent: true,
+          z: 1,
+        }]
+      : []
+
+    const chartHeight = singleGroup ? 320 : 350
 
     return {
       option: {
         tooltip: {
           ...getTooltipStyle(),
           trigger: 'item' as const,
-          formatter: (params: { data: unknown[]; seriesName: string }) => {
-            const d = params.data as unknown[]
-            const time = new Date(d[0] as number).toLocaleString()
-            const label = d[2] ? `<br/><b>${d[2]}</b>` : ''
-            const group = groups.length > 1 ? `<br/>Group: ${params.seriesName}` : ''
-            return `<b>${time}</b>${label}${group}`
+          formatter: (params: { data: unknown[]; seriesName: string; dataIndex: number }) => {
+            const raw = params.data as unknown[]
+            const pointTime = raw[0] as number
+            const time = new Date(pointTime).toLocaleString()
+            const label = raw[2] ? `<br/><b>${raw[2]}</b>` : ''
+            const groupInfo = groups.length > 1 ? `<br/>Group: ${params.seriesName}` : ''
+
+            let delta = ''
+            if (config.showTimeDeltas !== false) {
+              const seriesGroupName = singleGroup ? groups[0] : params.seriesName
+              const dataForGroup = chartData
+                .filter(row => groupByCol ? String(row[groupByCol] ?? 'Unknown') === seriesGroupName : true)
+                .sort((a, b) => new Date(String(a[timeCol])).getTime() - new Date(String(b[timeCol])).getTime())
+              const eventIdx = dataForGroup.findIndex(row =>
+                new Date(String(row[timeCol])).getTime() === pointTime
+              )
+              if (eventIdx > 0) {
+                const prevTime = new Date(String(dataForGroup[eventIdx - 1][timeCol])).getTime()
+                const diff = pointTime - prevTime
+                if (diff > 0) {
+                  delta = `<br/><span style="color:#888">Δ ${formatDuration(diff)}</span>`
+                }
+              } else {
+                delta = `<br/><span style="color:#888">Sequence start</span>`
+              }
+            }
+
+            return `<b>${time}</b>${label}${groupInfo}${delta}`
           },
         },
         legend: groups.length > 1 ? { top: 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
-        grid: { top: groups.length > 1 ? 40 : 16, right: 80, bottom: 40, left: 16, containLabel: true },
+        grid: gridConfig,
         xAxis: { type: 'time' as const, ...getAxisStyle() },
-        yAxis: {
-          type: 'category' as const,
-          data: groups,
-          ...getAxisStyle(),
-          show: groups.length > 1,
-          axisLabel: { ...getAxisStyle().axisLabel, width: 60, overflow: 'truncate' as const }
-        },
-        dataZoom: [{ type: 'slider' as const, xAxisIndex: 0, bottom: 0, height: 20 }],
-        series: groups.map((group, gi) => ({
-          name: group,
-          type: 'scatter' as const,
-          symbolSize: 14,
-          itemStyle: {
-            color: config.seriesColors?.[group] ?? CHART_COLORS[gi % CHART_COLORS.length],
-            borderColor: colors.text,
-            borderWidth: 1,
-            shadowBlur: 4,
-            shadowColor: 'rgba(0,0,0,0.3)'
-          },
-          label: showLabels ? {
-            show: true,
-            position: 'top' as const,
-            formatter: (params: { data: unknown[] }) => {
-              const d = params.data as unknown[]
-              return d[2] ? truncateLabel(d[2]) : ''
-            },
-            fontSize: 10,
-            color: colors.textMuted,
-            distance: 8,
-            overflow: 'truncate' as const,
-            ellipsis: '…',
-          } : undefined,
-          emphasis: {
-            scale: 1.5,
-            label: { show: true, fontSize: 12, fontWeight: 'bold' as const }
-          },
-          data: chartData
-            .filter(d => groupByCol ? String(d[groupByCol] ?? 'Unknown') === group : true)
-            .map(d => [
-              new Date(String(d[timeCol])).getTime(),
-              group,
-              labelCol ? d[labelCol] : null,
-            ]),
-          animation: false,
-        })),
+        ...yAxisConfig,
+        dataZoom: dataZoomConfig,
+        series: [
+          ...connectorSeries,
+          ...groups.flatMap((group, gi) => {
+            const groupData = chartData
+              .filter(d => groupByCol ? String(d[groupByCol] ?? 'Unknown') === group : true)
+            const color = config.seriesColors?.[group] ?? CHART_COLORS[gi % CHART_COLORS.length]
+            const itemStyle = {
+              color,
+              borderColor: colors.text,
+              borderWidth: 1,
+              shadowBlur: 4,
+              shadowColor: 'rgba(0,0,0,0.3)',
+            }
+            const makeSeries = (
+              labelPos: 'top' | 'bottom',
+              dataFilter: (d: Record<string, unknown>, i: number) => boolean,
+            ) => ({
+              name: group,
+              type: 'scatter' as const,
+              symbolSize: 14,
+              itemStyle,
+              label: showLabels ? {
+                show: true,
+                position: labelPos,
+                formatter: (p: { data: unknown[] }) => {
+                  const row = p.data as unknown[]
+                  return row[2] ? truncateLabel(row[2]) : ''
+                },
+                fontSize: 11,
+                color: colors.textMuted,
+                distance: 16,
+                overflow: 'truncate' as const,
+                ellipsis: '…',
+              } : undefined,
+              labelLayout: showLabels ? { hideOverlap: true } : undefined,
+              emphasis: {
+                scale: 1.5,
+                label: { show: true, fontSize: 12, fontWeight: 'bold' as const },
+              },
+              data: groupData
+                .filter(dataFilter)
+                .map(d => [
+                  new Date(String(d[timeCol])).getTime(),
+                  singleGroup ? 0.2 : group,
+                  labelCol ? d[labelCol] : null,
+                ]),
+              animation: false,
+              z: 2,
+            })
+            return [
+              makeSeries('top', (_, i) => i % 2 === 0),
+              makeSeries('bottom', (_, i) => i % 2 === 1),
+            ]
+          }),
+        ],
       },
-      height: 350,
+      height: chartHeight,
     }
-  }, [chartData, groups, isRangeMode, showLabels, maxLabelLength, timeCol, endTimeCol, labelCol, groupByCol, config.seriesColors, colors])
+  }, [chartData, groups, isRangeMode, showLabels, timeCol, endTimeCol, labelCol, groupByCol, config.seriesColors, config.showConnectors, config.showTimeDeltas, colors, truncateLabel])
 
-  return <EChartsContainer option={option} height={height} />
+  return <EChartsContainer option={option} height={height} notMerge />
 }
 
 function TimelineConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
@@ -237,6 +333,24 @@ function TimelineConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
           </select>
         </div>
       )}
+      <div style={styles.row}>
+        <label style={styles.checkbox}>
+          <input
+            type="checkbox"
+            checked={config.showConnectors ?? true}
+            onChange={e => onChange({ ...config, showConnectors: e.target.checked })}
+          />
+          Show connectors
+        </label>
+        <label style={styles.checkbox}>
+          <input
+            type="checkbox"
+            checked={config.showTimeDeltas ?? true}
+            onChange={e => onChange({ ...config, showTimeDeltas: e.target.checked })}
+          />
+          Show time deltas
+        </label>
+      </div>
     </div>
   )
 }
@@ -253,7 +367,7 @@ const styles: Record<string, React.CSSProperties> = {
 export const TimelineModule: ChartModule = {
   Component: TimelineChartComponent,
   ConfigPanel: TimelineConfigPanel,
-  defaultConfig: { chartType: 'timeline', showLegend: true, showGrid: true, showLabels: true },
+  defaultConfig: { chartType: 'timeline', showLegend: true, showGrid: true, showLabels: true, showConnectors: true, showTimeDeltas: true },
   detectColumns: (columns) => {
     const timeCols = columns.filter(c => isTimeType(c.type))
     const firstTextCol = columns.find(c => !isTimeType(c.type) && (!c.type || c.type.includes('text') || c.type.includes('varchar')))
