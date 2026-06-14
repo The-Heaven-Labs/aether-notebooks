@@ -180,6 +180,13 @@ export function NotebookPage() {
     [cellSaveState]
   )
 
+  const localCellsRef = useRef(localCells)
+  localCellsRef.current = localCells
+  const paramValuesRef = useRef(paramValues)
+  paramValuesRef.current = paramValues
+  const notebookConnectorIdRef = useRef(notebookConnectorId)
+  notebookConnectorIdRef.current = notebookConnectorId
+
   const [cellRunAt, setCellRunAt] = useState<Record<string, Date>>({})
   const [focusedCellId, setFocusedCellId] = useState<string | null>(null)
   const [allCollapsed, setAllCollapsed] = useState(false)
@@ -246,10 +253,18 @@ export function NotebookPage() {
       prev.map((c) => (c.id === cellId ? { ...c, metadata } : c)),
     )
     flashCell(cellId)
-  }, []), useCallback((cellId: string, _source?: string) => {
-    // cell_updated event received - invalidate query so fresh source from
-    // DB flows into Cell props, and the new useEffect in Cell syncs it to Yjs
-    qc.invalidateQueries({ queryKey: ['notebook', id] })
+  }, []), useCallback((cellId: string, source?: string) => {
+    // cell_updated event received — update specific cell in cache to avoid full re-fetch
+    if (source !== undefined) {
+      setLocalCells((prev) =>
+        prev.map((c) => c.id === cellId ? { ...c, source } : c),
+      )
+      qc.setQueryData<NotebookWithCells>(['notebook', id], (old) =>
+        old ? { ...old, cells: old.cells.map((c) => c.id === cellId ? { ...c, source } : c) } : old,
+      )
+    } else {
+      qc.invalidateQueries({ queryKey: ['notebook', id] })
+    }
     flashCell(cellId)
   }, [id, qc]))
 
@@ -308,16 +323,16 @@ export function NotebookPage() {
     // Always sync localCells with notebook data (for agent updates)
     if (notebook) {
       setLocalCells(prev => {
+        let changed = false
         const merged = notebook.cells.map(nbCell => {
           const local = prev.find(c => c.id === nbCell.id)
-          // Always use notebook source (database is authoritative)
-          // Create new object to trigger memoized Cell re-render
-          if (local && local.source !== nbCell.source) {
-            return { ...nbCell }
+          if (local && local.source === nbCell.source) {
+            return local
           }
+          changed = true
           return nbCell
         })
-        return merged
+        return changed ? merged : prev
       })
     }
     return () => { document.title = "Heaven's Notebooks" }
@@ -408,7 +423,8 @@ export function NotebookPage() {
   })
 
   const switchCellType = useCallback(async (cellId: string) => {
-    const cell = localCells.find((c) => c.id === cellId)
+    const cells = localCellsRef.current
+    const cell = cells.find((c) => c.id === cellId)
     if (!cell) return
     const newType = cell.type === 'code' ? 'text' : 'code'
     const newLanguage = newType === 'code' ? 'sql' : 'markdown'
@@ -421,7 +437,7 @@ export function NotebookPage() {
     qc.setQueryData<NotebookWithCells>(['notebook', id], (old) =>
       old ? { ...old, cells: (old.cells ?? []).map(updater) } : old
     )
-  }, [id, localCells, qc])
+  }, [id, qc])
 
   const updateCellMeta = useCallback(async (cellId: string, updates: Partial<Pick<Cell, 'source_visible' | 'outputs_hidden' | 'cell_collapsed' | 'slide_break' | 'title' | 'slug'>>) => {
     try {
@@ -434,14 +450,15 @@ export function NotebookPage() {
 
   const updateCellChartConfig = useCallback(async (cellId: string, config: ChartConfig) => {
     try {
+      const cells = localCellsRef.current
       setLocalCells((prev) => prev.map((c) => c.id === cellId ? { ...c, metadata: { ...c.metadata, chart: config } } : c))
-      const cell = localCells.find((c) => c.id === cellId)
+      const cell = cells.find((c) => c.id === cellId)
       const metadata = { ...cell?.metadata, chart: config }
       await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { metadata })
     } catch (err) {
       setMutationError(err instanceof Error ? err.message : 'Failed to update chart config')
     }
-  }, [id, localCells])
+  }, [id])
 
   const fetchHistory = useCallback(async (cellId: string) => {
     const versions = await api.get<CellVersion[]>(`/api/v1/notebooks/${id}/cells/${cellId}/versions`)
@@ -456,6 +473,23 @@ export function NotebookPage() {
   }, [])
   const stableDashboardHandler = useCallback((cid: string) => setAddToDashboardCellId(cid), [])
   const stableHistoryHandler = useCallback((cid: string) => fetchHistory(cid), [fetchHistory])
+  const stableOnEditStart = useCallback(() => setIsEditingCell(true), [])
+  const stableOnEditEnd = useCallback(() => setIsEditingCell(false), [])
+  const stableDuplicate = useCallback((cid: string) => duplicateCell.mutate(cid), [duplicateCell])
+  const moveCell = useCallback((cellId: string, dir: -1 | 1) => {
+    setLocalCells((prev) => {
+      const idx = prev.findIndex((c) => c.id === cellId)
+      if (idx < 0) return prev
+      const next = [...prev]
+      const swap = idx + dir
+      if (swap < 0 || swap >= next.length) return prev
+      ;[next[idx], next[swap]] = [next[swap], next[idx]]
+      return next
+    })
+  }, [])
+
+  const stableMoveUp = useCallback((cid: string) => moveCell(cid, -1), [moveCell])
+  const stableMoveDown = useCallback((cid: string) => moveCell(cid, 1), [moveCell])
 
   const restoreVersion = useCallback(async (cellId: string, versionId: string) => {
     try {
@@ -489,7 +523,8 @@ export function NotebookPage() {
     })
 
     // Check if agent just updated this cell — suppress auto-save
-    const cell = localCells.find(c => c.id === cellId)
+    const cells = localCellsRef.current
+    const cell = cells.find(c => c.id === cellId)
     if (cell?.agent_updated_at) {
       const elapsed = Date.now() - new Date(cell.agent_updated_at).getTime()
       if (elapsed < 5000) {
@@ -504,7 +539,7 @@ export function NotebookPage() {
     saveTimers.current[cellId] = setTimeout(() => {
       saveCellSource(cellId, source)
     }, 1500)
-  }, [saveCellSource, localCells])
+  }, [saveCellSource])
 
   const assignConnector = useCallback(async (cellId: string, connectorId: string) => {
     await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, {
@@ -523,12 +558,13 @@ export function NotebookPage() {
   }, [id])
 
   const updateCellParam = useCallback(async (cellId: string, paramName: string, value: string) => {
-    const cell = localCells.find(c => c.id === cellId)
+    const cells = localCellsRef.current
+    const cell = cells.find(c => c.id === cellId)
     if (!cell || !cell.parameters) return
     const updated = cell.parameters.map(p => p.name === paramName ? { ...p, default: value } : p)
     setLocalCells(prev => prev.map(c => c.id === cellId ? { ...c, parameters: updated } : c))
     await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { parameters: updated })
-  }, [id, localCells])
+  }, [id])
 
   const applyNotebookConnector = useCallback((connectorId: string | null) => {
     const val = connectorId ?? ''
@@ -537,7 +573,8 @@ export function NotebookPage() {
   }, [updateNotebook])
 
   const addCellToDashboard = useCallback(async (dashboardId: string, cellId: string) => {
-    const cell = localCells.find(c => c.id === cellId)
+    const cells = localCellsRef.current
+    const cell = cells.find(c => c.id === cellId)
     if (!cell) return
     // Fetch existing widgets to compute layout
     const dash = await api.get<Dashboard & { widgets: Widget[] }>(`/api/v1/dashboards/${dashboardId}`)
@@ -555,15 +592,18 @@ export function NotebookPage() {
     setAddToDashboardCellId(null)
     setAddToDashboardToast(`Added to "${dash.title}"`)
     setTimeout(() => setAddToDashboardToast(null), 3000)
-  }, [id, localCells])
+  }, [id])
 
   const saveAndRun = useCallback(
     async (cellId: string) => {
-      const cell = localCells.find((c) => c.id === cellId)
+      const cells = localCellsRef.current
+      const params = paramValuesRef.current
+      const nbConnectorId = notebookConnectorIdRef.current
+      const cell = cells.find((c) => c.id === cellId)
       if (!cell) return
 
       // Pre-flight: check connector is assigned
-      const effectiveConnectorId = cell.connector_id || notebookConnectorId
+      const effectiveConnectorId = cell.connector_id || nbConnectorId
       if (!effectiveConnectorId) {
         setLocalCells((prev) =>
           prev.map((c) =>
@@ -581,7 +621,7 @@ export function NotebookPage() {
       try {
         const result = await api.post<{ outputs: Output[]; metrics?: { connect_time_ms: number; query_time_ms: number; render_time_ms: number; total_time_ms: number } }>(
           `/api/v1/notebooks/${id}/cells/${cellId}/execute`,
-          { parameters: paramValues },
+          { parameters: params },
         )
         setLocalCells((prev) =>
           prev.map((c) => (c.id === cellId ? { ...c, outputs: result.outputs, metrics: result.metrics } : c)),
@@ -602,14 +642,15 @@ export function NotebookPage() {
         })
       }
     },
-    [id, localCells, paramValues, notebookConnectorId],
+    [id],
   )
 
   const runAll = useCallback(async () => {
-    for (const cell of localCells) {
+    const cells = localCellsRef.current
+    for (const cell of cells) {
       if (cell.type === 'code') await saveAndRun(cell.id)
     }
-  }, [localCells, saveAndRun])
+  }, [saveAndRun])
 
   const toggleCollapseAll = useCallback(async () => {
     const newCollapsed = !allCollapsed
@@ -726,18 +767,6 @@ export function NotebookPage() {
     },
     isEditingCell
   )
-
-  const moveCell = useCallback((cellId: string, dir: -1 | 1) => {
-    setLocalCells((prev) => {
-      const idx = prev.findIndex((c) => c.id === cellId)
-      if (idx < 0) return prev
-      const next = [...prev]
-      const swap = idx + dir
-      if (swap < 0 || swap >= next.length) return prev
-      ;[next[idx], next[swap]] = [next[swap], next[idx]]
-      return next
-    })
-  }, [])
 
   const runningCount = runningCells.size
   const schemaConnectorId = notebookConnectorId || null
@@ -1017,20 +1046,20 @@ export function NotebookPage() {
                             onSave={readOnly ? undefined : saveCellSource}
                             onAssignConnector={readOnly ? noop as any : assignConnector}
                             onClearConnector={readOnly ? undefined : clearCellConnector}
-                            onMoveUp={readOnly || i === 0 ? undefined : () => moveCell(cell.id, -1)}
-                            onMoveDown={readOnly || i === localCells.length - 1 ? undefined : () => moveCell(cell.id, 1)}
-                            onSwitchType={readOnly ? undefined : () => switchCellType(cell.id)}
-                            onDuplicate={readOnly ? undefined : () => duplicateCell.mutate(cell.id)}
+                            onMoveUp={readOnly || i === 0 ? undefined : stableMoveUp}
+                            onMoveDown={readOnly || i === localCells.length - 1 ? undefined : stableMoveDown}
+                            onSwitchType={readOnly ? undefined : switchCellType}
+                            onDuplicate={readOnly ? undefined : stableDuplicate}
                             running={runningCells.has(cell.id)}
                             saveState={cellSaveState[cell.id]}
                             runAt={cellRunAt[cell.id]}
                             metrics={cell.metrics}
-                            onUpdateCellMeta={readOnly ? undefined : (updates) => updateCellMeta(cell.id, updates)}
+                            onUpdateCellMeta={readOnly ? undefined : updateCellMeta}
                             onChartConfigChange={readOnly ? undefined : updateCellChartConfig}
-                            onShowHistory={readOnly ? undefined : () => stableHistoryHandler(cell.id)}
+                            onShowHistory={readOnly ? undefined : stableHistoryHandler}
                             onFocus={stableFocusHandler}
-                            onEditStart={() => setIsEditingCell(true)}
-                            onEditEnd={() => setIsEditingCell(false)}
+                            onEditStart={stableOnEditStart}
+                            onEditEnd={stableOnEditEnd}
                             onAddToDashboard={readOnly ? undefined : stableDashboardHandler}
                             focused={cell.id === focusedCellId}
                             index={i}
