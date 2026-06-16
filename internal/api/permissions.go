@@ -18,9 +18,13 @@ type aclCandidate struct {
 }
 
 var resourceTable = map[string]string{
-	"notebook":  "notebooks",
-	"connector": "connectors",
-	"dashboard": "dashboards",
+	"notebook":    "notebooks",
+	"connector":   "connectors",
+	"dashboard":   "dashboards",
+	"agent":       "agents",
+	"model_config": "model_configs",
+	"skill":       "skills",
+	"mcp_server":  "mcp_servers",
 }
 
 // checkPermission returns true if userID has action on resourceType/resourceID within orgID.

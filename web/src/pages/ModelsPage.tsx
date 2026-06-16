@@ -8,6 +8,7 @@ import { Brain } from 'lucide-react'
 import { api } from '../api/client'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import type { ModelConfig } from '../types/agent'
+import { PermissionsPanel } from '../components/PermissionsPanel'
 
 interface ModelConfigForm {
   name: string
@@ -120,6 +121,7 @@ export function ModelsPage() {
 
   const [testResult, setTestResult] = useState<{ id: string; ok: boolean; message: string } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<ModelConfig | null>(null)
+  const [permissionsTarget, setPermissionsTarget] = useState<{ id: string; name: string } | null>(null)
   const testMutation = useMutation({
     mutationFn: async (id: string) => {
       const res = await api.post<{ status: string; response: string; model: string }>(`/api/v1/model-configs/${id}/test`, {})
@@ -199,8 +201,9 @@ export function ModelsPage() {
                 <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{c.base_url}</td>
                 <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{c.model}</td>
                 <td style={{ ...cellStyle, fontSize: 12, color: 'var(--text-muted)' }}>{c.context_window?.toLocaleString() ?? '—'}</td>
-                <td style={styles.tdActions}>
-                  <button
+                  <td style={styles.tdActions}>
+                    <button type="button" style={styles.permissionsBtn} onClick={() => setPermissionsTarget({ id: c.id, name: c.name })}>Permissions</button>
+                    <button
                     type="button"
                     style={testMutation.isPending && testResult?.id === c.id ? { ...styles.testBtn, opacity: 0.6 } : styles.testBtn}
                     onClick={() => { setTestResult(null); testMutation.mutate(c.id) }}
@@ -241,6 +244,14 @@ export function ModelsPage() {
         onConfirm={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null) }}
         onCancel={() => setDeleteTarget(null)}
       />
+      {permissionsTarget && (
+        <PermissionsPanel
+          resourceType="model_config"
+          resourceId={permissionsTarget.id}
+          resourceName={permissionsTarget.name}
+          onClose={() => setPermissionsTarget(null)}
+        />
+      )}
     </AppShell>
   )
 }
@@ -293,6 +304,7 @@ const styles: Record<string, React.CSSProperties> = {
   cancelBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   saveBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   newBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  permissionsBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 },
   editBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--accent)', marginRight: 6 },
   deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--error-full)' },
   testBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 },

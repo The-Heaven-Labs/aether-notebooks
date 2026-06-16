@@ -44,6 +44,10 @@ func (h *modelConfigHandlers) handleList(w http.ResponseWriter, r *http.Request)
 		rows.Scan(&c.ID, &c.OrgID, &c.Name, &c.Provider, &c.BaseURL, &c.Model, &c.APIKeyEncrypted,
 			&defaultParams, &c.ContextWindow, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
 		json.Unmarshal(defaultParams, &c.DefaultParams)
+		allowed, _ := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "model_config", c.ID, "view")
+		if !allowed {
+			continue
+		}
 		configs = append(configs, c)
 	}
 
@@ -104,6 +108,13 @@ func (h *modelConfigHandlers) handleCreate(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// Grant creator full access
+	h.server.db.Pool.Exec(r.Context(),
+		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		 VALUES ($1, 'model_config', $2, 'user', $3, ARRAY['view','edit','delete'])
+		 ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
+		claims.OrgID, cfgID, claims.UserID)
 
 	h.server.audit.Log(r.Context(), audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,

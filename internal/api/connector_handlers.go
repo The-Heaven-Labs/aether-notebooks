@@ -158,6 +158,11 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
+		// Filter by permission: only return connectors user can view
+		allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "view")
+		if !allowed {
+			continue
+		}
 		// Decrypt and mask password
 		if plain, err := crypto.Decrypt(encryptedConfig, s.masterKey); err == nil {
 			json.Unmarshal(plain, &c.Config)
@@ -517,6 +522,12 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	connID := r.PathValue("id")
 	ctx := r.Context()
+
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", connID, "view")
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
 
 	connType, configEnc, allowlist, denylist, err := s.loadConnectorWithFilters(ctx, connID, claims.OrgID)
 	if err != nil {

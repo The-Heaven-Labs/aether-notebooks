@@ -56,6 +56,81 @@ func (s *Server) handleListMOTD(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, motds)
 }
 
+func (s *Server) handleListMOTDAdmin(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+	ctx := r.Context()
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT id, title, content, priority, visibility, pages, show_on_login, created_at, expires_at
+		 FROM motd_messages WHERE org_id = $1
+		 ORDER BY priority DESC, created_at DESC`, claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list MOTDs")
+		return
+	}
+	defer rows.Close()
+
+	var motds []map[string]any
+	for rows.Next() {
+		var id, content, visibility string
+		var title string
+		var priority int
+		var pages []string
+		var showOnLogin bool
+		var createdAt time.Time
+		var expiresAt *time.Time
+		if err := rows.Scan(&id, &title, &content, &priority, &visibility, &pages, &showOnLogin, &createdAt, &expiresAt); err != nil {
+			continue
+		}
+		motds = append(motds, map[string]any{
+			"id": id, "title": title, "content": content, "priority": priority,
+			"visibility": visibility, "pages": pages, "show_on_login": showOnLogin,
+			"created_at": createdAt, "expires_at": expiresAt,
+		})
+	}
+	if motds == nil {
+		motds = []map[string]any{}
+	}
+	writeJSON(w, http.StatusOK, motds)
+}
+
+func (s *Server) handleListLoginMOTD(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT id, title, content, priority, created_at, expires_at
+		 FROM motd_messages
+		 WHERE show_on_login = true AND (expires_at IS NULL OR expires_at > NOW())
+		 ORDER BY priority DESC, created_at DESC`)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list MOTDs")
+		return
+	}
+	defer rows.Close()
+
+	var motds []map[string]any
+	for rows.Next() {
+		var id, content string
+		var title string
+		var priority int
+		var createdAt time.Time
+		var expiresAt *time.Time
+		if err := rows.Scan(&id, &title, &content, &priority, &createdAt, &expiresAt); err != nil {
+			continue
+		}
+		motds = append(motds, map[string]any{
+			"id": id, "title": title, "content": content,
+			"priority": priority, "created_at": createdAt, "expires_at": expiresAt,
+		})
+	}
+	if motds == nil {
+		motds = []map[string]any{}
+	}
+	writeJSON(w, http.StatusOK, motds)
+}
+
 func (s *Server) handleCreateMOTD(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	if claims == nil {

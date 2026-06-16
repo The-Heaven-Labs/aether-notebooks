@@ -15,6 +15,7 @@ interface AgentPanelProps {
   onCellOutput?: (cellId: string, outputs: Array<{ type: string; data: unknown }>) => void
   onCellScrollTo?: (cellId: string) => void
   onClose: () => void
+  onMinimize?: () => void
 }
 
 const WS_URL = (import.meta.env.VITE_WS_URL || 'ws://localhost:8080') + '/api/v1/ws/agents/'
@@ -27,7 +28,7 @@ interface AgentChatState {
   messages: Array<{ role: string; content: string; reasoning?: string; params?: string; result?: string }>
 }
 
-export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellOutput, onCellScrollTo, onClose }: AgentPanelProps) {
+export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellOutput, onCellScrollTo, onClose, onMinimize }: AgentPanelProps) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
   const [_sessionId, setSessionId] = useState<string | null>(null)
@@ -283,7 +284,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
   const startSession = async (agent: Agent) => {
     try {
       const res = await api.post<{ session_id: string }>('/api/v1/agents/' + agent.id + '/session', {
-        notebook_id: notebookId || '',
+        notebook_id: notebookId || null,
       })
       setSessionId(res.session_id)
       setSessionTitle(null)
@@ -495,6 +496,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
       <PanelHeader
         title={sessionTitle || (selectedAgent ? selectedAgent.name : 'AI Agent')}
         onClose={onClose}
+        onMinimize={onMinimize}
         closeTitle="Close agent panel"
         style={{ borderBottom: '1px solid var(--border)', flexShrink: 0 }}
       />
@@ -716,8 +718,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--bg-primary)',
     display: 'flex',
     flexDirection: 'column',
-    flexShrink: 0,
-    position: 'relative',
+    flex: 1,
     minHeight: 0,
     overflow: 'hidden',
   },

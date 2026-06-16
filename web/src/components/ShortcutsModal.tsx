@@ -32,6 +32,7 @@ const NOTEBOOK_SHORTCUTS: ShortcutEntry[] = [
 
 const GLOBAL_SHORTCUTS: ShortcutEntry[] = [
   { key: '?', action: 'Show keyboard shortcuts' },
+  { key: 'Ctrl+K', action: 'Open AI agent' },
 ]
 
 export function ShortcutsModal({ onClose, extraShortcuts }: Props) {

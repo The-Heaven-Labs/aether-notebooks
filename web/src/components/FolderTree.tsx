@@ -147,6 +147,28 @@ export function FolderTree({ onSelectFolder, selectedFolderId, onMoveFolder, onP
 
   return (
     <div style={{ padding: '8px 0' }}>
+      {/* Root / entry */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          padding: '4px 12px',
+          cursor: 'pointer',
+          fontSize: 13,
+          fontWeight: 600,
+          background: selectedFolderId === null ? 'var(--accent-light)' : 'transparent',
+          color: selectedFolderId === null ? 'var(--accent)' : 'var(--nav-text)',
+          borderRight: selectedFolderId === null ? '2px solid var(--accent)' : '2px solid transparent',
+        }}
+        onClick={() => onSelectFolder(null)}
+        title="Navigate to root"
+      >
+        <span style={{ width: 16, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: 6 }}>
+          <FolderIcon size={14} />
+        </span>
+        <span style={{ fontSize: 13, fontWeight: 500 }}>/</span>
+      </div>
+
       {/* Home folders section */}
       {homeFolders.length > 0 && (
         <div style={{ marginBottom: 16 }}>

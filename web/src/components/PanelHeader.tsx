@@ -1,26 +1,38 @@
 import type React from 'react'
-import { X } from 'lucide-react'
+import { X, ChevronDown } from 'lucide-react'
 
 interface Props {
   title: string
   onClose?: () => void
+  onMinimize?: () => void
   closeTitle?: string
   style?: React.CSSProperties
 }
 
-export function PanelHeader({ title, onClose, closeTitle = 'Close', style }: Props) {
+export function PanelHeader({ title, onClose, onMinimize, closeTitle = 'Close', style }: Props) {
   return (
     <div style={{ ...styles.header, ...style }}>
       <span style={styles.title}>{title}</span>
-      {onClose && (
-        <button
-          style={styles.closeBtn}
-          onClick={onClose}
-          title={closeTitle}
-        >
-          <X size={13} />
-        </button>
-      )}
+      <div style={{ display: 'flex', gap: 4 }}>
+        {onMinimize && (
+          <button
+            style={styles.iconBtn}
+            onClick={onMinimize}
+            title="Minimize"
+          >
+            <ChevronDown size={13} />
+          </button>
+        )}
+        {onClose && (
+          <button
+            style={styles.iconBtn}
+            onClick={onClose}
+            title={closeTitle}
+          >
+            <X size={13} />
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -42,7 +54,7 @@ const styles: Record<string, React.CSSProperties> = {
     textTransform: 'uppercase',
     letterSpacing: '0.06em',
   },
-  closeBtn: {
+  iconBtn: {
     display: 'flex',
     alignItems: 'center',
     background: 'none',

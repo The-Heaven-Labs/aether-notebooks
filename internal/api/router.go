@@ -176,6 +176,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/dashboards/{id}/share", authMW(RequireRole("editor")(http.HandlerFunc(s.handleShareDashboard))))
 	s.mux.Handle("GET /api/v1/dashboards/{id}/permissions", authMW(http.HandlerFunc(s.handleGetDashboardPermissions)))
 	s.mux.HandleFunc("GET /api/v1/public/dashboards/{token}", s.handlePublicDashboard)
+	s.mux.HandleFunc("GET /api/v1/public/motd", s.handleListLoginMOTD)
 
 	// WebSocket routes
 	s.mux.Handle("GET /api/v1/ws/notebooks/{id}", authMW(http.HandlerFunc(s.handleNotebookWS)))
@@ -272,27 +273,24 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/agents", authMW(http.HandlerFunc(ah.handleListAgents)))
 	s.mux.Handle("POST /api/v1/agents", authMW(http.HandlerFunc(ah.handleCreateAgent)))
 	s.mux.Handle("GET /api/v1/agents/{id}", authMW(http.HandlerFunc(ah.handleGetAgent)))
-	s.mux.Handle("PUT /api/v1/agents/{id}", authMW(http.HandlerFunc(ah.handleUpdateAgent)))
-	s.mux.Handle("DELETE /api/v1/agents/{id}", authMW(http.HandlerFunc(ah.handleDeleteAgent)))
+	s.mux.Handle("PUT /api/v1/agents/{id}", authMW(s.requirePermission("agent", "id", "edit")(http.HandlerFunc(ah.handleUpdateAgent))))
+	s.mux.Handle("DELETE /api/v1/agents/{id}", authMW(s.requirePermission("agent", "id", "delete")(http.HandlerFunc(ah.handleDeleteAgent))))
 	s.mux.Handle("POST /api/v1/agents/{id}/session", authMW(http.HandlerFunc(ah.handleCreateSession)))
 	s.mux.Handle("GET /api/v1/agents/{id}/sessions", authMW(http.HandlerFunc(ah.handleListSessions)))
 	s.mux.Handle("GET /api/v1/sessions/{session_id}", authMW(http.HandlerFunc(ah.handleGetSession)))
 	s.mux.Handle("GET /api/v1/sessions/{session_id}/messages", authMW(http.HandlerFunc(ah.handleGetSessionMessages)))
 	s.mux.Handle("PATCH /api/v1/sessions/{session_id}/title", authMW(http.HandlerFunc(ah.handleUpdateSessionTitle)))
-
 	mch := modelConfigHandlers{server: s}
 	s.mux.Handle("GET /api/v1/model-configs", authMW(http.HandlerFunc(mch.handleList)))
 	s.mux.Handle("POST /api/v1/model-configs", authMW(http.HandlerFunc(mch.handleCreate)))
-	s.mux.Handle("PUT /api/v1/model-configs/{id}", authMW(http.HandlerFunc(mch.handleUpdate)))
-	s.mux.Handle("DELETE /api/v1/model-configs/{id}", authMW(http.HandlerFunc(mch.handleDelete)))
+	s.mux.Handle("PUT /api/v1/model-configs/{id}", authMW(s.requirePermission("model_config", "id", "edit")(http.HandlerFunc(mch.handleUpdate))))
+	s.mux.Handle("DELETE /api/v1/model-configs/{id}", authMW(s.requirePermission("model_config", "id", "delete")(http.HandlerFunc(mch.handleDelete))))
 	s.mux.Handle("POST /api/v1/model-configs/{id}/test", authMW(http.HandlerFunc(mch.handleTest)))
-
 	sh := skillHandlers{server: s}
 	s.mux.Handle("GET /api/v1/skills", authMW(http.HandlerFunc(sh.handleList)))
 	s.mux.Handle("POST /api/v1/skills", authMW(http.HandlerFunc(sh.handleCreate)))
-	s.mux.Handle("PUT /api/v1/skills/{id}", authMW(http.HandlerFunc(sh.handleUpdate)))
-	s.mux.Handle("DELETE /api/v1/skills/{id}", authMW(http.HandlerFunc(sh.handleDelete)))
-
+	s.mux.Handle("PUT /api/v1/skills/{id}", authMW(s.requirePermission("skill", "id", "edit")(http.HandlerFunc(sh.handleUpdate))))
+	s.mux.Handle("DELETE /api/v1/skills/{id}", authMW(s.requirePermission("skill", "id", "delete")(http.HandlerFunc(sh.handleDelete))))
 	mh := mcpServerHandlers{server: s}
 	s.mux.Handle("GET /api/v1/mcp-servers", authMW(http.HandlerFunc(mh.handleList)))
 	s.mux.Handle("POST /api/v1/mcp-servers", authMW(RequireRole("admin")(http.HandlerFunc(mh.handleCreate))))
@@ -310,6 +308,7 @@ func (s *Server) routes() {
 
 	// MOTD routes
 	s.mux.Handle("GET /api/v1/motd", authMW(http.HandlerFunc(s.handleListMOTD)))
+	s.mux.Handle("GET /api/v1/admin/motd", authMW(RequireRole("admin")(http.HandlerFunc(s.handleListMOTDAdmin))))
 	s.mux.Handle("POST /api/v1/admin/motd", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateMOTD))))
 	s.mux.Handle("PUT /api/v1/admin/motd/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateMOTD))))
 	s.mux.Handle("DELETE /api/v1/admin/motd/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleDeleteMOTD))))

@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react'
+import { useLocation } from 'react-router-dom'
+import { Bot } from 'lucide-react'
 import { TopBar } from './TopBar'
 import { Sidebar } from './Sidebar'
 import { ShortcutsModal } from './ShortcutsModal'
 import { AgentPanel } from './AgentPanel'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { api } from '../api/client'
 
 interface Props {
@@ -13,7 +17,8 @@ interface Props {
 export function AppShell({ children, noPadding }: Props) {
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showGlobalAgent, setShowGlobalAgent] = useState(false)
-  const [motds, setMotds] = useState<Array<{id: string; title: string; content: string}>>([])
+  const [globalAgentMinimized, setGlobalAgentMinimized] = useState(false)
+  const [motds, setMotds] = useState<Array<{id: string; title: string; content: string; visibility: string; pages: string[]}>>([])
   const [dismissedMotds, setDismissedMotds] = useState<Set<string>>(() => {
     try {
       const stored = localStorage.getItem('hnb:dismissed_motds')
@@ -30,7 +35,7 @@ export function AppShell({ children, noPadding }: Props) {
   })
 
   useEffect(() => {
-    api.get<Array<{id: string; title: string; content: string}>>('/api/v1/motd')
+    api.get<Array<{id: string; title: string; content: string; visibility: string; pages: string[]}>>('/api/v1/motd')
       .then(setMotds)
       .catch(() => {})
   }, [])
@@ -45,7 +50,14 @@ export function AppShell({ children, noPadding }: Props) {
     })
   }
 
-  const visibleMotds = motds.filter(m => !dismissedMotds.has(m.id))
+  const location = useLocation()
+  const visibleMotds = motds.filter(m => {
+    if (dismissedMotds.has(m.id)) return false
+    if (m.visibility === 'specific' && m.pages?.length) {
+      return m.pages.some(p => location.pathname.startsWith(p))
+    }
+    return true
+  })
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -62,9 +74,12 @@ export function AppShell({ children, noPadding }: Props) {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement).isContentEditable) return
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         e.preventDefault()
         setShowGlobalAgent(v => !v)
+        setGlobalAgentMinimized(false)
       }
     }
     document.addEventListener('keydown', handler)
@@ -82,7 +97,7 @@ export function AppShell({ children, noPadding }: Props) {
             <div key={motd.id} style={motdStyles.banner}>
               <div style={motdStyles.bannerContent}>
                 {motd.title && <strong style={motdStyles.bannerTitle}>{motd.title}:</strong>}
-                <span dangerouslySetInnerHTML={{ __html: motd.content.replace(/\n/g, '<br/>') }} />
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{motd.content}</ReactMarkdown>
               </div>
               <button onClick={() => dismissMotd(motd.id)} style={motdStyles.bannerClose} title="Dismiss">×</button>
             </div>
@@ -92,7 +107,19 @@ export function AppShell({ children, noPadding }: Props) {
       </div>
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
 
-      {showGlobalAgent && (
+      {/* Global Agent FAB (floating action button) */}
+      {!showGlobalAgent && (
+        <button
+          style={fabStyles.fab}
+          onClick={() => { setShowGlobalAgent(true); setGlobalAgentMinimized(false) }}
+          title="Open AI Agent (Ctrl+K)"
+        >
+          <Bot size={20} />
+        </button>
+      )}
+
+      {/* Global Agent modal */}
+      {showGlobalAgent && !globalAgentMinimized && (
         <>
           <div
             style={globalAgentStyles.backdrop}
@@ -101,13 +128,35 @@ export function AppShell({ children, noPadding }: Props) {
           <div style={globalAgentStyles.modal} onClick={e => e.stopPropagation()}>
             <AgentPanel
               notebookId=""
-              width={500}
+              width={460}
               onResize={() => {}}
-              onClose={() => setShowGlobalAgent(false)}
+              onClose={() => {
+                try {
+                  localStorage.removeItem('hnb:agentChat:__global__')
+                  localStorage.removeItem('hnb:lastAgentId')
+                } catch {}
+                setShowGlobalAgent(false)
+              }}
+              onMinimize={() => setGlobalAgentMinimized(true)}
               onCellCreated={() => {}}
             />
           </div>
         </>
+      )}
+
+      {/* Minimized agent bar */}
+      {showGlobalAgent && globalAgentMinimized && (
+        <div style={globalAgentStyles.minimizedBar} onClick={() => setGlobalAgentMinimized(false)}>
+          <Bot size={16} />
+          <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>AI Agent (minimized)</span>
+          <button
+            style={globalAgentStyles.minimizedClose}
+            onClick={e => { e.stopPropagation(); setShowGlobalAgent(false) }}
+            title="Close agent"
+          >
+            ×
+          </button>
+        </div>
       )}
     </div>
   )
@@ -116,15 +165,49 @@ export function AppShell({ children, noPadding }: Props) {
 const globalAgentStyles: Record<string, React.CSSProperties> = {
   backdrop: {
     position: 'fixed', inset: 0, zIndex: 1500,
-    background: 'rgba(0,0,0,0.5)',
+    background: 'transparent',
   },
   modal: {
     position: 'fixed', zIndex: 1501,
-    top: '10%', left: '50%', transform: 'translateX(-50%)',
-    width: 500, maxWidth: '90vw', height: '70vh',
+    bottom: 8, right: 24,
+    width: 460, maxWidth: 'calc(100vw - 48px)',
+    height: 480, maxHeight: 'calc(100vh - 16px)',
     borderRadius: 8, overflow: 'hidden',
     border: '1px solid var(--border)',
     boxShadow: '0 16px 48px rgba(0,0,0,0.3)',
+    background: 'var(--bg-primary)',
+    display: 'flex', flexDirection: 'column',
+  },
+  minimizedBar: {
+    position: 'fixed', zIndex: 1501,
+    bottom: 0, left: 0, right: 0,
+    height: 44,
+    display: 'flex', alignItems: 'center', gap: 8,
+    padding: '0 16px',
+    background: 'var(--bg-elevated)',
+    borderTop: '1px solid var(--border)',
+    cursor: 'pointer',
+  },
+  minimizedClose: {
+    marginLeft: 'auto',
+    background: 'none', border: 'none',
+    cursor: 'pointer',
+    color: 'var(--text-muted)',
+    fontSize: 18,
+    padding: '4px 8px',
+    lineHeight: 1,
+  },
+}
+
+const fabStyles: Record<string, React.CSSProperties> = {
+  fab: {
+    position: 'fixed', bottom: 24, right: 24, zIndex: 1400,
+    width: 44, height: 44, borderRadius: '50%',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    background: 'var(--accent)', color: '#fff',
+    border: 'none', cursor: 'pointer',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+    transition: 'transform 0.15s, box-shadow 0.15s',
   },
 }
 
@@ -136,30 +219,37 @@ const styles: Record<string, React.CSSProperties> = {
 
 const motdStyles: Record<string, React.CSSProperties> = {
   banner: {
-    background: 'var(--accent-light)',
-    borderBottom: '1px solid var(--accent)',
-    padding: '8px 16px',
+    background: 'var(--warning-light)',
+    borderBottom: '1px solid var(--warning-border)',
+    borderLeft: '3px solid var(--accent)',
+    padding: '10px 16px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     fontSize: 13,
+    fontWeight: 500,
     color: 'var(--text-primary)',
   },
   bannerContent: {
     flex: 1,
     lineHeight: 1.5,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
   },
   bannerTitle: {
-    marginRight: 8,
+    fontWeight: 600,
+    whiteSpace: 'nowrap',
   },
   bannerClose: {
     background: 'none',
     border: 'none',
     cursor: 'pointer',
     color: 'var(--text-muted)',
-    fontSize: 18,
-    padding: '0 4px',
-    marginLeft: 8,
+    fontSize: 20,
+    padding: '0 6px',
+    marginLeft: 12,
     lineHeight: 1,
+    opacity: 0.7,
   },
 }
