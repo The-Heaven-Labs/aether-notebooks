@@ -125,6 +125,10 @@ func (s *Server) handleListNotebooks(w http.ResponseWriter, r *http.Request) {
 		}
 		nb.FolderID = folderID
 		json.Unmarshal(params, &nb.Parameters)
+		allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "view")
+		if !allowed {
+			continue
+		}
 		notebooks = append(notebooks, nb)
 	}
 
