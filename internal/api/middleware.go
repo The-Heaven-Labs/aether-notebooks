@@ -76,7 +76,7 @@ func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler,
 				`SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2`,
 				orgID, userID).Scan(&role)
 			if role == "" {
-				role = "viewer"
+				role = "member"
 			}
 
 			claims := &auth.Claims{
@@ -118,9 +118,9 @@ func RequirePlatformAdmin(next http.Handler) http.Handler {
 	})
 }
 
-// RequireRole returns middleware that enforces a minimum role level.
-func RequireRole(minRole string) func(http.Handler) http.Handler {
-	roleLevel := map[string]int{"onboarding": -1, "viewer": 0, "editor": 1, "admin": 2}
+// RequireRole returns middleware that enforces the admin role.
+// Editor and viewer roles have been removed — ACLs handle all non-admin permissioning.
+func RequireRole(role string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			claims := ClaimsFromContext(r.Context())
@@ -128,7 +128,7 @@ func RequireRole(minRole string) func(http.Handler) http.Handler {
 				writeError(w, http.StatusUnauthorized, "not authenticated")
 				return
 			}
-			if roleLevel[claims.Role] < roleLevel[minRole] {
+			if role == "admin" && claims.Role != "admin" {
 				writeError(w, http.StatusForbidden, "insufficient permissions")
 				return
 			}

@@ -291,7 +291,6 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, filteredEntries)
 }
 
-
 // @Summary List root contents
 // @Description List folders and resources at the root level
 // @Tags folders
@@ -501,7 +500,6 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 
 	writeJSON(w, http.StatusOK, contents)
 }
-
 
 // @Summary Get folder contents
 // @Description Get all items in a folder (subfolders, notebooks, connectors, dashboards)

@@ -70,7 +70,7 @@ const ACTION_DESCRIPTIONS: Record<ResourceType, Record<string, string>> = {
 
 interface AclEntry {
   id: string
-  subject_type: 'user' | 'group'
+  subject_type: 'user' | 'group' | 'org_role'
   subject_id: string
   actions: string[]
 }
@@ -108,10 +108,10 @@ function initials(name: string): string {
     .join('')
 }
 
-function Avatar({ name, type }: { name: string; type: 'user' | 'group' }) {
+function Avatar({ name, type }: { name: string; type: 'user' | 'group' | 'org_role' }) {
   return (
     <div style={styles.avatar}>
-      {type === 'group' ? '#' : initials(name)}
+      {type === 'group' ? '#' : type === 'org_role' ? '★' : initials(name)}
     </div>
   )
 }
@@ -205,6 +205,8 @@ export function PermissionsPanel({
     if (entry.subject_type === 'user') {
       const m = members.find((m) => m.user_id === entry.subject_id)
       return m ? (m.name || m.email) : entry.subject_id
+    } else if (entry.subject_type === 'org_role') {
+      return entry.subject_id === 'everyone' ? 'Everyone (all members)' : entry.subject_id
     } else {
       const g = groups.find((g) => g.id === entry.subject_id)
       return g ? g.name : entry.subject_id
@@ -235,7 +237,7 @@ export function PermissionsPanel({
 
   function handleAddEntry() {
     if (!newSubjectKey || newActions.length === 0) return
-    const [subjectType, subjectId] = newSubjectKey.split(':') as ['user' | 'group', string]
+    const [subjectType, subjectId] = newSubjectKey.split(':') as ['user' | 'group' | 'org_role', string]
     const current = draft ?? aclData ?? []
     const updated: AclEntry[] = [
       ...current,
@@ -450,7 +452,8 @@ export function PermissionsPanel({
                   value={newSubjectKey}
                   onChange={(e) => setNewSubjectKey(e.target.value)}
                 >
-                  <option value="">Select user or group…</option>
+                  <option value="">Select user, group, or Everyone…</option>
+                  <option value="org_role:everyone">Everyone (all members)</option>
                   {members.length > 0 && (
                     <optgroup label="Users">
                       {members

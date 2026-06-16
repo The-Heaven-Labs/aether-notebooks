@@ -10,3 +10,8 @@
 - [ ] There should be a configurable chart for geo-things, e.g., showing a global map, a map of a given country with separations of state/city etc. It should support coordinates and names
 - [ ] There should be a configurable sankey map supported
 - [ ] Add an "admin mode" toggle (in sidebar or header) for org admins. When enabled, admins bypass ACLs and see everything. When disabled, admins respect ACLs like regular users. This avoids the need to remove/re-add admin roles for troubleshooting.
+- [ ] The list of users and groups will eventually be pretty big, so the select list for permissions will be really big (also the one to add members to a group). That being the case, refactor these to be searchable and performant even at high numbers (thousands of each).
+- [ ] When you create a notebook and go back to the files/folders, the notebook doesn't immediately appear, a hard refresh is necessary to do so. It should automatically appear in this scenario.
+- [ ] It should not be possible to create notebooks at root folder, only folders there, then notebooks inside the folders.
+- [ ] Pressing back from a notebook should go back to the exact page you were before, e.g., if in the files, should go back to the same folder that was open before
+- [ ]

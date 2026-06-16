@@ -313,20 +313,13 @@ function BulkMoveModal({ count, onConfirm, onClose }: { count: number; onConfirm
 
 // ─── BulkPermissionsModal ────────────────────────────────────────────────────
 
-const BULK_PRESETS: Record<string, string[]> = {
-  folder: { viewer: ['view'], editor: ['view', 'create', 'edit'], admin: ['view', 'create', 'edit', 'manage', 'delete'] } as unknown as string[],
-  notebook: { viewer: ['view'], editor: ['view', 'run', 'edit'], admin: ['view', 'run', 'edit', 'share', 'delete'] } as unknown as string[],
-  connector: { viewer: ['view'], editor: ['view', 'use', 'edit'], admin: ['view', 'use', 'edit', 'share', 'delete'] } as unknown as string[],
-  dashboard: { viewer: ['view'], editor: ['view', 'edit'], admin: ['view', 'edit', 'share', 'delete'] } as unknown as string[],
-}
-
 function BulkPermissionsModal({ count, items, onClose, onApplied }: {
   count: number
   items: Array<{ type: ResourceType; id: string }>
   onClose: () => void
   onApplied: () => void
 }) {
-  const [role, setRole] = useState<'viewer' | 'editor' | 'admin'>('viewer')
+  const [level, setLevel] = useState<'view' | 'edit' | 'admin'>('view')
   const [applying, setApplying] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -337,38 +330,22 @@ function BulkPermissionsModal({ count, items, onClose, onApplied }: {
     dashboard: ['view', 'edit', 'share', 'delete'],
   }
 
-  const roleActions: Record<string, string[]> = {
-    viewer: ['view'],
-    editor: {
-      folder: ['view', 'create', 'edit'],
-      notebook: ['view', 'run', 'edit'],
-      connector: ['view', 'use', 'edit'],
-      dashboard: ['view', 'edit'],
-    } as unknown as string[],
-    admin: {
-      folder: ['view', 'create', 'edit', 'manage', 'delete'],
-      notebook: ['view', 'run', 'edit', 'share', 'delete'],
-      connector: ['view', 'use', 'edit', 'share', 'delete'],
-      dashboard: ['view', 'edit', 'share', 'delete'],
-    } as unknown as string[],
-  }
-
   async function handleApply() {
     setApplying(true)
     setError(null)
     try {
       await Promise.all(items.map(async ({ type, id }) => {
         let actions: string[]
-        if (role === 'viewer') {
+        if (level === 'view') {
           actions = ['view']
-        } else if (role === 'editor') {
+        } else if (level === 'edit') {
           const p = presets[type] ?? ['view']
           actions = p.filter(a => a !== 'delete' && a !== 'manage' && a !== 'share')
         } else {
           actions = presets[type] ?? ['view']
         }
         await api.put(`/api/v1/acl/${type}/${id}`, {
-          entries: [{ subject_type: 'org_role', subject_id: 'editor', actions }],
+          entries: [{ subject_type: 'org_role', subject_id: 'everyone', actions }],
         })
       }))
       onApplied()
@@ -388,17 +365,17 @@ function BulkPermissionsModal({ count, items, onClose, onApplied }: {
         </div>
         <div style={{ padding: '20px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0 }}>
-            This will set permissions for all {count} selected items. Existing permissions will be replaced.
+            This will set permissions for all {count} selected items. Existing permissions will be replaced. This grants access to <strong>Everyone (all members)</strong>.
           </p>
           <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
             Permission level
             <select
               style={{ width: '100%', padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, marginTop: 4, background: 'var(--bg-input)', color: 'var(--text-primary)' }}
-              value={role}
-              onChange={e => setRole(e.target.value as 'viewer' | 'editor' | 'admin')}
+              value={level}
+              onChange={e => setLevel(e.target.value as 'view' | 'edit' | 'admin')}
             >
-              <option value="viewer">Viewer — can view only</option>
-              <option value="editor">Editor — can view and edit</option>
+              <option value="view">View — can view only</option>
+              <option value="edit">Edit — can view and edit</option>
               <option value="admin">Admin — full access including delete</option>
             </select>
           </label>

@@ -25,27 +25,27 @@ type Parameter struct {
 }
 
 type Cell struct {
-	ID            string      `json:"id"`
-	NotebookID    string      `json:"notebook_id"`
-	Position      int         `json:"position"`
-	Type          CellType    `json:"type"`
-	Language      string      `json:"language,omitempty"`
-	ConnectorID   string      `json:"connector_id,omitempty"`
-	Source        string      `json:"source"`
-	Outputs       []Output    `json:"outputs"`
+	ID             string          `json:"id"`
+	NotebookID     string          `json:"notebook_id"`
+	Position       int             `json:"position"`
+	Type           CellType        `json:"type"`
+	Language       string          `json:"language,omitempty"`
+	ConnectorID    string          `json:"connector_id,omitempty"`
+	Source         string          `json:"source"`
+	Outputs        []Output        `json:"outputs"`
 	SourceVisible  bool            `json:"source_visible"`
 	OutputsHidden  bool            `json:"outputs_hidden"`
 	CellCollapsed  bool            `json:"cell_collapsed"`
-	SlideBreak    bool        `json:"slide_break"`
-	Parameters    []Parameter `json:"parameters"`
-	Title         string      `json:"title,omitempty"`
-	Description   string      `json:"description,omitempty"`
-	Slug          string      `json:"slug,omitempty"`
-	Limit         *int            `json:"limit,omitempty"`
-	Metadata      json.RawMessage `json:"metadata,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
-	AgentUpdatedAt *time.Time     `json:"agent_updated_at,omitempty"`
+	SlideBreak     bool            `json:"slide_break"`
+	Parameters     []Parameter     `json:"parameters"`
+	Title          string          `json:"title,omitempty"`
+	Description    string          `json:"description,omitempty"`
+	Slug           string          `json:"slug,omitempty"`
+	Limit          *int            `json:"limit,omitempty"`
+	Metadata       json.RawMessage `json:"metadata,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+	AgentUpdatedAt *time.Time      `json:"agent_updated_at,omitempty"`
 }
 
 type CellType string

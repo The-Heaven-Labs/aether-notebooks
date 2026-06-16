@@ -201,7 +201,7 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, err
 		}
 
-cellID := uuid.New().String()
+		cellID := uuid.New().String()
 		position := req.Position
 		if position <= 0 {
 			var maxPos int

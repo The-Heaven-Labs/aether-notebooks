@@ -85,6 +85,25 @@ func (s *Server) handleOrgCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ensure Everyone group exists for this org
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO groups (org_id, name) VALUES ($1, 'Everyone') ON CONFLICT DO NOTHING`,
+		orgID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create Everyone group")
+		return
+	}
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO group_members (group_id, user_id)
+		 SELECT g.id, $1 FROM groups g WHERE g.org_id = $2 AND g.name = 'Everyone'
+		 ON CONFLICT (group_id, user_id) DO NOTHING`,
+		claims.UserID, orgID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to add user to Everyone group")
+		return
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit")
 		return
@@ -214,6 +233,25 @@ func (s *Server) handleOrgJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ensure Everyone group exists and add user
+	if _, err := joinTx.Exec(ctx,
+		`INSERT INTO groups (org_id, name) VALUES ($1, 'Everyone') ON CONFLICT DO NOTHING`,
+		orgID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create Everyone group")
+		return
+	}
+
+	if _, err := joinTx.Exec(ctx,
+		`INSERT INTO group_members (group_id, user_id)
+		 SELECT g.id, $1 FROM groups g WHERE g.org_id = $2 AND g.name = 'Everyone'
+		 ON CONFLICT (group_id, user_id) DO NOTHING`,
+		claims.UserID, orgID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to add user to Everyone group")
+		return
+	}
+
 	if err := joinTx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit")
 		return
@@ -267,9 +305,9 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 	if req.Role == "" {
 		req.Role = "viewer"
 	}
-	validRoles := map[string]bool{"viewer": true, "editor": true, "admin": true, "no_access": true}
+	validRoles := map[string]bool{"viewer": true, "editor": true, "admin": true}
 	if !validRoles[req.Role] {
-		writeError(w, http.StatusBadRequest, "role must be viewer, editor, admin, or no_access")
+		writeError(w, http.StatusBadRequest, "role must be admin, editor, or viewer")
 		return
 	}
 
@@ -320,9 +358,9 @@ func (s *Server) handleCreateInviteLink(w http.ResponseWriter, r *http.Request) 
 	if req.Role == "" {
 		req.Role = "viewer"
 	}
-	validRolesLink := map[string]bool{"viewer": true, "editor": true, "admin": true, "no_access": true}
+	validRolesLink := map[string]bool{"viewer": true, "editor": true, "admin": true}
 	if !validRolesLink[req.Role] {
-		writeError(w, http.StatusBadRequest, "role must be viewer, editor, or admin")
+		writeError(w, http.StatusBadRequest, "role must be admin, editor, or viewer")
 		return
 	}
 
