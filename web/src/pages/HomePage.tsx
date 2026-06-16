@@ -475,14 +475,21 @@ export function HomePage() {
   })
 
   useEffect(() => {
-    if (!folderID && homeFolders && homeFolders.length > 0) {
-      // Find the current user's home folder by matching owner_id with user_id
+    // On initial page load only: redirect to home folder if no folder is selected
+    if (!folderID && homeFolders && homeFolders.length > 0 && !sessionStorage.getItem('hnb_root_nav')) {
       const myHome = homeFolders.find(h => h.owner_id === user?.user_id)
       if (myHome) {
         setSearchParams({ folder: myHome.id })
       }
     }
   }, [folderID, homeFolders, setSearchParams, user?.user_id])
+
+  // Mark when user explicitly navigates away from home folder
+  useEffect(() => {
+    if (folderID) {
+      sessionStorage.setItem('hnb_root_nav', '1')
+    }
+  }, [folderID])
 
   
 
@@ -850,23 +857,24 @@ export function HomePage() {
               </div>
             )}
 
-            {/* Breadcrumb — only when in a folder */}
-            {folderID && (
-              <div style={s.breadcrumb}>
-                <button style={s.crumbBtn} onClick={() => setSearchParams({})}>
-                  <Home size={13} style={{ marginRight: 4 }} />
-                  Files
-                </button>
-                {ancestors.map((a) => (
-                  <span key={a.id} style={{ display: 'flex', alignItems: 'center' }}>
-                    <span style={s.sep}>/</span>
-                    <button style={s.crumbBtn} onClick={() => setSearchParams({ folder: a.id })}>
-                      {a.name}
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
+            {/* Breadcrumb */}
+            <div style={s.breadcrumb}>
+              <button style={{
+                ...s.crumbBtn,
+                ...(!folderID ? { color: 'var(--text-primary)', fontWeight: 600, background: 'var(--bg-elevated)' } : {}),
+              }} onClick={() => setSearchParams({})}>
+                <Home size={13} style={{ marginRight: 4 }} />
+                Files
+              </button>
+              {folderID && ancestors.map((a) => (
+                <span key={a.id} style={{ display: 'flex', alignItems: 'center' }}>
+                  <span style={s.sep}>/</span>
+                  <button style={s.crumbBtn} onClick={() => setSearchParams({ folder: a.id })}>
+                    {a.name}
+                  </button>
+                </span>
+              ))}
+            </div>
 
             {/* Recent section — root only, no active search */}
             {!folderID && !searchQuery && recentItems.length > 0 && (
@@ -1256,7 +1264,11 @@ export function HomePage() {
                 resourceType={permissionsTarget.type}
                 resourceId={permissionsTarget.id}
                 resourceName={permissionsTarget.name}
-                parentFolderId={folderID ?? undefined}
+                parentFolderId={
+                  permissionsTarget.type === 'folder' && permissionsTarget.id === folderID
+                    ? data?.folder?.parent_id ?? undefined
+                    : folderID ?? undefined
+                }
                 resourceOwnerId={
                   permissionsTarget.type === 'folder' ? data?.folder?.created_by :
                   permissionsTarget.type === 'notebook' ? data?.notebooks?.find(nb => nb.id === permissionsTarget.id)?.created_by :

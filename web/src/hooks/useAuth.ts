@@ -56,7 +56,7 @@ export function useAuthProvider(): AuthContextValue {
     }
     const claims = parseJwt(resp.token)
     if (claims) {
-      setUser({ user_id: claims.sub as string, org_id: claims.org_id as string, role: claims.role as string })
+      setUser({ user_id: claims.uid as string, org_id: claims.oid as string, role: claims.role as string })
     }
   }, [])
 
@@ -73,7 +73,7 @@ export function useAuthProvider(): AuthContextValue {
       localStorage.setItem('hnb_org_name', org.name)
       const claims = parseJwt(token)
       if (claims) {
-        setUser({ user_id: claims.sub as string, org_id: claims.org_id as string, role: claims.role as string })
+        setUser({ user_id: claims.uid as string, org_id: claims.oid as string, role: claims.role as string })
       }
     }
     return null

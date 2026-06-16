@@ -9,4 +9,4 @@
 - [ ] Change of permissions and its details should be logged to audit
 - [ ] There should be a configurable chart for geo-things, e.g., showing a global map, a map of a given country with separations of state/city etc. It should support coordinates and names
 - [ ] There should be a configurable sankey map supported
-- [ ]
+- [ ] Add an "admin mode" toggle (in sidebar or header) for org admins. When enabled, admins bypass ACLs and see everything. When disabled, admins respect ACLs like regular users. This avoids the need to remove/re-add admin roles for troubleshooting.

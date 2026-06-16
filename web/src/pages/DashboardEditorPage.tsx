@@ -10,7 +10,6 @@ import { OutputRenderer } from '../components/OutputRenderer'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem, Layout } from 'react-grid-layout'
-import 'react-grid-layout/css/styles.css'
 import { Skeleton } from '../components/Skeleton'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -25,13 +24,6 @@ interface DashboardWithWidgets extends Dashboard {
   widgets: Widget[]
 }
 
-function debounce<T extends (...args: Parameters<T>) => void>(fn: T, ms: number): T {
-  let timer: ReturnType<typeof setTimeout>
-  return ((...args: Parameters<T>) => {
-    clearTimeout(timer)
-    timer = setTimeout(() => fn(...args), ms)
-  }) as T
-}
 
 const toGridItem = (w: Widget): LayoutItem => ({
   i: w.id,
@@ -89,6 +81,24 @@ export function DashboardEditorPage() {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [mutationError, setMutationError] = useState<string | null>(null)
+const [saveStatus, setSaveStatus] = useState<'saving' | 'saved' | null>(null)
+const pendingSaves = useRef(0)
+const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+const markSaving = useCallback(() => {
+  pendingSaves.current++
+  setSaveStatus('saving')
+  if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current)
+}, [])
+
+const markSaved = useCallback(() => {
+  pendingSaves.current--
+  if (pendingSaves.current <= 0) {
+    pendingSaves.current = 0
+    setSaveStatus('saved')
+    saveStatusTimer.current = setTimeout(() => setSaveStatus(null), 2000)
+  }
+}, [])
 
   const [showPicker, setShowPicker] = useState(false)
   const [showPermissions, setShowPermissions] = useState(false)
@@ -97,18 +107,27 @@ export function DashboardEditorPage() {
   const [pickerType, setPickerType] = useState<'table' | 'chart'>('table')
   const [pickerError, setPickerError] = useState<string | null>(null)
 
-  const [gridCols, setGridCols] = useState(12)
-
-  const [containerWidth, setContainerWidth] = useState(1200)
+  const [containerWidth, setContainerWidth] = useState(
+    () => Math.min(window.innerWidth - 160, 1200)
+  )
   const [deleteWidgetTarget, setDeleteWidgetTarget] = useState<string | null>(null)
   const isMobileLayout = containerWidth < 600
-  const gridRef = useRef<HTMLDivElement>(null)
+  const gridContainerRef = useRef<HTMLDivElement | null>(null)
+
+  const gridRef = useCallback((el: HTMLDivElement | null) => {
+    gridContainerRef.current = el
+    if (el) {
+      setContainerWidth(el.clientWidth)
+    }
+  }, [])
+
   useEffect(() => {
-    if (!gridRef.current) return
+    const el = gridContainerRef.current
+    if (!el) return
     const obs = new ResizeObserver(([entry]) => {
       setContainerWidth(entry.contentRect.width)
     })
-    obs.observe(gridRef.current)
+    obs.observe(el)
     return () => obs.disconnect()
   }, [])
 
@@ -116,12 +135,15 @@ export function DashboardEditorPage() {
     queryKey: ['dashboard', id],
     queryFn: () => api.get<DashboardWithWidgets>(`/api/v1/dashboards/${id}`),
     enabled: !!id,
+    staleTime: 0,
+    refetchOnMount: true,
   })
+
+  const gridCols = dashboard?.settings?.grid_cols ?? 12
 
   useEffect(() => {
     if (dashboard) {
       document.title = `${dashboard.title} — Heaven's Notebooks`
-      if (dashboard.settings?.grid_cols) setGridCols(dashboard.settings.grid_cols)
     }
     return () => { document.title = "Heaven's Notebooks" }
   }, [dashboard])
@@ -172,22 +194,32 @@ export function DashboardEditorPage() {
     onError: (err: Error) => setMutationError(err.message),
   })
 
-  const handleLayoutChange = useCallback(
-    debounce((newLayout: Layout) => {
-      if (!dashboard) return
-      newLayout.forEach(item => {
-        const widget = dashboard.widgets?.find((w: Widget) => w.id === item.i)
-        if (!widget) return
-        const prev = widget.layout
-        if (prev.col === item.x && prev.row === item.y &&
-            prev.width === item.w && prev.height === item.h) return
-        api.put(`/api/v1/dashboards/${dashboard.id}/widgets/${item.i}`, {
-          layout: { row: item.y, col: item.x, width: item.w, height: item.h },
-        })
-      })
-    }, 400),
-    [dashboard],
-  )
+  const saveLayout = useCallback((item: LayoutItem) => {
+    if (!dashboard) return
+    const widget = dashboard.widgets?.find((w: Widget) => w.id === item.i)
+    if (!widget) return
+    const prev = widget.layout
+    if (prev.col === item.x && prev.row === item.y &&
+        prev.width === item.w && prev.height === item.h) return
+    markSaving()
+    api.put(`/api/v1/dashboards/${dashboard.id}/widgets/${item.i}`, {
+      layout: { row: item.y, col: item.x, width: item.w, height: item.h },
+    }).then(() => {
+      qc.invalidateQueries({ queryKey: ['dashboard', id] })
+      markSaved()
+    }).catch((err: Error) => {
+      setMutationError('Failed to save widget layout')
+      markSaved()
+    })
+  }, [dashboard, qc, id])
+
+  const onResizeStop = useCallback((_layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
+    if (newItem) saveLayout(newItem)
+  }, [saveLayout])
+
+  const onDragStop = useCallback((_layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
+    if (newItem) saveLayout(newItem)
+  }, [saveLayout])
 
   if (isLoading) {
     return (
@@ -274,17 +306,26 @@ export function DashboardEditorPage() {
                     color: gridCols === c ? '#fff' : 'var(--text-secondary)',
                   }}
                   onClick={async () => {
-                    setGridCols(c)
+                    markSaving()
                     await api.put(`/api/v1/dashboards/${id}`, {
                       settings: { ...dashboard?.settings, grid_cols: c },
                     })
                     qc.invalidateQueries({ queryKey: ['dashboard', id] })
+                    markSaved()
                   }}
                 >
                   {c}
                 </button>
               ))}
             </div>
+          )}
+          {saveStatus && (
+            <span style={{
+              fontSize: 11, fontWeight: 600, color: saveStatus === 'saving' ? 'var(--text-muted)' : 'var(--success)',
+              textTransform: 'uppercase', letterSpacing: '0.04em',
+            }}>
+              {saveStatus === 'saving' ? 'Saving…' : 'Saved'}
+            </span>
           )}
           <Link
             to={`/dashboards/${id}/view`}
@@ -431,14 +472,15 @@ export function DashboardEditorPage() {
             ))}
           </div>
         ) : (
-          <div ref={gridRef}>
+          <div ref={gridRef} style={{ minHeight: 240 }}>
             <GridLayout
               layout={dashboard.widgets?.map(toGridItem) ?? []}
               width={containerWidth}
               gridConfig={{ cols: gridCols, rowHeight: 120 }}
               dragConfig={{ enabled: true, handle: '.widget-drag-handle' }}
               resizeConfig={{ enabled: true }}
-              onLayoutChange={handleLayoutChange}
+              onResizeStop={onResizeStop}
+              onDragStop={onDragStop}
               style={{ minHeight: 240 }}
             >
               {dashboard.widgets?.map((widget: Widget) => (

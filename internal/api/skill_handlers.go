@@ -35,6 +35,10 @@ func (h *skillHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 		if sysPrompt != nil {
 			s.SystemPrompt = *sysPrompt
 		}
+		allowed, _ := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "skill", s.ID, "view")
+		if !allowed {
+			continue
+		}
 		skills = append(skills, s)
 	}
 
@@ -68,6 +72,13 @@ func (h *skillHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// Grant creator full access
+	h.server.db.Pool.Exec(r.Context(),
+		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		 VALUES ($1, 'skill', $2, 'user', $3, ARRAY['view','edit','delete'])
+		 ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
+		claims.OrgID, skillID, claims.UserID)
 
 	writeJSON(w, http.StatusCreated, map[string]string{"id": skillID})
 }

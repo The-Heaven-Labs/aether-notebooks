@@ -44,6 +44,10 @@ func (h *mcpServerHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		allowed, _ := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "mcp_server", s.ID, "view")
+		if !allowed {
+			continue
+		}
 		servers = append(servers, s)
 	}
 	if err := rows.Err(); err != nil {
@@ -109,6 +113,13 @@ func (h *mcpServerHandlers) handleCreate(w http.ResponseWriter, r *http.Request)
 		Action: "mcp_server.create", ResourceType: "mcp_server", ResourceID: id,
 	})
 
+	// Grant creator full access
+	h.server.db.Pool.Exec(r.Context(),
+		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		 VALUES ($1, 'mcp_server', $2, 'user', $3, ARRAY['view','edit','delete'])
+		 ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
+		claims.OrgID, id, claims.UserID)
+
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id})
 }
 
@@ -125,8 +136,14 @@ func (h *mcpServerHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
 
+	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "mcp_server", id, "view")
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
 	var s models.MCPServerOrg
-	err := h.server.db.Pool.QueryRow(r.Context(), `
+	err = h.server.db.Pool.QueryRow(r.Context(), `
 		SELECT id, org_id, name, type, command, args, created_by, created_at, updated_at
 		FROM mcp_servers WHERE id = $1 AND org_id = $2
 	`, id, claims.OrgID).Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &s.Args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)

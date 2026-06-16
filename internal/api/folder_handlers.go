@@ -171,11 +171,31 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, e)
 	}
 
-	// Filter home folders: show if user owns it OR has access to any content inside
+	// Filter home folders: show if user owns it OR has ACL access OR has access to any content inside
 	var filteredEntries []homeFolderEntry
 	for _, entry := range entries {
 		// Check if user owns this home folder
 		if entry.OwnerID != nil && *entry.OwnerID == claims.UserID {
+			filteredEntries = append(filteredEntries, entry)
+			continue
+		}
+
+		// Check if user has direct ACL access on this home folder (explicit entries only)
+		var hasACL bool
+		s.db.Pool.QueryRow(ctx,
+			`SELECT EXISTS (
+				SELECT 1 FROM acl_entries
+				WHERE resource_type = 'folder' AND resource_id = $1
+				AND (
+					(subject_type = 'user' AND subject_id = $2::text)
+					OR (subject_type = 'group' AND subject_id = ANY($3::text[]))
+					OR (subject_type = 'org_role' AND subject_id = 'everyone')
+				)
+				LIMIT 1
+			)`,
+			entry.ID, claims.UserID, groupIDs,
+		).Scan(&hasACL)
+		if hasACL {
 			filteredEntries = append(filteredEntries, entry)
 			continue
 		}
@@ -319,59 +339,59 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'user' AND subject_id = $2::text)
 		   OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = f.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
 		   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-		 )
-		 AND (
-		   -- Has accessible subfolder
-		   EXISTS (
-				SELECT 1 FROM folders sub 
-				WHERE sub.parent_id = f.id 
-				AND sub.org_id = f.org_id
-				AND (
-					sub.owner_id = $2
-					OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = sub.id AND subject_type = 'user' AND subject_id = $2::text)
-					OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = sub.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
-					OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = sub.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-				)
-				LIMIT 1
-		   )
-		   OR
-		   -- Has accessible notebook
-		   EXISTS (
-				SELECT 1 FROM notebooks nb 
-				WHERE nb.folder_id = f.id 
-				AND nb.org_id = f.org_id
-				AND (
-					EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'user' AND subject_id = $2::text)
-					OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'notebook' AND resource_id = nb.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
-					OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-				)
-				LIMIT 1
-		   )
-		   OR
-		   -- Has accessible connector
-		   EXISTS (
-				SELECT 1 FROM connectors c 
-				WHERE c.folder_id = f.id 
-				AND c.org_id = f.org_id
-				AND (
-					EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'user' AND subject_id = $2::text)
-					OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'connector' AND resource_id = c.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
-					OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-				)
-				LIMIT 1
-		   )
-		   OR
-		   -- Has accessible dashboard
-		   EXISTS (
-				SELECT 1 FROM dashboards d 
-				WHERE d.folder_id = f.id 
-				AND d.org_id = f.org_id
-				AND (
-					EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d.id AND subject_type = 'user' AND subject_id = $2::text)
-					OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'dashboard' AND resource_id = d.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
-					OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-				)
-				LIMIT 1
+		   OR (
+			   -- Has accessible subfolder
+			   EXISTS (
+					SELECT 1 FROM folders sub 
+					WHERE sub.parent_id = f.id 
+					AND sub.org_id = f.org_id
+					AND (
+						sub.owner_id = $2
+						OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = sub.id AND subject_type = 'user' AND subject_id = $2::text)
+						OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = sub.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
+						OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = sub.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+					)
+					LIMIT 1
+			   )
+			   OR
+			   -- Has accessible notebook
+			   EXISTS (
+					SELECT 1 FROM notebooks nb 
+					WHERE nb.folder_id = f.id 
+					AND nb.org_id = f.org_id
+					AND (
+						EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'user' AND subject_id = $2::text)
+						OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'notebook' AND resource_id = nb.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
+						OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+					)
+					LIMIT 1
+			   )
+			   OR
+			   -- Has accessible connector
+			   EXISTS (
+					SELECT 1 FROM connectors c 
+					WHERE c.folder_id = f.id 
+					AND c.org_id = f.org_id
+					AND (
+						EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'user' AND subject_id = $2::text)
+						OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'connector' AND resource_id = c.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
+						OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+					)
+					LIMIT 1
+			   )
+			   OR
+			   -- Has accessible dashboard
+			   EXISTS (
+					SELECT 1 FROM dashboards d 
+					WHERE d.folder_id = f.id 
+					AND d.org_id = f.org_id
+					AND (
+						EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d.id AND subject_type = 'user' AND subject_id = $2::text)
+						OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'dashboard' AND resource_id = d.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($3::text[]))
+						OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+					)
+					LIMIT 1
+			   )
 		   )
 		 )
 		 ORDER BY f.name`,
@@ -752,21 +772,31 @@ func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 	folderID := r.PathValue("id")
 	ctx := r.Context()
 
-	var req struct {
-		Name     *string `json:"name"`
-		ParentID *string `json:"parent_id"`
-	}
-	if err := decodeJSON(r, &req); err != nil {
+	var rawReq map[string]json.RawMessage
+	if err := decodeJSON(r, &rawReq); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Name == nil && req.ParentID == nil {
+
+	var name *string
+	if nameRaw, ok := rawReq["name"]; ok {
+		json.Unmarshal(nameRaw, &name)
+	}
+
+	setParentID := false
+	var parentID *string
+	if parentRaw, ok := rawReq["parent_id"]; ok {
+		setParentID = true
+		json.Unmarshal(parentRaw, &parentID)
+	}
+
+	if name == nil && !setParentID {
 		writeError(w, http.StatusBadRequest, "name or parent_id required")
 		return
 	}
 
 	// Cycle guard: ensure the new parent is not the folder itself or a descendant.
-	if req.ParentID != nil {
+	if setParentID && parentID != nil {
 		var isCycle bool
 		err := s.db.Pool.QueryRow(ctx, `
 			WITH RECURSIVE desc AS (
@@ -777,7 +807,7 @@ func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 				WHERE f.org_id = $3
 			)
 			SELECT EXISTS(SELECT 1 FROM desc WHERE id = $2)
-		`, folderID, *req.ParentID, claims.OrgID).Scan(&isCycle)
+		`, folderID, *parentID, claims.OrgID).Scan(&isCycle)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "cycle check failed")
 			return
@@ -793,14 +823,14 @@ func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 	args := []any{}
 	argIdx := 1
 
-	if req.Name != nil {
+	if name != nil {
 		setClauses = append(setClauses, fmt.Sprintf("name = $%d", argIdx))
-		args = append(args, *req.Name)
+		args = append(args, *name)
 		argIdx++
 	}
-	if req.ParentID != nil {
+	if setParentID {
 		setClauses = append(setClauses, fmt.Sprintf("parent_id = $%d", argIdx))
-		args = append(args, *req.ParentID)
+		args = append(args, parentID)
 		argIdx++
 	}
 
