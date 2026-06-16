@@ -143,5 +143,3 @@ func TestUpdateCellInYjs_SkipsNoopUpdate(t *testing.T) {
 		t.Errorf("state changed on noop update: first=%d bytes, second=%d bytes", len(firstState), len(secondState))
 	}
 }
-
-

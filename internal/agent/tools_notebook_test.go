@@ -255,10 +255,10 @@ func TestAgentCreateCellWithConnectorID(t *testing.T) {
 	ctx := setupToolContext(t, db, orgID, userID, nbID)
 
 	args, _ := json.Marshal(map[string]any{
-		"notebook_id":   nbID,
-		"type":          "code",
-		"source":        "SELECT 1",
-		"connector_id":  connID,
+		"notebook_id":  nbID,
+		"type":         "code",
+		"source":       "SELECT 1",
+		"connector_id": connID,
 	})
 	result, err := createCellHandler(args, ctx)
 	if err != nil {
@@ -319,8 +319,8 @@ func TestAgentUpdateCellConnectorID(t *testing.T) {
 	cellID := createResult.(map[string]any)["cell_id"].(string)
 
 	updateArgs, _ := json.Marshal(map[string]any{
-		"cell_id":       cellID,
-		"connector_id":  connID,
+		"cell_id":      cellID,
+		"connector_id": connID,
 	})
 	_, err = updateCellDef.Handler(updateArgs, ctx)
 	if err != nil {

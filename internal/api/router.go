@@ -132,48 +132,48 @@ func (s *Server) routes() {
 	s.mux.Handle("DELETE /api/v1/tokens/{id}", authMW(http.HandlerFunc(s.handleDeleteToken)))
 
 	// Notebook routes
-	s.mux.Handle("POST /api/v1/notebooks", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateNotebook))))
+	s.mux.Handle("POST /api/v1/notebooks", authMW(http.HandlerFunc(s.handleCreateNotebook)))
 	s.mux.Handle("GET /api/v1/notebooks", authMW(http.HandlerFunc(s.handleListNotebooks)))
 	s.mux.Handle("GET /api/v1/notebooks/{id}", authMW(http.HandlerFunc(s.handleGetNotebook)))
 	s.mux.Handle("DELETE /api/v1/notebooks/{id}", authMW(s.requirePermission("notebook", "id", "delete")(http.HandlerFunc(s.handleDeleteNotebook))))
 	s.mux.Handle("PUT /api/v1/notebooks/{id}", authMW(s.requirePermission("notebook", "id", "edit")(http.HandlerFunc(s.handleUpdateNotebook))))
 	s.mux.Handle("GET /api/v1/notebooks/{id}/permissions", authMW(http.HandlerFunc(s.handleGetNotebookPermissions)))
 	s.mux.Handle("GET /api/v1/notebooks/{id}/export", authMW(http.HandlerFunc(s.handleExportNotebook)))
-	s.mux.Handle("POST /api/v1/notebooks/import", authMW(RequireRole("editor")(http.HandlerFunc(s.handleImportNotebook))))
+	s.mux.Handle("POST /api/v1/notebooks/import", authMW(http.HandlerFunc(s.handleImportNotebook)))
 
 	// Cell routes
-	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/cells", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateCell))))
-	s.mux.Handle("PUT /api/v1/notebooks/{notebook_id}/cells/{cell_id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleUpdateCell))))
-	s.mux.Handle("DELETE /api/v1/notebooks/{notebook_id}/cells/{cell_id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDeleteCell))))
+	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/cells", authMW(http.HandlerFunc(s.handleCreateCell)))
+	s.mux.Handle("PUT /api/v1/notebooks/{notebook_id}/cells/{cell_id}", authMW(http.HandlerFunc(s.handleUpdateCell)))
+	s.mux.Handle("DELETE /api/v1/notebooks/{notebook_id}/cells/{cell_id}", authMW(http.HandlerFunc(s.handleDeleteCell)))
 	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/cells/{cell_id}/execute", authMW(http.HandlerFunc(s.handleExecuteCell)))
-	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/cells/{cell_id}/duplicate", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDuplicateCell))))
+	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/cells/{cell_id}/duplicate", authMW(http.HandlerFunc(s.handleDuplicateCell)))
 
 	// Cell history routes
 	s.mux.Handle("GET /api/v1/notebooks/{notebook_id}/cells/{cell_id}/versions", authMW(http.HandlerFunc(s.handleListCellVersions)))
-	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/cells/{cell_id}/versions/{version_id}/restore", authMW(RequireRole("editor")(http.HandlerFunc(s.handleRestoreCellVersion))))
+	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/cells/{cell_id}/versions/{version_id}/restore", authMW(http.HandlerFunc(s.handleRestoreCellVersion)))
 
 	// Snapshot routes
-	s.mux.Handle("POST /api/v1/notebooks/{id}/snapshots", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateSnapshot))))
+	s.mux.Handle("POST /api/v1/notebooks/{id}/snapshots", authMW(http.HandlerFunc(s.handleCreateSnapshot)))
 	s.mux.Handle("GET /api/v1/notebooks/{id}/snapshots", authMW(http.HandlerFunc(s.handleListSnapshots)))
-	s.mux.Handle("POST /api/v1/notebooks/{id}/snapshots/{snapshot_id}/restore", authMW(RequireRole("editor")(http.HandlerFunc(s.handleRestoreSnapshot))))
+	s.mux.Handle("POST /api/v1/notebooks/{id}/snapshots/{snapshot_id}/restore", authMW(http.HandlerFunc(s.handleRestoreSnapshot)))
 
 	// Schedule routes
-	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/schedules", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateSchedule))))
+	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/schedules", authMW(http.HandlerFunc(s.handleCreateSchedule)))
 	s.mux.Handle("GET /api/v1/notebooks/{notebook_id}/schedules", authMW(http.HandlerFunc(s.handleListSchedules)))
 	s.mux.Handle("GET /api/v1/schedules/{id}", authMW(http.HandlerFunc(s.handleGetSchedule)))
-	s.mux.Handle("DELETE /api/v1/schedules/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDeleteSchedule))))
-	s.mux.Handle("PUT /api/v1/schedules/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleUpdateSchedule))))
+	s.mux.Handle("DELETE /api/v1/schedules/{id}", authMW(http.HandlerFunc(s.handleDeleteSchedule)))
+	s.mux.Handle("PUT /api/v1/schedules/{id}", authMW(http.HandlerFunc(s.handleUpdateSchedule)))
 
 	// Dashboard routes
-	s.mux.Handle("POST /api/v1/dashboards", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateDashboard))))
+	s.mux.Handle("POST /api/v1/dashboards", authMW(http.HandlerFunc(s.handleCreateDashboard)))
 	s.mux.Handle("GET /api/v1/dashboards", authMW(http.HandlerFunc(s.handleListDashboards)))
 	s.mux.Handle("GET /api/v1/dashboards/{id}", authMW(http.HandlerFunc(s.handleGetDashboard)))
 	s.mux.Handle("PUT /api/v1/dashboards/{id}", authMW(s.requirePermission("dashboard", "id", "edit")(http.HandlerFunc(s.handleUpdateDashboard))))
 	s.mux.Handle("DELETE /api/v1/dashboards/{id}", authMW(s.requirePermission("dashboard", "id", "delete")(http.HandlerFunc(s.handleDeleteDashboard))))
-	s.mux.Handle("POST /api/v1/dashboards/{id}/widgets", authMW(RequireRole("editor")(http.HandlerFunc(s.handleAddWidget))))
-	s.mux.Handle("PUT /api/v1/dashboards/{id}/widgets/{widget_id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleUpdateWidget))))
-	s.mux.Handle("DELETE /api/v1/dashboards/{id}/widgets/{widget_id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDeleteWidget))))
-	s.mux.Handle("POST /api/v1/dashboards/{id}/share", authMW(RequireRole("editor")(http.HandlerFunc(s.handleShareDashboard))))
+	s.mux.Handle("POST /api/v1/dashboards/{id}/widgets", authMW(http.HandlerFunc(s.handleAddWidget)))
+	s.mux.Handle("PUT /api/v1/dashboards/{id}/widgets/{widget_id}", authMW(http.HandlerFunc(s.handleUpdateWidget)))
+	s.mux.Handle("DELETE /api/v1/dashboards/{id}/widgets/{widget_id}", authMW(http.HandlerFunc(s.handleDeleteWidget)))
+	s.mux.Handle("POST /api/v1/dashboards/{id}/share", authMW(http.HandlerFunc(s.handleShareDashboard)))
 	s.mux.Handle("GET /api/v1/dashboards/{id}/permissions", authMW(http.HandlerFunc(s.handleGetDashboardPermissions)))
 	s.mux.HandleFunc("GET /api/v1/public/dashboards/{token}", s.handlePublicDashboard)
 	s.mux.HandleFunc("GET /api/v1/public/motd", s.handleListLoginMOTD)
@@ -187,10 +187,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /internal/auth/validate", s.handleInternalAuthValidate)
 
 	// Attachment routes
-	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/attachments", authMW(RequireRole("editor")(http.HandlerFunc(s.handleUploadAttachment))))
+	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/attachments", authMW(http.HandlerFunc(s.handleUploadAttachment)))
 	s.mux.Handle("GET /api/v1/notebooks/{notebook_id}/attachments", authMW(http.HandlerFunc(s.handleListAttachments)))
 	s.mux.Handle("GET /api/v1/attachments/{id}", authMW(http.HandlerFunc(s.handleGetAttachment)))
-	s.mux.Handle("DELETE /api/v1/attachments/{id}", authMW(RequireRole("editor")(http.HandlerFunc(s.handleDeleteAttachment))))
+	s.mux.Handle("DELETE /api/v1/attachments/{id}", authMW(http.HandlerFunc(s.handleDeleteAttachment)))
 
 	// Connector routes
 	s.mux.Handle("POST /api/v1/connectors", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateConnector))))
@@ -216,7 +216,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/folders", authMW(http.HandlerFunc(s.handleListRootContents)))
 	s.mux.Handle("GET /api/v1/folders/{id}", authMW(s.requirePermission("folder", "id", "view")(http.HandlerFunc(s.handleGetFolderContents))))
 	s.mux.Handle("GET /api/v1/folders/{id}/ancestors", authMW(http.HandlerFunc(s.handleGetFolderAncestors)))
-	s.mux.Handle("POST /api/v1/folders", authMW(RequireRole("editor")(http.HandlerFunc(s.handleCreateFolder))))
+	s.mux.Handle("POST /api/v1/folders", authMW(http.HandlerFunc(s.handleCreateFolder)))
 	s.mux.Handle("PUT /api/v1/folders/{id}", authMW(s.requirePermission("folder", "id", "edit")(http.HandlerFunc(s.handleUpdateFolder))))
 	s.mux.Handle("DELETE /api/v1/folders/{id}", authMW(s.requirePermission("folder", "id", "delete")(http.HandlerFunc(s.handleDeleteFolder))))
 
