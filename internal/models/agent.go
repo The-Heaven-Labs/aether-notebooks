@@ -53,8 +53,8 @@ type Agent struct {
 	ModelConfigID         *string        `json:"model_config_id,omitempty"`
 	SubagentModelConfigID *string        `json:"subagent_model_config_id,omitempty"`
 	SystemPrompt          string         `json:"system_prompt,omitempty"`
-	SkillIDs             []string       `json:"skill_ids"`
-	MCPServerIDs         []string       `json:"mcp_server_ids"`
+	SkillIDs              []string       `json:"skill_ids"`
+	MCPServerIDs          []string       `json:"mcp_server_ids"`
 	MCPServers            []MCPServerOrg `json:"mcp_servers"`
 	FolderID              *string        `json:"folder_id,omitempty"`
 	MaxTurns              *int           `json:"max_turns,omitempty"`

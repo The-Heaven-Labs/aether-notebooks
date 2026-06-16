@@ -38,12 +38,12 @@ func TestAgentCRUD(t *testing.T) {
 	var agentID string
 	t.Run("create", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{
-			"name":             "Test Agent",
-			"description":      "A test agent",
-			"system_prompt":    "You are helpful",
+			"name":            "Test Agent",
+			"description":     "A test agent",
+			"system_prompt":   "You are helpful",
 			"model_config_id": mcID,
-			"skill_ids":        []string{},
-			"mcp_server_ids":   []string{},
+			"skill_ids":       []string{},
+			"mcp_server_ids":  []string{},
 		})
 		req := httptest.NewRequest("POST", "/api/v1/agents", strings.NewReader(string(body)))
 		req.Header.Set("Content-Type", "application/json")
@@ -173,10 +173,10 @@ func TestAgentCreateWithSkills(t *testing.T) {
 	skillID := createSkill(t, srv, token)
 
 	body, _ := json.Marshal(map[string]any{
-		"name":             "Agent With Skill",
+		"name":            "Agent With Skill",
 		"model_config_id": mcID,
-		"skill_ids":        []string{skillID},
-		"mcp_server_ids":   []string{},
+		"skill_ids":       []string{skillID},
+		"mcp_server_ids":  []string{},
 	})
 	req := httptest.NewRequest("POST", "/api/v1/agents", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -217,10 +217,10 @@ func TestAgentCreateWithMCPServers(t *testing.T) {
 	mcpID := createMCPServer(t, srv, token)
 
 	body, _ := json.Marshal(map[string]any{
-		"name":             "Agent With MCP",
+		"name":            "Agent With MCP",
 		"model_config_id": mcID,
-		"skill_ids":        []string{},
-		"mcp_server_ids":   []string{mcpID},
+		"skill_ids":       []string{},
+		"mcp_server_ids":  []string{mcpID},
 	})
 	req := httptest.NewRequest("POST", "/api/v1/agents", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -265,10 +265,10 @@ func TestAgentListIncludesMCPServers(t *testing.T) {
 	mcpID := createMCPServer(t, srv, token)
 
 	body, _ := json.Marshal(map[string]any{
-		"name":             "Agent MCP List",
+		"name":            "Agent MCP List",
 		"model_config_id": mcID,
-		"skill_ids":        []string{},
-		"mcp_server_ids":   []string{mcpID},
+		"skill_ids":       []string{},
+		"mcp_server_ids":  []string{mcpID},
 	})
 	req := httptest.NewRequest("POST", "/api/v1/agents", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")

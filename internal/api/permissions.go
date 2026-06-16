@@ -18,13 +18,13 @@ type aclCandidate struct {
 }
 
 var resourceTable = map[string]string{
-	"notebook":    "notebooks",
-	"connector":   "connectors",
-	"dashboard":   "dashboards",
-	"agent":       "agents",
+	"notebook":     "notebooks",
+	"connector":    "connectors",
+	"dashboard":    "dashboards",
+	"agent":        "agents",
 	"model_config": "model_configs",
-	"skill":       "skills",
-	"mcp_server":  "mcp_servers",
+	"skill":        "skills",
+	"mcp_server":   "mcp_servers",
 }
 
 // checkPermission returns true if userID has action on resourceType/resourceID within orgID.
@@ -200,10 +200,8 @@ func matchesUser(c aclCandidate, userID, orgRole string, groupIDs []string) bool
 			}
 		}
 	case "org_role":
-		if c.subjectID == "everyone" {
-			return true // special org_role that matches all users in the org
-		}
-		return c.subjectID == orgRole
+		// "everyone" matches every member of the org; individual roles are deprecated
+		return c.subjectID == "everyone"
 	}
 	return false
 }

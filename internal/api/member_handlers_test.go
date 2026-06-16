@@ -38,8 +38,8 @@ func TestMemberManagement(t *testing.T) {
 		t.Fatalf("list members: expected at least 1 member, got %d", len(members))
 	}
 
-	// 4. POST /api/v1/members — invite second user as "editor"
-	body, _ := json.Marshal(map[string]string{"email": secondEmail, "role": "editor"})
+	// 4. POST /api/v1/members — invite second user
+	body, _ := json.Marshal(map[string]string{"email": secondEmail, "role": "viewer"})
 	req = httptest.NewRequest("POST", "/api/v1/members", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+adminToken)

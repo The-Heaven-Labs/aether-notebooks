@@ -243,11 +243,11 @@ func TestAttachmentUploadRequiresWritePermission(t *testing.T) {
 	nbID := nbResp["id"].(string)
 	orgID := nbResp["org_id"].(string)
 
-	// Register a second user in their own org, then invite them as viewer into the admin's org
+	// Register a second user in their own org, then invite them into the admin's org
 	viewerEmail := fmt.Sprintf("viewer-%d@example.com", ts)
 	registerAndGetToken(t, actx.srv, viewerEmail, "Viewer Own Org")
 
-	// Invite viewer into the admin's org as "viewer"
+	// Invite viewer into the admin's org
 	inviteBody, _ := json.Marshal(map[string]string{"email": viewerEmail, "role": "viewer"})
 	inviteReq := httptest.NewRequest("POST", "/api/v1/members", bytes.NewReader(inviteBody))
 	inviteReq.Header.Set("Content-Type", "application/json")

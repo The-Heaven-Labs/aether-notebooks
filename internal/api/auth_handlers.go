@@ -225,6 +225,13 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 					fmt.Printf("auto-join createHomeFolder failed: %v\n", hmErr)
 					autoJoinOrgID = ""
 				} else if _, gErr := autoJoinTx.Exec(ctx,
+					`INSERT INTO groups (org_id, name) VALUES ($1, 'Everyone') ON CONFLICT DO NOTHING`,
+					autoJoinOrgID,
+				); gErr != nil {
+					autoJoinTx.Rollback(ctx)
+					fmt.Printf("auto-join Everyone group creation failed: %v\n", gErr)
+					autoJoinOrgID = ""
+				} else if _, gErr := autoJoinTx.Exec(ctx,
 					`INSERT INTO group_members (group_id, user_id)
 					 SELECT g.id, $1 FROM groups g WHERE g.org_id = $2 AND g.name = 'Everyone'
 					 ON CONFLICT (group_id, user_id) DO NOTHING`,
