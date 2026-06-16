@@ -21,9 +21,9 @@ type createDashboardRequest struct {
 }
 
 type updateDashboardRequest struct {
-	Title    *string                  `json:"title,omitempty"`
+	Title    *string                   `json:"title,omitempty"`
 	Settings *models.DashboardSettings `json:"settings,omitempty"`
-	FolderID *string                  `json:"folder_id,omitempty"`
+	FolderID *string                   `json:"folder_id,omitempty"`
 }
 
 type addWidgetRequest struct {
@@ -92,17 +92,6 @@ func (s *Server) handleUpdateDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 
-	// Check edit permission
-	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "edit")
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "permission check failed")
-		return
-	}
-	if !allowed {
-		writeError(w, http.StatusForbidden, "you don't have permission to edit this dashboard")
-		return
-	}
-
 	// Build dynamic UPDATE query
 	updates := []string{}
 	args := []interface{}{}
@@ -137,7 +126,7 @@ func (s *Server) handleUpdateDashboard(w http.ResponseWriter, r *http.Request) {
 
 	var dash models.Dashboard
 	var settingsOut []byte
-	err = s.db.Pool.QueryRow(ctx, query, args...).Scan(
+	err := s.db.Pool.QueryRow(ctx, query, args...).Scan(
 		&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.PublicToken, &dash.FolderID,
 		&dash.CreatedBy, &dash.CreatedAt, &dash.UpdatedAt)
 	if err == pgx.ErrNoRows {
@@ -191,6 +180,10 @@ func (s *Server) handleListDashboards(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		json.Unmarshal(settingsOut, &d.Settings)
+		allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "view")
+		if !allowed {
+			continue
+		}
 		dashboards = append(dashboards, d)
 	}
 	if dashboards == nil {
@@ -289,17 +282,6 @@ func (s *Server) handleDeleteDashboard(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	dashID := r.PathValue("id")
 	ctx := r.Context()
-
-	// Check delete permission
-	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "delete")
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "permission check failed")
-		return
-	}
-	if !allowed {
-		writeError(w, http.StatusForbidden, "you don't have permission to delete this dashboard")
-		return
-	}
 
 	result, err := s.db.Pool.Exec(ctx,
 		`DELETE FROM dashboards WHERE id = $1 AND org_id = $2`,

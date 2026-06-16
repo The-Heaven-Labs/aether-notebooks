@@ -45,6 +45,36 @@ func (h *skillHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, skills)
 }
 
+func (h *skillHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	claims := ClaimsFromContext(r.Context())
+
+	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "skill", id, "view")
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
+	var s models.Skill
+	var desc, sysPrompt *string
+	err = h.server.db.Pool.QueryRow(r.Context(), `
+		SELECT id, org_id, name, description, system_prompt, tool_ids, folder_id, created_by, created_at, updated_at
+		FROM skills WHERE id = $1 AND org_id = $2
+	`, id, claims.OrgID).Scan(&s.ID, &s.OrgID, &s.Name, &desc, &sysPrompt, &s.ToolIDs, &s.FolderID, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "skill not found")
+		return
+	}
+	if desc != nil {
+		s.Description = *desc
+	}
+	if sysPrompt != nil {
+		s.SystemPrompt = *sysPrompt
+	}
+
+	writeJSON(w, http.StatusOK, s)
+}
+
 func (h *skillHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req struct {

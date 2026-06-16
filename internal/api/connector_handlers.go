@@ -14,13 +14,13 @@ import (
 )
 
 type createConnectorRequest struct {
-	Name            string                 `json:"name"`
-	Type            models.ConnectorType   `json:"type"`
-	Config          models.ConnectorConfig `json:"config"`
-	IsDefault       bool                   `json:"is_default"`
-	FolderID        *string                `json:"folder_id,omitempty"`
-	TableAllowlist  []string               `json:"table_allowlist,omitempty"`
-	TableDenylist   []string               `json:"table_denylist,omitempty"`
+	Name           string                 `json:"name"`
+	Type           models.ConnectorType   `json:"type"`
+	Config         models.ConnectorConfig `json:"config"`
+	IsDefault      bool                   `json:"is_default"`
+	FolderID       *string                `json:"folder_id,omitempty"`
+	TableAllowlist []string               `json:"table_allowlist,omitempty"`
+	TableDenylist  []string               `json:"table_denylist,omitempty"`
 }
 
 // @Summary Create a connector
@@ -134,6 +134,37 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 // @Failure 401 {object} map[string]string
 // @Security BearerAuth
 // @Router /connectors [get]
+func (s *Server) handleGetConnector(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	id := r.PathValue("id")
+	ctx := r.Context()
+
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", id, "view")
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
+	var c models.Connector
+	var encryptedConfig []byte
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, table_allowlist, table_denylist
+		 FROM connectors WHERE id=$1 AND org_id=$2`,
+		id, claims.OrgID,
+	).Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
+		&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.TableAllowlist, &c.TableDenylist)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "connector not found")
+		return
+	}
+	if plain, err := crypto.Decrypt(encryptedConfig, s.masterKey); err == nil {
+		json.Unmarshal(plain, &c.Config)
+		c.Config.Password = "***"
+	}
+
+	writeJSON(w, http.StatusOK, c)
+}
+
 func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -179,11 +210,11 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateConnectorRequest struct {
-	Name            *string                 `json:"name,omitempty"`
-	Config          *models.ConnectorConfig `json:"config,omitempty"`
-	IsDefault       *bool                   `json:"is_default,omitempty"`
-	TableAllowlist  []string                `json:"table_allowlist,omitempty"`
-	TableDenylist   []string                `json:"table_denylist,omitempty"`
+	Name           *string                 `json:"name,omitempty"`
+	Config         *models.ConnectorConfig `json:"config,omitempty"`
+	IsDefault      *bool                   `json:"is_default,omitempty"`
+	TableAllowlist []string                `json:"table_allowlist,omitempty"`
+	TableDenylist  []string                `json:"table_denylist,omitempty"`
 }
 
 // @Summary Update a connector
