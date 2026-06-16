@@ -68,6 +68,35 @@ func (h *modelConfigHandlers) handleList(w http.ResponseWriter, r *http.Request)
 // @Failure 400 {object} map[string]string
 // @Security BearerAuth
 // @Router /model-configs [post]
+func (h *modelConfigHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	claims := ClaimsFromContext(r.Context())
+
+	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "model_config", id, "view")
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
+	var c models.ModelConfig
+	var apiKeyEncrypted []byte
+	var defaultParams []byte
+	err = h.server.db.Pool.QueryRow(r.Context(), `
+		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted,
+			   default_params, context_window, folder_id, created_by, created_at, updated_at
+		FROM model_configs WHERE id = $1 AND org_id = $2
+	`, id, claims.OrgID).Scan(&c.ID, &c.OrgID, &c.Name, &c.Provider, &c.BaseURL, &c.Model, &apiKeyEncrypted,
+		&defaultParams, &c.ContextWindow, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "model config not found")
+		return
+	}
+	json.Unmarshal(defaultParams, &c.DefaultParams)
+	c.APIKeyEncrypted = nil
+
+	writeJSON(w, http.StatusOK, c)
+}
+
 func (h *modelConfigHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req struct {
