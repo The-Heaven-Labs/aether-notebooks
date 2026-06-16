@@ -30,7 +30,6 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 	defer rows.Close()
 
 	agents := []models.Agent{}
-	var agentIDs []string
 	for rows.Next() {
 		var a models.Agent
 		var desc, sysPrompt *string
@@ -44,15 +43,22 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 		if sysPrompt != nil {
 			a.SystemPrompt = *sysPrompt
 		}
+		allowed, _ := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", a.ID, "view")
+		if !allowed {
+			continue
+		}
 		agents = append(agents, a)
-		agentIDs = append(agentIDs, a.ID)
 	}
 	if err := rows.Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	if len(agentIDs) > 0 {
+	if len(agents) > 0 {
+		agentIDs := make([]string, len(agents))
+		for i := range agents {
+			agentIDs[i] = agents[i].ID
+		}
 		mcpMap := h.batchLoadMCPHandlers(r.Context(), agentIDs)
 		for i := range agents {
 			if mcp, ok := mcpMap[agents[i].ID]; ok {
@@ -168,6 +174,13 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "agent.create", ResourceType: "agent", ResourceID: agentID,
 	})
+
+	// Grant creator full access
+	h.server.db.Pool.Exec(r.Context(),
+		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		 VALUES ($1, 'agent', $2, 'user', $3, ARRAY['view','edit','delete'])
+		 ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
+		claims.OrgID, agentID, claims.UserID)
 
 	writeJSON(w, http.StatusCreated, map[string]string{"id": agentID})
 }
@@ -361,10 +374,14 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 	}
 
 	sessionID := uuid.New().String()
+	var notebookID *string
+	if req.NotebookID != "" {
+		notebookID = &req.NotebookID
+	}
 	_, err := h.server.db.Pool.Exec(r.Context(), `
 		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, max_tokens, title, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-	`, sessionID, agentID, req.NotebookID, claims.UserID, req.MaxTurns, req.MaxTokens, req.Title)
+	`, sessionID, agentID, notebookID, claims.UserID, req.MaxTurns, req.MaxTokens, req.Title)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -448,16 +465,21 @@ func (h *agentHandlers) handleGetSession(w http.ResponseWriter, r *http.Request)
 	var s models.AgentSession
 	var endedAt *time.Time
 	var title *string
+	var notebookID *string
 	err := h.server.db.Pool.QueryRow(r.Context(), `
 		SELECT id, agent_id, notebook_id, user_id, max_turns, max_tokens, ended_at, title, created_at
 		FROM agent_sessions WHERE id = $1
-	`, sessionID).Scan(&s.ID, &s.AgentID, &s.NotebookID, &s.UserID, &s.MaxTurns, &s.MaxTokens, &endedAt, &title, &s.CreatedAt)
+	`, sessionID).Scan(&s.ID, &s.AgentID, &notebookID, &s.UserID, &s.MaxTurns, &s.MaxTokens, &endedAt, &title, &s.CreatedAt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
 
 	s.EndedAt = endedAt
+	s.NotebookID = ""
+	if notebookID != nil {
+		s.NotebookID = *notebookID
+	}
 	s.Title = title
 
 	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", s.AgentID, "view")

@@ -31,10 +31,14 @@ func (s *SessionStore) CreateSession(ctx context.Context, agentID, notebookID, u
 		CreatedAt:  time.Now(),
 	}
 
+	var nbID *string
+	if session.NotebookID != "" {
+		nbID = &session.NotebookID
+	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, max_tokens, title, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, session.ID, session.AgentID, session.NotebookID, session.UserID, session.MaxTurns, session.MaxTokens, session.Title, session.CreatedAt)
+	`, session.ID, session.AgentID, nbID, session.UserID, session.MaxTurns, session.MaxTokens, session.Title, session.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
 	}
@@ -46,14 +50,19 @@ func (s *SessionStore) GetSession(ctx context.Context, sessionID string) (*model
 	var session models.AgentSession
 	var endedAt *time.Time
 	var title *string
+	var notebookID *string
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, agent_id, notebook_id, user_id, max_turns, max_tokens, ended_at, title, created_at
 		FROM agent_sessions WHERE id = $1
-	`, sessionID).Scan(&session.ID, &session.AgentID, &session.NotebookID, &session.UserID, &session.MaxTurns, &session.MaxTokens, &endedAt, &title, &session.CreatedAt)
+	`, sessionID).Scan(&session.ID, &session.AgentID, &notebookID, &session.UserID, &session.MaxTurns, &session.MaxTokens, &endedAt, &title, &session.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get session: %w", err)
 	}
 	session.EndedAt = endedAt
+	session.NotebookID = ""
+	if notebookID != nil {
+		session.NotebookID = *notebookID
+	}
 	if title != nil {
 		session.Title = title
 	}

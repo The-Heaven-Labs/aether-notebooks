@@ -4,13 +4,17 @@ import { api } from '../api/client'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type ResourceType = 'folder' | 'notebook' | 'connector' | 'dashboard'
+type ResourceType = 'folder' | 'notebook' | 'connector' | 'dashboard' | 'agent' | 'model_config' | 'skill' | 'mcp_server'
 
 const ACTION_LABELS: Record<ResourceType, string[]> = {
-  folder:    ['view', 'create', 'edit', 'manage', 'delete'],
-  notebook:  ['view', 'run', 'edit', 'share', 'delete'],
-  connector: ['view', 'use', 'edit', 'share', 'delete'],
-  dashboard: ['view', 'edit', 'share', 'delete'],
+  folder:      ['view', 'create', 'edit', 'manage', 'delete'],
+  notebook:    ['view', 'run', 'edit', 'share', 'delete'],
+  connector:   ['view', 'use', 'edit', 'share', 'delete'],
+  dashboard:   ['view', 'edit', 'share', 'delete'],
+  agent:       ['view', 'edit', 'delete'],
+  model_config:['view', 'edit', 'delete'],
+  skill:       ['view', 'edit', 'delete'],
+  mcp_server:  ['view', 'edit', 'delete'],
 }
 
 const ACTION_DESCRIPTIONS: Record<ResourceType, Record<string, string>> = {
@@ -41,6 +45,26 @@ const ACTION_DESCRIPTIONS: Record<ResourceType, Record<string, string>> = {
     manage: 'Manage folder-level permissions',
     share:  'Share this folder with others',
     delete: 'Delete the folder permanently',
+  },
+  agent: {
+    view:   'See agent details and configuration',
+    edit:   'Edit agent settings and prompt',
+    delete: 'Delete the agent permanently',
+  },
+  model_config: {
+    view:   'See model configuration details',
+    edit:   'Edit model configuration',
+    delete: 'Delete the model configuration permanently',
+  },
+  skill: {
+    view:   'See skill details',
+    edit:   'Edit skill definition',
+    delete: 'Delete the skill permanently',
+  },
+  mcp_server: {
+    view:   'See MCP server details',
+    edit:   'Edit MCP server configuration',
+    delete: 'Delete the MCP server permanently',
   },
 }
 
@@ -120,11 +144,11 @@ export function PermissionsPanel({
   const [saveError, setSaveError] = useState<string | null>(null)
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set())
 
-  function toggleExpand(idx: number) {
+  function setExpanded(idx: number, expanded: boolean) {
     setExpandedRows(prev => {
       const next = new Set(prev)
-      if (next.has(idx)) next.delete(idx)
-      else next.add(idx)
+      if (expanded) next.add(idx)
+      else next.delete(idx)
       return next
     })
   }
@@ -241,11 +265,15 @@ export function PermissionsPanel({
 
   const visibleEntries = draft !== null ? draft : directEntries
 
-  const typeBadgeColors: Record<ResourceType, string> = {
+  const typeBadgeColors: Record<string, string> = {
     folder: '#e8f0fe',
     notebook: '#fce8ff',
     connector: '#e8fff0',
     dashboard: '#fff8e8',
+    agent: '#f0e8ff',
+    model_config: '#e8fff0',
+    skill: '#ffe8f0',
+    mcp_server: '#fff0e8',
   }
 
   // ── Render ──
@@ -311,7 +339,7 @@ export function PermissionsPanel({
                       </div>
                       <div style={styles.checkboxGroup}>
                         {actions.map((action) => (
-                          <label key={action} style={styles.checkLabel} title={ACTION_DESCRIPTIONS[resourceType][action]}>
+                          <label key={action} style={styles.checkLabel} title={ACTION_DESCRIPTIONS[resourceType]?.[action] ?? ''}>
                             <input
                               type="checkbox"
                               checked={entry.actions.includes(action)}
@@ -339,16 +367,19 @@ export function PermissionsPanel({
               {visibleEntries.map((entry, idx) => (
                 <div
                   key={entry.id || `direct-${idx}`}
-                  style={styles.entryRow}
-                  onMouseEnter={() => toggleExpand(idx)}
-                  onMouseLeave={() => toggleExpand(idx)}
-                  onFocus={() => toggleExpand(idx)}
                   tabIndex={0}
+                  style={{ ...styles.entryRow, cursor: 'pointer' }}
+                  onClick={() => setExpanded(idx, !expandedRows.has(idx))}
+                  onBlur={(e) => {
+                    if (!e.currentTarget.contains(e.relatedTarget as Node)) setExpanded(idx, false)
+                  }}
                 >
-                  <Avatar name={subjectName(entry)} type={entry.subject_type} />
-                  <div style={styles.entryInfo}>
-                    <span style={styles.entryName}>{subjectName(entry)}</span>
-                    <span style={styles.entryType}>{entry.subject_type}</span>
+                  <div style={styles.entryRowHeader}>
+                    <Avatar name={subjectName(entry)} type={entry.subject_type} />
+                    <div style={styles.entryInfo}>
+                      <span style={styles.entryName}>{subjectName(entry)}</span>
+                      <span style={styles.entryType}>{entry.subject_type}</span>
+                    </div>
                   </div>
                   {expandedRows.has(idx) && (
                     <div style={styles.expandedRow}>
@@ -356,7 +387,8 @@ export function PermissionsPanel({
                         style={{ ...styles.removeBtn, opacity: canEdit ? 1 : 0.4 }}
                         title="Remove"
                         disabled={!canEdit}
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation()
                           if (canEdit) handleRemoveEntry(idx)
                         }}
                       >
@@ -365,11 +397,12 @@ export function PermissionsPanel({
 
                       <div style={styles.checkboxGroup}>
                         {actions.map((action) => (
-                          <label key={action} style={styles.checkLabel} title={ACTION_DESCRIPTIONS[resourceType][action]}>
+                          <label key={action} style={styles.checkLabel} title={ACTION_DESCRIPTIONS[resourceType]?.[action] ?? ''}>
                             <input
                               type="checkbox"
                               checked={entry.actions.includes(action)}
-                              onChange={() => {
+                              onChange={(e) => {
+                                e.stopPropagation()
                                 if (canEdit) handleToggleAction(idx, action)
                               }}
                               disabled={!canEdit}
@@ -442,7 +475,7 @@ export function PermissionsPanel({
 
                 <div style={styles.checkboxGroup}>
                   {actions.map((action) => (
-                    <label key={action} style={styles.checkLabel} title={ACTION_DESCRIPTIONS[resourceType][action]}>
+                    <label key={action} style={styles.checkLabel} title={ACTION_DESCRIPTIONS[resourceType]?.[action] ?? ''}>
                       <input
                         type="checkbox"
                         checked={newActions.includes(action)}
@@ -593,18 +626,21 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '8px 12px',
   },
   entryRow: {
+    padding: '10px 0',
+    borderBottom: '1px solid var(--border)',
+    outline: 'none',
+  },
+  entryRowHeader: {
     display: 'flex',
     alignItems: 'center',
     gap: 10,
-    padding: '10px 0',
-    borderBottom: '1px solid var(--border)',
   },
   expandedRow: {
     display: 'flex',
     alignItems: 'center',
     gap: 12,
-    width: '100%',
-    marginTop: 4,
+    marginTop: 8,
+    paddingLeft: 42,
   },
   avatar: {
     width: 32,

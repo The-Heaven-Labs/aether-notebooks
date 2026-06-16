@@ -8,6 +8,7 @@ import { Zap } from 'lucide-react'
 import { api } from '../api/client'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import type { Skill } from '../types/agent'
+import { PermissionsPanel } from '../components/PermissionsPanel'
 
 interface SkillForm {
   name: string
@@ -47,6 +48,7 @@ export function SkillsPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
+  const [permissionsTarget, setPermissionsTarget] = useState<{ id: string; name: string } | null>(null)
 
   const { data: skills = [], isLoading } = useQuery<Skill[]>({
     queryKey: ['skills'],
@@ -166,6 +168,7 @@ export function SkillsPage() {
                   </div>
                 </td>
                 <td style={styles.tdActions}>
+                  <button type="button" style={styles.permissionsBtn} onClick={() => setPermissionsTarget({ id: s.id, name: s.name })}>Permissions</button>
                   <button type="button" style={styles.editBtn} onClick={() => startEdit(s)}>Edit</button>
                   <button type="button" style={styles.deleteBtn} onClick={() => setDeleteTarget({ id: s.id, name: s.name })}>
                     Delete
@@ -185,6 +188,14 @@ export function SkillsPage() {
         onConfirm={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null) }}
         onCancel={() => setDeleteTarget(null)}
       />
+      {permissionsTarget && (
+        <PermissionsPanel
+          resourceType="skill"
+          resourceId={permissionsTarget.id}
+          resourceName={permissionsTarget.name}
+          onClose={() => setPermissionsTarget(null)}
+        />
+      )}
     </AppShell>
   )
 }
@@ -242,6 +253,7 @@ const styles: Record<string, React.CSSProperties> = {
   cancelBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   saveBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   newBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  permissionsBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 },
   editBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--accent)', marginRight: 6 },
   deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--error-full)' },
   tdActions: { padding: '8px 16px', textAlign: 'right' as const },

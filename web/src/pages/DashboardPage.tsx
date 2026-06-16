@@ -312,14 +312,25 @@ const toGridItem = (w: Widget): LayoutItem => ({
 function DashboardContent({ id }: { id: string }) {
   const qc = useQueryClient()
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [containerWidth, setContainerWidth] = useState(1200)
-  const gridRef = useRef<HTMLDivElement>(null)
+  const [containerWidth, setContainerWidth] = useState(
+    () => Math.min(window.innerWidth - 160, 1200)
+  )
+  const gridContainerRef = useRef<HTMLDivElement | null>(null)
+
+  const gridRef = useCallback((el: HTMLDivElement | null) => {
+    gridContainerRef.current = el
+    if (el) {
+      setContainerWidth(el.clientWidth)
+    }
+  }, [])
+
   useEffect(() => {
-    if (!gridRef.current) return
+    const el = gridContainerRef.current
+    if (!el) return
     const obs = new ResizeObserver(([entry]) => {
       setContainerWidth(entry.contentRect.width)
     })
-    obs.observe(gridRef.current)
+    obs.observe(el)
     return () => obs.disconnect()
   }, [])
 

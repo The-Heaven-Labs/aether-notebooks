@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -94,17 +95,23 @@ func makeListNotebooksHandler(db *pgxpool.Pool) ToolHandler {
 
 		var notebooks []map[string]any
 		for rows.Next() {
-			var id, name, desc, created string
+			var id, name, desc string
 			var fID *string
-			rows.Scan(&id, &name, &desc, &fID, &created)
+			var created time.Time
+			if err := rows.Scan(&id, &name, &desc, &fID, &created); err != nil {
+				continue
+			}
 			folderID := ""
 			if fID != nil {
 				folderID = *fID
 			}
 			notebooks = append(notebooks, map[string]any{
 				"id": id, "name": name, "description": desc,
-				"folder_id": folderID, "created_at": created,
+				"folder_id": folderID, "created_at": created.Format(time.RFC3339),
 			})
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("list notebooks iter: %w", err)
 		}
 		return map[string]any{"notebooks": notebooks, "count": len(notebooks)}, nil
 	}
@@ -137,12 +144,18 @@ func makeListConnectorsHandler(db *pgxpool.Pool) ToolHandler {
 
 		var connectors []map[string]any
 		for rows.Next() {
-			var id, name, ctype, folderID, created string
-			rows.Scan(&id, &name, &ctype, &folderID, &created)
+			var id, name, ctype, folderID string
+			var created time.Time
+			if err := rows.Scan(&id, &name, &ctype, &folderID, &created); err != nil {
+				continue
+			}
 			connectors = append(connectors, map[string]any{
 				"id": id, "name": name, "type": ctype,
-				"folder_id": folderID, "created_at": created,
+				"folder_id": folderID, "created_at": created.Format(time.RFC3339),
 			})
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("list connectors iter: %w", err)
 		}
 		return map[string]any{"connectors": connectors, "count": len(connectors)}, nil
 	}

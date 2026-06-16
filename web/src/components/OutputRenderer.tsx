@@ -299,17 +299,19 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
   const activeCellRef = useRef<HTMLTableCellElement | null>(null)
   const theadRef = useRef<HTMLTableSectionElement | null>(null)
   const [copied, setCopied] = useState(false)
+  const scrollAreaRef = useRef<HTMLDivElement | null>(null)
 
   // Imperative cell highlighting to avoid re-rendering all rows on detail change
   useEffect(() => {
-    document.querySelectorAll<HTMLElement>('.output-scroll-area [data-row][data-col]').forEach(el => {
+    if (!scrollAreaRef.current) return
+    scrollAreaRef.current.querySelectorAll<HTMLElement>('[data-row][data-col]').forEach(el => {
       el.style.background = ''
       el.style.outline = ''
       el.style.outlineOffset = ''
     })
     if (detail && isDetailActive) {
-      const cell = document.querySelector<HTMLElement>(
-        `.output-scroll-area [data-row="${detail.rowIndex}"][data-col="${detail.colIndex}"]`,
+      const cell = scrollAreaRef.current.querySelector<HTMLElement>(
+        `[data-row="${detail.rowIndex}"][data-col="${detail.colIndex}"]`,
       )
       if (cell) {
         cell.style.background = 'var(--accent-light)'
@@ -489,7 +491,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
 
       {view === 'table' ? (
         <div style={{ position: 'relative', display: 'flex' }}>
-          <div className="output-scroll-area" style={{ ...styles.tableWrap, maxHeight: outputHeight, flex: 1, minWidth: 0 }}>
+          <div ref={scrollAreaRef} className="output-scroll-area" style={{ ...styles.tableWrap, maxHeight: outputHeight, flex: 1, minWidth: 0 }}>
             <table style={styles.table}>
               <thead ref={theadRef}>
                 <tr>

@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { api } from '../api/client'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { AppShell } from '../components/AppShell'
 import type { SSOProvider } from '../types'
 
 interface Org {
@@ -514,6 +515,7 @@ function MOTDTab() {
     visibility: 'all',
     show_on_login: false,
     expires_at: '',
+    pages: [] as string[],
   })
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -542,7 +544,7 @@ function MOTDTab() {
   })
 
   function resetForm() {
-    setFormData({ title: '', content: '', priority: 0, visibility: 'all', show_on_login: false, expires_at: '' })
+    setFormData({ title: '', content: '', priority: 0, visibility: 'all', show_on_login: false, expires_at: '', pages: [] })
     setShowForm(false)
     setEditingId(null)
     setFormError(null)
@@ -556,6 +558,7 @@ function MOTDTab() {
       visibility: m.visibility,
       show_on_login: m.show_on_login,
       expires_at: m.expires_at ? m.expires_at.slice(0, 16) : '',
+      pages: m.pages ?? [],
     })
     setEditingId(m.id)
     setShowForm(true)
@@ -573,6 +576,7 @@ function MOTDTab() {
       priority: formData.priority,
       visibility: formData.visibility,
       show_on_login: formData.show_on_login,
+      pages: formData.pages,
     }
     if (formData.expires_at) {
       body.expires_at = new Date(formData.expires_at).toISOString()
@@ -605,7 +609,7 @@ function MOTDTab() {
               <input style={formStyles.input} value={formData.title} onChange={e => setFormData(f => ({ ...f, title: e.target.value }))} placeholder="System Update" />
             </label>
             <label style={formStyles.label}>
-              Content <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(supports \n for line breaks)</span>
+              Content <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(supports Markdown)</span>
               <textarea
                 style={{ ...formStyles.input, minHeight: 80, resize: 'vertical', fontFamily: 'var(--font-sans)' }}
                 value={formData.content}
@@ -626,6 +630,35 @@ function MOTDTab() {
                 </select>
               </label>
             </div>
+            {formData.visibility === 'specific' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>Show on pages</span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {['/'  , '/notebooks', '/connectors', '/dashboards', '/audit', '/members', '/admin', '/groups', '/settings', '/agents', '/models', '/skills', '/mcps'].map(page => (
+                    <label key={page} style={{
+                      display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 4, cursor: 'pointer',
+                      background: formData.pages.includes(page) ? 'var(--accent)' : 'var(--bg-secondary)',
+                      color: formData.pages.includes(page) ? '#fff' : 'var(--text-primary)',
+                      fontSize: 12, fontWeight: formData.pages.includes(page) ? 600 : 400, userSelect: 'none',
+                    }}>
+                      <input
+                        type="checkbox"
+                        style={{ display: 'none' }}
+                        checked={formData.pages.includes(page)}
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setFormData(f => ({ ...f, pages: [...f.pages, page] }))
+                          } else {
+                            setFormData(f => ({ ...f, pages: f.pages.filter(p => p !== page) }))
+                          }
+                        }}
+                      />
+                      {page === '/' ? 'Home' : page.charAt(1).toUpperCase() + page.slice(2)}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
             <label style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <input type="checkbox" checked={formData.show_on_login} onChange={e => setFormData(f => ({ ...f, show_on_login: e.target.checked }))} />
               Show on login page
@@ -665,6 +698,8 @@ function MOTDTab() {
                   {m.content.slice(0, 80)}{m.content.length > 80 ? '…' : ''}
                   {' · '}Priority: {m.priority}
                   {m.expires_at && ` · Expires: ${new Date(m.expires_at).toLocaleDateString()}`}
+                  {' · '}{m.show_on_login ? 'Login page' : 'App only'}
+                  {m.visibility === 'specific' ? ' · Specific pages' : ' · All pages'}
                 </span>
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
@@ -724,8 +759,9 @@ export function AdminPage() {
   }, [])
 
   return (
-    <div style={styles.page}>
-      <h1 style={styles.title}>Platform Admin</h1>
+    <AppShell>
+      <div>
+        <h1 style={styles.title}>Platform Admin</h1>
       <div style={styles.tabs} role="tablist">
         <button
           role="tab"
@@ -820,16 +856,16 @@ export function AdminPage() {
 
       {tab === 'sso' && <SSOProvidersTab />}
       {tab === 'motd' && <MOTDTab />}
-    </div>
+      </div>
+    </AppShell>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  page: { padding: 24 },
   title: { fontSize: 20, fontWeight: 600, marginBottom: 16, color: 'var(--text-primary)' },
   tabs: { display: 'flex', gap: 2, marginBottom: 16, borderBottom: '1px solid var(--border)' },
-  tab: { padding: '8px 16px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14 },
-  tabActive: { padding: '8px 16px', background: 'none', border: 'none', borderBottom: '2px solid var(--accent)', cursor: 'pointer', color: 'var(--text-primary)', fontSize: 14, fontWeight: 600 },
+  tab: { padding: '8px 16px', background: 'transparent', border: 'none', borderBottom: '2px solid transparent', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, borderRadius: 0 },
+  tabActive: { padding: '8px 16px', background: 'var(--bg-elevated)', border: 'none', borderBottom: '2px solid var(--accent)', cursor: 'pointer', color: 'var(--text-primary)', fontSize: 14, fontWeight: 600, borderRadius: 0 },
   table: { width: '100%', borderCollapse: 'collapse' },
   th: { textAlign: 'left', padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' },
   td: { padding: '10px 12px', fontSize: 13, color: 'var(--text-primary)', borderBottom: '1px solid var(--border)' },

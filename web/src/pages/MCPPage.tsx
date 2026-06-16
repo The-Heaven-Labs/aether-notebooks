@@ -8,6 +8,7 @@ import { Server, Loader2, CheckCircle2, XCircle } from 'lucide-react'
 import { api } from '../api/client'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import type { MCPServerOrg } from '../types/agent'
+import { PermissionsPanel } from '../components/PermissionsPanel'
 
 interface MCPForm {
   name: string
@@ -35,6 +36,7 @@ export function MCPPage() {
   const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string }>>({})
   const [testingIds, setTestingIds] = useState<Set<string>>(new Set())
   const [deleteTarget, setDeleteTarget] = useState<MCPServerOrg | null>(null)
+  const [permissionsTarget, setPermissionsTarget] = useState<{ id: string; name: string } | null>(null)
 
   const { data: servers = [], isLoading } = useQuery<MCPServerOrg[]>({
     queryKey: ['mcp-servers'],
@@ -166,6 +168,7 @@ export function MCPPage() {
                 <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{s.command}</td>
                 <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{s.args?.join(' ') || '—'}</td>
                 <td style={styles.tdActions}>
+                  <button type="button" style={styles.permissionsBtn} onClick={() => setPermissionsTarget({ id: s.id, name: s.name })}>Permissions</button>
                   <button type="button" style={styles.testBtn} onClick={() => testServer(s.id)} disabled={testingIds.has(s.id)}>
                     {testingIds.has(s.id) ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : 'Test'}
                   </button>
@@ -198,6 +201,14 @@ export function MCPPage() {
         onConfirm={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null) }}
         onCancel={() => setDeleteTarget(null)}
       />
+      {permissionsTarget && (
+        <PermissionsPanel
+          resourceType="mcp_server"
+          resourceId={permissionsTarget.id}
+          resourceName={permissionsTarget.name}
+          onClose={() => setPermissionsTarget(null)}
+        />
+      )}
     </AppShell>
   )
 }
@@ -235,6 +246,7 @@ const styles: Record<string, React.CSSProperties> = {
   cancelBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   saveBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   newBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  permissionsBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 },
   testBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6, display: 'inline-flex', alignItems: 'center', gap: 4 },
   editBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--accent)', marginRight: 6 },
   deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--error-full)' },

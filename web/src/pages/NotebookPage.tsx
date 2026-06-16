@@ -275,7 +275,7 @@ export function NotebookPage() {
   const [addToDashboardToast, setAddToDashboardToast] = useState<string | null>(null)
   const [deleteCellTarget, setDeleteCellTarget] = useState<string | null>(null)
 
-  const { data: notebook, isLoading } = useQuery({
+  const { data: notebook, isLoading, error: notebookError } = useQuery({
     queryKey: ['notebook', id],
     queryFn: () => api.get<NotebookWithCells>(`/api/v1/notebooks/${id}`),
     enabled: !!id,
@@ -786,7 +786,7 @@ export function NotebookPage() {
   if (!notebook) return (
     <AppShell noPadding>
       <div style={{ padding: '40px', color: 'var(--text-muted)', textAlign: 'center' }}>
-        Notebook not found
+        {notebookError ? String(notebookError) : 'Notebook not found'}
       </div>
     </AppShell>
   )

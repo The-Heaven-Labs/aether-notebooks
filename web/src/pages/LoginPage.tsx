@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Eye, EyeOff } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useAuth } from '../hooks/useAuth'
 import { ApiError, api } from '../api/client'
 import { ErrorBanner } from '../components/ErrorBanner'
@@ -41,6 +43,13 @@ export function LoginPage() {
   const [probing, setProbing] = useState(false)
   const [ssoProviders, setSsoProviders] = useState<SSOProvider[]>([])
   const [showPassword, setShowPassword] = useState(false)
+  const [loginMotds, setLoginMotds] = useState<Array<{id: string; title: string; content: string}>>([])
+
+  useEffect(() => {
+    api.get<Array<{id: string; title: string; content: string}>>('/api/v1/public/motd')
+      .then(setLoginMotds)
+      .catch(() => {})
+  }, [])
 
   // Focus password field when it becomes visible and no SSO providers
   const showPasswordStep = mode === 'register' || step === 'password' || step === 'sso_and_password'
@@ -198,6 +207,27 @@ export function LoginPage() {
               Create account
             </button>
           </div>
+
+          {loginMotds.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              {loginMotds.map(motd => (
+                <div key={motd.id} style={{
+                  background: 'var(--warning-light)',
+                  border: '1px solid var(--warning-border)',
+                  borderLeft: '3px solid var(--accent)',
+                  borderRadius: 4,
+                  padding: '12px 16px',
+                  marginBottom: loginMotds.length > 1 ? 8 : 0,
+                  fontSize: 13,
+                  color: 'var(--text-primary)',
+                  lineHeight: 1.5,
+                }}>
+                  {motd.title && <strong style={{ marginRight: 8, fontWeight: 600 }}>{motd.title}:</strong>}
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{motd.content}</ReactMarkdown>
+                </div>
+              ))}
+            </div>
+          )}
 
           <p style={styles.formHeading}>
             {mode === 'login' ? 'Welcome back' : 'Get started free'}
