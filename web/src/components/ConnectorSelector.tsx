@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 
-interface Connector {
+interface ConnectorItem {
   id: string
   name: string
   type: string
+  can_use?: boolean
 }
 
 interface ConnectorSelectorProps {
@@ -22,10 +23,10 @@ export function ConnectorSelector({
   allowClear = false,
   style,
 }: ConnectorSelectorProps) {
-  const [connectors, setConnectors] = useState<Connector[]>([])
+  const [connectors, setConnectors] = useState<ConnectorItem[]>([])
 
   useEffect(() => {
-    api.get<Connector[]>('/api/v1/connectors')
+    api.get<ConnectorItem[]>('/api/v1/connectors')
       .then(data => setConnectors(data))
       .catch(() => {})
   }, [])
@@ -49,8 +50,8 @@ export function ConnectorSelector({
     >
       <option value="" disabled={!allowClear || !value}>{allowClear && value ? 'Clear selection' : placeholder}</option>
       {connectors.map(c => (
-        <option key={c.id} value={c.id}>
-          {c.name}
+        <option key={c.id} value={c.id} disabled={c.can_use === false}>
+          {c.name}{c.can_use === false ? ' (view only)' : ''}
         </option>
       ))}
     </select>

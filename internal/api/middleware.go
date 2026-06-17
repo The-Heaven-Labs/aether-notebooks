@@ -15,6 +15,20 @@ type contextKey string
 
 const claimsKey contextKey = "claims"
 
+const adminModeKey contextKey = "admin_mode"
+
+func adminModeFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return true
+	}
+	v := ctx.Value(adminModeKey)
+	if v == nil {
+		return true
+	}
+	enabled, ok := v.(bool)
+	return !ok || enabled
+}
+
 func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -45,6 +59,8 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool) func(http.Handle
 			}
 
 			ctx := context.WithValue(r.Context(), claimsKey, claims)
+			adminMode := r.Header.Get("X-HNB-Admin-Mode") != "false"
+			ctx = context.WithValue(ctx, adminModeKey, adminMode)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -86,6 +102,8 @@ func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler,
 			}
 
 			ctx := context.WithValue(r.Context(), claimsKey, claims)
+			adminMode := r.Header.Get("X-HNB-Admin-Mode") != "false"
+			ctx = context.WithValue(ctx, adminModeKey, adminMode)
 
 			// Update last_used_at in background
 			go func() {

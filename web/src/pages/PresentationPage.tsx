@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { makeMarkdownComponents } from '../components/MarkdownCell'
+import type { ChartConfig } from '../charts'
 import type { Notebook, Cell, Output } from '../types'
 
 interface NotebookWithCells extends Notebook {
@@ -35,6 +36,10 @@ export function PresentationPage() {
       return acc
     }, [])
   }, [notebook?.cells])
+
+  const getChartConfig = useCallback((cell: Cell): ChartConfig | undefined => {
+    return cell.metadata?.chart as ChartConfig | undefined
+  }, [])
 
   const total = slides.length
   const currentSlide = slides[index] ?? []
@@ -80,7 +85,12 @@ export function PresentationPage() {
                 )}
                 {/* Output: shown unless outputs_hidden is explicitly true */}
                 {cell.outputs_hidden !== true && (cell.outputs ?? []).length > 0 && (
-                  <OutputRenderer outputs={cell.outputs as Output[]} cellId={cell.id} />
+                  <OutputRenderer
+                    outputs={cell.outputs as Output[]}
+                    cellId={cell.id}
+                    chartConfig={getChartConfig(cell)}
+                    hideExport
+                  />
                 )}
               </div>
             )

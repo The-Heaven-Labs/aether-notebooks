@@ -36,6 +36,9 @@ async function request<T>(
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
   }
+  if (localStorage.getItem('hnb_admin_mode') === 'false') {
+    headers['X-HNB-Admin-Mode'] = 'false'
+  }
 
   const res = await fetch(BASE_URL + path, {
     method,

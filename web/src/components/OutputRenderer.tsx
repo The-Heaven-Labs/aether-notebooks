@@ -35,21 +35,22 @@ interface Props {
   cellId?: string
   chartConfig?: ChartConfig
   onChartConfigChange?: (config: ChartConfig) => void
+  hideExport?: boolean
 }
 
-export const OutputRenderer = memo(function OutputRenderer({ outputs, fixedView, cellId, chartConfig, onChartConfigChange }: Props) {
+export const OutputRenderer = memo(function OutputRenderer({ outputs, fixedView, cellId, chartConfig, onChartConfigChange, hideExport }: Props) {
   if (!outputs || outputs.length === 0) return null
 
   return (
     <div style={styles.container}>
       {outputs.map((out, i) => (
-        <OutputItem key={i} output={out} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} />
+        <OutputItem key={i} output={out} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} hideExport={hideExport} />
       ))}
     </div>
   )
 })
 
-function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChange }: { output: Output; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void }) {
+function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChange, hideExport }: { output: Output; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; hideExport?: boolean }) {
   if (output.type === 'error') {
     return (
       <div style={styles.errorWrap}>
@@ -66,7 +67,7 @@ function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChang
   if (output.type === 'table') {
     const rs = output.data as ResultSet
     if (!rs?.columns?.length) return <p style={styles.empty}>No results returned</p>
-    return <TableOutput rs={rs} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} />
+    return <TableOutput rs={rs} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} hideExport={hideExport} />
   }
 
   return null
@@ -276,7 +277,7 @@ function exportJSON(rs: ResultSet): void {
   URL.revokeObjectURL(url)
 }
 
-const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void }) {
+const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange, hideExport }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; hideExport?: boolean }) {
   const storageKey = cellId ? `hnb_cell_view_${cellId}` : null
   const hasChartConfig = !!chartConfig?.chartType
   const [view, setView] = useState<'table' | 'chart'>(() => {
@@ -461,7 +462,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
         <span style={styles.rowCount}>
           {rs.rows.length} row{rs.rows.length !== 1 ? 's' : ''} · {rs.columns.length} columns
         </span>
-        {!fixedView && (
+        {!fixedView && !hideExport && (
           <div style={styles.exportGroup}>
             <button style={styles.exportBtn} onClick={() => exportCSV(rs)} title="Download as CSV" aria-label="Download as CSV">
               <Download size={12} /> CSV
@@ -471,7 +472,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
             </button>
           </div>
         )}
-        {!fixedView && (
+        {!fixedView && !hideExport && (
           <div style={styles.viewToggle}>
             <button
               style={{ ...styles.viewBtn, ...(view === 'table' ? styles.viewBtnActive : {}), display: 'flex', alignItems: 'center', gap: 4 }}

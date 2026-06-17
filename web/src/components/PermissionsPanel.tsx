@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 
@@ -112,6 +112,211 @@ function Avatar({ name, type }: { name: string; type: 'user' | 'group' | 'org_ro
   return (
     <div style={styles.avatar}>
       {type === 'group' ? '#' : type === 'org_role' ? '★' : initials(name)}
+    </div>
+  )
+}
+
+// ─── Searchable Subject Selector ─────────────────────────────────────────────
+
+interface SubjectSearchProps {
+  members: Array<{ user_id: string; email: string; name?: string }>
+  groups: Array<{ id: string; name: string }>
+  resourceOwnerId?: string
+  value: string
+  onChange: (key: string) => void
+}
+
+function SubjectSearch({ members, groups, resourceOwnerId, value, onChange }: SubjectSearchProps) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [focusedIdx, setFocusedIdx] = useState(-1)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
+
+  const availableMembers = members.filter(m => m.user_id !== resourceOwnerId)
+  const displayLabel = value === 'org_role:everyone'
+    ? 'Everyone (all members)'
+    : value?.startsWith('user:')
+      ? availableMembers.find(m => 'user:' + m.user_id === value)?.name
+        || availableMembers.find(m => 'user:' + m.user_id === value)?.email
+        || 'Selected'
+      : value?.startsWith('group:')
+        ? groups.find(g => 'group:' + g.id === value)?.name || 'Selected'
+        : 'Select user, group, or Everyone…'
+
+  const q = query.toLowerCase().trim()
+  const filtered: Array<{ key: string; label: string; group: string }> = [
+    { key: 'org_role:everyone', label: 'Everyone (all members)', group: '' },
+    ...availableMembers
+      .filter(m => !q || (m.name?.toLowerCase() || '').includes(q) || m.email.toLowerCase().includes(q))
+      .map(m => ({ key: 'user:' + m.user_id, label: m.name || m.email, group: 'Users' })),
+    ...groups
+      .filter(g => !q || g.name.toLowerCase().includes(q))
+      .map(g => ({ key: 'group:' + g.id, label: g.name, group: 'Groups' })),
+  ]
+
+  const selectOption = useCallback((key: string) => {
+    onChange(key)
+    setOpen(false)
+    setQuery('')
+    setFocusedIdx(-1)
+  }, [onChange])
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+        setQuery('')
+        setFocusedIdx(-1)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  useEffect(() => {
+    if (open) inputRef.current?.focus()
+  }, [open])
+
+  useEffect(() => {
+    if (focusedIdx >= 0 && listRef.current) {
+      const el = listRef.current.children[focusedIdx] as HTMLElement
+      el?.scrollIntoView?.({ block: 'nearest' })
+    }
+  }, [focusedIdx])
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setFocusedIdx(i => Math.min(i + 1, filtered.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setFocusedIdx(i => Math.max(i - 1, -1))
+    } else if (e.key === 'Enter' && focusedIdx >= 0) {
+      e.preventDefault()
+      selectOption(filtered[focusedIdx].key)
+    } else if (e.key === 'Escape') {
+      setOpen(false)
+      setQuery('')
+      setFocusedIdx(-1)
+    }
+  }
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', flex: 1 }}>
+      <button
+        type="button"
+        style={{
+          width: '100%',
+          textAlign: 'left',
+          padding: '7px 10px',
+          fontSize: 12,
+          background: 'var(--bg-input)',
+          color: value ? 'var(--text-primary)' : 'var(--text-muted)',
+          border: '1px solid var(--border)',
+          borderRadius: 4,
+          cursor: 'pointer',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 8,
+        }}
+        onClick={() => { setOpen(v => !v); setFocusedIdx(-1) }}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayLabel}</span>
+        <span style={{ flexShrink: 0, fontSize: 10, color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : undefined }}>▾</span>
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute',
+          top: '100%',
+          left: 0,
+          right: 0,
+          zIndex: 100,
+          background: 'var(--bg-elevated)',
+          border: '1px solid var(--border)',
+          borderRadius: 4,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+          marginTop: 2,
+        }}>
+          <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)' }}>
+            <input
+              ref={inputRef}
+              style={{
+                width: '100%',
+                padding: '5px 8px',
+                fontSize: 12,
+                background: 'var(--bg-input)',
+                color: 'var(--text-primary)',
+                border: '1px solid var(--border)',
+                borderRadius: 3,
+                outline: 'none',
+                boxSizing: 'border-box',
+              }}
+              type="text"
+              value={query}
+              onChange={(e) => { setQuery(e.target.value); setFocusedIdx(-1) }}
+              onKeyDown={handleKeyDown}
+              placeholder="Search…"
+              autoComplete="off"
+            />
+          </div>
+          <ul ref={listRef} style={{
+            listStyle: 'none',
+            margin: 0,
+            padding: '4px 0',
+            maxHeight: 240,
+            overflowY: 'auto',
+          }} role="listbox">
+            {filtered.length === 0 && (
+              <li style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)' }}>No matches found</li>
+            )}
+            {filtered.map((item, idx) => {
+              const isEveryone = item.key === 'org_role:everyone'
+              const isSelected = item.key === value
+              const isFocused = idx === focusedIdx
+              const showGroupHeader = idx === 0 && !q
+                ? false
+                : idx > 0 && filtered[idx - 1].group !== item.group
+              return (
+                <div key={item.key}>
+                  {!q && showGroupHeader && item.group && (
+                    <li style={{
+                      padding: '3px 12px',
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: 'var(--text-muted)',
+                      textTransform: 'uppercase' as const,
+                      letterSpacing: 0.5,
+                      listStyle: 'none',
+                    }}>{item.group}</li>
+                  )}
+                  <li
+                    role="option"
+                    aria-selected={isSelected}
+                    style={{
+                      padding: '6px 12px',
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      background: isFocused ? 'var(--accent-light)' : 'transparent',
+                      color: isSelected ? 'var(--accent)' : isEveryone ? 'var(--text-primary)' : 'var(--text-primary)',
+                      fontWeight: isEveryone ? 600 : 400,
+                      listStyle: 'none',
+                    }}
+                    onMouseEnter={() => setFocusedIdx(idx)}
+                    onMouseDown={(e) => { e.preventDefault(); selectOption(item.key) }}
+                  >
+                    {item.label}
+                  </li>
+                </div>
+              )
+            })}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }
@@ -447,34 +652,13 @@ export function PermissionsPanel({
 
               {/* Add entry row */}
               <div style={styles.addRow}>
-                <select
-                  style={styles.select}
+                <SubjectSearch
+                  members={members}
+                  groups={groups}
+                  resourceOwnerId={resourceOwnerId}
                   value={newSubjectKey}
-                  onChange={(e) => setNewSubjectKey(e.target.value)}
-                >
-                  <option value="">Select user, group, or Everyone…</option>
-                  <option value="org_role:everyone">Everyone (all members)</option>
-                  {members.length > 0 && (
-                    <optgroup label="Users">
-                      {members
-                        .filter(m => m.user_id !== resourceOwnerId)
-                        .map((m) => (
-                          <option key={m.user_id} value={`user:${m.user_id}`}>
-                            {m.name || m.email}
-                          </option>
-                        ))}
-                    </optgroup>
-                  )}
-                  {groups.length > 0 && (
-                    <optgroup label="Groups">
-                      {groups.map((g) => (
-                        <option key={g.id} value={`group:${g.id}`}>
-                          {g.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
+                  onChange={setNewSubjectKey}
+                />
 
                 <div style={styles.checkboxGroup}>
                   {actions.map((action) => (

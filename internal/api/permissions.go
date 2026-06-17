@@ -60,8 +60,8 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 	}
 	everyoneRows.Close()
 
-	// Org admins always have full access to everything
-	if orgRole == "admin" {
+	// Org admins bypass ACLs when admin mode is enabled
+	if orgRole == "admin" && adminModeFromContext(ctx) {
 		return true, nil
 	}
 

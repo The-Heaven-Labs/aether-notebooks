@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
 import { EChartsContainer, CHART_COLORS, getTooltipStyle, getChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns } from './common'
+import { ConfigHint } from './ConfigHint'
 
 function PieChartComponent({ data, config }: ChartProps) {
   const { xAxis, yAxes } = useAxisColumns(data, config)
@@ -43,6 +44,7 @@ function PieConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
         >
           {columns.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
+        <ConfigHint>Column for slice labels (categories)</ConfigHint>
       </div>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Value column</div>
@@ -54,6 +56,7 @@ function PieConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
         >
           {columns.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
+        <ConfigHint>Column for slice sizes (numeric values)</ConfigHint>
       </div>
       <label style={styles.checkbox}>
         <input
@@ -63,6 +66,7 @@ function PieConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
         />
         Donut (ring)
       </label>
+      <ConfigHint>Show as a ring chart with a hole in the center</ConfigHint>
     </div>
   )
 }

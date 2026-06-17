@@ -275,9 +275,17 @@ func (s *Server) handleAddGroupMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "insert failed")
 		return
 	}
+
+	var memberEmail string
+	s.db.Pool.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, req.UserID).Scan(&memberEmail)
+
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "group.member.add", ResourceType: "group", ResourceID: groupID,
+		Metadata: map[string]any{
+			"user_id": req.UserID,
+			"email":   memberEmail,
+		},
 	})
 	writeJSON(w, http.StatusCreated, map[string]string{"user_id": req.UserID})
 }
@@ -315,9 +323,17 @@ func (s *Server) handleRemoveGroupMember(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "delete failed")
 		return
 	}
+
+	var memberEmail string
+	s.db.Pool.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, userID).Scan(&memberEmail)
+
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "group.member.remove", ResourceType: "group", ResourceID: groupID,
+		Metadata: map[string]any{
+			"user_id": userID,
+			"email":   memberEmail,
+		},
 	})
 	w.WriteHeader(http.StatusNoContent)
 }

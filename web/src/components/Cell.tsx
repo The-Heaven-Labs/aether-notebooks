@@ -437,7 +437,7 @@ export const Cell = memo(function Cell({
       {/* ── Slide break indicator ── */}
       {cell.slide_break && (
         <div style={styles.slideBreakIndicator}>
-          <span style={styles.slideBreakLabel}>Slide break</span>
+          <span style={styles.slideBreakLabel}>Joined with previous slide</span>
         </div>
       )}
       <div
@@ -478,7 +478,9 @@ export const Cell = memo(function Cell({
               >
                 <option value="">Inherit from notebook</option>
                 {connectors.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
+                  <option key={c.id} value={c.id} disabled={c.can_use === false}>
+                    {c.name}{c.can_use === false ? ' (view only)' : ''}
+                  </option>
                 ))}
               </select>
             ) : (
@@ -654,11 +656,11 @@ export const Cell = memo(function Cell({
           <button
             type="button"
             title={cell.slide_break
-              ? 'Slide break: This cell starts a new presentation slide.\nClick to merge it with the previous slide.'
-              : 'Join with previous slide: This cell continues the previous slide.\nClick to start a new slide from this cell.'}
+              ? 'Joined with previous slide. Click to unmerge and start a new slide here.'
+              : 'By default each cell starts a new slide. Click to merge this cell with the previous slide.'}
             aria-label={cell.slide_break
-              ? 'Remove slide break (merge with previous slide)'
-              : 'Add slide break (start new presentation slide)'}
+              ? 'Unmerge from previous slide (start a new slide here)'
+              : 'Merge with previous slide'}
             style={{ ...styles.actionBtn, color: cell.slide_break ? 'var(--accent)' : 'var(--text-muted)' }}
             onClick={() => onUpdateCellMeta?.(cell.id, { slide_break: !cell.slide_break })}
           >
