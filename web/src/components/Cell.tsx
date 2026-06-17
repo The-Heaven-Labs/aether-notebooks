@@ -200,6 +200,7 @@ interface CodeEditorProps {
   index?: number
   onEditStart?: () => void
   onEditEnd?: () => void
+  readOnly?: boolean
 }
 
 function languageExtension(cell: Cell, connector?: Connector) {
@@ -212,7 +213,7 @@ function languageExtension(cell: Cell, connector?: Connector) {
   return sql({ dialect: MySQL })
 }
 
-function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, connector, index, onEditStart, onEditEnd }: CodeEditorProps) {
+function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, connector, index, onEditStart, onEditEnd, readOnly }: CodeEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null)
   const onRunRef = useRef(onRun)
   const onSourceChangeRef = useRef(onSourceChange)
@@ -265,6 +266,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
             // Fix cursor visibility: use text color so it's always visible in any theme
             '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--text-primary)' },
           }),
+          EditorView.editable.of(!readOnly),
           EditorView.contentAttributes.of({
             'aria-label': cell.title
               ? `SQL editor: ${cell.title}`
@@ -690,6 +692,7 @@ export const Cell = memo(function Cell({
               index={index}
               onEditStart={onEditStart}
               onEditEnd={onEditEnd}
+              readOnly={!onSave}
             />
           : <MarkdownView cell={cell} notebookId={notebookId} onSourceChange={onSourceChange} onSave={onSave} />
       )}

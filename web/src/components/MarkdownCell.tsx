@@ -411,6 +411,7 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
           flex: splitMode ? '0 0 50%' : undefined,
         }}
         value={source}
+        readOnly={!onSave}
         onChange={(e) => {
           const el = e.target
           el.style.height = 'auto'
@@ -429,6 +430,10 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
         }}
         onKeyDown={(e) => {
           if (e.key === 'Escape') {
+            e.currentTarget.blur()
+          }
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+            e.preventDefault()
             e.currentTarget.blur()
           }
           // Tab key inserts spaces instead of changing focus
@@ -458,6 +463,7 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
           overflow: splitMode ? 'auto' : undefined,
         }}
         onClick={() => {
+          if (!onSave) return
           if (!splitMode) {
             setIsFocused(true)
             setTimeout(() => textareaRef.current?.focus(), 0)
@@ -470,7 +476,7 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
       </div>
       </div>
 
-      {isFocused && (
+      {isFocused && onSave && (
         <div style={styles.mdToolbar}>
           <div style={styles.mdToolbarLeft}>
             <button

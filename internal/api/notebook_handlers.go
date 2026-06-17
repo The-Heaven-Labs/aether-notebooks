@@ -562,10 +562,18 @@ func (s *Server) handleImportNotebook(w http.ResponseWriter, r *http.Request) {
 		title = "Imported Notebook"
 	}
 
+	folderID := r.FormValue("folder_id")
+
 	ctx := r.Context()
 	var notebookID string
-	err = s.db.Pool.QueryRow(ctx, `INSERT INTO notebooks (org_id, title, created_by) VALUES ($1, $2, $3) RETURNING id`,
-		claims.OrgID, title, claims.UserID).Scan(&notebookID)
+	if folderID != "" {
+		err = s.db.Pool.QueryRow(ctx,
+			`INSERT INTO notebooks (org_id, title, created_by, folder_id) VALUES ($1, $2, $3, $4) RETURNING id`,
+			claims.OrgID, title, claims.UserID, folderID).Scan(&notebookID)
+	} else {
+		err = s.db.Pool.QueryRow(ctx, `INSERT INTO notebooks (org_id, title, created_by) VALUES ($1, $2, $3) RETURNING id`,
+			claims.OrgID, title, claims.UserID).Scan(&notebookID)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create notebook")
 		return

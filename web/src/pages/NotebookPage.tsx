@@ -1078,24 +1078,28 @@ export function NotebookPage() {
                             focused={cell.id === focusedCellId}
                             index={i}
                           />
-                          <AddCellBar
-                            onAddCode={readOnly ? noop : () => createCell.mutate({ type: 'code', position: cell.position + 1 })}
-                            onAddText={readOnly ? noop : () => createCell.mutate({ type: 'text', position: cell.position + 1 })}
-                          />
+                          {!readOnly && (
+                            <AddCellBar
+                              onAddCode={() => createCell.mutate({ type: 'code', position: cell.position + 1 })}
+                              onAddText={() => createCell.mutate({ type: 'text', position: cell.position + 1 })}
+                            />
+                          )}
                         </div>
                       </SortableCellWrapper>
                     ))}
                   </SortableContext>
                 </DndContext>
 
-                <div style={styles.addRow}>
-                  <button type="button" style={styles.addBtn} onClick={readOnly ? () => {} : () => createCell.mutate({ type: 'code' })} disabled={readOnly}>
-                    + Code Cell
-                  </button>
-                  <button type="button" style={styles.addBtn} onClick={readOnly ? () => {} : () => createCell.mutate({ type: 'text' })} disabled={readOnly}>
-                    + Text Cell
-                  </button>
-                </div>
+                {!readOnly && (
+                  <div style={styles.addRow}>
+                    <button type="button" style={styles.addBtn} onClick={() => createCell.mutate({ type: 'code' })}>
+                      + Code Cell
+                    </button>
+                    <button type="button" style={styles.addBtn} onClick={() => createCell.mutate({ type: 'text' })}>
+                      + Text Cell
+                    </button>
+                  </div>
+                )}
                 <div ref={cellsEndRef} />
               </div>
             </div>

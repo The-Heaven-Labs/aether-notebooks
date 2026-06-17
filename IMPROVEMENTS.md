@@ -11,8 +11,10 @@
 - [x] There should be a configurable sankey chart supported
 - [x] Add an "admin mode" toggle (in sidebar or header) for org admins. When enabled, admins bypass ACLs and see everything. When disabled, admins respect ACLs like regular users. This avoids the need to remove/re-add admin roles for troubleshooting.
 - [x] The list of users and groups will eventually be pretty big, so the select list for permissions will be really big (also the one to add members to a group). That being the case, refactor these to be searchable and performant even at high numbers (thousands of each).
-- [ ] When you create a notebook and go back to the files/folders, the notebook doesn't immediately appear, a hard refresh is necessary to do so. It should automatically appear in this scenario.
-- [ ] It should not be possible to create notebooks at root folder, only folders there, then notebooks inside the folders.
-- [ ] Pressing back from a notebook should go back to the exact page you were before, e.g., if in the files, should go back to the same folder that was open before
-- [ ] Buttons like edit, delete and permissions should be grayed-out for users that have no permission to do these actions in a given resource
-- [ ] Pressing Ctrl + Enter (Or shift + Enter) in a markdown cell should render the markdown and leave edit mode
+- [x] When you create a notebook and go back to the files/folders, the notebook doesn't immediately appear, a hard refresh is necessary to do so. It should automatically appear in this scenario.
+- [x] It should not be possible to create notebooks at root folder, only folders there, then notebooks inside the folders.
+- [x] Pressing back from a notebook should go back to the exact page you were before, e.g., if in the files, should go back to the same folder that was open before
+- [x] Buttons like edit, delete and permissions should be grayed-out for users that have no permission to do these actions in a given resource
+- [x] Pressing Ctrl + Enter (Or shift + Enter) in a markdown cell should render the markdown and leave edit mode
+- [ ] It should not be possible to create notebooks on the folder `/`, only in folders after `/`. When in `/`, the new notebook button should not appear.
+- [ ]

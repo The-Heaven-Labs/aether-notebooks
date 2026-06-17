@@ -87,12 +87,33 @@ func hasAccessibleContentSQL(folderAlias, userIDVar string, groupIDsVar string) 
 	)`, folderAlias, folderAlias, userIDVar, userIDVar, groupIDsVar, folderAlias, folderAlias, userIDVar, groupIDsVar, folderAlias, folderAlias, userIDVar, groupIDsVar, folderAlias, folderAlias, userIDVar, groupIDsVar)
 }
 
+type folderNotebook struct {
+	models.Notebook
+	CanEdit   bool `json:"can_edit"`
+	CanDelete bool `json:"can_delete"`
+	CanShare  bool `json:"can_share"`
+}
+
+type folderDashboard struct {
+	models.Dashboard
+	CanEdit   bool `json:"can_edit"`
+	CanDelete bool `json:"can_delete"`
+	CanShare  bool `json:"can_share"`
+}
+
+type folderItemFolder struct {
+	models.Folder
+	CanEdit   bool `json:"can_edit"`
+	CanDelete bool `json:"can_delete"`
+	CanShare  bool `json:"can_share"`
+}
+
 type folderContents struct {
 	Folder     *models.Folder     `json:"folder,omitempty"`
-	Folders    []models.Folder    `json:"folders"`
-	Notebooks  []models.Notebook  `json:"notebooks"`
+	Folders    []folderItemFolder `json:"folders"`
+	Notebooks  []folderNotebook   `json:"notebooks"`
 	Connectors []folderConnector  `json:"connectors"`
-	Dashboards []models.Dashboard `json:"dashboards"`
+	Dashboards []folderDashboard  `json:"dashboards"`
 }
 
 // folderConnector is a lightweight connector listing (no encrypted credentials).
@@ -104,6 +125,9 @@ type folderConnector struct {
 	FolderID  *string `json:"folder_id,omitempty"`
 	CreatedBy string  `json:"created_by"`
 	CreatedAt string  `json:"created_at"`
+	CanEdit   bool    `json:"can_edit"`
+	CanDelete bool    `json:"can_delete"`
+	CanShare  bool    `json:"can_share"`
 }
 
 // handleListHomeFolders returns all home folders for the org, grouped by owner.
@@ -304,10 +328,10 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 
 	contents := folderContents{
-		Folders:    []models.Folder{},
-		Notebooks:  []models.Notebook{},
+		Folders:    []folderItemFolder{},
+		Notebooks:  []folderNotebook{},
 		Connectors: []folderConnector{},
-		Dashboards: []models.Dashboard{},
+		Dashboards: []folderDashboard{},
 	}
 
 	// Collect user's group memberships for permission checks
@@ -408,7 +432,10 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		contents.Folders = append(contents.Folders, f)
+		editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", f.ID, "edit")
+		deleteOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", f.ID, "delete")
+		shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", f.ID, "manage")
+		contents.Folders = append(contents.Folders, folderItemFolder{Folder: f, CanEdit: editOK, CanDelete: deleteOK, CanShare: shareOK})
 	}
 	if err := rows.Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
@@ -432,10 +459,12 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		// Check permission
 		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "view")
 		if err == nil && ok {
-			contents.Notebooks = append(contents.Notebooks, nb)
+			editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "edit")
+			deleteOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "delete")
+			shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "share")
+			contents.Notebooks = append(contents.Notebooks, folderNotebook{Notebook: nb, CanEdit: editOK, CanDelete: deleteOK, CanShare: shareOK})
 		}
 	}
 	if err := nbRows.Err(); err != nil {
@@ -459,9 +488,11 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		// Check permission
 		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "view")
 		if err == nil && ok {
+			c.CanEdit, _ = s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "edit")
+			c.CanDelete, _ = s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "delete")
+			c.CanShare, _ = s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "share")
 			contents.Connectors = append(contents.Connectors, c)
 		}
 	}
@@ -487,10 +518,12 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		// Check permission
 		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "view")
 		if err == nil && ok {
-			contents.Dashboards = append(contents.Dashboards, d)
+			editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "edit")
+			deleteOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "delete")
+			shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "share")
+			contents.Dashboards = append(contents.Dashboards, folderDashboard{Dashboard: d, CanEdit: editOK, CanDelete: deleteOK, CanShare: shareOK})
 		}
 	}
 	if err := dRows.Err(); err != nil {
@@ -533,10 +566,10 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 
 	contents := folderContents{
 		Folder:     &folder,
-		Folders:    []models.Folder{},
-		Notebooks:  []models.Notebook{},
+		Folders:    []folderItemFolder{},
+		Notebooks:  []folderNotebook{},
 		Connectors: []folderConnector{},
-		Dashboards: []models.Dashboard{},
+		Dashboards: []folderDashboard{},
 	}
 
 	// Sub-folders
@@ -564,7 +597,10 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 	for _, f := range subFolders {
 		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", f.ID, "view")
 		if err == nil && ok {
-			contents.Folders = append(contents.Folders, f)
+			editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", f.ID, "edit")
+			deleteOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", f.ID, "delete")
+			shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", f.ID, "manage")
+			contents.Folders = append(contents.Folders, folderItemFolder{Folder: f, CanEdit: editOK, CanDelete: deleteOK, CanShare: shareOK})
 		}
 	}
 
@@ -592,7 +628,10 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 	for _, nb := range subNotebooks {
 		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "view")
 		if err == nil && ok {
-			contents.Notebooks = append(contents.Notebooks, nb)
+			editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "edit")
+			deleteOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "delete")
+			shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "share")
+			contents.Notebooks = append(contents.Notebooks, folderNotebook{Notebook: nb, CanEdit: editOK, CanDelete: deleteOK, CanShare: shareOK})
 		}
 	}
 
@@ -619,6 +658,9 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 	for _, c := range subConnectors {
 		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "view")
 		if err == nil && ok {
+			c.CanEdit, _ = s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "edit")
+			c.CanDelete, _ = s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "delete")
+			c.CanShare, _ = s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "share")
 			contents.Connectors = append(contents.Connectors, c)
 		}
 	}
@@ -646,7 +688,10 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 	for _, d := range subDashboards {
 		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "view")
 		if err == nil && ok {
-			contents.Dashboards = append(contents.Dashboards, d)
+			editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "edit")
+			deleteOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "delete")
+			shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "share")
+			contents.Dashboards = append(contents.Dashboards, folderDashboard{Dashboard: d, CanEdit: editOK, CanDelete: deleteOK, CanShare: shareOK})
 		}
 	}
 
