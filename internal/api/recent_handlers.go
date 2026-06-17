@@ -26,7 +26,7 @@ func (s *Server) handleGetRecent(w http.ResponseWriter, r *http.Request) {
 		SELECT id::text, 'connector', name, updated_at
 		FROM connectors WHERE org_id = $1
 		ORDER BY updated_at DESC
-		LIMIT 10
+		LIMIT 20
 	`, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
@@ -34,13 +34,28 @@ func (s *Server) handleGetRecent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	items := []recentItem{}
+	var candidates []recentItem
 	for rows.Next() {
 		var item recentItem
 		if err := rows.Scan(&item.ID, &item.Type, &item.Name, &item.UpdatedAt); err != nil {
 			continue
 		}
+		candidates = append(candidates, item)
+	}
+
+	items := []recentItem{}
+	for _, item := range candidates {
+		allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, item.Type, item.ID, "view")
+		if !allowed {
+			continue
+		}
 		items = append(items, item)
+		if len(items) >= 10 {
+			break
+		}
+	}
+	if items == nil {
+		items = []recentItem{}
 	}
 	writeJSON(w, http.StatusOK, items)
 }

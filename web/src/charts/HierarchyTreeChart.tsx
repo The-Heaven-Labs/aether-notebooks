@@ -2,6 +2,7 @@ import { useRef, useCallback, useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
 import { EChartsContainer, CHART_COLORS, getChartColors, useRowsAsObjects, walkTree, applyCollapsedToTree } from './common'
 import type { ECharts } from 'echarts/core'
+import { ConfigHint } from './ConfigHint'
 
 interface TreeNode {
   name: string
@@ -171,7 +172,7 @@ function HierarchyTreeComponent({ data, config }: ChartProps) {
 
   return (
     <div style={{ position: 'relative' }}>
-      <EChartsContainer option={option} height={height} onChartReady={handleChartReady} notMerge={true} />
+      <EChartsContainer option={option} height={height} onChartReady={handleChartReady} notMerge={true} showReset />
       <button
         type="button"
         onClick={handleReset}
@@ -206,6 +207,7 @@ function HierarchyTreeConfigPanel({ config, columns, onChange }: ConfigPanelProp
               : columns.map(c => <option key={c} value={c}>{c}</option>)
             }
           </select>
+          <ConfigHint>Unique identifier for each node</ConfigHint>
         </div>
         <div style={styles.section}>
           <div style={styles.sectionLabel}>Parent ID column</div>
@@ -220,6 +222,7 @@ function HierarchyTreeConfigPanel({ config, columns, onChange }: ConfigPanelProp
               : columns.map(c => <option key={c} value={c}>{c}</option>)
             }
           </select>
+          <ConfigHint>References each node's parent (builds the tree)</ConfigHint>
         </div>
       </div>
       <div style={styles.section}>
@@ -233,6 +236,7 @@ function HierarchyTreeConfigPanel({ config, columns, onChange }: ConfigPanelProp
           <option value="">Use ID</option>
           {columns.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
+        <ConfigHint>Display text for nodes (uses ID if not set)</ConfigHint>
       </div>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Metrics <span style={{ fontWeight: 400, textTransform: 'none' }}>(Ctrl+click multi)</span></div>
@@ -260,6 +264,7 @@ function HierarchyTreeConfigPanel({ config, columns, onChange }: ConfigPanelProp
             </button>
           )}
         </div>
+        <ConfigHint>Numeric columns to display as node values</ConfigHint>
       </div>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Layout</div>
@@ -272,6 +277,7 @@ function HierarchyTreeConfigPanel({ config, columns, onChange }: ConfigPanelProp
           <option value="top-down">Top-down</option>
           <option value="left-to-right">Left-to-right</option>
         </select>
+        <ConfigHint>Tree orientation direction</ConfigHint>
       </div>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Horizontal spacing</div>
@@ -291,6 +297,7 @@ function HierarchyTreeConfigPanel({ config, columns, onChange }: ConfigPanelProp
           <option value="70">Wide</option>
           <option value="100">Very wide</option>
         </select>
+        <ConfigHint>Distance between sibling nodes</ConfigHint>
       </div>
     </div>
   )

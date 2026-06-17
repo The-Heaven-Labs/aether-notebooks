@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useAuth, useAuthProvider, AuthContext } from './hooks/useAuth'
 import { LoginPage } from './pages/LoginPage'
@@ -32,7 +32,12 @@ const queryClient = new QueryClient({
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth()
-  return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />
+  const location = useLocation()
+  if (!isAuthenticated) {
+    sessionStorage.setItem('hnb_redirect_after_login', location.pathname + location.search)
+    return <Navigate to="/login" replace />
+  }
+  return <>{children}</>
 }
 
 function AppRoutes() {

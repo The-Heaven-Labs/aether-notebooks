@@ -6,18 +6,16 @@ import { PermissionsPanel } from '../components/PermissionsPanel'
 import { renderWithProviders } from './utils'
 import { ACL_ENTRIES } from './handlers'
 
-// The /api/v1/members endpoint returns objects with `id` field (not `user_id`)
-// as expected by the PermissionsPanel component's Member interface.
-const MEMBERS_WITH_ID = [
-  { id: 'user-1', name: 'Alice Admin', email: 'alice@test.com', role: 'admin' },
-  { id: 'user-2', name: 'Bob Editor', email: 'bob@test.com', role: 'editor' },
+const MEMBERS_WITH_USER_ID = [
+  { user_id: 'user-1', name: 'Alice Admin', email: 'alice@test.com', role: 'admin' },
+  { user_id: 'user-2', name: 'Bob Editor', email: 'bob@test.com', role: 'editor' },
 ]
 
 beforeEach(() => {
   vi.clearAllMocks()
   // Override members handler so component can resolve subject names by id
   server.use(
-    http.get('/api/v1/members', () => HttpResponse.json(MEMBERS_WITH_ID))
+    http.get('/api/v1/members', () => HttpResponse.json(MEMBERS_WITH_USER_ID))
   )
 })
 

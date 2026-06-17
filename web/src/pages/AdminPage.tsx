@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { api } from '../api/client'
-import { ConfirmDialog } from '../components/ConfirmDialog'
 import { AppShell } from '../components/AppShell'
 import type { SSOProvider } from '../types'
 
@@ -483,258 +482,11 @@ const ssoStyles: Record<string, React.CSSProperties> = {
   },
 }
 
-// ─── MOTD Tab ──────────────────────────────────────────────────────────────────
-
-interface MOTDMessage {
-  id: string
-  title: string
-  content: string
-  priority: number
-  visibility: string
-  pages: string[]
-  show_on_login: boolean
-  created_at: string
-  expires_at: string | null
-}
-
-function MOTDTab() {
-  const qc = useQueryClient()
-  const [deleteMotdConfirm, setDeleteMotdConfirm] = useState<string | null>(null)
-
-  const { data: motds = [], isLoading } = useQuery<MOTDMessage[]>({
-    queryKey: ['admin', 'motd'],
-    queryFn: () => api.get('/api/v1/admin/motd'),
-  })
-
-  const [showForm, setShowForm] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [formData, setFormData] = useState({
-    title: '',
-    content: '',
-    priority: 0,
-    visibility: 'all',
-    show_on_login: false,
-    expires_at: '',
-    pages: [] as string[],
-  })
-  const [formError, setFormError] = useState<string | null>(null)
-
-  const createMotd = useMutation({
-    mutationFn: (body: Record<string, unknown>) => api.post('/api/v1/admin/motd', body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin', 'motd'] })
-      resetForm()
-    },
-    onError: (e: unknown) => setFormError(String(e)),
-  })
-
-  const updateMotd = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) =>
-      api.put(`/api/v1/admin/motd/${id}`, body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['admin', 'motd'] })
-      resetForm()
-    },
-    onError: (e: unknown) => setFormError(String(e)),
-  })
-
-  const deleteMotd = useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/admin/motd/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'motd'] }),
-  })
-
-  function resetForm() {
-    setFormData({ title: '', content: '', priority: 0, visibility: 'all', show_on_login: false, expires_at: '', pages: [] })
-    setShowForm(false)
-    setEditingId(null)
-    setFormError(null)
-  }
-
-  function handleEdit(m: MOTDMessage) {
-    setFormData({
-      title: m.title || '',
-      content: m.content,
-      priority: m.priority,
-      visibility: m.visibility,
-      show_on_login: m.show_on_login,
-      expires_at: m.expires_at ? m.expires_at.slice(0, 16) : '',
-      pages: m.pages ?? [],
-    })
-    setEditingId(m.id)
-    setShowForm(true)
-    setFormError(null)
-  }
-
-  function handleSubmit() {
-    if (!formData.content.trim()) {
-      setFormError('Content is required')
-      return
-    }
-    const body: Record<string, unknown> = {
-      title: formData.title,
-      content: formData.content,
-      priority: formData.priority,
-      visibility: formData.visibility,
-      show_on_login: formData.show_on_login,
-      pages: formData.pages,
-    }
-    if (formData.expires_at) {
-      body.expires_at = new Date(formData.expires_at).toISOString()
-    }
-    if (editingId) {
-      updateMotd.mutate({ id: editingId, body })
-    } else {
-      createMotd.mutate(body)
-    }
-  }
-
-  return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-        <p style={ssoStyles.desc}>
-          Message of the Day banners shown to all users. Higher priority messages appear first.
-        </p>
-        {!showForm && (
-          <button style={ssoStyles.addBtn} onClick={() => { setShowForm(true); setFormError(null) }}>
-            + Add MOTD
-          </button>
-        )}
-      </div>
-
-      {showForm && (
-        <div style={formStyles.container}>
-          <div style={formStyles.grid}>
-            <label style={formStyles.label}>
-              Title
-              <input style={formStyles.input} value={formData.title} onChange={e => setFormData(f => ({ ...f, title: e.target.value }))} placeholder="System Update" />
-            </label>
-            <label style={formStyles.label}>
-              Content <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(supports Markdown)</span>
-              <textarea
-                style={{ ...formStyles.input, minHeight: 80, resize: 'vertical', fontFamily: 'var(--font-sans)' }}
-                value={formData.content}
-                onChange={e => setFormData(f => ({ ...f, content: e.target.value }))}
-                placeholder="Scheduled maintenance at 3pm..."
-              />
-            </label>
-            <div style={{ display: 'flex', gap: 12 }}>
-              <label style={{ ...formStyles.label, flex: 1 }}>
-                Priority
-                <input style={formStyles.input} type="number" value={formData.priority} onChange={e => setFormData(f => ({ ...f, priority: parseInt(e.target.value) || 0 }))} />
-              </label>
-              <label style={{ ...formStyles.label, flex: 1 }}>
-                Visibility
-                <select style={formStyles.input} value={formData.visibility} onChange={e => setFormData(f => ({ ...f, visibility: e.target.value }))}>
-                  <option value="all">All pages</option>
-                  <option value="specific">Specific pages</option>
-                </select>
-              </label>
-            </div>
-            {formData.visibility === 'specific' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>Show on pages</span>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {['/'  , '/notebooks', '/connectors', '/dashboards', '/audit', '/members', '/admin', '/groups', '/settings', '/agents', '/models', '/skills', '/mcps'].map(page => (
-                    <label key={page} style={{
-                      display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 4, cursor: 'pointer',
-                      background: formData.pages.includes(page) ? 'var(--accent)' : 'var(--bg-secondary)',
-                      color: formData.pages.includes(page) ? '#fff' : 'var(--text-primary)',
-                      fontSize: 12, fontWeight: formData.pages.includes(page) ? 600 : 400, userSelect: 'none',
-                    }}>
-                      <input
-                        type="checkbox"
-                        style={{ display: 'none' }}
-                        checked={formData.pages.includes(page)}
-                        onChange={e => {
-                          if (e.target.checked) {
-                            setFormData(f => ({ ...f, pages: [...f.pages, page] }))
-                          } else {
-                            setFormData(f => ({ ...f, pages: f.pages.filter(p => p !== page) }))
-                          }
-                        }}
-                      />
-                      {page === '/' ? 'Home' : page.charAt(1).toUpperCase() + page.slice(2)}
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-            <label style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <input type="checkbox" checked={formData.show_on_login} onChange={e => setFormData(f => ({ ...f, show_on_login: e.target.checked }))} />
-              Show on login page
-            </label>
-            <label style={formStyles.label}>
-              Expires at <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(leave empty for no expiry)</span>
-              <input style={formStyles.input} type="datetime-local" value={formData.expires_at} onChange={e => setFormData(f => ({ ...f, expires_at: e.target.value }))} />
-            </label>
-          </div>
-          {formError && <div style={formStyles.error}>{formError}</div>}
-          <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-            <button
-              style={{ ...formStyles.btn, opacity: (createMotd.isPending || updateMotd.isPending) ? 0.6 : 1 }}
-              onClick={handleSubmit}
-              disabled={createMotd.isPending || updateMotd.isPending}
-            >
-              {(createMotd.isPending || updateMotd.isPending) ? 'Saving…' : editingId ? 'Save Changes' : 'Create MOTD'}
-            </button>
-            <button style={formStyles.cancelBtn} onClick={resetForm} disabled={createMotd.isPending || updateMotd.isPending}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {isLoading ? (
-        <div style={ssoStyles.empty}>Loading…</div>
-      ) : motds.length === 0 && !showForm ? (
-        <div style={ssoStyles.empty}>No MOTD messages configured.</div>
-      ) : (
-        <div style={{ ...ssoStyles.list, marginTop: showForm ? 16 : 0 }}>
-          {motds.map(m => (
-            <div key={m.id} style={ssoStyles.row}>
-              <div style={ssoStyles.rowInfo}>
-                <span style={ssoStyles.rowName}>{m.title || '(untitled)'}</span>
-                <span style={ssoStyles.rowMeta}>
-                  {m.content.slice(0, 80)}{m.content.length > 80 ? '…' : ''}
-                  {' · '}Priority: {m.priority}
-                  {m.expires_at && ` · Expires: ${new Date(m.expires_at).toLocaleDateString()}`}
-                  {' · '}{m.show_on_login ? 'Login page' : 'App only'}
-                  {m.visibility === 'specific' ? ' · Specific pages' : ' · All pages'}
-                </span>
-              </div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button style={ssoStyles.iconBtn} onClick={() => handleEdit(m)}>Edit</button>
-                <button
-                  style={{ ...ssoStyles.iconBtn, color: 'var(--error)', borderColor: 'var(--error)' }}
-                  onClick={() => setDeleteMotdConfirm(m.id)}
-                  disabled={deleteMotd.isPending}
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <ConfirmDialog
-        open={!!deleteMotdConfirm}
-        title="Delete MOTD"
-        message="Delete this MOTD message?"
-        confirmLabel="Delete"
-        destructive
-        onConfirm={() => { if (deleteMotdConfirm) deleteMotd.mutate(deleteMotdConfirm); setDeleteMotdConfirm(null) }}
-        onCancel={() => setDeleteMotdConfirm(null)}
-      />
-    </div>
-  )
-}
-
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export function AdminPage() {
   useEffect(() => { document.title = "Platform Admin — Heaven's Notebooks" }, [])
-  const [tab, setTab] = useState<'orgs' | 'users' | 'sso' | 'motd'>('orgs')
+  const [tab, setTab] = useState<'orgs' | 'users' | 'sso'>('orgs')
   const [orgs, setOrgs] = useState<Org[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
@@ -763,41 +515,39 @@ export function AdminPage() {
       <div>
         <h1 style={styles.title}>Platform Admin</h1>
       <div style={styles.tabs} role="tablist">
-        <button
-          role="tab"
-          aria-selected={tab === 'orgs'}
-          style={tab === 'orgs' ? styles.tabActive : styles.tab}
-          onClick={() => setTab('orgs')}
-        >
-          Orgs
-        </button>
-        <button
-          role="tab"
-          aria-selected={tab === 'users'}
-          style={tab === 'users' ? styles.tabActive : styles.tab}
-          onClick={() => setTab('users')}
-        >
-          Users
-        </button>
-        <button
-          role="tab"
-          aria-selected={tab === 'sso'}
-          style={tab === 'sso' ? styles.tabActive : styles.tab}
-          onClick={() => setTab('sso')}
-        >
-          SSO Providers
-        </button>
-        <button
-          role="tab"
-          aria-selected={tab === 'motd'}
-          style={tab === 'motd' ? styles.tabActive : styles.tab}
-          onClick={() => setTab('motd')}
-        >
-          MOTD
-        </button>
+        {isPlatformAdmin && (
+          <button
+            role="tab"
+            aria-selected={tab === 'orgs'}
+            style={tab === 'orgs' ? styles.tabActive : styles.tab}
+            onClick={() => setTab('orgs')}
+          >
+            Orgs
+          </button>
+        )}
+        {isPlatformAdmin && (
+          <button
+            role="tab"
+            aria-selected={tab === 'users'}
+            style={tab === 'users' ? styles.tabActive : styles.tab}
+            onClick={() => setTab('users')}
+          >
+            Users
+          </button>
+        )}
+        {isPlatformAdmin && (
+          <button
+            role="tab"
+            aria-selected={tab === 'sso'}
+            style={tab === 'sso' ? styles.tabActive : styles.tab}
+            onClick={() => setTab('sso')}
+          >
+            SSO Providers
+          </button>
+        )}
       </div>
 
-      {tab === 'orgs' && (
+      {isPlatformAdmin && tab === 'orgs' && (
         <table style={styles.table}>
           <thead><tr>
             <th style={styles.th}>Name</th>
@@ -818,7 +568,7 @@ export function AdminPage() {
         </table>
       )}
 
-      {tab === 'users' && (
+      {isPlatformAdmin && tab === 'users' && (
         <table style={styles.table}>
           <thead><tr>
             <th style={styles.th}>Email</th>
@@ -854,8 +604,7 @@ export function AdminPage() {
         </table>
       )}
 
-      {tab === 'sso' && <SSOProvidersTab />}
-      {tab === 'motd' && <MOTDTab />}
+      {isPlatformAdmin && tab === 'sso' && <SSOProvidersTab />}
       </div>
     </AppShell>
   )

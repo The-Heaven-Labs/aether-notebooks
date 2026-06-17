@@ -1,6 +1,7 @@
 import type React from 'react'
 import type { ChartConfig, ChartType } from './types'
 import { ALL_CHART_TYPES, CHART_COLORS } from './index'
+import { ConfigHint } from './ConfigHint'
 
 interface AxisConfigPanelProps {
   config: ChartConfig
@@ -30,6 +31,7 @@ export function AxisConfigPanel({
               <option key={t.value} value={t.value}>{t.symbol} {t.label}</option>
             ))}
           </select>
+          <ConfigHint>Visualization style for your data</ConfigHint>
         </div>
       </div>
 
@@ -45,6 +47,7 @@ export function AxisConfigPanel({
           >
             {columns.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
+          <ConfigHint>{showPieOptions ? 'Column for slice labels' : 'Column for horizontal axis (categories, time, or numeric values)'}</ConfigHint>
         </div>
         <div style={styles.section}>
           <div style={styles.sectionLabel}>{showPieOptions ? 'Value column' : 'Y axis'} <span style={{ fontWeight: 400, textTransform: 'none' }}>(Ctrl+click multi)</span></div>
@@ -64,6 +67,7 @@ export function AxisConfigPanel({
           >
             {columns.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
+          <ConfigHint>{showPieOptions ? 'Column for slice sizes' : 'Column(s) for vertical values (Ctrl+click for multiple series)'}</ConfigHint>
         </div>
       </div>
       {showStack && (
@@ -79,6 +83,7 @@ export function AxisConfigPanel({
               <option value="no">No</option>
               <option value="yes">Yes</option>
             </select>
+            <ConfigHint>Stack multiple series on top of each other</ConfigHint>
           </div>
         </div>
       )}
@@ -94,6 +99,7 @@ export function AxisConfigPanel({
             placeholder="Optional title"
             onChange={e => onChange({ ...config, title: e.target.value })}
           />
+          <ConfigHint>Optional text displayed at the top of the chart</ConfigHint>
         </div>
       </div>
 
@@ -121,6 +127,7 @@ export function AxisConfigPanel({
               )
             })}
           </div>
+          <ConfigHint>Customize the color for each data series</ConfigHint>
         </div>
       </div>
 
@@ -151,6 +158,7 @@ export function AxisConfigPanel({
           Labels
         </label>
       </div>
+      <ConfigHint>Legend identifies each series, Grid shows background lines, Labels show values on data points</ConfigHint>
     </div>
   )
 }

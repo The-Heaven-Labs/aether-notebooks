@@ -10,6 +10,9 @@ import { ScatterChartModule } from './ScatterChart'
 import { PieChartModule } from './PieChart'
 import { TimelineModule } from './TimelineChart'
 import { HierarchyTreeModule } from './HierarchyTreeChart'
+import { BigNumberModule } from './BigNumber'
+import { MapChartModule } from './MapChart'
+import { SankeyChartModule } from './SankeyChart'
 // Registry
 export const CHART_MODULES: Record<string, ChartModule> = {
   bar: BarChartModule,
@@ -21,6 +24,9 @@ export const CHART_MODULES: Record<string, ChartModule> = {
   donut: PieChartModule,
   timeline: TimelineModule,
   hierarchy_tree: HierarchyTreeModule,
+  big_number: BigNumberModule,
+  map: MapChartModule,
+  sankey: SankeyChartModule,
 }
 
 export const ALL_CHART_TYPES = [
@@ -33,6 +39,9 @@ export const ALL_CHART_TYPES = [
   { value: 'donut', label: 'Donut', symbol: '◎' },
   { value: 'timeline', label: 'Timeline', symbol: '⏱' },
   { value: 'hierarchy_tree', label: 'Tree', symbol: '🌲' },
+  { value: 'big_number', label: 'Big Number', symbol: '123' },
+  { value: 'map', label: 'Map', symbol: '🌍' },
+  { value: 'sankey', label: 'Sankey', symbol: '⇄' },
 ] as const
 
 interface ChartViewProps {
@@ -74,6 +83,29 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
             Switch to a different chart type or run a query with more columns.
           </p>
         </div>
+        {onConfigChange && (
+          <div>
+            <button
+              style={styles.configBtn}
+              onClick={() => setShowConfig(v => !v)}
+              aria-label={showConfig ? 'Close chart config' : 'Configure chart'}
+            >
+              <Settings2 size={13} />
+              {showConfig ? ' Close' : ' Configure'}
+            </button>
+            {showConfig && (
+              <mod.ConfigPanel config={effectiveConfig} columns={columns} onChange={handleConfigChange} />
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div style={styles.wrap}>
+      <mod.Component data={data} config={effectiveConfig} />
+      {onConfigChange && (
         <div>
           <button
             style={styles.configBtn}
@@ -87,26 +119,7 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
             <mod.ConfigPanel config={effectiveConfig} columns={columns} onChange={handleConfigChange} />
           )}
         </div>
-      </div>
-    )
-  }
-
-  return (
-    <div style={styles.wrap}>
-      <mod.Component data={data} config={effectiveConfig} />
-      <div>
-        <button
-          style={styles.configBtn}
-          onClick={() => setShowConfig(v => !v)}
-          aria-label={showConfig ? 'Close chart config' : 'Configure chart'}
-        >
-          <Settings2 size={13} />
-          {showConfig ? ' Close' : ' Configure'}
-        </button>
-        {showConfig && (
-          <mod.ConfigPanel config={effectiveConfig} columns={columns} onChange={handleConfigChange} />
-        )}
-      </div>
+      )}
     </div>
   )
 }

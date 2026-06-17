@@ -6,6 +6,9 @@ export type ChartType =
   | 'pie' | 'donut'
   | 'timeline'
   | 'hierarchy_tree'
+  | 'big_number'
+  | 'map'
+  | 'sankey'
 
 export interface ChartConfig {
   chartType: ChartType
@@ -23,6 +26,12 @@ export interface ChartConfig {
   metricColumns?: string[]
   layout?: 'top-down' | 'left-to-right'
   nodeSpacing?: number
+  // Big number
+  valueColumn?: string
+  label?: string
+  prefix?: string
+  suffix?: string
+  decimalPlaces?: number
   // Shared
   title?: string
   showLegend?: boolean

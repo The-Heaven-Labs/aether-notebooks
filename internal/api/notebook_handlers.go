@@ -153,15 +153,24 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 	nbID := r.PathValue("id")
 
 	ctx := r.Context()
-	var nb models.Notebook
-	var params []byte
-	var connID *string
-	var folderID *string
+	var (
+		nb        models.Notebook
+		params    []byte
+		connID    *string
+		folderID  *string
+		ownerName string
+		ownerEmail string
+	)
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, org_id, title, COALESCE(description,''), connector_id, parameters, created_by, created_at, updated_at, folder_id
-		 FROM notebooks WHERE id = $1 AND org_id = $2`,
+		`SELECT n.id, n.org_id, n.title, COALESCE(n.description,''), n.connector_id, n.parameters,
+		        n.created_by, n.created_at, n.updated_at, n.folder_id,
+		        COALESCE(u.name, ''), COALESCE(u.email, '')
+		 FROM notebooks n
+		 LEFT JOIN users u ON u.id = n.created_by
+		 WHERE n.id = $1 AND n.org_id = $2`,
 		nbID, claims.OrgID,
-	).Scan(&nb.ID, &nb.OrgID, &nb.Title, &nb.Description, &connID, &params, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt, &folderID)
+	).Scan(&nb.ID, &nb.OrgID, &nb.Title, &nb.Description, &connID, &params, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt, &folderID,
+		&ownerName, &ownerEmail)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "notebook not found")
 		return
@@ -185,6 +194,9 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
 	}
+
+	editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "edit")
+	runOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "run")
 
 	cellRows, err := s.db.Pool.Query(ctx,
 		`SELECT id, notebook_id, position, type, language, connector_id, source, outputs,
@@ -229,10 +241,21 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 
 	type notebookWithCells struct {
 		models.Notebook
-		Cells []models.Cell `json:"cells"`
+		Cells       []models.Cell `json:"cells"`
+		OwnerName   string        `json:"owner_name"`
+		OwnerEmail  string        `json:"owner_email"`
+		CanEdit     bool          `json:"can_edit"`
+		CanRun      bool          `json:"can_run"`
 	}
 
-	resp := notebookWithCells{Notebook: nb, Cells: cells}
+	resp := notebookWithCells{
+		Notebook:   nb,
+		Cells:      cells,
+		OwnerName:  ownerName,
+		OwnerEmail: ownerEmail,
+		CanEdit:    editOK,
+		CanRun:     runOK,
+	}
 	if resp.Cells == nil {
 		resp.Cells = []models.Cell{}
 	}

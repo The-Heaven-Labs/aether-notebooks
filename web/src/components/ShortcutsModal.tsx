@@ -26,7 +26,7 @@ const NOTEBOOK_SHORTCUTS: ShortcutEntry[] = [
   { key: 'Shift+D', action: 'Duplicate cell' },
   { key: 'M', action: 'Convert to markdown' },
   { key: 'Y', action: 'Convert to code' },
-  { key: 'Shift+M', action: 'Toggle slide break' },
+  { key: 'Shift+M', action: 'Toggle slide merge' },
   { key: 'Ctrl+Shift+F (in SQL editor)', action: 'Format SQL' },
 ]
 
