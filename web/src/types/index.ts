@@ -172,8 +172,8 @@ export interface Folder {
 
 export interface FolderContents {
   folder?: Folder
-  folders: Folder[]
-  notebooks: Notebook[]
+  folders: (Folder & { can_edit?: boolean; can_delete?: boolean; can_share?: boolean })[]
+  notebooks: (Notebook & { can_delete?: boolean; can_share?: boolean })[]
   connectors: Array<{
     id: string
     name: string
@@ -182,8 +182,11 @@ export interface FolderContents {
     folder_id?: string
     created_by: string
     created_at: string
+    can_edit?: boolean
+    can_delete?: boolean
+    can_share?: boolean
   }>
-  dashboards: Dashboard[]
+  dashboards: (Dashboard & { can_edit?: boolean; can_delete?: boolean; can_share?: boolean })[]
 }
 
 export interface Group {
