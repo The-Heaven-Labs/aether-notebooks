@@ -1,18 +1,21 @@
+import type React from 'react'
 import { memo, useRef, useEffect, useMemo } from 'react'
 import * as echarts from 'echarts/core'
-import { BarChart, LineChart, ScatterChart, PieChart, TreeChart } from 'echarts/charts'
+import { BarChart, LineChart, ScatterChart, PieChart, TreeChart, MapChart, SankeyChart } from 'echarts/charts'
 import {
   GridComponent, TooltipComponent, LegendComponent,
-  DataZoomComponent, ToolboxComponent,
+  DataZoomComponent, ToolboxComponent, GeoComponent,
+  VisualMapComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { ResultSet } from '../types'
 
 // Register only what we use
 echarts.use([
-  BarChart, LineChart, ScatterChart, PieChart, TreeChart,
+  BarChart, LineChart, ScatterChart, PieChart, TreeChart, MapChart, SankeyChart,
   GridComponent, TooltipComponent, LegendComponent,
-  DataZoomComponent, ToolboxComponent,
+  DataZoomComponent, ToolboxComponent, GeoComponent,
+  VisualMapComponent,
   CanvasRenderer,
 ])
 
@@ -142,6 +145,7 @@ interface EChartsContainerProps {
   height?: number
   onChartReady?: (chart: echarts.ECharts) => void
   notMerge?: boolean
+  showReset?: boolean
 }
 
 // Walk tree nodes to collect collapsed names or apply state
@@ -168,9 +172,13 @@ export function applyCollapsedToTree(data: any, collapsed: Set<string>): any {
   return node
 }
 
-export const EChartsContainer = memo(function EChartsContainer({ option, height = 300, onChartReady, notMerge = false }: EChartsContainerProps) {
+export const EChartsContainer = memo(function EChartsContainer({ option, height = 300, onChartReady, notMerge = false, showReset = false }: EChartsContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
+
+  const handleReset = () => {
+    chartRef.current?.dispatchAction({ type: 'restore' })
+  }
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -223,5 +231,34 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height 
     }
   }, [])
 
-  return <div data-testid="chart-container" ref={containerRef} style={{ height, width: '100%' }} />
+  return (
+    <div style={{ position: 'relative' }}>
+      <div data-testid="chart-container" ref={containerRef} style={{ height, width: '100%' }} />
+      {showReset && (
+        <button
+          onClick={handleReset}
+          style={resetBtnStyle}
+          title="Reset zoom/pan"
+          aria-label="Reset zoom and pan to initial view"
+        >
+          ↺ Reset
+        </button>
+      )}
+    </div>
+  )
 })
+
+const resetBtnStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: 8,
+  right: 8,
+  fontSize: 11,
+  padding: '4px 10px',
+  background: 'var(--bg-card)',
+  color: 'var(--text-muted)',
+  border: '1px solid var(--border)',
+  borderRadius: 4,
+  cursor: 'pointer',
+  zIndex: 10,
+  transition: 'background 0.15s, color 0.15s',
+}

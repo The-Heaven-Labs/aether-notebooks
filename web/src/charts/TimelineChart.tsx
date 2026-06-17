@@ -1,6 +1,7 @@
 import { useMemo, useCallback } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
 import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, useRowsAsObjects, isTimeType } from './common'
+import { ConfigHint } from './ConfigHint'
 
 function detectTimeColumns(columns: { name: string; type?: string }[]): string[] {
   return columns.filter(c => isTimeType(c.type)).map(c => c.name)
@@ -236,7 +237,7 @@ function TimelineChartComponent({ data, config }: ChartProps) {
     }
   }, [chartData, groups, isRangeMode, showLabels, timeCol, endTimeCol, labelCol, groupByCol, config.seriesColors, config.showConnectors, config.showTimeDeltas, colors, truncateLabel])
 
-  return <EChartsContainer option={option} height={height} notMerge />
+  return <EChartsContainer option={option} height={height} notMerge showReset />
 }
 
 function TimelineConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
@@ -261,9 +262,10 @@ function TimelineConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
             : columns.map(c => <option key={c} value={c}>{c}</option>)
           }
         </select>
+        <ConfigHint>Column containing event timestamps</ConfigHint>
       </div>
       <div style={styles.section}>
-        <div style={styles.sectionLabel}>End time column <span style={{ fontWeight: 400, textTransform: 'none' }}>(optional, for ranges)</span></div>
+        <div style={styles.sectionLabel}>End time column <span style={{ fontWeight: 400, textTransform: 'none' }}>(optional)</span></div>
         <select
           aria-label="End time column"
           style={styles.select}
@@ -273,6 +275,7 @@ function TimelineConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
           <option value="">None (point events)</option>
           {timeCols.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
+        <ConfigHint>Optional column for event end times (enables range bars)</ConfigHint>
       </div>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Label column</div>
@@ -285,6 +288,7 @@ function TimelineConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
           <option value="">None</option>
           {columns.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
+        <ConfigHint>Column for event text labels</ConfigHint>
       </div>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Group by</div>
@@ -297,6 +301,7 @@ function TimelineConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
           <option value="">No grouping</option>
           {columns.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
+        <ConfigHint>Column to group events into parallel swim lanes</ConfigHint>
       </div>
       <div style={styles.row}>
         <label style={styles.checkbox}>
@@ -331,6 +336,7 @@ function TimelineConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
             <option value={30}>30 characters</option>
             <option value={50}>50 characters</option>
           </select>
+          <ConfigHint>Truncate long labels to this character count</ConfigHint>
         </div>
       )}
       <div style={styles.row}>
@@ -351,6 +357,7 @@ function TimelineConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
           Show time deltas
         </label>
       </div>
+      <ConfigHint>Connectors draw lines between related events, Time deltas show time differences</ConfigHint>
     </div>
   )
 }

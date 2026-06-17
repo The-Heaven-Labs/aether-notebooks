@@ -180,7 +180,11 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var connectors []models.Connector
+	type connectorWithPerms struct {
+		models.Connector
+		CanUse bool `json:"can_use"`
+	}
+	var result []connectorWithPerms
 	for rows.Next() {
 		var c models.Connector
 		var encryptedConfig []byte
@@ -194,19 +198,20 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 		if !allowed {
 			continue
 		}
+		canUse, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "use")
 		// Decrypt and mask password
 		if plain, err := crypto.Decrypt(encryptedConfig, s.masterKey); err == nil {
 			json.Unmarshal(plain, &c.Config)
 			c.Config.Password = "***"
 		}
-		connectors = append(connectors, c)
+		result = append(result, connectorWithPerms{Connector: c, CanUse: canUse})
 	}
 
-	if connectors == nil {
-		connectors = []models.Connector{}
+	if result == nil {
+		result = []connectorWithPerms{}
 	}
 
-	writeJSON(w, http.StatusOK, connectors)
+	writeJSON(w, http.StatusOK, result)
 }
 
 type updateConnectorRequest struct {
@@ -483,6 +488,12 @@ func (s *Server) handleListConnectorDatabases(w http.ResponseWriter, r *http.Req
 	connID := r.PathValue("id")
 	ctx := r.Context()
 
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", connID, "use")
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
 	connType, configEnc, err := s.loadConnectorRow(ctx, connID, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "connector not found")
@@ -521,6 +532,12 @@ func (s *Server) handleTestConnector(w http.ResponseWriter, r *http.Request) {
 	connID := r.PathValue("id")
 	ctx := r.Context()
 
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", connID, "use")
+	if err != nil || !allowed {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "insufficient permissions"})
+		return
+	}
+
 	connType, configEnc, err := s.loadConnectorRow(ctx, connID, claims.OrgID)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "connector not found"})
@@ -554,7 +571,7 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 	connID := r.PathValue("id")
 	ctx := r.Context()
 
-	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", connID, "view")
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", connID, "use")
 	if err != nil || !allowed {
 		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return

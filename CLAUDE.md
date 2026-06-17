@@ -134,11 +134,55 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 
 **Tests hit a real database** — no mocks. `task test` starts infra automatically. Tests use `setupTestServer(t)` from `testhelpers_test.go` which wires a real DB, JWT issuer, and audit logger.
 
-**Roles**: `viewer`, `editor`, `admin`. Routes use `RequireRole("editor")` middleware. First registered user becomes org admin.
+## Roles & Admin
+
+hnb has a **two-level admin system**: org-level and instance-level. All non-admin permissioning is handled exclusively through ACL entries (user, group, or "Everyone" subjects) — org roles no longer grant implicit permissions.
+
+### Org Roles
+
+Every member of an organization has a role in `org_members`. The only meaningful role is:
+
+| Role | Effect |
+|---|---|
+| `admin` | **Bypasses all ACLs** within their org — can see/edit/delete every resource, manage members, connectors, groups, audit logs, SSO, MCP servers, and MOTD messages |
+| `editor` / `viewer` | Stored for legacy tracking but **grant no implicit permissions**. Access is determined entirely by ACLs. |
+
+**How org admin is assigned**: The **person who creates the org automatically becomes its admin**. Additional admins can be assigned by existing admins via:
+- `PUT /api/v1/members/{user_id}` (change a member's role)
+- `POST /api/v1/members/invite` or `POST /api/v1/members/invite-link` (invite with role `admin`)
+
+### Platform Admin (instance-level super-admin)
+
+A **platform admin** is a special flag (`users.is_platform_admin`) that grants access to **instance-wide management** across *all* organizations. This is distinct from an org admin, which only governs a single org.
+
+**Why it exists**: Platform admin is designed for the **host/SaaS operator** of an hnb instance. Use cases include:
+- Viewing all orgs and their user counts (`GET /api/v1/admin/orgs`)
+- Managing all users across orgs (`GET /api/v1/admin/users`)
+- Promoting/demoting other platform admins (`PUT /api/v1/admin/users/{id}`)
+- Configuring **platform-level SSO providers** that org admins can then enable for their org
+- Managing instance-wide Message of the Day (MOTD)
+
+**How platform admin is assigned**:
+1. **Auto-promotion at startup**: Set `HNB_PLATFORM_ADMIN_EMAIL=envar` — the server promotes that user on startup and on registration.
+2. **By another platform admin**: `PUT /api/v1/admin/users/{id}` with `{"is_platform_admin": true}`.
+3. **Direct SQL**: `UPDATE users SET is_platform_admin=true WHERE email='...'`.
+
+In dev, `Taskfile.yml` sets `HNB_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com` — so that user is auto-promoted.
+
+### How They Differ
+
+| Aspect | Org Admin | Platform Admin |
+|---|---|---|
+| **Scope** | Single organization | Entire instance (all orgs) |
+| **Storage** | `org_members.role = 'admin'` | `users.is_platform_admin = true` |
+| **ACL bypass** | Yes — all resources in their org | N/A (operates at instance level) |
+| **Middleware** | `RequireRole("admin")` | `RequirePlatformAdmin` |
+| **Frontend** | "Settings" link in profile menu | "Admin" link in top bar |
+| **Key features** | Invite members, manage connectors/groups/audit/SSO | List/manage orgs, users, platform SSO, MOTD |
 
 **Filesystem**: Folders live in `folders` table with self-referential `parent_id` (adjacency list). All resource types (notebooks, connectors, dashboards) have a nullable `folder_id`. Each user gets a personal home folder created on registration/org-join, seeded with a full-access ACL entry. Home folders use the user's email as the name (e.g., `user@example.com`).
 
-**Permissions**: `acl_entries` table stores per-resource ACL. Resolution walks the ancestor folder chain via recursive CTE, ordered by specificity (resource entry beats parent folder beats grandparent; within same depth: user beats group beats org_role). Falls back to org-role defaults only when no ACL entry exists anywhere in the chain. Use `checkPermission(ctx, pool, orgID, userID, resourceType, resourceID, action)` from `internal/api/permissions.go`. Route middleware: `requirePermission(resourceType, idParam, action)`.
+**Permissions**: `acl_entries` table stores per-resource ACL. Resolution walks the ancestor folder chain via recursive CTE, ordered by specificity (resource entry beats parent folder beats grandparent; within same depth: user beats group beats org_role). Deny by default if no ACL matches. Use `checkPermission(ctx, pool, orgID, userID, resourceType, resourceID, action)` from `internal/api/permissions.go`. Route middleware: `requirePermission(resourceType, idParam, action)`.
 
 **Groups**: Custom groups (`groups` + `group_members` tables) are first-class permission subjects. Group management (create/rename/delete/members) requires `admin` role; viewing groups is open to all members.
 

@@ -60,6 +60,12 @@ export function LoginPage() {
     }
   }, [showPasswordStep, ssoProviders.length])
 
+  function redirectAfterLogin() {
+    const redirectTo = sessionStorage.getItem('hnb_redirect_after_login')
+    sessionStorage.removeItem('hnb_redirect_after_login')
+    return redirectTo || '/'
+  }
+
   // Handle OIDC callback: pick up ?token= from the query string
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -79,7 +85,7 @@ export function LoginPage() {
         .catch(err => console.warn('[OIDC] Failed to fetch user info:', err))
         .finally(() => {
           window.history.replaceState({}, '', window.location.pathname)
-          navigate('/')
+          navigate(redirectAfterLogin())
         })
     }
   }, [navigate])
@@ -124,7 +130,7 @@ export function LoginPage() {
         if (pendingJoinToken) {
           navigate('/join')
         } else {
-          navigate('/')
+          navigate(redirectAfterLogin())
         }
       } else {
         const onboardingToken = await register(email, password, name)
@@ -135,7 +141,7 @@ export function LoginPage() {
         } else if (onboardingToken) {
           navigate('/onboarding')
         } else {
-          navigate('/')
+          navigate(redirectAfterLogin())
         }
       }
     } catch (err) {

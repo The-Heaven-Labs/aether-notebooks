@@ -1,17 +1,18 @@
-- [ ] When an unauthenticated user clicks a notebook link, it will be forwarded to the auth screen. After auth, it should be automatically forwarded to the page it wanted to go beforehand.
-- [ ] The platform admin role is a bit obscure. Why does it exist, how it differs from a regular org admin? Also, how does a Org admin happens? The person that created the org automatically is admin?
-- [ ] Add a configurable single number chart type
-- [ ] Instead of letting any user open audit page and greet with the insufficient permission message, the menu should not appear when there are no permissions.
-- [ ] Instead of letting users see in the list and open any dashboard to then green with insufficient permissions, it should follow the appearance rules of notebooks. Also, dashboards should appear in the general files page, inside folders and follow the permission system of notebooks
-- [ ] From inside a notebook, an user nor the AI Agent can know who is the owner of the notebook nor the permissions applied to it.
-- [ ] There should be clear indicators (and better yet, do not appear at all) when an user does not have access to a given connector
-- [ ] It should be more traceable in audit the path from generating an invite link to someone joining an org (e.g, which invite was used, to be able to link to the invite generation)
-- [ ] Change of permissions and its details should be logged to audit
-- [ ] There should be a configurable chart for geo-things, e.g., showing a global map, a map of a given country with separations of state/city etc. It should support coordinates and names
-- [ ] There should be a configurable sankey map supported
-- [ ] Add an "admin mode" toggle (in sidebar or header) for org admins. When enabled, admins bypass ACLs and see everything. When disabled, admins respect ACLs like regular users. This avoids the need to remove/re-add admin roles for troubleshooting.
-- [ ] The list of users and groups will eventually be pretty big, so the select list for permissions will be really big (also the one to add members to a group). That being the case, refactor these to be searchable and performant even at high numbers (thousands of each).
+- [x] When an unauthenticated user clicks a notebook link, it will be forwarded to the auth screen. After auth, it should be automatically forwarded to the page it wanted to go beforehand.
+- [x] The platform admin role is a bit obscure. Why does it exist, how it differs from a regular org admin? Also, how does a Org admin happens? The person that created the org automatically is admin?
+- [x] Add a configurable single number chart type
+- [x] Instead of letting any user open audit page and greet with the insufficient permission message, the menu should not appear when there are no permissions.
+- [x] Instead of letting users see in the list and open any dashboard to then green with insufficient permissions, it should follow the appearance rules of notebooks. Also, dashboards should appear in the general files page, inside folders and follow the permission system of notebooks
+- [x] From inside a notebook, an user nor the AI Agent can know who is the owner of the notebook nor the permissions applied to it.
+- [x] There should be clear indicators (and better yet, do not appear at all) when an user does not have access to a given connector
+- [x] It should be more traceable in audit the path from generating an invite link to someone joining an org (e.g, which invite was used, to be able to link to the invite generation)
+- [x] Change of permissions and its details should be logged to audit
+- [x] There should be a configurable chart for geo-things, e.g., showing a global map, a map of a given country with separations of state/city etc. It should support coordinates and names
+- [x] There should be a configurable sankey chart supported
+- [x] Add an "admin mode" toggle (in sidebar or header) for org admins. When enabled, admins bypass ACLs and see everything. When disabled, admins respect ACLs like regular users. This avoids the need to remove/re-add admin roles for troubleshooting.
+- [x] The list of users and groups will eventually be pretty big, so the select list for permissions will be really big (also the one to add members to a group). That being the case, refactor these to be searchable and performant even at high numbers (thousands of each).
 - [ ] When you create a notebook and go back to the files/folders, the notebook doesn't immediately appear, a hard refresh is necessary to do so. It should automatically appear in this scenario.
 - [ ] It should not be possible to create notebooks at root folder, only folders there, then notebooks inside the folders.
 - [ ] Pressing back from a notebook should go back to the exact page you were before, e.g., if in the files, should go back to the same folder that was open before
-- [ ]
+- [ ] Buttons like edit, delete and permissions should be grayed-out for users that have no permission to do these actions in a given resource
+- [ ] Pressing Ctrl + Enter (Or shift + Enter) in a markdown cell should render the markdown and leave edit mode

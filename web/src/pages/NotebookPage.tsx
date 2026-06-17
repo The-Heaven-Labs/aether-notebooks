@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ChevronsRight, ChevronLeft, Loader2, X, Bot, Check, GripVertical } from 'lucide-react'
+import { ChevronsRight, ChevronLeft, Loader2, X, Bot, Check, GripVertical, Shield } from 'lucide-react'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -24,6 +24,7 @@ import { ErrorBanner } from '../components/ErrorBanner'
 import { AgentPanel } from '../components/AgentPanel'
 import { useNotebookWs } from '../hooks/useNotebookWs'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { PermissionsPanel } from '../components/PermissionsPanel'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -157,6 +158,7 @@ export function NotebookPage() {
   const [showParameters, setShowParameters] = useState(false)
   const [notebookConnectorId, setNotebookConnectorId] = useState<string>('')
   const [mutationError, setMutationError] = useState<string | null>(null)
+  const [showPermissions, setShowPermissions] = useState(false)
   const [cellSaveState, setCellSaveState] = useState<Record<string, { saving: boolean; savedAt: Date | null; error: string | null }>>({})
 
   // Derive global save status from per-cell save states
@@ -281,13 +283,7 @@ export function NotebookPage() {
     enabled: !!id,
   })
 
-  const { data: permissions } = useQuery({
-    queryKey: ['notebook-permissions', id],
-    queryFn: () => api.get<{ can_edit: boolean; can_run: boolean }>(`/api/v1/notebooks/${id}/permissions`),
-    enabled: !!id,
-  })
-
-  const readOnly = !permissions?.can_edit
+  const readOnly = !notebook?.can_edit
 
   const { data: connectors = [] } = useQuery({
     queryKey: ['connectors'],
@@ -824,6 +820,14 @@ export function NotebookPage() {
             )}
           </div>
         </div>
+        {/* Owner info */}
+        {notebook.owner_name && (
+          <div style={styles.ownerRow}>
+            <span style={styles.ownerText}>
+              Created by {notebook.owner_name}{notebook.owner_email ? ` (${notebook.owner_email})` : ''}
+            </span>
+          </div>
+        )}
         {/* Row 2: title + description */}
         <div style={styles.titleSection}>
           {editingTitle ? (
@@ -987,6 +991,16 @@ export function NotebookPage() {
           >
             <Bot size={13} /> AI
           </button>
+          {notebook?.can_edit && (
+            <button
+              type="button"
+              style={styles.schemaBtn}
+              onClick={() => setShowPermissions(true)}
+              title="Manage permissions"
+            >
+              <Shield size={13} /> Permissions
+            </button>
+          )}
         </div>
       </div>
 
@@ -1040,7 +1054,7 @@ export function NotebookPage() {
                             cell={cell}
                             connectors={connectors}
                             notebookId={id!}
-                            onRun={permissions?.can_run ? saveAndRun : noop}
+                            onRun={notebook?.can_run ? saveAndRun : noop}
                             onDelete={readOnly ? noop : stableDeleteHandler}
                             onSourceChange={readOnly ? noop : updateSource}
                             onSave={readOnly ? undefined : saveCellSource}
@@ -1195,6 +1209,17 @@ export function NotebookPage() {
       onConfirm={() => { if (deleteCellTarget) deleteCell.mutate(deleteCellTarget); setDeleteCellTarget(null) }}
       onCancel={() => setDeleteCellTarget(null)}
     />
+    {showPermissions && notebook && (
+      <PermissionsPanel
+        resourceType="notebook"
+        resourceId={notebook.id}
+        resourceName={notebook.title}
+        parentFolderId={notebook.folder_id}
+        resourceOwnerId={notebook.created_by}
+        canEdit={notebook.can_edit}
+        onClose={() => setShowPermissions(false)}
+      />
+    )}
     </AppShell>
   )
 }
@@ -1282,6 +1307,15 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-muted)',
     opacity: 0.6,
     fontStyle: 'italic',
+  },
+  ownerRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  },
+  ownerText: {
+    fontSize: 12,
+    color: 'var(--text-muted)',
   },
   metaInfo: {
     display: 'flex',

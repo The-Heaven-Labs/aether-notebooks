@@ -153,13 +153,15 @@ func (s *Server) handleOrgJoin(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var orgID, role string
 
+	var inviteMeta map[string]any
+
 	if req.InviteToken != "" {
 		// Validate invite from org_invites (Fix 3: also fetch email column)
-		var inviteEmail string
+		var inviteEmail, inviteID string
 		err := s.db.Pool.QueryRow(ctx,
-			`SELECT org_id, role, email FROM org_invites WHERE token = $1 AND accepted_at IS NULL AND expires_at > now()`,
+			`SELECT org_id, role, email, id FROM org_invites WHERE token = $1 AND accepted_at IS NULL AND expires_at > now()`,
 			req.InviteToken,
-		).Scan(&orgID, &role, &inviteEmail)
+		).Scan(&orgID, &role, &inviteEmail, &inviteID)
 		if err == pgx.ErrNoRows {
 			writeError(w, http.StatusBadRequest, "invalid, expired, or already used invite token")
 			return
@@ -194,15 +196,27 @@ func (s *Server) handleOrgJoin(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "invite already used")
 			return
 		}
+
+		inviteMeta = map[string]any{
+			"invite_id": inviteID,
+			"role":      role,
+			"email":     inviteEmail,
+		}
 	} else if req.InviteLinkToken != "" {
 		// Validate invite link from org_invite_links
+		var linkID string
 		err := s.db.Pool.QueryRow(ctx,
-			`SELECT org_id, role FROM org_invite_links WHERE token = $1`,
+			`SELECT org_id, role, id FROM org_invite_links WHERE token = $1`,
 			req.InviteLinkToken,
-		).Scan(&orgID, &role)
+		).Scan(&orgID, &role, &linkID)
 		if err != nil {
 			writeError(w, http.StatusNotFound, "invalid invite link token")
 			return
+		}
+
+		inviteMeta = map[string]any{
+			"invite_link_id": linkID,
+			"role":           role,
 		}
 	} else {
 		writeError(w, http.StatusBadRequest, "invite_token or invite_link_token is required")
@@ -271,6 +285,7 @@ func (s *Server) handleOrgJoin(w http.ResponseWriter, r *http.Request) {
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: orgID, UserID: claims.UserID,
 		Action: "org.join", ResourceType: "org", ResourceID: orgID,
+		Metadata: inviteMeta,
 	})
 
 	resp := authResponse{}
@@ -334,6 +349,10 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "invite.create", ResourceType: "invite", ResourceID: inviteID,
+		Metadata: map[string]any{
+			"email": req.Email,
+			"role":  req.Role,
+		},
 	})
 
 	writeJSON(w, http.StatusCreated, map[string]string{
@@ -386,6 +405,9 @@ func (s *Server) handleCreateInviteLink(w http.ResponseWriter, r *http.Request) 
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "invite_link.create", ResourceType: "invite_link", ResourceID: linkID,
+		Metadata: map[string]any{
+			"role": req.Role,
+		},
 	})
 
 	writeJSON(w, http.StatusCreated, map[string]string{

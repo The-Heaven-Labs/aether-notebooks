@@ -97,6 +97,17 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check "use" permission on the connector
+	useOK, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", cell.ConnectorID, "use")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !useOK {
+		writeError(w, http.StatusForbidden, "you don't have permission to use this connector")
+		return
+	}
+
 	// Build slug map from all sibling cells in the notebook that have a slug
 	slugMap := map[string]string{}
 	slugRows, slugErr := s.db.Pool.Query(ctx,

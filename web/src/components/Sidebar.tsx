@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { Home, LayoutDashboard, Database, Users, UserCircle, ClipboardList, ChevronLeft, ChevronRight, Bot, Brain, Wrench, Puzzle, X, Settings } from 'lucide-react'
 import { useMediaQuery } from '../hooks/useMediaQuery'
+import { useAuth } from '../hooks/useAuth'
 
-const NAV_ITEMS = [
+const ALL_NAV_ITEMS = [
   { to: '/',           title: 'Files',       icon: <Home size={16} /> },
   { to: '/dashboards', title: 'Dashboards',  icon: <LayoutDashboard size={16} /> },
   { to: '/connectors', title: 'Connectors',  icon: <Database size={16} /> },
@@ -27,9 +28,19 @@ export function openMobileSidebar() {
 }
 
 export function Sidebar() {
+  const { user } = useAuth()
+  const isPlatformAdmin = localStorage.getItem('hnb_is_platform_admin') === 'true'
   const location = useLocation()
   const isMobile = useMediaQuery(768)
   const isTablet = useMediaQuery(1024)
+  const NAV_ITEMS = useMemo(() =>
+    ALL_NAV_ITEMS.filter(item => {
+      if (item.to === '/audit') return user?.role === 'admin'
+      if (item.to === '/admin') return isPlatformAdmin
+      return true
+    }),
+    [user?.role, isPlatformAdmin]
+  )
 
   const [expanded, setExpanded] = useState(() => {
     return localStorage.getItem('hnb_sidebar_expanded') !== 'false'

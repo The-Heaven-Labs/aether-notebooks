@@ -3,8 +3,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
 import { ErrorBanner } from '../components/ErrorBanner'
-import { Check, Copy, Trash2, Plus, AlertTriangle } from 'lucide-react'
+import { Check, Copy, Trash2, Plus, AlertTriangle, Shield } from 'lucide-react'
 import { api } from '../api/client'
+import { useAuth } from '../hooks/useAuth'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 
 interface UserProfile {
@@ -32,6 +33,7 @@ interface CreatedToken {
 }
 
 export function ProfilePage() {
+  const { user: authUser } = useAuth()
   const qc = useQueryClient()
   const { data: user } = useQuery<UserProfile>({
     queryKey: ['profile'],
@@ -70,6 +72,7 @@ export function ProfilePage() {
     (localStorage.getItem('hnb_theme') ?? 'light') as 'light' | 'dark'
   )
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [adminMode, setAdminMode] = useState(() => localStorage.getItem('hnb_admin_mode') !== 'false')
 
   // Token management state
   const [showTokenForm, setShowTokenForm] = useState(false)
@@ -175,6 +178,26 @@ export function ProfilePage() {
               ))}
             </div>
           </div>
+          {authUser?.role === 'admin' && (
+            <div style={styles.label}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <Shield size={14} style={{ color: 'var(--text-muted)' }} />
+                Admin Mode
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {(['on', 'off'] as const).map(v => (
+                  <button key={v} type="button"
+                    style={adminMode === (v === 'on') ? styles.themeActive : styles.themeBtn}
+                    onClick={() => { setAdminMode(v === 'on'); localStorage.setItem('hnb_admin_mode', String(v === 'on')) }}>
+                    {v === 'on' ? 'ON' : 'OFF'}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                When OFF, your admin role is disabled and you respect ACLs like regular users.
+              </div>
+            </div>
+          )}
           {saveStatus === 'saved' && (
             <ErrorBanner message="Profile updated successfully" variant="info" onDismiss={() => setSaveStatus('idle')} />
           )}

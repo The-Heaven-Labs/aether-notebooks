@@ -5,6 +5,7 @@ import { SectionHeader } from '../components/SectionHeader'
 import { api } from '../api/client'
 import { Loader2, CheckCircle2, XCircle } from 'lucide-react'
 import type { SSOProvider, PlatformSSOProvider, SSOSettings } from '../types'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 
 // ─── Provider form state ────────────────────────────────────────────────────
 
@@ -332,6 +333,210 @@ export function OrgSettingsPage() {
     },
   })
 
+// ─── MOTD Section ───────────────────────────────────────────────────────────
+
+interface MOTDMessage {
+  id: string
+  title: string
+  content: string
+  priority: number
+  visibility: string
+  pages: string[]
+  show_on_login: boolean
+  created_at: string
+  expires_at: string | null
+}
+
+function MOTDSection() {
+  const qc = useQueryClient()
+  const [deleteMotdConfirm, setDeleteMotdConfirm] = useState<string | null>(null)
+  const [showForm, setShowForm] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [formData, setFormData] = useState({
+    title: '', content: '', priority: 0, visibility: 'all',
+    show_on_login: false, expires_at: '', pages: [] as string[],
+  })
+  const [formError, setFormError] = useState<string | null>(null)
+
+  const { data: motds = [], isLoading } = useQuery<MOTDMessage[]>({
+    queryKey: ['org', 'motd'],
+    queryFn: () => api.get('/api/v1/admin/motd'),
+  })
+
+  const createMotd = useMutation({
+    mutationFn: (body: Record<string, unknown>) => api.post('/api/v1/admin/motd', body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['org', 'motd'] }); resetForm() },
+    onError: (e: unknown) => setFormError(String(e)),
+  })
+
+  const updateMotd = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) =>
+      api.put(`/api/v1/admin/motd/${id}`, body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['org', 'motd'] }); resetForm() },
+    onError: (e: unknown) => setFormError(String(e)),
+  })
+
+  const deleteMotd = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/admin/motd/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['org', 'motd'] }),
+  })
+
+  function resetForm() {
+    setFormData({ title: '', content: '', priority: 0, visibility: 'all', show_on_login: false, expires_at: '', pages: [] })
+    setShowForm(false); setEditingId(null); setFormError(null)
+  }
+
+  function handleEdit(m: MOTDMessage) {
+    setFormData({
+      title: m.title || '', content: m.content, priority: m.priority,
+      visibility: m.visibility, show_on_login: m.show_on_login,
+      expires_at: m.expires_at ? m.expires_at.slice(0, 16) : '', pages: m.pages ?? [],
+    })
+    setEditingId(m.id); setShowForm(true); setFormError(null)
+  }
+
+  function handleSubmit() {
+    if (!formData.content.trim()) { setFormError('Content is required'); return }
+    const body: Record<string, unknown> = {
+      title: formData.title, content: formData.content, priority: formData.priority,
+      visibility: formData.visibility, show_on_login: formData.show_on_login, pages: formData.pages,
+    }
+    if (formData.expires_at) body.expires_at = new Date(formData.expires_at).toISOString()
+    if (editingId) { updateMotd.mutate({ id: editingId, body }) } else { createMotd.mutate(body) }
+  }
+
+  const pages = ['/'  , '/notebooks', '/connectors', '/dashboards', '/audit', '/members', '/admin', '/groups', '/settings', '/agents', '/models', '/skills', '/mcps']
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+          {motds.length} message{motds.length !== 1 ? 's' : ''}
+        </span>
+        {!showForm && (
+          <button style={styles.addBtn} onClick={() => { setShowForm(true); setFormError(null) }}>+ Add MOTD</button>
+        )}
+      </div>
+
+      {showForm && (
+        <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, padding: 16, marginBottom: 16 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <label style={formLabel}>
+              Title
+              <input style={formInput} value={formData.title} onChange={e => setFormData(f => ({ ...f, title: e.target.value }))} placeholder="System Update" />
+            </label>
+            <label style={formLabel}>
+              Content <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(supports Markdown)</span>
+              <textarea style={{ ...formInput, minHeight: 80, resize: 'vertical' }} value={formData.content} onChange={e => setFormData(f => ({ ...f, content: e.target.value }))} placeholder="Scheduled maintenance at 3pm..." />
+            </label>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <label style={{ ...formLabel, flex: 1 }}>
+                Priority
+                <input style={formInput} type="number" value={formData.priority} onChange={e => setFormData(f => ({ ...f, priority: parseInt(e.target.value) || 0 }))} />
+              </label>
+              <label style={{ ...formLabel, flex: 1 }}>
+                Visibility
+                <select style={formInput} value={formData.visibility} onChange={e => setFormData(f => ({ ...f, visibility: e.target.value }))}>
+                  <option value="all">All pages</option>
+                  <option value="specific">Specific pages</option>
+                </select>
+              </label>
+            </div>
+            {formData.visibility === 'specific' && (
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>Show on pages</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {pages.map(page => (
+                    <label key={page} style={{
+                      display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 4, cursor: 'pointer',
+                      background: formData.pages.includes(page) ? 'var(--accent)' : 'var(--bg-card)',
+                      color: formData.pages.includes(page) ? '#fff' : 'var(--text-primary)',
+                      fontSize: 12, fontWeight: formData.pages.includes(page) ? 600 : 400, userSelect: 'none',
+                    }}>
+                      <input type="checkbox" style={{ display: 'none' }} checked={formData.pages.includes(page)}
+                        onChange={e => setFormData(f => ({ ...f, pages: e.target.checked ? [...f.pages, page] : f.pages.filter(p => p !== page) }))} />
+                      {page === '/' ? 'Home' : page.charAt(1).toUpperCase() + page.slice(2)}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+            <label style={{ ...formLabel, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <input type="checkbox" checked={formData.show_on_login} onChange={e => setFormData(f => ({ ...f, show_on_login: e.target.checked }))} />
+              Show on login page
+            </label>
+            <label style={formLabel}>
+              Expires at <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(leave empty for no expiry)</span>
+              <input style={formInput} type="datetime-local" value={formData.expires_at} onChange={e => setFormData(f => ({ ...f, expires_at: e.target.value }))} />
+            </label>
+          </div>
+          {formError && <div style={{ color: 'var(--error)', fontSize: 12, marginTop: 8 }}>{formError}</div>}
+          <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+            <button style={{
+              padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              opacity: (createMotd.isPending || updateMotd.isPending) ? 0.6 : 1,
+            }} onClick={handleSubmit} disabled={createMotd.isPending || updateMotd.isPending}>
+              {(createMotd.isPending || updateMotd.isPending) ? 'Saving…' : editingId ? 'Save Changes' : 'Create MOTD'}
+            </button>
+            <button style={{
+              padding: '7px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)',
+            }} onClick={resetForm} disabled={createMotd.isPending || updateMotd.isPending}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: 12 }}>Loading…</div>
+      ) : motds.length === 0 && !showForm ? (
+        <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: 12 }}>No MOTD messages configured.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {motds.map(m => (
+            <div key={m.id} style={styles.row}>
+              <div style={styles.rowInfo}>
+                <span style={styles.rowName}>{m.title || '(untitled)'}</span>
+                <span style={styles.rowMeta}>
+                  {m.content.slice(0, 80)}{m.content.length > 80 ? '…' : ''}
+                  {' · '}Priority: {m.priority}
+                  {m.expires_at && ` · Expires: ${new Date(m.expires_at).toLocaleDateString()}`}
+                  {' · '}{m.show_on_login ? 'Login page' : 'App only'}
+                  {m.visibility === 'specific' ? ' · Specific pages' : ' · All pages'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button style={styles.iconBtn} onClick={() => handleEdit(m)}>Edit</button>
+                <button style={{ ...styles.iconBtn, color: 'var(--error)', borderColor: 'var(--error)' }}
+                  onClick={() => setDeleteMotdConfirm(m.id)} disabled={deleteMotd.isPending}>Delete</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={!!deleteMotdConfirm}
+        title="Delete MOTD"
+        message="Delete this MOTD message?"
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => { if (deleteMotdConfirm) deleteMotd.mutate(deleteMotdConfirm); setDeleteMotdConfirm(null) }}
+        onCancel={() => setDeleteMotdConfirm(null)}
+      />
+    </div>
+  )
+}
+
+const formLabel: React.CSSProperties = {
+  display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)',
+}
+
+const formInput: React.CSSProperties = {
+  padding: '7px 10px', fontSize: 13, background: 'var(--bg-input)', color: 'var(--text-primary)',
+  border: '1px solid var(--border)', borderRadius: 4, fontFamily: 'var(--font-sans)',
+}
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <AppShell>
@@ -487,6 +692,15 @@ export function OrgSettingsPage() {
               Allow password login when SSO is configured
             </span>
           </label>
+        </section>
+
+        {/* ── D. Message of the Day ── */}
+        <section style={styles.section}>
+          <div style={styles.sectionTitle}>Message of the Day</div>
+          <p style={styles.sectionDesc}>
+            Banners shown to all users. Higher priority messages appear first.
+          </p>
+          <MOTDSection />
         </section>
       </div>
     </AppShell>

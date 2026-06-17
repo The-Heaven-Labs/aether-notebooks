@@ -21,6 +21,10 @@ export interface Notebook {
   created_at: string
   updated_at: string
   parameters?: Parameter[]
+  owner_name?: string
+  owner_email?: string
+  can_edit?: boolean
+  can_run?: boolean
 }
 
 export interface Cell {
@@ -84,6 +88,7 @@ export interface Connector {
   folder_id?: string
   created_by?: string
   created_at: string
+  can_use?: boolean
   table_allowlist?: string[]
   table_denylist?: string[]
   config?: {

@@ -80,6 +80,12 @@ func (s *Server) handleUpdateMemberRole(w http.ResponseWriter, r *http.Request) 
 	}
 
 	ctx := r.Context()
+
+	// Fetch current role and email before updating
+	var oldRole, targetEmail string
+	s.db.Pool.QueryRow(ctx, `SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2`, claims.OrgID, targetUserID).Scan(&oldRole)
+	s.db.Pool.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, targetUserID).Scan(&targetEmail)
+
 	result, err := s.db.Pool.Exec(ctx,
 		`UPDATE org_members SET role = $1 WHERE org_id = $2 AND user_id = $3`,
 		req.Role, claims.OrgID, targetUserID,
@@ -96,6 +102,11 @@ func (s *Server) handleUpdateMemberRole(w http.ResponseWriter, r *http.Request) 
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "member.update_role", ResourceType: "member", ResourceID: targetUserID,
+		Metadata: map[string]any{
+			"email":    targetEmail,
+			"old_role": oldRole,
+			"new_role": req.Role,
+		},
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -110,6 +121,12 @@ func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+
+	// Fetch role and email before removing
+	var removedRole, targetEmail string
+	s.db.Pool.QueryRow(ctx, `SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2`, claims.OrgID, targetUserID).Scan(&removedRole)
+	s.db.Pool.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, targetUserID).Scan(&targetEmail)
+
 	result, err := s.db.Pool.Exec(ctx,
 		`DELETE FROM org_members WHERE org_id = $1 AND user_id = $2`,
 		claims.OrgID, targetUserID,
@@ -126,6 +143,10 @@ func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "member.remove", ResourceType: "member", ResourceID: targetUserID,
+		Metadata: map[string]any{
+			"email": targetEmail,
+			"role":  removedRole,
+		},
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -184,6 +205,10 @@ func (s *Server) handleInviteMember(w http.ResponseWriter, r *http.Request) {
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "member.invite", ResourceType: "member", ResourceID: userID,
+		Metadata: map[string]any{
+			"email": req.Email,
+			"role":  req.Role,
+		},
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
