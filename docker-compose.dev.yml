@@ -191,6 +191,7 @@ services:
       # Vite (running inside this container) proxies /api and /internal to the
       # API service on the internal Docker network.
       API_URL: http://api:8080
+      VITE_RELAY_URL: ws://localhost:3001
     volumes:
       - ./web:/app
       - web-node-modules:/app/node_modules

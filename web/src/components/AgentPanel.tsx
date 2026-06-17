@@ -718,9 +718,11 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--bg-primary)',
     display: 'flex',
     flexDirection: 'column',
-    flex: 1,
+    flexShrink: 0,
+    height: '100%',
     minHeight: 0,
     overflow: 'hidden',
+    position: 'relative',
   },
   resizeHandle: {
     position: 'absolute',
@@ -796,6 +798,10 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 12,
   },
   emptyState: {
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
     textAlign: 'center',
     padding: 20,
     color: 'var(--text-muted)',

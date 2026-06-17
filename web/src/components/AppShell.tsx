@@ -18,6 +18,13 @@ export function AppShell({ children, noPadding }: Props) {
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showGlobalAgent, setShowGlobalAgent] = useState(false)
   const [globalAgentMinimized, setGlobalAgentMinimized] = useState(false)
+  const [globalAgentWidth, setGlobalAgentWidth] = useState(() => {
+    try {
+      const saved = localStorage.getItem('hnb:agentPanelWidth:__global__')
+      if (saved) return Math.max(320, Math.min(600, parseInt(saved, 10)))
+    } catch { /* ignore */ }
+    return 460
+  })
   const [motds, setMotds] = useState<Array<{id: string; title: string; content: string; visibility: string; pages: string[]}>>([])
   const [dismissedMotds, setDismissedMotds] = useState<Set<string>>(() => {
     try {
@@ -86,6 +93,10 @@ export function AppShell({ children, noPadding }: Props) {
     return () => document.removeEventListener('keydown', handler)
   }, [])
 
+  useEffect(() => {
+    localStorage.setItem('hnb:agentPanelWidth:__global__', String(globalAgentWidth))
+  }, [globalAgentWidth])
+
   return (
     <div style={styles.root}>
       <a href="#main-content" className="skip-link">Skip to content</a>
@@ -125,11 +136,11 @@ export function AppShell({ children, noPadding }: Props) {
             style={globalAgentStyles.backdrop}
             onClick={() => setShowGlobalAgent(false)}
           />
-          <div style={globalAgentStyles.modal} onClick={e => e.stopPropagation()}>
+          <div style={{ ...globalAgentStyles.modal, width: globalAgentWidth }} onClick={e => e.stopPropagation()}>
             <AgentPanel
               notebookId=""
-              width={460}
-              onResize={() => {}}
+              width={globalAgentWidth}
+              onResize={setGlobalAgentWidth}
               onClose={() => {
                 try {
                   localStorage.removeItem('hnb:agentChat:__global__')
@@ -170,7 +181,7 @@ const globalAgentStyles: Record<string, React.CSSProperties> = {
   modal: {
     position: 'fixed', zIndex: 1501,
     bottom: 8, right: 24,
-    width: 460, maxWidth: 'calc(100vw - 48px)',
+    maxWidth: 'calc(100vw - 48px)',
     height: 480, maxHeight: 'calc(100vh - 16px)',
     borderRadius: 8, overflow: 'hidden',
     border: '1px solid var(--border)',

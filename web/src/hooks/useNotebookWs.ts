@@ -6,6 +6,8 @@ export function useNotebookWs(
   onCellOutput?: (cellId: string, outputs: Array<{ type: string; data: unknown }>) => void,
   onCellMetadataChanged?: (cellId: string, metadata: Record<string, unknown>) => void,
   onCellUpdated?: (cellId: string, source?: string) => void,
+  onCellCreated?: (cell: import('../types').Cell) => void,
+  onCellDeleted?: (cellId: string) => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -15,6 +17,10 @@ export function useNotebookWs(
   onCellMetadataChangedRef.current = onCellMetadataChanged
   const onCellUpdatedRef = useRef(onCellUpdated)
   onCellUpdatedRef.current = onCellUpdated
+  const onCellCreatedRef = useRef(onCellCreated)
+  onCellCreatedRef.current = onCellCreated
+  const onCellDeletedRef = useRef(onCellDeleted)
+  onCellDeletedRef.current = onCellDeleted
 
   const connect = useCallback(() => {
     if (!notebookId) return
@@ -40,6 +46,10 @@ export function useNotebookWs(
           onCellMetadataChangedRef.current(msg.cell_id, msg.metadata)
         } else if (msg.type === 'cell_updated' && onCellUpdatedRef.current) {
           onCellUpdatedRef.current(msg.cell_id, msg.source)
+        } else if (msg.type === 'cell_created' && onCellCreatedRef.current) {
+          onCellCreatedRef.current(msg.cell)
+        } else if (msg.type === 'cell_deleted' && onCellDeletedRef.current) {
+          onCellDeletedRef.current(msg.cell_id)
         }
       } catch {
         // ignore non-JSON messages
