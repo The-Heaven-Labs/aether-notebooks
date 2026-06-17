@@ -148,6 +148,12 @@ func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
 		Action: "cell.create", ResourceType: "cell", ResourceID: cell.ID,
 	})
 
+	// Broadcast to connected clients so they see the new cell
+	s.hub.Broadcast(nbID, map[string]any{
+		"type": "cell_created",
+		"cell": cell,
+	})
+
 	writeJSON(w, http.StatusCreated, cell)
 }
 
@@ -303,25 +309,18 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(outputs, &cell.Outputs)
 	json.Unmarshal(cellParams, &cell.Parameters)
 
+	// Broadcast updates to connected clients
+	updateMsg := map[string]any{"type": "cell_updated", "cell_id": cellID}
 	if req.Source != nil {
 		s.upsertCellVersion(ctx, cellID, *req.Source, claims.UserID)
 
 		// Write to Yjs (source of truth) if source changed
 		if err := agent.UpdateCellInYjs(ctx, s.db.Pool, nbID, cellID, *req.Source); err != nil {
-			// Log but don't fail — Yjs write is best-effort for API updates
-			// (agent updates are the primary path)
 			log.Printf("WARNING: yjs update failed for cell %s: %v", cellID, err)
 		}
 
-		// Broadcast to connected clients so they see the update
-		s.hub.Broadcast(nbID, map[string]any{
-			"type":    "cell_updated",
-			"cell_id": cellID,
-			"source":  *req.Source,
-		})
+		updateMsg["source"] = *req.Source
 	}
-
-	// Log cell type change in version history and audit trail
 	if req.Type != nil {
 		typeNote := fmt.Sprintf("[type changed to %s]", *req.Type)
 		_ = s.upsertCellVersion(ctx, cellID, typeNote, claims.UserID)
@@ -330,7 +329,12 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 			Action: "cell.type_change", ResourceType: "cell", ResourceID: cellID,
 			Metadata: map[string]any{"new_type": *req.Type},
 		})
+		updateMsg["type"] = *req.Type
 	}
+	if req.Language != nil {
+		updateMsg["language"] = *req.Language
+	}
+	s.hub.Broadcast(nbID, updateMsg)
 	if req.Source != nil {
 		s.audit.Log(ctx, audit.Entry{
 			OrgID: claims.OrgID, UserID: claims.UserID,
@@ -380,6 +384,12 @@ func (s *Server) handleDeleteCell(w http.ResponseWriter, r *http.Request) {
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "cell.delete", ResourceType: "cell", ResourceID: cellID,
+	})
+
+	// Broadcast deletion so connected clients remove the cell
+	s.hub.Broadcast(nbID, map[string]any{
+		"type":    "cell_deleted",
+		"cell_id": cellID,
 	})
 
 	w.WriteHeader(http.StatusNoContent)

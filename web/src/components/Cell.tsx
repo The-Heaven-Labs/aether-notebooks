@@ -694,7 +694,7 @@ export const Cell = memo(function Cell({
               onEditEnd={onEditEnd}
               readOnly={!onSave}
             />
-          : <MarkdownView cell={cell} notebookId={notebookId} onSourceChange={onSourceChange} onSave={onSave} />
+          : <MarkdownView cell={cell} notebookId={notebookId} onSourceChange={onSourceChange} onSave={onSave} onEditStart={onEditStart} onEditEnd={onEditEnd} />
       )}
 
       {/* ── Output ── */}
