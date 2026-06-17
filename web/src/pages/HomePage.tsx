@@ -52,12 +52,17 @@ interface ContextMenuProps {
   onDelete: (type: ResourceType, id: string, name: string) => void
   onEdit: (type: ResourceType, id: string) => void
   onClose: () => void
+  canEdit?: boolean
+  canDelete?: boolean
+  canShare?: boolean
 }
 
-function ContextMenu({ target, onRename, onMove, onPermissions, onDelete, onEdit, onClose }: ContextMenuProps) {
+function ContextMenu({ target, onRename, onMove, onPermissions, onDelete, onEdit, onClose, canEdit, canDelete: canDeletePerm, canShare }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
-  const canRename = target.type === 'folder' || target.type === 'notebook'
-  const canDelete = target.type === 'folder' || target.type === 'notebook'
+  const showRename = target.type === 'folder' || target.type === 'notebook'
+  const showDelete = target.type === 'folder' || target.type === 'notebook'
+  const renameDisabled = !canEdit
+  const deleteDisabled = !canDeletePerm
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -76,10 +81,13 @@ function ContextMenu({ target, onRename, onMove, onPermissions, onDelete, onEdit
     }
   }, [onClose])
 
+  const disabledStyle = { opacity: 0.4, cursor: 'default' }
+
   return (
     <div ref={ref} style={ms.menu}>
-      {canRename && (
-        <button style={ms.item} onClick={() => {
+      {showRename && (
+        <button style={renameDisabled ? { ...ms.item, ...disabledStyle } : ms.item} disabled={renameDisabled} onClick={() => {
+          if (renameDisabled) return
           onRename({ type: target.type as 'folder' | 'notebook', id: target.id, currentName: target.name })
           onClose()
         }}>Rename</button>
@@ -90,17 +98,25 @@ function ContextMenu({ target, onRename, onMove, onPermissions, onDelete, onEdit
       }}>Move to…</button>
       {target.type === 'connector' ? (
         <>
-          <button style={ms.item} onClick={() => { onEdit(target.type, target.id); onClose() }}>Edit</button>
-          <button style={ms.item} onClick={() => { onPermissions({ type: target.type, id: target.id, name: target.name }); onClose() }}>Permissions</button>
+          <button style={canEdit === false ? { ...ms.item, ...disabledStyle } : ms.item} disabled={canEdit === false} onClick={() => {
+            if (canEdit === false) return
+            onEdit(target.type, target.id); onClose()
+          }}>Edit</button>
+          <button style={canShare === false ? { ...ms.item, ...disabledStyle } : ms.item} disabled={canShare === false} onClick={() => {
+            if (canShare === false) return
+            onPermissions({ type: target.type, id: target.id, name: target.name }); onClose()
+          }}>Permissions</button>
         </>
       ) : (
-        <button style={ms.item} onClick={() => {
+        <button style={canShare === false ? { ...ms.item, ...disabledStyle } : ms.item} disabled={canShare === false} onClick={() => {
+          if (canShare === false) return
           onPermissions({ type: target.type, id: target.id, name: target.name })
           onClose()
         }}>Permissions</button>
       )}
-      {canDelete ? (
-        <button style={{ ...ms.item, color: 'var(--error)' }} onClick={() => {
+      {showDelete ? (
+        <button style={deleteDisabled ? { ...ms.item, color: 'var(--error)', ...disabledStyle } : { ...ms.item, color: 'var(--error)' }} disabled={deleteDisabled} onClick={() => {
+          if (deleteDisabled) return
           onDelete(target.type, target.id, target.name)
           onClose()
         }}>Delete</button>
@@ -452,8 +468,14 @@ export function HomePage() {
   })
 
   useEffect(() => {
-    // On initial page load only: redirect to home folder if no folder is selected
-    if (!folderID && homeFolders && homeFolders.length > 0 && !sessionStorage.getItem('hnb_root_nav')) {
+    if (!folderID && homeFolders && homeFolders.length > 0) {
+      if (sessionStorage.getItem('hnb_root_nav')) {
+        const lastFolder = sessionStorage.getItem('hnb_last_folder')
+        if (lastFolder) {
+          setSearchParams({ folder: lastFolder })
+          return
+        }
+      }
       const myHome = homeFolders.find(h => h.owner_id === user?.user_id)
       if (myHome) {
         setSearchParams({ folder: myHome.id })
@@ -461,7 +483,7 @@ export function HomePage() {
     }
   }, [folderID, homeFolders, setSearchParams, user?.user_id])
 
-  // Mark when user explicitly navigates away from home folder
+  // Mark when user has navigated away from root
   useEffect(() => {
     if (folderID) {
       sessionStorage.setItem('hnb_root_nav', '1')
@@ -506,14 +528,26 @@ export function HomePage() {
   const createNotebook = useMutation({
     mutationFn: (title: string) =>
       api.post<{ id: string }>('/api/v1/notebooks', { title, ...(folderID ? { folder_id: folderID } : {}) }),
-    onSuccess: (nb) => navigate(`/notebooks/${nb.id}`),
+    onSuccess: (nb) => {
+      qc.invalidateQueries({ queryKey: ['folder-contents'] })
+      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
+      qc.invalidateQueries({ queryKey: ['folder-home'] })
+      if (folderID) sessionStorage.setItem('hnb_last_folder', folderID)
+      navigate(`/notebooks/${nb.id}`)
+    },
     onError: (e: Error) => setError(e.message),
   })
 
   const createDashboard = useMutation({
     mutationFn: (title: string) =>
       api.post<{ id: string }>('/api/v1/dashboards', { title, ...(folderID ? { folder_id: folderID } : {}) }),
-    onSuccess: (d) => navigate(`/dashboards/${d.id}`),
+    onSuccess: (d) => {
+      qc.invalidateQueries({ queryKey: ['folder-contents'] })
+      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
+      qc.invalidateQueries({ queryKey: ['folder-home'] })
+      if (folderID) sessionStorage.setItem('hnb_last_folder', folderID)
+      navigate(`/dashboards/${d.id}`)
+    },
     onError: (e: Error) => setError(e.message),
   })
 
@@ -873,7 +907,10 @@ export function HomePage() {
                       <button
                         key={`${item.type}-${item.id}`}
                         style={s.recentChip}
-                        onClick={() => navigate(href)}
+                        onClick={() => {
+                          if (folderID) sessionStorage.setItem('hnb_last_folder', folderID)
+                          navigate(href)
+                        }}
                         title={item.name}
                       >
                         {icon}
@@ -892,41 +929,47 @@ export function HomePage() {
               <button style={s.newBtn} onClick={() => { setCreating('folder'); setNewName('') }}>
                 + New Folder
               </button>
-              <button style={s.newBtn} onClick={() => { setCreating('notebook'); setNewName('') }}>
-                + New Notebook
-              </button>
-              <button style={s.newBtn} onClick={() => { setCreating('dashboard'); setNewName('') }}>
-                + New Dashboard
-              </button>
-              <input
-                ref={importRef}
-                type="file"
-                accept=".ipynb"
-                style={{ display: 'none' }}
-                onChange={async (e) => {
-                  const file = e.target.files?.[0]
-                  if (!file) return
-                  const form = new FormData()
-                  form.append('file', file)
-                  try {
-                    const token = localStorage.getItem('hnb_token')
-                    const res = await fetch('/api/v1/notebooks/import', {
-                      method: 'POST',
-                      headers: { Authorization: `Bearer ${token}` },
-                      body: form,
-                    })
-                    if (!res.ok) throw new Error('Import failed')
-                    const result = await res.json()
-                    navigate(`/notebooks/${result.id}`)
-                  } catch (err) {
-                    console.error('Import failed:', err)
-                  }
-                  e.target.value = ''
-                }}
-              />
-              <button style={s.newBtn} onClick={() => importRef.current?.click()}>
-                Import .ipynb
-              </button>
+              {folderID && (
+                <>
+                  <button style={s.newBtn} onClick={() => { setCreating('notebook'); setNewName('') }}>
+                    + New Notebook
+                  </button>
+                  <button style={s.newBtn} onClick={() => { setCreating('dashboard'); setNewName('') }}>
+                    + New Dashboard
+                  </button>
+                  <input
+                    ref={importRef}
+                    type="file"
+                    accept=".ipynb"
+                    style={{ display: 'none' }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0]
+                      if (!file) return
+                      const form = new FormData()
+                      form.append('file', file)
+                      if (folderID) form.append('folder_id', folderID)
+                      try {
+                        const token = localStorage.getItem('hnb_token')
+                        const res = await fetch('/api/v1/notebooks/import', {
+                          method: 'POST',
+                          headers: { Authorization: `Bearer ${token}` },
+                          body: form,
+                        })
+                        if (!res.ok) throw new Error('Import failed')
+                        const result = await res.json()
+                        if (folderID) sessionStorage.setItem('hnb_last_folder', folderID)
+                        navigate(`/notebooks/${result.id}`)
+                      } catch (err) {
+                        console.error('Import failed:', err)
+                      }
+                      e.target.value = ''
+                    }}
+                  />
+                  <button style={s.newBtn} onClick={() => importRef.current?.click()}>
+                    Import .ipynb
+                  </button>
+                </>
+              )}
             </div>
 
             {/* Inline create form */}
@@ -1023,6 +1066,9 @@ export function HomePage() {
                             onDelete={handleDelete}
                             onEdit={handleEdit}
                             onClose={() => setOpenMenu(null)}
+                            canEdit={f.can_edit}
+                            canDelete={f.can_delete}
+                            canShare={f.can_share}
                           />
                         </div>
                       )}
@@ -1059,7 +1105,7 @@ export function HomePage() {
                           />
                         </div>
                       ) : (
-                        <Link to={`/notebooks/${nb.id}`} style={s.itemLink}>
+                        <Link to={`/notebooks/${nb.id}`} style={s.itemLink} onClick={() => { if (folderID) sessionStorage.setItem('hnb_last_folder', folderID) }}>
                           <BookOpen size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <span style={s.itemName}>{nb.title}</span>
@@ -1084,6 +1130,9 @@ export function HomePage() {
                               onDelete={handleDelete}
                               onEdit={handleEdit}
                               onClose={() => setOpenMenu(null)}
+                              canEdit={nb.can_edit}
+                              canDelete={nb.can_delete}
+                              canShare={nb.can_share}
                             />
                           </div>
                         )}
@@ -1139,6 +1188,9 @@ export function HomePage() {
                               onDelete={handleDelete}
                               onEdit={handleEdit}
                               onClose={() => setOpenMenu(null)}
+                              canEdit={c.can_edit}
+                              canDelete={c.can_delete}
+                              canShare={c.can_share}
                             />
                           </div>
                         )}
@@ -1167,7 +1219,7 @@ export function HomePage() {
                           onClick={(e) => e.stopPropagation()}
                         />
                       </div>
-                      <Link to={`/dashboards/${d.id}`} style={s.itemLink}>
+                      <Link to={`/dashboards/${d.id}`} style={s.itemLink} onClick={() => { if (folderID) sessionStorage.setItem('hnb_last_folder', folderID) }}>
                         <LayoutDashboard size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <span style={s.itemName}>{d.title}</span>
@@ -1191,6 +1243,9 @@ export function HomePage() {
                               onDelete={handleDelete}
                               onEdit={handleEdit}
                               onClose={() => setOpenMenu(null)}
+                              canEdit={d.can_edit}
+                              canDelete={d.can_delete}
+                              canShare={d.can_share}
                             />
                           </div>
                         )}
@@ -1251,6 +1306,13 @@ export function HomePage() {
                   permissionsTarget.type === 'notebook' ? data?.notebooks?.find(nb => nb.id === permissionsTarget.id)?.created_by :
                   permissionsTarget.type === 'connector' ? data?.connectors?.find(c => c.id === permissionsTarget.id)?.created_by :
                   permissionsTarget.type === 'dashboard' ? data?.dashboards?.find(d => d.id === permissionsTarget.id)?.created_by :
+                  undefined
+                }
+                canEdit={
+                  permissionsTarget.type === 'folder' && data?.folder ? (data.folder as any).can_share :
+                  permissionsTarget.type === 'notebook' ? data?.notebooks?.find((nb: any) => nb.id === permissionsTarget.id)?.can_share :
+                  permissionsTarget.type === 'connector' ? data?.connectors?.find((c: any) => c.id === permissionsTarget.id)?.can_share :
+                  permissionsTarget.type === 'dashboard' ? data?.dashboards?.find((d: any) => d.id === permissionsTarget.id)?.can_share :
                   undefined
                 }
                 onClose={() => setPermissionsTarget(null)}
