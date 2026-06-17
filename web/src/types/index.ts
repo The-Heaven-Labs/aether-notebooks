@@ -112,6 +112,8 @@ export interface Dashboard {
   created_at: string
   updated_at: string
   widgets?: Widget[]
+  can_view_with_data?: boolean
+  widgets_data?: Record<string, { cell_id: string; source: string; type: string; language: string; outputs: Output[] }>
 }
 
 export interface Widget {

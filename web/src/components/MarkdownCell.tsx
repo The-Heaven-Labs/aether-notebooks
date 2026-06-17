@@ -8,6 +8,12 @@ import type { Cell } from '../types'
 import { slugify } from './Cell'
 import { ImageViewer } from './ImageViewer'
 
+const markdownEditCallbacks = new Map<string, () => void>()
+
+export function focusMarkdownCell(cellId: string) {
+  markdownEditCallbacks.get(cellId)?.()
+}
+
 export interface ResizableImageProps {
   src: string | null
   alt?: string
@@ -211,11 +217,13 @@ export interface MarkdownViewProps {
   notebookId: string
   onSourceChange: (cellId: string, source: string) => void
   onSave?: (cellId: string, source: string) => void
+  onEditStart?: () => void
+  onEditEnd?: () => void
 }
 
 
 
-export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: MarkdownViewProps) {
+export function MarkdownView({ cell, notebookId, onSourceChange, onSave, onEditStart, onEditEnd }: MarkdownViewProps) {
   const [source, setSource] = useState(cell.source)
   const [isFocused, setIsFocused] = useState(false)
   const [splitMode, setSplitMode] = useState(false)
@@ -235,6 +243,23 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
     setSource(cell.source)
   }, [cell.source, isFocused])
 
+  // Register an edit callback so NotebookPage can programmatically enter edit mode
+  useEffect(() => {
+    markdownEditCallbacks.set(cell.id, () => {
+      if (!onSave) return
+      setIsFocused(true)
+      setTimeout(() => {
+        const el = textareaRef.current
+        if (el) {
+          const len = el.value.length
+          el.setSelectionRange(len, len)
+          el.focus()
+        }
+      }, 0)
+    })
+    return () => markdownEditCallbacks.delete(cell.id)
+  }, [cell.id, onSave])
+
   const updateSource = useCallback((s: string) => {
     setSource(s)
     onSourceChange(cell.id, s)
@@ -244,7 +269,8 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
     setSource(s)
     onSave?.(cell.id, s)
     setIsFocused(false)
-  }, [cell.id, onSave])
+    onEditEnd?.()
+  }, [cell.id, onSave, onEditEnd])
 
   const handleResize = useCallback((imgSrc: string, newWidth: number) => {
     const escaped = imgSrc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -422,6 +448,7 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave }: Markd
         onPaste={handlePaste}
         onFocus={() => {
           setIsFocused(true)
+          onEditStart?.()
           const el = textareaRef.current
           if (el) {
             el.style.height = 'auto'

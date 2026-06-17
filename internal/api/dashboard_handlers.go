@@ -223,11 +223,18 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check view permission
+	// Check view permission (view_with_data implies view)
 	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "view")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "permission check failed")
 		return
+	}
+	if !allowed {
+		allowed, err = s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "view_with_data")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "permission check failed")
+			return
+		}
 	}
 	if !allowed {
 		writeError(w, http.StatusForbidden, "you don't have permission to view this dashboard")
@@ -235,17 +242,71 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	json.Unmarshal(settingsOut, &dash.Settings)
 
+	// Check view_with_data permission
+	viewWithData, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "view_with_data")
+
 	widgets, err := s.loadWidgets(ctx, dashID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "load widgets failed")
 		return
 	}
 
+	type widgetCellData struct {
+		CellID   string          `json:"cell_id"`
+		Source   string          `json:"source"`
+		Type     string          `json:"type"`
+		Language string          `json:"language"`
+		Outputs  json.RawMessage `json:"outputs"`
+	}
+
 	type dashboardWithWidgets struct {
 		models.Dashboard
-		Widgets []models.Widget `json:"widgets"`
+		Widgets         []models.Widget            `json:"widgets"`
+		WidgetsData     map[string]widgetCellData  `json:"widgets_data,omitempty"`
+		CanViewWithData bool                       `json:"can_view_with_data"`
 	}
-	writeJSON(w, http.StatusOK, dashboardWithWidgets{Dashboard: dash, Widgets: widgets})
+
+	resp := dashboardWithWidgets{
+		Dashboard:       dash,
+		Widgets:         widgets,
+		CanViewWithData: viewWithData,
+	}
+
+	if viewWithData && len(widgets) > 0 {
+		// Collect unique cell IDs from all widgets
+		cellIDs := make([]string, 0, len(widgets))
+		for _, w := range widgets {
+			if w.CellID != nil {
+				cellIDs = append(cellIDs, *w.CellID)
+			}
+		}
+
+		if len(cellIDs) > 0 {
+			rows, err := s.db.Pool.Query(ctx,
+				`SELECT c.id, c.source, c.type, c.language, c.outputs
+				 FROM cells c
+				 JOIN notebooks n ON n.id = c.notebook_id AND n.org_id = $1
+				 WHERE c.id = ANY($2)`,
+				claims.OrgID, cellIDs,
+			)
+			if err == nil {
+				defer rows.Close()
+				widgetsData := make(map[string]widgetCellData, len(cellIDs))
+				for rows.Next() {
+					var cd widgetCellData
+					var outputs []byte
+					if err := rows.Scan(&cd.CellID, &cd.Source, &cd.Type, &cd.Language, &outputs); err != nil {
+						continue
+					}
+					cd.Outputs = outputs
+					widgetsData[cd.CellID] = cd
+				}
+				resp.WidgetsData = widgetsData
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleGetDashboardPermissions(w http.ResponseWriter, r *http.Request) {
@@ -254,7 +315,18 @@ func (s *Server) handleGetDashboardPermissions(w http.ResponseWriter, r *http.Re
 	ctx := r.Context()
 
 	viewOK, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "view")
-	if err != nil || !viewOK {
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !viewOK {
+		viewOK, err = s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "view_with_data")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "permission check failed")
+			return
+		}
+	}
+	if !viewOK {
 		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
 	}
@@ -262,11 +334,13 @@ func (s *Server) handleGetDashboardPermissions(w http.ResponseWriter, r *http.Re
 	editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "edit")
 	deleteOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "delete")
 	shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "share")
+	viewWithDataOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "view_with_data")
 
 	writeJSON(w, http.StatusOK, map[string]bool{
-		"can_edit":   editOK,
-		"can_delete": deleteOK,
-		"can_share":  shareOK,
+		"can_edit":          editOK,
+		"can_delete":        deleteOK,
+		"can_share":         shareOK,
+		"can_view_with_data": viewWithDataOK,
 	})
 }
 
@@ -343,6 +417,19 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 	if !exists {
 		writeError(w, http.StatusNotFound, "dashboard not found")
 		return
+	}
+
+	// Validate widget references a notebook the user can view (prevents IDOR escalation)
+	if req.NotebookID != nil {
+		nbOK, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", *req.NotebookID, "view")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "permission check failed")
+			return
+		}
+		if !nbOK {
+			writeError(w, http.StatusForbidden, "you don't have permission to view this notebook")
+			return
+		}
 	}
 
 	if req.Config == nil {
@@ -483,6 +570,16 @@ func (s *Server) handleShareDashboard(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	dashID := r.PathValue("id")
 	ctx := r.Context()
+
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "share")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "you don't have permission to share this dashboard")
+		return
+	}
 
 	tokenBytes := make([]byte, 16)
 	rand.Read(tokenBytes)

@@ -14,6 +14,7 @@ import { api } from '../api/client'
 import type { Notebook, Cell, Output, Connector, Parameter, CellVersion, Dashboard, Widget } from '../types'
 import type { ChartConfig } from '../charts'
 import { Cell as NotebookCell, focusCellEditorEnd } from '../components/Cell'
+import { focusMarkdownCell } from '../components/MarkdownCell'
 import { ParametersBar } from '../components/ParametersBar'
 import { SchemaBrowser } from '../components/SchemaBrowser'
 import { SchedulesPanel } from '../components/SchedulesPanel'
@@ -207,7 +208,13 @@ export function NotebookPage() {
   const [showAgent, setShowAgent] = useState(() => {
     try { return localStorage.getItem(`hnb:agentPanel:${id}`) === 'true' } catch { return false }
   })
-  const [agentPanelWidth, setAgentPanelWidth] = useState(360)
+  const [agentPanelWidth, setAgentPanelWidth] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`hnb:agentPanelWidth:${id}`)
+      if (saved) return Math.max(280, Math.min(600, parseInt(saved, 10)))
+    } catch { /* ignore */ }
+    return Math.max(280, Math.min(600, Math.round(window.innerWidth / 3)))
+  })
 
   // Drag-and-drop sensors
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
@@ -268,6 +275,21 @@ export function NotebookPage() {
       qc.invalidateQueries({ queryKey: ['notebook', id] })
     }
     flashCell(cellId)
+  }, [id, qc]), useCallback((cell: Cell) => {
+    setLocalCells((prev) => {
+      if (prev.some((c) => c.id === cell.id)) return prev
+      return [...prev, cell].sort((a, b) => a.position - b.position)
+    })
+    qc.setQueryData<NotebookWithCells>(['notebook', id], (old) => {
+      if (!old || old.cells.some((c) => c.id === cell.id)) return old
+      return { ...old, cells: [...old.cells, cell].sort((a, b) => a.position - b.position) }
+    })
+    flashCell(cell.id)
+  }, [id, qc]), useCallback((cellId: string) => {
+    setLocalCells((prev) => prev.filter((c) => c.id !== cellId))
+    qc.setQueryData<NotebookWithCells>(['notebook', id], (old) =>
+      old ? { ...old, cells: old.cells.filter((c) => c.id !== cellId) } : old,
+    )
   }, [id, qc]))
 
   const cellsEndRef = useRef<HTMLDivElement>(null)
@@ -303,6 +325,10 @@ export function NotebookPage() {
   useEffect(() => {
     localStorage.setItem(`hnb:agentPanel:${id}`, String(showAgent))
   }, [showAgent, id])
+
+  useEffect(() => {
+    localStorage.setItem(`hnb:agentPanelWidth:${id}`, String(agentPanelWidth))
+  }, [agentPanelWidth, id])
 
   const initializedRef = useRef(false)
   useEffect(() => {
@@ -356,10 +382,14 @@ export function NotebookPage() {
       if (withConnector.connector_id) {
         assignConnector(cell.id, withConnector.connector_id)
       }
-      setLocalCells((prev) => [...prev, withConnector].sort((a, b) => a.position - b.position))
-      qc.setQueryData<NotebookWithCells>(['notebook', id], (old) =>
-        old ? { ...old, cells: [...(old.cells ?? []), withConnector].sort((a, b) => a.position - b.position) } : old
-      )
+      setLocalCells((prev) => {
+        if (prev.some((c) => c.id === withConnector.id)) return prev
+        return [...prev, withConnector].sort((a, b) => a.position - b.position)
+      })
+      qc.setQueryData<NotebookWithCells>(['notebook', id], (old) => {
+        if (!old || old.cells.some((c) => c.id === withConnector.id)) return old
+        return { ...old, cells: [...(old.cells ?? []), withConnector].sort((a, b) => a.position - b.position) }
+      })
       setTimeout(() => {
         const el = document.getElementById('cell-' + cell.id)
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -419,6 +449,7 @@ export function NotebookPage() {
   })
 
   const switchCellType = useCallback(async (cellId: string) => {
+    setIsEditingCell(false)
     const cells = localCellsRef.current
     const cell = cells.find((c) => c.id === cellId)
     if (!cell) return
@@ -747,6 +778,7 @@ export function NotebookPage() {
         setIsEditingCell(true)
         requestAnimationFrame(() => {
           focusCellEditorEnd(focusedCellId)
+          focusMarkdownCell(focusedCellId)
         })
       },
       exitEditMode: () => {
@@ -1029,6 +1061,18 @@ export function NotebookPage() {
           <div style={styles.cellsArea}>
             <div style={styles.bodyInner}>
               <div style={styles.cells}>
+                {!readOnly && (
+                  <AddCellBar
+                    onAddCode={() => {
+                      const first = localCells[0]
+                      createCell.mutate({ type: 'code', position: first ? first.position : 0 })
+                    }}
+                    onAddText={() => {
+                      const first = localCells[0]
+                      createCell.mutate({ type: 'text', position: first ? first.position : 0 })
+                    }}
+                  />
+                )}
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                   <SortableContext items={localCells.map(c => c.id)} strategy={verticalListSortingStrategy}>
                     {localCells.map((cell, i) => (

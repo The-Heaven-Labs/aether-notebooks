@@ -171,19 +171,26 @@ const inputStyles: Record<string, React.CSSProperties> = {
   },
 }
 
-function QueryWidget({ widget, qc }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient> }) {
+function QueryWidget({ widget, qc, widgetsData, dashboardId }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string }) {
   const { params } = useDashboardParams()
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Use widgets_data when available (view_with_data permission) instead of fetching notebooks individually
+  const widgetCellData = widgetsData?.[widget.cell_id!]
+  const useInlinedData = !!widgetCellData
 
   const { data: notebook, isLoading } = useQuery({
     queryKey: ['notebook', widget.notebook_id],
     queryFn: () => api.get<NotebookWithCells>(`/api/v1/notebooks/${widget.notebook_id}`),
+    enabled: !useInlinedData,
   })
 
   // When params change and the cell source contains template refs ({{...}}),
   // trigger a re-execution. Execute integration is a follow-on — stub here.
   useEffect(() => {
-    const cell = notebook?.cells?.find((c: Cell) => c.id === widget.cell_id)
+    const cell = useInlinedData
+      ? widgetCellData
+      : notebook?.cells?.find((c: Cell) => c.id === widget.cell_id)
     if (!cell?.source?.includes('{{')) return
 
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -195,11 +202,13 @@ function QueryWidget({ widget, qc }: { widget: AnyWidget; qc: ReturnType<typeof 
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-  }, [params, notebook, widget.cell_id])
+  }, [params, notebook, widget.cell_id, widgetCellData, useInlinedData])
 
-  if (isLoading) return <div style={queryWidgetStyles.loading}>Loading…</div>
+  if (!useInlinedData && isLoading) return <div style={queryWidgetStyles.loading}>Loading…</div>
 
-  const cell = notebook?.cells?.find((c: Cell) => c.id === widget.cell_id)
+  const cell = useInlinedData
+    ? widgetCellData!
+    : notebook?.cells?.find((c: Cell) => c.id === widget.cell_id)
   if (!cell) return <div style={queryWidgetStyles.empty}>Cell not found</div>
 
   // Markdown cells render their source directly — they don't need to be "run"
@@ -226,7 +235,13 @@ function QueryWidget({ widget, qc }: { widget: AnyWidget; qc: ReturnType<typeof 
                 ...(token ? { Authorization: `Bearer ${token}` } : {}),
               },
               body: JSON.stringify({ parameters: {} }),
-            }).then(() => qc.invalidateQueries({ queryKey: ['notebook', widget.notebook_id] }))
+            }).then(() => {
+              if (useInlinedData && dashboardId) {
+                qc.invalidateQueries({ queryKey: ['dashboard', dashboardId] })
+              } else {
+                qc.invalidateQueries({ queryKey: ['notebook', widget.notebook_id] })
+              }
+            })
           }}
         >
           Run cell
@@ -244,7 +259,7 @@ const queryWidgetStyles: Record<string, React.CSSProperties> = {
   markdown: { padding: '16px', fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.6, overflow: 'auto', height: '100%' },
 }
 
-function WidgetCard({ widget, qc, onEdit }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; onEdit?: () => void }) {
+function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string; onEdit?: () => void }) {
   const [loading, setLoading] = useState(false)
 
   const handleRun = useCallback(async () => {
@@ -296,7 +311,7 @@ function WidgetCard({ widget, qc, onEdit }: { widget: AnyWidget; qc: ReturnType<
           </button>
         )}
       </div>
-      <QueryWidget widget={widget} qc={qc} />
+      <QueryWidget widget={widget} qc={qc} widgetsData={widgetsData} dashboardId={dashboardId} />
     </div>
   )
 }
@@ -365,8 +380,12 @@ function DashboardContent({ id }: { id: string }) {
             })
           )
       )
-      const notebookIds = [...new Set(queryWidgets.map(w => w.notebook_id).filter(Boolean))]
-      notebookIds.forEach(nbId => qc.invalidateQueries({ queryKey: ['notebook', nbId] }))
+      if (dashboard?.can_view_with_data) {
+        qc.invalidateQueries({ queryKey: ['dashboard', id] })
+      } else {
+        const notebookIds = [...new Set(queryWidgets.map(w => w.notebook_id).filter(Boolean))]
+        notebookIds.forEach(nbId => qc.invalidateQueries({ queryKey: ['notebook', nbId] }))
+      }
     } finally {
       setIsRefreshing(false)
     }
@@ -524,7 +543,7 @@ function DashboardContent({ id }: { id: string }) {
             >
               {dataWidgets.map((widget) => (
                 <div key={widget.id} style={styles.widgetCard}>
-                  <WidgetCard widget={widget} qc={qc} />
+                  <WidgetCard widget={widget} qc={qc} widgetsData={dashboard.widgets_data} dashboardId={id} />
                 </div>
               ))}
             </GridLayout>
