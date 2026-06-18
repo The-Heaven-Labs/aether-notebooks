@@ -190,6 +190,7 @@ export function NotebookPage() {
   const notebookConnectorIdRef = useRef(notebookConnectorId)
   notebookConnectorIdRef.current = notebookConnectorId
 
+  const [following, setFollowing] = useState<{ email: string; name: string } | null>(null)
   const [cellRunAt, setCellRunAt] = useState<Record<string, Date>>({})
   const [focusedCellId, setFocusedCellId] = useState<string | null>(null)
   const [allCollapsed, setAllCollapsed] = useState(false)
@@ -248,7 +249,11 @@ export function NotebookPage() {
       }
     }, 50)
   }
-  useNotebookWs(id, useCallback((cellId: string, outputs: Array<{ type: string; data: unknown }>) => {
+  const shouldScroll = useCallback((userEmail?: string) => {
+    return following && userEmail === following.email
+  }, [following])
+
+  useNotebookWs(id, useCallback((cellId: string, outputs: Array<{ type: string; data: unknown }>, userEmail?: string) => {
     setLocalCells((prev) =>
       prev.map((c) => (c.id === cellId ? { ...c, outputs: outputs as Output[] } : c)),
     )
@@ -258,17 +263,17 @@ export function NotebookPage() {
       return next
     })
     setCellRunAt((prev) => ({ ...prev, [cellId]: new Date() }))
-    if (!pendingExecRef.current.has(cellId)) {
+    if (!pendingExecRef.current.has(cellId) && shouldScroll(userEmail)) {
       flashCell(cellId)
     }
-  }, []), useCallback((cellId: string, metadata: Record<string, unknown>) => {
+  }, [shouldScroll]), useCallback((cellId: string, metadata: Record<string, unknown>, userEmail?: string) => {
     setLocalCells((prev) =>
       prev.map((c) => (c.id === cellId ? { ...c, metadata } : c)),
     )
-    if (!pendingExecRef.current.has(cellId)) {
+    if (!pendingExecRef.current.has(cellId) && shouldScroll(userEmail)) {
       flashCell(cellId)
     }
-  }, []), useCallback((cellId: string, updates: Record<string, unknown>) => {
+  }, [shouldScroll]), useCallback((cellId: string, updates: Record<string, unknown>, userEmail?: string) => {
     // cell_updated event received — apply all broadcast fields to local cache
     if (Object.keys(updates).length > 0) {
       setLocalCells((prev) =>
@@ -280,10 +285,10 @@ export function NotebookPage() {
     } else {
       qc.invalidateQueries({ queryKey: ['notebook', id] })
     }
-    if (!pendingExecRef.current.has(cellId)) {
+    if (!pendingExecRef.current.has(cellId) && shouldScroll(userEmail)) {
       flashCell(cellId)
     }
-  }, [id, qc]), useCallback((cell: Cell) => {
+  }, [id, qc, shouldScroll]), useCallback((cell: Cell, userEmail?: string) => {
     setLocalCells((prev) => {
       if (prev.some((c) => c.id === cell.id)) return prev
       return [...prev, cell].sort((a, b) => a.position - b.position)
@@ -292,10 +297,10 @@ export function NotebookPage() {
       if (!old || old.cells.some((c) => c.id === cell.id)) return old
       return { ...old, cells: [...old.cells, cell].sort((a, b) => a.position - b.position) }
     })
-    if (!pendingExecRef.current.has(cell.id)) {
+    if (!pendingExecRef.current.has(cell.id) && shouldScroll(userEmail)) {
       flashCell(cell.id)
     }
-  }, [id, qc]), useCallback((cellId: string) => {
+  }, [id, qc, shouldScroll]), useCallback((cellId: string) => {
     setLocalCells((prev) => prev.filter((c) => c.id !== cellId))
     qc.setQueryData<NotebookWithCells>(['notebook', id], (old) =>
       old ? { ...old, cells: old.cells.filter((c) => c.id !== cellId) } : old,
