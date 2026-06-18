@@ -150,8 +150,9 @@ func (s *Server) handleCreateCell(w http.ResponseWriter, r *http.Request) {
 
 	// Broadcast to connected clients so they see the new cell
 	s.hub.Broadcast(nbID, map[string]any{
-		"type": "cell_created",
-		"cell": cell,
+		"type":       "cell_created",
+		"cell":       cell,
+		"user_email": s.userEmail(ctx, claims.UserID),
 	})
 
 	writeJSON(w, http.StatusCreated, cell)
@@ -358,14 +359,16 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 	if req.Limit != nil {
 		updateMsg["limit"] = *req.Limit
 	}
+	updateMsg["user_email"] = s.userEmail(ctx, claims.UserID)
 	s.hub.Broadcast(nbID, updateMsg)
 	if req.Metadata != nil {
 		var metadataMap map[string]any
 		if err := json.Unmarshal(req.Metadata, &metadataMap); err == nil {
 			s.hub.Broadcast(nbID, map[string]any{
-				"type":     "cell_metadata_changed",
-				"cell_id":  cellID,
-				"metadata": metadataMap,
+				"type":       "cell_metadata_changed",
+				"cell_id":    cellID,
+				"metadata":   metadataMap,
+				"user_email": s.userEmail(ctx, claims.UserID),
 			})
 		}
 	}
@@ -422,8 +425,9 @@ func (s *Server) handleDeleteCell(w http.ResponseWriter, r *http.Request) {
 
 	// Broadcast deletion so connected clients remove the cell
 	s.hub.Broadcast(nbID, map[string]any{
-		"type":    "cell_deleted",
-		"cell_id": cellID,
+		"type":       "cell_deleted",
+		"cell_id":    cellID,
+		"user_email": s.userEmail(ctx, claims.UserID),
 	})
 
 	w.WriteHeader(http.StatusNoContent)
