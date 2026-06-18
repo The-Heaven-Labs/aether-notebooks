@@ -262,14 +262,14 @@ export function NotebookPage() {
       prev.map((c) => (c.id === cellId ? { ...c, metadata } : c)),
     )
     flashCell(cellId)
-  }, []), useCallback((cellId: string, source?: string) => {
-    // cell_updated event received — update specific cell in cache to avoid full re-fetch
-    if (source !== undefined) {
+  }, []), useCallback((cellId: string, updates: Record<string, unknown>) => {
+    // cell_updated event received — apply all broadcast fields to local cache
+    if (Object.keys(updates).length > 0) {
       setLocalCells((prev) =>
-        prev.map((c) => c.id === cellId ? { ...c, source } : c),
+        prev.map((c) => c.id === cellId ? { ...c, ...updates } as Cell : c),
       )
       qc.setQueryData<NotebookWithCells>(['notebook', id], (old) =>
-        old ? { ...old, cells: old.cells.map((c) => c.id === cellId ? { ...c, source } : c) } : old,
+        old ? { ...old, cells: old.cells.map((c) => c.id === cellId ? { ...c, ...updates } as Cell : c) } : old,
       )
     } else {
       qc.invalidateQueries({ queryKey: ['notebook', id] })
@@ -484,6 +484,18 @@ export function NotebookPage() {
       await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { metadata })
     } catch (err) {
       setMutationError(err instanceof Error ? err.message : 'Failed to update chart config')
+    }
+  }, [id])
+
+  const updateCellViewMode = useCallback(async (cellId: string, viewMode: 'table' | 'chart') => {
+    try {
+      const cells = localCellsRef.current
+      setLocalCells((prev) => prev.map((c) => c.id === cellId ? { ...c, metadata: { ...c.metadata, viewMode } } : c))
+      const cell = cells.find((c) => c.id === cellId)
+      const metadata = { ...cell?.metadata, viewMode }
+      await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { metadata })
+    } catch (err) {
+      setMutationError(err instanceof Error ? err.message : 'Failed to update view mode')
     }
   }, [id])
 
@@ -1114,6 +1126,7 @@ export function NotebookPage() {
                             metrics={cell.metrics}
                             onUpdateCellMeta={readOnly ? undefined : updateCellMeta}
                             onChartConfigChange={readOnly ? undefined : updateCellChartConfig}
+                            onViewModeChange={readOnly ? undefined : updateCellViewMode}
                             onShowHistory={readOnly ? undefined : stableHistoryHandler}
                             onFocus={stableFocusHandler}
                             onEditStart={stableOnEditStart}

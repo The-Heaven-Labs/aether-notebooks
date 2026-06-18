@@ -5,7 +5,7 @@ export function useNotebookWs(
   notebookId: string | undefined,
   onCellOutput?: (cellId: string, outputs: Array<{ type: string; data: unknown }>) => void,
   onCellMetadataChanged?: (cellId: string, metadata: Record<string, unknown>) => void,
-  onCellUpdated?: (cellId: string, source?: string) => void,
+  onCellUpdated?: (cellId: string, updates: Record<string, unknown>) => void,
   onCellCreated?: (cell: import('../types').Cell) => void,
   onCellDeleted?: (cellId: string) => void,
 ) {
@@ -45,7 +45,13 @@ export function useNotebookWs(
         } else if (msg.type === 'cell_metadata_changed' && onCellMetadataChangedRef.current) {
           onCellMetadataChangedRef.current(msg.cell_id, msg.metadata)
         } else if (msg.type === 'cell_updated' && onCellUpdatedRef.current) {
-          onCellUpdatedRef.current(msg.cell_id, msg.source)
+          const updates: Record<string, unknown> = {}
+          for (const key of ['source', 'cell_type', 'language', 'source_visible', 'outputs_hidden', 'cell_collapsed', 'slide_break', 'title', 'description', 'slug', 'limit']) {
+            if (msg[key] !== undefined) {
+              updates[key === 'cell_type' ? 'type' : key] = msg[key]
+            }
+          }
+          onCellUpdatedRef.current(msg.cell_id, updates)
         } else if (msg.type === 'cell_created' && onCellCreatedRef.current) {
           onCellCreatedRef.current(msg.cell)
         } else if (msg.type === 'cell_deleted' && onCellDeletedRef.current) {

@@ -329,12 +329,46 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 			Action: "cell.type_change", ResourceType: "cell", ResourceID: cellID,
 			Metadata: map[string]any{"new_type": *req.Type},
 		})
-		updateMsg["type"] = *req.Type
+		updateMsg["cell_type"] = *req.Type
 	}
 	if req.Language != nil {
 		updateMsg["language"] = *req.Language
 	}
+	if req.SourceVisible != nil {
+		updateMsg["source_visible"] = *req.SourceVisible
+	}
+	if req.OutputsHidden != nil {
+		updateMsg["outputs_hidden"] = *req.OutputsHidden
+	}
+	if req.CellCollapsed != nil {
+		updateMsg["cell_collapsed"] = *req.CellCollapsed
+	}
+	if req.SlideBreak != nil {
+		updateMsg["slide_break"] = *req.SlideBreak
+	}
+	if req.Title != nil {
+		updateMsg["title"] = *req.Title
+	}
+	if req.Description != nil {
+		updateMsg["description"] = *req.Description
+	}
+	if req.Slug != nil {
+		updateMsg["slug"] = *req.Slug
+	}
+	if req.Limit != nil {
+		updateMsg["limit"] = *req.Limit
+	}
 	s.hub.Broadcast(nbID, updateMsg)
+	if req.Metadata != nil {
+		var metadataMap map[string]any
+		if err := json.Unmarshal(req.Metadata, &metadataMap); err == nil {
+			s.hub.Broadcast(nbID, map[string]any{
+				"type":     "cell_metadata_changed",
+				"cell_id":  cellID,
+				"metadata": metadataMap,
+			})
+		}
+	}
 	if req.Source != nil {
 		s.audit.Log(ctx, audit.Entry{
 			OrgID: claims.OrgID, UserID: claims.UserID,
