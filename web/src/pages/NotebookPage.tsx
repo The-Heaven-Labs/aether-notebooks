@@ -191,6 +191,8 @@ export function NotebookPage() {
   notebookConnectorIdRef.current = notebookConnectorId
 
   const [following, setFollowing] = useState<{ email: string; name: string } | null>(null)
+  const [viewOpen, setViewOpen] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
   const [cellRunAt, setCellRunAt] = useState<Record<string, Date>>({})
   const [focusedCellId, setFocusedCellId] = useState<string | null>(null)
   const [allCollapsed, setAllCollapsed] = useState(false)
@@ -1023,82 +1025,73 @@ export function NotebookPage() {
           )}
         </div>
         <div style={styles.toolbarRight}>
-          <button
-            type="button"
-            style={{ ...styles.schemaBtn, ...(showParameters ? styles.schemaBtnActive : {}) }}
-            onClick={() => setShowParameters((v) => !v)}
-          >
-            Parameters
-          </button>
-          <button
-            type="button"
-            style={{ ...styles.schemaBtn, ...(showSchema ? styles.schemaBtnActive : {}) }}
-            onClick={() => setShowSchema((v) => !v)}
-          >
-            Schema
-          </button>
-          <button
-            type="button"
-            style={{ ...styles.schemaBtn, ...(showSchedules ? styles.schemaBtnActive : {}) }}
-            onClick={() => setShowSchedules((v) => !v)}
-          >
-            Schedules
-          </button>
-          <button
-            type="button"
-            style={styles.schemaBtn}
-            onClick={() => window.open(`/notebooks/${id}/present`, '_blank')}
-          >
-            Present
-          </button>
-          <button
-            type="button"
-            style={styles.schemaBtn}
-            onClick={() => {
-              const token = localStorage.getItem('hnb_token')
-              fetch(`/api/v1/notebooks/${id}/export`, { headers: { Authorization: `Bearer ${token}` } })
-                .then(r => r.blob())
-                .then(blob => {
-                  const url = URL.createObjectURL(blob)
-                  const a = document.createElement('a')
-                  a.href = url
-                  a.download = `${notebook.title}.ipynb`
-                  document.body.appendChild(a)
-                  a.click()
-                  document.body.removeChild(a)
-                  URL.revokeObjectURL(url)
-                })
-            }}
-            title="Export as .ipynb"
-          >
-            Export
-          </button>
-          <button
-            type="button"
-            style={styles.schemaBtn}
-            onClick={toggleCollapseAll}
-          >
-            {allCollapsed ? 'Show All' : 'Collapse All'}
-          </button>
-          <button
-            type="button"
-            style={styles.schemaBtn}
-            onClick={toggleAllCode}
-            title="Hide/show all code cells"
-          >
-            {allCodeHidden ? 'Show Code' : 'Hide Code'}
-          </button>
-          <button
-            type="button"
-            style={styles.schemaBtn}
-            onClick={toggleAllOutputs}
-            title="Hide/show all outputs"
-          >
-            {allOutputsHidden ? 'Show Outputs' : 'Hide Outputs'}
-          </button>
+          {/* View dropdown */}
+          <div style={{ position: 'relative' }}>
+            <button
+              type="button"
+              style={{ ...styles.schemaBtn, ...(viewOpen ? styles.schemaBtnActive : {}) }}
+              onClick={() => { setViewOpen(v => !v); setShareOpen(false) }}
+            >
+              View ▾
+            </button>
+            {viewOpen && (
+              <>
+                <div style={styles.dropdownBackdrop} onClick={() => setViewOpen(false)} />
+                <div style={styles.dropdown}>
+                  <button
+                    type="button"
+                    style={{ ...styles.dropdownItem, ...(showParameters ? styles.dropdownItemActive : {}) }}
+                    onClick={() => { setShowParameters(v => !v); setViewOpen(false) }}
+                  >
+                    Parameters
+                  </button>
+                  <button
+                    type="button"
+                    style={{ ...styles.dropdownItem, ...(showSchema ? styles.dropdownItemActive : {}) }}
+                    onClick={() => { setShowSchema(v => !v); setViewOpen(false) }}
+                  >
+                    Schema
+                  </button>
+                  <button
+                    type="button"
+                    style={{ ...styles.dropdownItem, ...(showSchedules ? styles.dropdownItemActive : {}) }}
+                    onClick={() => { setShowSchedules(v => !v); setViewOpen(false) }}
+                  >
+                    Schedules
+                  </button>
+                  <div style={styles.dropdownSeparator} />
+                  <button
+                    type="button"
+                    style={styles.dropdownItem}
+                    onClick={() => { toggleCollapseAll(); setViewOpen(false) }}
+                  >
+                    {allCollapsed ? 'Show All' : 'Collapse All'}
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.dropdownItem}
+                    onClick={() => { toggleAllCode(); setViewOpen(false) }}
+                  >
+                    {allCodeHidden ? 'Show Code' : 'Hide Code'}
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.dropdownItem}
+                    onClick={() => { toggleAllOutputs(); setViewOpen(false) }}
+                  >
+                    {allOutputsHidden ? 'Show Outputs' : 'Hide Outputs'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Run All — standalone */}
           <button type="button" style={styles.runAllBtn} onClick={runAll} disabled={runningCount > 0}>
             <ChevronsRight size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />Run All
           </button>
+
+          {/* AI — standalone */}
           <button
             type="button"
             style={{ ...styles.schemaBtn, ...(showAgent ? styles.schemaBtnActive : {}), display: 'flex', alignItems: 'center', gap: 4 }}
@@ -1106,16 +1099,65 @@ export function NotebookPage() {
           >
             <Bot size={13} /> AI
           </button>
-          {notebook?.can_edit && (
+
+          {/* Share dropdown */}
+          <div style={{ position: 'relative' }}>
             <button
               type="button"
-              style={styles.schemaBtn}
-              onClick={() => setShowPermissions(true)}
-              title="Manage permissions"
+              style={{ ...styles.schemaBtn, ...(shareOpen ? styles.schemaBtnActive : {}) }}
+              onClick={() => { setShareOpen(v => !v); setViewOpen(false) }}
             >
-              <Shield size={13} /> Permissions
+              Share ▾
             </button>
-          )}
+            {shareOpen && (
+              <>
+                <div style={styles.dropdownBackdrop} onClick={() => setShareOpen(false)} />
+                <div style={styles.dropdown}>
+                  <button
+                    type="button"
+                    style={styles.dropdownItem}
+                    onClick={() => {
+                      const token = localStorage.getItem('hnb_token')
+                      fetch(`/api/v1/notebooks/${id}/export`, { headers: { Authorization: `Bearer ${token}` } })
+                        .then(r => r.blob())
+                        .then(blob => {
+                          const url = URL.createObjectURL(blob)
+                          const a = document.createElement('a')
+                          a.href = url
+                          a.download = `${notebook.title}.ipynb`
+                          document.body.appendChild(a)
+                          a.click()
+                          document.body.removeChild(a)
+                          URL.revokeObjectURL(url)
+                          setShareOpen(false)
+                        })
+                    }}
+                  >
+                    Export (.ipynb)
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.dropdownItem}
+                    onClick={() => { window.open(`/notebooks/${id}/present`, '_blank'); setShareOpen(false) }}
+                  >
+                    Present mode
+                  </button>
+                  {notebook?.can_edit && (
+                    <>
+                      <div style={styles.dropdownSeparator} />
+                      <button
+                        type="button"
+                        style={styles.dropdownItem}
+                        onClick={() => { setShowPermissions(true); setShareOpen(false) }}
+                      >
+                        <Shield size={13} style={{ marginRight: 6 }} /> Permissions
+                      </button>
+                    </>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1517,6 +1559,53 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--bg-secondary)',
     border: '1px solid var(--text-muted)',
     color: 'var(--text-primary)',
+  },
+  dropdown: {
+    position: 'absolute' as const,
+    top: '100%',
+    right: 0,
+    marginTop: 4,
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+    zIndex: 100,
+    minWidth: 180,
+    padding: '4px 0',
+  },
+  dropdownBackdrop: {
+    position: 'fixed' as const,
+    inset: 0,
+    zIndex: 99,
+  },
+  dropdownItem: {
+    display: 'flex',
+    alignItems: 'center',
+    width: '100%',
+    padding: '6px 12px',
+    border: 'none',
+    background: 'none',
+    cursor: 'pointer',
+    fontSize: 13,
+    color: 'var(--text-primary)',
+    textAlign: 'left' as const,
+  },
+  dropdownItemActive: {
+    display: 'flex',
+    alignItems: 'center',
+    width: '100%',
+    padding: '6px 12px',
+    border: 'none',
+    background: 'var(--bg-secondary)',
+    cursor: 'pointer',
+    fontSize: 13,
+    color: 'var(--accent)',
+    textAlign: 'left' as const,
+  },
+  dropdownSeparator: {
+    height: 1,
+    background: 'var(--border-light)',
+    margin: '4px 0',
   },
 
   // ── Body / cells area ──
