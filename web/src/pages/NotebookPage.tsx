@@ -409,7 +409,7 @@ export function NotebookPage() {
     }
     el.addEventListener('scroll', handler, { passive: true })
     return () => el.removeEventListener('scroll', handler)
-  }, [id])
+  }, [id, notebook])
 
   const cellsEndRef = useRef<HTMLDivElement>(null)
 
