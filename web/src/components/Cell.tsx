@@ -109,8 +109,10 @@ export function updateCellFocus(notebookId: string, cellId: string | null) {
 export function updateCellScroll(notebookId: string, scrollTop: number | null) {
   const collab = collabCache.get(notebookId)
   if (!collab?.provider.awareness) return
+  const current = collab.provider.awareness.getLocalState()?.focus
+  if (current?.scrollTop === scrollTop) return
   collab.provider.awareness.setLocalStateField('focus', {
-    cellId: collab.provider.awareness.getLocalState()?.focus?.cellId ?? null,
+    cellId: current?.cellId ?? null,
     scrollTop,
     updatedAt: Date.now(),
   })
