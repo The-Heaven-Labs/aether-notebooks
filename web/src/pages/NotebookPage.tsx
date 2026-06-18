@@ -321,10 +321,14 @@ export function NotebookPage() {
       if (!following) return
       const states = awareness.getStates()
       for (const [, state] of states) {
-        if (state.user?.email === following.email && state.focus?.cellId) {
-          const el = document.getElementById('cell-' + state.focus.cellId)
-          if (el) {
-            el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        if (state.user?.email === following.email && state.focus) {
+          if (state.focus.scrollTop != null && cellsContainerRef.current) {
+            cellsContainerRef.current.scrollTop = state.focus.scrollTop
+          } else if (state.focus.cellId) {
+            const el = document.getElementById('cell-' + state.focus.cellId)
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            }
           }
           break
         }
