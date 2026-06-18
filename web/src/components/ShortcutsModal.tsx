@@ -14,8 +14,8 @@ interface Props {
 const NOTEBOOK_SHORTCUTS: ShortcutEntry[] = [
   { key: 'Enter', action: 'Enter edit mode (cursor at end)' },
   { key: 'Escape', action: 'Exit edit mode / close modal' },
-  { key: 'Shift+Enter', action: 'Run focused cell' },
-  { key: 'Ctrl+Enter (in editor)', action: 'Run cell' },
+  { key: 'Shift+Enter', action: 'Run cell and focus next' },
+  { key: 'Ctrl+Enter', action: 'Run cell and stay' },
   { key: 'J / ↓', action: 'Move focus down' },
   { key: 'K / ↑', action: 'Move focus up' },
   { key: 'Ctrl+↑', action: 'Move cell up' },
