@@ -3,11 +3,11 @@ import { getToken } from '../api/client'
 
 export function useNotebookWs(
   notebookId: string | undefined,
-  onCellOutput?: (cellId: string, outputs: Array<{ type: string; data: unknown }>) => void,
-  onCellMetadataChanged?: (cellId: string, metadata: Record<string, unknown>) => void,
-  onCellUpdated?: (cellId: string, updates: Record<string, unknown>) => void,
-  onCellCreated?: (cell: import('../types').Cell) => void,
-  onCellDeleted?: (cellId: string) => void,
+  onCellOutput?: (cellId: string, outputs: Array<{ type: string; data: unknown }>, userEmail?: string) => void,
+  onCellMetadataChanged?: (cellId: string, metadata: Record<string, unknown>, userEmail?: string) => void,
+  onCellUpdated?: (cellId: string, updates: Record<string, unknown>, userEmail?: string) => void,
+  onCellCreated?: (cell: import('../types').Cell, userEmail?: string) => void,
+  onCellDeleted?: (cellId: string, userEmail?: string) => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -41,9 +41,9 @@ export function useNotebookWs(
       try {
         const msg = JSON.parse(event.data)
         if (msg.type === 'cell_output' && onCellOutputRef.current) {
-          onCellOutputRef.current(msg.cell_id, msg.outputs)
+          onCellOutputRef.current(msg.cell_id, msg.outputs, msg.user_email)
         } else if (msg.type === 'cell_metadata_changed' && onCellMetadataChangedRef.current) {
-          onCellMetadataChangedRef.current(msg.cell_id, msg.metadata)
+          onCellMetadataChangedRef.current(msg.cell_id, msg.metadata, msg.user_email)
         } else if (msg.type === 'cell_updated' && onCellUpdatedRef.current) {
           const updates: Record<string, unknown> = {}
           for (const key of ['source', 'cell_type', 'language', 'source_visible', 'outputs_hidden', 'cell_collapsed', 'slide_break', 'title', 'description', 'slug', 'limit']) {
@@ -51,11 +51,11 @@ export function useNotebookWs(
               updates[key === 'cell_type' ? 'type' : key] = msg[key]
             }
           }
-          onCellUpdatedRef.current(msg.cell_id, updates)
+          onCellUpdatedRef.current(msg.cell_id, updates, msg.user_email)
         } else if (msg.type === 'cell_created' && onCellCreatedRef.current) {
-          onCellCreatedRef.current(msg.cell)
+          onCellCreatedRef.current(msg.cell, msg.user_email)
         } else if (msg.type === 'cell_deleted' && onCellDeletedRef.current) {
-          onCellDeletedRef.current(msg.cell_id)
+          onCellDeletedRef.current(msg.cell_id, msg.user_email)
         }
       } catch {
         // ignore non-JSON messages
