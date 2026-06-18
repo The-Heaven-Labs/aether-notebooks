@@ -409,7 +409,8 @@ export function NotebookPage() {
     }
     el.addEventListener('scroll', handler, { passive: true })
     return () => el.removeEventListener('scroll', handler)
-  }, [id, notebook])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, localCells.length])
 
   const cellsEndRef = useRef<HTMLDivElement>(null)
 
