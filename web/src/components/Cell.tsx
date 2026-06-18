@@ -12,7 +12,7 @@ import { tags } from '@lezer/highlight'
 import { format } from 'sql-formatter'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
-import { yCollab } from 'y-codemirror.next'
+import { yCollab, ySyncFacet, YSyncConfig } from 'y-codemirror.next'
 import { OutputRenderer } from './OutputRenderer'
 import { MarkdownView } from './MarkdownCell'
 import type { Cell, Connector } from '../types'
@@ -154,6 +154,7 @@ interface Props {
   metrics?: { connect_time_ms: number; query_time_ms: number; render_time_ms: number; total_time_ms: number }
   onUpdateCellMeta?: (cellId: string, updates: Partial<Pick<Cell, 'source_visible' | 'outputs_hidden' | 'cell_collapsed' | 'slide_break' | 'title' | 'slug' | 'limit'>>) => void
   onChartConfigChange?: (cellId: string, config: ChartConfig) => void
+  onViewModeChange?: (cellId: string, viewMode: 'table' | 'chart') => void
   onShowHistory?: (cellId: string) => void
   onFocus?: (cellId: string) => void
   onEditStart?: () => void
@@ -292,18 +293,21 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
     const attachCollab = () => {
       const editorContent = view.state.doc.toString()
       const yjsContent = ytext.toString()
-      if (yjsContent.length === 0) {
-        // Yjs is empty, initialize from editor (database source)
-        collab.doc.transact(() => ytext.insert(0, editorContent))
-      } else if (yjsContent !== editorContent) {
-        // Conflict: Yjs and editor differ. Database source (editor) is authoritative
-        // when it differs from Yjs — agent may have updated it directly.
+      const ySyncConfig = new YSyncConfig(ytext, collab.provider.awareness)
+      if (yjsContent.length === 0 || yjsContent !== editorContent) {
+        // Sync editor content into Yjs (database is authoritative), using the
+        // same config as origin so yCollab's observer ignores this change.
         collab.doc.transact(() => {
-          ytext.delete(0, ytext.length)
+          if (ytext.length > 0) ytext.delete(0, ytext.length)
           ytext.insert(0, editorContent)
-        })
+        }, ySyncConfig)
       }
-      view.dispatch({ effects: compartment.reconfigure(yCollab(ytext, collab.provider.awareness)) })
+      // Activate yCollab with our config last (overrides yCollab's internal one)
+      // so the observer's origin guard matches our transact origin above.
+      view.dispatch({ effects: compartment.reconfigure([
+        ...yCollab(ytext, collab.provider.awareness),
+        ySyncFacet.of(ySyncConfig),
+      ]) })
     }
 
     let onSynced: (({ state }: { state: boolean }) => void) | null = null
@@ -384,6 +388,7 @@ export const Cell = memo(function Cell({
   metrics,
   onUpdateCellMeta,
   onChartConfigChange,
+  onViewModeChange,
   onShowHistory,
   onFocus,
   onEditStart,
@@ -406,6 +411,11 @@ export const Cell = memo(function Cell({
   const handleChartConfigChange = useCallback(
     (cfg: ChartConfig) => onChartConfigChange?.(cell.id, cfg),
     [cell.id, onChartConfigChange],
+  )
+  const viewMode = cell.metadata?.viewMode as 'table' | 'chart' | undefined
+  const handleViewModeChange = useCallback(
+    (vm: 'table' | 'chart') => onViewModeChange?.(cell.id, vm),
+    [cell.id, onViewModeChange],
   )
 
   // ── Collapsed ───────────────────────────────────────────────────────────────
@@ -705,6 +715,8 @@ export const Cell = memo(function Cell({
             cellId={cell.id ?? undefined}
             chartConfig={chartConfig}
             onChartConfigChange={handleChartConfigChange}
+            viewMode={viewMode}
+            onViewModeChange={handleViewModeChange}
           />
         </div>
       )}
