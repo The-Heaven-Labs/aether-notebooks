@@ -13,7 +13,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Notebook, Cell, Output, Connector, Parameter, CellVersion, Dashboard, Widget } from '../types'
 import type { ChartConfig } from '../charts'
-import { Cell as NotebookCell, focusCellEditorEnd } from '../components/Cell'
+import { Cell as NotebookCell, focusCellEditorEnd, collabCache, updateCellScroll } from '../components/Cell'
 import { focusMarkdownCell } from '../components/MarkdownCell'
 import { ParametersBar } from '../components/ParametersBar'
 import { SchemaBrowser } from '../components/SchemaBrowser'
@@ -306,6 +306,40 @@ export function NotebookPage() {
       old ? { ...old, cells: old.cells.filter((c) => c.id !== cellId) } : old,
     )
   }, [id, qc]))
+
+  // Awareness: follow the followed user's focus
+  useEffect(() => {
+    if (!id) return
+    const collab = collabCache.get(id)
+    const awareness = collab?.provider.awareness
+    if (!awareness) return
+
+    const handler = () => {
+      if (!following) return
+      const states = awareness.getStates()
+      for (const [, state] of states) {
+        if (state.user?.email === following.email && state.focus?.cellId) {
+          const el = document.getElementById('cell-' + state.focus.cellId)
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          }
+          break
+        }
+      }
+    }
+    awareness.on('change', handler)
+    return () => awareness.off('change', handler)
+  }, [id, following])
+
+  // Awareness: broadcast who we're following
+  useEffect(() => {
+    if (!id) return
+    const collab = collabCache.get(id)
+    if (!collab?.provider.awareness) return
+    collab.provider.awareness.setLocalStateField('following', {
+      email: following?.email ?? null,
+    })
+  }, [id, following])
 
   const cellsEndRef = useRef<HTMLDivElement>(null)
 

@@ -64,7 +64,7 @@ interface NotebookCollab {
   refCount: number
   synced: boolean
 }
-const collabCache = new Map<string, NotebookCollab>()
+export const collabCache = new Map<string, NotebookCollab>()
 
 export function getOrCreateCollab(notebookId: string): NotebookCollab {
   const existing = collabCache.get(notebookId)
@@ -93,6 +93,26 @@ export function getOrCreateCollab(notebookId: string): NotebookCollab {
   provider.on('synced', ({ state }: { state: boolean }) => { if (state) entry.synced = true })
   collabCache.set(notebookId, entry)
   return entry
+}
+
+export function updateCellFocus(notebookId: string, cellId: string | null) {
+  const collab = collabCache.get(notebookId)
+  if (!collab?.provider.awareness) return
+  collab.provider.awareness.setLocalStateField('focus', {
+    cellId,
+    scrollTop: null,
+    updatedAt: Date.now(),
+  })
+}
+
+export function updateCellScroll(notebookId: string, scrollTop: number | null) {
+  const collab = collabCache.get(notebookId)
+  if (!collab?.provider.awareness) return
+  collab.provider.awareness.setLocalStateField('focus', {
+    cellId: collab.provider.awareness.getLocalState()?.focus?.cellId ?? null,
+    scrollTop,
+    updatedAt: Date.now(),
+  })
 }
 
 function releaseCollab(notebookId: string) {
