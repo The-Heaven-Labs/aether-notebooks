@@ -340,6 +340,36 @@ export function NotebookPage() {
     return () => awareness.off('change', handler)
   }, [id, following, collabVersion])
 
+  // Poll awareness states when following (belt-and-suspenders for change events)
+  useEffect(() => {
+    if (!following || !id) return
+    const c = collabCache.get(id)
+    const awareness = c?.provider?.awareness
+    if (!awareness) return
+
+    const check = () => {
+      if (!following) return
+      const states = awareness.getStates()
+      for (const [, state] of states) {
+        if (state.user?.email === following.email && state.focus) {
+          if (state.focus.scrollTop != null && cellsContainerRef.current) {
+            cellsContainerRef.current.scrollTop = state.focus.scrollTop
+          } else if (state.focus.cellId) {
+            const el = document.getElementById('cell-' + state.focus.cellId)
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            }
+          }
+          break
+        }
+      }
+    }
+
+    check()
+    const timer = setInterval(check, 800)
+    return () => clearInterval(timer)
+  }, [id, following, collabVersion])
+
   // Awareness: broadcast who we're following
   useEffect(() => {
     if (!id) return
@@ -348,7 +378,7 @@ export function NotebookPage() {
     collab.provider.awareness.setLocalStateField('following', {
       email: following?.email ?? null,
     })
-  }, [id, following])
+  }, [id, following, collabVersion])
 
   // Escape key unfollow
   useEffect(() => {
