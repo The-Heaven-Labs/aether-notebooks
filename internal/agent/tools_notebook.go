@@ -301,9 +301,10 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 		// Broadcast to all notebook viewers via WebSocket
 		if ctx.BroadcastFunc != nil {
 			ctx.BroadcastFunc(notebookID, map[string]any{
-				"type":    "cell_updated",
-				"cell_id": req.CellID,
-				"source":  req.Source,
+				"type":       "cell_updated",
+				"cell_id":    req.CellID,
+				"source":     req.Source,
+				"user_email": "agent@hnb",
 			})
 		}
 

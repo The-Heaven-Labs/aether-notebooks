@@ -100,9 +100,10 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 				json.Unmarshal(updatedMetadata, &metadataMap)
 			}
 			ctx.BroadcastFunc(notebookID, map[string]any{
-				"type":     "cell_metadata_changed",
-				"cell_id":  req.CellID,
-				"metadata": metadataMap,
+				"type":       "cell_metadata_changed",
+				"cell_id":    req.CellID,
+				"metadata":   metadataMap,
+				"user_email": "agent@hnb",
 			})
 		}
 
