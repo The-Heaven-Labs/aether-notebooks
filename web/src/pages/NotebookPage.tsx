@@ -355,6 +355,26 @@ export function NotebookPage() {
     return () => window.removeEventListener('keydown', handler)
   }, [following])
 
+  const cellsContainerRef = useRef<HTMLDivElement>(null)
+
+  // Throttled scroll tracking
+  useEffect(() => {
+    const el = cellsContainerRef.current
+    if (!el || !id) return
+    let ticking = false
+    const handler = () => {
+      if (!ticking) {
+        requestAnimationFrame(() => {
+          updateCellScroll(id, el.scrollTop)
+          ticking = false
+        })
+        ticking = true
+      }
+    }
+    el.addEventListener('scroll', handler, { passive: true })
+    return () => el.removeEventListener('scroll', handler)
+  }, [id])
+
   const cellsEndRef = useRef<HTMLDivElement>(null)
 
   // Add-to-dashboard modal
@@ -1212,7 +1232,7 @@ export function NotebookPage() {
           />
         )}
         <div style={styles.mainColumn}>
-          <div style={styles.cellsArea}>
+          <div ref={cellsContainerRef} style={styles.cellsArea}>
             <div style={styles.bodyInner}>
               <div style={styles.cells}>
                 {!readOnly && (
