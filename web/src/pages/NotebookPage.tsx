@@ -203,6 +203,8 @@ export function NotebookPage() {
     return () => clearInterval(id)
   }, [])
   const [isEditingCell, setIsEditingCell] = useState(false)
+  const autoFocusCellRef = useRef(false)
+  const pendingExecRef = useRef(new Set<string>())
   const [historyCell, setHistoryCell] = useState<string | null>(null)
   const [historyVersions, setHistoryVersions] = useState<CellVersion[]>([])
   const [showAgent, setShowAgent] = useState(() => {
@@ -256,12 +258,16 @@ export function NotebookPage() {
       return next
     })
     setCellRunAt((prev) => ({ ...prev, [cellId]: new Date() }))
-    flashCell(cellId)
+    if (!pendingExecRef.current.has(cellId)) {
+      flashCell(cellId)
+    }
   }, []), useCallback((cellId: string, metadata: Record<string, unknown>) => {
     setLocalCells((prev) =>
       prev.map((c) => (c.id === cellId ? { ...c, metadata } : c)),
     )
-    flashCell(cellId)
+    if (!pendingExecRef.current.has(cellId)) {
+      flashCell(cellId)
+    }
   }, []), useCallback((cellId: string, updates: Record<string, unknown>) => {
     // cell_updated event received — apply all broadcast fields to local cache
     if (Object.keys(updates).length > 0) {
@@ -274,7 +280,9 @@ export function NotebookPage() {
     } else {
       qc.invalidateQueries({ queryKey: ['notebook', id] })
     }
-    flashCell(cellId)
+    if (!pendingExecRef.current.has(cellId)) {
+      flashCell(cellId)
+    }
   }, [id, qc]), useCallback((cell: Cell) => {
     setLocalCells((prev) => {
       if (prev.some((c) => c.id === cell.id)) return prev
@@ -284,7 +292,9 @@ export function NotebookPage() {
       if (!old || old.cells.some((c) => c.id === cell.id)) return old
       return { ...old, cells: [...old.cells, cell].sort((a, b) => a.position - b.position) }
     })
-    flashCell(cell.id)
+    if (!pendingExecRef.current.has(cell.id)) {
+      flashCell(cell.id)
+    }
   }, [id, qc]), useCallback((cellId: string) => {
     setLocalCells((prev) => prev.filter((c) => c.id !== cellId))
     qc.setQueryData<NotebookWithCells>(['notebook', id], (old) =>
@@ -394,6 +404,10 @@ export function NotebookPage() {
         const el = document.getElementById('cell-' + cell.id)
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
       }, 100)
+      if (autoFocusCellRef.current) {
+        autoFocusCellRef.current = false
+        setFocusedCellId(cell.id)
+      }
     },
     onError: (err: Error) => setMutationError(err.message),
   })
@@ -657,6 +671,7 @@ export function NotebookPage() {
       await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { source: cell.source })
 
       setRunningCells((s) => new Set(s).add(cellId))
+      pendingExecRef.current.add(cellId)
       try {
         const result = await api.post<{ outputs: Output[]; metrics?: { connect_time_ms: number; query_time_ms: number; render_time_ms: number; total_time_ms: number } }>(
           `/api/v1/notebooks/${id}/cells/${cellId}/execute`,
@@ -674,6 +689,7 @@ export function NotebookPage() {
           ),
         )
       } finally {
+        setTimeout(() => pendingExecRef.current.delete(cellId), 3000)
         setRunningCells((s) => {
           const next = new Set(s)
           next.delete(cellId)
@@ -740,6 +756,22 @@ export function NotebookPage() {
   useNotebookKeyboardShortcuts(
     {
       runFocusedCell: () => { if (focusedCellId) saveAndRun(focusedCellId) },
+      runFocusedCellAndAdvance: () => {
+        if (!focusedCellId) return
+        const cellId = focusedCellId
+        const idx = localCells.findIndex((c) => c.id === cellId)
+        if (idx < localCells.length - 1) {
+          const nextId = localCells[idx + 1].id
+          setFocusedCellId(nextId)
+          saveAndRun(cellId).then(() => requestAnimationFrame(() => {
+            const el = document.getElementById('cell-' + nextId)
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }))
+        } else {
+          saveAndRun(cellId)
+          createCell.mutate({ type: 'code', position: localCells[idx].position + 1 })
+        }
+      },
       addCellBelow: () => {
         const idx = localCells.findIndex((c) => c.id === focusedCellId)
         const pos = idx >= 0 ? localCells[idx].position + 1 : undefined

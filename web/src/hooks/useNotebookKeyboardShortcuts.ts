@@ -3,6 +3,7 @@ import { isAnyDetailActive } from '../components/OutputRenderer'
 
 export interface ShortcutActions {
   runFocusedCell: () => void
+  runFocusedCellAndAdvance: () => void
   addCellBelow: () => void
   addCellAbove: () => void
   deleteFocusedCell: () => void
@@ -55,8 +56,11 @@ export function useNotebookKeyboardShortcuts(
         return
       }
 
-      // Shift+Enter → run cell
-      if (e.shiftKey && e.key === 'Enter') { e.preventDefault(); actions.runFocusedCell(); return }
+      // Shift+Enter → run cell and advance to next
+      if (e.shiftKey && e.key === 'Enter') { e.preventDefault(); actions.runFocusedCellAndAdvance(); return }
+
+      // Ctrl+Enter → run cell, stay on current
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); actions.runFocusedCell(); return }
 
       // Ctrl+Up/Down → move cell up/down (skip if detail panel is open)
       if (!inDetailPanel && (e.ctrlKey || e.metaKey) && e.key === 'ArrowUp') {
