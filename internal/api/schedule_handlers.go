@@ -57,6 +57,11 @@ func (s *Server) handleCreateSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "edit"); err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions to schedule this notebook")
+		return
+	}
+
 	if req.ParameterOverrides == nil {
 		req.ParameterOverrides = map[string]string{}
 	}
@@ -107,6 +112,11 @@ func (s *Server) handleListSchedules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "view"); err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, notebook_id, cron_expression, parameter_overrides, enabled, last_run_at, next_run_at, created_at, updated_at
 		 FROM schedules WHERE notebook_id = $1 ORDER BY created_at DESC`,
@@ -149,17 +159,25 @@ func (s *Server) handleDeleteSchedule(w http.ResponseWriter, r *http.Request) {
 	schedID := r.PathValue("id")
 	ctx := r.Context()
 
-	result, err := s.db.Pool.Exec(ctx,
-		`DELETE FROM schedules WHERE id = $1
+	var nbID string
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT notebook_id FROM schedules WHERE id = $1
 		 AND notebook_id IN (SELECT id FROM notebooks WHERE org_id = $2)`,
 		schedID, claims.OrgID,
-	)
+	).Scan(&nbID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "delete failed")
+		writeError(w, http.StatusNotFound, "schedule not found")
 		return
 	}
-	if result.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "schedule not found")
+
+	if allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "edit"); err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
+	_, err = s.db.Pool.Exec(ctx, `DELETE FROM schedules WHERE id = $1`, schedID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delete failed")
 		return
 	}
 
@@ -193,6 +211,23 @@ func (s *Server) handleUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+
+	var nbID string
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT notebook_id FROM schedules WHERE id = $1
+		 AND notebook_id IN (SELECT id FROM notebooks WHERE org_id = $2)`,
+		schedID, claims.OrgID,
+	).Scan(&nbID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "schedule not found")
+		return
+	}
+
+	if allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "edit"); err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
 	query := "UPDATE schedules SET updated_at = NOW()"
 	args := []any{}
 	argN := 1
@@ -220,15 +255,15 @@ func (s *Server) handleUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query += fmt.Sprintf(
-		` WHERE id = $%d AND notebook_id IN (SELECT id FROM notebooks WHERE org_id = $%d)`,
-		argN, argN+1,
+		` WHERE id = $%d`,
+		argN,
 	)
-	args = append(args, schedID, claims.OrgID)
+	args = append(args, schedID)
 	query += " RETURNING id, notebook_id, cron_expression, parameter_overrides, enabled, last_run_at, next_run_at, created_at, updated_at"
 
 	var sched models.Schedule
 	var overridesOut []byte
-	err := s.db.Pool.QueryRow(ctx, query, args...).Scan(
+	err = s.db.Pool.QueryRow(ctx, query, args...).Scan(
 		&sched.ID, &sched.NotebookID, &sched.CronExpression, &overridesOut,
 		&sched.Enabled, &sched.LastRunAt, &sched.NextRunAt, &sched.CreatedAt, &sched.UpdatedAt,
 	)
@@ -281,6 +316,12 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
+
+	if allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", sched.NotebookID, "view"); err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
 	json.Unmarshal(overridesOut, &sched.ParameterOverrides)
 	writeJSON(w, http.StatusOK, sched)
 }

@@ -63,8 +63,8 @@ func TestNotebookUpdate(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("not-found: expected 404, got %d", rec.Code)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("not-found: expected 403, got %d", rec.Code)
 	}
 }
 

@@ -350,6 +350,12 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 	agentID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
 
+	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "view")
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
 	var req struct {
 		NotebookID string  `json:"notebook_id"`
 		MaxTurns   int     `json:"max_turns"`
@@ -378,7 +384,7 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 	if req.NotebookID != "" {
 		notebookID = &req.NotebookID
 	}
-	_, err := h.server.db.Pool.Exec(r.Context(), `
+	_, err = h.server.db.Pool.Exec(r.Context(), `
 		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, max_tokens, title, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
 	`, sessionID, agentID, notebookID, claims.UserID, req.MaxTurns, req.MaxTokens, req.Title)
