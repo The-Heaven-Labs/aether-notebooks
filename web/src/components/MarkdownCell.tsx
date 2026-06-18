@@ -5,7 +5,7 @@ import rehypeRaw from 'rehype-raw'
 import { Loader2, Link, Heading, Code, Maximize2 } from 'lucide-react'
 import { getToken } from '../api/client'
 import type { Cell } from '../types'
-import { slugify } from './Cell'
+import { slugify, updateCellFocus } from './Cell'
 import { ImageViewer } from './ImageViewer'
 
 const markdownEditCallbacks = new Map<string, () => void>()
@@ -444,11 +444,12 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave, onEditS
           el.style.height = el.scrollHeight + 'px'
           updateSource(e.target.value)
         }}
-        onBlur={(e) => blurEditor(e.target.value)}
+        onBlur={(e) => { blurEditor(e.target.value); updateCellFocus(notebookId, null) }}
         onPaste={handlePaste}
         onFocus={() => {
           setIsFocused(true)
           onEditStart?.()
+          updateCellFocus(notebookId, cell.id)
           const el = textareaRef.current
           if (el) {
             el.style.height = 'auto'
