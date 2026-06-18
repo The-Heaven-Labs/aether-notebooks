@@ -248,6 +248,11 @@ func (h *modelConfigHandlers) handleTest(w http.ResponseWriter, r *http.Request)
 	cfgID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
 
+	if allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "model_config", cfgID, "view"); err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
 	var mc models.ModelConfig
 	var apiKeyEncrypted []byte
 	var defaultParams []byte

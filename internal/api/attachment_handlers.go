@@ -143,6 +143,11 @@ func (s *Server) handleListAttachments(w http.ResponseWriter, r *http.Request) {
 	nbID := r.PathValue("notebook_id")
 	ctx := r.Context()
 
+	if allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "view"); err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, filename, mime_type, size_bytes, created_at FROM attachments
 		 WHERE notebook_id = $1 AND org_id = $2 ORDER BY created_at DESC`,
@@ -185,17 +190,18 @@ func (s *Server) handleDeleteAttachment(w http.ResponseWriter, r *http.Request) 
 	attID := r.PathValue("id")
 	ctx := r.Context()
 
-	var exists bool
+	var nbID string
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT true FROM attachments WHERE id = $1 AND org_id = $2`,
+		`SELECT COALESCE(notebook_id::text, '') FROM attachments WHERE id = $1 AND org_id = $2`,
 		attID, claims.OrgID,
-	).Scan(&exists)
-	if err == pgx.ErrNoRows || !exists {
+	).Scan(&nbID)
+	if err != nil || nbID == "" {
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return
 	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db error")
+
+	if allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "edit"); err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
 	}
 

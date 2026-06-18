@@ -17,16 +17,18 @@ const claimsKey contextKey = "claims"
 
 const adminModeKey contextKey = "admin_mode"
 
+// adminModeFromContext returns whether admin mode is enabled.
+// Defaults to false (admin mode OFF) unless explicitly set.
 func adminModeFromContext(ctx context.Context) bool {
 	if ctx == nil {
-		return true
+		return false
 	}
 	v := ctx.Value(adminModeKey)
 	if v == nil {
-		return true
+		return false
 	}
 	enabled, ok := v.(bool)
-	return !ok || enabled
+	return ok && enabled
 }
 
 func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool) func(http.Handler) http.Handler {
@@ -154,3 +156,5 @@ func RequireRole(role string) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+

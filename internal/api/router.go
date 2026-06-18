@@ -300,7 +300,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/mcp-servers/{id}", authMW(http.HandlerFunc(mh.handleGet)))
 	s.mux.Handle("PUT /api/v1/mcp-servers/{id}", authMW(RequireRole("admin")(http.HandlerFunc(mh.handleUpdate))))
 	s.mux.Handle("DELETE /api/v1/mcp-servers/{id}", authMW(RequireRole("admin")(http.HandlerFunc(mh.handleDelete))))
-	s.mux.Handle("POST /api/v1/mcp-servers/{id}/test", authMW(http.HandlerFunc(mh.handleTestMCPServer)))
+	s.mux.Handle("POST /api/v1/mcp-servers/{id}/test", authMW(RequireRole("admin")(http.HandlerFunc(mh.handleTestMCPServer))))
 
 	// Agent WebSocket route
 	s.mux.Handle("GET /api/v1/ws/agents/{session_id}", authMW(http.HandlerFunc(s.handleAgentWS)))
