@@ -296,6 +296,9 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
           compartment.of([]),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) onSourceChangeRef.current(cell.id, update.state.doc.toString())
+            if (update.focusChanged) {
+              updateCellFocus(notebookId, update.view.hasFocus ? cell.id : null)
+            }
           }),
         ],
       }),
