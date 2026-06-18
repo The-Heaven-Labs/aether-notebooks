@@ -312,9 +312,8 @@ export function NotebookPage() {
 
   // Awareness: follow the followed user's focus
   useEffect(() => {
-    if (!id) return
-    const collab = collabCache.get(id)
-    const awareness = collab?.provider.awareness
+    const c = id ? collabCache.get(id) : undefined
+    const awareness = c?.provider?.awareness
     if (!awareness) return
 
     const handler = () => {
@@ -334,9 +333,11 @@ export function NotebookPage() {
         }
       }
     }
+
+    handler()
     awareness.on('change', handler)
     return () => awareness.off('change', handler)
-  }, [id, following])
+  }, [id, following, collab])
 
   // Awareness: broadcast who we're following
   useEffect(() => {
