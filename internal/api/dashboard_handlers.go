@@ -314,6 +314,12 @@ func (s *Server) handleGetDashboardPermissions(w http.ResponseWriter, r *http.Re
 	dashID := r.PathValue("id")
 	ctx := r.Context()
 
+	var dashOrgID string
+	if err := s.db.Pool.QueryRow(ctx, "SELECT org_id FROM dashboards WHERE id=$1", dashID).Scan(&dashOrgID); err != nil || dashOrgID != claims.OrgID {
+		writeError(w, http.StatusNotFound, "dashboard not found")
+		return
+	}
+
 	viewOK, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "view")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "permission check failed")

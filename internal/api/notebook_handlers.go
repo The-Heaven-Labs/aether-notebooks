@@ -268,12 +268,13 @@ func (s *Server) handleGetNotebookPermissions(w http.ResponseWriter, r *http.Req
 	nbID := r.PathValue("id")
 	ctx := r.Context()
 
-	viewOK, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "view")
-	if err != nil || !viewOK {
-		writeError(w, http.StatusForbidden, "insufficient permissions")
+	var notebookOrgID string
+	if err := s.db.Pool.QueryRow(ctx, "SELECT org_id FROM notebooks WHERE id=$1", nbID).Scan(&notebookOrgID); err != nil || notebookOrgID != claims.OrgID {
+		writeError(w, http.StatusNotFound, "notebook not found")
 		return
 	}
 
+	_, _ = s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "view")
 	editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "edit")
 	runOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "run")
 
@@ -440,6 +441,11 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleExportNotebook(w http.ResponseWriter, r *http.Request) {
 	notebookID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
+
+	if allowed, err := s.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "notebook", notebookID, "view"); err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
 
 	var title string
 	err := s.db.Pool.QueryRow(r.Context(), `SELECT title FROM notebooks WHERE id = $1 AND org_id = $2`, notebookID, claims.OrgID).Scan(&title)

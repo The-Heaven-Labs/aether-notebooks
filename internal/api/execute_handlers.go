@@ -81,6 +81,12 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check "run" permission on the notebook
+	if allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "run"); err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions to execute cells in this notebook")
+		return
+	}
+
 	// Notebook connector fallback: if cell has no connector, try the notebook's connector
 	if cell.ConnectorID == "" {
 		var nbConnID *string

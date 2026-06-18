@@ -714,6 +714,11 @@ func (s *Server) handleGetFolderAncestors(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", folderID, "view"); err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
 	// Recursive CTE: start from folder itself (depth=0), walk up via parent_id
 	// ORDER BY depth DESC gives root first, leaf last
 	rows, err := s.db.Pool.Query(ctx,

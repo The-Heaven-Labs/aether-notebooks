@@ -60,9 +60,18 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 	}
 	everyoneRows.Close()
 
-	// Org admins bypass ACLs when admin mode is enabled
+	// Org admins bypass ACLs when admin mode is enabled — scoped to their org
 	if orgRole == "admin" && adminModeFromContext(ctx) {
-		return true, nil
+		var resourceOrgID string
+		if resourceType == "folder" {
+			s.db.Pool.QueryRow(ctx, "SELECT org_id FROM folders WHERE id=$1", resourceID).Scan(&resourceOrgID)
+		} else if table, ok := resourceTable[resourceType]; ok {
+			q := fmt.Sprintf("SELECT org_id FROM %s WHERE id=$1", table)
+			s.db.Pool.QueryRow(ctx, q, resourceID).Scan(&resourceOrgID)
+		}
+		if resourceOrgID == orgID {
+			return true, nil
+		}
 	}
 
 	// 2. ACL entries directly on the resource (specificity = -1)
