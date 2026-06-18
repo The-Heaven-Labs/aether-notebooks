@@ -487,7 +487,7 @@ export const Cell = memo(function Cell({
         }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      onClick={() => onFocus?.(cell.id)}
+      onClick={() => { onFocus?.(cell.id); updateCellFocus(notebookId, cell.id) }}
     >
       {/* ── Meta bar ── */}
       <div style={{
