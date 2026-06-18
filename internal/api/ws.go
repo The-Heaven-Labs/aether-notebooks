@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -56,6 +57,15 @@ func (h *Hub) Broadcast(notebookID string, msg interface{}) {
 
 func (s *Server) Hub() *Hub {
 	return s.hub
+}
+
+func (s *Server) userEmail(ctx context.Context, userID string) string {
+	var email string
+	err := s.db.Pool.QueryRow(ctx, "SELECT email FROM users WHERE id = $1", userID).Scan(&email)
+	if err != nil {
+		return userID
+	}
+	return email
 }
 
 func (s *Server) handleNotebookWS(w http.ResponseWriter, r *http.Request) {
