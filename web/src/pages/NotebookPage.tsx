@@ -23,6 +23,7 @@ import { HistoryPanel } from '../components/HistoryPanel'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { AgentPanel } from '../components/AgentPanel'
+import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { useNotebookWs } from '../hooks/useNotebookWs'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { PermissionsPanel } from '../components/PermissionsPanel'
@@ -342,6 +343,17 @@ export function NotebookPage() {
       email: following?.email ?? null,
     })
   }, [id, following])
+
+  // Escape key unfollow
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && following) {
+        setFollowing(null)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [following])
 
   const cellsEndRef = useRef<HTMLDivElement>(null)
 
@@ -883,6 +895,8 @@ export function NotebookPage() {
 
   const runningCount = runningCells.size
   const schemaConnectorId = notebookConnectorId || null
+  const userEmail = localStorage.getItem('hnb_user_email') ?? ''
+  const collab = useMemo(() => id ? collabCache.get(id) : null, [id])
 
   if (isLoading) return (
     <AppShell noPadding>
@@ -1023,6 +1037,21 @@ export function NotebookPage() {
               Running {runningCount} cell{runningCount > 1 ? 's' : ''}…
             </span>
           )}
+          <CollaboratorAvatars
+            provider={collab?.provider}
+            currentUserEmail={userEmail}
+            following={following}
+            onFollow={(c) => setFollowing({ email: c.email, name: c.name })}
+            onUnfollow={() => setFollowing(null)}
+            showAgent={showAgent}
+            onFollowAgent={() => {
+              if (following?.email === 'agent@hnb') {
+                setFollowing(null)
+              } else {
+                setFollowing({ email: 'agent@hnb', name: 'AI Agent' })
+              }
+            }}
+          />
         </div>
         <div style={styles.toolbarRight}>
           {/* View dropdown */}
