@@ -36,21 +36,23 @@ interface Props {
   chartConfig?: ChartConfig
   onChartConfigChange?: (config: ChartConfig) => void
   hideExport?: boolean
+  viewMode?: 'table' | 'chart'
+  onViewModeChange?: (viewMode: 'table' | 'chart') => void
 }
 
-export const OutputRenderer = memo(function OutputRenderer({ outputs, fixedView, cellId, chartConfig, onChartConfigChange, hideExport }: Props) {
+export const OutputRenderer = memo(function OutputRenderer({ outputs, fixedView, cellId, chartConfig, onChartConfigChange, hideExport, viewMode, onViewModeChange }: Props) {
   if (!outputs || outputs.length === 0) return null
 
   return (
     <div style={styles.container}>
       {outputs.map((out, i) => (
-        <OutputItem key={i} output={out} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} hideExport={hideExport} />
+        <OutputItem key={i} output={out} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} hideExport={hideExport} viewMode={viewMode} onViewModeChange={onViewModeChange} />
       ))}
     </div>
   )
 })
 
-function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChange, hideExport }: { output: Output; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; hideExport?: boolean }) {
+function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChange, hideExport, viewMode, onViewModeChange }: { output: Output; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void }) {
   if (output.type === 'error') {
     return (
       <div style={styles.errorWrap}>
@@ -67,7 +69,7 @@ function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChang
   if (output.type === 'table') {
     const rs = output.data as ResultSet
     if (!rs?.columns?.length) return <p style={styles.empty}>No results returned</p>
-    return <TableOutput rs={rs} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} hideExport={hideExport} />
+    return <TableOutput rs={rs} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} hideExport={hideExport} viewMode={viewMode} onViewModeChange={onViewModeChange} />
   }
 
   return null
@@ -277,12 +279,12 @@ function exportJSON(rs: ResultSet): void {
   URL.revokeObjectURL(url)
 }
 
-const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange, hideExport }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; hideExport?: boolean }) {
+const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange, hideExport, viewMode, onViewModeChange }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void }) {
   const storageKey = cellId ? `hnb_cell_view_${cellId}` : null
   const hasChartConfig = !!chartConfig?.chartType
   const [view, setView] = useState<'table' | 'chart'>(() => {
     if (fixedView) return fixedView
-    // If chart config was set (by agent or user), default to chart view
+    if (viewMode) return viewMode
     if (hasChartConfig) return 'chart'
     if (storageKey) {
       const saved = localStorage.getItem(storageKey)
@@ -290,6 +292,12 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
     }
     return 'table'
   })
+  // Sync when viewMode changes from broadcast
+  useEffect(() => {
+    if (viewMode && viewMode !== view) {
+      setView(viewMode)
+    }
+  }, [viewMode])
   const [outputHeight, setOutputHeight] = useState(OUTPUT_DEFAULT_HEIGHT)
   const dragStartY = useRef<number | null>(null)
   const dragStartHeight = useRef<number>(OUTPUT_DEFAULT_HEIGHT)
@@ -334,6 +342,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
   const handleViewChange = (v: 'table' | 'chart') => {
     setView(v)
     if (storageKey) localStorage.setItem(storageKey, v)
+    onViewModeChange?.(v)
   }
 
   const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
