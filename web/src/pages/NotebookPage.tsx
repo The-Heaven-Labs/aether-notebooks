@@ -145,6 +145,7 @@ function SortableCellWrapper({ children, id }: { children: React.ReactNode; id: 
 export function NotebookPage() {
   const { id } = useParams<{ id: string }>()
   const qc = useQueryClient()
+  const [collabVersion, setCollabVersion] = useState(0)
   const [runningCells, setRunningCells] = useState<Set<string>>(new Set())
   const [localCells, setLocalCells] = useState<Cell[]>([])
   const [editingTitle, setEditingTitle] = useState(false)
@@ -337,7 +338,7 @@ export function NotebookPage() {
     handler()
     awareness.on('change', handler)
     return () => awareness.off('change', handler)
-  }, [id, following, collab])
+  }, [id, following, collabVersion])
 
   // Awareness: broadcast who we're following
   useEffect(() => {
@@ -924,10 +925,12 @@ export function NotebookPage() {
   const [collab, setCollab] = useState<NotebookCollab | null>(null)
   useEffect(() => {
     if (!id) { setCollab(null); return }
-    setCollab(collabCache.get(id) ?? null)
+    const initial = collabCache.get(id)
+    setCollab(initial ?? null)
+    if (initial) setCollabVersion(v => v + 1)
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail
-      if (detail.notebookId === id) setCollab(collabCache.get(id) ?? null)
+      if (detail.notebookId === id) { setCollab(collabCache.get(id) ?? null); setCollabVersion(v => v + 1) }
     }
     window.addEventListener('hnb-collab', handler)
     return () => window.removeEventListener('hnb-collab', handler)
