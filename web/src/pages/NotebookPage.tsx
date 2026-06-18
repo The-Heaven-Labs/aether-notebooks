@@ -13,7 +13,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Notebook, Cell, Output, Connector, Parameter, CellVersion, Dashboard, Widget } from '../types'
 import type { ChartConfig } from '../charts'
-import { Cell as NotebookCell, focusCellEditorEnd, collabCache, updateCellScroll } from '../components/Cell'
+import { Cell as NotebookCell, focusCellEditorEnd, collabCache, updateCellScroll, type NotebookCollab } from '../components/Cell'
 import { focusMarkdownCell } from '../components/MarkdownCell'
 import { ParametersBar } from '../components/ParametersBar'
 import { SchemaBrowser } from '../components/SchemaBrowser'
@@ -916,7 +916,17 @@ export function NotebookPage() {
   const runningCount = runningCells.size
   const schemaConnectorId = notebookConnectorId || null
   const userEmail = localStorage.getItem('hnb_user_email') ?? ''
-  const collab = useMemo(() => id ? collabCache.get(id) : null, [id])
+  const [collab, setCollab] = useState<NotebookCollab | null>(null)
+  useEffect(() => {
+    if (!id) { setCollab(null); return }
+    setCollab(collabCache.get(id) ?? null)
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (detail.notebookId === id) setCollab(collabCache.get(id) ?? null)
+    }
+    window.addEventListener('hnb-collab', handler)
+    return () => window.removeEventListener('hnb-collab', handler)
+  }, [id])
 
   if (isLoading) return (
     <AppShell noPadding>

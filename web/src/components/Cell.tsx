@@ -58,7 +58,7 @@ const sqlHighlight = HighlightStyle.define([
 
 const RELAY_URL = import.meta.env.VITE_RELAY_URL || 'ws://localhost:3001'
 
-interface NotebookCollab {
+export interface NotebookCollab {
   doc: Y.Doc
   provider: HocuspocusProvider
   refCount: number
@@ -92,6 +92,7 @@ export function getOrCreateCollab(notebookId: string): NotebookCollab {
   const entry: NotebookCollab = { doc, provider, refCount: 1, synced: false }
   provider.on('synced', ({ state }: { state: boolean }) => { if (state) entry.synced = true })
   collabCache.set(notebookId, entry)
+  window.dispatchEvent(new CustomEvent('hnb-collab', { detail: { notebookId } }))
   return entry
 }
 
