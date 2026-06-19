@@ -10,7 +10,7 @@ import (
 )
 
 func TestExecuteCell_Vulnerability(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	// Create a connector via adminA (admin role required for connector creation)
@@ -91,7 +91,7 @@ func TestExecuteCell_Vulnerability(t *testing.T) {
 }
 
 func TestExecuteCell_NoConnectorUse(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	// Create a connector with NO ACL for aliceA

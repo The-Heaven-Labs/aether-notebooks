@@ -10,7 +10,7 @@ import (
 // ——— LIST ORGS ———
 
 func TestAdminRoute_ListOrgs(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
@@ -35,7 +35,7 @@ func TestAdminRoute_ListOrgs(t *testing.T) {
 // ——— LIST USERS ———
 
 func TestAdminRoute_ListUsers(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
@@ -60,7 +60,7 @@ func TestAdminRoute_ListUsers(t *testing.T) {
 // ——— UPDATE USER ———
 
 func TestAdminRoute_UpdateUser(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("platAdmin promotes aliceA — 200", func(t *testing.T) {

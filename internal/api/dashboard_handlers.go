@@ -261,9 +261,9 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 
 	type dashboardWithWidgets struct {
 		models.Dashboard
-		Widgets         []models.Widget            `json:"widgets"`
-		WidgetsData     map[string]widgetCellData  `json:"widgets_data,omitempty"`
-		CanViewWithData bool                       `json:"can_view_with_data"`
+		Widgets         []models.Widget           `json:"widgets"`
+		WidgetsData     map[string]widgetCellData `json:"widgets_data,omitempty"`
+		CanViewWithData bool                      `json:"can_view_with_data"`
 	}
 
 	resp := dashboardWithWidgets{
@@ -343,9 +343,9 @@ func (s *Server) handleGetDashboardPermissions(w http.ResponseWriter, r *http.Re
 	viewWithDataOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "view_with_data")
 
 	writeJSON(w, http.StatusOK, map[string]bool{
-		"can_edit":          editOK,
-		"can_delete":        deleteOK,
-		"can_share":         shareOK,
+		"can_edit":           editOK,
+		"can_delete":         deleteOK,
+		"can_share":          shareOK,
 		"can_view_with_data": viewWithDataOK,
 	})
 }

@@ -11,7 +11,7 @@ import (
 // ——— LIST ———
 
 func TestConnector_List(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
@@ -65,7 +65,7 @@ func TestConnector_List(t *testing.T) {
 // ——— GET ———
 
 func TestConnector_Get(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200 (admin bypass)", func(t *testing.T) {
@@ -105,7 +105,7 @@ func TestConnector_Get(t *testing.T) {
 // ——— CREATE ———
 
 func TestConnector_Create(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	body := map[string]any{
@@ -139,7 +139,7 @@ func TestConnector_Create(t *testing.T) {
 // ——— UPDATE ———
 
 func TestConnector_Update(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200", func(t *testing.T) {
@@ -178,7 +178,7 @@ func TestConnector_Update(t *testing.T) {
 // ——— DELETE ———
 
 func TestConnector_Delete(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 204", func(t *testing.T) {
@@ -202,7 +202,7 @@ func TestConnector_Delete(t *testing.T) {
 // ——— TEST CONFIG (no resource needed) ———
 
 func TestConnector_TestConfig(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	body := map[string]any{
@@ -228,7 +228,7 @@ func TestConnector_TestConfig(t *testing.T) {
 // ——— TEST EXISTING CONNECTOR ———
 
 func TestConnector_Test(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200 (admin bypass)", func(t *testing.T) {
@@ -253,7 +253,7 @@ func TestConnector_Test(t *testing.T) {
 // ——— SCHEMA ———
 
 func TestConnector_Schema(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200 (admin bypass)", func(t *testing.T) {
@@ -278,7 +278,7 @@ func TestConnector_Schema(t *testing.T) {
 // ——— DATABASES ———
 
 func TestConnector_Databases(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200 (admin bypass)", func(t *testing.T) {
@@ -303,7 +303,7 @@ func TestConnector_Databases(t *testing.T) {
 // ——— SET DEFAULT ———
 
 func TestConnector_SetDefault(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 204", func(t *testing.T) {

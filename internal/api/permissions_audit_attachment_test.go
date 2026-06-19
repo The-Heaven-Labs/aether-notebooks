@@ -53,7 +53,7 @@ func uploadAsUserGetID(t *testing.T, f *AuditFixtures, userKey, nbID string) str
 // ——— UPLOAD ———
 
 func TestAttachment_Upload_Permissions(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := setupAuditWithStorage(t)
 
 	t.Run("adminA on NoACL — 201 (admin bypass)", func(t *testing.T) {
@@ -100,7 +100,7 @@ func TestAttachment_Upload_Permissions(t *testing.T) {
 // ——— LIST ———
 
 func TestAttachment_List_Permissions(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := setupAuditWithStorage(t)
 
 	noACLAtt := uploadAsUserGetID(t, f, "adminA", f.OrgA.Notebooks.NoACL)
@@ -142,7 +142,7 @@ func TestAttachment_List_Permissions(t *testing.T) {
 // ——— GET ———
 
 func TestAttachment_Get_Permissions(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := setupAuditWithStorage(t)
 
 	noACLAtt := uploadAsUserGetID(t, f, "adminA", f.OrgA.Notebooks.NoACL)
@@ -179,7 +179,7 @@ func TestAttachment_Get_Permissions(t *testing.T) {
 // ——— DELETE ———
 
 func TestAttachment_Delete_Permissions(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := setupAuditWithStorage(t)
 
 	noACLAtt := uploadAsUserGetID(t, f, "adminA", f.OrgA.Notebooks.NoACL)

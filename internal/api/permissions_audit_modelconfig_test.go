@@ -11,7 +11,7 @@ import (
 // ——— LIST ———
 
 func TestModelConfig_List(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
@@ -65,7 +65,7 @@ func TestModelConfig_List(t *testing.T) {
 // ——— GET ———
 
 func TestModelConfig_Get(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200 (admin bypass)", func(t *testing.T) {
@@ -105,7 +105,7 @@ func TestModelConfig_Get(t *testing.T) {
 // ——— CREATE ———
 
 func TestModelConfig_Create(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	payload := map[string]any{
@@ -138,7 +138,7 @@ func TestModelConfig_Create(t *testing.T) {
 // ——— UPDATE ———
 
 func TestModelConfig_Update(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200 (admin bypass)", func(t *testing.T) {
@@ -188,7 +188,7 @@ func TestModelConfig_Update(t *testing.T) {
 // ——— DELETE ———
 
 func TestModelConfig_Delete(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 204", func(t *testing.T) {
@@ -214,7 +214,7 @@ func TestModelConfig_Delete(t *testing.T) {
 // ——— TEST ———
 
 func TestModelConfig_Test(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA tests config — 200", func(t *testing.T) {
@@ -243,7 +243,7 @@ func TestModelConfig_Test(t *testing.T) {
 // ——— GROUP ACL ———
 
 func TestModelConfig_GroupACL(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("bobA gets GroupACL — 200 (group view+edit)", func(t *testing.T) {

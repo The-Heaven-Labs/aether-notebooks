@@ -8,7 +8,7 @@ import (
 // TestSchedule_Create_NoPermission: aliceA has no ACL on NoACL notebook.
 // Currently no permission check — should be 403, likely returns 201 (VULNERABILITY).
 func TestSchedule_Create_NoPermission(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	status, body := f.DoRequest(t, "aliceA", "POST",
@@ -23,7 +23,7 @@ func TestSchedule_Create_NoPermission(t *testing.T) {
 // TestSchedule_Create_ViewOnly: aliceA has view-only on UserACL notebook.
 // Creating a schedule should require edit permission.
 func TestSchedule_Create_ViewOnly(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	status, body := f.DoRequest(t, "aliceA", "POST",
@@ -38,7 +38,7 @@ func TestSchedule_Create_ViewOnly(t *testing.T) {
 // TestSchedule_Create_CrossOrg: adminB tries to create a schedule on an Org A notebook.
 // Should be denied — cross-org isolation.
 func TestSchedule_Create_CrossOrg(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	status, body := f.DoRequest(t, "adminB", "POST",
@@ -52,7 +52,7 @@ func TestSchedule_Create_CrossOrg(t *testing.T) {
 
 // TestSchedule_List_NoPermission: aliceA lists schedules on NoACL notebook — should be denied.
 func TestSchedule_List_NoPermission(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	// adminA baseline
@@ -71,7 +71,7 @@ func TestSchedule_List_NoPermission(t *testing.T) {
 
 // TestSchedule_List_CrossOrg: adminB lists schedules on Org A notebook — should be denied.
 func TestSchedule_List_CrossOrg(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	status, body := f.DoRequest(t, "adminB", "GET",
@@ -85,7 +85,7 @@ func TestSchedule_List_CrossOrg(t *testing.T) {
 // TestSchedule_Get_NoPermission: aliceA tries to GET a schedule on a notebook she has
 // view-only access to. The schedule handler has no permission check — should be 403.
 func TestSchedule_Get_NoPermission(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	schedID := createSchedule(t, f.srv, f.Tokens["adminA"], f.OrgA.Notebooks.UserACL, "0 0 * * *")
@@ -99,7 +99,7 @@ func TestSchedule_Get_NoPermission(t *testing.T) {
 
 // TestSchedule_Get_CrossOrg: adminB tries to GET an Org A schedule — should be 404 (org scoped).
 func TestSchedule_Get_CrossOrg(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	schedID := createSchedule(t, f.srv, f.Tokens["adminA"], f.OrgA.Notebooks.NoACL, "0 0 * * *")
@@ -110,7 +110,7 @@ func TestSchedule_Get_CrossOrg(t *testing.T) {
 
 // TestSchedule_Update_NoPermission: aliceA tries to update a schedule on a view-only notebook.
 func TestSchedule_Update_NoPermission(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	schedID := createSchedule(t, f.srv, f.Tokens["adminA"], f.OrgA.Notebooks.UserACL, "0 0 * * *")
@@ -125,7 +125,7 @@ func TestSchedule_Update_NoPermission(t *testing.T) {
 
 // TestSchedule_Update_CrossOrg: adminB tries to update an Org A schedule.
 func TestSchedule_Update_CrossOrg(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	schedID := createSchedule(t, f.srv, f.Tokens["adminA"], f.OrgA.Notebooks.NoACL, "0 0 * * *")
@@ -137,7 +137,7 @@ func TestSchedule_Update_CrossOrg(t *testing.T) {
 
 // TestSchedule_Delete_NoPermission: aliceA tries to delete a schedule on a view-only notebook.
 func TestSchedule_Delete_NoPermission(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	schedID := createSchedule(t, f.srv, f.Tokens["adminA"], f.OrgA.Notebooks.UserACL, "0 0 * * *")
@@ -151,7 +151,7 @@ func TestSchedule_Delete_NoPermission(t *testing.T) {
 
 // TestSchedule_Delete_CrossOrg: adminB tries to delete an Org A schedule.
 func TestSchedule_Delete_CrossOrg(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	schedID := createSchedule(t, f.srv, f.Tokens["adminA"], f.OrgA.Notebooks.NoACL, "0 0 * * *")
@@ -162,7 +162,7 @@ func TestSchedule_Delete_CrossOrg(t *testing.T) {
 
 // TestSchedule_Update_AdminBaseline: adminA can update their own org's schedule.
 func TestSchedule_Update_AdminBaseline(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	schedID := createSchedule(t, f.srv, f.Tokens["adminA"], f.OrgA.Notebooks.NoACL, "0 0 * * *")
@@ -174,7 +174,7 @@ func TestSchedule_Update_AdminBaseline(t *testing.T) {
 
 // TestSchedule_Delete_AdminBaseline: adminA can delete their own org's schedule.
 func TestSchedule_Delete_AdminBaseline(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	schedID := createSchedule(t, f.srv, f.Tokens["adminA"], f.OrgA.Notebooks.NoACL, "0 0 * * *")

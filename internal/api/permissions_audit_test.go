@@ -16,10 +16,10 @@ import (
 )
 
 type ResourceSet struct {
-	NoACL        string
-	UserACL      string
-	GroupACL     string
-	EveryoneACL  string
+	NoACL       string
+	UserACL     string
+	GroupACL    string
+	EveryoneACL string
 }
 
 type OrgFixtures struct {
