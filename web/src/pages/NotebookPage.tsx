@@ -988,7 +988,7 @@ export function NotebookPage() {
   )
 
   return (
-    <AppShell noPadding>
+    <AppShell noPadding hideGlobalFab={showAgent}>
     <div style={styles.page}>
       {/* Notebook Header */}
       <div style={styles.header}>
