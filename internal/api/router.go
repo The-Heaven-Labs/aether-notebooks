@@ -214,7 +214,7 @@ func (s *Server) routes() {
 
 	// Folder routes
 	s.mux.Handle("GET /api/v1/folders", authMW(http.HandlerFunc(s.handleListRootContents)))
-	s.mux.Handle("GET /api/v1/folders/{id}", authMW(s.requirePermission("folder", "id", "view")(http.HandlerFunc(s.handleGetFolderContents))))
+	s.mux.Handle("GET /api/v1/folders/{id}", authMW(http.HandlerFunc(s.handleGetFolderContents)))
 	s.mux.Handle("GET /api/v1/folders/{id}/ancestors", authMW(http.HandlerFunc(s.handleGetFolderAncestors)))
 	s.mux.Handle("POST /api/v1/folders", authMW(http.HandlerFunc(s.handleCreateFolder)))
 	s.mux.Handle("PUT /api/v1/folders/{id}", authMW(s.requirePermission("folder", "id", "edit")(http.HandlerFunc(s.handleUpdateFolder))))
