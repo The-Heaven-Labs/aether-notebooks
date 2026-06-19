@@ -12,7 +12,7 @@ import (
 // ——— PUBLIC ENDPOINTS (no auth required) ———
 
 func TestPublicEndpoints(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	srv := setupTestServer(t)
 
 	t.Run("GET /health — 200", func(t *testing.T) {
@@ -68,7 +68,7 @@ func TestPublicEndpoints(t *testing.T) {
 // ——— AUTH-REQUIRED ENDPOINTS (unauthenticated → 401) ———
 
 func TestAuthenticatedEndpoints_RejectUnauthenticated(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	srv := setupTestServer(t)
 
 	endpoints := []struct {
@@ -111,7 +111,7 @@ func TestAuthenticatedEndpoints_RejectUnauthenticated(t *testing.T) {
 // ——— ATTACHMENT ENDPOINTS UNAUTHENTICATED ———
 
 func TestAttachmentEndpoints_RejectUnauthenticated(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	srv := setupTestServer(t)
 
 	t.Run("POST upload attachment — 401", func(t *testing.T) {
@@ -150,7 +150,7 @@ func TestAttachmentEndpoints_RejectUnauthenticated(t *testing.T) {
 // ——— MOTD ENDPOINTS ———
 
 func TestMOTD_Endpoints(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA creates MOTD — 201", func(t *testing.T) {
@@ -216,7 +216,7 @@ func TestMOTD_Endpoints(t *testing.T) {
 // ——— CROSS-ORG MEMBER LISTING ———
 
 func TestMembers_CrossOrgIsolation(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA lists Org A members — contains expected users", func(t *testing.T) {

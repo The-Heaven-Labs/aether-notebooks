@@ -12,14 +12,14 @@ import (
 // ——— LIST ———
 
 func TestNotebook_List(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
-		name     string
-		userKey  string
-		wantMin  int
-		wantMax  int
+		name    string
+		userKey string
+		wantMin int
+		wantMax int
 	}{
 		{
 			name:    "adminA sees all Org A notebooks",
@@ -66,7 +66,7 @@ func TestNotebook_List(t *testing.T) {
 // ——— GET ———
 
 func TestNotebook_Get(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200 (admin bypass)", func(t *testing.T) {
@@ -111,7 +111,7 @@ func TestNotebook_Get(t *testing.T) {
 // ——— CREATE ———
 
 func TestNotebook_Create(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
@@ -137,7 +137,7 @@ func TestNotebook_Create(t *testing.T) {
 // ——— UPDATE ———
 
 func TestNotebook_Update(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200 (admin bypass)", func(t *testing.T) {
@@ -180,7 +180,7 @@ func TestNotebook_Update(t *testing.T) {
 // ——— DELETE ———
 
 func TestNotebook_Delete(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	// Create dedicated notebooks for delete tests to avoid affecting other tests
@@ -229,7 +229,7 @@ func TestNotebook_Delete(t *testing.T) {
 // ——— PERMISSIONS ———
 
 func TestNotebook_Permissions(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200 (admin bypass)", func(t *testing.T) {
@@ -269,7 +269,7 @@ func TestNotebook_Permissions(t *testing.T) {
 // ——— EXPORT ———
 
 func TestNotebook_Export(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200 (baseline)", func(t *testing.T) {
@@ -304,7 +304,7 @@ func TestNotebook_Export(t *testing.T) {
 // ——— CELL OPERATIONS ———
 
 func TestNotebook_CreateCell(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 201 (baseline)", func(t *testing.T) {
@@ -350,7 +350,7 @@ func TestNotebook_CreateCell(t *testing.T) {
 }
 
 func TestNotebook_UpdateCell(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	// Create cells in the various notebooks using adminA
@@ -400,7 +400,7 @@ func TestNotebook_UpdateCell(t *testing.T) {
 }
 
 func TestNotebook_DeleteCell(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	noACLCell := createCellInNotebook(t, f, "adminA", f.OrgA.Notebooks.NoACL)
@@ -431,7 +431,7 @@ func TestNotebook_DeleteCell(t *testing.T) {
 }
 
 func TestNotebook_DuplicateCell(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	noACLCell := createCellInNotebook(t, f, "adminA", f.OrgA.Notebooks.NoACL)
@@ -469,7 +469,7 @@ func TestNotebook_DuplicateCell(t *testing.T) {
 }
 
 func TestNotebook_Cell_Groups_And_EveryoneACL(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	// bobA is in the "engineers" group which has view+edit on GroupACL notebook

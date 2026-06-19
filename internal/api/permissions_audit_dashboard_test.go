@@ -31,7 +31,7 @@ func createWidgetInDashboard(t *testing.T, f *AuditFixtures, userKey, dashID, nb
 // ——— LIST ———
 
 func TestDashboard_List(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
@@ -85,7 +85,7 @@ func TestDashboard_List(t *testing.T) {
 // ——— GET ———
 
 func TestDashboard_Get(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200 (admin bypass)", func(t *testing.T) {
@@ -125,7 +125,7 @@ func TestDashboard_Get(t *testing.T) {
 // ——— CREATE ———
 
 func TestDashboard_Create(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
@@ -150,7 +150,7 @@ func TestDashboard_Create(t *testing.T) {
 // ——— UPDATE ———
 
 func TestDashboard_Update(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200 (admin bypass)", func(t *testing.T) {
@@ -200,7 +200,7 @@ func TestDashboard_Update(t *testing.T) {
 // ——— DELETE ———
 
 func TestDashboard_Delete(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 204", func(t *testing.T) {
@@ -226,7 +226,7 @@ func TestDashboard_Delete(t *testing.T) {
 // ——— WIDGETS ———
 
 func TestDashboard_Widgets(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	// Use the EveryoneACL notebook (everyone has view) and create a cell in it
@@ -307,7 +307,7 @@ func TestDashboard_Widgets(t *testing.T) {
 // ——— SHARE ———
 
 func TestDashboard_Share(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA shares NoACL dashboard — 200", func(t *testing.T) {
@@ -345,7 +345,7 @@ func TestDashboard_Share(t *testing.T) {
 // ——— PERMISSIONS ———
 
 func TestDashboard_Permissions(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200", func(t *testing.T) {
@@ -379,7 +379,7 @@ func TestDashboard_Permissions(t *testing.T) {
 // ——— PUBLIC ———
 
 func TestDashboard_Public(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	// Create a public token via adminA

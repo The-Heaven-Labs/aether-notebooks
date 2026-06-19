@@ -11,7 +11,7 @@ import (
 // ——— LIST ———
 
 func TestSkill_List(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
@@ -65,7 +65,7 @@ func TestSkill_List(t *testing.T) {
 // ——— GET ———
 
 func TestSkill_Get(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200 (admin bypass)", func(t *testing.T) {
@@ -105,7 +105,7 @@ func TestSkill_Get(t *testing.T) {
 // ——— CREATE ———
 
 func TestSkill_Create(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
@@ -131,7 +131,7 @@ func TestSkill_Create(t *testing.T) {
 // ——— UPDATE ———
 
 func TestSkill_Update(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200 (admin bypass)", func(t *testing.T) {
@@ -181,7 +181,7 @@ func TestSkill_Update(t *testing.T) {
 // ——— DELETE ———
 
 func TestSkill_Delete(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 204", func(t *testing.T) {
@@ -207,7 +207,7 @@ func TestSkill_Delete(t *testing.T) {
 // ——— GROUP ACL ———
 
 func TestSkill_GroupACL(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("bobA gets GroupACL skill — 200 (group view+edit)", func(t *testing.T) {

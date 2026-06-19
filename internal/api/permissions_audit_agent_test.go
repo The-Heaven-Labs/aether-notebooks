@@ -28,7 +28,7 @@ func createSessionInAgent(t *testing.T, f *AuditFixtures, userKey, agentID, note
 // ——— LIST ———
 
 func TestAgent_List(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
@@ -82,7 +82,7 @@ func TestAgent_List(t *testing.T) {
 // ——— GET ———
 
 func TestAgent_Get(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200 (admin bypass)", func(t *testing.T) {
@@ -122,7 +122,7 @@ func TestAgent_Get(t *testing.T) {
 // ——— CREATE ———
 
 func TestAgent_Create(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
@@ -148,7 +148,7 @@ func TestAgent_Create(t *testing.T) {
 // ——— UPDATE ———
 
 func TestAgent_Update(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200 (admin bypass)", func(t *testing.T) {
@@ -198,7 +198,7 @@ func TestAgent_Update(t *testing.T) {
 // ——— DELETE ———
 
 func TestAgent_Delete(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 204", func(t *testing.T) {
@@ -224,7 +224,7 @@ func TestAgent_Delete(t *testing.T) {
 // ——— SESSION CREATION (F11: no permission check) ———
 
 func TestAgent_SessionLifecycle(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	// Need a notebook_id for sessions to avoid pre-existing scan bug with NULL notebook_id
@@ -295,7 +295,7 @@ func TestAgent_SessionLifecycle(t *testing.T) {
 // ——— SESSION WITH VIEW PERMISSION ———
 
 func TestAgent_SessionWithPermission(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 	nbID := f.OrgA.Notebooks.NoACL
 
@@ -346,7 +346,7 @@ func TestAgent_SessionWithPermission(t *testing.T) {
 // ——— STATS (RequireRole admin) ———
 
 func TestAgent_Stats(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA gets global stats — 200", func(t *testing.T) {
@@ -379,7 +379,7 @@ func TestAgent_Stats(t *testing.T) {
 // ——— GROUP ACL ON AGENT ———
 
 func TestAgent_GroupACL(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("bobA gets GroupACL agent — 200 (group view+edit)", func(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 )
 
 func TestMiddleware_RequirePermission(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
@@ -72,7 +72,7 @@ func TestMiddleware_RequirePermission(t *testing.T) {
 }
 
 func TestMiddleware_RequireRoleAdmin(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
@@ -111,7 +111,7 @@ func TestMiddleware_RequireRoleAdmin(t *testing.T) {
 }
 
 func TestMiddleware_RequirePlatformAdmin(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
@@ -145,7 +145,7 @@ func TestMiddleware_RequirePlatformAdmin(t *testing.T) {
 }
 
 func TestMiddleware_AdminModeOff(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA admin mode off on no-ACL connector — denied", func(t *testing.T) {

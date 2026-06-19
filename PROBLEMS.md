@@ -23,5 +23,5 @@
 - [x] Pressing A/B to create cells should focus these cells instead of keep on the previous selected one
 - [x] Cant access the folder '/` anymore
 - [x] When changing a cell from markdown to code, it doubles the content. Likely a sync issue.
-- [ ] When the notebook agent modal is open, the global AI toggle button is on top of it, making it hard to reach the cancel/send button
+- [x] When the notebook agent modal is open, the global AI toggle button is on top of it, making it hard to reach the cancel/send button
 - [ ]
