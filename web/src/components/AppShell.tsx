@@ -12,9 +12,10 @@ import { api } from '../api/client'
 interface Props {
   children: React.ReactNode
   noPadding?: boolean
+  hideGlobalFab?: boolean
 }
 
-export function AppShell({ children, noPadding }: Props) {
+export function AppShell({ children, noPadding, hideGlobalFab }: Props) {
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showGlobalAgent, setShowGlobalAgent] = useState(false)
   const [globalAgentMinimized, setGlobalAgentMinimized] = useState(false)
@@ -118,56 +119,60 @@ export function AppShell({ children, noPadding }: Props) {
       </div>
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
 
-      {/* Global Agent FAB (floating action button) */}
-      {!showGlobalAgent && (
-        <button
-          style={fabStyles.fab}
-          onClick={() => { setShowGlobalAgent(true); setGlobalAgentMinimized(false) }}
-          title="Open AI Agent (Ctrl+K)"
-        >
-          <Bot size={20} />
-        </button>
-      )}
-
-      {/* Global Agent modal */}
-      {showGlobalAgent && !globalAgentMinimized && (
+      {!hideGlobalFab && (
         <>
-          <div
-            style={globalAgentStyles.backdrop}
-            onClick={() => setShowGlobalAgent(false)}
-          />
-          <div style={{ ...globalAgentStyles.modal, width: globalAgentWidth }} onClick={e => e.stopPropagation()}>
-            <AgentPanel
-              notebookId=""
-              width={globalAgentWidth}
-              onResize={setGlobalAgentWidth}
-              onClose={() => {
-                try {
-                  localStorage.removeItem('hnb:agentChat:__global__')
-                  localStorage.removeItem('hnb:lastAgentId')
-                } catch {}
-                setShowGlobalAgent(false)
-              }}
-              onMinimize={() => setGlobalAgentMinimized(true)}
-              onCellCreated={() => {}}
-            />
-          </div>
-        </>
-      )}
+          {/* Global Agent FAB (floating action button) */}
+          {!showGlobalAgent && (
+            <button
+              style={fabStyles.fab}
+              onClick={() => { setShowGlobalAgent(true); setGlobalAgentMinimized(false) }}
+              title="Open AI Agent (Ctrl+K)"
+            >
+              <Bot size={20} />
+            </button>
+          )}
 
-      {/* Minimized agent bar */}
-      {showGlobalAgent && globalAgentMinimized && (
-        <div style={globalAgentStyles.minimizedBar} onClick={() => setGlobalAgentMinimized(false)}>
-          <Bot size={16} />
-          <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>AI Agent (minimized)</span>
-          <button
-            style={globalAgentStyles.minimizedClose}
-            onClick={e => { e.stopPropagation(); setShowGlobalAgent(false) }}
-            title="Close agent"
-          >
-            ×
-          </button>
-        </div>
+          {/* Global Agent modal */}
+          {showGlobalAgent && !globalAgentMinimized && (
+            <>
+              <div
+                style={globalAgentStyles.backdrop}
+                onClick={() => setShowGlobalAgent(false)}
+              />
+              <div style={{ ...globalAgentStyles.modal, width: globalAgentWidth }} onClick={e => e.stopPropagation()}>
+                <AgentPanel
+                  notebookId=""
+                  width={globalAgentWidth}
+                  onResize={setGlobalAgentWidth}
+                  onClose={() => {
+                    try {
+                      localStorage.removeItem('hnb:agentChat:__global__')
+                      localStorage.removeItem('hnb:lastAgentId')
+                    } catch {}
+                    setShowGlobalAgent(false)
+                  }}
+                  onMinimize={() => setGlobalAgentMinimized(true)}
+                  onCellCreated={() => {}}
+                />
+              </div>
+            </>
+          )}
+
+          {/* Minimized agent bar */}
+          {showGlobalAgent && globalAgentMinimized && (
+            <div style={globalAgentStyles.minimizedBar} onClick={() => setGlobalAgentMinimized(false)}>
+              <Bot size={16} />
+              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>AI Agent (minimized)</span>
+              <button
+                style={globalAgentStyles.minimizedClose}
+                onClick={e => { e.stopPropagation(); setShowGlobalAgent(false) }}
+                title="Close agent"
+              >
+                ×
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
