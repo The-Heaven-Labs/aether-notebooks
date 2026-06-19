@@ -11,7 +11,7 @@ import (
 // ——— LIST ———
 
 func TestMCPServer_List(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
@@ -65,7 +65,7 @@ func TestMCPServer_List(t *testing.T) {
 // ——— GET ———
 
 func TestMCPServer_Get(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200 (admin bypass)", func(t *testing.T) {
@@ -105,7 +105,7 @@ func TestMCPServer_Get(t *testing.T) {
 // ——— CREATE ———
 
 func TestMCPServer_Create(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	payload := map[string]any{
@@ -136,7 +136,7 @@ func TestMCPServer_Create(t *testing.T) {
 // ——— UPDATE ———
 
 func TestMCPServer_Update(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 200", func(t *testing.T) {
@@ -175,7 +175,7 @@ func TestMCPServer_Update(t *testing.T) {
 // ——— DELETE ———
 
 func TestMCPServer_Delete(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL — 204", func(t *testing.T) {
@@ -199,7 +199,7 @@ func TestMCPServer_Delete(t *testing.T) {
 // ——— TEST ———
 
 func TestMCPServer_Test(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA tests NoACL — 200", func(t *testing.T) {

@@ -12,7 +12,7 @@ import (
 // ——— LIST ROOT CONTENTS ———
 
 func TestFolder_List(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA lists root contents — sees all Org A root folders", func(t *testing.T) {
@@ -62,7 +62,7 @@ func TestFolder_List(t *testing.T) {
 // ——— GET (VIEW) ———
 
 func TestFolder_Get(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL folder — 200 (admin bypass)", func(t *testing.T) {
@@ -105,7 +105,7 @@ func TestFolder_Get(t *testing.T) {
 // ——— CREATE ———
 
 func TestFolder_Create(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
@@ -131,7 +131,7 @@ func TestFolder_Create(t *testing.T) {
 // ——— UPDATE ———
 
 func TestFolder_Update(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL folder — 200 (admin bypass)", func(t *testing.T) {
@@ -174,7 +174,7 @@ func TestFolder_Update(t *testing.T) {
 // ——— DELETE ———
 
 func TestFolder_Delete(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	// Create dedicated folders for delete tests (adminA owns them)
@@ -223,7 +223,7 @@ func TestFolder_Delete(t *testing.T) {
 // ——— ANCESTORS ———
 
 func TestFolder_Ancestors(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("adminA on NoACL folder — 200 (baseline)", func(t *testing.T) {
@@ -258,7 +258,7 @@ func TestFolder_Ancestors(t *testing.T) {
 // ——— ENSURE HOME FOLDER ———
 
 func TestFolder_EnsureHome(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	tests := []struct {
@@ -287,7 +287,7 @@ func TestFolder_EnsureHome(t *testing.T) {
 // ——— FOLDER HIERARCHY INHERITANCE ———
 
 func TestFolder_HierarchyInheritance(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 	ctx := context.Background()
 
@@ -351,7 +351,7 @@ func TestFolder_HierarchyInheritance(t *testing.T) {
 // ——— BOB A GROUP ACL ON FOLDER ———
 
 func TestFolder_GroupACL(t *testing.T) {
-	 t.Parallel()
+	t.Parallel()
 	f := SetupAuditTest(t)
 
 	t.Run("bobA gets GroupACL folder — 200 (group view+edit)", func(t *testing.T) {

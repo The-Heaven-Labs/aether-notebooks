@@ -154,11 +154,11 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	var (
-		nb        models.Notebook
-		params    []byte
-		connID    *string
-		folderID  *string
-		ownerName string
+		nb         models.Notebook
+		params     []byte
+		connID     *string
+		folderID   *string
+		ownerName  string
 		ownerEmail string
 	)
 	err := s.db.Pool.QueryRow(ctx,
@@ -241,11 +241,11 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 
 	type notebookWithCells struct {
 		models.Notebook
-		Cells       []models.Cell `json:"cells"`
-		OwnerName   string        `json:"owner_name"`
-		OwnerEmail  string        `json:"owner_email"`
-		CanEdit     bool          `json:"can_edit"`
-		CanRun      bool          `json:"can_run"`
+		Cells      []models.Cell `json:"cells"`
+		OwnerName  string        `json:"owner_name"`
+		OwnerEmail string        `json:"owner_email"`
+		CanEdit    bool          `json:"can_edit"`
+		CanRun     bool          `json:"can_run"`
 	}
 
 	resp := notebookWithCells{
