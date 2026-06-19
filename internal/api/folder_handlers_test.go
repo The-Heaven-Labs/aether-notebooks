@@ -2,12 +2,15 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestFolderCRUD(t *testing.T) {
@@ -129,4 +132,103 @@ func TestFolderCRUD(t *testing.T) {
 	if rec10.Code != http.StatusNoContent {
 		t.Fatalf("force delete: expected 204, got %d: %s", rec10.Code, rec10.Body.String())
 	}
+}
+
+func TestListHomeFolders_DeeplySharedNotebook(t *testing.T) {
+	srv := setupTestServer(t)
+	ctx := context.Background()
+	now := time.Now().UnixNano()
+
+	// Create user A (org admin)
+	emailA := fmt.Sprintf("deepparent-%d@test.com", now)
+	tokenA := registerAndGetToken(t, srv, emailA, "Deep Org")
+	userA := userIDFromToken(t, srv, tokenA)
+	orgID := orgIDFromUser(t, srv, userA)
+
+	// Create user B (org member)
+	emailB := fmt.Sprintf("deepchild-%d@test.com", now)
+	userB := insertUser(t, srv, emailB, "User B")
+	addOrgMember(t, srv, orgID, userB, "editor")
+	tokenB := issueToken(t, userB, orgID, "editor")
+
+	// Ensure home folder for user B (user A's was created during registration)
+	code, _ := doRequest(t, srv, tokenB, "POST", "/api/v1/users/me/home", nil)
+	require.Equal(t, http.StatusCreated, code)
+
+	// Get User A's home folder ID
+	var homeAID string
+	err := srv.DB().Pool.QueryRow(ctx,
+		`SELECT id FROM folders WHERE owner_id = $1 AND is_home = true`, userA,
+	).Scan(&homeAID)
+	require.NoError(t, err)
+
+	// User A creates a subfolder under their home
+	code, resp := doRequest(t, srv, tokenA, "POST", "/api/v1/folders", map[string]any{
+		"name":      "My Subfolder",
+		"parent_id": homeAID,
+	})
+	require.Equal(t, http.StatusCreated, code)
+	subfolderID := resp["id"].(string)
+
+	// User A creates a notebook in the subfolder
+	code, resp = doRequest(t, srv, tokenA, "POST", "/api/v1/notebooks", map[string]any{
+		"title":     "Deeply Shared Notebook",
+		"folder_id": subfolderID,
+	})
+	require.Equal(t, http.StatusCreated, code)
+	notebookID := resp["id"].(string)
+
+	// User A shares the notebook with User B (add ACL entry directly)
+	_, err = srv.DB().Pool.Exec(ctx,
+		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		 VALUES ($1, 'notebook', $2::uuid, 'user', $3, ARRAY['view'])`,
+		orgID, notebookID, userB,
+	)
+	require.NoError(t, err)
+
+	// User B lists home folders — should include User A's home
+	req := httptest.NewRequest("GET", "/api/v1/home", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenB)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var entries []map[string]any
+	err = json.Unmarshal(rec.Body.Bytes(), &entries)
+	require.NoError(t, err)
+
+	// Verify User A's home folder appears in User B's home folder list
+	var homeAEntry map[string]any
+	found := false
+	for _, entry := range entries {
+		if entry["id"].(string) == homeAID {
+			homeAEntry = entry
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "User B should see User A's home folder (contains a shared notebook 2 levels deep)")
+
+	// Verify the subfolder appears under User A's home folder
+	subFolders, ok := homeAEntry["sub_folders"].([]any)
+	require.True(t, ok, "homeA entry should have sub_folders")
+	require.Equal(t, 1, len(subFolders), "homeA should have 1 subfolder visible to User B")
+
+	subFolderEntry := subFolders[0].(map[string]any)
+	require.Equal(t, subfolderID, subFolderEntry["id"].(string), "subfolder ID should match")
+
+	// Also verify User B can get the contents of the subfolder (which contains the shared notebook)
+	req2 := httptest.NewRequest("GET", "/api/v1/folders/"+subfolderID, nil)
+	req2.Header.Set("Authorization", "Bearer "+tokenB)
+	rec2 := httptest.NewRecorder()
+	srv.ServeHTTP(rec2, req2)
+	require.Equal(t, http.StatusOK, rec2.Code)
+	var subContents map[string]any
+	err = json.Unmarshal(rec2.Body.Bytes(), &subContents)
+	require.NoError(t, err)
+	nbs, ok := subContents["notebooks"].([]any)
+	require.True(t, ok, "subfolder contents should have notebooks")
+	require.Equal(t, 1, len(nbs), "subfolder should have 1 notebook visible to User B")
+	nbEntry := nbs[0].(map[string]any)
+	require.Equal(t, notebookID, nbEntry["id"].(string), "notebook ID should match")
 }
