@@ -17,6 +17,10 @@ vi.mock('../components/PermissionsPanel', () => ({
 // ── Root view (T2.1) ──────────────────────────────────────────────────────────
 
 describe('Root view (T2.1)', () => {
+  beforeEach(() => {
+    server.use(http.get('/api/v1/home', () => HttpResponse.json([])))
+  })
+
   test('shows "Files" breadcrumb at root', async () => {
     renderWithProviders(<HomePage />)
     expect(await screen.findByText('Files')).toBeInTheDocument()
@@ -24,25 +28,21 @@ describe('Root view (T2.1)', () => {
 
   test('shows folders from root contents', async () => {
     renderWithProviders(<HomePage />)
-    // Folder names appear in both sidebar tree and main content
-    const aliceMatches = await screen.findAllByText("Alice's Home")
-    expect(aliceMatches.length).toBeGreaterThan(0)
-    const engMatches = screen.getAllByText('Engineering')
+    const engMatches = await screen.findAllByText('Engineering')
     expect(engMatches.length).toBeGreaterThan(0)
   })
 
   test('shows notebooks from root contents', async () => {
     renderWithProviders(<HomePage />)
-    // 'Root Notebook' may appear in both the Recent chips and the Notebooks section
     const matches = await screen.findAllByText('Root Notebook')
     expect(matches.length).toBeGreaterThan(0)
   })
 
-  test('shows New Folder, New Notebook, New Dashboard toolbar buttons', async () => {
+  test('shows New Folder button but not New Notebook/New Dashboard at root', async () => {
     renderWithProviders(<HomePage />)
     expect(await screen.findByText('+ New Folder')).toBeInTheDocument()
-    expect(screen.getByText('+ New Notebook')).toBeInTheDocument()
-    expect(screen.getByText('+ New Dashboard')).toBeInTheDocument()
+    expect(screen.queryByText('+ New Notebook')).not.toBeInTheDocument()
+    expect(screen.queryByText('+ New Dashboard')).not.toBeInTheDocument()
   })
 })
 

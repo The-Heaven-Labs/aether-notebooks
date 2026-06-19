@@ -20,4 +20,8 @@
 - [ ] When a dashboard is shared but the underlying notebooks are not, the user opens a dashboard which will have no access. There should be 2 sharing modes, one that shares it and the cell permissions are the ones from the person that opened it (received the share), and one where the user that receives the share can see/run the cells with the same permissions (for view/run) of the user that made the share/add permission.
 - [ ] The default AI panel inside notebooks is now getting half of the space. The horizontal size should be changeable, and the default should be closer to 1/3
 - [ ] Live data syncronization between different users in a notebook with changes seem to not be working, needing to refresh page to see changes from user 1, when logged as user 2.
+- [ ] Pressing A/B to create cells should focus these cells instead of keep on the previous selected one
+- [x] Cant access the folder '/` anymore
+- [ ] When changing a cell from markdown to code, it doubles the content. Likely a sync issue.
+- [ ] When the notebook agent modal is open, the global AI toggle button is on top of it, making it hard to reach the cancel/send button
 - [ ]

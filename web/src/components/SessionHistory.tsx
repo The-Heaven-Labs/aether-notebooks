@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react'
 import { ArrowLeft, MessageSquare, Play, Edit2 } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { api } from '../api/client'
+import { chatMarkdownComponents } from './AgentPanel'
 
 interface SessionSummary {
   id: string
@@ -94,7 +97,7 @@ export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHist
                 ...styles.historyMessage,
                 ...(msg.role === 'user' ? styles.userBubble : msg.role === 'assistant' ? styles.assistantBubble : styles.toolBubble),
               }}>
-                {msg.content || (msg.tool_calls ? 'Tool calls' : '(empty)')}
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content || (msg.tool_calls ? 'Tool calls' : '(empty)')}</ReactMarkdown>
               </div>
             ))
           )}

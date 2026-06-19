@@ -16,5 +16,6 @@
 - [x] Pressing back from a notebook should go back to the exact page you were before, e.g., if in the files, should go back to the same folder that was open before
 - [x] Buttons like edit, delete and permissions should be grayed-out for users that have no permission to do these actions in a given resource
 - [x] Pressing Ctrl + Enter (Or shift + Enter) in a markdown cell should render the markdown and leave edit mode
-- [ ] It should not be possible to create notebooks on the folder `/`, only in folders after `/`. When in `/`, the new notebook button should not appear.
+- [x] It should not be possible to create notebooks on the folder `/`, only in folders after `/`. When in `/`, the new notebook button should not appear.
+- [x] Agent chat messages should render markdown
 - [ ]
