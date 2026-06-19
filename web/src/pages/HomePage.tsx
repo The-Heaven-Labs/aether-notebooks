@@ -461,34 +461,23 @@ export function HomePage() {
       : api.get<FolderContents>('/api/v1/folders'),
   })
 
-  // Default to user's home folder if no folder param is set
+  // Default to user's home folder if no folder param is set (first mount only)
+  const initialLoad = useRef(true)
   const { data: homeFolders } = useQuery<Array<{ id: string; name: string; is_home: boolean; owner_id: string }>>({
     queryKey: ['folder-home'],
     queryFn: () => api.get('/api/v1/home'),
   })
 
   useEffect(() => {
+    if (!initialLoad.current) return
+    initialLoad.current = false
     if (!folderID && homeFolders && homeFolders.length > 0) {
-      if (sessionStorage.getItem('hnb_root_nav')) {
-        const lastFolder = sessionStorage.getItem('hnb_last_folder')
-        if (lastFolder) {
-          setSearchParams({ folder: lastFolder })
-          return
-        }
-      }
       const myHome = homeFolders.find(h => h.owner_id === user?.user_id)
       if (myHome) {
         setSearchParams({ folder: myHome.id })
       }
     }
   }, [folderID, homeFolders, setSearchParams, user?.user_id])
-
-  // Mark when user has navigated away from root
-  useEffect(() => {
-    if (folderID) {
-      sessionStorage.setItem('hnb_root_nav', '1')
-    }
-  }, [folderID])
 
   
 

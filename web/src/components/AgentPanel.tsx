@@ -1,11 +1,38 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Send, Loader2, History, Copy, Check, Square } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { api, getToken } from '../api/client'
 import type { Agent, AgentTaskItem, WSMessage } from '../types/agent'
 import { PanelHeader } from './PanelHeader'
 import { SessionHistory } from './SessionHistory'
 import { SlashCommandPicker } from './SlashCommandPicker'
 import { TaskList } from './TaskList'
+
+export const chatMarkdownComponents = {
+  table: ({ children }: any) => (
+    <div style={{ overflowX: 'auto', margin: '4px 0' }}>
+      <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12 }}>{children}</table>
+    </div>
+  ),
+  th: ({ children }: any) => (
+    <th style={{ border: '1px solid var(--border)', padding: '6px 8px', textAlign: 'left', fontWeight: 600, background: 'var(--bg-elevated)' }}>
+      {children}
+    </th>
+  ),
+  td: ({ children }: any) => (
+    <td style={{ border: '1px solid var(--border)', padding: '4px 8px' }}>{children}</td>
+  ),
+  code: ({ className, children, ...props }: any) => {
+    const isInline = !className
+    return isInline ? (
+      <code style={{ background: 'var(--bg-elevated)', padding: '1px 4px', borderRadius: 3, fontSize: 11 }} {...props}>{children}</code>
+    ) : (
+      <code style={{ display: 'block', background: 'var(--bg-elevated)', padding: 8, borderRadius: 4, fontSize: 11, whiteSpace: 'pre-wrap', overflowX: 'auto' }} {...props}>{children}</code>
+    )
+  },
+  pre: ({ children }: any) => <>{children}</>,
+}
 
 interface AgentPanelProps {
   notebookId?: string
@@ -624,9 +651,9 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
                            )}
                          </div>
                        </details>
-                     ) : (
-                       msg.content
-                     )}
+                      ) : (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
+                      )}
                    </div>
                  )}
                </div>
@@ -645,7 +672,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
               )}
               {isStreaming && currentStreamingText && (
               <div style={{ ...styles.message, ...styles.assistantMessage }}>
-                {currentStreamingText}
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{currentStreamingText}</ReactMarkdown>
                 <span style={styles.streamingDot} />
               </div>
             )}
