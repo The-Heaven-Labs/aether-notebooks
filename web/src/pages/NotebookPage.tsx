@@ -278,16 +278,17 @@ export function NotebookPage() {
       flashCell(cellId)
     }
   }, [shouldScroll]), useCallback((cellId: string, updates: Record<string, unknown>, userEmail?: string) => {
-    // cell_updated event received — apply all broadcast fields to local cache
-    if (Object.keys(updates).length > 0) {
+    // cell_updated event received — apply broadcast fields to local cache
+    // Skip source: Yjs is the source of truth for cell content; the broadcast
+    // echoes back stale source from auto-save PUT and would overwrite Yjs.
+    const { source: _source, ...rest } = updates as Record<string, unknown> & { source?: unknown }
+    if (Object.keys(rest).length > 0) {
       setLocalCells((prev) =>
-        prev.map((c) => c.id === cellId ? { ...c, ...updates } as Cell : c),
+        prev.map((c) => c.id === cellId ? { ...c, ...rest } as Cell : c),
       )
       qc.setQueryData<NotebookWithCells>(['notebook', id], (old) =>
-        old ? { ...old, cells: old.cells.map((c) => c.id === cellId ? { ...c, ...updates } as Cell : c) } : old,
+        old ? { ...old, cells: old.cells.map((c) => c.id === cellId ? { ...c, ...rest } as Cell : c) } : old,
       )
-    } else {
-      qc.invalidateQueries({ queryKey: ['notebook', id] })
     }
     if (!pendingExecRef.current.has(cellId) && shouldScroll(userEmail)) {
       flashCell(cellId)
@@ -295,11 +296,17 @@ export function NotebookPage() {
   }, [id, qc, shouldScroll]), useCallback((cell: Cell, userEmail?: string) => {
     setLocalCells((prev) => {
       if (prev.some((c) => c.id === cell.id)) return prev
-      return [...prev, cell].sort((a, b) => a.position - b.position)
+      const shifted = prev.map((c) =>
+        c.position >= cell.position ? { ...c, position: c.position + 1 } : c
+      )
+      return [...shifted, cell].sort((a, b) => a.position - b.position)
     })
     qc.setQueryData<NotebookWithCells>(['notebook', id], (old) => {
       if (!old || old.cells.some((c) => c.id === cell.id)) return old
-      return { ...old, cells: [...old.cells, cell].sort((a, b) => a.position - b.position) }
+      const shifted = old.cells.map((c) =>
+        c.position >= cell.position ? { ...c, position: c.position + 1 } : c
+      )
+      return { ...old, cells: [...shifted, cell].sort((a, b) => a.position - b.position) }
     })
     if (!pendingExecRef.current.has(cell.id) && shouldScroll(userEmail)) {
       flashCell(cell.id)
@@ -472,6 +479,9 @@ export function NotebookPage() {
             return local
           }
           changed = true
+          if (local) {
+            return { ...nbCell, source: local.source }
+          }
           return nbCell
         })
         return changed ? merged : prev
@@ -504,11 +514,17 @@ export function NotebookPage() {
       }
       setLocalCells((prev) => {
         if (prev.some((c) => c.id === withConnector.id)) return prev
-        return [...prev, withConnector].sort((a, b) => a.position - b.position)
+        const shifted = prev.map((c) =>
+          c.position >= withConnector.position ? { ...c, position: c.position + 1 } : c
+        )
+        return [...shifted, withConnector].sort((a, b) => a.position - b.position)
       })
       qc.setQueryData<NotebookWithCells>(['notebook', id], (old) => {
         if (!old || old.cells.some((c) => c.id === withConnector.id)) return old
-        return { ...old, cells: [...(old.cells ?? []), withConnector].sort((a, b) => a.position - b.position) }
+        const shifted = old.cells.map((c) =>
+          c.position >= withConnector.position ? { ...c, position: c.position + 1 } : c
+        )
+        return { ...old, cells: [...shifted, withConnector].sort((a, b) => a.position - b.position) }
       })
       setTimeout(() => {
         const el = document.getElementById('cell-' + cell.id)
@@ -885,14 +901,27 @@ export function NotebookPage() {
       addCellBelow: () => {
         const idx = localCells.findIndex((c) => c.id === focusedCellId)
         const pos = idx >= 0 ? localCells[idx].position + 1 : undefined
+        autoFocusCellRef.current = true
         createCell.mutate({ type: 'code', position: pos })
       },
       addCellAbove: () => {
         const idx = localCells.findIndex((c) => c.id === focusedCellId)
         const pos = idx >= 0 ? localCells[idx].position : undefined
+        autoFocusCellRef.current = true
         createCell.mutate({ type: 'code', position: pos })
       },
-      deleteFocusedCell: () => { if (focusedCellId) deleteCell.mutate(focusedCellId) },
+      deleteFocusedCell: () => {
+        if (!focusedCellId) return
+        const idx = localCells.findIndex((c) => c.id === focusedCellId)
+        if (idx >= 0) {
+          if (idx < localCells.length - 1) {
+            setFocusedCellId(localCells[idx + 1].id)
+          } else if (idx > 0) {
+            setFocusedCellId(localCells[idx - 1].id)
+          }
+        }
+        deleteCell.mutate(focusedCellId)
+      },
       moveFocusDown: () => {
         if (!focusedCellId) return
         const idx = localCells.findIndex((c) => c.id === focusedCellId)
