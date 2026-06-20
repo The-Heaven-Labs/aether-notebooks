@@ -43,7 +43,7 @@ var BuiltinTools = []BuiltinToolDef{
 
 func SeedBuiltinTools(ctx context.Context, pool *pgxpool.Pool, orgID string) {
 	var systemUserID string
-	err := pool.QueryRow(ctx, `SELECT id FROM org_members WHERE org_id = $1 LIMIT 1`, orgID).Scan(&systemUserID)
+	err := pool.QueryRow(ctx, `SELECT user_id FROM org_members WHERE org_id = $1 LIMIT 1`, orgID).Scan(&systemUserID)
 	if err != nil {
 		slog.Warn("seed builtin tools: no users found for org, skipping", "org_id", orgID)
 		return
