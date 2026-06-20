@@ -58,7 +58,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 		}{
 			Name:        "create_skill",
 			Description: "Save a reusable skill",
-			Parameters:  `{"type":"object","properties":{"name":{"type":"string"},"description":{"type":"string"},"system_prompt":{"type":"string"},"tool_ids":{"type":"array","items":{"type":"string"}}},"required":["name","system_prompt"]}`,
+			Parameters:  `{"type":"object","properties":{"name":{"type":"string"},"description":{"type":"string"},"system_prompt":{"type":"string"}},"required":["name","system_prompt"]}`,
 		},
 		Handler: makeCreateSkillHandler(pool),
 	})
@@ -84,7 +84,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 		}{
 			Name:        "update_skill",
 			Description: "Modify a skill",
-			Parameters:  `{"type":"object","properties":{"skill_id":{"type":"string"},"name":{"type":"string"},"system_prompt":{"type":"string"},"tool_ids":{"type":"array","items":{"type":"string"}}},"required":["skill_id"]}`,
+			Parameters:  `{"type":"object","properties":{"skill_id":{"type":"string"},"name":{"type":"string"},"system_prompt":{"type":"string"}},"required":["skill_id"]}`,
 		},
 		Handler: makeUpdateSkillHandler(pool),
 	})
@@ -250,23 +250,21 @@ func makeUpdateAgentHandler(pool *pgxpool.Pool) ToolHandler {
 func makeCreateSkillHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
-			Name         string   `json:"name"`
-			Description  string   `json:"description"`
-			SystemPrompt string   `json:"system_prompt"`
-			ToolIDs      []string `json:"tool_ids"`
+			Name         string `json:"name"`
+			Description  string `json:"description"`
+			SystemPrompt string `json:"system_prompt"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
 
 		skillID := uuid.New().String()
-		toolIDsJSON, _ := json.Marshal(req.ToolIDs)
 
 		_, err := pool.Exec(ctx.Context, `
-			INSERT INTO skills (id, org_id, name, description, system_prompt, tool_ids, created_by, created_at, updated_at)
-			SELECT $1, org_id, $2, $3, $4, $5, $6, NOW(), NOW()
-			FROM agents WHERE id = (SELECT agent_id FROM agent_sessions WHERE id = $7)
-		`, skillID, req.Name, req.Description, req.SystemPrompt, toolIDsJSON, ctx.UserID, ctx.SessionID)
+			INSERT INTO skills (id, org_id, name, description, system_prompt, created_by, created_at, updated_at)
+			SELECT $1, org_id, $2, $3, $4, $5, NOW(), NOW()
+			FROM agents WHERE id = (SELECT agent_id FROM agent_sessions WHERE id = $6)
+		`, skillID, req.Name, req.Description, req.SystemPrompt, ctx.UserID, ctx.SessionID)
 		if err != nil {
 			return nil, fmt.Errorf("create skill: %w", err)
 		}
@@ -339,25 +337,21 @@ func makeSpawnSubagentsHandler(pool *pgxpool.Pool, engine *Engine) ToolHandler {
 func makeUpdateSkillHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
-			SkillID      string   `json:"skill_id"`
-			Name         *string  `json:"name"`
-			SystemPrompt *string  `json:"system_prompt"`
-			ToolIDs      []string `json:"tool_ids"`
+			SkillID      string  `json:"skill_id"`
+			Name         *string `json:"name"`
+			SystemPrompt *string `json:"system_prompt"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
 
-		skillIDsJSON, _ := json.Marshal(req.ToolIDs)
-
 		_, err := pool.Exec(ctx.Context, `
 			UPDATE skills SET
 				name = COALESCE($2, name),
 				system_prompt = COALESCE($3, system_prompt),
-				tool_ids = COALESCE($4, tool_ids),
 				updated_at = NOW()
 			WHERE id = $1
-		`, req.SkillID, req.Name, req.SystemPrompt, skillIDsJSON)
+		`, req.SkillID, req.Name, req.SystemPrompt)
 		if err != nil {
 			return nil, fmt.Errorf("update skill: %w", err)
 		}
