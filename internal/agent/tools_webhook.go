@@ -58,7 +58,7 @@ func makeWebhookToolDef(t *models.Tool, allowedDomains []string) (*ToolDef, erro
 				return nil, err
 			}
 
-			// Substitute {{param}} in URL
+			// Substitute {{param}} in URL with proper encoding
 			resolvedURL := rawURL
 			var bodyArgs map[string]any
 			if params != nil {
@@ -66,7 +66,24 @@ func makeWebhookToolDef(t *models.Tool, allowedDomains []string) (*ToolDef, erro
 				for k, v := range params {
 					placeholder := fmt.Sprintf("{{%s}}", k)
 					if strings.Contains(resolvedURL, placeholder) {
-						resolvedURL = strings.ReplaceAll(resolvedURL, placeholder, fmt.Sprintf("%v", v))
+						val := fmt.Sprintf("%v", v)
+						// Encode based on where the placeholder appears
+						if idx := strings.Index(resolvedURL, placeholder); idx >= 0 {
+							after := resolvedURL[idx+len(placeholder):]
+							beforeQ := strings.Index(resolvedURL[:idx], "?")
+							afterQ := strings.Index(after, "?")
+							if beforeQ >= 0 && afterQ < 0 {
+								// Placeholder is in query portion (after ?)
+								val = url.QueryEscape(val)
+							} else if beforeQ < 0 && afterQ < 0 {
+								// No ? in URL at all, placeholder is in path
+								val = url.PathEscape(val)
+							} else {
+								// Ambiguous — encode path-safe
+								val = url.PathEscape(val)
+							}
+						}
+						resolvedURL = strings.ReplaceAll(resolvedURL, placeholder, val)
 					} else {
 						bodyArgs[k] = v
 					}
