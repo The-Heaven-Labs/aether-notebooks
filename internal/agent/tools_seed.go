@@ -56,13 +56,17 @@ func SeedBuiltinTools(ctx context.Context, pool *pgxpool.Pool, orgID string) {
 	}
 
 	for _, bt := range BuiltinTools {
-		schema, _ := json.Marshal(bt.Schema)
+		schema := bt.Schema
+		if schema == nil {
+			schema = map[string]any{"type": "object", "properties": map[string]any{}}
+		}
+		schemaJSON, _ := json.Marshal(schema)
 		config, _ := json.Marshal(map[string]string{"handler_name": bt.HandlerName})
 		_, err := pool.Exec(ctx, `
 			INSERT INTO tools (id, org_id, name, description, type, schema, config, created_by, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, 'builtin', $5, $6, $7, NOW(), NOW())
 			ON CONFLICT (org_id, name) DO NOTHING`,
-			uuid.New().String(), orgID, bt.Name, bt.Description, string(schema), string(config), systemUserID)
+			uuid.New().String(), orgID, bt.Name, bt.Description, string(schemaJSON), string(config), systemUserID)
 		if err != nil {
 			slog.Warn("seed builtin tool failed", "tool", bt.Name, "error", err)
 		}

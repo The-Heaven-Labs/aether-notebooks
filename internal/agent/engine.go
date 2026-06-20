@@ -126,6 +126,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				if schema != nil {
 					json.Unmarshal(schema, &t.Schema)
 				}
+				if t.Schema == nil {
+					t.Schema = models.JSONMap{}
+				}
 				if config != nil {
 					json.Unmarshal(config, &t.Config)
 				}

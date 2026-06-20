@@ -55,7 +55,6 @@ const METHOD_OPTIONS = ['GET', 'POST', 'PUT']
 const TYPE_OPTIONS: { value: ToolType; label: string }[] = [
   { value: 'webhook', label: 'Webhook' },
   { value: 'sql_query', label: 'SQL Query' },
-  { value: 'builtin', label: 'Built-in' },
 ]
 
 const TYPE_COLORS: Record<ToolType, string> = {
@@ -103,7 +102,7 @@ export function ToolsPage() {
       payload.schema = { type: 'object', properties: props }
       if (required.length > 0) payload.schema.required = required
     } else {
-      payload.schema = {}
+      payload.schema = { type: 'object', properties: {} }
     }
     if (form.type === 'webhook') {
       const headers: Record<string, string> = {}
