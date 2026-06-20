@@ -376,19 +376,19 @@ function ToolFormFields({ form, setForm, connectors, editing }: {
               {form.headers.map((h, i) => (
                 <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                   <input style={{ ...styles.input, flex: 1 }} placeholder="Key" value={h.key} onChange={e => updateHeader(i, 'key', e.target.value)} />
-                  <input style={{ ...styles.input, flex: 1 }} placeholder="Value" value={h.sensitive ? '••••••' : h.value} onChange={e => updateHeader(i, 'value', e.target.value)} disabled={h.sensitive} />
-                  <button
-                    type="button"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: '4px 6px', color: h.sensitive ? 'var(--accent)' : 'var(--text-muted)' }}
-                    onClick={() => setForm(f => {
-                      const hdrs = [...f.headers]
-                      hdrs[i] = { ...hdrs[i], sensitive: !hdrs[i].sensitive }
-                      return { ...f, headers: hdrs }
-                    })}
-                    title={h.sensitive ? 'Sensitive — hidden on read' : 'Click to mark as sensitive'}
-                  >
-                    {h.sensitive ? '🔒' : '🔓'}
-                  </button>
+                  <input style={{ ...styles.input, flex: 1 }} placeholder="Value" value={h.sensitive ? '••••••' : h.value} onChange={e => updateHeader(i, 'value', e.target.value)} />
+                  <label style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                    <input
+                      type="checkbox"
+                      checked={h.sensitive}
+                      onChange={() => setForm(f => {
+                        const hdrs = [...f.headers]
+                        hdrs[i] = { ...hdrs[i], sensitive: !hdrs[i].sensitive, value: hdrs[i].sensitive ? '' : hdrs[i].value }
+                        return { ...f, headers: hdrs }
+                      })}
+                    />
+                    sensitive
+                  </label>
                   <button type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error-full)', fontSize: 14, padding: '4px 6px' }} onClick={() => removeHeader(i)}>×</button>
                 </div>
               ))}
