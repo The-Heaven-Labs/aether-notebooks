@@ -354,7 +354,6 @@ func createSkill(t *testing.T, srv *api.Server, token string) string {
 	body, _ := json.Marshal(map[string]any{
 		"name":        "Test Skill",
 		"description": "A test skill",
-		"tool_ids":    []string{},
 	})
 	req := httptest.NewRequest("POST", "/api/v1/skills", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
