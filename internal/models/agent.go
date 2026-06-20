@@ -75,6 +75,7 @@ type Agent struct {
 	SubagentModelConfigID *string        `json:"subagent_model_config_id,omitempty"`
 	SystemPrompt          string         `json:"system_prompt,omitempty"`
 	SkillIDs              []string       `json:"skill_ids"`
+	Skills                []Skill        `json:"skills,omitempty"`
 	MCPServerIDs          []string       `json:"mcp_server_ids"`
 	MCPServers            []MCPServerOrg `json:"mcp_servers"`
 	ToolIDs               []string       `json:"tool_ids,omitempty"`
