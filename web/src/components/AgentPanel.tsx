@@ -184,6 +184,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
           setMessages((prev) => [...prev, { role: 'tool', content: msg.tool, reasoning: streamingReasoningRef.current || undefined }])
           if (streamingReasoningRef.current) {
             needsCollapseRef.current = true
+            streamingReasoningRef.current = ''
           }
           break
         case 'tool_result':
@@ -397,6 +398,9 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
         }
         lines.push(`**Assistant:** ${msg.content}`)
       } else if (msg.role === 'tool') {
+        if (msg.reasoning) {
+          lines.push(`> **Thinking:** ${msg.reasoning}`)
+        }
         lines.push(`**Tool: ${msg.content}**`)
         if (msg.params) lines.push(`  Params: \`${msg.params}\``)
         if (msg.result) lines.push(`  Result: \`${msg.result.length > 500 ? msg.result.slice(0, 500) + '...' : msg.result}\``)
