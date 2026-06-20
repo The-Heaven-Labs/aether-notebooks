@@ -279,6 +279,22 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
             setMessages((prev) => [...prev, { role: 'assistant', content: JSON.stringify(msg.data, null, 2) }])
           }
           break
+        case 'reconnect_sync': {
+          const serverMsgs = msg.messages as Array<{ role: string; content?: string; tool_calls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>; tool_call_id?: string }>
+          if (serverMsgs.length === 0) break
+          const converted = serverMsgs.map((m) => {
+            if (m.role === 'tool') {
+              return { role: 'tool', content: m.tool_call_id || 'tool', params: JSON.stringify(m.tool_calls?.[0]?.arguments || {}), result: m.content }
+            }
+            if (m.tool_calls && m.tool_calls.length > 0) {
+              return { role: 'tool' as const, content: m.tool_calls.map(tc => tc.name).join(', '), params: JSON.stringify(m.tool_calls.map(tc => tc.arguments)), result: undefined }
+            }
+            return { role: m.role as 'user' | 'assistant' | 'tool', content: m.content || '' }
+          })
+          setMessages(converted)
+          setTasks([])
+          break
+        }
         case 'tasks_updated':
           setTasks((prev) => {
             const incoming = msg.data as AgentTaskItem[]

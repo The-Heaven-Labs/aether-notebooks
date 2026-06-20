@@ -17,6 +17,7 @@ interface ModelConfigForm {
   model: string
   api_key: string
   context_window: number
+  compaction_threshold: number
 }
 
 const emptyForm = (): ModelConfigForm => ({
@@ -26,6 +27,7 @@ const emptyForm = (): ModelConfigForm => ({
   model: 'gpt-4o',
   api_key: '',
   context_window: 128000,
+  compaction_threshold: 70,
 })
 
 const PROVIDERS = [
@@ -77,6 +79,8 @@ export function ModelsPage() {
     queryFn: () => api.get<ModelConfig[]>('/api/v1/model-configs'),
   })
 
+  const defaultParams = () => ({ compaction_threshold: form.compaction_threshold })
+
   const createMutation = useMutation({
     mutationFn: () => api.post<{ id: string }>('/api/v1/model-configs', {
       name: form.name,
@@ -85,6 +89,7 @@ export function ModelsPage() {
       model: form.model,
       api_key: form.api_key,
       context_window: form.context_window,
+      default_params: defaultParams(),
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['model-configs'] })
@@ -103,6 +108,7 @@ export function ModelsPage() {
       model: form.model,
       ...(form.api_key ? { api_key: form.api_key } : {}),
       context_window: form.context_window,
+      default_params: defaultParams(),
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['model-configs'] })
@@ -136,7 +142,7 @@ export function ModelsPage() {
   })
 
   const startEdit = (config: ModelConfig) => {
-    setEditingId(config.id)
+    const threshold = config.default_params?.['compaction_threshold']
     setForm({
       name: config.name,
       provider: config.provider,
@@ -144,7 +150,9 @@ export function ModelsPage() {
       model: config.model,
       api_key: '',
       context_window: config.context_window,
+      compaction_threshold: typeof threshold === 'number' ? threshold : 70,
     })
+    setEditingId(config.id)
   }
 
   return (
@@ -193,7 +201,7 @@ export function ModelsPage() {
             action={{ label: '+ New Model', onClick: () => setCreating(true) }}
           />
         ) : (
-          <StyledTable headers={['Name', 'Provider', 'Endpoint', 'Model', 'Context Window', '']}>
+          <StyledTable headers={['Name', 'Provider', 'Endpoint', 'Model', 'Context Window', 'Compaction', '']}>
             {configs.map((c) => (
               <tr key={c.id} style={rowStyle}>
                 <td style={cellStyle}><strong>{c.name}</strong></td>
@@ -201,6 +209,9 @@ export function ModelsPage() {
                 <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{c.base_url}</td>
                 <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{c.model}</td>
                 <td style={{ ...cellStyle, fontSize: 12, color: 'var(--text-muted)' }}>{c.context_window?.toLocaleString() ?? '—'}</td>
+                <td style={{ ...cellStyle, fontSize: 12, color: 'var(--text-muted)' }}>
+                  {c.default_params?.['compaction_threshold'] != null ? `${c.default_params['compaction_threshold']}%` : '70%'}
+                </td>
                   <td style={styles.tdActions}>
                     <button type="button" style={styles.permissionsBtn} onClick={() => setPermissionsTarget({ id: c.id, name: c.name })}>Permissions</button>
                     <button
@@ -290,6 +301,10 @@ function ModelFormFields({ form, setForm }: { form: ModelConfigForm; setForm: Re
       </label>
       <label style={styles.label}>Context Window (tokens)
         <input style={styles.input} type="number" min={1000} max={2000000} value={form.context_window} onChange={e => setForm(f => ({ ...f, context_window: parseInt(e.target.value) || 128000 }))} />
+      </label>
+      <label style={styles.label}>Compaction Threshold %
+        <input style={styles.input} type="number" min={0} max={100} value={form.compaction_threshold} onChange={e => setForm(f => ({ ...f, compaction_threshold: parseInt(e.target.value) || 70 }))} />
+        <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>Auto-summarize when context reaches this % of the window. 0 = disabled.</span>
       </label>
     </div>
   )

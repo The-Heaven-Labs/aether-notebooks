@@ -15,22 +15,20 @@ import (
 )
 
 type Engine struct {
-	registry            *ToolRegistry
-	session             *SessionStore
-	llm                 *LLMClient
-	pool                *pgxpool.Pool
-	mu                  sync.Mutex
-	rateLimiter         *RateLimiter
-	BroadcastFunc       func(notebookID string, msg any)
-	toolAllowedDomains  []string
+	registry           *ToolRegistry
+	session            *SessionStore
+	llm                *LLMClient
+	pool               *pgxpool.Pool
+	mu                 sync.Mutex
+	BroadcastFunc      func(notebookID string, msg any)
+	toolAllowedDomains []string
 }
 
 func NewEngine(ctx context.Context, pool *pgxpool.Pool) *Engine {
 	engine := &Engine{
-		registry:    NewToolRegistry(),
-		session:     NewSessionStore(pool),
-		pool:        pool,
-		rateLimiter: NewRateLimiter(pool),
+		registry: NewToolRegistry(),
+		session:  NewSessionStore(pool),
+		pool:     pool,
 	}
 
 	RegisterNotebookTools(engine.registry, pool)
@@ -50,6 +48,61 @@ func NewEngine(ctx context.Context, pool *pgxpool.Pool) *Engine {
 	}
 
 	return engine
+}
+
+// compactChatHistory replaces older conversation history with an LLM-generated summary
+// when the token count approaches the context window limit.
+// It keeps the system prompt (index 0) and the last 8 messages, summarizing everything in between.
+func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsgs []ChatMessage, masterKey []byte, sessionID string) []ChatMessage {
+	if len(chatMsgs) <= 10 {
+		return chatMsgs
+	}
+
+	// Keep system message (index 0) and last 8 messages (recent context + current turn)
+	keepEnd := len(chatMsgs) - 8
+	if keepEnd <= 1 {
+		return chatMsgs
+	}
+
+	oldMsgs := chatMsgs[1:keepEnd]
+
+	var sb strings.Builder
+	sb.WriteString("Summarize the following conversation history concisely, preserving key information, decisions, data findings, and context:\n\n")
+	for _, m := range oldMsgs {
+		role := m.Role
+		content := m.Content
+		if len(content) > 500 {
+			content = content[:500] + "..."
+		}
+		sb.WriteString(fmt.Sprintf("%s: %s\n", role, content))
+	}
+
+	resp, err := llm.Chat(ctx, []ChatMessage{
+		{Role: "user", Content: sb.String()},
+	}, nil, masterKey)
+	if err != nil {
+		slog.Warn("compaction summarization failed", "session_id", sessionID, "error", err)
+		return chatMsgs
+	}
+
+	summary := ""
+	if len(resp.Choices) > 0 {
+		summary = resp.Choices[0].Message.Content
+	}
+	if summary == "" {
+		return chatMsgs
+	}
+
+	compacted := make([]ChatMessage, 0, keepEnd+8)
+	compacted = append(compacted, chatMsgs[0])
+	compacted = append(compacted, ChatMessage{
+		Role:    "system",
+		Content: "The following is a summary of earlier conversation history:\n\n" + summary + "\n\n(older context was compacted to stay within context window limits)",
+	})
+	compacted = append(compacted, chatMsgs[keepEnd:]...)
+
+	slog.Info("context compaction completed", "session_id", sessionID, "old_msgs", len(oldMsgs), "new_msgs", len(compacted))
+	return compacted
 }
 
 func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, tools []*ToolDef, masterKey []byte, onToken func(string), onReasoning func(string), onToolCall func(string, string, string), onToolResult func(string, string, string, string), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, error) {
@@ -153,16 +206,6 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		}
 	}
 
-	ok, err := e.rateLimiter.CheckAndUpdateTokens(ctx, sessionID, 0, 0)
-	if err != nil {
-		slog.Error("rate limit check failed", "session_id", sessionID, "error", err)
-		return "", "", nil, events, fmt.Errorf("rate limit check: %w", err)
-	}
-	if !ok {
-		slog.Warn("rate limit exceeded", "session_id", sessionID)
-		return "", "", nil, events, fmt.Errorf("rate limit exceeded: session has reached max turns or tokens")
-	}
-
 	// Build skill catalog (name + description only, not full content)
 	type skillCatalogEntry struct {
 		Name        string `json:"name"`
@@ -183,6 +226,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	}
 
 	llmClient := e.llm
+	contextWindow := 128000 // default
+	compactionThreshold := 70 // default 70%
 	if agent.ModelConfigID != nil && *agent.ModelConfigID != "" {
 		slog.Debug("engine: using agent model config", "session_id", sessionID, "model_config_id", *agent.ModelConfigID)
 		var mc models.ModelConfig
@@ -195,7 +240,13 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		if defaultParams != nil {
 			json.Unmarshal(defaultParams, &mc.DefaultParams)
 		}
+		if v, ok := mc.DefaultParams["compaction_threshold"]; ok {
+			if f, ok := v.(float64); ok {
+				compactionThreshold = int(f)
+			}
+		}
 		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted)
+		contextWindow = mc.ContextWindow
 	} else {
 		slog.Warn("engine: no model config on agent, using default LLM client", "session_id", sessionID, "default_llm_nil", e.llm == nil)
 	}
@@ -255,6 +306,28 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		msg := ChatMessage{Role: m.Role, Content: m.Content}
 		if m.ReasoningContent != "" {
 			msg.ReasoningContent = m.ReasoningContent
+		}
+		if len(m.ToolCalls) > 0 {
+			for _, tc := range m.ToolCalls {
+				argsStr := ""
+				if b, err := json.Marshal(tc.Arguments); err == nil {
+					argsStr = string(b)
+				}
+				msg.ToolCalls = append(msg.ToolCalls, ToolCall{
+					ID:   tc.ID,
+					Type: "function",
+					Function: struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					}{
+						Name:      tc.Name,
+						Arguments: argsStr,
+					},
+				})
+			}
+		}
+		if m.ToolCallID != nil {
+			msg.ToolCallID = *m.ToolCallID
 		}
 		chatMsgs = append(chatMsgs, msg)
 	}
@@ -378,6 +451,12 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		modelCalls++
 		totalTokensInput += resp.Usage.PromptTokens
 		totalTokensOutput += resp.Usage.CompletionTokens
+
+		// Auto-compact if approaching context window limit
+		if compactionThreshold > 0 && totalTokensInput > contextWindow*compactionThreshold/100 && len(chatMsgs) > 10 {
+			chatMsgs = e.compactChatHistory(ctx, llmClient, chatMsgs, masterKey, sessionID)
+			slog.Info("context compaction triggered", "session_id", sessionID, "tokens", totalTokensInput, "context_window", contextWindow)
+		}
 
 		choice := resp.Choices[0]
 		text := choice.Message.Content

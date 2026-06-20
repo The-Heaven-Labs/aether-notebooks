@@ -65,6 +65,29 @@ export interface CellVersion {
   user?: { id: string; name: string; email: string }
 }
 
+export interface SnapshotChanges {
+  title_changed: boolean
+  old_title: string
+  new_title: string
+  cells_added: string[]
+  cells_deleted: string[]
+  cells_modified: string[]
+  positions_changed: boolean
+}
+
+export interface NotebookSnapshot {
+  id: string
+  notebook_id: string
+  name: string
+  title: string
+  cell_sources: Record<string, string>
+  created_by: string
+  created_at: string
+  auto: boolean
+  user?: { id: string; name: string; email: string }
+  changes?: SnapshotChanges
+}
+
 export interface Output {
   type: 'table' | 'error' | 'text' | 'chart'
   data: unknown

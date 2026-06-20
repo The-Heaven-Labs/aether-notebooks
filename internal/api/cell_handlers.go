@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -401,6 +402,9 @@ func (s *Server) handleDeleteCell(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "no permission to delete cells from this notebook")
 		return
 	}
+
+	// Auto-snapshot before destructive action
+	go agent.EnsureAutoSnapshot(context.Background(), s.db.Pool, nbID, claims.UserID)
 
 	result, err := s.db.Pool.Exec(ctx,
 		`DELETE FROM cells WHERE id = $1 AND notebook_id = $2

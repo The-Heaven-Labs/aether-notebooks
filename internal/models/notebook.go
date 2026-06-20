@@ -70,13 +70,45 @@ type CellVersion struct {
 	User      *User     `json:"user,omitempty"`
 }
 
+type SnapshotCell struct {
+	ID            string          `json:"id"`
+	Type          CellType        `json:"type"`
+	Language      string          `json:"language,omitempty"`
+	Source        string          `json:"source"`
+	Position      int             `json:"position"`
+	ConnectorID   string          `json:"connector_id,omitempty"`
+	Outputs       json.RawMessage `json:"outputs,omitempty"`
+	Limit         *int            `json:"limit,omitempty"`
+	SourceVisible bool            `json:"source_visible"`
+	CellCollapsed bool            `json:"cell_collapsed"`
+	SlideBreak    bool            `json:"slide_break"`
+	Metadata      json.RawMessage `json:"metadata,omitempty"`
+	Title         string          `json:"title,omitempty"`
+	Description   string          `json:"description,omitempty"`
+}
+
+type SnapshotChanges struct {
+	TitleChanged   bool     `json:"title_changed"`
+	OldTitle       string   `json:"old_title"`
+	NewTitle       string   `json:"new_title"`
+	CellsAdded     []string `json:"cells_added"`
+	CellsDeleted   []string `json:"cells_deleted"`
+	CellsModified  []string `json:"cells_modified"`
+	PositionsChanged bool   `json:"positions_changed"`
+}
+
 type NotebookSnapshot struct {
 	ID          string            `json:"id"`
 	NotebookID  string            `json:"notebook_id"`
 	Name        string            `json:"name"`
+	Title       string            `json:"title"`
 	CellSources map[string]string `json:"cell_sources"`
+	Cells       []SnapshotCell    `json:"cells,omitempty"`
 	CreatedBy   string            `json:"created_by"`
 	CreatedAt   time.Time         `json:"created_at"`
+	Auto        bool              `json:"auto"`
+	User        *User             `json:"user,omitempty"`
+	Changes     *SnapshotChanges  `json:"changes,omitempty"`
 }
 
 type Schedule struct {

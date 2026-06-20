@@ -20,7 +20,7 @@ var BuiltinTools = []BuiltinToolDef{
 	{Name: "notebook_read_cells", Description: "Read cells from a notebook", HandlerName: "notebook_read_cells"},
 	{Name: "notebook_create_cell", Description: "Create a new cell", HandlerName: "notebook_create_cell"},
 	{Name: "notebook_update_cell", Description: "Update an existing cell", HandlerName: "notebook_update_cell"},
-	{Name: "notebook_delete_cell", Description: "Delete a cell", HandlerName: "notebook_delete_cell"},
+	{Name: "notebook_delete_cell", Description: "Delete a cell", HandlerName: "delete_cell"},
 	{Name: "notebook_run_cell", Description: "Run a code cell", HandlerName: "notebook_run_cell"},
 	{Name: "notebook_list_cells", Description: "List all cells in a notebook", HandlerName: "notebook_list_cells"},
 	{Name: "get_notebook_context", Description: "Get full notebook context", HandlerName: "get_notebook_context"},
@@ -39,6 +39,9 @@ var BuiltinTools = []BuiltinToolDef{
 	{Name: "list_connectors", Description: "List connectors", HandlerName: "list_connectors"},
 	{Name: "list_folders", Description: "List folders", HandlerName: "list_folders"},
 	{Name: "get_folder_tree", Description: "Get folder tree", HandlerName: "get_folder_tree"},
+	{Name: "create_snapshot", Description: "Create a notebook snapshot", HandlerName: "create_snapshot"},
+	{Name: "list_snapshots", Description: "List notebook snapshots", HandlerName: "list_snapshots"},
+	{Name: "restore_snapshot", Description: "Restore a notebook snapshot", HandlerName: "restore_snapshot"},
 }
 
 func SeedBuiltinTools(ctx context.Context, pool *pgxpool.Pool, orgID string) {
