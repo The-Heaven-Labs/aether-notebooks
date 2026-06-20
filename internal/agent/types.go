@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/heavenlabs/hnb/internal/models"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -205,8 +206,13 @@ func (r *ToolRegistry) List() []*ToolDef {
 }
 
 func validateRequiredParams(schema any, params map[string]any) error {
-	schemaMap, ok := schema.(map[string]any)
-	if !ok {
+	var schemaMap map[string]any
+	switch v := schema.(type) {
+	case map[string]any:
+		schemaMap = v
+	case models.JSONMap:
+		schemaMap = map[string]any(v)
+	default:
 		return nil
 	}
 	required, _ := schemaMap["required"].([]any)
