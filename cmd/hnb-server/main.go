@@ -138,6 +138,7 @@ func main() {
 	srv.SetPublicURL(cfg.PublicURL)
 	srv.SetFrontendURL(cfg.FrontendURL)
 	srv.SetMaxAttachmentBytes(cfg.MaxAttachmentBytes)
+	srv.SetToolAllowedDomains(cfg.ToolAllowedDomains)
 	httpSrv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      srv,

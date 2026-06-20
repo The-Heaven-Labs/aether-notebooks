@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -23,6 +24,21 @@ type Config struct {
 	S3AccessKey        string
 	S3SecretKey        string
 	MaxAttachmentBytes int64
+	ToolAllowedDomains []string // comma-separated domains allowed for webhook tools (bypasses private IP block)
+}
+
+func parseCommaList(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
 
 func Load() (*Config, error) {
@@ -47,6 +63,7 @@ func Load() (*Config, error) {
 		S3AccessKey:        os.Getenv("HNB_S3_ACCESS_KEY"),
 		S3SecretKey:        os.Getenv("HNB_S3_SECRET_KEY"),
 		MaxAttachmentBytes: maxAttachmentBytes,
+		ToolAllowedDomains: parseCommaList(os.Getenv("HNB_TOOL_ALLOWED_DOMAINS")),
 	}
 	if cfg.MasterKey == "" {
 		return nil, fmt.Errorf("HNB_MASTER_KEY is required")

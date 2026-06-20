@@ -15,13 +15,14 @@ import (
 )
 
 type Engine struct {
-	registry      *ToolRegistry
-	session       *SessionStore
-	llm           *LLMClient
-	pool          *pgxpool.Pool
-	mu            sync.Mutex
-	rateLimiter   *RateLimiter
-	BroadcastFunc func(notebookID string, msg any)
+	registry            *ToolRegistry
+	session             *SessionStore
+	llm                 *LLMClient
+	pool                *pgxpool.Pool
+	mu                  sync.Mutex
+	rateLimiter         *RateLimiter
+	BroadcastFunc       func(notebookID string, msg any)
+	toolAllowedDomains  []string
 }
 
 func NewEngine(ctx context.Context, pool *pgxpool.Pool) *Engine {
@@ -488,7 +489,7 @@ func (e *Engine) resolveToolDef(t *models.Tool) (*ToolDef, error) {
 		}
 		return def, nil
 	case models.ToolTypeWebhook:
-		return makeWebhookToolDef(t)
+		return makeWebhookToolDef(t, e.toolAllowedDomains)
 	case models.ToolTypeSQLQuery:
 		return makeSQLQueryToolDef(t, e.pool)
 	default:
@@ -506,6 +507,10 @@ func (e *Engine) SessionStore() *SessionStore {
 
 func (e *Engine) SetLLMClient(llm *LLMClient) {
 	e.llm = llm
+}
+
+func (e *Engine) SetToolAllowedDomains(domains []string) {
+	e.toolAllowedDomains = domains
 }
 
 func (e *Engine) HandleSlashCommand(ctx context.Context, sessionID string, command string, orgID string, masterKey []byte) (any, error) {
