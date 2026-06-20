@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"time"
 
+	"github.com/heavenlabs/hnb/internal/crypto"
+	"github.com/heavenlabs/hnb/internal/executor"
 	"github.com/heavenlabs/hnb/internal/models"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -28,26 +30,28 @@ func makeSQLQueryToolDef(t *models.Tool, pool *pgxpool.Pool) (*ToolDef, error) {
 			Parameters:  t.Schema,
 		},
 		Handler: func(args json.RawMessage, ctx *ToolContext) (any, error) {
-			var params map[string]any
+			var llmParams map[string]any
 			if len(args) > 0 {
-				json.Unmarshal(args, &params)
+				json.Unmarshal(args, &llmParams)
 			}
-			if err := validateRequiredParams(t.Schema, params); err != nil {
+			if err := validateRequiredParams(t.Schema, llmParams); err != nil {
 				return nil, err
 			}
-			queryStr := query
-			if params != nil {
-				for k, v := range params {
-					val := fmt.Sprintf("%v", v)
-					queryStr = strings.ReplaceAll(queryStr, fmt.Sprintf("{{%s}}", k), val)
+
+			// Convert LLM params to executor string map
+			strParams := make(map[string]string)
+			if llmParams != nil {
+				for k, v := range llmParams {
+					strParams[k] = fmt.Sprintf("%v", v)
 				}
 			}
-			return executeAgentSQL(ctx.Context, pool, connectorID, queryStr)
+
+			return executeAgentSQL(ctx.Context, pool, connectorID, query, strParams, ctx.MasterKey)
 		},
 	}, nil
 }
 
-func executeAgentSQL(ctx context.Context, pool *pgxpool.Pool, connectorID, query string) (any, error) {
+func executeAgentSQL(ctx context.Context, pool *pgxpool.Pool, connectorID, query string, params map[string]string, masterKey []byte) (any, error) {
 	var connType string
 	var configEnc []byte
 	err := pool.QueryRow(ctx,
@@ -56,10 +60,30 @@ func executeAgentSQL(ctx context.Context, pool *pgxpool.Pool, connectorID, query
 	if err != nil {
 		return nil, fmt.Errorf("connector not found: %w", err)
 	}
-	return map[string]any{
-		"connector_id": connectorID,
-		"query":        query,
-		"status":       "executed",
-		"note":         fmt.Sprintf("Query executed against %s connector", connType),
-	}, nil
+
+	plain, err := crypto.Decrypt(configEnc, masterKey)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt connector config: %w", err)
+	}
+
+	driver, ok := executor.GetDriver(models.ConnectorType(connType))
+	if !ok {
+		return nil, fmt.Errorf("unsupported connector type: %s", connType)
+	}
+
+	exec, err := driver.NewExecutor(plain)
+	if err != nil {
+		return nil, fmt.Errorf("create executor: %w", err)
+	}
+	defer exec.Close()
+
+	c, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	result, err := exec.Execute(c, query, params, 1000)
+	if err != nil {
+		return nil, fmt.Errorf("execute: %w", err)
+	}
+
+	return result, nil
 }
