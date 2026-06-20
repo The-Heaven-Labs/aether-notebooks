@@ -294,6 +294,12 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/skills", authMW(http.HandlerFunc(sh.handleCreate)))
 	s.mux.Handle("PUT /api/v1/skills/{id}", authMW(s.requirePermission("skill", "id", "edit")(http.HandlerFunc(sh.handleUpdate))))
 	s.mux.Handle("DELETE /api/v1/skills/{id}", authMW(s.requirePermission("skill", "id", "delete")(http.HandlerFunc(sh.handleDelete))))
+	th := toolHandlers{server: s}
+	s.mux.Handle("GET /api/v1/tools", authMW(http.HandlerFunc(th.handleList)))
+	s.mux.Handle("POST /api/v1/tools", authMW(http.HandlerFunc(th.handleCreate)))
+	s.mux.Handle("GET /api/v1/tools/{id}", authMW(s.requirePermission("tool", "id", "view")(http.HandlerFunc(th.handleGet))))
+	s.mux.Handle("PUT /api/v1/tools/{id}", authMW(s.requirePermission("tool", "id", "edit")(http.HandlerFunc(th.handleUpdate))))
+	s.mux.Handle("DELETE /api/v1/tools/{id}", authMW(s.requirePermission("tool", "id", "delete")(http.HandlerFunc(th.handleDelete))))
 	mh := mcpServerHandlers{server: s}
 	s.mux.Handle("GET /api/v1/mcp-servers", authMW(http.HandlerFunc(mh.handleList)))
 	s.mux.Handle("POST /api/v1/mcp-servers", authMW(RequireRole("admin")(http.HandlerFunc(mh.handleCreate))))
