@@ -53,6 +53,7 @@ interface AgentChatState {
   agentId: string
   sessionId: string
   messages: Array<{ role: string; content: string; reasoning?: string; params?: string; result?: string }>
+  tasks?: AgentTaskItem[]
 }
 
 export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellOutput, onCellScrollTo, onClose, onMinimize }: AgentPanelProps) {
@@ -100,6 +101,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
   const resizeRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const selectedAgentRef = useRef<Agent | null>(null)
+  const userScrolledAwayRef = useRef(false)
   selectedAgentRef.current = selectedAgent
 
   useEffect(() => {
@@ -124,6 +126,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
           setSelectedAgent(agent)
           setSessionId(savedState.sessionId)
           setMessages(savedState.messages)
+          setTasks(savedState.tasks || [])
           connectWebSocket(savedState.sessionId)
           return
         }
@@ -147,9 +150,9 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
     return null
   }
 
-  const saveChatState = (agentId: string, sessionId: string, msgs: Array<{ role: string; content: string; reasoning?: string; params?: string; result?: string }>) => {
+  const saveChatState = (agentId: string, sessionId: string, msgs: Array<{ role: string; content: string; reasoning?: string; params?: string; result?: string }>, tks?: AgentTaskItem[]) => {
     try {
-      localStorage.setItem(chatStateKey, JSON.stringify({ agentId, sessionId, messages: msgs }))
+      localStorage.setItem(chatStateKey, JSON.stringify({ agentId, sessionId, messages: msgs, tasks: tks }))
     } catch { /* ignore */ }
   }
 
@@ -181,7 +184,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
           appendStreamingReasoning(msg.data)
           break
         case 'tool_call':
-          setMessages((prev) => [...prev, { role: 'tool', content: msg.tool, reasoning: streamingReasoningRef.current || undefined }])
+          setMessages((prev) => [...prev, { role: 'tool', content: msg.tool, reasoning: msg.reasoning || streamingReasoningRef.current || undefined }])
           if (streamingReasoningRef.current) {
             needsCollapseRef.current = true
             streamingReasoningRef.current = ''
@@ -233,12 +236,14 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
           setIsStreaming(false)
           updateStreamingReasoning('')
           needsCollapseRef.current = false
+          setTasks((prev) => prev.map((t) => t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t))
           setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50)
           break
         case 'cancelled':
           setIsStreaming(false)
           updateStreamingReasoning('')
           needsCollapseRef.current = false
+          setTasks((prev) => prev.map((t) => t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t))
           const cancelledText = streamingTextRef.current
           if (cancelledText) {
             setMessages((prev) => [...prev, { role: 'assistant', content: cancelledText + '\n\n*[Cancelled]*' }])
@@ -264,7 +269,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
               const summaryMsgs = [{ role: 'assistant', content: 'Previous session summary:\n\n' + data.summary }]
               setMessages(summaryMsgs)
               if (selectedAgentRef.current) {
-                saveChatState(selectedAgentRef.current.id, data.session_id, summaryMsgs)
+                saveChatState(selectedAgentRef.current.id, data.session_id, summaryMsgs, undefined)
               }
             } else {
               const s = (msg.data as any).summary
@@ -281,7 +286,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
             for (const t of incoming) {
               const idx = merged.findIndex((m) => m.id === t.id)
               if (idx >= 0) {
-                merged[idx] = { ...merged[idx], ...t }
+                merged[idx] = { ...merged[idx], ...t, ...(t.description ? {} : { description: merged[idx].description }) }
               } else {
                 merged.push(t)
               }
@@ -321,7 +326,8 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
       setSelectedAgent(agent)
       localStorage.setItem(LAST_AGENT_KEY, agent.id)
       setMessages([])
-      saveChatState(agent.id, res.session_id, [])
+      setTasks([])
+      saveChatState(agent.id, res.session_id, [], undefined)
       connectWebSocket(res.session_id)
     } catch {
       setError('Failed to start session')
@@ -333,7 +339,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
     setSessionTitle(null)
     setMessages([])
     if (selectedAgent) {
-      saveChatState(selectedAgent.id, sessionID, [])
+      saveChatState(selectedAgent.id, sessionID, [], undefined)
     }
     connectWebSocket(sessionID)
   }
@@ -434,16 +440,27 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
   }
 
   useEffect(() => {
-    if (messageListRef.current) {
-      messageListRef.current.scrollTop = messageListRef.current.scrollHeight
+    const el = messageListRef.current
+    if (!el) return
+    const onScroll = () => {
+      userScrolledAwayRef.current = el.scrollHeight - el.scrollTop - el.clientHeight > 80
     }
-  }, [messages, currentStreamingText])
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [])
+
+  useEffect(() => {
+    const el = messageListRef.current
+    if (el && !userScrolledAwayRef.current) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [messages, currentStreamingText, currentStreamingReasoning])
 
   useEffect(() => {
     if (_sessionId && selectedAgent && messages.length > 0) {
-      saveChatState(selectedAgent.id, _sessionId, messages)
+      saveChatState(selectedAgent.id, _sessionId, messages, tasks)
     }
-  }, [messages, _sessionId, selectedAgent])
+  }, [messages, tasks, _sessionId, selectedAgent])
 
   useEffect(() => {
     if (isStreaming || pendingMessages.length === 0 || processingRef.current) return
@@ -551,7 +568,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
               }))
               setMessages(formatted)
               if (selectedAgent) {
-                saveChatState(selectedAgent.id, session.id, formatted)
+                saveChatState(selectedAgent.id, session.id, formatted, undefined)
               }
             } catch {
               setMessages([])
@@ -626,14 +643,14 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
                   : 'Ask me anything. I can help with notebooks, queries, analysis, and more.'}
               </div>
             )}
-             {messages.map((msg, i) => (
-               <div key={i}>
-                 {msg.reasoning && (
-                   <details style={{ ...styles.message, ...styles.reasoningMessage, marginBottom: 4 }}>
-                     <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>Thinking</summary>
-                     <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{msg.reasoning}</div>
-                   </details>
-                 )}
+              {messages.map((msg, i) => (
+                <div key={i}>
+                    {msg.reasoning && (
+                      <details open={!isStreaming && i === messages.findLastIndex(m => !!m.reasoning)} style={{ ...styles.message, ...styles.reasoningMessage, marginBottom: 4 }}>
+                        <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>Thinking</summary>
+                        <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{msg.reasoning}</div>
+                      </details>
+                    )}
                  {msg.role !== 'reasoning' && (
                    <div style={{ ...styles.message, ...(msg.role === 'user' ? styles.userMessage : msg.role === 'tool' ? styles.toolMessage : styles.assistantMessage) }}>
                      {msg.role === 'tool' ? (
@@ -664,18 +681,14 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
                  )}
                </div>
              ))}
-             {isStreaming && currentStreamingReasoning && (
-                <details open style={{ ...styles.message, ...styles.reasoningMessage }}>
-                  <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>Thinking</summary>
-                  <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{currentStreamingReasoning}</div>
-                </details>
-              )}
-              {isStreaming && !currentStreamingReasoning && !currentStreamingText && (
-                <div style={{ ...styles.message, ...styles.assistantMessage, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: 'var(--text-muted)' }} />
-                  <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>Processing...</span>
-                </div>
-              )}
+              {isStreaming && !currentStreamingText && (
+                 <details open style={{ ...styles.message, ...styles.reasoningMessage }}>
+                   <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>Thinking</summary>
+                   <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>
+                     {currentStreamingReasoning || <span style={{ color: 'var(--text-muted)' }}>...</span>}
+                   </div>
+                 </details>
+               )}
               {isStreaming && currentStreamingText && (
               <div style={{ ...styles.message, ...styles.assistantMessage }}>
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{currentStreamingText}</ReactMarkdown>

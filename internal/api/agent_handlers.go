@@ -587,8 +587,12 @@ func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Reques
 		var msgCount int
 		var endedAt *time.Time
 		var title *string
-		if err := rows.Scan(&s.ID, &s.AgentID, &s.NotebookID, &s.UserID, &s.MaxTurns, &s.MaxTokens, &endedAt, &title, &s.CreatedAt, &firstMsg, &msgCount); err != nil {
+		var notebookID *string
+		if err := rows.Scan(&s.ID, &s.AgentID, &notebookID, &s.UserID, &s.MaxTurns, &s.MaxTokens, &endedAt, &title, &s.CreatedAt, &firstMsg, &msgCount); err != nil {
 			continue
+		}
+		if notebookID != nil {
+			s.NotebookID = *notebookID
 		}
 		sessions = append(sessions, map[string]any{
 			"id":            s.ID,
