@@ -130,13 +130,19 @@ func (h *toolHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "type is required")
 		return
 	}
-	if req.Type != "builtin" && req.Type != "webhook" && req.Type != "sql_query" {
-		writeError(w, http.StatusBadRequest, "type must be 'builtin', 'webhook', or 'sql_query'")
+	if req.Type != "webhook" && req.Type != "sql_query" {
+		writeError(w, http.StatusBadRequest, "type must be 'webhook' or 'sql_query'")
 		return
 	}
 
 	if req.Schema == nil {
 		req.Schema = models.JSONMap{}
+	}
+	if _, ok := req.Schema["type"]; !ok {
+		req.Schema["type"] = "object"
+	}
+	if _, ok := req.Schema["properties"]; !ok {
+		req.Schema["properties"] = map[string]any{}
 	}
 	if req.Config == nil {
 		req.Config = models.JSONMap{}

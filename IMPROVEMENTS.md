@@ -18,4 +18,7 @@
 - [x] Pressing Ctrl + Enter (Or shift + Enter) in a markdown cell should render the markdown and leave edit mode
 - [x] It should not be possible to create notebooks on the folder `/`, only in folders after `/`. When in `/`, the new notebook button should not appear.
 - [x] Agent chat messages should render markdown
+- [x] I get an error trying chat when there are sql tools available to the agent: Error: llm call: llm error 400: {"error":{"message":"Error from provider (DeepSeek): Invalid schema for function 'siquel': schema must be a JSON Schema of 'type: "object"', got 'type: null'.","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}
+- [x] I can create tools of type built-in, which make no sense
+- [ ] Tool list should be ordered by type, then alphabetically. Built-in should be last.
 - [ ]

@@ -149,6 +149,19 @@ type ToolDef struct {
 	Handler ToolHandler `json:"-"`
 }
 
+func normalizeToolParams(params map[string]any) map[string]any {
+	if params == nil {
+		params = map[string]any{}
+	}
+	if _, ok := params["type"]; !ok {
+		params["type"] = "object"
+	}
+	if _, ok := params["properties"]; !ok {
+		params["properties"] = map[string]any{}
+	}
+	return params
+}
+
 func (t *ToolDef) ToOpenAITool() (OpenAITool, error) {
 	var params map[string]any
 	if t.Function.Parameters != nil {
@@ -163,6 +176,7 @@ func (t *ToolDef) ToOpenAITool() (OpenAITool, error) {
 			params = map[string]any(v)
 		}
 	}
+	params = normalizeToolParams(params)
 	return OpenAITool{
 		Type: "function",
 		Function: struct {
