@@ -29,9 +29,14 @@ func makeSQLQueryToolDef(t *models.Tool, pool *pgxpool.Pool) (*ToolDef, error) {
 		},
 		Handler: func(args json.RawMessage, ctx *ToolContext) (any, error) {
 			var params map[string]any
-			queryStr := query
 			if len(args) > 0 {
 				json.Unmarshal(args, &params)
+			}
+			if err := validateRequiredParams(t.Schema, params); err != nil {
+				return nil, err
+			}
+			queryStr := query
+			if params != nil {
 				for k, v := range params {
 					val := fmt.Sprintf("%v", v)
 					queryStr = strings.ReplaceAll(queryStr, fmt.Sprintf("{{%s}}", k), val)
