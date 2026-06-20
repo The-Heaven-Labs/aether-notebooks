@@ -25,6 +25,7 @@ var resourceTable = map[string]string{
 	"model_config": "model_configs",
 	"skill":        "skills",
 	"mcp_server":   "mcp_servers",
+	"tool":         "tools",
 }
 
 // checkPermission returns true if userID has action on resourceType/resourceID within orgID.

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gorilla/websocket"
@@ -41,7 +42,7 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 		Cache:     redisCache,
 		upgrader:  websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
 	}
-	s.agentEngine = agent.NewEngine(db.Pool)
+	s.agentEngine = agent.NewEngine(context.Background(), db.Pool)
 	s.agentEngine.BroadcastFunc = func(notebookID string, msg any) {
 		s.hub.Broadcast(notebookID, msg)
 	}
@@ -294,6 +295,13 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/skills", authMW(http.HandlerFunc(sh.handleCreate)))
 	s.mux.Handle("PUT /api/v1/skills/{id}", authMW(s.requirePermission("skill", "id", "edit")(http.HandlerFunc(sh.handleUpdate))))
 	s.mux.Handle("DELETE /api/v1/skills/{id}", authMW(s.requirePermission("skill", "id", "delete")(http.HandlerFunc(sh.handleDelete))))
+	th := toolHandlers{server: s}
+	s.mux.Handle("GET /api/v1/tools", authMW(http.HandlerFunc(th.handleList)))
+	s.mux.Handle("POST /api/v1/tools", authMW(http.HandlerFunc(th.handleCreate)))
+	s.mux.Handle("GET /api/v1/tools/{id}", authMW(s.requirePermission("tool", "id", "view")(http.HandlerFunc(th.handleGet))))
+	s.mux.Handle("PUT /api/v1/tools/{id}", authMW(s.requirePermission("tool", "id", "edit")(http.HandlerFunc(th.handleUpdate))))
+	s.mux.Handle("DELETE /api/v1/tools/{id}", authMW(s.requirePermission("tool", "id", "delete")(http.HandlerFunc(th.handleDelete))))
+	s.mux.Handle("POST /api/v1/tools/{id}/test", authMW(http.HandlerFunc(th.handleTest)))
 	mh := mcpServerHandlers{server: s}
 	s.mux.Handle("GET /api/v1/mcp-servers", authMW(http.HandlerFunc(mh.handleList)))
 	s.mux.Handle("POST /api/v1/mcp-servers", authMW(RequireRole("admin")(http.HandlerFunc(mh.handleCreate))))
