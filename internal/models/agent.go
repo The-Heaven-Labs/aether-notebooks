@@ -45,6 +45,28 @@ type MCPServerOrg struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type ToolType string
+
+const (
+	ToolTypeBuiltin  ToolType = "builtin"
+	ToolTypeWebhook  ToolType = "webhook"
+	ToolTypeSQLQuery ToolType = "sql_query"
+)
+
+type Tool struct {
+	ID          string    `json:"id"`
+	OrgID       string    `json:"org_id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Type        ToolType  `json:"type"`
+	Schema      JSONMap   `json:"schema"`
+	Config      JSONMap   `json:"config"`
+	FolderID    *string   `json:"folder_id,omitempty"`
+	CreatedBy   string    `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type Agent struct {
 	ID                    string         `json:"id"`
 	OrgID                 string         `json:"org_id"`
@@ -56,6 +78,8 @@ type Agent struct {
 	SkillIDs              []string       `json:"skill_ids"`
 	MCPServerIDs          []string       `json:"mcp_server_ids"`
 	MCPServers            []MCPServerOrg `json:"mcp_servers"`
+	ToolIDs               []string       `json:"tool_ids,omitempty"`
+	Tools                 []Tool         `json:"tools,omitempty"`
 	FolderID              *string        `json:"folder_id,omitempty"`
 	MaxTurns              *int           `json:"max_turns,omitempty"`
 	CreatedBy             string         `json:"created_by"`
