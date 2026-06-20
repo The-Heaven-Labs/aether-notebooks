@@ -26,6 +26,13 @@ export function AppShell({ children, noPadding, hideGlobalFab }: Props) {
     } catch { /* ignore */ }
     return 460
   })
+  const [globalAgentHeight, setGlobalAgentHeight] = useState(() => {
+    try {
+      const saved = localStorage.getItem('hnb:agentPanelHeight:__global__')
+      if (saved) return Math.max(200, Math.min(800, parseInt(saved, 10)))
+    } catch { /* ignore */ }
+    return 640
+  })
   const [motds, setMotds] = useState<Array<{id: string; title: string; content: string; visibility: string; pages: string[]}>>([])
   const [dismissedMotds, setDismissedMotds] = useState<Set<string>>(() => {
     try {
@@ -139,7 +146,29 @@ export function AppShell({ children, noPadding, hideGlobalFab }: Props) {
                 style={globalAgentStyles.backdrop}
                 onClick={() => setShowGlobalAgent(false)}
               />
-              <div style={{ ...globalAgentStyles.modal, width: globalAgentWidth }} onClick={e => e.stopPropagation()}>
+              <div style={{ ...globalAgentStyles.modal, width: globalAgentWidth, height: globalAgentHeight }} onClick={e => e.stopPropagation()}>
+                <div
+                  style={globalAgentStyles.vResizeHandle}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    const startY = e.clientY
+                    const startH = globalAgentHeight
+                    let lastClamped = startH
+                    const onMove = (ev: MouseEvent) => {
+                      const newH = startH + (startY - ev.clientY)
+                      const clamped = Math.max(200, Math.min(800, newH))
+                      lastClamped = clamped
+                      setGlobalAgentHeight(clamped)
+                    }
+                    const onUp = () => {
+                      try { localStorage.setItem('hnb:agentPanelHeight:__global__', String(lastClamped)) } catch {}
+                      document.removeEventListener('mousemove', onMove)
+                      document.removeEventListener('mouseup', onUp)
+                    }
+                    document.addEventListener('mousemove', onMove)
+                    document.addEventListener('mouseup', onUp)
+                  }}
+                />
                 <AgentPanel
                   notebookId=""
                   width={globalAgentWidth}
@@ -148,6 +177,7 @@ export function AppShell({ children, noPadding, hideGlobalFab }: Props) {
                     try {
                       localStorage.removeItem('hnb:agentChat:__global__')
                       localStorage.removeItem('hnb:lastAgentId')
+                      localStorage.removeItem('hnb:agentPanelHeight:__global__')
                     } catch {}
                     setShowGlobalAgent(false)
                   }}
@@ -187,12 +217,18 @@ const globalAgentStyles: Record<string, React.CSSProperties> = {
     position: 'fixed', zIndex: 1501,
     bottom: 8, right: 24,
     maxWidth: 'calc(100vw - 48px)',
-    height: 480, maxHeight: 'calc(100vh - 16px)',
+    maxHeight: 'calc(100vh - 16px)',
     borderRadius: 8, overflow: 'hidden',
     border: '1px solid var(--border)',
     boxShadow: '0 16px 48px rgba(0,0,0,0.3)',
     background: 'var(--bg-primary)',
     display: 'flex', flexDirection: 'column',
+  },
+  vResizeHandle: {
+    position: 'absolute', top: 0, left: 0, right: 0,
+    height: 6, cursor: 'ns-resize',
+    zIndex: 10,
+    background: 'transparent',
   },
   minimizedBar: {
     position: 'fixed', zIndex: 1501,

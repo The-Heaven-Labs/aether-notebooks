@@ -289,9 +289,15 @@ function AgentFormFields({ form, setForm, modelConfigs, skills, tools, mcpServer
     s.name.toLowerCase().includes(skillSearch.toLowerCase()) ||
     (s.description ?? '').toLowerCase().includes(skillSearch.toLowerCase())
   )
-  const filteredTools = tools.filter(t =>
-    t.name.toLowerCase().includes(toolSearch.toLowerCase())
-  )
+  const filteredTools = [...tools]
+    .sort((a, b) => {
+      const typeOrder: Record<string, number> = { builtin: 1, sql_query: 0, webhook: 0 }
+      const cmp = (typeOrder[a.type] ?? 0) - (typeOrder[b.type] ?? 0)
+      if (cmp !== 0) return cmp
+      if (a.type !== b.type) return a.type.localeCompare(b.type)
+      return a.name.localeCompare(b.name)
+    })
+    .filter(t => t.name.toLowerCase().includes(toolSearch.toLowerCase()))
   const filteredMCPs = mcpServers.filter(m =>
     m.name.toLowerCase().includes(mcpSearch.toLowerCase())
   )

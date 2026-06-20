@@ -24,7 +24,7 @@ func (h *toolHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
 		SELECT id, org_id, name, description, type, schema, config, folder_id, created_by, created_at, updated_at
-		FROM tools WHERE org_id = $1 ORDER BY name
+		FROM tools WHERE org_id = $1 ORDER BY CASE WHEN type = 'builtin' THEN 1 ELSE 0 END, type, name
 	`, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
