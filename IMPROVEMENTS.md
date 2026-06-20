@@ -30,4 +30,7 @@
 - [x] Can't go back to past sessions in the global agent modal, error "Failed to load sessions"
 - [x] There is a scenario where the last 2 thinking blocks are expanded and with the same content in the global agent modal
 - [x] When the global agent modal is streaming a response, I cant scroll up to read something that has already passed
+- [ ] The notebook Agent modal must enable making the panel bigger width wise (make the limit higher than currently)
+- [ ] Agent modals (notebook and global) should show current token consumption and it should update as chat goes on
+- [ ] Chat messages should have a hover effect that shows at what time exactly they happened
 - [ ]

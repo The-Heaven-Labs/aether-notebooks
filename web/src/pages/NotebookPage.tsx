@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ChevronsRight, ChevronLeft, Loader2, X, Bot, Check, GripVertical, Shield } from 'lucide-react'
+import { ChevronsRight, ChevronLeft, Loader2, X, Bot, Check, GripVertical, Shield, Clock } from 'lucide-react'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -11,7 +11,7 @@ import { AppShell } from '../components/AppShell'
 import { Skeleton } from '../components/Skeleton'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { Notebook, Cell, Output, Connector, Parameter, CellVersion, Dashboard, Widget } from '../types'
+import type { Notebook, Cell, Output, Connector, Parameter, CellVersion, NotebookSnapshot, Dashboard, Widget } from '../types'
 import type { ChartConfig } from '../charts'
 import { Cell as NotebookCell, focusCellEditorEnd, collabCache, updateCellScroll, type NotebookCollab } from '../components/Cell'
 import { focusMarkdownCell } from '../components/MarkdownCell'
@@ -20,6 +20,7 @@ import { SchemaBrowser } from '../components/SchemaBrowser'
 import { SchedulesPanel } from '../components/SchedulesPanel'
 import { useNotebookKeyboardShortcuts } from '../hooks/useNotebookKeyboardShortcuts'
 import { HistoryPanel } from '../components/HistoryPanel'
+import { NotebookHistoryPanel } from '../components/NotebookHistoryPanel'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { AgentPanel } from '../components/AgentPanel'
@@ -162,6 +163,8 @@ export function NotebookPage() {
   const [notebookConnectorId, setNotebookConnectorId] = useState<string>('')
   const [mutationError, setMutationError] = useState<string | null>(null)
   const [showPermissions, setShowPermissions] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
+  const [historySnapshots, setHistorySnapshots] = useState<NotebookSnapshot[]>([])
   const [cellSaveState, setCellSaveState] = useState<Record<string, { saving: boolean; savedAt: Date | null; error: string | null }>>({})
 
   // Derive global save status from per-cell save states
@@ -679,6 +682,30 @@ export function NotebookPage() {
       setMutationError(err instanceof Error ? err.message : 'Failed to restore version')
     }
   }, [id])
+
+  const openSnapshotHistory = useCallback(async () => {
+    try {
+      const snaps = await api.get<NotebookSnapshot[]>(`/api/v1/notebooks/${id}/snapshots`)
+      setHistorySnapshots(snaps)
+      setShowHistory(true)
+    } catch (err) {
+      setMutationError(err instanceof Error ? err.message : 'Failed to load version history')
+    }
+  }, [id])
+
+  const createSnapshot = useCallback(async (name: string) => {
+    await api.post(`/api/v1/notebooks/${id}/snapshots`, { name })
+    // Refresh the list
+    const snaps = await api.get<NotebookSnapshot[]>(`/api/v1/notebooks/${id}/snapshots`)
+    setHistorySnapshots(snaps)
+  }, [id])
+
+  const restoreSnapshot = useCallback(async (snapshotId: string) => {
+    await api.post(`/api/v1/notebooks/${id}/snapshots/${snapshotId}/restore`, {})
+    setShowHistory(false)
+    // Reload the notebook data
+    qc.invalidateQueries({ queryKey: ['notebook', id] })
+  }, [id, qc])
 
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
@@ -1227,6 +1254,15 @@ export function NotebookPage() {
             <Bot size={13} /> AI
           </button>
 
+          {/* History — standalone */}
+          <button
+            type="button"
+            style={{ ...styles.schemaBtn, ...(showHistory ? styles.schemaBtnActive : {}), display: 'flex', alignItems: 'center', gap: 4 }}
+            onClick={openSnapshotHistory}
+          >
+            <Clock size={13} /> History
+          </button>
+
           {/* Share dropdown */}
           <div style={{ position: 'relative' }}>
             <button
@@ -1495,6 +1531,21 @@ export function NotebookPage() {
               currentSource={localCells.find((c) => c.id === historyCell)?.source ?? ''}
               onRestore={(vId) => restoreVersion(historyCell, vId)}
               onClose={() => setHistoryCell(null)}
+            />
+          </div>
+        </>
+      )}
+
+      {showHistory && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 199 }} onClick={() => setShowHistory(false)} />
+          <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 380, overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
+            <NotebookHistoryPanel
+              snapshots={historySnapshots}
+              onCreateSnapshot={createSnapshot}
+              onRestore={restoreSnapshot}
+              onClose={() => setShowHistory(false)}
+              canEdit={notebook?.can_edit ?? false}
             />
           </div>
         </>

@@ -69,12 +69,15 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	var currentCancel context.CancelFunc
 	var processing bool
 
+	// currentSessionID can be updated when rate-limit auto-continuation creates a new session
+	currentSessionID := sessionID
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		for out := range writeChan {
 			if err := conn.WriteJSON(out); err != nil {
-				slog.Debug("ws: write error, writer exiting", "session_id", sessionID, "error", err)
+				slog.Debug("ws: write error, writer exiting", "error", err)
 				return
 			}
 		}
@@ -87,11 +90,11 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 		for {
 			var msg WSMessage
 			if err := conn.ReadJSON(&msg); err != nil {
-				slog.Debug("ws: read error, reader exiting", "session_id", sessionID, "error", err)
+				slog.Debug("ws: read error, reader exiting", "session_id", currentSessionID, "error", err)
 				return
 			}
 
-			slog.Debug("ws: received message", "session_id", sessionID, "type", msg.Type, "content_len", len(msg.Content))
+			slog.Debug("ws: received message", "session_id", currentSessionID, "type", msg.Type, "content_len", len(msg.Content))
 
 			if msg.Type == "cancel" {
 				mu.Lock()
@@ -109,7 +112,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 				rows, err := s.db.Pool.Query(ctx, `
 					SELECT id, role, content, tool_calls FROM agent_messages
 					WHERE session_id = $1 AND id > $2 ORDER BY created_at
-				`, sessionID, msg.LastMessageID)
+				`, currentSessionID, msg.LastMessageID)
 				if err == nil {
 					var messages []models.AgentMessage
 					for rows.Next() {
@@ -141,18 +144,19 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					continue // drop message if already processing
 				}
 				processing = true
+				sid := currentSessionID
 				mu.Unlock()
 
-				slog.Info("ws: processing message", "session_id", sessionID, "content_len", len(msg.Content))
+				slog.Info("ws: processing message", "session_id", sid, "content_len", len(msg.Content))
 
 				// Run processing in separate goroutine so reader stays free for cancel
-				go func(content string) {
+				go func(content string, sid string) {
 					msgCtx, msgCancel := context.WithCancel(ctx)
 					mu.Lock()
 					currentCancel = msgCancel
 					mu.Unlock()
 
-					_, reasoning, _, events, err := s.agentEngine.ProcessMessage(msgCtx, sessionID, content, s.agentEngine.GetRegistry().List(), s.masterKey,
+					_, reasoning, _, events, err := s.agentEngine.ProcessMessage(msgCtx, sid, content, s.agentEngine.GetRegistry().List(), s.masterKey,
 						func(token string) {
 							writeChan <- WSResponse{Type: "token", Data: token}
 						},
@@ -200,7 +204,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 									Type string            `json:"type"`
 									Data []agent.AgentTask `json:"data"`
 								}{Type: "tasks_updated", Data: evt.Tasks}
-							}
+										}
 						},
 					)
 
@@ -214,15 +218,15 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 							// Cancelled by user - cancelled response already sent
 							return
 						}
-						slog.Error("ws: process message error", "session_id", sessionID, "error", err)
+						slog.Error("ws: process message error", "session_id", sid, "error", err)
 						writeChan <- WSErrorResponse{Type: "error", Message: err.Error()}
 						return
 					}
 
 					_ = events
 					writeChan <- WSResponse{Type: "done", Data: map[string]any{"content": "", "reasoning": reasoning}}
-					slog.Debug("ws: message done", "session_id", sessionID, "reasoning_len", len(reasoning))
-				}(msg.Content)
+					slog.Debug("ws: message done", "session_id", sid, "reasoning_len", len(reasoning))
+				}(msg.Content, currentSessionID)
 			} else if msg.Type == "slash_command" {
 				result, err := s.agentEngine.HandleSlashCommand(ctx, sessionID, msg.Command, claims.OrgID, s.masterKey)
 				if err != nil {

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -112,11 +113,63 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Description string `json:"description"`
 			Parameters  any    `json:"parameters"`
 		}{
+			Name:        "delete_cell",
+			Description: "Delete a cell from a notebook. Use this to clean up cells that are no longer needed.",
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"ID of the cell to delete"}},"required":["cell_id"]}`,
+		},
+		Handler: makeDeleteCellHandler(db),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
 			Name:        "get_notebook_context",
 			Description: "Get the full content of a notebook including all cell sources and optionally outputs. Use this to understand the complete notebook structure and content.",
 			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string","description":"The notebook ID to read"},"max_cells":{"type":"integer","description":"Maximum number of cells to return (default 50)"},"include_outputs":{"type":"boolean","description":"Include cell outputs (default false, truncates to first 10 rows if true)"}},"required":["notebook_id"]}`,
 		},
 		Handler: makeGetNotebookContextHandler(db),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "create_snapshot",
+			Description: "Create a manual snapshot (version history checkpoint) of the current notebook state. Use this before making destructive changes.",
+			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string","description":"Notebook ID (defaults to current)"},"name":{"type":"string","description":"A descriptive name for this snapshot"}},"required":["name"]}`,
+		},
+		Handler: makeCreateSnapshotHandler(db),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "list_snapshots",
+			Description: "List all version history checkpoints (snapshots) for a notebook. Shows date, who created it, name, and what changed.",
+			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string","description":"Notebook ID (defaults to current)"}},"required":[]}`,
+		},
+		Handler: makeListSnapshotsHandler(db),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "restore_snapshot",
+			Description: "Restore a notebook to a previous version history checkpoint. This will restore the notebook title, all cell sources, types, positions, and metadata to the state captured in the snapshot.",
+			Parameters:  `{"type":"object","properties":{"snapshot_id":{"type":"string","description":"ID of the snapshot to restore to"}},"required":["snapshot_id"]}`,
+		},
+		Handler: makeRestoreSnapshotHandler(db),
 	})
 }
 
@@ -573,6 +626,58 @@ func makeExploreSchemaHandler(db *pgxpool.Pool) ToolHandler {
 	}
 }
 
+func makeDeleteCellHandler(db *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			CellID string `json:"cell_id"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+
+	notebookID, err := ctx.GetNotebookIDForCell(req.CellID)
+	if err != nil {
+		return nil, fmt.Errorf("get cell notebook: %w", err)
+	}
+	if err := ctx.CheckPermission("notebook", notebookID, "edit"); err != nil {
+		return nil, err
+	}
+
+	// Auto-snapshot before destructive action
+	go EnsureAutoSnapshot(context.Background(), db, notebookID, ctx.UserID)
+
+	result, err := db.Exec(ctx.Context,
+			`DELETE FROM cells WHERE id = $1 AND notebook_id = $2
+			 AND notebook_id IN (SELECT id FROM notebooks WHERE org_id = $3)`,
+			req.CellID, notebookID, ctx.OrgID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("delete cell: %w", err)
+		}
+		if result.RowsAffected() == 0 {
+			return nil, fmt.Errorf("cell not found")
+		}
+
+		// Touch notebook timestamp
+		db.Exec(ctx.Context, `UPDATE notebooks SET updated_at = NOW() WHERE id = $1`, notebookID)
+
+		_ = ctx.AuditLog("cell.delete", "cell", req.CellID)
+
+		ctx.EmitCellDeleted(req.CellID)
+
+		// Broadcast to all notebook viewers via WebSocket
+		if ctx.BroadcastFunc != nil {
+			ctx.BroadcastFunc(notebookID, map[string]any{
+				"type":       "cell_deleted",
+				"cell_id":    req.CellID,
+				"user_email": "agent@hnb",
+			})
+		}
+
+		return map[string]any{"cell_id": req.CellID, "status": "deleted"}, nil
+	}
+}
+
 func makeGetNotebookContextHandler(db *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var params struct {
@@ -640,5 +745,148 @@ func makeGetNotebookContextHandler(db *pgxpool.Pool) ToolHandler {
 		}
 
 		return map[string]string{"content": result.String()}, nil
+	}
+}
+
+func makeCreateSnapshotHandler(db *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			NotebookID string `json:"notebook_id"`
+			Name       string `json:"name"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if req.Name == "" {
+			return nil, fmt.Errorf("name is required")
+		}
+		if req.NotebookID == "" {
+			req.NotebookID = ctx.NotebookID
+		}
+		if req.NotebookID == "" {
+			return nil, fmt.Errorf("notebook_id is required")
+		}
+		if err := ctx.CheckPermission("notebook", req.NotebookID, "edit"); err != nil {
+			return nil, err
+		}
+
+		snap, err := CreateNotebookSnapshot(ctx.Context, db, req.NotebookID, req.Name, ctx.UserID, false)
+		if err != nil {
+			return nil, fmt.Errorf("create snapshot: %w", err)
+		}
+
+		_ = ctx.AuditLog("snapshot.create", "notebook", req.NotebookID)
+
+		return map[string]any{
+			"snapshot_id": snap.ID,
+			"name":        snap.Name,
+			"created_at":  snap.CreatedAt,
+			"cell_count":  len(snap.Cells),
+		}, nil
+	}
+}
+
+func makeListSnapshotsHandler(db *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			NotebookID string `json:"notebook_id"`
+		}
+		json.Unmarshal(args, &req)
+		if req.NotebookID == "" {
+			req.NotebookID = ctx.NotebookID
+		}
+		if req.NotebookID == "" {
+			return nil, fmt.Errorf("notebook_id is required")
+		}
+		if err := ctx.CheckPermission("notebook", req.NotebookID, "view"); err != nil {
+			return nil, err
+		}
+
+		rows, err := db.Query(ctx.Context,
+			`SELECT ns.id, ns.name, ns.title, ns.created_by_name, ns.created_at, ns.auto,
+			        u.id, u.name, u.email
+			 FROM notebook_snapshots ns
+			 LEFT JOIN users u ON u.id = ns.created_by
+			 WHERE ns.notebook_id=$1
+			 ORDER BY ns.created_at DESC`,
+			req.NotebookID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("list snapshots: %w", err)
+		}
+		defer rows.Close()
+
+		var snapshots []map[string]any
+		for rows.Next() {
+			var id, name, title, createdByName string
+			var createdAt time.Time
+			var auto bool
+			var uID, uName, uEmail *string
+			if err := rows.Scan(&id, &name, &title, &createdByName, &createdAt, &auto,
+				&uID, &uName, &uEmail); err != nil {
+				continue
+			}
+			userName := createdByName
+			if uName != nil && *uName != "" {
+				userName = *uName
+			}
+			snapshots = append(snapshots, map[string]any{
+				"id":         id,
+				"name":       name,
+				"title":      title,
+				"created_by": userName,
+				"created_at": createdAt.Format(time.RFC3339),
+				"auto":       auto,
+			})
+		}
+		if snapshots == nil {
+			snapshots = []map[string]any{}
+		}
+
+		return map[string]any{"snapshots": snapshots, "count": len(snapshots)}, nil
+	}
+}
+
+func makeRestoreSnapshotHandler(db *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			SnapshotID string `json:"snapshot_id"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if req.SnapshotID == "" {
+			return nil, fmt.Errorf("snapshot_id is required")
+		}
+
+		// Get notebook ID from the snapshot
+		var nbID string
+		err := db.QueryRow(ctx.Context,
+			`SELECT notebook_id FROM notebook_snapshots WHERE id=$1`, req.SnapshotID,
+		).Scan(&nbID)
+		if err != nil {
+			return nil, fmt.Errorf("snapshot not found")
+		}
+
+		if err := ctx.CheckPermission("notebook", nbID, "edit"); err != nil {
+			return nil, err
+		}
+
+		if err := RestoreNotebookSnapshot(ctx.Context, db, nbID, req.SnapshotID, ctx.OrgID, ctx.UserID, nil); err != nil {
+			return nil, fmt.Errorf("restore snapshot: %w", err)
+		}
+
+		_ = ctx.AuditLog("snapshot.restore", "notebook", nbID)
+
+		// Broadcast to all notebook viewers via WebSocket
+		if ctx.BroadcastFunc != nil {
+			ctx.BroadcastFunc(nbID, map[string]any{
+				"type":       "notebook_refresh",
+				"reason":     "snapshot_restore",
+				"user_email": "agent@hnb",
+			})
+		}
+
+		return map[string]any{"notebook_id": nbID, "status": "restored"}, nil
 	}
 }

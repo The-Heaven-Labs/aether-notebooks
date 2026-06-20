@@ -42,6 +42,16 @@ type EngineEvent struct {
 	Outputs  any         `json:"outputs,omitempty"`
 }
 
+func (tc *ToolContext) EmitCellDeleted(cellID string) {
+	evt := EngineEvent{Type: "cell_deleted", CellID: cellID}
+	if tc.Events != nil {
+		*tc.Events = append(*tc.Events, evt)
+	}
+	if tc.OnEvent != nil {
+		tc.OnEvent(evt)
+	}
+}
+
 func (tc *ToolContext) EmitCellCreated(cellID string, position int) {
 	evt := EngineEvent{Type: "cell_created", CellID: cellID, Position: position}
 	if tc.Events != nil {
