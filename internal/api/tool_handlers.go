@@ -158,7 +158,7 @@ func (h *toolHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	h.server.db.Pool.Exec(r.Context(),
 		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-		 VALUES ($1, 'tool', $2, 'user', $3, ARRAY['view','edit','delete'])
+		 VALUES ($1, 'tool', $2, 'user', $3, ARRAY['view','edit','delete','use'])
 		 ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
 		claims.OrgID, toolID, claims.UserID)
 

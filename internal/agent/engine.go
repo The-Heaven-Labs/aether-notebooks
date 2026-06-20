@@ -102,13 +102,19 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		mcpRows.Close()
 	}
 
+	var orgRole string
+	err = e.pool.QueryRow(ctx, `SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2`, agent.OrgID, session.UserID).Scan(&orgRole)
+	if err != nil {
+		orgRole = "editor"
+	}
+
 	// Load agent tools from tools table
 	agentTools := make([]*ToolDef, 0)
 	if len(agent.ToolIDs) > 0 {
 		tRows, err := e.pool.Query(ctx, `
 			SELECT id, org_id, name, description, type, schema, config
 			FROM tools WHERE id = ANY($1)`, agent.ToolIDs)
-		if err == nil {
+			if err == nil {
 			for tRows.Next() {
 				var t models.Tool
 				var schema, config []byte
@@ -120,6 +126,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				}
 				if config != nil {
 					json.Unmarshal(config, &t.Config)
+				}
+				// Check runtime permission: user must have 'use' on the tool
+				if orgRole != "admin" {
+					allowed, err := e.checkToolUsePermission(ctx, session.UserID, agent.OrgID, orgRole, t.ID)
+					if err != nil || !allowed {
+						slog.Warn("engine: user lacks use permission for tool", "tool", t.Name, "user", session.UserID, "error", err)
+						continue
+					}
 				}
 				toolDef, err := e.resolveToolDef(&t)
 				if err != nil {
@@ -183,12 +197,6 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 
 	if llmClient == nil {
 		return "", "", nil, events, fmt.Errorf("no LLM client available: assign a model config to this agent in the Agents page")
-	}
-
-	var orgRole string
-	err = e.pool.QueryRow(ctx, `SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2`, agent.OrgID, session.UserID).Scan(&orgRole)
-	if err != nil {
-		orgRole = "editor"
 	}
 
 	messages, err := e.session.GetMessages(ctx, sessionID)
@@ -495,6 +503,29 @@ func (e *Engine) resolveToolDef(t *models.Tool) (*ToolDef, error) {
 	default:
 		return nil, fmt.Errorf("unknown tool type: %s", t.Type)
 	}
+}
+
+func (e *Engine) checkToolUsePermission(ctx context.Context, userID, orgID, orgRole, toolID string) (bool, error) {
+	if orgRole == "admin" {
+		return true, nil
+	}
+	var exists bool
+	err := e.pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM acl_entries
+			WHERE resource_type = 'tool' AND resource_id = $1 AND org_id = $2
+			AND (
+				(subject_type = 'user' AND subject_id = $3)
+				OR (subject_type = 'org_role' AND subject_id = $4)
+				OR (subject_type = 'org_role' AND subject_id = 'everyone')
+			)
+			AND 'use' = ANY(actions)
+		)
+	`, toolID, orgID, userID, orgRole).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check tool use permission: %w", err)
+	}
+	return exists, nil
 }
 
 func (e *Engine) GetRegistry() *ToolRegistry {
