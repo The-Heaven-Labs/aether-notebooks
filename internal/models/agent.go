@@ -26,7 +26,6 @@ type Skill struct {
 	Name         string    `json:"name"`
 	Description  string    `json:"description,omitempty"`
 	SystemPrompt string    `json:"system_prompt,omitempty"`
-	ToolIDs      []string  `json:"tool_ids"`
 	FolderID     *string   `json:"folder_id,omitempty"`
 	CreatedBy    string    `json:"created_by"`
 	CreatedAt    time.Time `json:"created_at"`
