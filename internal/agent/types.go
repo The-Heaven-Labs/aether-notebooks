@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -201,4 +202,29 @@ func (r *ToolRegistry) List() []*ToolDef {
 		defs = append(defs, def)
 	}
 	return defs
+}
+
+func validateRequiredParams(schema any, params map[string]any) error {
+	schemaMap, ok := schema.(map[string]any)
+	if !ok {
+		return nil
+	}
+	required, _ := schemaMap["required"].([]any)
+	if len(required) == 0 {
+		return nil
+	}
+	var missing []string
+	for _, r := range required {
+		name, _ := r.(string)
+		if name == "" {
+			continue
+		}
+		if _, ok := params[name]; !ok || params[name] == nil {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required parameters: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }

@@ -44,6 +44,9 @@ func makeWebhookToolDef(t *models.Tool) (*ToolDef, error) {
 			if len(args) > 0 {
 				json.Unmarshal(args, &params)
 			}
+			if err := validateRequiredParams(t.Schema, params); err != nil {
+				return nil, err
+			}
 
 			// Substitute {{param}} in URL
 			resolvedURL := url
