@@ -15,7 +15,7 @@ const ACTION_LABELS: Record<ResourceType, string[]> = {
   model_config:['view', 'edit', 'delete'],
   skill:       ['view', 'edit', 'delete'],
   mcp_server:  ['view', 'edit', 'delete'],
-  tool:        ['view', 'edit', 'delete'],
+  tool:        ['view', 'use', 'edit', 'delete'],
 }
 
 const ACTION_DESCRIPTIONS: Record<ResourceType, Record<string, string>> = {
@@ -70,6 +70,7 @@ const ACTION_DESCRIPTIONS: Record<ResourceType, Record<string, string>> = {
   },
   tool: {
     view:   'See tool details',
+    use:    'Use this tool in an agent',
     edit:   'Edit tool configuration',
     delete: 'Delete the tool permanently',
   },
