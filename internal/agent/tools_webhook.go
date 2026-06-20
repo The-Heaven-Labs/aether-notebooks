@@ -23,6 +23,10 @@ func makeWebhookToolDef(t *models.Tool, allowedDomains []string) (*ToolDef, erro
 	if method == "" {
 		method = "POST"
 	}
+	contentType, _ := t.Config["content_type"].(string)
+	if contentType == "" {
+		contentType = "application/json"
+	}
 	headers := make(map[string]string)
 	if h, ok := t.Config["headers"].(map[string]any); ok {
 		for k, v := range h {
@@ -119,7 +123,9 @@ func makeWebhookToolDef(t *models.Tool, allowedDomains []string) (*ToolDef, erro
 			if err != nil {
 				return nil, fmt.Errorf("create request: %w", err)
 			}
-			req.Header.Set("Content-Type", "application/json")
+			if req.Body != nil && req.Body != http.NoBody {
+				req.Header.Set("Content-Type", contentType)
+			}
 			for k, v := range headers {
 				req.Header.Set(k, v)
 			}

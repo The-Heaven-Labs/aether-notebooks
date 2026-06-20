@@ -23,6 +23,7 @@ interface ToolForm {
   type: ToolType
   url: string
   method: string
+  content_type: string
   headers: { key: string; value: string; sensitive: boolean }[]
   connector_id: string
   sql: string
@@ -41,6 +42,7 @@ const emptyForm = (): ToolForm => ({
   type: 'webhook',
   url: '',
   method: 'POST',
+  content_type: 'application/json',
   headers: [{ key: '', value: '', sensitive: false }],
   connector_id: '',
   sql: '',
@@ -115,6 +117,7 @@ export function ToolsPage() {
       payload.config = {
         url: form.url,
         method: form.method,
+        content_type: form.content_type,
         headers,
         ...(secrets.length > 0 ? { secrets } : {}),
       }
@@ -192,6 +195,7 @@ export function ToolsPage() {
       type: tool.type,
       url: config.url ?? '',
       method: config.method ?? 'POST',
+      content_type: config.content_type ?? 'application/json',
       headers: headerEntries,
       connector_id: config.connector_id ?? '',
       sql: config.query ?? config.sql ?? '',
@@ -370,13 +374,16 @@ function ToolFormFields({ form, setForm, connectors, editing }: {
               {METHOD_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
           </label>
+          <label style={styles.label}>Content-Type
+            <input style={styles.input} value={form.content_type} onChange={setField('content_type')} placeholder="application/json" />
+          </label>
           <label style={{ ...styles.label, gridColumn: '1 / -1' }}>
             Headers
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
               {form.headers.map((h, i) => (
                 <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                   <input style={{ ...styles.input, flex: 1 }} placeholder="Key" value={h.key} onChange={e => updateHeader(i, 'key', e.target.value)} />
-                  <input style={{ ...styles.input, flex: 1 }} placeholder="Value" value={h.sensitive ? '••••••' : h.value} onChange={e => updateHeader(i, 'value', e.target.value)} />
+                  <input type={h.sensitive ? 'password' : 'text'} style={{ ...styles.input, flex: 1 }} placeholder="Value" value={h.sensitive && h.value === '__HNB_REDACTED__' ? '' : h.value} onChange={e => updateHeader(i, 'value', e.target.value)} />
                   <label style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                     <input
                       type="checkbox"
