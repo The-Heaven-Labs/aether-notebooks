@@ -59,6 +59,7 @@ func (h *toolHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 		if !allowed {
 			continue
 		}
+		redactToolConfig(&t)
 		tools = append(tools, t)
 	}
 
@@ -102,6 +103,7 @@ func (h *toolHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
 		t.Config = models.JSONMap{}
 	}
 
+	redactToolConfig(&t)
 	writeJSON(w, http.StatusOK, t)
 }
 
@@ -298,4 +300,12 @@ func (h *toolHandlers) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusNoContent, nil)
+}
+
+func redactToolConfig(t *models.Tool) {
+	if t.Type == "webhook" {
+		if _, ok := t.Config["headers"]; ok {
+			delete(t.Config, "headers")
+		}
+	}
 }
