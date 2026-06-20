@@ -7,6 +7,9 @@ export interface Agent {
   subagent_model_config_id?: string
   system_prompt?: string
   skill_ids: string[]
+  skills?: Skill[]
+  tool_ids: string[]
+  tools?: Tool[]
   mcp_server_ids: string[]
   mcp_servers: MCPServerOrg[]
   folder_id?: string
