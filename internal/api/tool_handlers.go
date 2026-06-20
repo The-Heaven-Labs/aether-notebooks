@@ -1,9 +1,14 @@
 package api
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/heavenlabs/hnb/internal/models"
@@ -198,6 +203,84 @@ func (h *toolHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"id": toolID})
+}
+
+func (h *toolHandlers) handleTest(w http.ResponseWriter, r *http.Request) {
+	toolID := r.PathValue("id")
+	claims := ClaimsFromContext(r.Context())
+
+	var toolType string
+	var configRaw []byte
+	err := h.server.db.Pool.QueryRow(r.Context(),
+		`SELECT type, config FROM tools WHERE id = $1 AND org_id = $2`,
+		toolID, claims.OrgID).Scan(&toolType, &configRaw)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "tool not found")
+		return
+	}
+
+	var cfg models.JSONMap
+	if len(configRaw) > 0 {
+		json.Unmarshal(configRaw, &cfg)
+	}
+
+	switch toolType {
+	case "webhook":
+		url, _ := cfg["url"].(string)
+		if url == "" {
+			writeError(w, http.StatusBadRequest, "webhook URL not configured")
+			return
+		}
+		method, _ := cfg["method"].(string)
+		if method == "" {
+			method = "POST"
+		}
+		headers := make(map[string]string)
+		if h, ok := cfg["headers"].(map[string]any); ok {
+			for k, v := range h {
+				headers[k] = fmt.Sprintf("%v", v)
+			}
+		}
+		body := map[string]string{"test": "hnb-tool-probe"}
+		bodyBytes, _ := json.Marshal(body)
+		req, _ := http.NewRequest(method, url, bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		resp, err := http.DefaultClient.Do(req.WithContext(ctx))
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "webhook call failed: "+err.Error())
+			return
+		}
+		defer resp.Body.Close()
+		respBody, _ := io.ReadAll(resp.Body)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": resp.StatusCode,
+			"body":   string(respBody),
+		})
+
+	case "sql_query":
+		connectorID, _ := cfg["connector_id"].(string)
+		query, _ := cfg["query"].(string)
+		if connectorID == "" {
+			writeError(w, http.StatusBadRequest, "connector_id is required")
+			return
+		}
+		if query == "" {
+			writeError(w, http.StatusBadRequest, "query is required")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "ok",
+			"note":   "connector and query configured; execution tested at runtime",
+		})
+
+	default:
+		writeError(w, http.StatusBadRequest, "testing not supported for builtin tools")
+	}
 }
 
 func (h *toolHandlers) handleDelete(w http.ResponseWriter, r *http.Request) {
