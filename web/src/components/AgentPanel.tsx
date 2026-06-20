@@ -231,6 +231,8 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
         case 'error':
           setMessages((prev) => [...prev, { role: 'assistant', content: 'Error: ' + msg.message }])
           setIsStreaming(false)
+          updateStreamingReasoning('')
+          needsCollapseRef.current = false
           setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50)
           break
         case 'cancelled':
