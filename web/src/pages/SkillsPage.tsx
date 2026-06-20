@@ -22,21 +22,6 @@ const emptyForm = (): SkillForm => ({
   system_prompt: '',
 })
 
-const TOOL_OPTIONS = [
-  { id: 'notebook_read_cells', label: 'Read Cells' },
-  { id: 'notebook_create_cell', label: 'Create Cell' },
-  { id: 'notebook_edit_cell', label: 'Edit Cell' },
-  { id: 'notebook_delete_cell', label: 'Delete Cell' },
-  { id: 'notebook_run_cell', label: 'Run Cell' },
-  { id: 'notebook_list_cells', label: 'List Cells' },
-  { id: 'chart_create', label: 'Create Chart' },
-  { id: 'chart_update', label: 'Update Chart' },
-  { id: 'chart_delete', label: 'Delete Chart' },
-  { id: 'agent_create', label: 'Create Agent' },
-  { id: 'agent_edit', label: 'Edit Agent' },
-  { id: 'mcp_http', label: 'MCP HTTP' },
-]
-
 export function SkillsPage() {
   useEffect(() => { document.title = "Skills — Heaven's Notebooks" }, [])
 
@@ -44,7 +29,6 @@ export function SkillsPage() {
   const [creating, setCreating] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<SkillForm>(emptyForm())
-  const [selectedTools, setSelectedTools] = useState<string[]>([])
   const [formError, setFormError] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
@@ -60,13 +44,11 @@ export function SkillsPage() {
       name: form.name,
       description: form.description,
       system_prompt: form.system_prompt,
-      tool_ids: selectedTools,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['skills'] })
       setCreating(false)
       setForm(emptyForm())
-      setSelectedTools([])
       setFormError(null)
     },
     onError: (e: unknown) => setFormError(String(e)),
@@ -77,13 +59,11 @@ export function SkillsPage() {
       name: form.name,
       description: form.description,
       system_prompt: form.system_prompt,
-      tool_ids: selectedTools,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['skills'] })
       setEditingId(null)
       setForm(emptyForm())
-      setSelectedTools([])
       setFormError(null)
     },
     onError: (e: unknown) => setFormError(String(e)),
@@ -102,12 +82,7 @@ export function SkillsPage() {
       description: skill.description ?? '',
       system_prompt: skill.system_prompt ?? '',
     })
-    setSelectedTools(skill.tool_ids ?? [])
   }
-
-  const toggleTool = (id: string) => setSelectedTools(prev =>
-    prev.includes(id) ? prev.filter(t => t !== id) : [...prev, id]
-  )
 
   return (
     <AppShell>
@@ -118,10 +93,10 @@ export function SkillsPage() {
 
         {creating && (
           <FormCard title="New Skill">
-            <SkillFormFields form={form} setForm={setForm} selectedTools={selectedTools} toggleTool={toggleTool} />
+            <SkillFormFields form={form} setForm={setForm} />
             <div style={styles.formActions}>
               <span style={{ flex: 1 }} />
-              <button type="button" style={styles.cancelBtn} onClick={() => { setCreating(false); setForm(emptyForm()); setSelectedTools([]) }}>Cancel</button>
+              <button type="button" style={styles.cancelBtn} onClick={() => { setCreating(false); setForm(emptyForm()) }}>Cancel</button>
               <button type="button" style={styles.saveBtn} onClick={() => createMutation.mutate()} disabled={!form.name || createMutation.isPending}>
                 {createMutation.isPending ? 'Creating…' : 'Create'}
               </button>
@@ -132,10 +107,10 @@ export function SkillsPage() {
 
         {editingId && (
           <FormCard title="Edit Skill">
-            <SkillFormFields form={form} setForm={setForm} selectedTools={selectedTools} toggleTool={toggleTool} />
+            <SkillFormFields form={form} setForm={setForm} />
             <div style={styles.formActions}>
               <span style={{ flex: 1 }} />
-              <button type="button" style={styles.cancelBtn} onClick={() => { setEditingId(null); setForm(emptyForm()); setSelectedTools([]) }}>Cancel</button>
+              <button type="button" style={styles.cancelBtn} onClick={() => { setEditingId(null); setForm(emptyForm()) }}>Cancel</button>
               <button type="button" style={styles.saveBtn} onClick={() => updateMutation.mutate(editingId!)} disabled={!form.name || updateMutation.isPending}>
                 {updateMutation.isPending ? 'Saving…' : 'Save'}
               </button>
@@ -154,19 +129,11 @@ export function SkillsPage() {
             action={{ label: '+ New Skill', onClick: () => setCreating(true) }}
           />
         ) : (
-          <StyledTable headers={['Name', 'Description', 'Tools', '']}>
+          <StyledTable headers={['Name', 'Description', '']}>
             {skills.map((s) => (
               <tr key={s.id} style={rowStyle}>
                 <td style={cellStyle}><strong>{s.name}</strong></td>
                 <td style={cellStyle}><span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{s.description || '—'}</span></td>
-                <td style={cellStyle}>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {(s.tool_ids ?? []).map(id => (
-                      <span key={id} style={styles.toolTag}>{TOOL_OPTIONS.find(t => t.id === id)?.label ?? id}</span>
-                    ))}
-                    {(!s.tool_ids || s.tool_ids.length === 0) && <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>}
-                  </div>
-                </td>
                 <td style={styles.tdActions}>
                   <button type="button" style={styles.permissionsBtn} onClick={() => setPermissionsTarget({ id: s.id, name: s.name })}>Permissions</button>
                   <button type="button" style={styles.editBtn} onClick={() => startEdit(s)}>Edit</button>
@@ -200,11 +167,9 @@ export function SkillsPage() {
   )
 }
 
-function SkillFormFields({ form, setForm, selectedTools, toggleTool }: {
+function SkillFormFields({ form, setForm }: {
   form: SkillForm
   setForm: React.Dispatch<React.SetStateAction<SkillForm>>
-  selectedTools: string[]
-  toggleTool: (id: string) => void
 }) {
   return (
     <>
@@ -217,27 +182,6 @@ function SkillFormFields({ form, setForm, selectedTools, toggleTool }: {
         </label>
         <label style={{ ...styles.label, gridColumn: '1 / -1' }}>System Prompt
           <textarea style={{ ...styles.input, minHeight: 100, resize: 'vertical' }} value={form.system_prompt} onChange={e => setForm(f => ({ ...f, system_prompt: e.target.value }))} placeholder="You are a data analyst expert. You help users explore their data, write queries, and create visualizations..." />
-        </label>
-        <label style={{ ...styles.label, gridColumn: '1 / -1' }}>
-          Available Tools
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
-            {TOOL_OPTIONS.map(t => (
-              <button
-                key={t.id}
-                type="button"
-                style={{
-                  padding: '4px 12px', fontSize: 12, borderRadius: 12, cursor: 'pointer',
-                  background: selectedTools.includes(t.id) ? 'var(--accent)' : 'var(--bg-input)',
-                  color: selectedTools.includes(t.id) ? '#fff' : 'var(--text-secondary)',
-                  border: `1px solid ${selectedTools.includes(t.id) ? 'var(--accent)' : 'var(--border)'}`,
-                  fontWeight: 500,
-                }}
-                onClick={() => toggleTool(t.id)}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
         </label>
       </div>
     </>
@@ -257,7 +201,6 @@ const styles: Record<string, React.CSSProperties> = {
   editBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--accent)', marginRight: 6 },
   deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--error-full)' },
   tdActions: { padding: '8px 16px', textAlign: 'right' as const },
-  toolTag: { display: 'inline-block', fontSize: 11, fontFamily: 'var(--font-mono)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', padding: '2px 8px', borderRadius: 10, border: '1px solid var(--border)' },
 }
 
 type RowProps = React.CSSProperties
