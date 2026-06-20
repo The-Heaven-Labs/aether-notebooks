@@ -7,6 +7,9 @@ export interface Agent {
   subagent_model_config_id?: string
   system_prompt?: string
   skill_ids: string[]
+  skills?: Skill[]
+  tool_ids: string[]
+  tools?: Tool[]
   mcp_server_ids: string[]
   mcp_servers: MCPServerOrg[]
   folder_id?: string
@@ -49,7 +52,22 @@ export interface Skill {
   name: string
   description?: string
   system_prompt?: string
-  tool_ids: string[]
+  folder_id?: string
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export type ToolType = 'builtin' | 'webhook' | 'sql_query'
+
+export interface Tool {
+  id: string
+  org_id: string
+  name: string
+  description: string
+  type: ToolType
+  schema: Record<string, any>
+  config: Record<string, any>
   folder_id?: string
   created_by: string
   created_at: string

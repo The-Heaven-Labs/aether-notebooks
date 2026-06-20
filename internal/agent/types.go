@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/heavenlabs/hnb/internal/models"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -150,12 +152,15 @@ type ToolDef struct {
 func (t *ToolDef) ToOpenAITool() (OpenAITool, error) {
 	var params map[string]any
 	if t.Function.Parameters != nil {
-		if s, ok := t.Function.Parameters.(string); ok {
-			if err := json.Unmarshal([]byte(s), &params); err != nil {
+		switch v := t.Function.Parameters.(type) {
+		case string:
+			if err := json.Unmarshal([]byte(v), &params); err != nil {
 				return OpenAITool{}, fmt.Errorf("parse parameters: %w", err)
 			}
-		} else if m, ok := t.Function.Parameters.(map[string]any); ok {
-			params = m
+		case map[string]any:
+			params = v
+		case models.JSONMap:
+			params = map[string]any(v)
 		}
 	}
 	return OpenAITool{
@@ -201,4 +206,34 @@ func (r *ToolRegistry) List() []*ToolDef {
 		defs = append(defs, def)
 	}
 	return defs
+}
+
+func validateRequiredParams(schema any, params map[string]any) error {
+	var schemaMap map[string]any
+	switch v := schema.(type) {
+	case map[string]any:
+		schemaMap = v
+	case models.JSONMap:
+		schemaMap = map[string]any(v)
+	default:
+		return nil
+	}
+	required, _ := schemaMap["required"].([]any)
+	if len(required) == 0 {
+		return nil
+	}
+	var missing []string
+	for _, r := range required {
+		name, _ := r.(string)
+		if name == "" {
+			continue
+		}
+		if _, ok := params[name]; !ok || params[name] == nil {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required parameters: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }

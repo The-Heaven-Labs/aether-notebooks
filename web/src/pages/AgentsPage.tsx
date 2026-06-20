@@ -5,9 +5,9 @@ import { SectionHeader } from '../components/SectionHeader'
 import { FormCard } from '../components/FormCard'
 import { EmptyState } from '../components/EmptyState'
 import { Bot } from 'lucide-react'
-import { api } from '../api/client'
+import { api, toolsApi } from '../api/client'
 import { ConfirmDialog } from '../components/ConfirmDialog'
-import type { Agent, ModelConfig, Skill, MCPServerOrg } from '../types/agent'
+import type { Agent, ModelConfig, Skill, MCPServerOrg, Tool } from '../types/agent'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 
 interface AgentForm {
@@ -17,6 +17,7 @@ interface AgentForm {
   model_config_id: string
   subagent_model_config_id: string
   skill_ids: string[]
+  tool_ids: string[]
   mcp_server_ids: string[]
   max_turns: number
 }
@@ -28,6 +29,7 @@ const emptyForm = (): AgentForm => ({
   model_config_id: '',
   subagent_model_config_id: '',
   skill_ids: [],
+  tool_ids: [],
   mcp_server_ids: [],
   max_turns: 90,
 })
@@ -64,6 +66,11 @@ export function AgentsPage() {
     queryFn: () => api.get<MCPServerOrg[]>('/api/v1/mcp-servers'),
   })
 
+  const { data: tools = [] } = useQuery<Tool[]>({
+    queryKey: ['tools'],
+    queryFn: toolsApi.list,
+  })
+
   const createMutation = useMutation({
     mutationFn: () => api.post<{ id: string }>('/api/v1/agents', {
       name: form.name,
@@ -72,6 +79,7 @@ export function AgentsPage() {
       model_config_id: form.model_config_id || undefined,
       subagent_model_config_id: form.subagent_model_config_id || undefined,
       skill_ids: form.skill_ids,
+      tool_ids: form.tool_ids,
       mcp_server_ids: form.mcp_server_ids,
       max_turns: form.max_turns || undefined,
     }),
@@ -92,6 +100,7 @@ export function AgentsPage() {
       model_config_id: form.model_config_id || undefined,
       subagent_model_config_id: form.subagent_model_config_id || undefined,
       skill_ids: form.skill_ids,
+      tool_ids: form.tool_ids,
       mcp_server_ids: form.mcp_server_ids,
       max_turns: form.max_turns || undefined,
     }),
@@ -119,6 +128,7 @@ export function AgentsPage() {
       model_config_id: agent.model_config_id ?? '',
       subagent_model_config_id: agent.subagent_model_config_id ?? '',
       skill_ids: agent.skill_ids ?? [],
+      tool_ids: agent.tool_ids ?? [],
       mcp_server_ids: agent.mcp_server_ids ?? [],
       max_turns: agent.max_turns ?? 90,
     })
@@ -132,6 +142,11 @@ export function AgentsPage() {
   const toggleMCPServer = (id: string) => setForm(f => ({
     ...f,
     mcp_server_ids: f.mcp_server_ids.includes(id) ? f.mcp_server_ids.filter(s => s !== id) : [...f.mcp_server_ids, id],
+  }))
+
+  const toggleTool = (id: string) => setForm(f => ({
+    ...f,
+    tool_ids: f.tool_ids.includes(id) ? f.tool_ids.filter(t => t !== id) : [...f.tool_ids, id],
   }))
 
   return (
@@ -148,8 +163,8 @@ export function AgentsPage() {
           <FormCard title="New Agent">
             <AgentFormFields
               form={form} setForm={setForm}
-              modelConfigs={modelConfigs} skills={skills} mcpServers={mcpServers}
-              toggleSkill={toggleSkill} toggleMCPServer={toggleMCPServer}
+              modelConfigs={modelConfigs} skills={skills} tools={tools} mcpServers={mcpServers}
+              toggleSkill={toggleSkill} toggleTool={toggleTool} toggleMCPServer={toggleMCPServer}
             />
             <div style={styles.formActions}>
               <span style={{ flex: 1 }} />
@@ -166,8 +181,8 @@ export function AgentsPage() {
           <FormCard title="Edit Agent">
             <AgentFormFields
               form={form} setForm={setForm}
-              modelConfigs={modelConfigs} skills={skills} mcpServers={mcpServers}
-              toggleSkill={toggleSkill} toggleMCPServer={toggleMCPServer}
+              modelConfigs={modelConfigs} skills={skills} tools={tools} mcpServers={mcpServers}
+              toggleSkill={toggleSkill} toggleTool={toggleTool} toggleMCPServer={toggleMCPServer}
             />
             <div style={styles.formActions}>
               <span style={{ flex: 1 }} />
@@ -190,7 +205,7 @@ export function AgentsPage() {
             action={{ label: '+ New Agent', onClick: () => setCreating(true) }}
           />
         ) : (
-          <StyledTable headers={['Name', 'Model Config', 'Skills', 'MCP Servers', '']}>
+          <StyledTable headers={['Name', 'Model Config', 'Skills', 'Tools', 'MCP Servers', '']}>
             {agents.map((a) => {
               const mc = modelConfigs.find(m => m.id === a.model_config_id)
               return (
@@ -203,9 +218,18 @@ export function AgentsPage() {
                     {mc ? <span style={styles.badge}>{mc.name}</span> : <span style={{ color: 'var(--text-muted)' }}>default</span>}
                   </td>
                   <td style={cellStyle}>
-                    {a.skill_ids?.length
-                      ? a.skill_ids.map(id => skills.find(s => s.id === id)?.name ?? id).filter(Boolean).join(', ') || '—'
-                      : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                    {a.skills?.length
+                      ? a.skills.map(s => s.name).join(', ')
+                      : a.skill_ids?.length
+                        ? a.skill_ids.map(id => skills.find(s => s.id === id)?.name ?? id.slice(0, 8)).join(', ')
+                        : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                  </td>
+                  <td style={cellStyle}>
+                    {a.tools?.length
+                      ? a.tools.map(t => t.name).join(', ')
+                      : a.tool_ids?.length
+                        ? a.tool_ids.map(id => tools.find(t => t.id === id)?.name ?? id.slice(0, 8)).join(', ')
+                        : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                   </td>
                   <td style={cellStyle}>
                     {a.mcp_servers?.length
@@ -246,21 +270,27 @@ export function AgentsPage() {
   )
 }
 
-function AgentFormFields({ form, setForm, modelConfigs, skills, mcpServers, toggleSkill, toggleMCPServer }: {
+function AgentFormFields({ form, setForm, modelConfigs, skills, tools, mcpServers, toggleSkill, toggleTool, toggleMCPServer }: {
   form: AgentForm
   setForm: React.Dispatch<React.SetStateAction<AgentForm>>
   modelConfigs: ModelConfig[]
   skills: Skill[]
+  tools: Tool[]
   mcpServers: MCPServerOrg[]
   toggleSkill: (id: string) => void
+  toggleTool: (id: string) => void
   toggleMCPServer: (id: string) => void
 }) {
   const [skillSearch, setSkillSearch] = useState('')
+  const [toolSearch, setToolSearch] = useState('')
   const [mcpSearch, setMcpSearch] = useState('')
 
   const filteredSkills = skills.filter(s =>
     s.name.toLowerCase().includes(skillSearch.toLowerCase()) ||
     (s.description ?? '').toLowerCase().includes(skillSearch.toLowerCase())
+  )
+  const filteredTools = tools.filter(t =>
+    t.name.toLowerCase().includes(toolSearch.toLowerCase())
   )
   const filteredMCPs = mcpServers.filter(m =>
     m.name.toLowerCase().includes(mcpSearch.toLowerCase())
@@ -338,6 +368,45 @@ function AgentFormFields({ form, setForm, modelConfigs, skills, mcpServers, togg
                 <span key={id} style={styles.chip}>
                   {skill.name}
                   <button type="button" onClick={() => toggleSkill(id)} style={styles.chipRemove}>×</button>
+                </span>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Tools — searchable checkbox grid */}
+      <div style={{ gridColumn: '1 / -1' }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>Tools</div>
+        <input
+          style={styles.searchInput}
+          placeholder="Search tools..."
+          value={toolSearch}
+          onChange={e => setToolSearch(e.target.value)}
+        />
+        <div style={styles.selectorGrid}>
+          {tools.length === 0 && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No tools yet — <a href="/tools" style={{ color: 'var(--accent)' }}>create one</a></span>}
+          {tools.length > 0 && filteredTools.length === 0 && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No tools match "{toolSearch}"</span>}
+          {filteredTools.map(t => (
+            <label key={t.id} style={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={form.tool_ids.includes(t.id)}
+                onChange={() => toggleTool(t.id)}
+              />
+              <span style={styles.checkboxText}>{t.name} <span style={{ opacity: 0.6, fontSize: 10 }}>({t.type})</span></span>
+            </label>
+          ))}
+        </div>
+        {form.tool_ids.length > 0 && (
+          <div style={styles.chipsRow}>
+            {form.tool_ids.map(id => {
+              const tool = tools.find(t => t.id === id)
+              if (!tool) return null
+              return (
+                <span key={id} style={styles.chip}>
+                  {tool.name}
+                  <button type="button" onClick={() => toggleTool(id)} style={styles.chipRemove}>×</button>
                 </span>
               )
             })}

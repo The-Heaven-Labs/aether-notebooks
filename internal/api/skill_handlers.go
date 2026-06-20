@@ -15,7 +15,7 @@ func (h *skillHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT id, org_id, name, description, system_prompt, tool_ids, folder_id, created_by, created_at, updated_at
+		SELECT id, org_id, name, description, system_prompt, folder_id, created_by, created_at, updated_at
 		FROM skills WHERE org_id = $1 ORDER BY created_at DESC
 	`, claims.OrgID)
 	if err != nil {
@@ -28,7 +28,7 @@ func (h *skillHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var s models.Skill
 		var desc, sysPrompt *string
-		rows.Scan(&s.ID, &s.OrgID, &s.Name, &desc, &sysPrompt, &s.ToolIDs, &s.FolderID, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
+		rows.Scan(&s.ID, &s.OrgID, &s.Name, &desc, &sysPrompt, &s.FolderID, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
 		if desc != nil {
 			s.Description = *desc
 		}
@@ -58,9 +58,9 @@ func (h *skillHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
 	var s models.Skill
 	var desc, sysPrompt *string
 	err = h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT id, org_id, name, description, system_prompt, tool_ids, folder_id, created_by, created_at, updated_at
+		SELECT id, org_id, name, description, system_prompt, folder_id, created_by, created_at, updated_at
 		FROM skills WHERE id = $1 AND org_id = $2
-	`, id, claims.OrgID).Scan(&s.ID, &s.OrgID, &s.Name, &desc, &sysPrompt, &s.ToolIDs, &s.FolderID, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
+	`, id, claims.OrgID).Scan(&s.ID, &s.OrgID, &s.Name, &desc, &sysPrompt, &s.FolderID, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "skill not found")
 		return
@@ -78,26 +78,22 @@ func (h *skillHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
 func (h *skillHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req struct {
-		Name         string   `json:"name"`
-		Description  string   `json:"description"`
-		SystemPrompt string   `json:"system_prompt"`
-		ToolIDs      []string `json:"tool_ids"`
-		FolderID     *string  `json:"folder_id"`
+		Name         string  `json:"name"`
+		Description  string  `json:"description"`
+		SystemPrompt string  `json:"system_prompt"`
+		FolderID     *string `json:"folder_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	if req.ToolIDs == nil {
-		req.ToolIDs = []string{}
-	}
 
 	skillID := uuid.New().String()
 
 	_, err := h.server.db.Pool.Exec(r.Context(), `
-		INSERT INTO skills (id, org_id, name, description, system_prompt, tool_ids, folder_id, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-	`, skillID, claims.OrgID, req.Name, req.Description, req.SystemPrompt, req.ToolIDs, req.FolderID, claims.UserID)
+		INSERT INTO skills (id, org_id, name, description, system_prompt, folder_id, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+	`, skillID, claims.OrgID, req.Name, req.Description, req.SystemPrompt, req.FolderID, claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -118,10 +114,9 @@ func (h *skillHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
 	var req struct {
-		Name         *string  `json:"name"`
-		Description  *string  `json:"description"`
-		SystemPrompt *string  `json:"system_prompt"`
-		ToolIDs      []string `json:"tool_ids"`
+		Name         *string `json:"name"`
+		Description  *string `json:"description"`
+		SystemPrompt *string `json:"system_prompt"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -133,10 +128,9 @@ func (h *skillHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
 			name = COALESCE($2, name),
 			description = COALESCE($3, description),
 			system_prompt = COALESCE($4, system_prompt),
-			tool_ids = COALESCE($5, tool_ids),
 			updated_at = NOW()
-		WHERE id = $1 AND org_id = $6
-	`, skillID, req.Name, req.Description, req.SystemPrompt, req.ToolIDs, claims.OrgID)
+		WHERE id = $1 AND org_id = $5
+	`, skillID, req.Name, req.Description, req.SystemPrompt, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
