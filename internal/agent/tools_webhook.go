@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/heavenlabs/hnb/internal/models"
@@ -39,12 +40,46 @@ func makeWebhookToolDef(t *models.Tool) (*ToolDef, error) {
 			Parameters:  t.Schema,
 		},
 		Handler: func(args json.RawMessage, ctx *ToolContext) (any, error) {
+			var params map[string]any
+			if len(args) > 0 {
+				json.Unmarshal(args, &params)
+			}
+
+			// Substitute {{param}} in URL
+			resolvedURL := url
+			var bodyArgs map[string]any
+			if params != nil {
+				bodyArgs = make(map[string]any)
+				for k, v := range params {
+					placeholder := fmt.Sprintf("{{%s}}", k)
+					if strings.Contains(resolvedURL, placeholder) {
+						resolvedURL = strings.ReplaceAll(resolvedURL, placeholder, fmt.Sprintf("%v", v))
+					} else {
+						bodyArgs[k] = v
+					}
+				}
+			}
+
 			var req *http.Request
 			var err error
-			if method == "GET" {
-				req, err = http.NewRequest(method, url, nil)
-			} else {
-				req, err = http.NewRequest(method, url, bytes.NewReader(args))
+			switch method {
+			case "GET":
+				req, err = http.NewRequest(method, resolvedURL, nil)
+				if err == nil && len(bodyArgs) > 0 {
+					q := req.URL.Query()
+					for k, v := range bodyArgs {
+						q.Set(k, fmt.Sprintf("%v", v))
+					}
+					req.URL.RawQuery = q.Encode()
+				}
+			default:
+				var bodyBytes []byte
+				if len(bodyArgs) > 0 {
+					bodyBytes, _ = json.Marshal(bodyArgs)
+				} else if len(args) > 0 {
+					bodyBytes = args
+				}
+				req, err = http.NewRequest(method, resolvedURL, bytes.NewReader(bodyBytes))
 			}
 			if err != nil {
 				return nil, fmt.Errorf("create request: %w", err)
