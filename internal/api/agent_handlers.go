@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -194,6 +195,22 @@ func (h *agentHandlers) batchLoadTools(ctx context.Context, agents []models.Agen
 	return result
 }
 
+func (h *agentHandlers) validateToolAccess(ctx context.Context, userID, orgID, role string, toolIDs []string) error {
+	if role == "admin" {
+		return nil
+	}
+	for _, tid := range toolIDs {
+		allowed, err := h.server.checkPermission(ctx, userID, orgID, role, "tool", tid, "view")
+		if err != nil {
+			return fmt.Errorf("check tool %s: %w", tid, err)
+		}
+		if !allowed {
+			return fmt.Errorf("you don't have access to one or more tools")
+		}
+	}
+	return nil
+}
+
 func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req struct {
@@ -238,6 +255,13 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	if len(req.ToolIDs) > 0 {
+		if err := h.validateToolAccess(r.Context(), claims.UserID, claims.OrgID, claims.Role, req.ToolIDs); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
 	}
 
 	if len(req.MCPServerIDs) > 0 {
@@ -385,6 +409,13 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 	if result.RowsAffected() == 0 {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
+	}
+
+	if req.ToolIDs != nil && len(req.ToolIDs) > 0 {
+		if err := h.validateToolAccess(r.Context(), claims.UserID, claims.OrgID, claims.Role, req.ToolIDs); err != nil {
+			writeError(w, http.StatusForbidden, err.Error())
+			return
+		}
 	}
 
 	if req.MCPServerIDs != nil {
