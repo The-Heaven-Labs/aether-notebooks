@@ -29,6 +29,7 @@ type Server struct {
 	maxAttachmentBytes int64
 	agentEngine        *agent.Engine
 	upgrader           websocket.Upgrader
+	toolAllowedDomains []string
 }
 
 func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, redisCache *cache.Cache) *Server {
@@ -77,6 +78,12 @@ func (s *Server) SetFrontendURL(u string) {
 // SetMaxAttachmentBytes sets the maximum allowed attachment upload size in bytes.
 func (s *Server) SetMaxAttachmentBytes(n int64) {
 	s.maxAttachmentBytes = n
+}
+
+// SetToolAllowedDomains sets which domains bypass the private IP block for webhook tools.
+func (s *Server) SetToolAllowedDomains(domains []string) {
+	s.toolAllowedDomains = domains
+	s.agentEngine.SetToolAllowedDomains(domains)
 }
 
 // DB returns the database connection (used in tests).

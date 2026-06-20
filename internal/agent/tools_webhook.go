@@ -7,15 +7,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/heavenlabs/hnb/internal/models"
 )
 
-func makeWebhookToolDef(t *models.Tool) (*ToolDef, error) {
-	url, _ := t.Config["url"].(string)
-	if url == "" {
+func makeWebhookToolDef(t *models.Tool, allowedDomains []string) (*ToolDef, error) {
+	rawURL, _ := t.Config["url"].(string)
+	if rawURL == "" {
 		return nil, fmt.Errorf("webhook tool missing url")
 	}
 	method, _ := t.Config["method"].(string)
@@ -27,6 +28,15 @@ func makeWebhookToolDef(t *models.Tool) (*ToolDef, error) {
 		for k, v := range h {
 			headers[k] = fmt.Sprintf("%v", v)
 		}
+	}
+
+	// Validate scheme at definition time
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid webhook URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("unsupported URL scheme: %s", u.Scheme)
 	}
 	return &ToolDef{
 		Type: "function",
@@ -49,7 +59,7 @@ func makeWebhookToolDef(t *models.Tool) (*ToolDef, error) {
 			}
 
 			// Substitute {{param}} in URL
-			resolvedURL := url
+			resolvedURL := rawURL
 			var bodyArgs map[string]any
 			if params != nil {
 				bodyArgs = make(map[string]any)
@@ -61,6 +71,11 @@ func makeWebhookToolDef(t *models.Tool) (*ToolDef, error) {
 						bodyArgs[k] = v
 					}
 				}
+			}
+
+			// Validate resolved URL for SSRF
+			if err := validateWebhookURL(resolvedURL, allowedDomains); err != nil {
+				return nil, err
 			}
 
 			var req *http.Request
