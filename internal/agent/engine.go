@@ -114,7 +114,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		tRows, err := e.pool.Query(ctx, `
 			SELECT id, org_id, name, description, type, schema, config
 			FROM tools WHERE id = ANY($1)`, agent.ToolIDs)
-			if err == nil {
+		if err != nil {
+			slog.Warn("engine: failed to query agent tools", "session_id", sessionID, "error", err)
+		} else {
 			for tRows.Next() {
 				var t models.Tool
 				var schema, config []byte
