@@ -4,7 +4,7 @@ import { api } from '../api/client'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type ResourceType = 'folder' | 'notebook' | 'connector' | 'dashboard' | 'agent' | 'model_config' | 'skill' | 'mcp_server'
+type ResourceType = 'folder' | 'notebook' | 'connector' | 'dashboard' | 'agent' | 'model_config' | 'skill' | 'mcp_server' | 'tool'
 
 const ACTION_LABELS: Record<ResourceType, string[]> = {
   folder:      ['view', 'create', 'edit', 'manage', 'delete'],
@@ -15,6 +15,7 @@ const ACTION_LABELS: Record<ResourceType, string[]> = {
   model_config:['view', 'edit', 'delete'],
   skill:       ['view', 'edit', 'delete'],
   mcp_server:  ['view', 'edit', 'delete'],
+  tool:        ['view', 'edit', 'delete'],
 }
 
 const ACTION_DESCRIPTIONS: Record<ResourceType, Record<string, string>> = {
@@ -66,6 +67,11 @@ const ACTION_DESCRIPTIONS: Record<ResourceType, Record<string, string>> = {
     view:   'See MCP server details',
     edit:   'Edit MCP server configuration',
     delete: 'Delete the MCP server permanently',
+  },
+  tool: {
+    view:   'See tool details',
+    edit:   'Edit tool configuration',
+    delete: 'Delete the tool permanently',
   },
 }
 
