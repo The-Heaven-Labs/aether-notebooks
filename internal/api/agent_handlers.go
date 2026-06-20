@@ -20,7 +20,7 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
 		SELECT id, org_id, name, description, model_config_id, subagent_model_config_id,
-			   system_prompt, skill_ids, folder_id, max_turns, created_by, created_at, updated_at
+			   system_prompt, skill_ids, tool_ids, folder_id, max_turns, created_by, created_at, updated_at
 		FROM agents WHERE org_id = $1 ORDER BY created_at DESC
 	`, claims.OrgID)
 	if err != nil {
@@ -34,7 +34,7 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 		var a models.Agent
 		var desc, sysPrompt *string
 		if err := rows.Scan(&a.ID, &a.OrgID, &a.Name, &desc, &a.ModelConfigID, &a.SubagentModelConfigID,
-			&sysPrompt, &a.SkillIDs, &a.FolderID, &a.MaxTurns, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			&sysPrompt, &a.SkillIDs, &a.ToolIDs, &a.FolderID, &a.MaxTurns, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			continue
 		}
 		if desc != nil {
@@ -59,12 +59,18 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 		for i := range agents {
 			agentIDs[i] = agents[i].ID
 		}
+
 		mcpMap := h.batchLoadMCPHandlers(r.Context(), agentIDs)
+		skillMap := h.batchLoadSkills(r.Context(), agents)
+		toolMap := h.batchLoadTools(r.Context(), agents)
+
 		for i := range agents {
 			if mcp, ok := mcpMap[agents[i].ID]; ok {
 				agents[i].MCPServerIDs = mcp.IDs
 				agents[i].MCPServers = mcp.Servers
 			}
+			agents[i].Skills = skillMap[agents[i].ID]
+			agents[i].Tools = toolMap[agents[i].ID]
 		}
 	}
 
@@ -105,6 +111,89 @@ func (h *agentHandlers) batchLoadMCPHandlers(ctx context.Context, agentIDs []str
 	return result
 }
 
+func (h *agentHandlers) batchLoadSkills(ctx context.Context, agents []models.Agent) map[string][]models.Skill {
+	allIDs := []string{}
+	seen := map[string]bool{}
+	for _, a := range agents {
+		for _, sid := range a.SkillIDs {
+			if !seen[sid] {
+				seen[sid] = true
+				allIDs = append(allIDs, sid)
+			}
+		}
+	}
+	if len(allIDs) == 0 {
+		return nil
+	}
+
+	rows, err := h.server.db.Pool.Query(ctx, `SELECT id, name FROM skills WHERE id = ANY($1)`, allIDs)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	skillByName := map[string]models.Skill{}
+	for rows.Next() {
+		var s models.Skill
+		rows.Scan(&s.ID, &s.Name)
+		skillByName[s.ID] = s
+	}
+
+	result := map[string][]models.Skill{}
+	for _, a := range agents {
+		for _, sid := range a.SkillIDs {
+			if s, ok := skillByName[sid]; ok {
+				result[a.ID] = append(result[a.ID], s)
+			}
+		}
+	}
+	return result
+}
+
+func (h *agentHandlers) batchLoadTools(ctx context.Context, agents []models.Agent) map[string][]models.Tool {
+	allIDs := []string{}
+	seen := map[string]bool{}
+	for _, a := range agents {
+		for _, tid := range a.ToolIDs {
+			if !seen[tid] {
+				seen[tid] = true
+				allIDs = append(allIDs, tid)
+			}
+		}
+	}
+	if len(allIDs) == 0 {
+		return nil
+	}
+
+	rows, err := h.server.db.Pool.Query(ctx, `
+		SELECT id, name, description, type FROM tools WHERE id = ANY($1)`, allIDs)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	toolByID := map[string]models.Tool{}
+	for rows.Next() {
+		var t models.Tool
+		var desc *string
+		rows.Scan(&t.ID, &t.Name, &desc, &t.Type)
+		if desc != nil {
+			t.Description = *desc
+		}
+		toolByID[t.ID] = t
+	}
+
+	result := map[string][]models.Tool{}
+	for _, a := range agents {
+		for _, tid := range a.ToolIDs {
+			if t, ok := toolByID[tid]; ok {
+				result[a.ID] = append(result[a.ID], t)
+			}
+		}
+	}
+	return result
+}
+
 func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req struct {
@@ -114,6 +203,7 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 		SubagentModelConfigID *string  `json:"subagent_model_config_id"`
 		SystemPrompt          string   `json:"system_prompt"`
 		SkillIDs              []string `json:"skill_ids"`
+		ToolIDs               []string `json:"tool_ids"`
 		MCPServerIDs          []string `json:"mcp_server_ids"`
 		FolderID              *string  `json:"folder_id"`
 		MaxTurns              *int     `json:"max_turns"`
@@ -124,6 +214,9 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 	}
 	if req.SkillIDs == nil {
 		req.SkillIDs = []string{}
+	}
+	if req.ToolIDs == nil {
+		req.ToolIDs = []string{}
 	}
 	if req.MCPServerIDs == nil {
 		req.MCPServerIDs = []string{}
@@ -138,10 +231,10 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 
 	_, err := h.server.db.Pool.Exec(r.Context(), `
 		INSERT INTO agents (id, org_id, name, description, model_config_id, subagent_model_config_id,
-			system_prompt, skill_ids, folder_id, max_turns, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+			system_prompt, skill_ids, tool_ids, folder_id, max_turns, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
 	`, agentID, claims.OrgID, req.Name, req.Description, req.ModelConfigID, req.SubagentModelConfigID,
-		req.SystemPrompt, skillIDs, req.FolderID, req.MaxTurns, claims.UserID)
+		req.SystemPrompt, skillIDs, req.ToolIDs, req.FolderID, req.MaxTurns, claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -199,10 +292,10 @@ func (h *agentHandlers) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 	var desc, sysPrompt *string
 	err = h.server.db.Pool.QueryRow(r.Context(), `
 		SELECT id, org_id, name, description, model_config_id, subagent_model_config_id,
-			   system_prompt, skill_ids, folder_id, max_turns, created_by, created_at, updated_at
+			   system_prompt, skill_ids, tool_ids, folder_id, max_turns, created_by, created_at, updated_at
 		FROM agents WHERE id = $1 AND org_id = $2
 	`, agentID, claims.OrgID).Scan(&a.ID, &a.OrgID, &a.Name, &desc, &a.ModelConfigID, &a.SubagentModelConfigID,
-		&sysPrompt, &a.SkillIDs, &a.FolderID, &a.MaxTurns, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt)
+		&sysPrompt, &a.SkillIDs, &a.ToolIDs, &a.FolderID, &a.MaxTurns, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
@@ -218,6 +311,29 @@ func (h *agentHandlers) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 	if mcp, ok := mcpMap[a.ID]; ok {
 		a.MCPServerIDs = mcp.IDs
 		a.MCPServers = mcp.Servers
+	}
+
+	// Load tools
+	if len(a.ToolIDs) > 0 {
+		tRows, err := h.server.db.Pool.Query(r.Context(), `
+			SELECT id, org_id, name, description, type, schema, config, folder_id, created_by, created_at, updated_at
+			FROM tools WHERE id = ANY($1)`, a.ToolIDs)
+		if err == nil {
+			defer tRows.Close()
+			for tRows.Next() {
+				var t models.Tool
+				var schema, config []byte
+				if err := tRows.Scan(&t.ID, &t.OrgID, &t.Name, &t.Description, &t.Type, &schema, &config, &t.FolderID, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt); err == nil {
+					if len(schema) > 0 {
+						json.Unmarshal(schema, &t.Schema)
+					}
+					if len(config) > 0 {
+						json.Unmarshal(config, &t.Config)
+					}
+					a.Tools = append(a.Tools, t)
+				}
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, a)
@@ -238,6 +354,7 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 		Description           *string  `json:"description"`
 		SystemPrompt          *string  `json:"system_prompt"`
 		SkillIDs              []string `json:"skill_ids"`
+		ToolIDs               []string `json:"tool_ids"`
 		ModelConfigID         *string  `json:"model_config_id"`
 		SubagentModelConfigID *string  `json:"subagent_model_config_id"`
 		MCPServerIDs          []string `json:"mcp_server_ids"`
@@ -254,12 +371,13 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 			description = COALESCE($3, description),
 			system_prompt = COALESCE($4, system_prompt),
 			skill_ids = COALESCE($5, skill_ids),
-			model_config_id = COALESCE($6, model_config_id),
-			subagent_model_config_id = COALESCE($7, subagent_model_config_id),
-			max_turns = COALESCE($8, max_turns),
+			tool_ids = COALESCE($6, tool_ids),
+			model_config_id = COALESCE($7, model_config_id),
+			subagent_model_config_id = COALESCE($8, subagent_model_config_id),
+			max_turns = COALESCE($9, max_turns),
 			updated_at = NOW()
-		WHERE id = $1 AND org_id = $9
-	`, agentID, req.Name, req.Description, req.SystemPrompt, req.SkillIDs, req.ModelConfigID, req.SubagentModelConfigID, req.MaxTurns, claims.OrgID)
+		WHERE id = $1 AND org_id = $10
+	`, agentID, req.Name, req.Description, req.SystemPrompt, req.SkillIDs, req.ToolIDs, req.ModelConfigID, req.SubagentModelConfigID, req.MaxTurns, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

@@ -35,7 +35,6 @@ func TestSkillCRUD(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{
 			"name":        "Test Skill",
 			"description": "A test skill",
-			"tool_ids":    []string{},
 		})
 		req := httptest.NewRequest("POST", "/api/v1/skills", strings.NewReader(string(body)))
 		req.Header.Set("Content-Type", "application/json")
@@ -66,19 +65,11 @@ func TestSkillCRUD(t *testing.T) {
 		if skills[0]["name"] != "Test Skill" {
 			t.Fatalf("expected name 'Test Skill', got %v", skills[0]["name"])
 		}
-		toolIDs, ok := skills[0]["tool_ids"].([]interface{})
-		if !ok {
-			t.Fatalf("expected tool_ids to be array, got %T", skills[0]["tool_ids"])
-		}
-		if len(toolIDs) != 0 {
-			t.Fatalf("expected empty tool_ids, got %v", toolIDs)
-		}
 	})
 
 	t.Run("update", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{
-			"name":     "Updated Skill",
-			"tool_ids": []string{"tool1", "tool2"},
+			"name": "Updated Skill",
 		})
 		req := httptest.NewRequest("PUT", "/api/v1/skills/"+skillID, strings.NewReader(string(body)))
 		req.Header.Set("Content-Type", "application/json")
@@ -87,17 +78,6 @@ func TestSkillCRUD(t *testing.T) {
 		srv.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("update skill: expected 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		req2 := httptest.NewRequest("GET", "/api/v1/skills", nil)
-		req2.Header.Set("Authorization", "Bearer "+token)
-		rec2 := httptest.NewRecorder()
-		srv.ServeHTTP(rec2, req2)
-		var skills []map[string]any
-		json.NewDecoder(rec2.Body).Decode(&skills)
-		toolIDs, ok := skills[0]["tool_ids"].([]interface{})
-		if !ok || len(toolIDs) != 2 {
-			t.Fatalf("expected 2 tool_ids, got %v", skills[0]["tool_ids"])
 		}
 	})
 

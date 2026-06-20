@@ -24,7 +24,7 @@ type Engine struct {
 	BroadcastFunc func(notebookID string, msg any)
 }
 
-func NewEngine(pool *pgxpool.Pool) *Engine {
+func NewEngine(ctx context.Context, pool *pgxpool.Pool) *Engine {
 	engine := &Engine{
 		registry:    NewToolRegistry(),
 		session:     NewSessionStore(pool),
@@ -36,6 +36,17 @@ func NewEngine(pool *pgxpool.Pool) *Engine {
 	RegisterAgentTools(engine.registry, pool, engine)
 	RegisterPlatformTools(engine.registry, pool)
 	RegisterChartTools(engine.registry, pool)
+
+	// Seed built-in tools for all orgs
+	orgRows, err := pool.Query(ctx, `SELECT id FROM orgs`)
+	if err == nil {
+		for orgRows.Next() {
+			var orgID string
+			orgRows.Scan(&orgID)
+			SeedBuiltinTools(ctx, pool, orgID)
+		}
+		orgRows.Close()
+	}
 
 	return engine
 }
@@ -52,13 +63,17 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	var agent models.Agent
 	var systemPrompt string
 	var skillIDs []byte
-	err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, description, model_config_id, subagent_model_config_id, system_prompt, array_to_json(skill_ids)::text, folder_id, max_turns, created_by, created_at, updated_at FROM agents WHERE id = $1`, session.AgentID).Scan(
-		&agent.ID, &agent.OrgID, &agent.Name, &agent.Description, &agent.ModelConfigID, &agent.SubagentModelConfigID, &systemPrompt, &skillIDs, &agent.FolderID, &agent.MaxTurns, &agent.CreatedBy, &agent.CreatedAt, &agent.UpdatedAt)
+	var toolIDs []byte
+	err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, description, model_config_id, subagent_model_config_id, system_prompt, array_to_json(skill_ids)::text, array_to_json(tool_ids)::text, folder_id, max_turns, created_by, created_at, updated_at FROM agents WHERE id = $1`, session.AgentID).Scan(
+		&agent.ID, &agent.OrgID, &agent.Name, &agent.Description, &agent.ModelConfigID, &agent.SubagentModelConfigID, &systemPrompt, &skillIDs, &toolIDs, &agent.FolderID, &agent.MaxTurns, &agent.CreatedBy, &agent.CreatedAt, &agent.UpdatedAt)
 	if err != nil {
 		return "", "", nil, events, fmt.Errorf("get agent: %w", err)
 	}
 	if skillIDs != nil {
 		json.Unmarshal(skillIDs, &agent.SkillIDs)
+	}
+	if toolIDs != nil {
+		json.Unmarshal(toolIDs, &agent.ToolIDs)
 	}
 
 	mcpRows, err := e.pool.Query(ctx, `
@@ -84,6 +99,38 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			slog.Warn("error iterating mcp server rows", "session_id", sessionID, "error", err)
 		}
 		mcpRows.Close()
+	}
+
+	// Load agent tools from tools table
+	agentTools := make([]*ToolDef, 0)
+	if len(agent.ToolIDs) > 0 {
+		tRows, err := e.pool.Query(ctx, `
+			SELECT id, org_id, name, description, type, schema, config
+			FROM tools WHERE id = ANY($1)`, agent.ToolIDs)
+		if err == nil {
+			for tRows.Next() {
+				var t models.Tool
+				var schema, config []byte
+				if err := tRows.Scan(&t.ID, &t.OrgID, &t.Name, &t.Description, &t.Type, &schema, &config); err != nil {
+					continue
+				}
+				if schema != nil {
+					json.Unmarshal(schema, &t.Schema)
+				}
+				if config != nil {
+					json.Unmarshal(config, &t.Config)
+				}
+				toolDef, err := e.resolveToolDef(&t)
+				if err != nil {
+					slog.Warn("engine: failed to resolve tool", "tool", t.Name, "error", err)
+					continue
+				}
+				if toolDef != nil {
+					agentTools = append(agentTools, toolDef)
+				}
+			}
+			tRows.Close()
+		}
 	}
 
 	ok, err := e.rateLimiter.CheckAndUpdateTokens(ctx, sessionID, 0, 0)
@@ -235,8 +282,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		}()
 	}
 
-	allTools := make([]*ToolDef, len(tools))
-	copy(allTools, tools)
+	allTools := make([]*ToolDef, 0)
+	allTools = append(allTools, agentTools...)
+	allTools = append(allTools, tools...)
 
 	if len(agent.MCPServers) > 0 {
 		for _, ms := range agent.MCPServers {
@@ -425,6 +473,27 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	}
 
 	return "", "", allToolCalls, events, fmt.Errorf("max turns reached")
+}
+
+func (e *Engine) resolveToolDef(t *models.Tool) (*ToolDef, error) {
+	switch t.Type {
+	case models.ToolTypeBuiltin:
+		handlerName, _ := t.Config["handler_name"].(string)
+		if handlerName == "" {
+			return nil, fmt.Errorf("builtin tool missing handler_name")
+		}
+		def, ok := e.registry.Get(handlerName)
+		if !ok {
+			return nil, fmt.Errorf("builtin handler not found: %s", handlerName)
+		}
+		return def, nil
+	case models.ToolTypeWebhook:
+		return makeWebhookToolDef(t)
+	case models.ToolTypeSQLQuery:
+		return makeSQLQueryToolDef(t, e.pool)
+	default:
+		return nil, fmt.Errorf("unknown tool type: %s", t.Type)
+	}
 }
 
 func (e *Engine) GetRegistry() *ToolRegistry {
