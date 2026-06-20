@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Home, LayoutDashboard, Database, Users, UserCircle, ClipboardList, ChevronLeft, ChevronRight, Bot, Brain, Wrench, Puzzle, X, Settings } from 'lucide-react'
+import { Home, LayoutDashboard, Database, Users, UserCircle, ClipboardList, ChevronLeft, ChevronRight, Bot, Brain, Wrench, Puzzle, X, Settings, Zap } from 'lucide-react'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useAuth } from '../hooks/useAuth'
 
@@ -17,7 +17,8 @@ const ALL_NAV_ITEMS = [
 const AGENT_NAV_ITEMS = [
   { to: '/agents',  title: 'Agents',  icon: <Bot size={16} /> },
   { to: '/models',  title: 'Models',  icon: <Brain size={16} /> },
-  { to: '/skills',  title: 'Skills',  icon: <Wrench size={16} /> },
+  { to: '/tools',   title: 'Tools',   icon: <Wrench size={16} /> },
+  { to: '/skills',  title: 'Skills',  icon: <Zap size={16} /> },
   { to: '/mcps',    title: 'MCPs',    icon: <Puzzle size={16} /> },
 ]
 

@@ -61,3 +61,14 @@ export const api = {
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
   delete: <T>(path: string) => request<T>('DELETE', path),
 }
+
+export const toolsApi = {
+  list: (): Promise<Tool[]> => api.get('/api/v1/tools'),
+  get: (id: string): Promise<Tool> => api.get(`/api/v1/tools/${id}`),
+  create: (data: Partial<Tool>): Promise<{ id: string }> => api.post('/api/v1/tools', data),
+  update: (id: string, data: Partial<Tool>): Promise<void> => api.put(`/api/v1/tools/${id}`, data),
+  delete: (id: string): Promise<void> => api.delete(`/api/v1/tools/${id}`),
+  test: (id: string): Promise<{ status: number; body?: string; result?: any }> => api.post(`/api/v1/tools/${id}/test`),
+}
+
+import type { Tool } from '../types/agent'

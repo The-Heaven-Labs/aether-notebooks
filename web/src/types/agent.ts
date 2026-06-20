@@ -49,7 +49,22 @@ export interface Skill {
   name: string
   description?: string
   system_prompt?: string
-  tool_ids: string[]
+  folder_id?: string
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export type ToolType = 'builtin' | 'webhook' | 'sql_query'
+
+export interface Tool {
+  id: string
+  org_id: string
+  name: string
+  description: string
+  type: ToolType
+  schema: Record<string, any>
+  config: Record<string, any>
   folder_id?: string
   created_by: string
   created_at: string
