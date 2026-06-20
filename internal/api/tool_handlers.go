@@ -184,6 +184,17 @@ func (h *toolHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Restore redacted secret values from old config
+	if req.Config != nil {
+		var oldConfigRaw []byte
+		err := h.server.db.Pool.QueryRow(r.Context(), `SELECT config FROM tools WHERE id = $1 AND org_id = $2`, toolID, claims.OrgID).Scan(&oldConfigRaw)
+		if err == nil && len(oldConfigRaw) > 0 {
+			var oldConfig models.JSONMap
+			json.Unmarshal(oldConfigRaw, &oldConfig)
+			restoreSecrets(oldConfig, *req.Config)
+		}
+	}
+
 	result, err := h.server.db.Pool.Exec(r.Context(), `
 		UPDATE tools SET
 			name = COALESCE($2, name),
@@ -302,10 +313,49 @@ func (h *toolHandlers) handleDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusNoContent, nil)
 }
 
+const redactedSentinel = "__HNB_REDACTED__"
+
 func redactToolConfig(t *models.Tool) {
-	if t.Type == "webhook" {
-		if _, ok := t.Config["headers"]; ok {
-			delete(t.Config, "headers")
+	if t.Type != "webhook" {
+		return
+	}
+	secrets, _ := t.Config["secrets"].([]any)
+	if len(secrets) == 0 {
+		return
+	}
+	headers, ok := t.Config["headers"].(map[string]any)
+	if !ok {
+		return
+	}
+	for _, s := range secrets {
+		name, _ := s.(string)
+		if _, exists := headers[name]; exists {
+			headers[name] = redactedSentinel
+		}
+	}
+}
+
+func restoreSecrets(oldConfig, newConfig models.JSONMap) {
+	secrets, _ := newConfig["secrets"].([]any)
+	if len(secrets) == 0 {
+		return
+	}
+	oldHeaders, ok := oldConfig["headers"].(map[string]any)
+	if !ok {
+		return
+	}
+	newHeaders, ok := newConfig["headers"].(map[string]any)
+	if !ok {
+		return
+	}
+	for _, s := range secrets {
+		name, _ := s.(string)
+		if newVal, exists := newHeaders[name]; exists {
+			if str, ok := newVal.(string); ok && str == redactedSentinel {
+				if oldVal, exists := oldHeaders[name]; exists {
+					newHeaders[name] = oldVal
+				}
+			}
 		}
 	}
 }

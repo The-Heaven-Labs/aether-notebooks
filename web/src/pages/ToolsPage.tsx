@@ -23,7 +23,7 @@ interface ToolForm {
   type: ToolType
   url: string
   method: string
-  headers: { key: string; value: string }[]
+  headers: { key: string; value: string; sensitive: boolean }[]
   connector_id: string
   sql: string
   parameters: ParamDef[]
@@ -41,7 +41,7 @@ const emptyForm = (): ToolForm => ({
   type: 'webhook',
   url: '',
   method: 'POST',
-  headers: [{ key: '', value: '' }],
+  headers: [{ key: '', value: '', sensitive: false }],
   connector_id: '',
   sql: '',
   parameters: [],
@@ -104,10 +104,19 @@ export function ToolsPage() {
       payload.schema = {}
     }
     if (form.type === 'webhook') {
+      const headers: Record<string, string> = {}
+      const secrets: string[] = []
+      for (const h of form.headers) {
+        if (h.key && h.value) {
+          headers[h.key] = h.value
+          if (h.sensitive) secrets.push(h.key)
+        }
+      }
       payload.config = {
         url: form.url,
         method: form.method,
-        headers: form.headers.filter(h => h.key && h.value).reduce((acc, h) => ({ ...acc, [h.key]: h.value }), {}),
+        headers,
+        ...(secrets.length > 0 ? { secrets } : {}),
       }
     } else if (form.type === 'sql_query') {
       payload.config = {
@@ -173,15 +182,17 @@ export function ToolsPage() {
           required: required.includes(name),
         }))
       : []
+    const secrets = (config.secrets as string[]) || []
+    const headerEntries = typeof config.headers === 'object' && config.headers
+      ? Object.entries(config.headers).map(([key, value]) => ({ key, value: String(value), sensitive: secrets.includes(key) }))
+      : [{ key: '', value: '', sensitive: false }]
     setForm({
       name: tool.name,
       description: tool.description ?? '',
       type: tool.type,
       url: config.url ?? '',
       method: config.method ?? 'POST',
-      headers: typeof config.headers === 'object' && config.headers
-        ? Object.entries(config.headers).map(([key, value]) => ({ key, value: String(value) }))
-        : [{ key: '', value: '' }],
+      headers: headerEntries,
       connector_id: config.connector_id ?? '',
       sql: config.query ?? config.sql ?? '',
       parameters,
@@ -365,7 +376,19 @@ function ToolFormFields({ form, setForm, connectors, editing }: {
               {form.headers.map((h, i) => (
                 <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                   <input style={{ ...styles.input, flex: 1 }} placeholder="Key" value={h.key} onChange={e => updateHeader(i, 'key', e.target.value)} />
-                  <input style={{ ...styles.input, flex: 1 }} placeholder="Value" value={h.value} onChange={e => updateHeader(i, 'value', e.target.value)} />
+                  <input style={{ ...styles.input, flex: 1 }} placeholder="Value" value={h.sensitive ? '••••••' : h.value} onChange={e => updateHeader(i, 'value', e.target.value)} disabled={h.sensitive} />
+                  <button
+                    type="button"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, padding: '4px 6px', color: h.sensitive ? 'var(--accent)' : 'var(--text-muted)' }}
+                    onClick={() => setForm(f => {
+                      const hdrs = [...f.headers]
+                      hdrs[i] = { ...hdrs[i], sensitive: !hdrs[i].sensitive }
+                      return { ...f, headers: hdrs }
+                    })}
+                    title={h.sensitive ? 'Sensitive — hidden on read' : 'Click to mark as sensitive'}
+                  >
+                    {h.sensitive ? '🔒' : '🔓'}
+                  </button>
                   <button type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error-full)', fontSize: 14, padding: '4px 6px' }} onClick={() => removeHeader(i)}>×</button>
                 </div>
               ))}
