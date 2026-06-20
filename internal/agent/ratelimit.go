@@ -22,20 +22,25 @@ func NewRateLimiter(pool *pgxpool.Pool) *RateLimiter {
 }
 
 func (rl *RateLimiter) CheckAndUpdateTokens(ctx context.Context, sessionID string, tokensIn, tokensOut int) (bool, error) {
-	messageCount, err := rl.sessionStore.GetMessageCount(ctx, sessionID)
-	if err != nil {
-		return false, err
-	}
-
 	var maxTurns, maxTokens int
-	err = rl.pool.QueryRow(ctx, `
+	err := rl.pool.QueryRow(ctx, `
 		SELECT max_turns, max_tokens FROM agent_sessions WHERE id = $1
 	`, sessionID).Scan(&maxTurns, &maxTokens)
 	if err != nil {
 		return false, err
 	}
 
-	if messageCount >= maxTurns {
+	// Count tool calls across all assistant messages in the session.
+	// This reflects actual agent work (tool invocations) rather than counting
+	// every message (user, assistant, tool result) which inflates the count.
+	var toolCallCount int
+	rl.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(jsonb_array_length(tool_calls)), 0)
+		FROM agent_messages
+		WHERE session_id = $1 AND tool_calls IS NOT NULL
+	`, sessionID).Scan(&toolCallCount)
+
+	if toolCallCount >= maxTurns {
 		return false, nil
 	}
 
@@ -79,11 +84,11 @@ func (rl *RateLimiter) CreateSummarizedSession(ctx context.Context, sessionID st
 	return newSession.ID, nil
 }
 
-func (rl *RateLimiter) GetSessionStats(ctx context.Context, sessionID string) (messageCount int, totalTokens int, err error) {
-	messageCount, err = rl.sessionStore.GetMessageCount(ctx, sessionID)
-	if err != nil {
-		return
-	}
+func (rl *RateLimiter) GetSessionStats(ctx context.Context, sessionID string) (toolCallCount int, totalTokens int, err error) {
+	rl.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(jsonb_array_length(tool_calls)), 0)
+		FROM agent_messages WHERE session_id = $1 AND tool_calls IS NOT NULL
+	`, sessionID).Scan(&toolCallCount)
 
 	rl.pool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(tokens_input + tokens_output), 0) FROM agent_messages WHERE session_id = $1

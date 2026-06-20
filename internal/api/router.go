@@ -164,6 +164,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/notebooks/{id}/snapshots", authMW(http.HandlerFunc(s.handleCreateSnapshot)))
 	s.mux.Handle("GET /api/v1/notebooks/{id}/snapshots", authMW(http.HandlerFunc(s.handleListSnapshots)))
 	s.mux.Handle("POST /api/v1/notebooks/{id}/snapshots/{snapshot_id}/restore", authMW(http.HandlerFunc(s.handleRestoreSnapshot)))
+	s.mux.Handle("GET /api/v1/notebooks/{id}/snapshots/{snapshot_id}/diff", authMW(http.HandlerFunc(s.handleSnapshotDiff)))
 
 	// Schedule routes
 	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/schedules", authMW(http.HandlerFunc(s.handleCreateSchedule)))

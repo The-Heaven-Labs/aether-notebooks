@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/heavenlabs/hnb/internal/agent"
+	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/models"
 	"github.com/jackc/pgx/v5"
 )
@@ -211,6 +213,61 @@ type createSnapshotRequest struct {
 	Name string `json:"name"`
 }
 
+
+
+// computeSnapshotChanges computes the diff between two snapshots.
+func computeSnapshotChanges(prev, curr *models.NotebookSnapshot) *models.SnapshotChanges {
+	if prev == nil || curr == nil {
+		return nil
+	}
+
+	changes := &models.SnapshotChanges{
+		TitleChanged: prev.Title != curr.Title,
+		OldTitle:     prev.Title,
+		NewTitle:     curr.Title,
+	}
+
+	prevCells := make(map[string]models.SnapshotCell)
+	for _, c := range prev.Cells {
+		prevCells[c.ID] = c
+	}
+	currCells := make(map[string]models.SnapshotCell)
+	for _, c := range curr.Cells {
+		currCells[c.ID] = c
+	}
+
+	prevPositions := make(map[string]int)
+	for _, c := range prev.Cells {
+		prevPositions[c.ID] = c.Position
+	}
+	currPositions := make(map[string]int)
+	for _, c := range curr.Cells {
+		currPositions[c.ID] = c.Position
+	}
+
+	for _, c := range curr.Cells {
+		if _, ok := prevCells[c.ID]; !ok {
+			changes.CellsAdded = append(changes.CellsAdded, c.ID)
+		} else if prevCells[c.ID].Source != c.Source {
+			changes.CellsModified = append(changes.CellsModified, c.ID)
+		}
+	}
+	for _, c := range prev.Cells {
+		if _, ok := currCells[c.ID]; !ok {
+			changes.CellsDeleted = append(changes.CellsDeleted, c.ID)
+		}
+	}
+
+	for id, pos := range currPositions {
+		if prevPos, ok := prevPositions[id]; ok && prevPos != pos {
+			changes.PositionsChanged = true
+			break
+		}
+	}
+
+	return changes
+}
+
 func (s *Server) handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("id")
@@ -223,39 +280,12 @@ func (s *Server) handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// Collect all cell sources
-	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, source FROM cells WHERE notebook_id=$1 ORDER BY position`,
-		nbID,
-	)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query cells failed")
-		return
-	}
-	defer rows.Close()
-
-	cellSources := map[string]string{}
-	for rows.Next() {
-		var id, src string
-		rows.Scan(&id, &src)
-		cellSources[id] = src
-	}
-
-	sourcesJSON, _ := json.Marshal(cellSources)
-
-	var snap models.NotebookSnapshot
-	var sourcesOut []byte
-	err = s.db.Pool.QueryRow(ctx,
-		`INSERT INTO notebook_snapshots (notebook_id, name, cell_sources, created_by)
-		 VALUES ($1,$2,$3,$4)
-		 RETURNING id, notebook_id, name, cell_sources, created_by, created_at`,
-		nbID, req.Name, sourcesJSON, claims.UserID,
-	).Scan(&snap.ID, &snap.NotebookID, &snap.Name, &sourcesOut, &snap.CreatedBy, &snap.CreatedAt)
+	snap, err := agent.CreateNotebookSnapshot(ctx, s.db.Pool, nbID, req.Name, claims.UserID, false)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "create snapshot failed")
 		return
 	}
-	json.Unmarshal(sourcesOut, &snap.CellSources)
+
 	writeJSON(w, http.StatusCreated, snap)
 }
 
@@ -272,8 +302,13 @@ func (s *Server) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, notebook_id, name, cell_sources, created_by, created_at
-		 FROM notebook_snapshots WHERE notebook_id=$1 ORDER BY created_at DESC`,
+		`SELECT ns.id, ns.notebook_id, ns.name, ns.title, ns.cell_sources, ns.cells,
+		        ns.created_by, ns.created_by_name, ns.created_at, ns.auto,
+		        u.id, u.name, u.email
+		 FROM notebook_snapshots ns
+		 LEFT JOIN users u ON u.id = ns.created_by
+		 WHERE ns.notebook_id=$1
+		 ORDER BY ns.created_at DESC`,
 		nbID,
 	)
 	if err != nil {
@@ -285,14 +320,35 @@ func (s *Server) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
 	var snaps []models.NotebookSnapshot
 	for rows.Next() {
 		var snap models.NotebookSnapshot
-		var sourcesOut []byte
-		rows.Scan(&snap.ID, &snap.NotebookID, &snap.Name, &sourcesOut, &snap.CreatedBy, &snap.CreatedAt)
+		var sourcesOut, cellsOut []byte
+		var userName string
+		var uID, uName, uEmail *string
+		rows.Scan(&snap.ID, &snap.NotebookID, &snap.Name, &snap.Title,
+			&sourcesOut, &cellsOut, &snap.CreatedBy, &userName, &snap.CreatedAt, &snap.Auto,
+			&uID, &uName, &uEmail)
 		json.Unmarshal(sourcesOut, &snap.CellSources)
+		if cellsOut != nil {
+			json.Unmarshal(cellsOut, &snap.Cells)
+		}
+		if uID != nil {
+			snap.User = &models.User{ID: *uID, Name: *uName, Email: *uEmail}
+		} else if userName != "" {
+			snap.User = &models.User{Name: userName}
+		}
 		snaps = append(snaps, snap)
 	}
 	if snaps == nil {
 		snaps = []models.NotebookSnapshot{}
 	}
+
+	// Compute changes between consecutive snapshots (they are ordered DESC,
+	// so compute between each pair and assign to the newer one)
+	for i := 0; i < len(snaps)-1; i++ {
+		// snaps[i] is newer (DESC), snaps[i+1] is older
+		changes := computeSnapshotChanges(&snaps[i+1], &snaps[i])
+		snaps[i].Changes = changes
+	}
+
 	writeJSON(w, http.StatusOK, snaps)
 }
 
@@ -302,13 +358,48 @@ func (s *Server) handleRestoreSnapshot(w http.ResponseWriter, r *http.Request) {
 	snapID := r.PathValue("snapshot_id")
 	ctx := r.Context()
 
-	var sourcesJSON []byte
+	onRestored := func(cctx context.Context, cellID, source, userID string) error {
+		return s.upsertCellVersion(cctx, cellID, source, userID)
+	}
+
+	if err := agent.RestoreNotebookSnapshot(ctx, s.db.Pool, nbID, snapID, claims.OrgID, claims.UserID, onRestored); err != nil {
+		if err.Error() == "snapshot not found" {
+			writeError(w, http.StatusNotFound, "snapshot not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "restore failed")
+		}
+		return
+	}
+
+	_ = s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "snapshot.restore", ResourceType: "notebook", ResourceID: nbID,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "restored"})
+}
+
+func (s *Server) handleSnapshotDiff(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	nbID := r.PathValue("id")
+	snapID := r.PathValue("snapshot_id")
+	againstID := r.URL.Query().Get("against")
+	ctx := r.Context()
+
+	if againstID == "" {
+		writeError(w, http.StatusBadRequest, "against query param is required")
+		return
+	}
+
+	var currTitle string
+	var currCellsJSON []byte
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT ns.cell_sources FROM notebook_snapshots ns
+		`SELECT ns.title, ns.cells
+		 FROM notebook_snapshots ns
 		 JOIN notebooks n ON n.id = ns.notebook_id
 		 WHERE ns.id=$1 AND ns.notebook_id=$2 AND n.org_id=$3`,
 		snapID, nbID, claims.OrgID,
-	).Scan(&sourcesJSON)
+	).Scan(&currTitle, &currCellsJSON)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "snapshot not found")
 		return
@@ -318,16 +409,32 @@ func (s *Server) handleRestoreSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var cellSources map[string]string
-	json.Unmarshal(sourcesJSON, &cellSources)
-
-	for cellID, src := range cellSources {
-		if _, err := s.db.Pool.Exec(ctx, `UPDATE cells SET source=$1, updated_at=NOW() WHERE id=$2 AND notebook_id=$3`, src, cellID, nbID); err != nil {
-			writeError(w, http.StatusInternalServerError, "restore failed")
-			return
-		}
-		s.upsertCellVersion(ctx, cellID, src, claims.UserID)
+	var prevTitle string
+	var prevCellsJSON []byte
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT title, cells FROM notebook_snapshots WHERE id=$1 AND notebook_id=$2`,
+		againstID, nbID,
+	).Scan(&prevTitle, &prevCellsJSON)
+	if err == pgx.ErrNoRows {
+		writeError(w, http.StatusNotFound, "comparison snapshot not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "restored"})
+	var prevCells, currCells []models.SnapshotCell
+	if prevCellsJSON != nil {
+		json.Unmarshal(prevCellsJSON, &prevCells)
+	}
+	if currCellsJSON != nil {
+		json.Unmarshal(currCellsJSON, &currCells)
+	}
+
+	prev := &models.NotebookSnapshot{Title: prevTitle, Cells: prevCells}
+	curr := &models.NotebookSnapshot{Title: currTitle, Cells: currCells}
+	changes := computeSnapshotChanges(prev, curr)
+
+	writeJSON(w, http.StatusOK, changes)
 }
