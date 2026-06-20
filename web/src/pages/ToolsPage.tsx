@@ -10,6 +10,13 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import type { Tool, ToolType } from '../types/agent'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 
+interface ParamDef {
+  name: string
+  type: string
+  description: string
+  required: boolean
+}
+
 interface ToolForm {
   name: string
   description: string
@@ -19,6 +26,7 @@ interface ToolForm {
   headers: { key: string; value: string }[]
   connector_id: string
   sql: string
+  parameters: ParamDef[]
 }
 
 interface Connector {
@@ -36,7 +44,10 @@ const emptyForm = (): ToolForm => ({
   headers: [{ key: '', value: '' }],
   connector_id: '',
   sql: '',
+  parameters: [],
 })
+
+const PARAM_TYPES = ['string', 'number', 'boolean', 'integer']
 
 const METHOD_OPTIONS = ['GET', 'POST', 'PUT']
 const TYPE_OPTIONS: { value: ToolType; label: string }[] = [
@@ -80,6 +91,18 @@ export function ToolsPage() {
       description: form.description,
       type: form.type,
     }
+    if (form.parameters.length > 0) {
+      const props: Record<string, any> = {}
+      const required: string[] = []
+      for (const p of form.parameters) {
+        props[p.name] = { type: p.type, description: p.description }
+        if (p.required) required.push(p.name)
+      }
+      payload.schema = { type: 'object', properties: props }
+      if (required.length > 0) payload.schema.required = required
+    } else {
+      payload.schema = {}
+    }
     if (form.type === 'webhook') {
       payload.config = {
         url: form.url,
@@ -89,7 +112,7 @@ export function ToolsPage() {
     } else if (form.type === 'sql_query') {
       payload.config = {
         connector_id: form.connector_id,
-        sql: form.sql,
+        query: form.sql,
       }
     }
     return payload
@@ -139,15 +162,29 @@ export function ToolsPage() {
   const startEdit = (tool: Tool) => {
     setEditingId(tool.id)
     const config = tool.config || {}
+    const schema = tool.schema || {}
+    const schemaProps = schema.properties as Record<string, { type: string; description?: string }> | undefined
+    const required = (schema.required as string[]) || []
+    const parameters: ParamDef[] = schemaProps
+      ? Object.entries(schemaProps).map(([name, def]) => ({
+          name,
+          type: def.type || 'string',
+          description: def.description || '',
+          required: required.includes(name),
+        }))
+      : []
     setForm({
       name: tool.name,
       description: tool.description ?? '',
       type: tool.type,
       url: config.url ?? '',
       method: config.method ?? 'POST',
-      headers: config.headers ? Object.entries(config.headers).map(([key, value]) => ({ key, value: String(value) })) : [{ key: '', value: '' }],
+      headers: typeof config.headers === 'object' && config.headers
+        ? Object.entries(config.headers).map(([key, value]) => ({ key, value: String(value) }))
+        : [{ key: '', value: '' }],
       connector_id: config.connector_id ?? '',
-      sql: config.sql ?? '',
+      sql: config.query ?? config.sql ?? '',
+      parameters,
     })
   }
 
@@ -276,6 +313,14 @@ function ToolFormFields({ form, setForm, connectors, editing }: {
   const setField = (field: keyof ToolForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setForm(f => ({ ...f, [field]: e.target.value }))
 
+  const setParam = (i: number, field: keyof ParamDef, val: string | boolean) => setForm(f => {
+    const p = [...f.parameters]
+    p[i] = { ...p[i], [field]: val }
+    return { ...f, parameters: p }
+  })
+  const addParam = () => setForm(f => ({ ...f, parameters: [...f.parameters, { name: '', type: 'string', description: '', required: false }] }))
+  const removeParam = (i: number) => setForm(f => ({ ...f, parameters: f.parameters.filter((_, idx) => idx !== i) }))
+
   const addHeader = () => setForm(f => ({ ...f, headers: [...f.headers, { key: '', value: '' }] }))
   const removeHeader = (i: number) => setForm(f => ({ ...f, headers: f.headers.filter((_, idx) => idx !== i) }))
   const updateHeader = (i: number, field: 'key' | 'value', val: string) => setForm(f => {
@@ -342,6 +387,36 @@ function ToolFormFields({ form, setForm, connectors, editing }: {
             <textarea style={{ ...styles.input, minHeight: 120, resize: 'vertical', fontFamily: 'var(--font-mono)' }} value={form.sql} onChange={setField('sql')} placeholder="SELECT * FROM table LIMIT 10" />
           </label>
         </>
+      )}
+
+      {form.type !== 'builtin' && (
+        <label style={{ ...styles.label, gridColumn: '1 / -1', marginTop: 4 }}>
+          Parameters
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
+            Define the arguments the LLM can pass to this tool. Use <code>{'{{name}}'}</code> in SQL queries to reference parameters.
+          </div>
+          {form.parameters.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>No parameters defined — tool will be called without arguments.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 6 }}>
+              {form.parameters.map((p, i) => (
+                <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input style={{ ...styles.input, width: 120 }} placeholder="name" value={p.name} onChange={e => setParam(i, 'name', e.target.value)} />
+                  <select style={{ ...styles.input, width: 100 }} value={p.type} onChange={e => setParam(i, 'type', e.target.value)}>
+                    {PARAM_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <input style={{ ...styles.input, flex: 1, minWidth: 150 }} placeholder="description" value={p.description} onChange={e => setParam(i, 'description', e.target.value)} />
+                  <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-secondary)' }}>
+                    <input type="checkbox" checked={p.required} onChange={e => setParam(i, 'required', e.target.checked)} />
+                    required
+                  </label>
+                  <button type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error-full)', fontSize: 14, padding: '4px 6px' }} onClick={() => removeParam(i)}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <button type="button" style={{ ...styles.cancelBtn, alignSelf: 'flex-start' }} onClick={addParam}>+ Add Parameter</button>
+        </label>
       )}
     </div>
   )
