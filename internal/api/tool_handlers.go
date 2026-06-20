@@ -336,26 +336,33 @@ func redactToolConfig(t *models.Tool) {
 }
 
 func restoreSecrets(oldConfig, newConfig models.JSONMap) {
+	oldHeaders, _ := oldConfig["headers"].(map[string]any)
+	newHeaders, _ := newConfig["headers"].(map[string]any)
+	if oldHeaders == nil || newHeaders == nil {
+		return
+	}
+
 	secrets, _ := newConfig["secrets"].([]any)
-	if len(secrets) == 0 {
-		return
-	}
-	oldHeaders, ok := oldConfig["headers"].(map[string]any)
-	if !ok {
-		return
-	}
-	newHeaders, ok := newConfig["headers"].(map[string]any)
-	if !ok {
-		return
-	}
+	secretSet := map[string]bool{}
 	for _, s := range secrets {
-		name, _ := s.(string)
-		if newVal, exists := newHeaders[name]; exists {
-			if str, ok := newVal.(string); ok && str == redactedSentinel {
-				if oldVal, exists := oldHeaders[name]; exists {
-					newHeaders[name] = oldVal
-				}
+		if name, ok := s.(string); ok {
+			secretSet[name] = true
+		}
+	}
+
+	for name, newVal := range newHeaders {
+		str, ok := newVal.(string)
+		if !ok || str != redactedSentinel {
+			continue
+		}
+		if secretSet[name] {
+			// Still sensitive — restore old value
+			if oldVal, exists := oldHeaders[name]; exists {
+				newHeaders[name] = oldVal
 			}
+		} else {
+			// No longer sensitive — treat as removed
+			delete(newHeaders, name)
 		}
 	}
 }
