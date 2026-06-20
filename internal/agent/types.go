@@ -152,12 +152,15 @@ type ToolDef struct {
 func (t *ToolDef) ToOpenAITool() (OpenAITool, error) {
 	var params map[string]any
 	if t.Function.Parameters != nil {
-		if s, ok := t.Function.Parameters.(string); ok {
-			if err := json.Unmarshal([]byte(s), &params); err != nil {
+		switch v := t.Function.Parameters.(type) {
+		case string:
+			if err := json.Unmarshal([]byte(v), &params); err != nil {
 				return OpenAITool{}, fmt.Errorf("parse parameters: %w", err)
 			}
-		} else if m, ok := t.Function.Parameters.(map[string]any); ok {
-			params = m
+		case map[string]any:
+			params = v
+		case models.JSONMap:
+			params = map[string]any(v)
 		}
 	}
 	return OpenAITool{
