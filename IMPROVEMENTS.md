@@ -20,5 +20,14 @@
 - [x] Agent chat messages should render markdown
 - [x] I get an error trying chat when there are sql tools available to the agent: Error: llm call: llm error 400: {"error":{"message":"Error from provider (DeepSeek): Invalid schema for function 'siquel': schema must be a JSON Schema of 'type: "object"', got 'type: null'.","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}
 - [x] I can create tools of type built-in, which make no sense
-- [ ] Tool list should be ordered by type, then alphabetically. Built-in should be last.
+- [x] Tool list should be ordered by type, then alphabetically. Built-in should be last.
+- [x] The agent feature of tasks, when a task is complete in dark theme, the text disappears (or becomes the same color as the background).
+- [x] In the global agent modal, thinking between tool calls is disappearing.
+- [x] The global agent modal should be resizeable vertically
+- [x] When I refresh the page with an agent global modal happening, the chat continues as normal, but the tasks are gone in this scenario
+- [x] When I cancel the execution of the model while a task is in progress, this task keeps on spinning forever
+- [x] Typing /new on global agent modal creates a new chat, but the old tasks still appear
+- [x] Can't go back to past sessions in the global agent modal, error "Failed to load sessions"
+- [x] There is a scenario where the last 2 thinking blocks are expanded and with the same content in the global agent modal
+- [x] When the global agent modal is streaming a response, I cant scroll up to read something that has already passed
 - [ ]

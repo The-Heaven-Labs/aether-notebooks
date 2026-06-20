@@ -66,14 +66,13 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 6,
     padding: '2px 0',
   },
-  doneItem: {
-    opacity: 0.5,
-  },
+  doneItem: {},
   description: {
     color: 'var(--text-primary)',
     fontSize: 12,
   },
   doneText: {
+    color: 'var(--text-muted)',
     textDecoration: 'line-through',
   },
 }
