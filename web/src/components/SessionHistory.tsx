@@ -41,7 +41,7 @@ export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHist
 
   useEffect(() => {
     api.get<SessionSummary[]>(`/api/v1/agents/${agentId}/sessions`)
-      .then(setSessions)
+      .then(data => setSessions(data ?? []))
       .catch(() => setError('Failed to load sessions'))
       .finally(() => setLoading(false))
   }, [agentId])
@@ -52,7 +52,7 @@ export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHist
     setError(null)
     try {
       const msgs = await api.get<SessionMessage[]>(`/api/v1/sessions/${session.id}/messages`)
-      setMessages(msgs)
+      setMessages(msgs ?? [])
     } catch {
       setError('Failed to load messages')
     } finally {
