@@ -26,6 +26,7 @@ var BuiltinTools = []BuiltinToolDef{
 	{Name: "notebook_delete_cell", Description: "Delete a cell", HandlerName: "delete_cell"},
 	{Name: "notebook_run_cell", Description: "Run a code cell", HandlerName: "notebook_run_cell"},
 	{Name: "notebook_list_cells", Description: "List all cells in a notebook", HandlerName: "notebook_list_cells"},
+	{Name: "execute_sql", Description: "Run ad-hoc SQL queries", HandlerName: "execute_sql"},
 	{Name: "get_notebook_context", Description: "Get full notebook context", HandlerName: "get_notebook_context"},
 	{Name: "list_skills", Description: "List available skills", HandlerName: "list_skills"},
 	{Name: "load_skill", Description: "Load a skill's full instructions", HandlerName: "load_skill"},
