@@ -46,6 +46,12 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
 
   const [showConfig, setShowConfig] = useState(false)
 
+  const handleConfigChange = (newCfg: ChartConfig) => {
+    if (onConfigChange) {
+      onConfigChange(newCfg)
+    }
+  }
+
   const mod = CHART_MODULES[chartType]
   if (!mod) {
     return <div style={{ padding: 16, color: 'var(--text-muted)' }}>Unknown chart type: {chartType}</div>
