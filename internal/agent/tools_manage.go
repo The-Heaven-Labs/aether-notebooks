@@ -180,10 +180,15 @@ func makeListDashboardsHandler(pool *pgxpool.Pool) ToolHandler {
 		for rows.Next() {
 			var id, title string
 			var createdAt time.Time
-			rows.Scan(&id, &title, &createdAt)
+			if err := rows.Scan(&id, &title, &createdAt); err != nil {
+				return nil, fmt.Errorf("scan dashboard: %w", err)
+			}
 			dashboards = append(dashboards, map[string]any{
 				"id": id, "title": title, "created_at": createdAt.Format(time.RFC3339),
 			})
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("list dashboards iter: %w", err)
 		}
 		if dashboards == nil {
 			dashboards = []map[string]any{}
@@ -309,9 +314,14 @@ func makeReadPermissionsHandler(pool *pgxpool.Pool) ToolHandler {
 		for rows.Next() {
 			var e entry
 			var actions []byte
-			rows.Scan(&e.ID, &e.SubjectType, &e.SubjectID, &actions)
+			if err := rows.Scan(&e.ID, &e.SubjectType, &e.SubjectID, &actions); err != nil {
+				return nil, fmt.Errorf("scan entry: %w", err)
+			}
 			json.Unmarshal(actions, &e.Actions)
 			entries = append(entries, e)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("read permissions iter: %w", err)
 		}
 		if entries == nil {
 			entries = []entry{}
@@ -411,11 +421,16 @@ func makeExportNotebookHandler(pool *pgxpool.Pool) ToolHandler {
 			var c ipynbCell
 			var cellType, lang, src string
 			var pos int
-			rows.Scan(&cellType, &lang, &src, &pos)
+			if err := rows.Scan(&cellType, &lang, &src, &pos); err != nil {
+				return nil, fmt.Errorf("scan cell: %w", err)
+			}
 			c.CellType = cellType
 			c.Source = src
 			c.Metadata.Language = lang
 			cells = append(cells, c)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("export cells iter: %w", err)
 		}
 
 		ipynb := map[string]any{
