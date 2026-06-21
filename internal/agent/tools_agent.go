@@ -70,8 +70,8 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "spawn_subagents",
-			Description: "Fork parallel exploration tasks",
-			Parameters:  `{"type":"object","properties":{"tasks":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"goal":{"type":"string"},"context":{"type":"object"},"agent_id":{"type":"string"}}}}},"required":["tasks"]}`,
+			Description: "Execute multiple independent tasks in parallel by launching separate AI sub-agents. Use this when a request has multiple distinct, independent subtasks that can be worked on simultaneously (e.g., exploring different database schemas, writing separate code modules, researching multiple topics). Each sub-agent gets its own goal and runs independently. Returns a task_id for each sub-agent so you can check on their progress. Unlike create_tasks (which only tracks to-do items), spawn_subagents actually runs work in parallel. Maximum 5 sub-agents per call.",
+			Parameters:  `{"type":"object","properties":{"tasks":{"type":"array","description":"List of independent sub-tasks to execute in parallel","minItems":1,"maxItems":5,"items":{"type":"object","properties":{"id":{"type":"string","description":"Short unique identifier for this sub-task (e.g. 'explore_schema', 'build_query', 'research_api')"},"goal":{"type":"string","description":"Clear, specific instruction for the sub-agent. Include what data to query, what to build, or what question to answer."},"agent_id":{"type":"string","description":"Optional agent ID to use for this sub-task. Omit to use the current agent."}},"required":["id","goal"]}}},"required":["tasks"]}`,
 		},
 		Handler: makeSpawnSubagentsHandler(pool, engine),
 	})
