@@ -516,7 +516,6 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 	var req struct {
 		NotebookID string  `json:"notebook_id"`
 		MaxTurns   int     `json:"max_turns"`
-		MaxTokens  int     `json:"max_tokens"`
 		Title      *string `json:"title"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
@@ -532,9 +531,6 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 	if req.MaxTurns == 0 {
 		req.MaxTurns = 100
 	}
-	if req.MaxTokens == 0 {
-		req.MaxTokens = 100000
-	}
 
 	sessionID := uuid.New().String()
 	var notebookID *string
@@ -542,9 +538,9 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 		notebookID = &req.NotebookID
 	}
 	_, err = h.server.db.Pool.Exec(r.Context(), `
-		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, max_tokens, title, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-	`, sessionID, agentID, notebookID, claims.UserID, req.MaxTurns, req.MaxTokens, req.Title)
+		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, title, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW())
+	`, sessionID, agentID, notebookID, claims.UserID, req.MaxTurns, req.Title)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -569,7 +565,6 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"session_id":     sessionID,
-		"max_tokens":     req.MaxTokens,
 		"context_window": contextWindow,
 	})
 }
@@ -585,7 +580,7 @@ func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Reques
 	}
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT s.id, s.agent_id, s.notebook_id, s.user_id, s.max_turns, s.max_tokens, s.ended_at, s.title, s.created_at,
+		SELECT s.id, s.agent_id, s.notebook_id, s.user_id, s.max_turns, s.ended_at, s.title, s.created_at,
 			COALESCE(
 				(SELECT content FROM agent_messages WHERE session_id = s.id AND role = 'user' ORDER BY created_at ASC LIMIT 1),
 				''
@@ -612,7 +607,7 @@ func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Reques
 		var endedAt *time.Time
 		var title *string
 		var notebookID *string
-		if err := rows.Scan(&s.ID, &s.AgentID, &notebookID, &s.UserID, &s.MaxTurns, &s.MaxTokens, &endedAt, &title, &s.CreatedAt, &firstMsg, &msgCount); err != nil {
+		if err := rows.Scan(&s.ID, &s.AgentID, &notebookID, &s.UserID, &s.MaxTurns, &endedAt, &title, &s.CreatedAt, &firstMsg, &msgCount); err != nil {
 			continue
 		}
 		if notebookID != nil {
@@ -624,7 +619,6 @@ func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Reques
 			"notebook_id":   s.NotebookID,
 			"user_id":       s.UserID,
 			"max_turns":     s.MaxTurns,
-			"max_tokens":    s.MaxTokens,
 			"ended_at":      endedAt,
 			"title":         title,
 			"created_at":    s.CreatedAt,
@@ -650,9 +644,9 @@ func (h *agentHandlers) handleGetSession(w http.ResponseWriter, r *http.Request)
 	var title *string
 	var notebookID *string
 	err := h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT id, agent_id, notebook_id, user_id, max_turns, max_tokens, ended_at, title, created_at
+		SELECT id, agent_id, notebook_id, user_id, max_turns, ended_at, title, created_at
 		FROM agent_sessions WHERE id = $1
-	`, sessionID).Scan(&s.ID, &s.AgentID, &notebookID, &s.UserID, &s.MaxTurns, &s.MaxTokens, &endedAt, &title, &s.CreatedAt)
+	`, sessionID).Scan(&s.ID, &s.AgentID, &notebookID, &s.UserID, &s.MaxTurns, &endedAt, &title, &s.CreatedAt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "session not found")
 		return

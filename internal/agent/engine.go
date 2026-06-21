@@ -933,7 +933,7 @@ func (e *Engine) summarizeAndNewSession(ctx context.Context, sessionID string, m
 	}
 
 	// 3. Create a new session
-	newSession, err := e.session.CreateSession(ctx, oldSession.AgentID, oldSession.NotebookID, oldSession.UserID, oldSession.MaxTurns, oldSession.MaxTokens, nil)
+	newSession, err := e.session.CreateSession(ctx, oldSession.AgentID, oldSession.NotebookID, oldSession.UserID, oldSession.MaxTurns, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create new session: %w", err)
 	}
