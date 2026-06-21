@@ -149,6 +149,9 @@ func makeListSkillsHandler(pool *pgxpool.Pool) ToolHandler {
 				"capabilities": prompt,
 			})
 		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("list skills iter: %w", err)
+		}
 		if skills == nil {
 			skills = []map[string]string{}
 		}
@@ -236,12 +239,16 @@ func makeUpdateAgentHandler(pool *pgxpool.Pool) ToolHandler {
 		}
 
 		var version int
-		pool.QueryRow(ctx.Context, `SELECT COALESCE(MAX(version), 0) + 1 FROM agent_versions WHERE agent_id = $1`, agentID).Scan(&version)
-		_, _ = pool.Exec(ctx.Context, `
+		if err := pool.QueryRow(ctx.Context, `SELECT COALESCE(MAX(version), 0) + 1 FROM agent_versions WHERE agent_id = $1`, agentID).Scan(&version); err != nil {
+			slog.Warn("query agent version", "error", err)
+		}
+		if _, err := pool.Exec(ctx.Context, `
 			INSERT INTO agent_versions (id, agent_id, version, name, description, system_prompt, skill_ids, changed_by, change_reason, created_at)
 			SELECT $1, $2, $3, name, description, system_prompt, skill_ids, $4, 'agent_self_modification', NOW()
 			FROM agents WHERE id = $2
-		`, uuid.New().String(), agentID, version, ctx.UserID)
+		`, uuid.New().String(), agentID, version, ctx.UserID); err != nil {
+			slog.Warn("record agent version", "error", err)
+		}
 
 		return map[string]any{"agent_id": agentID, "status": "updated"}, nil
 	}
