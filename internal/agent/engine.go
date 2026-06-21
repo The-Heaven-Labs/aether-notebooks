@@ -1085,6 +1085,9 @@ func (e *Engine) buildNotebookContext(ctx context.Context, notebookID string) st
 		result += "\nUse get_notebook_context tool to read full cell contents."
 	}
 
+	// Add subagent capability mention
+	result += "\n\nYou have the spawn_subagents tool to run multiple independent tasks in parallel via separate AI sub-agents. Use it when a request contains several distinct subtasks that don't depend on each other's results. For example: exploring multiple schemas at once, generating several unrelated queries, or researching different topics simultaneously."
+
 	// Add resource link patterns
 	result += "\n\nResource link patterns (use these to provide clickable links to the user):"
 	result += "\n- Notebook: " + asLink(base, "/notebooks/{id}")
