@@ -605,3 +605,57 @@ func verifyPositions(t *testing.T, pool *pgxpool.Pool, nbID string, expectedCoun
 		t.Fatalf("expected %d cells, got %d", expectedCount, count)
 	}
 }
+
+func TestAgentSwapCells(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+
+	// Create 3 cells at positions 0, 1, 2
+	now := time.Now()
+	cellIDs := make([]string, 3)
+	for i := 0; i < 3; i++ {
+		cellIDs[i] = uuid.New().String()
+		_, err := db.Pool.Exec(context.Background(), `
+			INSERT INTO cells (id, notebook_id, type, language, source, position, created_at, updated_at)
+			VALUES ($1, $2, 'code', 'sql', 'SELECT 1', $3, $4, $4)
+		`, cellIDs[i], nbID, i, now)
+		if err != nil {
+			t.Fatalf("create cell %d: %v", i, err)
+		}
+	}
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	swapDef, ok := reg.Get("swap_cells")
+	if !ok {
+		t.Fatalf("swap_cells tool not found")
+	}
+	handler := swapDef.Handler
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+
+	// Swap cells at positions 0 and 2
+	args, _ := json.Marshal(map[string]any{
+		"cell_id_a": cellIDs[0],
+		"cell_id_b": cellIDs[2],
+	})
+	_, err := handler(args, ctx)
+	if err != nil {
+		t.Fatalf("swap cells: %v", err)
+	}
+
+	// Verify swapped positions
+	var pos0, pos2 int
+	if err := db.Pool.QueryRow(context.Background(), `SELECT position FROM cells WHERE id=$1`, cellIDs[0]).Scan(&pos0); err != nil {
+		t.Fatalf("get pos0: %v", err)
+	}
+	if err := db.Pool.QueryRow(context.Background(), `SELECT position FROM cells WHERE id=$1`, cellIDs[2]).Scan(&pos2); err != nil {
+		t.Fatalf("get pos2: %v", err)
+	}
+	if pos0 != 2 || pos2 != 0 {
+		t.Fatalf("expected positions 2 and 0, got %d and %d", pos0, pos2)
+	}
+
+	// Verify no duplicates
+	verifyPositions(t, db.Pool, nbID, 3)
+}
