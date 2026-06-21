@@ -34,7 +34,7 @@ function AreaChartComponent({ data, config }: ChartProps) {
     })),
   }), [chartData, xAxis, yAxes, config.title, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, config.connectNulls, config.dataZoom, config.smooth, colors])
 
-  return <EChartsContainer option={option} />
+  return <EChartsContainer option={option} showReset />
 }
 
 function AreaConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
