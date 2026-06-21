@@ -789,7 +789,8 @@ export function NotebookPage() {
     const existingWidgets = dash.widgets ?? []
     const maxBottom = existingWidgets.reduce((max: number, w: Widget) => Math.max(max, w.layout.row + w.layout.height), 0)
     const layout = { row: maxBottom, col: 0, width: 6, height: 2 }
-    const widgetType = cell.type === 'text' ? 'text' : 'table'
+    const hasChart = !!(cell as any).metadata?.chart?.chartType
+    const widgetType = cell.type === 'text' ? 'text' : hasChart ? 'chart' : 'table'
     await api.post(`/api/v1/dashboards/${dashboardId}/widgets`, {
       notebook_id: id,
       cell_id: cellId,
