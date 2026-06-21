@@ -4,6 +4,7 @@ import { ArrowLeft, Play, Loader2, Pencil, Settings } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
+import type { ChartConfig } from '../charts/types'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { OutputRenderer } from '../components/OutputRenderer'
@@ -250,7 +251,8 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId }: { widget: AnyWidg
     )
   }
   const fixedView = widget.type === 'chart' ? 'chart' : 'table'
-  return <OutputRenderer outputs={cell.outputs} fixedView={fixedView} />
+  const chartConfig = (cell as any).metadata?.chart as ChartConfig | undefined
+  return <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} />
 }
 
 const queryWidgetStyles: Record<string, React.CSSProperties> = {

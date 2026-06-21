@@ -6,6 +6,7 @@ import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
+import type { ChartConfig } from '../charts/types'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { GridLayout } from 'react-grid-layout'
@@ -65,7 +66,8 @@ function WidgetContent({ widget }: { widget: Widget }) {
     return <div style={widgetContentStyles.empty}>No results yet — run the notebook first</div>
   }
   const fixedView = widget.type === 'chart' ? 'chart' : 'table'
-  return <OutputRenderer outputs={cell.outputs} fixedView={fixedView} />
+  const chartConfig = cell.metadata?.chart as ChartConfig | undefined
+  return <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} />
 }
 
 const widgetContentStyles: Record<string, React.CSSProperties> = {
