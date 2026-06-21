@@ -17,7 +17,7 @@ func RegisterChartTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		}{
 			Name:        "create_chart",
 			Description: "Turn a cell's table output into a chart",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"layout":{"type":"string","enum":["top-down","left-to-right"]}},"required":["cell_id","chart_type"]}`,
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]}},"required":["cell_id","chart_type"]}`,
 		},
 		Handler: makeCreateChartHandler(db),
 	})
@@ -30,7 +30,7 @@ func RegisterChartTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		}{
 			Name:        "update_chart",
 			Description: "Modify chart config on an existing cell",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string"},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"layout":{"type":"string","enum":["top-down","left-to-right"]}},"required":["cell_id"]}`,
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]}},"required":["cell_id"]}`,
 		},
 		Handler: makeUpdateChartHandler(db),
 	})
@@ -51,6 +51,7 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 			IDColumn       string   `json:"id_column"`
 			ParentIDColumn string   `json:"parent_id_column"`
 			MetricColumns  []string `json:"metric_columns"`
+			ValueColumn    string   `json:"value_column"`
 			Layout         string   `json:"layout"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
@@ -77,6 +78,7 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 			"idColumn":       req.IDColumn,
 			"parentIdColumn": req.ParentIDColumn,
 			"metricColumns":  req.MetricColumns,
+			"valueColumn":    req.ValueColumn,
 			"layout":         req.Layout,
 			"created_at":     time.Now().Format(time.RFC3339),
 		}
@@ -126,6 +128,7 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 			IDColumn       string   `json:"id_column"`
 			ParentIDColumn string   `json:"parent_id_column"`
 			MetricColumns  []string `json:"metric_columns"`
+			ValueColumn    string   `json:"value_column"`
 			Layout         string   `json:"layout"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
@@ -182,6 +185,9 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 		}
 		if req.MetricColumns != nil {
 			existingConfig["metricColumns"] = req.MetricColumns
+		}
+		if req.ValueColumn != "" {
+			existingConfig["valueColumn"] = req.ValueColumn
 		}
 		if req.Layout != "" {
 			existingConfig["layout"] = req.Layout
