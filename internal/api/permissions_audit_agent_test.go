@@ -11,7 +11,7 @@ import (
 // createSessionInAgent creates a session using the given user's token and returns the session ID.
 func createSessionInAgent(t *testing.T, f *AuditFixtures, userKey, agentID, notebookID string) string {
 	t.Helper()
-	payload := map[string]any{"max_turns": 10, "max_tokens": 1000}
+	payload := map[string]any{"max_turns": 10}
 	if notebookID != "" {
 		payload["notebook_id"] = notebookID
 	}
@@ -234,7 +234,7 @@ func TestAgent_SessionLifecycle(t *testing.T) {
 	t.Run("aliceA creates session on NoACL — no permission check (F11)", func(t *testing.T) {
 		status, body := f.DoRequest(t, "aliceA", "POST",
 			"/api/v1/agents/"+f.OrgA.Agents.NoACL+"/session",
-			map[string]any{"max_turns": 10, "max_tokens": 1000, "notebook_id": nbID})
+			map[string]any{"max_turns": 10, "notebook_id": nbID})
 		t.Logf("aliceA create session on NoACL agent: %d %s", status, body)
 		if status == http.StatusCreated {
 			t.Log("VULNERABILITY F11: handleCreateSession does NOT check permission on the agent")
@@ -398,7 +398,7 @@ func TestAgent_GroupACL(t *testing.T) {
 	t.Run("bobA creates session on GroupACL agent — 201", func(t *testing.T) {
 		status, body := f.DoRequest(t, "bobA", "POST",
 			"/api/v1/agents/"+f.OrgA.Agents.GroupACL+"/session",
-			map[string]any{"max_turns": 10, "max_tokens": 1000, "notebook_id": f.OrgA.Notebooks.NoACL})
+			map[string]any{"max_turns": 10, "notebook_id": f.OrgA.Notebooks.NoACL})
 		t.Logf("bobA create session on GroupACL: %d %s", status, body)
 		require.Equal(t, http.StatusCreated, status)
 	})
