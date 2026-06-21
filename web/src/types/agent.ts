@@ -14,6 +14,7 @@ export interface Agent {
   mcp_servers: MCPServerOrg[]
   folder_id?: string
   max_turns?: number
+  model_config_params?: Record<string, unknown>
   created_by: string
   created_at: string
   updated_at: string
@@ -120,6 +121,21 @@ export interface AgentTaskItem {
   status: 'pending' | 'in_progress' | 'done'
 }
 
+export interface TokenBreakdown {
+  input: number
+  output: number
+  reasoning: number
+  cache_read: number
+  model_calls: number
+  system_prompt: number
+  skill_override: number
+  history: number
+  user_message: number
+  tool_definitions: number
+  tool_calls: number
+  tool_results: number
+}
+
 export type WSMessage =
   | { type: 'token'; data: string }
   | { type: 'reasoning'; data: string }
@@ -129,9 +145,10 @@ export type WSMessage =
   | { type: 'cell_output'; cell_id: string; outputs: Array<{ type: string; data: unknown }> }
   | { type: 'cell_updated'; cell_id: string }
   | { type: 'subagent_progress'; tasks: SubagentTask[] }
-  | { type: 'done'; tokens_used?: number; data?: { content?: string; reasoning?: string } }
+  | { type: 'done'; tokens?: TokenBreakdown; data?: { content?: string; reasoning?: string; tokens?: TokenBreakdown } }
   | { type: 'error'; message: string }
   | { type: 'slash_result'; command: string; data: unknown }
   | { type: 'backpressure_warning'; dropped_tokens: number }
   | { type: 'reconnect_sync'; messages: AgentMessage[] }
   | { type: 'tasks_updated'; data: AgentTaskItem[] }
+  | { type: 'tool_confirm_required'; tool_name: string; tool_args: string; current_source?: string }

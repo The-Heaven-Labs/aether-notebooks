@@ -22,13 +22,49 @@ type Engine struct {
 	mu                 sync.Mutex
 	BroadcastFunc      func(notebookID string, msg any)
 	toolAllowedDomains []string
+	tokenCounter       *TokenCounter
+	reasoningEffort    sync.Map // sessionID -> string
+	toolConfirmPending sync.Map // sessionID -> chan ToolConfirmResult
+}
+
+type ToolConfirmResult struct {
+	Approved bool
+	ToolName string
+}
+
+func (e *Engine) SetReasoningEffort(sessionID, effort string) {
+	e.reasoningEffort.Store(sessionID, effort)
+}
+
+func (e *Engine) GetReasoningEffort(sessionID string) string {
+	if v, ok := e.reasoningEffort.Load(sessionID); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+func (e *Engine) SetToolConfirm(sessionID string, ch chan ToolConfirmResult) {
+	e.toolConfirmPending.Store(sessionID, ch)
+}
+
+func (e *Engine) ResolveToolConfirm(sessionID string, approved bool, toolName string) {
+	v, ok := e.toolConfirmPending.LoadAndDelete(sessionID)
+	if !ok {
+		return
+	}
+	if ch, ok := v.(chan ToolConfirmResult); ok {
+		ch <- ToolConfirmResult{Approved: approved, ToolName: toolName}
+	}
 }
 
 func NewEngine(ctx context.Context, pool *pgxpool.Pool) *Engine {
 	engine := &Engine{
-		registry: NewToolRegistry(),
-		session:  NewSessionStore(pool),
-		pool:     pool,
+		registry:     NewToolRegistry(),
+		session:      NewSessionStore(pool),
+		pool:         pool,
+		tokenCounter: NewTokenCounter(),
 	}
 
 	RegisterNotebookTools(engine.registry, pool)
@@ -106,13 +142,13 @@ func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsg
 	return compacted
 }
 
-func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, tools []*ToolDef, masterKey []byte, onToken func(string), onReasoning func(string), onToolCall func(string, string, string), onToolResult func(string, string, string, string), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, error) {
+func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, tools []*ToolDef, masterKey []byte, onToken func(string), onReasoning func(string), onToolCall func(string, string, string), onToolResult func(string, string, string, string), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, *TokenBreakdown, error) {
 	var events []EngineEvent
 	slog.Debug("engine: ProcessMessage start", "session_id", sessionID, "msg_len", len(userMessage))
 	session, err := e.session.GetSession(ctx, sessionID)
 	if err != nil {
 		slog.Error("engine: get session failed", "session_id", sessionID, "error", err)
-		return "", "", nil, events, fmt.Errorf("get session: %w", err)
+		return "", "", nil, events, nil, fmt.Errorf("get session: %w", err)
 	}
 
 	var agent models.Agent
@@ -122,7 +158,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, description, model_config_id, subagent_model_config_id, system_prompt, array_to_json(skill_ids)::text, array_to_json(tool_ids)::text, folder_id, max_turns, created_by, created_at, updated_at FROM agents WHERE id = $1`, session.AgentID).Scan(
 		&agent.ID, &agent.OrgID, &agent.Name, &agent.Description, &agent.ModelConfigID, &agent.SubagentModelConfigID, &systemPrompt, &skillIDs, &toolIDs, &agent.FolderID, &agent.MaxTurns, &agent.CreatedBy, &agent.CreatedAt, &agent.UpdatedAt)
 	if err != nil {
-		return "", "", nil, events, fmt.Errorf("get agent: %w", err)
+		return "", "", nil, events, nil, fmt.Errorf("get agent: %w", err)
 	}
 	if skillIDs != nil {
 		json.Unmarshal(skillIDs, &agent.SkillIDs)
@@ -229,6 +265,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	llmClient := e.llm
 	contextWindow := 128000 // default
 	compactionThreshold := 70 // default 70%
+	modelName := ""
 	if agent.ModelConfigID != nil && *agent.ModelConfigID != "" {
 		slog.Debug("engine: using agent model config", "session_id", sessionID, "model_config_id", *agent.ModelConfigID)
 		var mc models.ModelConfig
@@ -236,7 +273,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at FROM model_configs WHERE id = $1`, *agent.ModelConfigID).Scan(
 			&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt)
 		if err != nil {
-			return "", "", nil, events, fmt.Errorf("get model config: %w", err)
+			return "", "", nil, events, nil, fmt.Errorf("get model config: %w", err)
 		}
 		if defaultParams != nil {
 			json.Unmarshal(defaultParams, &mc.DefaultParams)
@@ -246,19 +283,26 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				compactionThreshold = int(f)
 			}
 		}
-		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted)
+		modelName = mc.Model
+		if effort := e.GetReasoningEffort(sessionID); effort != "" {
+			if mc.DefaultParams == nil {
+				mc.DefaultParams = make(map[string]any)
+			}
+			mc.DefaultParams["reasoning_effort"] = effort
+		}
+		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams)
 		contextWindow = mc.ContextWindow
 	} else {
 		slog.Warn("engine: no model config on agent, using default LLM client", "session_id", sessionID, "default_llm_nil", e.llm == nil)
 	}
 
 	if llmClient == nil {
-		return "", "", nil, events, fmt.Errorf("no LLM client available: assign a model config to this agent in the Agents page")
+		return "", "", nil, events, nil, fmt.Errorf("no LLM client available: assign a model config to this agent in the Agents page")
 	}
 
 	messages, err := e.session.GetMessages(ctx, sessionID)
 	if err != nil {
-		return "", "", nil, events, fmt.Errorf("get messages: %w", err)
+		return "", "", nil, events, nil, fmt.Errorf("get messages: %w", err)
 	}
 
 	// Handle /skill:<name> prefix — inject skill prompt for this turn only
@@ -272,7 +316,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		var skillPrompt string
 		err = e.pool.QueryRow(ctx, `SELECT system_prompt FROM skills WHERE org_id = $1 AND LOWER(REPLACE(name, ' ', '-')) = $2`, agent.OrgID, skillName).Scan(&skillPrompt)
 		if err != nil {
-			return "", "", nil, events, fmt.Errorf("skill '%s' not found", skillName)
+			return "", "", nil, events, nil, fmt.Errorf("skill '%s' not found", skillName)
 		}
 		skillOverridePrompt = skillPrompt
 		if len(parts) > 1 && strings.TrimSpace(parts[1]) != "" {
@@ -304,33 +348,43 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: notebookCtx + skillCatalogStr})
 	}
 	for _, m := range messages {
-		msg := ChatMessage{Role: m.Role, Content: m.Content}
-		if m.ReasoningContent != "" {
-			msg.ReasoningContent = m.ReasoningContent
-		}
-		if len(m.ToolCalls) > 0 {
-			for _, tc := range m.ToolCalls {
-				argsStr := ""
-				if b, err := json.Marshal(tc.Arguments); err == nil {
-					argsStr = string(b)
+		if m.Role == "assistant" {
+			if len(m.ToolCalls) > 0 && m.Content == "" {
+				// Tool-calling assistant message without content — keep as-is
+				msg := ChatMessage{Role: "assistant", ToolCalls: make([]ToolCall, 0, len(m.ToolCalls))}
+				if m.ReasoningContent != "" {
+					msg.ReasoningContent = m.ReasoningContent
 				}
-				msg.ToolCalls = append(msg.ToolCalls, ToolCall{
-					ID:   tc.ID,
-					Type: "function",
-					Function: struct {
-						Name      string `json:"name"`
-						Arguments string `json:"arguments"`
-					}{
-						Name:      tc.Name,
-						Arguments: argsStr,
-					},
-				})
+				for _, tc := range m.ToolCalls {
+					argsStr := ""
+					if b, err := json.Marshal(tc.Arguments); err == nil {
+						argsStr = string(b)
+					}
+					msg.ToolCalls = append(msg.ToolCalls, ToolCall{
+						ID:   tc.ID,
+						Type: "function",
+						Function: struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						}{
+							Name:      tc.Name,
+							Arguments: argsStr,
+						},
+					})
+				}
+				chatMsgs = append(chatMsgs, msg)
+			} else if m.Content != "" {
+				chatMsgs = append(chatMsgs, ChatMessage{Role: "assistant", Content: m.Content})
 			}
+		} else if m.Role == "tool" {
+			toolID := ""
+			if m.ToolCallID != nil {
+				toolID = *m.ToolCallID
+			}
+			chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: toolID, Content: m.Content})
+		} else {
+			chatMsgs = append(chatMsgs, ChatMessage{Role: m.Role, Content: m.Content})
 		}
-		if m.ToolCallID != nil {
-			msg.ToolCallID = *m.ToolCallID
-		}
-		chatMsgs = append(chatMsgs, msg)
 	}
 	if skillOverridePrompt != "" {
 		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: "# Active Skill\n\n" + skillOverridePrompt})
@@ -417,7 +471,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	for i, t := range allTools {
 		oat, err := t.ToOpenAITool()
 		if err != nil {
-			return "", "", nil, events, fmt.Errorf("convert tool: %w", err)
+			return "", "", nil, events, nil, fmt.Errorf("convert tool: %w", err)
 		}
 		toolsList[i] = oat
 	}
@@ -427,36 +481,86 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		toolLookup[t.Function.Name] = t
 	}
 
+	tokBrk := &TokenBreakdown{}
+	if modelName == "" {
+		modelName = "gpt-4"
+	}
+	sysContent := systemPrompt + notebookCtx + skillCatalogStr
+	sysTokens := e.tokenCounter.CountText(sysContent, modelName)
+	chatMsgsForCount := make([]ChatMessage, 0)
+	for _, m := range messages {
+		msg := ChatMessage{Role: m.Role, Content: m.Content}
+		if m.ReasoningContent != "" {
+			msg.ReasoningContent = m.ReasoningContent
+		}
+		if len(m.ToolCalls) > 0 {
+			for _, tc := range m.ToolCalls {
+				argsStr := ""
+				if b, err := json.Marshal(tc.Arguments); err == nil {
+					argsStr = string(b)
+				}
+				msg.ToolCalls = append(msg.ToolCalls, ToolCall{
+					ID:   tc.ID,
+					Type: "function",
+					Function: struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					}{
+						Name:      tc.Name,
+						Arguments: argsStr,
+					},
+				})
+			}
+		}
+		if m.ToolCallID != nil {
+			msg.ToolCallID = *m.ToolCallID
+		}
+		chatMsgsForCount = append(chatMsgsForCount, msg)
+	}
+	historyTokens := e.tokenCounter.CountMessages(chatMsgsForCount, modelName)
+	userTokens := e.tokenCounter.CountText(effectiveMessage, modelName)
+	var skillTokens int
+	if skillOverridePrompt != "" {
+		skillTokens = e.tokenCounter.CountText("# Active Skill\n\n"+skillOverridePrompt, modelName)
+	}
+	toolDefTokens := e.tokenCounter.CountToolDefs(toolsList, modelName)
+
 	maxTurns := 90
 	if agent.MaxTurns != nil && *agent.MaxTurns > 0 {
 		maxTurns = *agent.MaxTurns
 	}
 	var allToolCalls []models.ToolCall
-	totalTokensInput := 0
-	totalTokensOutput := 0
 	modelCalls := 0
+	apiInputTotal := 0
+	var estimatedToolCalls, estimatedToolResults int
 
 	for turn := 0; turn < maxTurns; turn++ {
 		slog.Debug("engine: calling LLM", "session_id", sessionID, "turn", turn, "msgs", len(chatMsgs), "tools", len(toolsList))
 		resp, err := llmClient.Chat(ctx, chatMsgs, toolsList, masterKey)
 		if err != nil {
 			slog.Error("engine: LLM call failed", "session_id", sessionID, "turn", turn, "error", err)
-			return "", "", nil, events, fmt.Errorf("llm call: %w", err)
+			return "", "", nil, events, tokBrk, fmt.Errorf("llm call: %w", err)
 		}
 
 		if len(resp.Choices) == 0 {
 			slog.Error("engine: no choices in LLM response", "session_id", sessionID)
-			return "", "", nil, events, fmt.Errorf("no choices in response")
+			return "", "", nil, events, tokBrk, fmt.Errorf("no choices in response")
 		}
 
 		modelCalls++
-		totalTokensInput += resp.Usage.PromptTokens
-		totalTokensOutput += resp.Usage.CompletionTokens
+		apiInputTotal += resp.Usage.PromptTokens
+		tokBrk.Output += resp.Usage.CompletionTokens
+		if resp.Usage.CompletionTokensDetails != nil {
+			tokBrk.Reasoning += resp.Usage.CompletionTokensDetails.ReasoningTokens
+		}
+		if resp.Usage.PromptTokensDetails != nil {
+			tokBrk.CacheRead += resp.Usage.PromptTokensDetails.CachedTokens
+		}
 
 		// Auto-compact if approaching context window limit
-		if compactionThreshold > 0 && totalTokensInput > contextWindow*compactionThreshold/100 && len(chatMsgs) > 10 {
+		if compactionThreshold > 0 && apiInputTotal > contextWindow*compactionThreshold/100 && len(chatMsgs) > 10 {
 			chatMsgs = e.compactChatHistory(ctx, llmClient, chatMsgs, masterKey, sessionID)
-			slog.Info("context compaction triggered", "session_id", sessionID, "tokens", totalTokensInput, "context_window", contextWindow)
+			slog.Info("context compaction triggered", "session_id", sessionID, "tokens", apiInputTotal, "context_window", contextWindow)
 		}
 
 		choice := resp.Choices[0]
@@ -482,20 +586,29 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				})
 			}
 			msgID := uuid.New().String()
+			tokBrk.Input = apiInputTotal
+			tokBrk.ModelCalls = modelCalls
+			tokBrk.SystemPrompt = sysTokens
+			tokBrk.History = historyTokens
+			tokBrk.UserMessage = userTokens
+			tokBrk.ToolDefinitions = toolDefTokens
+			tokBrk.SkillOverride = skillTokens
+			tokBrk.ToolCalls = estimatedToolCalls
+			tokBrk.ToolResults = estimatedToolResults
 			agentMsg := &models.AgentMessage{
 				ID:               msgID,
 				SessionID:        sessionID,
 				Role:             "assistant",
 				Content:          text,
-				ToolCalls:        allToolCalls,
 				ReasoningContent: reasoningContent,
-				TokensInput:      totalTokensInput,
-				TokensOutput:     totalTokensOutput,
+				TokensInput:      apiInputTotal,
+				TokensOutput:     tokBrk.Output,
+				TokensReasoning:  tokBrk.Reasoning,
 				ModelCalls:       modelCalls,
 				CreatedAt:        time.Now(),
 			}
 			e.session.AppendMessage(ctx, agentMsg)
-			return text, reasoningContent, allToolCalls, events, nil
+			return text, reasoningContent, allToolCalls, events, tokBrk, nil
 		} else {
 			slog.Debug("engine: tool calls in response", "session_id", sessionID, "turn", turn, "num_tool_calls", len(toolCalls), "text_len", len(text))
 		}
@@ -525,13 +638,16 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				Name:      tc.Function.Name,
 				Arguments: args,
 			})
+			estimatedToolCalls += e.tokenCounter.CountText(tc.Function.Arguments, modelName)
 
 			toolDef, ok := toolLookup[tc.Function.Name]
 			if !ok {
 				toolDef, ok = e.registry.Get(tc.Function.Name)
 			}
 			if !ok {
-				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name)})
+				resultStr := fmt.Sprintf("unknown tool: %s", tc.Function.Name)
+				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
+				estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
 				continue
 			}
 
@@ -550,23 +666,72 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				BroadcastFunc: e.BroadcastFunc,
 			}
 
+			if toolDef.ConfirmRequired && onEvent != nil {
+				ch := make(chan ToolConfirmResult, 1)
+				e.SetToolConfirm(sessionID, ch)
+				eventArgs := tc.Function.Arguments
+				var currentSource string
+				if tc.Function.Name == "update_cell" {
+					var args struct {
+						CellID string `json:"cell_id"`
+					}
+					if json.Unmarshal([]byte(tc.Function.Arguments), &args) == nil && args.CellID != "" {
+						e.pool.QueryRow(ctx, `SELECT source FROM cells WHERE id = $1`, args.CellID).Scan(&currentSource)
+					}
+				}
+				onEvent(EngineEvent{Type: "tool_confirm_required", ToolName: tc.Function.Name, ToolArgs: eventArgs, Source: currentSource})
+				select {
+				case res := <-ch:
+					if !res.Approved {
+						resultStr := fmt.Sprintf("Tool call '%s' was denied by user", tc.Function.Name)
+						chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
+						estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
+						if onToolResult != nil {
+							onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "")
+						}
+						continue
+					}
+				case <-ctx.Done():
+					resultStr := fmt.Sprintf("Tool call '%s' timed out waiting for approval", tc.Function.Name)
+					chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
+					estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
+					if onToolResult != nil {
+						onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "timeout")
+					}
+					continue
+				}
+			}
+
 			result, err := toolDef.Handler([]byte(tc.Function.Arguments), toolCtx)
 			if err != nil {
-				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: fmt.Sprintf("error: %s", err.Error())})
+				resultStr := fmt.Sprintf("error: %s", err.Error())
+				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
+				estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
 				if onToolResult != nil {
 					onToolResult(tc.Function.Name, tc.Function.Arguments, "", err.Error())
 				}
 			} else {
 				resultJSON, _ := json.Marshal(result)
-				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: string(resultJSON)})
+				resultStr := string(resultJSON)
+				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
+				estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
 				if onToolResult != nil {
-					onToolResult(tc.Function.Name, tc.Function.Arguments, string(resultJSON), "")
+					onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "")
 				}
 			}
 		}
 	}
 
-	return "", "", allToolCalls, events, fmt.Errorf("max turns reached")
+	tokBrk.Input = apiInputTotal
+	tokBrk.ModelCalls = modelCalls
+	tokBrk.SystemPrompt = sysTokens
+	tokBrk.History = historyTokens
+	tokBrk.UserMessage = userTokens
+	tokBrk.ToolDefinitions = toolDefTokens
+	tokBrk.SkillOverride = skillTokens
+	tokBrk.ToolCalls = estimatedToolCalls
+	tokBrk.ToolResults = estimatedToolResults
+	return "", "", allToolCalls, events, tokBrk, fmt.Errorf("max turns reached")
 }
 
 func (e *Engine) resolveToolDef(t *models.Tool) (*ToolDef, error) {
@@ -727,7 +892,7 @@ func (e *Engine) summarizeSession(ctx context.Context, sessionID string, masterK
 		if defaultParams != nil {
 			json.Unmarshal(defaultParams, &mc.DefaultParams)
 		}
-		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted)
+		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams)
 	}
 
 	if llmClient == nil {
@@ -821,7 +986,7 @@ func (e *Engine) generateSessionTitle(ctx context.Context, sessionID string, mas
 				if defaultParams != nil {
 					json.Unmarshal(defaultParams, &mc.DefaultParams)
 				}
-				llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted)
+				llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams)
 			}
 		}
 	}

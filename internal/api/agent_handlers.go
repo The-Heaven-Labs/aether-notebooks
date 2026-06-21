@@ -20,9 +20,12 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 	claims := ClaimsFromContext(r.Context())
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT id, org_id, name, description, model_config_id, subagent_model_config_id,
-			   system_prompt, skill_ids, tool_ids, folder_id, max_turns, created_by, created_at, updated_at
-		FROM agents WHERE org_id = $1 ORDER BY created_at DESC
+		SELECT a.id, a.org_id, a.name, a.description, a.model_config_id, a.subagent_model_config_id,
+			   a.system_prompt, a.skill_ids, a.tool_ids, a.folder_id, a.max_turns, a.created_by, a.created_at, a.updated_at,
+			   mc.default_params
+		FROM agents a
+		LEFT JOIN model_configs mc ON mc.id = a.model_config_id
+		WHERE a.org_id = $1 ORDER BY a.created_at DESC
 	`, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -34,9 +37,14 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 	for rows.Next() {
 		var a models.Agent
 		var desc, sysPrompt *string
+		var mcDefaultParams []byte
 		if err := rows.Scan(&a.ID, &a.OrgID, &a.Name, &desc, &a.ModelConfigID, &a.SubagentModelConfigID,
-			&sysPrompt, &a.SkillIDs, &a.ToolIDs, &a.FolderID, &a.MaxTurns, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			&sysPrompt, &a.SkillIDs, &a.ToolIDs, &a.FolderID, &a.MaxTurns, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt,
+			&mcDefaultParams); err != nil {
 			continue
+		}
+		if mcDefaultParams != nil {
+			json.Unmarshal(mcDefaultParams, &a.ModelConfigParams)
 		}
 		if desc != nil {
 			a.Description = *desc
@@ -547,7 +555,10 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 		Action: "agent_session.create", ResourceType: "agent_session", ResourceID: sessionID,
 	})
 
-	writeJSON(w, http.StatusCreated, map[string]any{"session_id": sessionID})
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"session_id": sessionID,
+		"max_tokens": req.MaxTokens,
+	})
 }
 
 func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Request) {
@@ -669,7 +680,7 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 	}
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT id, role, content, tool_calls, tool_call_id, reasoning_content, created_at
+		SELECT id, role, content, tool_calls, tool_call_id, reasoning_content, tokens_input, tokens_output, created_at
 		FROM agent_messages WHERE session_id = $1 ORDER BY created_at ASC
 	`, sessionID)
 	if err != nil {
@@ -685,8 +696,9 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 		var toolCalls []byte
 		var toolCallID *string
 		var reasoning *string
+		var tokensInput, tokensOutput *int
 		var createdAt time.Time
-		rows.Scan(&id, &role, &content, &toolCalls, &toolCallID, &reasoning, &createdAt)
+		rows.Scan(&id, &role, &content, &toolCalls, &toolCallID, &reasoning, &tokensInput, &tokensOutput, &createdAt)
 		msg := map[string]any{
 			"id":         id,
 			"role":       role,
@@ -700,6 +712,12 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 		}
 		if reasoning != nil {
 			msg["reasoning_content"] = *reasoning
+		}
+		if tokensInput != nil {
+			msg["tokens_input"] = *tokensInput
+		}
+		if tokensOutput != nil {
+			msg["tokens_output"] = *tokensOutput
 		}
 		if len(toolCalls) > 0 {
 			msg["tool_calls"] = json.RawMessage(toolCalls)

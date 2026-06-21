@@ -221,9 +221,9 @@ export function NotebookPage() {
   const [agentPanelWidth, setAgentPanelWidth] = useState(() => {
     try {
       const saved = localStorage.getItem(`hnb:agentPanelWidth:${id}`)
-      if (saved) return Math.max(280, Math.min(600, parseInt(saved, 10)))
+      if (saved) return Math.max(280, Math.min(960, parseInt(saved, 10)))
     } catch { /* ignore */ }
-    return Math.max(280, Math.min(600, Math.round(window.innerWidth / 3)))
+    return Math.max(280, Math.min(960, Math.round(window.innerWidth / 3)))
   })
 
   // Drag-and-drop sensors
@@ -282,15 +282,17 @@ export function NotebookPage() {
     }
   }, [shouldScroll]), useCallback((cellId: string, updates: Record<string, unknown>, userEmail?: string) => {
     // cell_updated event received — apply broadcast fields to local cache
-    // Skip source: Yjs is the source of truth for cell content; the broadcast
-    // echoes back stale source from auto-save PUT and would overwrite Yjs.
+    // Skip source for regular users (Yjs is source of truth), but apply
+    // it for agent updates since Yjs may not be synced in real-time.
+    const isAgent = userEmail === 'agent@hnb'
     const { source: _source, ...rest } = updates as Record<string, unknown> & { source?: unknown }
-    if (Object.keys(rest).length > 0) {
+    const payload = isAgent ? (updates as Record<string, unknown>) : rest
+    if (Object.keys(payload).length > 0) {
       setLocalCells((prev) =>
-        prev.map((c) => c.id === cellId ? { ...c, ...rest } as Cell : c),
+        prev.map((c) => c.id === cellId ? { ...c, ...payload } as Cell : c),
       )
       qc.setQueryData<NotebookWithCells>(['notebook', id], (old) =>
-        old ? { ...old, cells: old.cells.map((c) => c.id === cellId ? { ...c, ...rest } as Cell : c) } : old,
+        old ? { ...old, cells: old.cells.map((c) => c.id === cellId ? { ...c, ...payload } as Cell : c) } : old,
       )
     }
     if (!pendingExecRef.current.has(cellId) && shouldScroll(userEmail)) {
