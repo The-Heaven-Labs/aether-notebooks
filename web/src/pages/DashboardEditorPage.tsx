@@ -250,7 +250,7 @@ const markSaved = useCallback(() => {
   const pickerCells = pickerNotebook?.cells ?? []
 
   return (
-    <AppShell>
+    <AppShell noPadding>
       {/* Sub-header */}
       <header style={{ ...styles.subHeader, ...(isMobileLayout ? styles.subHeaderMobile : {}) }}>
         <div style={styles.headerLeft}>
@@ -568,17 +568,15 @@ const styles: Record<string, React.CSSProperties> = {
   subHeader: {
     background: 'var(--bg-primary)',
     borderBottom: '1px solid var(--border)',
-    height: 52,
+    height: 44,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '0 24px',
+    padding: '0 12px',
     flexShrink: 0,
     position: 'sticky',
-    top: -32,        // negate AppShell main's 32px padding so bar sticks at top edge
+    top: 0,
     zIndex: 99,
-    // escape AppShell's 32px padding on all three sides
-    margin: '-32px -32px 0',
   },
   headerLeft: {
     display: 'flex',
