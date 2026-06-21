@@ -36,7 +36,7 @@ function BarChartComponent({ data, config }: ChartProps) {
     })),
   }), [chartData, xAxis, yAxes, isStacked, config.title, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, config.dataZoom, config.barWidth, config.barGap, colors])
 
-  return <EChartsContainer option={option} />
+  return <EChartsContainer option={option} showReset />
 }
 
 function BarConfigPanel({ config, columns, onChange }: ConfigPanelProps) {

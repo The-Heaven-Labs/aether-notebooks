@@ -31,7 +31,7 @@ function PieChartComponent({ data, config }: ChartProps) {
     }],
   }), [chartData, xAxis, valueKey, isDonut, config.title, config.seriesColors, config.showLegend, config.showLabels, config.roseType, config.startAngle, config.padAngle, colors])
 
-  return <EChartsContainer option={option} />
+  return <EChartsContainer option={option} showReset />
 }
 
 function PieConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
