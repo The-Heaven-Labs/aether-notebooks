@@ -1071,7 +1071,7 @@ func (e *Engine) buildNotebookContext(ctx context.Context, notebookID string) st
 		if err == nil {
 			result += fmt.Sprintf("\nConnector: %q (type: %s, id: %s)", connName, connType, *connectorID)
 			result += "\nNotebook cells: type 'code' with language 'sql' for database queries, type 'text' with language 'markdown' for documentation."
-			result += "\nCharts: Use create_chart to turn a cell's table output into a chart. Types: bar, stacked_bar, line, area, scatter, pie, donut, timeline, hierarchy_tree, big_number, map, sankey. For timeline: use time_column, end_time_column (optional), label_column. For hierarchy_tree: use id_column, parent_id_column, label_column. For big_number: use value_column. For map: x_column=longitude, y_column[0]=latitude, y_column[1]=value (optional), label_column. For sankey: x_column=source, y_column[0]=target, y_column[1]=value. Use update_chart to modify an existing chart's config. The frontend renders automatically from saved config."
+			result += "\nCharts: Use create_chart to turn a cell's table output into a chart. Types: bar, stacked_bar, line, area, scatter, pie, donut, timeline, hierarchy_tree, big_number, map, sankey. For timeline: use time_column, end_time_column (optional), label_column. For hierarchy_tree: use id_column, parent_id_column, label_column. For big_number: use value_column. For map: x_column=longitude, y_column[0]=latitude, y_column[1]=value (optional), label_column. For sankey: x_column=source, y_column[0]=target, y_column[1]=value. All chart types support show_labels, show_legend, show_grid, skip_empty flags. Use update_chart to modify an existing chart's config. The frontend renders automatically from saved config."
 		}
 	}
 
