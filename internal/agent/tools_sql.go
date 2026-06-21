@@ -38,6 +38,10 @@ func makeSQLQueryToolDef(t *models.Tool, pool *pgxpool.Pool) (*ToolDef, error) {
 				return nil, err
 			}
 
+			if err := ctx.CheckPermission("connector", connectorID, "use"); err != nil {
+				return nil, err
+			}
+
 			// Convert LLM params to executor string map
 			strParams := make(map[string]string)
 			if llmParams != nil {
@@ -46,17 +50,17 @@ func makeSQLQueryToolDef(t *models.Tool, pool *pgxpool.Pool) (*ToolDef, error) {
 				}
 			}
 
-			return executeAgentSQL(ctx.Context, pool, connectorID, query, strParams, ctx.MasterKey)
+			return executeAgentSQL(ctx.Context, pool, connectorID, query, strParams, ctx.MasterKey, ctx.OrgID)
 		},
 	}, nil
 }
 
-func executeAgentSQL(ctx context.Context, pool *pgxpool.Pool, connectorID, query string, params map[string]string, masterKey []byte) (any, error) {
+func executeAgentSQL(ctx context.Context, pool *pgxpool.Pool, connectorID, query string, params map[string]string, masterKey []byte, orgID string) (any, error) {
 	var connType string
 	var configEnc []byte
 	err := pool.QueryRow(ctx,
-		`SELECT type, config_encrypted FROM connectors WHERE id = $1`,
-		connectorID).Scan(&connType, &configEnc)
+		`SELECT type, config_encrypted FROM connectors WHERE id = $1 AND org_id = $2`,
+		connectorID, orgID).Scan(&connType, &configEnc)
 	if err != nil {
 		return nil, fmt.Errorf("connector not found: %w", err)
 	}
@@ -113,7 +117,7 @@ func makeExecuteSQLHandler(pool *pgxpool.Pool) ToolHandler {
 			req.Limit = 1000
 		}
 
-		result, err := executeAgentSQL(ctx.Context, pool, req.ConnectorID, req.Query, nil, ctx.MasterKey)
+		result, err := executeAgentSQL(ctx.Context, pool, req.ConnectorID, req.Query, nil, ctx.MasterKey, ctx.OrgID)
 		if err != nil {
 			return nil, err
 		}
