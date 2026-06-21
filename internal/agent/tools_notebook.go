@@ -310,15 +310,27 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 		position := req.Position
 		if position <= 0 {
 			var maxPos int
-			db.QueryRow(ctx.Context, `SELECT COALESCE(MAX(position), -1) FROM cells WHERE notebook_id = $1`, req.NotebookID).Scan(&maxPos)
+			if err := db.QueryRow(ctx.Context, `SELECT COALESCE(MAX(position), -1) FROM cells WHERE notebook_id = $1`, req.NotebookID).Scan(&maxPos); err != nil {
+				maxPos = -1
+			}
 			position = maxPos + 1
 		} else {
 			position = position - 1
-			if _, err := db.Exec(ctx.Context, `UPDATE cells SET position = -position - 1 WHERE notebook_id = $1 AND position >= $2`, req.NotebookID, position); err != nil {
+			tx, err := db.Begin(ctx.Context)
+			if err != nil {
+				return nil, fmt.Errorf("begin tx: %w", err)
+			}
+			defer tx.Rollback(ctx.Context)
+
+			if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = -position - 1 WHERE notebook_id = $1 AND position >= $2`, req.NotebookID, position); err != nil {
 				return nil, fmt.Errorf("shift cells: %w", err)
 			}
-			if _, err := db.Exec(ctx.Context, `UPDATE cells SET position = -position WHERE notebook_id = $1 AND position < 0`, req.NotebookID); err != nil {
+			if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = -position WHERE notebook_id = $1 AND position < 0`, req.NotebookID); err != nil {
 				return nil, fmt.Errorf("shift cells back: %w", err)
+			}
+
+			if err := tx.Commit(ctx.Context); err != nil {
+				return nil, fmt.Errorf("commit shift: %w", err)
 			}
 		}
 

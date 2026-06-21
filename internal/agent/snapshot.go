@@ -38,7 +38,7 @@ func CreateNotebookSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, name 
 		if err := rows.Scan(&c.ID, &c.Type, &lang, &c.Source, &c.Position, &connID,
 			&outputs, &limit, &c.SourceVisible, &c.CellCollapsed, &c.SlideBreak, &metadata,
 			&cTitle, &cDesc); err != nil {
-			continue
+			return nil, fmt.Errorf("scan cell row: %w", err)
 		}
 		if lang != nil {
 			c.Language = *lang
@@ -151,7 +151,10 @@ func RestoreNotebookSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, snap
 	var existingIDs []string
 	for existingRows.Next() {
 		var id string
-		existingRows.Scan(&id)
+		if err := existingRows.Scan(&id); err != nil {
+			existingRows.Close()
+			return fmt.Errorf("scan existing cell: %w", err)
+		}
 		existingIDs = append(existingIDs, id)
 	}
 	existingRows.Close()
