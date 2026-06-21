@@ -76,6 +76,7 @@ function MapChartComponent({ data, config }: ChartProps) {
       const dark = document.documentElement.getAttribute('data-theme') === 'dark'
       return {
         tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: tooltipFmt },
+        title: config.title ? { text: config.title, left: 'center', textStyle: { fontSize: 14, color: colors.text } } : undefined,
         geo: {
           map: 'world',
           roam: true,
@@ -110,14 +111,14 @@ function MapChartComponent({ data, config }: ChartProps) {
             color: colors.text,
             position: 'right' as const,
           },
-          animation: false,
-        }],
+            }],
       }
     }
 
     // Fallback: scatter on plain axes
     return {
       tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: tooltipFmt },
+      title: config.title ? { text: config.title, left: 'center', textStyle: { fontSize: 14, color: colors.text } } : undefined,
       grid: { top: 20, right: 16, bottom: 8, left: 16, containLabel: true },
       dataZoom: [
         { type: 'inside' as const, xAxisIndex: 0, filterMode: 'none' },
@@ -140,10 +141,9 @@ function MapChartComponent({ data, config }: ChartProps) {
           color: colors.text,
           position: 'right' as const,
         },
-        animation: false,
       }],
     }
-  }, [allPts, maxVal, geoReady, latCol, lonCol, valCol, labelCol, config.showLabels, config.seriesColors, colors, tooltipFmt])
+  }, [allPts, maxVal, geoReady, latCol, lonCol, valCol, labelCol, config.title, config.showLabels, config.seriesColors, colors, tooltipFmt])
 
   return <EChartsContainer option={option} height={400} notMerge showReset />
 }

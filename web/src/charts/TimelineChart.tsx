@@ -52,10 +52,11 @@ function TimelineChartComponent({ data, config }: ChartProps) {
       return {
         option: {
           tooltip: { ...getTooltipStyle(), trigger: 'axis' as const },
+          title: config.title ? { text: config.title, left: 'center', textStyle: { fontSize: 14, color: colors.text } } : undefined,
           legend: groups.length > 1 ? { top: 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
           grid: { top: groups.length > 1 ? 30 : 12, right: 16, bottom: 16, left: 16, containLabel: true },
           xAxis: { type: 'time' as const, ...getAxisStyle() },
-          yAxis: { type: 'category' as const, data: groups, inverse: true, ...getAxisStyle() },
+          yAxis: { type: 'category' as const, data: groups, inverse: true, ...getAxisStyle(), splitLine: { show: config.showGrid !== false } },
           dataZoom: [{
             type: 'slider' as const,
             xAxisIndex: 0,
@@ -84,7 +85,6 @@ function TimelineChartComponent({ data, config }: ChartProps) {
             data: chartData
               .filter(d => groupByCol ? String(d[groupByCol] ?? 'Unknown') === group : true)
               .map(d => [new Date(String(d[timeCol])).getTime(), new Date(String(d[endTimeCol!])).getTime(), group]),
-            animation: false,
           })),
         },
         height: Math.max(200, groups.length * 36 + 60),
@@ -99,7 +99,7 @@ function TimelineChartComponent({ data, config }: ChartProps) {
         show: false,
         min: 0,
         max: 1,
-        splitLine: { show: false },
+        splitLine: { show: config.showGrid !== false },
       }
     } : {
       yAxis: {
@@ -108,6 +108,7 @@ function TimelineChartComponent({ data, config }: ChartProps) {
         ...getAxisStyle(),
         show: true,
         axisLabel: { ...getAxisStyle().axisLabel, width: 60, overflow: 'truncate' as const },
+        splitLine: { show: config.showGrid !== false },
       }
     }
 
@@ -129,7 +130,6 @@ function TimelineChartComponent({ data, config }: ChartProps) {
             .map(d => [new Date(String(d[timeCol])).getTime(), 0.2]),
           lineStyle: { color: colors.textMuted, width: 1, type: 'dashed' as const, opacity: 0.25 },
           symbol: 'none',
-          animation: false,
           silent: true,
           z: 1,
         }]
@@ -172,6 +172,7 @@ function TimelineChartComponent({ data, config }: ChartProps) {
             return `<b>${time}</b>${label}${groupInfo}${delta}`
           },
         },
+        title: config.title ? { text: config.title, left: 'center', textStyle: { fontSize: 14, color: colors.text } } : undefined,
         legend: groups.length > 1 ? { top: 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
         grid: gridConfig,
         xAxis: { type: 'time' as const, ...getAxisStyle() },
@@ -223,7 +224,6 @@ function TimelineChartComponent({ data, config }: ChartProps) {
                   singleGroup ? 0.2 : group,
                   labelCol ? d[labelCol] : null,
                 ]),
-              animation: false,
               z: 2,
             })
             return [
@@ -235,7 +235,7 @@ function TimelineChartComponent({ data, config }: ChartProps) {
       },
       height: chartHeight,
     }
-  }, [chartData, groups, isRangeMode, showLabels, timeCol, endTimeCol, labelCol, groupByCol, config.seriesColors, config.showConnectors, config.showTimeDeltas, colors, truncateLabel])
+  }, [chartData, groups, isRangeMode, showLabels, timeCol, endTimeCol, labelCol, groupByCol, config.title, config.seriesColors, config.showConnectors, config.showTimeDeltas, config.showGrid, colors, truncateLabel])
 
   return <EChartsContainer option={option} height={height} notMerge showReset />
 }

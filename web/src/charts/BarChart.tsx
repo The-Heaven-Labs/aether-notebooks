@@ -12,8 +12,13 @@ function BarChartComponent({ data, config }: ChartProps) {
 
   const option = useMemo(() => ({
     tooltip: { trigger: 'axis' as const, ...getTooltipStyle() },
+    title: config.title ? { text: config.title, left: 'center', textStyle: { fontSize: 14, color: colors.text } } : undefined,
     legend: config.showLegend !== false ? { top: 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
-    grid: { top: config.showLegend !== false ? 30 : 8, right: 16, bottom: 8, left: 16, containLabel: true },
+    grid: { top: config.showLegend !== false ? 30 : 8, right: 16, bottom: config.dataZoom ? 32 : 8, left: 16, containLabel: true },
+    dataZoom: config.dataZoom ? [
+      { type: 'inside' as const, start: 0, end: 100 },
+      { type: 'slider' as const, start: 0, end: 100, bottom: 8, height: 20, borderColor: colors.border, textStyle: { fontSize: 10, color: colors.textMuted } },
+    ] : undefined,
     xAxis: { type: 'category' as const, data: chartData.map(d => d[xAxis]), ...getAxisStyle(config.showGrid) },
     yAxis: { type: 'value' as const, ...getAxisStyle(config.showGrid) },
     series: yAxes.map((y, i) => ({
@@ -21,14 +26,15 @@ function BarChartComponent({ data, config }: ChartProps) {
       type: 'bar' as const,
       data: chartData.map(d => d[y]),
       stack: isStacked ? 'a' : undefined,
+      barWidth: config.barWidth,
+      barGap: config.barGap,
       itemStyle: {
         color: config.seriesColors?.[y] ?? CHART_COLORS[i % CHART_COLORS.length],
         borderRadius: [3, 3, 0, 0] as [number, number, number, number],
       },
       label: config.showLabels ? { show: true, position: 'top' as const, fontSize: 10, color: colors.textMuted } : undefined,
-      animation: false,
     })),
-  }), [chartData, xAxis, yAxes, isStacked, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, colors])
+  }), [chartData, xAxis, yAxes, isStacked, config.title, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, config.dataZoom, config.barWidth, config.barGap, colors])
 
   return <EChartsContainer option={option} />
 }
