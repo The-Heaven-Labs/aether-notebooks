@@ -478,7 +478,7 @@ const markSaved = useCallback(() => {
             <GridLayout
               layout={dashboard.widgets?.map(toGridItem) ?? []}
               width={containerWidth}
-              gridConfig={{ cols: gridCols, rowHeight: 120 }}
+              gridConfig={{ cols: gridCols, rowHeight: 120, margin: [4, 4] }}
               dragConfig={{ enabled: true, handle: '.widget-drag-handle' }}
               resizeConfig={{ enabled: true }}
               onResizeStop={onResizeStop}
@@ -747,7 +747,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   widgetCard: {
     background: 'var(--bg-card)',
-    border: '1px solid var(--border)',
+    border: '1px solid var(--border-light)',
     borderRadius: 4,
     overflow: 'hidden',
     position: 'relative',
