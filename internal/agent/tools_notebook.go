@@ -568,7 +568,7 @@ func makeListCellsHandler(db *pgxpool.Pool) ToolHandler {
 		}
 
 		rows, err := db.Query(ctx.Context, `
-			SELECT id, type, language, title, position FROM cells WHERE notebook_id = $1 ORDER BY position
+			SELECT id, type, language, title, position, COALESCE(metadata->'chart', '{}') FROM cells WHERE notebook_id = $1 ORDER BY position
 		`, req.NotebookID)
 		if err != nil {
 			return nil, err
@@ -584,14 +584,25 @@ func makeListCellsHandler(db *pgxpool.Pool) ToolHandler {
 				Title    *string `json:"title"`
 				Position int     `json:"position"`
 			}
-			if err := rows.Scan(&c.ID, &c.Type, &c.Language, &c.Title, &c.Position); err != nil {
+			var metadata json.RawMessage
+			if err := rows.Scan(&c.ID, &c.Type, &c.Language, &c.Title, &c.Position, &metadata); err != nil {
 				return nil, fmt.Errorf("scan cell: %w", err)
 			}
 			title := ""
 			if c.Title != nil {
 				title = *c.Title
 			}
-			cells = append(cells, map[string]any{"id": c.ID, "type": c.Type, "language": c.Language, "title": title, "position": c.Position + 1})
+			cellMap := map[string]any{"id": c.ID, "type": c.Type, "language": c.Language, "title": title, "position": c.Position + 1}
+			// Include chart metadata if present (helps agent check if cell has chart config)
+			if metadata != nil && string(metadata) != "{}" {
+				var chartMeta map[string]any
+				if json.Unmarshal(metadata, &chartMeta) == nil {
+					if chartType, ok := chartMeta["chartType"].(string); ok {
+						cellMap["chart"] = map[string]any{"chartType": chartType}
+					}
+				}
+			}
+			cells = append(cells, cellMap)
 		}
 		if err := rows.Err(); err != nil {
 			return nil, fmt.Errorf("list cells iter: %w", err)

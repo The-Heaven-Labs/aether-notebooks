@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -89,6 +91,58 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"widget_id":{"type":"string"},"dashboard_id":{"type":"string"},"row":{"type":"number"},"col":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"type":{"type":"string","enum":["chart","table","text"]}},"required":["widget_id","dashboard_id"]}`,
 		},
 		Handler: makeUpdateDashboardWidgetHandler(pool),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "get_dashboard",
+			Description: "Get a dashboard with its widgets. Use this to see the current state of a dashboard before making changes.",
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"}},"required":["dashboard_id"]}`,
+		},
+		Handler: makeGetDashboardHandler(pool),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "delete_dashboard_widget",
+			Description: "Remove a widget from a dashboard.",
+			Parameters:  `{"type":"object","properties":{"widget_id":{"type":"string"},"dashboard_id":{"type":"string"}},"required":["widget_id","dashboard_id"]}`,
+		},
+		Handler: makeDeleteDashboardWidgetHandler(pool),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "update_dashboard",
+			Description: "Update a dashboard's title or grid settings (e.g., grid_cols: 12 for 12-column grid).",
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"title":{"type":"string"},"grid_cols":{"type":"number","description":"Number of columns in the grid layout (default 12)"}},"required":["dashboard_id"]}`,
+		},
+		Handler: makeUpdateDashboardHandler(pool),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "share_dashboard",
+			Description: "Generate a public shareable link for a dashboard. Returns the public token and the full URL.",
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"}},"required":["dashboard_id"]}`,
+		},
+		Handler: makeShareDashboardHandler(pool),
 	})
 
 	// Schedule tools
@@ -312,6 +366,146 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		}
 
 		return map[string]any{"widget_id": req.WidgetID}, nil
+	}
+}
+
+func makeGetDashboardHandler(pool *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct{ DashboardID string `json:"dashboard_id"` }
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if err := ctx.CheckPermission("dashboard", req.DashboardID, "view"); err != nil {
+			return nil, err
+		}
+
+		var title string
+		var settingsJSON []byte
+		err := pool.QueryRow(ctx.Context,
+			`SELECT title, COALESCE(settings, '{}') FROM dashboards WHERE id = $1 AND org_id = $2`,
+			req.DashboardID, ctx.OrgID,
+		).Scan(&title, &settingsJSON)
+		if err != nil {
+			return nil, fmt.Errorf("dashboard not found: %w", err)
+		}
+
+		var settings map[string]any
+		json.Unmarshal(settingsJSON, &settings)
+
+		// Fetch widgets
+		rows, err := pool.Query(ctx.Context,
+			`SELECT id, notebook_id, cell_id, type, layout FROM widgets WHERE dashboard_id = $1 ORDER BY created_at ASC`,
+			req.DashboardID)
+		if err != nil {
+			return nil, fmt.Errorf("load widgets: %w", err)
+		}
+		defer rows.Close()
+
+		var widgets []map[string]any
+		for rows.Next() {
+			var id, nbID, cellID, wType string
+			var layoutJSON []byte
+			if err := rows.Scan(&id, &nbID, &cellID, &wType, &layoutJSON); err != nil {
+				continue
+			}
+			var layout map[string]any
+			json.Unmarshal(layoutJSON, &layout)
+			widgets = append(widgets, map[string]any{
+				"id": id, "notebook_id": nbID, "cell_id": cellID,
+				"type": wType, "layout": layout,
+			})
+		}
+		if widgets == nil {
+			widgets = []map[string]any{}
+		}
+
+		return map[string]any{"dashboard_id": req.DashboardID, "title": title, "settings": settings, "widgets": widgets}, nil
+	}
+}
+
+func makeDeleteDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			WidgetID    string `json:"widget_id"`
+			DashboardID string `json:"dashboard_id"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if err := ctx.CheckPermission("dashboard", req.DashboardID, "edit"); err != nil {
+			return nil, err
+		}
+
+		result, err := pool.Exec(ctx.Context,
+			`DELETE FROM widgets WHERE id = $1 AND dashboard_id = $2`,
+			req.WidgetID, req.DashboardID)
+		if err != nil {
+			return nil, fmt.Errorf("delete widget: %w", err)
+		}
+		if result.RowsAffected() == 0 {
+			return nil, fmt.Errorf("widget not found")
+		}
+		_ = ctx.AuditLog("dashboard.delete_widget", "dashboard", req.DashboardID)
+		return map[string]any{"status": "deleted"}, nil
+	}
+}
+
+func makeUpdateDashboardHandler(pool *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			DashboardID string  `json:"dashboard_id"`
+			Title       *string `json:"title"`
+			GridCols    *int    `json:"grid_cols"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if err := ctx.CheckPermission("dashboard", req.DashboardID, "edit"); err != nil {
+			return nil, err
+		}
+
+		if req.Title == nil && req.GridCols == nil {
+			return nil, fmt.Errorf("nothing to update")
+		}
+
+		if req.Title != nil {
+			pool.Exec(ctx.Context, `UPDATE dashboards SET title = $1 WHERE id = $2 AND org_id = $3`,
+				*req.Title, req.DashboardID, ctx.OrgID)
+		}
+		if req.GridCols != nil {
+			pool.Exec(ctx.Context,
+				`UPDATE dashboards SET settings = COALESCE(settings, '{}')::jsonb || jsonb_build_object('grid_cols', $1), updated_at = NOW() WHERE id = $2 AND org_id = $3`,
+				*req.GridCols, req.DashboardID, ctx.OrgID)
+		}
+
+		_ = ctx.AuditLog("dashboard.update", "dashboard", req.DashboardID)
+		return map[string]any{"dashboard_id": req.DashboardID, "status": "updated"}, nil
+	}
+}
+
+func makeShareDashboardHandler(pool *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct{ DashboardID string `json:"dashboard_id"` }
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if err := ctx.CheckPermission("dashboard", req.DashboardID, "view"); err != nil {
+			return nil, err
+		}
+
+		tokenBytes := make([]byte, 16)
+		cryptorand.Read(tokenBytes)
+		token := hex.EncodeToString(tokenBytes)
+
+		result, err := pool.Exec(ctx.Context,
+			`UPDATE dashboards SET public_token = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3`,
+			token, req.DashboardID, ctx.OrgID)
+		if err != nil || result.RowsAffected() == 0 {
+			return nil, fmt.Errorf("dashboard not found")
+		}
+
+		_ = ctx.AuditLog("dashboard.share", "dashboard", req.DashboardID)
+		return map[string]any{"public_token": token, "url": "/public/dashboards/" + token}, nil
 	}
 }
 
