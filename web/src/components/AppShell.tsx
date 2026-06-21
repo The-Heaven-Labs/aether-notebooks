@@ -111,7 +111,7 @@ export function AppShell({ children, noPadding, hideGlobalFab }: Props) {
       <TopBar onShowShortcuts={() => setShowShortcuts(true)} />
       <div style={styles.body}>
         <Sidebar />
-        <main id="main-content" style={{ ...styles.main, background: 'var(--bg-primary)', ...(noPadding ? { padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' } : {}) }}>
+        <main id="main-content" style={{ ...styles.main, background: 'var(--bg-primary)', ...(noPadding ? { padding: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' } : {}) }}>
           {visibleMotds.map(motd => (
             <div key={motd.id} style={motdStyles.banner}>
               <div style={motdStyles.bannerContent}>
