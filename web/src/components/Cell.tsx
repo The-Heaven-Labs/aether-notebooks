@@ -37,12 +37,40 @@ function normalizeChartConfig(raw: unknown): ChartConfig | undefined {
     endTimeColumn: obj.endTimeColumn as string | undefined,
     labelColumn: obj.labelColumn as string | undefined,
     groupBy: obj.groupBy as string | undefined,
+    maxLabelLength: obj.maxLabelLength as number | undefined,
+    showConnectors: obj.showConnectors as boolean | undefined,
+    showTimeDeltas: obj.showTimeDeltas as boolean | undefined,
     // Hierarchy tree fields
     idColumn: obj.idColumn as string | undefined,
     parentIdColumn: obj.parentIdColumn as string | undefined,
     metricColumns: obj.metricColumns as string[] | undefined,
     layout: obj.layout as 'top-down' | 'left-to-right' | undefined,
     nodeSpacing: obj.nodeSpacing as number | undefined,
+    // Big number fields
+    valueColumn: obj.valueColumn as string | undefined,
+    label: obj.label as string | undefined,
+    prefix: obj.prefix as string | undefined,
+    suffix: obj.suffix as string | undefined,
+    decimalPlaces: obj.decimalPlaces as number | undefined,
+    // Bar fields
+    barWidth: obj.barWidth as string | undefined,
+    barGap: obj.barGap as string | undefined,
+    // Line/Area fields
+    smooth: obj.smooth as boolean | undefined,
+    connectNulls: obj.connectNulls as boolean | undefined,
+    // Pie/Donut fields
+    roseType: obj.roseType as 'radius' | 'area' | undefined,
+    startAngle: obj.startAngle as number | undefined,
+    padAngle: obj.padAngle as number | undefined,
+    // Sankey fields
+    nodeAlign: obj.nodeAlign as 'justify' | 'left' | 'right' | undefined,
+    nodeWidth: obj.nodeWidth as number | undefined,
+    nodeGap: obj.nodeGap as number | undefined,
+    // Scatter fields
+    colorColumn: obj.colorColumn as string | undefined,
+    sizeColumn: obj.sizeColumn as string | undefined,
+    // Shared
+    dataZoom: obj.dataZoom as boolean | undefined,
   }
 }
 
