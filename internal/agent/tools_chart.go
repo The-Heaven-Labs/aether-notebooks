@@ -17,7 +17,7 @@ func RegisterChartTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		}{
 			Name:        "create_chart",
 			Description: "Turn a cell's table output into a chart",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]}},"required":["cell_id","chart_type"]}`,
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"node_spacing":{"type":"number"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"}},"required":["cell_id","chart_type"]}`,
 		},
 		Handler: makeCreateChartHandler(db),
 	})
@@ -30,7 +30,7 @@ func RegisterChartTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		}{
 			Name:        "update_chart",
 			Description: "Modify chart config on an existing cell",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]}},"required":["cell_id"]}`,
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"node_spacing":{"type":"number"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"}},"required":["cell_id"]}`,
 		},
 		Handler: makeUpdateChartHandler(db),
 	})
@@ -39,20 +39,32 @@ func RegisterChartTools(reg *ToolRegistry, db *pgxpool.Pool) {
 func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
-			CellID         string   `json:"cell_id"`
-			ChartType      string   `json:"chart_type"`
-			XColumn        string   `json:"x_column"`
-			YColumns       []string `json:"y_columns"`
-			Title          string   `json:"title"`
-			TimeColumn     string   `json:"time_column"`
-			EndTimeColumn  string   `json:"end_time_column"`
-			LabelColumn    string   `json:"label_column"`
-			GroupBy        string   `json:"group_by"`
-			IDColumn       string   `json:"id_column"`
-			ParentIDColumn string   `json:"parent_id_column"`
-			MetricColumns  []string `json:"metric_columns"`
-			ValueColumn    string   `json:"value_column"`
-			Layout         string   `json:"layout"`
+			CellID          string   `json:"cell_id"`
+			ChartType       string   `json:"chart_type"`
+			XColumn         string   `json:"x_column"`
+			YColumns        []string `json:"y_columns"`
+			Title           string   `json:"title"`
+			TimeColumn      string   `json:"time_column"`
+			EndTimeColumn   string   `json:"end_time_column"`
+			LabelColumn     string   `json:"label_column"`
+			GroupBy         string   `json:"group_by"`
+			IDColumn        string   `json:"id_column"`
+			ParentIDColumn  string   `json:"parent_id_column"`
+			MetricColumns   []string `json:"metric_columns"`
+			ValueColumn     string   `json:"value_column"`
+			Layout          string   `json:"layout"`
+			ShowLabels      *bool    `json:"show_labels"`
+			ShowLegend      *bool    `json:"show_legend"`
+			ShowGrid        *bool    `json:"show_grid"`
+			SkipEmpty       *bool    `json:"skip_empty"`
+			NodeSpacing     *int     `json:"node_spacing"`
+			MaxLabelLength  *int     `json:"max_label_length"`
+			ShowConnectors  *bool    `json:"show_connectors"`
+			ShowTimeDeltas  *bool    `json:"show_time_deltas"`
+			DecimalPlaces   *int     `json:"decimal_places"`
+			ChartLabel      string   `json:"label"`
+			Prefix          string   `json:"prefix"`
+			Suffix          string   `json:"suffix"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -81,6 +93,42 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 			"valueColumn":    req.ValueColumn,
 			"layout":         req.Layout,
 			"created_at":     time.Now().Format(time.RFC3339),
+		}
+		if req.ShowLabels != nil {
+			chartConfig["showLabels"] = *req.ShowLabels
+		}
+		if req.ShowLegend != nil {
+			chartConfig["showLegend"] = *req.ShowLegend
+		}
+		if req.ShowGrid != nil {
+			chartConfig["showGrid"] = *req.ShowGrid
+		}
+		if req.SkipEmpty != nil {
+			chartConfig["skipEmpty"] = *req.SkipEmpty
+		}
+		if req.NodeSpacing != nil {
+			chartConfig["nodeSpacing"] = *req.NodeSpacing
+		}
+		if req.MaxLabelLength != nil {
+			chartConfig["maxLabelLength"] = *req.MaxLabelLength
+		}
+		if req.ShowConnectors != nil {
+			chartConfig["showConnectors"] = *req.ShowConnectors
+		}
+		if req.ShowTimeDeltas != nil {
+			chartConfig["showTimeDeltas"] = *req.ShowTimeDeltas
+		}
+		if req.DecimalPlaces != nil {
+			chartConfig["decimalPlaces"] = *req.DecimalPlaces
+		}
+		if req.ChartLabel != "" {
+			chartConfig["label"] = req.ChartLabel
+		}
+		if req.Prefix != "" {
+			chartConfig["prefix"] = req.Prefix
+		}
+		if req.Suffix != "" {
+			chartConfig["suffix"] = req.Suffix
 		}
 
 		configJSON, _ := json.Marshal(chartConfig)
@@ -116,20 +164,32 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
-			CellID         string   `json:"cell_id"`
-			ChartType      string   `json:"chart_type"`
-			XColumn        string   `json:"x_column"`
-			YColumns       []string `json:"y_columns"`
-			Title          string   `json:"title"`
-			TimeColumn     string   `json:"time_column"`
-			EndTimeColumn  string   `json:"end_time_column"`
-			LabelColumn    string   `json:"label_column"`
-			GroupBy        string   `json:"group_by"`
-			IDColumn       string   `json:"id_column"`
-			ParentIDColumn string   `json:"parent_id_column"`
-			MetricColumns  []string `json:"metric_columns"`
-			ValueColumn    string   `json:"value_column"`
-			Layout         string   `json:"layout"`
+			CellID          string   `json:"cell_id"`
+			ChartType       string   `json:"chart_type"`
+			XColumn         string   `json:"x_column"`
+			YColumns        []string `json:"y_columns"`
+			Title           string   `json:"title"`
+			TimeColumn      string   `json:"time_column"`
+			EndTimeColumn   string   `json:"end_time_column"`
+			LabelColumn     string   `json:"label_column"`
+			GroupBy         string   `json:"group_by"`
+			IDColumn        string   `json:"id_column"`
+			ParentIDColumn  string   `json:"parent_id_column"`
+			MetricColumns   []string `json:"metric_columns"`
+			ValueColumn     string   `json:"value_column"`
+			Layout          string   `json:"layout"`
+			ShowLabels      *bool    `json:"show_labels"`
+			ShowLegend      *bool    `json:"show_legend"`
+			ShowGrid        *bool    `json:"show_grid"`
+			SkipEmpty       *bool    `json:"skip_empty"`
+			NodeSpacing     *int     `json:"node_spacing"`
+			MaxLabelLength  *int     `json:"max_label_length"`
+			ShowConnectors  *bool    `json:"show_connectors"`
+			ShowTimeDeltas  *bool    `json:"show_time_deltas"`
+			DecimalPlaces   *int     `json:"decimal_places"`
+			ChartLabel      string   `json:"label"`
+			Prefix          string   `json:"prefix"`
+			Suffix          string   `json:"suffix"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -191,6 +251,42 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 		}
 		if req.Layout != "" {
 			existingConfig["layout"] = req.Layout
+		}
+		if req.ShowLabels != nil {
+			existingConfig["showLabels"] = *req.ShowLabels
+		}
+		if req.ShowLegend != nil {
+			existingConfig["showLegend"] = *req.ShowLegend
+		}
+		if req.ShowGrid != nil {
+			existingConfig["showGrid"] = *req.ShowGrid
+		}
+		if req.SkipEmpty != nil {
+			existingConfig["skipEmpty"] = *req.SkipEmpty
+		}
+		if req.NodeSpacing != nil {
+			existingConfig["nodeSpacing"] = *req.NodeSpacing
+		}
+		if req.MaxLabelLength != nil {
+			existingConfig["maxLabelLength"] = *req.MaxLabelLength
+		}
+		if req.ShowConnectors != nil {
+			existingConfig["showConnectors"] = *req.ShowConnectors
+		}
+		if req.ShowTimeDeltas != nil {
+			existingConfig["showTimeDeltas"] = *req.ShowTimeDeltas
+		}
+		if req.DecimalPlaces != nil {
+			existingConfig["decimalPlaces"] = *req.DecimalPlaces
+		}
+		if req.ChartLabel != "" {
+			existingConfig["label"] = req.ChartLabel
+		}
+		if req.Prefix != "" {
+			existingConfig["prefix"] = req.Prefix
+		}
+		if req.Suffix != "" {
+			existingConfig["suffix"] = req.Suffix
 		}
 
 		configJSON, _ := json.Marshal(existingConfig)
