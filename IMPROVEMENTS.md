@@ -37,3 +37,8 @@
 - [x] The agent selector uses default OS styling, should be a custom app one
 - [x] There should be a permissioning system for potential problematic (not read-only) tool calls, e.g., the first time a tool is called, the user should be asked if want to proceed. Also, there should be a toggle to accept all by default (current behavior). Read-only tool calls should be accepted by default.
 - [x] In dark theme, for chart configs of charts that have lots of series, the background of the color is light, and also the color picker also is light-themed
+- [ ] When creating a new session but was already on an empty session, it saves and empty session to the history. Empty sessions should be dropped.
+- [ ] I can scroll up and read messages while new are coming in the notebook AI panel, but not in the global AI panel
+- [ ] The global agent panel should have a way to "dock" to the right side of the page, which then would get similar to what the notebook panel is (but docking would work in any page)
+- [ ] Global agent panel works in any page. Moving pages should not cancel the chat context, it should stay happening in background, and when going to another page it should automatically connect back to the chat and continue as nothing happened.
+- [ ] The global agent panel should not block scroll on the page behind
