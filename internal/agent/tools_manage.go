@@ -145,6 +145,11 @@ func makeCreateDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 		if req.Title == "" {
 			return nil, fmt.Errorf("title is required")
 		}
+		if req.FolderID != nil && *req.FolderID != "" {
+			if err := ctx.CheckPermission("folder", *req.FolderID, "edit"); err != nil {
+				return nil, err
+			}
+		}
 
 		id := uuid.New().String()
 		now := time.Now()
@@ -247,6 +252,16 @@ func makeDeleteScheduleHandler(pool *pgxpool.Pool) ToolHandler {
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
+
+		var nbID string
+		if err := pool.QueryRow(ctx.Context,
+			`SELECT notebook_id FROM schedules WHERE id=$1`, req.ScheduleID).Scan(&nbID); err != nil {
+			return nil, fmt.Errorf("schedule not found")
+		}
+		if err := ctx.CheckPermission("notebook", nbID, "edit"); err != nil {
+			return nil, err
+		}
+
 		result, err := pool.Exec(ctx.Context,
 			`DELETE FROM schedules WHERE id=$1 AND notebook_id IN (SELECT id FROM notebooks WHERE org_id=$2)`,
 			req.ScheduleID, ctx.OrgID)
@@ -440,9 +455,22 @@ func makeImportNotebookHandler(pool *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("invalid ipynb JSON: %w", err)
 		}
 
+		if req.FolderID != nil && *req.FolderID != "" {
+			if err := ctx.CheckPermission("folder", *req.FolderID, "edit"); err != nil {
+				return nil, err
+			}
+		}
+
 		now := time.Now()
 		nbID := uuid.New().String()
-		_, err := pool.Exec(ctx.Context, `
+
+		tx, err := pool.Begin(ctx.Context)
+		if err != nil {
+			return nil, fmt.Errorf("begin tx: %w", err)
+		}
+		defer tx.Rollback(ctx.Context)
+
+		_, err = tx.Exec(ctx.Context, `
 			INSERT INTO notebooks (id, org_id, title, description, created_by, folder_id, created_at, updated_at)
 			VALUES ($1, $2, $3, '', $4, $5, $6, $6)
 		`, nbID, ctx.OrgID, req.Title, ctx.UserID, req.FolderID, now)
@@ -460,10 +488,16 @@ func makeImportNotebookHandler(pool *pgxpool.Pool) ToolHandler {
 				lang = "markdown"
 			}
 			cellID := uuid.New().String()
-			pool.Exec(ctx.Context, `
+			if _, err := tx.Exec(ctx.Context, `
 				INSERT INTO cells (id, notebook_id, type, language, source, position, created_at, updated_at)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
-			`, cellID, nbID, cellType, lang, c.Source, i, now)
+			`, cellID, nbID, cellType, lang, c.Source, i, now); err != nil {
+				return nil, fmt.Errorf("create cell %d: %w", i, err)
+			}
+		}
+
+		if err := tx.Commit(ctx.Context); err != nil {
+			return nil, fmt.Errorf("commit import: %w", err)
 		}
 
 		_ = ctx.AuditLog("notebook.import", "notebook", nbID)

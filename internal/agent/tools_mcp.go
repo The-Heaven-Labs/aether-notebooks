@@ -16,7 +16,7 @@ type MCPClient struct {
 	Command string
 	Args    []string
 	Env     map[string]string
-	Stdio   *io.ReadCloser
+	Stdio   io.ReadCloser
 	HTTPURL string
 }
 
