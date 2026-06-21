@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, getTooltipStyle, getChartColors, CHART_COLORS, useRowsAsObjects } from './common'
+import { EChartsContainer, getTooltipStyle, getChartColors, CHART_COLORS, useRowsAsObjects, ChartTypeSelect } from './common'
 import { ConfigHint } from './ConfigHint'
 
 function SankeyChartComponent({ data, config }: ChartProps) {
@@ -117,6 +117,10 @@ function SankeyChartComponent({ data, config }: ChartProps) {
 function SankeyConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
   return (
     <div style={styles.panel}>
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Chart type</div>
+        <ChartTypeSelect value={config.chartType ?? 'sankey'} onChange={v => onChange({ ...config, chartType: v as any })} />
+      </div>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Source column</div>
         <select

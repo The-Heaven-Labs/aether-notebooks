@@ -29,20 +29,7 @@ export const CHART_MODULES: Record<string, ChartModule> = {
   sankey: SankeyChartModule,
 }
 
-export const ALL_CHART_TYPES = [
-  { value: 'bar', label: 'Bar', symbol: '▊▊' },
-  { value: 'stacked_bar', label: 'Stack', symbol: '▊≡' },
-  { value: 'line', label: 'Line', symbol: '╱╲' },
-  { value: 'area', label: 'Area', symbol: '▓' },
-  { value: 'scatter', label: 'Scatter', symbol: '·:' },
-  { value: 'pie', label: 'Pie', symbol: '◕' },
-  { value: 'donut', label: 'Donut', symbol: '◎' },
-  { value: 'timeline', label: 'Timeline', symbol: '⏱' },
-  { value: 'hierarchy_tree', label: 'Tree', symbol: '🌲' },
-  { value: 'big_number', label: 'Big Number', symbol: '123' },
-  { value: 'map', label: 'Map', symbol: '🌍' },
-  { value: 'sankey', label: 'Sankey', symbol: '⇄' },
-] as const
+export { ALL_CHART_TYPES } from './common'
 
 interface ChartViewProps {
   output?: { type: string; data?: ResultSet; config?: Partial<ChartConfig> }

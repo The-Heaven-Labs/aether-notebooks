@@ -1,6 +1,6 @@
 import { useMemo, useCallback } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, useRowsAsObjects, isTimeType } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, useRowsAsObjects, isTimeType, ChartTypeSelect } from './common'
 import { ConfigHint } from './ConfigHint'
 
 function detectTimeColumns(columns: { name: string; type?: string }[]): string[] {
@@ -249,6 +249,10 @@ function TimelineConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
 
   return (
     <div style={styles.panel}>
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Chart type</div>
+        <ChartTypeSelect value={config.chartType ?? 'timeline'} onChange={v => onChange({ ...config, chartType: v as any })} />
+      </div>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Time column</div>
         <select

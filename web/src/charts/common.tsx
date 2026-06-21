@@ -24,6 +24,36 @@ export const CHART_COLORS = [
   '#f43f5e', '#8b5cf6', '#0ea5e9', '#84cc16',
 ]
 
+export const ALL_CHART_TYPES = [
+  { value: 'bar', label: 'Bar', symbol: '▊▊' },
+  { value: 'stacked_bar', label: 'Stack', symbol: '▊≡' },
+  { value: 'line', label: 'Line', symbol: '╱╲' },
+  { value: 'area', label: 'Area', symbol: '▓' },
+  { value: 'scatter', label: 'Scatter', symbol: '·:' },
+  { value: 'pie', label: 'Pie', symbol: '◕' },
+  { value: 'donut', label: 'Donut', symbol: '◎' },
+  { value: 'timeline', label: 'Timeline', symbol: '⏱' },
+  { value: 'hierarchy_tree', label: 'Tree', symbol: '🌲' },
+  { value: 'big_number', label: 'Big Number', symbol: '123' },
+  { value: 'map', label: 'Map', symbol: '🌍' },
+  { value: 'sankey', label: 'Sankey', symbol: '⇄' },
+] as const
+
+export function ChartTypeSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <select
+      aria-label="Chart type"
+      style={{ fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4, width: '100%' }}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+    >
+      {ALL_CHART_TYPES.map(t => (
+        <option key={t.value} value={t.value}>{t.symbol} {t.label}</option>
+      ))}
+    </select>
+  )
+}
+
 // Detect numeric column types
 const NUMERIC_TYPES = new Set([
   'int', 'int2', 'int4', 'int8', 'bigint', 'smallint', 'serial', 'bigserial',
