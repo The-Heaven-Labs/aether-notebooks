@@ -426,6 +426,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
       setSelectedAgent(agent)
       localStorage.setItem(LAST_AGENT_KEY, agent.id)
       setMessages([])
+      setTasks([])
       setTotalTokens(null)
       setContextWindow(res.context_window ?? 0)
       saveChatState(agent.id, res.session_id, [], undefined, undefined, res.context_window ?? 0)
@@ -439,6 +440,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
     setSessionId(sessionID)
     setSessionTitle(null)
     setMessages([])
+    setTasks([])
     if (selectedAgent) {
       saveChatState(selectedAgent.id, sessionID, [], undefined)
     }
