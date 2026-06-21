@@ -25,6 +25,11 @@ type WSMessage struct {
 	LastMessageID   string `json:"last_message_id,omitempty"`
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	Approved        bool   `json:"approved,omitempty"`
+	PageContext     *struct {
+		Type  string `json:"type"`
+		ID    string `json:"id,omitempty"`
+		Title string `json:"title,omitempty"`
+	} `json:"page_context,omitempty"`
 }
 
 type WSResponse struct {
@@ -142,6 +147,21 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 			if msg.Type == "set_reasoning_effort" {
 				s.agentEngine.SetReasoningEffort(currentSessionID, msg.ReasoningEffort)
 				slog.Debug("ws: set reasoning effort", "session_id", currentSessionID, "effort", msg.ReasoningEffort)
+				continue
+			}
+
+			if msg.Type == "set_page_context" {
+				if msg.PageContext != nil {
+					pc := &agent.PageContextInfo{
+						Type:  msg.PageContext.Type,
+						ID:    msg.PageContext.ID,
+						Title: msg.PageContext.Title,
+					}
+					s.agentEngine.SetPageContext(currentSessionID, pc)
+					slog.Debug("ws: set page context", "session_id", currentSessionID, "type", pc.Type, "id", pc.ID)
+				} else {
+					s.agentEngine.SetPageContext(currentSessionID, nil)
+				}
 				continue
 			}
 

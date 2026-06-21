@@ -53,6 +53,7 @@ export const chatMarkdownComponents = {
 
 interface AgentPanelProps {
   notebookId?: string
+  pageContext?: { type: 'notebook' | 'dashboard' | 'files'; id?: string; title?: string }
   width: number
   onResize: (width: number) => void
   onCellCreated?: (cellId: string, position: number) => void
@@ -75,7 +76,7 @@ interface AgentChatState {
   contextWindow?: number
 }
 
-export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellOutput, onCellScrollTo, onClose, onMinimize }: AgentPanelProps) {
+export function AgentPanel({ notebookId, pageContext, width, onResize, onCellCreated, onCellOutput, onCellScrollTo, onClose, onMinimize }: AgentPanelProps) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
   const [_sessionId, setSessionId] = useState<string | null>(null)
@@ -165,6 +166,16 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
     }
   }, [])
 
+  // Send page context to backend when it changes
+  useEffect(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN && pageContext) {
+      wsRef.current.send(JSON.stringify({
+        type: 'set_page_context',
+        page_context: { type: pageContext.type, id: pageContext.id || '', title: pageContext.title || '' },
+      }))
+    }
+  }, [pageContext])
+
   useEffect(() => {
     if (!selectedAgent && agents.length > 0 && !isLoadingAgents) {
       const savedState = loadChatState()
@@ -223,6 +234,12 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
       const e = reasoningEffortRef.current
       if (e) {
         ws.send(JSON.stringify({ type: 'set_reasoning_effort', reasoning_effort: e }))
+      }
+      if (pageContext) {
+        ws.send(JSON.stringify({
+          type: 'set_page_context',
+          page_context: { type: pageContext.type, id: pageContext.id || '', title: pageContext.title || '' },
+        }))
       }
     }
 
@@ -420,6 +437,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
     try {
       const res = await api.post<{ session_id: string; context_window?: number }>('/api/v1/agents/' + agent.id + '/session', {
         notebook_id: notebookId || null,
+        page_context: pageContext || (notebookId ? { type: 'notebook', id: notebookId } : null),
       })
       setSessionId(res.session_id)
       setSessionTitle(null)

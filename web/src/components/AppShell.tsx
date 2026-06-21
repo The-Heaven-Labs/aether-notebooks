@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Bot } from 'lucide-react'
 import { TopBar } from './TopBar'
@@ -66,6 +66,21 @@ export function AppShell({ children, noPadding, hideGlobalFab }: Props) {
   }
 
   const location = useLocation()
+
+  const currentPageContext = useMemo(() => {
+    const path = location.pathname
+    // /notebooks/:id — notebook page
+    const nbMatch = path.match(/^\/notebooks\/([a-f0-9-]+)/)
+    if (nbMatch) return { type: 'notebook' as const, id: nbMatch[1] }
+    // /dashboards/:id — dashboard editor
+    const dashEditMatch = path.match(/^\/dashboards\/([a-f0-9-]+)/)
+    if (dashEditMatch) return { type: 'dashboard' as const, id: dashEditMatch[1] }
+    // /dashboards — dashboard list
+    if (path === '/dashboards') return { type: 'files' as const }
+    // / — home/files
+    if (path === '/') return { type: 'files' as const }
+    return undefined
+  }, [location.pathname])
   const visibleMotds = motds.filter(m => {
     if (dismissedMotds.has(m.id)) return false
     if (m.visibility === 'specific' && m.pages?.length) {
@@ -171,6 +186,7 @@ export function AppShell({ children, noPadding, hideGlobalFab }: Props) {
                 />
                 <AgentPanel
                   notebookId=""
+                  pageContext={currentPageContext}
                   width={globalAgentWidth}
                   onResize={setGlobalAgentWidth}
                   onClose={() => {
