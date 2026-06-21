@@ -105,12 +105,12 @@ export function AxisConfigPanel({
             </select>
           </div>
           <div style={styles.section}>
-            <div style={styles.sectionLabel}>Bar gap</div>
+            <div style={styles.sectionLabel}>Category gap</div>
             <select
-              aria-label="Bar gap"
+              aria-label="Category gap"
               style={styles.select}
-              value={config.barGap ?? ''}
-              onChange={e => onChange({ ...config, barGap: e.target.value || undefined })}
+              value={config.barCategoryGap ?? ''}
+              onChange={e => onChange({ ...config, barCategoryGap: e.target.value || undefined })}
             >
               <option value="">Default</option>
               <option value="10%">Tight</option>
