@@ -159,7 +159,6 @@ export function AppShell({ children, noPadding }: Props) {
             onMinimize={() => setGlobalAgentMinimized(true)}
             onDock={() => { setGlobalAgentDocked(false); try { localStorage.setItem('hnb:agentDocked:__global__', 'false') } catch {} }}
             docked
-            onCellCreated={() => {}}
           />
         )}
       </div>
@@ -215,9 +214,8 @@ export function AppShell({ children, noPadding }: Props) {
                   onClose={() => setShowGlobalAgent(false)}
                   onMinimize={() => setGlobalAgentMinimized(true)}
                   onDock={() => { setGlobalAgentDocked(true); try { localStorage.setItem('hnb:agentDocked:__global__', 'true') } catch {} }}
-                  docked={false}
-                  onCellCreated={() => {}}
-                />
+              docked={false}
+            />
               </div>
             </>
           )}
