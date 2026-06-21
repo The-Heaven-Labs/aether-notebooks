@@ -65,14 +65,39 @@ export interface CellVersion {
   user?: { id: string; name: string; email: string }
 }
 
+export interface CellDiffLine {
+  type: 'add' | 'del' | 'ctx'
+  line: string
+  old_num?: number
+  new_num?: number
+}
+
+export interface CellDiff {
+  cell_id: string
+  position: number
+  title?: string
+  old_source: string
+  new_source: string
+  diff_lines: CellDiffLine[]
+  summary: string
+}
+
+export interface CellChange {
+  cell_id: string
+  position: number
+  old_position?: number
+  title?: string
+}
+
 export interface SnapshotChanges {
   title_changed: boolean
   old_title: string
   new_title: string
-  cells_added: string[]
-  cells_deleted: string[]
-  cells_modified: string[]
-  positions_changed: boolean
+  cells_added: CellChange[]
+  cells_deleted: CellChange[]
+  cells_modified: CellChange[]
+  positions_changed: CellChange[]
+  cell_diffs?: CellDiff[]
 }
 
 export interface NotebookSnapshot {

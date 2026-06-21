@@ -121,7 +121,8 @@ export function NotebookHistoryPanel({ snapshots, onCreateSnapshot, onRestore, o
                 const changeCount =
                   (snap.changes?.cells_added?.length ?? 0) +
                   (snap.changes?.cells_deleted?.length ?? 0) +
-                  (snap.changes?.cells_modified?.length ?? 0) +
+                  (snap.changes?.cell_diffs?.length ?? 0) +
+                  (snap.changes?.positions_changed?.length ?? 0) +
                   (snap.changes?.title_changed ? 1 : 0)
 
                 return (
@@ -153,30 +154,47 @@ export function NotebookHistoryPanel({ snapshots, onCreateSnapshot, onRestore, o
                             </span>
                           </div>
                         )}
-                        {snap.changes.cells_added.map((id) => (
-                          <div key={id} style={{ ...styles.changeRow, color: 'var(--success)' }}>
+                        {(snap.changes.cells_added ?? []).map((cell) => (
+                          <div key={cell.cell_id} style={{ ...styles.changeRow, color: 'var(--success)' }}>
                             <Plus size={11} style={{ flexShrink: 0, marginTop: 2 }} />
-                            <span style={{ fontSize: 11 }}>Cell added</span>
+                            <span style={{ fontSize: 11 }}>Cell #{cell.position}{cell.title ? ` (${cell.title})` : ''} added</span>
                           </div>
                         ))}
-                        {snap.changes.cells_deleted.map((id) => (
-                          <div key={id} style={{ ...styles.changeRow, color: 'var(--danger)' }}>
+                        {(snap.changes.cells_deleted ?? []).map((cell) => (
+                          <div key={cell.cell_id} style={{ ...styles.changeRow, color: 'var(--danger)' }}>
                             <Minus size={11} style={{ flexShrink: 0, marginTop: 2 }} />
-                            <span style={{ fontSize: 11 }}>Cell deleted</span>
+                            <span style={{ fontSize: 11 }}>Cell #{cell.position}{cell.title ? ` (${cell.title})` : ''} deleted</span>
                           </div>
                         ))}
-                        {snap.changes.cells_modified.map((id) => (
-                          <div key={id} style={styles.changeRow}>
-                            <Edit3 size={11} style={{ flexShrink: 0, marginTop: 2 }} />
-                            <span style={{ fontSize: 11 }}>Cell modified</span>
+                        {(snap.changes.cell_diffs ?? []).map((diff) => (
+                          <div key={diff.cell_id} style={{ marginBottom: 4 }}>
+                            <div style={{ ...styles.changeRow, marginBottom: 2 }}>
+                              <Edit3 size={11} style={{ flexShrink: 0, marginTop: 2 }} />
+                              <span style={{ fontSize: 11 }}>
+                                Cell #{diff.position}{diff.title ? ` (${diff.title})` : ''} modified
+                              </span>
+                              {diff.summary && (
+                                <span style={diffStyles.diffSummary}>{diff.summary}</span>
+                              )}
+                            </div>
+                            <div style={diffStyles.diffBlock}>
+                              {diff.diff_lines.map((line, i) => (
+                                <div key={i} style={{ ...diffStyles.diffLine, ...(line.type === 'add' ? diffStyles.diffAdd : line.type === 'del' ? diffStyles.diffDel : diffStyles.diffCtx) }}>
+                                  <span style={diffStyles.diffLineNum}>{line.type === 'add' ? `+${line.new_num}` : line.type === 'del' ? `-${line.old_num}` : `${line.old_num}`}</span>
+                                  <span style={diffStyles.diffLineContent}>{line.line}</span>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         ))}
-                        {snap.changes.positions_changed && (
-                          <div style={styles.changeRow}>
+                        {(snap.changes.positions_changed ?? []).map((cell) => (
+                          <div key={cell.cell_id} style={styles.changeRow}>
                             <Edit3 size={11} style={{ flexShrink: 0, marginTop: 2 }} />
-                            <span style={{ fontSize: 11 }}>Cells reordered</span>
+                            <span style={{ fontSize: 11 }}>
+                              Cell #{cell.old_position ?? '?'} → #{cell.position}{cell.title ? ` (${cell.title})` : ''} moved
+                            </span>
                           </div>
-                        )}
+                        ))}
                       </div>
                     )}
 
@@ -209,6 +227,17 @@ export function NotebookHistoryPanel({ snapshots, onCreateSnapshot, onRestore, o
       />
     </>
   )
+}
+
+const diffStyles = {
+  diffSummary: { fontSize: 10, color: 'var(--text-muted)', background: 'var(--bg-secondary)', borderRadius: 3, padding: '0 5px', marginLeft: 4 },
+  diffBlock: { background: 'var(--bg-secondary)', borderRadius: 4, fontSize: 10, fontFamily: 'var(--font-mono)', overflowX: 'auto' as const, maxHeight: 200, overflowY: 'auto' as const },
+  diffLine: { display: 'flex', alignItems: 'flex-start', padding: '1px 4px', lineHeight: '16px', whiteSpace: 'pre' as const },
+  diffAdd: { background: 'rgba(34,197,94,0.12)', color: '#22c55e' },
+  diffDel: { background: 'rgba(239,68,68,0.12)', color: '#ef4444' },
+  diffCtx: { color: 'var(--text-muted)' },
+  diffLineNum: { width: 36, flexShrink: 0, textAlign: 'right' as const, paddingRight: 6, color: 'inherit', opacity: 0.6 },
+  diffLineContent: { flex: 1, overflow: 'hidden' as const, textOverflow: 'ellipsis' as const },
 }
 
 const styles: Record<string, React.CSSProperties> = {

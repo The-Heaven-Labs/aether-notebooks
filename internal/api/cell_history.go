@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/models"
 	"github.com/jackc/pgx/v5"
+	"github.com/pmezard/go-difflib/difflib"
 )
 
 const (
@@ -215,6 +217,85 @@ type createSnapshotRequest struct {
 
 
 
+// computeCellDiff computes a line-level diff between old and new cell source.
+func computeCellDiff(cellID string, position int, title, oldSource, newSource string) models.CellDiff {
+	oldLines := difflib.SplitLines(oldSource)
+	newLines := difflib.SplitLines(newSource)
+
+	diff := models.CellDiff{
+		CellID:    cellID,
+		Position:  position + 1, // 1-indexed for display
+		Title:     title,
+		OldSource: oldSource,
+		NewSource: newSource,
+	}
+
+	matcher := difflib.NewMatcher(oldLines, newLines)
+	added := 0
+	deleted := 0
+	oldLineNum := 0
+	newLineNum := 0
+
+	for _, op := range matcher.GetOpCodes() {
+		switch op.Tag {
+		case 'e':
+			// Equal lines — show a few context lines
+			for i := op.I1; i < op.I2 && i < op.I1+3; i++ {
+				oldLineNum++
+				newLineNum++
+				diff.DiffLines = append(diff.DiffLines, models.CellDiffLine{
+					Type: "ctx", Line: oldLines[i],
+					OldNum: oldLineNum, NewNum: newLineNum,
+				})
+			}
+			if op.I2-op.I1 > 3 {
+				oldLineNum += op.I2 - op.I1 - 3
+				newLineNum += op.I2 - op.I1 - 3
+			}
+		case 'd':
+			for i := op.I1; i < op.I2; i++ {
+				oldLineNum++
+				deleted++
+				diff.DiffLines = append(diff.DiffLines, models.CellDiffLine{
+					Type: "del", Line: oldLines[i],
+					OldNum: oldLineNum,
+				})
+			}
+		case 'i':
+			for i := op.J1; i < op.J2; i++ {
+				newLineNum++
+				added++
+				diff.DiffLines = append(diff.DiffLines, models.CellDiffLine{
+					Type: "add", Line: newLines[i],
+					NewNum: newLineNum,
+				})
+			}
+		case 'r':
+			for i := op.I1; i < op.I2; i++ {
+				oldLineNum++
+				deleted++
+				diff.DiffLines = append(diff.DiffLines, models.CellDiffLine{
+					Type: "del", Line: oldLines[i],
+					OldNum: oldLineNum,
+				})
+			}
+			for i := op.J1; i < op.J2; i++ {
+				newLineNum++
+				added++
+				diff.DiffLines = append(diff.DiffLines, models.CellDiffLine{
+					Type: "add", Line: newLines[i],
+					NewNum: newLineNum,
+				})
+			}
+		}
+	}
+
+	if added > 0 || deleted > 0 {
+		diff.Summary = fmt.Sprintf("+%d/-%d lines", added, deleted)
+	}
+	return diff
+}
+
 // computeSnapshotChanges computes the diff between two snapshots.
 func computeSnapshotChanges(prev, curr *models.NotebookSnapshot) *models.SnapshotChanges {
 	if prev == nil || curr == nil {
@@ -247,21 +328,33 @@ func computeSnapshotChanges(prev, curr *models.NotebookSnapshot) *models.Snapsho
 
 	for _, c := range curr.Cells {
 		if _, ok := prevCells[c.ID]; !ok {
-			changes.CellsAdded = append(changes.CellsAdded, c.ID)
+			changes.CellsAdded = append(changes.CellsAdded, models.CellChange{
+				CellID: c.ID, Position: c.Position + 1, Title: c.Title,
+			})
 		} else if prevCells[c.ID].Source != c.Source {
-			changes.CellsModified = append(changes.CellsModified, c.ID)
+			changes.CellsModified = append(changes.CellsModified, models.CellChange{
+				CellID: c.ID, Position: c.Position + 1, Title: c.Title,
+			})
+			diff := computeCellDiff(c.ID, c.Position, c.Title, prevCells[c.ID].Source, c.Source)
+			if len(diff.DiffLines) > 0 {
+				changes.CellDiffs = append(changes.CellDiffs, diff)
+			}
 		}
 	}
 	for _, c := range prev.Cells {
 		if _, ok := currCells[c.ID]; !ok {
-			changes.CellsDeleted = append(changes.CellsDeleted, c.ID)
+			changes.CellsDeleted = append(changes.CellsDeleted, models.CellChange{
+				CellID: c.ID, Position: c.Position + 1, Title: c.Title,
+			})
 		}
 	}
 
 	for id, pos := range currPositions {
 		if prevPos, ok := prevPositions[id]; ok && prevPos != pos {
-			changes.PositionsChanged = true
-			break
+			c := currCells[id]
+			changes.PositionsChanged = append(changes.PositionsChanged, models.CellChange{
+				CellID: c.ID, Position: c.Position + 1, OldPosition: prevPos + 1, Title: c.Title,
+			})
 		}
 	}
 
