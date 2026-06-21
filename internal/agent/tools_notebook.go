@@ -146,6 +146,20 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Description string `json:"description"`
 			Parameters  any    `json:"parameters"`
 		}{
+			Name:        "swap_cells",
+			Description: "Swap the positions of two cells. Useful for reordering — two swaps can move any cell anywhere without needing to understand position cascading.",
+			Parameters:  `{"type":"object","properties":{"cell_id_a":{"type":"string","description":"UUID of the first cell"},"cell_id_b":{"type":"string","description":"UUID of the second cell"}},"required":["cell_id_a","cell_id_b"]}`,
+		},
+		Handler: makeSwapCellsHandler(db),
+		ConfirmRequired: true,
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
 			Name:        "execute_sql",
 			Description: "Run an ad-hoc SQL query on a database connector. Use this to explore data or run quick queries without creating a cell. Returns up to 1000 rows. For SELECT, SHOW, DESCRIBE queries.",
 			Parameters:  `{"type":"object","properties":{"connector_id":{"type":"string","description":"ID of the connector to query"},"query":{"type":"string","description":"The SQL query to execute"},"limit":{"type":"integer","description":"Max rows to return (default 1000)"}},"required":["connector_id","query"]}`,
@@ -699,6 +713,72 @@ func makeMoveCellHandler(db *pgxpool.Pool) ToolHandler {
 		_ = ctx.AuditLog("cell.move", "cell", req.CellID)
 
 		return map[string]any{"cell_id": req.CellID, "position": req.NewPosition, "status": "moved"}, nil
+	}
+}
+
+func makeSwapCellsHandler(db *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			CellA string `json:"cell_id_a"`
+			CellB string `json:"cell_id_b"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if req.CellA == "" || req.CellB == "" {
+			return nil, fmt.Errorf("cell_id_a and cell_id_b are required")
+		}
+		if req.CellA == req.CellB {
+			return nil, fmt.Errorf("cannot swap a cell with itself")
+		}
+
+		notebookID, err := ctx.GetNotebookIDForCell(req.CellA)
+		if err != nil {
+			return nil, fmt.Errorf("get notebook for cell A: %w", err)
+		}
+		nbID2, err := ctx.GetNotebookIDForCell(req.CellB)
+		if err != nil {
+			return nil, fmt.Errorf("get notebook for cell B: %w", err)
+		}
+		if notebookID != nbID2 {
+			return nil, fmt.Errorf("cells must be in the same notebook")
+		}
+		if err := ctx.CheckPermission("notebook", notebookID, "edit"); err != nil {
+			return nil, err
+		}
+
+		tx, err := db.Begin(ctx.Context)
+		if err != nil {
+			return nil, fmt.Errorf("begin tx: %w", err)
+		}
+		defer tx.Rollback(ctx.Context)
+
+		var posA, posB int
+		if err := tx.QueryRow(ctx.Context, `SELECT position FROM cells WHERE id=$1 AND notebook_id=$2`, req.CellA, notebookID).Scan(&posA); err != nil {
+			return nil, fmt.Errorf("get cell A position: %w", err)
+		}
+		if err := tx.QueryRow(ctx.Context, `SELECT position FROM cells WHERE id=$1 AND notebook_id=$2`, req.CellB, notebookID).Scan(&posB); err != nil {
+			return nil, fmt.Errorf("get cell B position: %w", err)
+		}
+
+		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = -(position + 1), updated_at = NOW() WHERE id = $1`, req.CellA); err != nil {
+			return nil, fmt.Errorf("move cell A aside: %w", err)
+		}
+		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = $1, updated_at = NOW() WHERE id = $2`, posA, req.CellB); err != nil {
+			return nil, fmt.Errorf("set cell B position: %w", err)
+		}
+		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = $1, updated_at = NOW() WHERE id = $2`, posB, req.CellA); err != nil {
+			return nil, fmt.Errorf("set cell A position: %w", err)
+		}
+
+		if err := tx.Commit(ctx.Context); err != nil {
+			return nil, fmt.Errorf("commit swap: %w", err)
+		}
+
+		_ = ctx.AuditLog("cell.swap", "cell", req.CellA)
+		_ = ctx.AuditLog("cell.swap", "cell", req.CellB)
+
+		return map[string]any{"cell_id_a": req.CellA, "cell_id_b": req.CellB, "status": "swapped"}, nil
 	}
 }
 
