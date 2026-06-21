@@ -229,8 +229,8 @@ func makeUpdateAgentHandler(pool *pgxpool.Pool) ToolHandler {
 				system_prompt = COALESCE($4, system_prompt),
 				skill_ids = COALESCE($5, skill_ids),
 				updated_at = NOW()
-			WHERE id = $1
-		`, agentID, req.Name, req.Description, req.SystemPrompt, skillIDsJSON)
+			WHERE id = $1 AND org_id = $6
+		`, agentID, req.Name, req.Description, req.SystemPrompt, skillIDsJSON, ctx.OrgID)
 		if err != nil {
 			return nil, fmt.Errorf("update agent: %w", err)
 		}
@@ -345,13 +345,17 @@ func makeUpdateSkillHandler(pool *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
 
+		if err := ctx.CheckPermission("skill", req.SkillID, "edit"); err != nil {
+			return nil, err
+		}
+
 		_, err := pool.Exec(ctx.Context, `
 			UPDATE skills SET
 				name = COALESCE($2, name),
 				system_prompt = COALESCE($3, system_prompt),
 				updated_at = NOW()
-			WHERE id = $1
-		`, req.SkillID, req.Name, req.SystemPrompt)
+			WHERE id = $1 AND org_id = $4
+		`, req.SkillID, req.Name, req.SystemPrompt, ctx.OrgID)
 		if err != nil {
 			return nil, fmt.Errorf("update skill: %w", err)
 		}
