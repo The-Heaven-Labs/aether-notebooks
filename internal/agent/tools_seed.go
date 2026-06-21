@@ -18,6 +18,8 @@ type BuiltinToolDef struct {
 
 var BuiltinTools = []BuiltinToolDef{
 	{Name: "notebook_create_notebook", Description: "Create a new notebook", HandlerName: "create_notebook"},
+	{Name: "notebook_delete_notebook", Description: "Delete a notebook", HandlerName: "delete_notebook"},
+	{Name: "notebook_update_notebook", Description: "Update a notebook", HandlerName: "update_notebook"},
 	{Name: "notebook_read_cells", Description: "Read cells from a notebook", HandlerName: "notebook_read_cells"},
 	{Name: "notebook_create_cell", Description: "Create a new cell", HandlerName: "notebook_create_cell"},
 	{Name: "notebook_update_cell", Description: "Update an existing cell", HandlerName: "notebook_update_cell"},

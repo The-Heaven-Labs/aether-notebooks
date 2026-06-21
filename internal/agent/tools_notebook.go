@@ -35,6 +35,32 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Description string `json:"description"`
 			Parameters  any    `json:"parameters"`
 		}{
+			Name:        "delete_notebook",
+			Description: "Delete a notebook and all its cells. This cannot be undone — use with care.",
+			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string","description":"ID of the notebook to delete"}},"required":["notebook_id"]}`,
+		},
+		Handler: makeDeleteNotebookHandler(db),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "update_notebook",
+			Description: "Update a notebook's title, description, or default connector.",
+			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"connector_id":{"type":"string"}},"required":["notebook_id"]}`,
+		},
+		Handler: makeUpdateNotebookHandler(db),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
 			Name:        "read_cell",
 			Description: "Get a cell's complete information including source, outputs, type, language, connector, and metadata",
 			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"Cell identifier"}},"required":["cell_id"]}`,
@@ -901,6 +927,79 @@ func makeRestoreSnapshotHandler(db *pgxpool.Pool) ToolHandler {
 		}
 
 		return map[string]any{"notebook_id": nbID, "status": "restored"}, nil
+	}
+}
+
+func makeDeleteNotebookHandler(db *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			NotebookID string `json:"notebook_id"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if req.NotebookID == "" {
+			return nil, fmt.Errorf("notebook_id is required")
+		}
+
+		if err := ctx.CheckPermission("notebook", req.NotebookID, "delete"); err != nil {
+			return nil, err
+		}
+
+		// Auto-snapshot before destructive action
+		go EnsureAutoSnapshot(context.Background(), db, req.NotebookID, ctx.UserID)
+
+		result, err := db.Exec(ctx.Context,
+			`DELETE FROM notebooks WHERE id = $1 AND org_id = $2`,
+			req.NotebookID, ctx.OrgID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("delete notebook: %w", err)
+		}
+		if result.RowsAffected() == 0 {
+			return nil, fmt.Errorf("notebook not found")
+		}
+
+		_ = ctx.AuditLog("notebook.delete", "notebook", req.NotebookID)
+
+		return map[string]any{"notebook_id": req.NotebookID, "status": "deleted"}, nil
+	}
+}
+
+func makeUpdateNotebookHandler(db *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			NotebookID   string  `json:"notebook_id"`
+			Title        *string `json:"title"`
+			Description  *string `json:"description"`
+			ConnectorID  *string `json:"connector_id"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if req.NotebookID == "" {
+			return nil, fmt.Errorf("notebook_id is required")
+		}
+
+		if err := ctx.CheckPermission("notebook", req.NotebookID, "edit"); err != nil {
+			return nil, err
+		}
+
+		_, err := db.Exec(ctx.Context, `
+			UPDATE notebooks SET
+				title = COALESCE($2, title),
+				description = COALESCE($3, description),
+				connector_id = COALESCE($4, connector_id),
+				updated_at = NOW()
+			WHERE id = $1 AND org_id = $5
+		`, req.NotebookID, req.Title, req.Description, req.ConnectorID, ctx.OrgID)
+		if err != nil {
+			return nil, fmt.Errorf("update notebook: %w", err)
+		}
+
+		_ = ctx.AuditLog("notebook.update", "notebook", req.NotebookID)
+
+		return map[string]any{"notebook_id": req.NotebookID, "status": "updated"}, nil
 	}
 }
 
