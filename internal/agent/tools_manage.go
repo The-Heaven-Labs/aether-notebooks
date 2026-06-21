@@ -334,14 +334,19 @@ func makeUpdatePermissionsHandler(pool *pgxpool.Pool) ToolHandler {
 
 		for _, e := range req.Entries {
 			actionsJSON, _ := json.Marshal(e.Actions)
-			subjID := e.SubjectID
+			subjType := e.SubjectType
+			var subjID *string
 			if e.SubjectType == "everyone" {
-				subjID = nil
+				subjType = "org_role"
+				s := "everyone"
+				subjID = &s
+			} else {
+				subjID = e.SubjectID
 			}
 			_, err := tx.Exec(ctx.Context, `
 				INSERT INTO acl_entries (resource_type, resource_id, org_id, subject_type, subject_id, actions)
 				VALUES ($1, $2, $3, $4, $5, $6)
-			`, req.ResourceType, req.ResourceID, ctx.OrgID, e.SubjectType, subjID, actionsJSON)
+			`, req.ResourceType, req.ResourceID, ctx.OrgID, subjType, subjID, actionsJSON)
 			if err != nil {
 				return nil, fmt.Errorf("insert entry: %w", err)
 			}
