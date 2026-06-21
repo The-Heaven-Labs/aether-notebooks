@@ -160,13 +160,13 @@ export function getTooltipStyle() {
   }
 }
 
-export function getAxisStyle() {
+export function getAxisStyle(showGrid?: boolean) {
   const c = getChartColors()
   return {
     axisLine: { show: false },
     axisTick: { show: false },
     axisLabel: { fontSize: 11, color: c.textMuted },
-    splitLine: { lineStyle: { color: c.border, type: 'dashed' as const } },
+    splitLine: showGrid !== false ? { lineStyle: { color: c.border, type: 'dashed' as const } } : { show: false },
   }
 }
 
