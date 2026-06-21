@@ -128,7 +128,15 @@ function HierarchyTreeComponent({ data, config }: ChartProps) {
   const bottomMargin = isHorizontal ? '8%' : (hasMetrics ? '30%' : '12%')
 
   const option = useMemo(() => ({
-    tooltip: { show: false },
+    tooltip: {
+      trigger: 'item' as const,
+      formatter: (params: any) => {
+        const name = params.name
+        const val = params.value
+        return val ? `${name}<br/>${val}` : name
+      },
+    },
+    title: config.title ? { text: config.title, left: 'center', textStyle: { fontSize: 14, color: chartColors.text } } : undefined,
     series: [{
       type: 'tree' as const,
       data: treeDataWithState,
@@ -166,7 +174,7 @@ function HierarchyTreeComponent({ data, config }: ChartProps) {
       lineStyle: { color: chartColors.border, width: 1.5, curveness: 0.5 },
       itemStyle: { borderColor: chartColors.bgCard },
     }],
-  }), [treeDataWithState, isHorizontal, horizontalMargin, rightMargin, bottomMargin])
+  }), [treeDataWithState, isHorizontal, horizontalMargin, rightMargin, bottomMargin, config.title])
 
   const height = isHorizontal ? 500 : Math.min(600, 250 + rowCount * (nodeSpacing * 0.6))
 
