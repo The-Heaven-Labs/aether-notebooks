@@ -12,8 +12,8 @@ function ScatterChartComponent({ data, config }: ChartProps) {
     tooltip: { ...getTooltipStyle() },
     legend: config.showLegend !== false && yAxes.length > 1 ? { top: 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
     grid: { top: config.showLegend !== false && yAxes.length > 1 ? 30 : 8, right: 16, bottom: 8, left: 16, containLabel: true },
-    xAxis: { type: 'value' as const, name: xAxis, ...getAxisStyle() },
-    yAxis: { type: 'value' as const, ...getAxisStyle() },
+    xAxis: { type: 'value' as const, name: xAxis, ...getAxisStyle(config.showGrid) },
+    yAxis: { type: 'value' as const, ...getAxisStyle(config.showGrid) },
     series: yAxes.map((y, i) => ({
       name: y,
       type: 'scatter' as const,
@@ -22,7 +22,7 @@ function ScatterChartComponent({ data, config }: ChartProps) {
       itemStyle: { color: config.seriesColors?.[y] ?? CHART_COLORS[i % CHART_COLORS.length], opacity: 0.8 },
       animation: false,
     })),
-  }), [chartData, xAxis, yAxes, config.seriesColors, config.showLegend, colors])
+  }), [chartData, xAxis, yAxes, config.seriesColors, config.showLegend, config.showGrid, colors])
 
   return <EChartsContainer option={option} />
 }
