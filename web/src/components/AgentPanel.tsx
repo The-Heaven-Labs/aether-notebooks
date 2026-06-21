@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Send, Loader2, History, Copy, Check, Square } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { useQueryClient } from '@tanstack/react-query'
 import { api, getToken } from '../api/client'
 import type { Agent, AgentTaskItem, TokenBreakdown, WSMessage } from '../types/agent'
 import { PanelHeader } from './PanelHeader'
@@ -56,9 +57,6 @@ interface AgentPanelProps {
   pageContext?: { type: 'notebook' | 'dashboard' | 'files'; id?: string; title?: string }
   width: number
   onResize: (width: number) => void
-  onCellCreated?: (cellId: string, position: number) => void
-  onCellOutput?: (cellId: string, outputs: Array<{ type: string; data: unknown }>) => void
-  onCellScrollTo?: (cellId: string) => void
   onClose: () => void
   onMinimize?: () => void
   onDock?: () => void
@@ -89,7 +87,7 @@ interface AgentChatState {
   lastMessageId?: string
 }
 
-export function AgentPanel({ notebookId, pageContext, width, onResize, onCellCreated, onCellOutput, onCellScrollTo, onClose, onMinimize, onDock, docked }: AgentPanelProps) {
+export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, onMinimize, onDock, docked }: AgentPanelProps) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
   const [_sessionId, setSessionId] = useState<string | null>(null)
@@ -155,6 +153,23 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onCellCre
   const userScrolledAwayRef = useRef(false)
   const lastScrollTimeRef = useRef(0)
   selectedAgentRef.current = selectedAgent
+
+  const queryClient = useQueryClient()
+
+  const scrollToCell = useCallback((cellId: string) => {
+    let attempts = 0
+    const interval = setInterval(() => {
+      const el = document.getElementById('cell-' + cellId)
+      if (el) {
+        clearInterval(interval)
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        el.classList.add('cell-flash')
+        setTimeout(() => el.classList.remove('cell-flash'), 3000)
+      } else if (++attempts >= 50) {
+        clearInterval(interval)
+      }
+    }, 100)
+  }, [])
 
   useEffect(() => {
     api.get<Agent[]>('/api/v1/agents')
@@ -307,15 +322,27 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onCellCre
           })
           break
         case 'cell_created':
-          onCellCreated?.(msg.cell_id, msg.position)
-          onCellScrollTo?.(msg.cell_id)
+          if (notebookId) {
+            queryClient.invalidateQueries({ queryKey: ['notebook', notebookId] })
+          }
+          scrollToCell(msg.cell_id)
           break
         case 'cell_output':
-          onCellOutput?.(msg.cell_id, msg.outputs)
-          onCellScrollTo?.(msg.cell_id)
+          if (notebookId) {
+            queryClient.setQueryData(['notebook', notebookId], (old: any) => {
+              if (!old) return old
+              return {
+                ...old,
+                cells: old.cells.map((c: any) =>
+                  c.id === msg.cell_id ? { ...c, outputs: msg.outputs as any[] } : c
+                )
+              }
+            })
+          }
+          scrollToCell(msg.cell_id)
           break
         case 'cell_updated':
-          onCellScrollTo?.(msg.cell_id)
+          scrollToCell(msg.cell_id)
           break
         case 'reconnect_sync': {
           // Server caught us up on messages we missed. Replace local state with
@@ -477,7 +504,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onCellCre
       setError('WebSocket connection failed')
       setIsStreaming(false)
     }
-  }, [onCellCreated, onCellScrollTo])
+  }, [notebookId, queryClient, scrollToCell])
 
   const startSession = async (agent: Agent) => {
     try {
