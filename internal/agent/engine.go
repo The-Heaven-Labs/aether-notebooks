@@ -25,6 +25,7 @@ type Engine struct {
 	tokenCounter       *TokenCounter
 	reasoningEffort    sync.Map // sessionID -> string
 	toolConfirmPending sync.Map // sessionID -> chan ToolConfirmResult
+	pageContextMap     sync.Map // sessionID -> map[string]string
 	frontendURL        string
 }
 
@@ -44,6 +45,25 @@ func (e *Engine) GetReasoningEffort(sessionID string) string {
 		}
 	}
 	return ""
+}
+
+type PageContextInfo struct {
+	Type  string
+	ID    string
+	Title string
+}
+
+func (e *Engine) SetPageContext(sessionID string, pc *PageContextInfo) {
+	e.pageContextMap.Store(sessionID, pc)
+}
+
+func (e *Engine) GetPageContext(sessionID string) *PageContextInfo {
+	if v, ok := e.pageContextMap.Load(sessionID); ok {
+		if pc, ok := v.(*PageContextInfo); ok {
+			return pc
+		}
+	}
+	return nil
 }
 
 func (e *Engine) SetToolConfirm(sessionID string, ch chan ToolConfirmResult) {
@@ -343,10 +363,22 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 
 	chatMsgs := make([]ChatMessage, 0)
 	notebookCtx := e.buildNotebookContext(ctx, session.NotebookID)
+	pageContextStr := ""
+	if pc := e.GetPageContext(sessionID); pc != nil {
+		pageContextStr = fmt.Sprintf("\n\nCurrent page: %s", pc.Type)
+		if pc.ID != "" {
+			pageContextStr += fmt.Sprintf(" (id: %s)", pc.ID)
+		}
+		if pc.Title != "" {
+			pageContextStr += fmt.Sprintf(" (title: %q)", pc.Title)
+		}
+		pageContextStr += "\nUse this context to understand what the user is looking at."
+	}
+
 	if systemPrompt != "" {
-		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: systemPrompt + notebookCtx + skillCatalogStr})
+		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: systemPrompt + notebookCtx + skillCatalogStr + pageContextStr})
 	} else {
-		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: notebookCtx + skillCatalogStr})
+		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: notebookCtx + skillCatalogStr + pageContextStr})
 	}
 	for _, m := range messages {
 		if m.Role == "assistant" {
