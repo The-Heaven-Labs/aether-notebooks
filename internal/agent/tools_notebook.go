@@ -369,7 +369,7 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 
 		ctx.EmitCellCreated(cellID, position+1)
 
-		return map[string]any{"cell_id": cellID, "position": position}, nil
+		return map[string]any{"cell_id": cellID, "position": position + 1}, nil
 	}
 }
 
@@ -656,19 +656,35 @@ func makeMoveCellHandler(db *pgxpool.Pool) ToolHandler {
 			return map[string]any{"cell_id": req.CellID, "position": req.NewPosition, "status": "no change"}, nil
 		}
 
-		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = -1 WHERE id = $1`, req.CellID); err != nil {
+		// Move source cell to a negative position that won't collide with the
+		// negative-intermediate shift pattern. -(oldPos+1) is always outside the
+		// range of shifted intermediate values for both increment and decrement.
+		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = $1 WHERE id = $2`,
+			-(oldPos+1), req.CellID); err != nil {
 			return nil, fmt.Errorf("remove cell: %w", err)
 		}
 
 		if newPos > oldPos {
-			if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = position - 1 WHERE notebook_id = $1 AND position > $2 AND position <= $3`,
-				notebookID, oldPos, newPos); err != nil {
+			// Shift cells in (oldPos, newPos] down by 1 using negative-intermediate pattern
+			// decrement: position -> position - 1
+			if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = -(position + 1) WHERE notebook_id = $1 AND position > $2 AND position <= $3 AND id != $4`,
+				notebookID, oldPos, newPos, req.CellID); err != nil {
 				return nil, fmt.Errorf("shift cells down: %w", err)
 			}
+			if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = -position - 2 WHERE notebook_id = $1 AND position < 0 AND id != $2`,
+				notebookID, req.CellID); err != nil {
+				return nil, fmt.Errorf("shift cells down back: %w", err)
+			}
 		} else {
-			if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = position + 1 WHERE notebook_id = $1 AND position >= $2 AND position < $3`,
-				notebookID, newPos, oldPos); err != nil {
+			// Shift cells in [newPos, oldPos) up by 1 using negative-intermediate pattern
+			// increment: position -> position + 1
+			if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = -position - 1 WHERE notebook_id = $1 AND position >= $2 AND position < $3 AND id != $4`,
+				notebookID, newPos, oldPos, req.CellID); err != nil {
 				return nil, fmt.Errorf("shift cells up: %w", err)
+			}
+			if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = -position WHERE notebook_id = $1 AND position < 0 AND id != $2`,
+				notebookID, req.CellID); err != nil {
+				return nil, fmt.Errorf("shift cells up back: %w", err)
 			}
 		}
 
