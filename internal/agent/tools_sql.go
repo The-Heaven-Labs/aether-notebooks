@@ -55,7 +55,7 @@ func executeAgentSQL(ctx context.Context, pool *pgxpool.Pool, connectorID, query
 	var connType string
 	var configEnc []byte
 	err := pool.QueryRow(ctx,
-		`SELECT type, config FROM connectors WHERE id = $1`,
+		`SELECT type, config_encrypted FROM connectors WHERE id = $1`,
 		connectorID).Scan(&connType, &configEnc)
 	if err != nil {
 		return nil, fmt.Errorf("connector not found: %w", err)
@@ -86,4 +86,38 @@ func executeAgentSQL(ctx context.Context, pool *pgxpool.Pool, connectorID, query
 	}
 
 	return result, nil
+}
+
+func makeExecuteSQLHandler(pool *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			ConnectorID string `json:"connector_id"`
+			Query       string `json:"query"`
+			Limit       int    `json:"limit"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if req.ConnectorID == "" {
+			return nil, fmt.Errorf("connector_id is required")
+		}
+		if req.Query == "" {
+			return nil, fmt.Errorf("query is required")
+		}
+
+		if err := ctx.CheckPermission("connector", req.ConnectorID, "use"); err != nil {
+			return nil, err
+		}
+
+		if req.Limit <= 0 {
+			req.Limit = 1000
+		}
+
+		result, err := executeAgentSQL(ctx.Context, pool, req.ConnectorID, req.Query, nil, ctx.MasterKey)
+		if err != nil {
+			return nil, err
+		}
+
+		return result, nil
+	}
 }

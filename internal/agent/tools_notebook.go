@@ -139,6 +139,19 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Description string `json:"description"`
 			Parameters  any    `json:"parameters"`
 		}{
+			Name:        "execute_sql",
+			Description: "Run an ad-hoc SQL query on a database connector. Use this to explore data or run quick queries without creating a cell. Returns up to 1000 rows. For SELECT, SHOW, DESCRIBE queries.",
+			Parameters:  `{"type":"object","properties":{"connector_id":{"type":"string","description":"ID of the connector to query"},"query":{"type":"string","description":"The SQL query to execute"},"limit":{"type":"integer","description":"Max rows to return (default 1000)"}},"required":["connector_id","query"]}`,
+		},
+		Handler: makeExecuteSQLHandler(db),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
 			Name:        "explore_schema",
 			Description: "Explore the database schema for a connector. Returns all tables/indices and their columns with types. Use this to understand what data is available before writing queries.",
 			Parameters:  `{"type":"object","properties":{"connector_id":{"type":"string","description":"ID of the connector to explore"}},"required":["connector_id"]}`,

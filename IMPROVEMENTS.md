@@ -34,4 +34,5 @@
 - [ ] Agent modals (notebook and global) should show current token consumption and it should update as chat goes on
 - [ ] Chat messages should have a hover effect that shows at what time exactly they happened
 - [ ] It should be configurable in the chats (notebook and global) the thinking level/effort for the models. To do this, I think there should be configs for this at the model level
+- [ ] The agent selector uses default OS styling, should be a custom app one
 - [ ]
