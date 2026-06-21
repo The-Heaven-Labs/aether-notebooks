@@ -251,7 +251,7 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId }: { widget: AnyWidg
     )
   }
   const fixedView = widget.type === 'chart' ? 'chart' : 'table'
-  const chartConfig = (cell as any).metadata?.chart as ChartConfig | undefined
+  const chartConfig = ((cell as any).metadata?.chart ?? widget.config) as ChartConfig | undefined
   return <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} />
 }
 

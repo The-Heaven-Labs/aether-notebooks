@@ -66,7 +66,7 @@ function WidgetContent({ widget }: { widget: Widget }) {
     return <div style={widgetContentStyles.empty}>No results yet — run the notebook first</div>
   }
   const fixedView = widget.type === 'chart' ? 'chart' : 'table'
-  const chartConfig = cell.metadata?.chart as ChartConfig | undefined
+  const chartConfig = (cell.metadata?.chart ?? widget.config) as ChartConfig | undefined
   return <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} />
 }
 
