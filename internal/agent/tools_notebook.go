@@ -133,8 +133,8 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "move_cell",
-			Description: "Change a cell's position in the notebook",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (from list_cells output, not the position number)"},"new_position":{"type":"integer"}},"required":["cell_id","new_position"]}`,
+			Description: "Move a cell to a new 1-based position. Cells between the old and new position shift by 1 to make room.",
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (the id field from list_cells, not the position number)"},"new_position":{"type":"integer"}},"required":["cell_id","new_position"]}`,
 		},
 		Handler: makeMoveCellHandler(db),
 		ConfirmRequired: true,
