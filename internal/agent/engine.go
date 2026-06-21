@@ -25,6 +25,7 @@ type Engine struct {
 	tokenCounter       *TokenCounter
 	reasoningEffort    sync.Map // sessionID -> string
 	toolConfirmPending sync.Map // sessionID -> chan ToolConfirmResult
+	frontendURL        string
 }
 
 type ToolConfirmResult struct {
@@ -794,6 +795,10 @@ func (e *Engine) SetToolAllowedDomains(domains []string) {
 	e.toolAllowedDomains = domains
 }
 
+func (e *Engine) SetFrontendURL(u string) {
+	e.frontendURL = u
+}
+
 func (e *Engine) HandleSlashCommand(ctx context.Context, sessionID string, command string, orgID string, masterKey []byte) (any, error) {
 	cmd := strings.TrimSpace(command)
 	switch cmd {
@@ -1052,7 +1057,11 @@ func (e *Engine) buildNotebookContext(ctx context.Context, notebookID string) st
 		return fmt.Sprintf("Current notebook: %s", notebookID)
 	}
 
+	base := e.frontendURL
 	result := fmt.Sprintf("Current notebook: %s (title: %q)", notebookID, title)
+	if base != "" {
+		result = fmt.Sprintf("Current notebook: %s (title: %q, link: %s/notebooks/%s)", notebookID, title, base, notebookID)
+	}
 
 	if connectorID != nil && *connectorID != "" {
 		var connName, connType string
@@ -1076,5 +1085,24 @@ func (e *Engine) buildNotebookContext(ctx context.Context, notebookID string) st
 		result += "\nUse get_notebook_context tool to read full cell contents."
 	}
 
+	// Add resource link patterns
+	result += "\n\nResource link patterns (use these to provide clickable links to the user):"
+	result += "\n- Notebook: " + asLink(base, "/notebooks/{id}")
+	result += "\n- Dashboard editor: " + asLink(base, "/dashboards/{id}")
+	result += "\n- Dashboard view: " + asLink(base, "/dashboards/{id}/view")
+	result += "\n- Folder: " + asLink(base, "/?folder={id}")
+	result += "\n- Connectors list: " + asLink(base, "/connectors")
+	result += "\nWhen a user asks for a link, provide it as a markdown link: [title](full_url). Use the resource IDs from tool results."
+
 	return result
+}
+
+// asLink formats a URL path as a markdown link example for the agent context.
+func asLink(base, path string) string {
+	example := path
+	// Replace the first {param} with a concrete example if base is known
+	if base != "" {
+		return fmt.Sprintf("`%s%s`", base, path)
+	}
+	return fmt.Sprintf("`%s` (relative path, prefix with app hostname)", example)
 }
