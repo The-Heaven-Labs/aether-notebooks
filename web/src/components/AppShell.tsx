@@ -91,10 +91,7 @@ export function AppShell({ children, noPadding }: Props) {
     if (path === '/') return { type: 'files' as const }
     return undefined
   }, [location.pathname])
-  const currentNotebookId = useMemo(() => {
-    const nbMatch = location.pathname.match(/^\/notebooks\/([a-f0-9-]+)/)
-    return nbMatch ? nbMatch[1] : ''
-  }, [location.pathname])
+  const currentNotebookId = currentPageContext?.type === 'notebook' ? (currentPageContext.id ?? '') : ''
   const visibleMotds = motds.filter(m => {
     if (dismissedMotds.has(m.id)) return false
     if (m.visibility === 'specific' && m.pages?.length) {
