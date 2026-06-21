@@ -305,6 +305,31 @@ h1:hover a, h2:hover a, h3:hover a, h4:hover a, h5:hover a, h6:hover a {
 /* border-left is set via CodeMirror theme extension in Cell.tsx
    caret-color is set globally above via .cm-editor */
 
+/* ── Color input (native picker) ────────────────────────────────────────── */
+/* Remove default browser padding around the swatch so background is minimal */
+input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+input[type="color"]::-moz-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+input[type="color"] {
+  background: transparent;
+}
+
+/* Dark mode: color input background */
+[data-theme="dark"] input[type="color"] {
+  background: transparent;
+}
+
 /* Dark mode: light cursor so it's visible on dark background */
 [data-theme="dark"] .cm-editor .cm-cursor,
 [data-theme="dark"] .cm-editor .cm-dropCursor {

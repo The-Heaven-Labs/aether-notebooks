@@ -36,4 +36,4 @@
 - [x] It should be configurable in the chats (notebook and global) the thinking level/effort for the models. To do this, I think there should be configs for this at the model level
 - [x] The agent selector uses default OS styling, should be a custom app one
 - [x] There should be a permissioning system for potential problematic (not read-only) tool calls, e.g., the first time a tool is called, the user should be asked if want to proceed. Also, there should be a toggle to accept all by default (current behavior). Read-only tool calls should be accepted by default.
-- [x]
+- [x] In dark theme, for chart configs of charts that have lots of series, the background of the color is light, and also the color picker also is light-themed

@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useCallback } from 'react'
 import * as echarts from 'echarts/core'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, useRowsAsObjects } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, useRowsAsObjects, ChartTypeSelect } from './common'
 import { ConfigHint } from './ConfigHint'
 
 const WORLD_GEO_URL = 'https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json'
@@ -151,6 +151,10 @@ function MapChartComponent({ data, config }: ChartProps) {
 function MapConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
   return (
     <div style={styles.panel}>
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Chart type</div>
+        <ChartTypeSelect value={config.chartType ?? 'map'} onChange={v => onChange({ ...config, chartType: v as any })} />
+      </div>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Latitude column</div>
         <select
