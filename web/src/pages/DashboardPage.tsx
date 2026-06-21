@@ -424,7 +424,7 @@ function DashboardContent({ id }: { id: string }) {
   const dataWidgets = widgets.filter((w) => !INPUT_WIDGET_TYPES.has(w.type))
 
   return (
-    <AppShell>
+    <AppShell noPadding>
       {/* Sub-header */}
       <header style={styles.subHeader}>
         <div style={styles.headerLeft}>
@@ -582,16 +582,15 @@ const styles: Record<string, React.CSSProperties> = {
   subHeader: {
     background: 'var(--nav-bg)',
     borderBottom: '1px solid var(--nav-border)',
-    height: 52,
+    height: 44,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '0 24px',
+    padding: '0 12px',
     flexShrink: 0,
     position: 'sticky',
-    top: -32,
+    top: 0,
     zIndex: 99,
-    margin: '-32px -32px 0',
   },
   headerLeft: {
     display: 'flex',
