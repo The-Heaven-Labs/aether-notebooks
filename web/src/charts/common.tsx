@@ -3,7 +3,7 @@ import { memo, useRef, useEffect, useMemo } from 'react'
 import * as echarts from 'echarts/core'
 import { BarChart, LineChart, ScatterChart, PieChart, TreeChart, MapChart, SankeyChart } from 'echarts/charts'
 import {
-  GridComponent, TooltipComponent, LegendComponent,
+  GridComponent, TooltipComponent, LegendComponent, TitleComponent,
   DataZoomComponent, ToolboxComponent, GeoComponent,
   VisualMapComponent,
 } from 'echarts/components'
@@ -13,7 +13,7 @@ import type { ResultSet } from '../types'
 // Register only what we use
 echarts.use([
   BarChart, LineChart, ScatterChart, PieChart, TreeChart, MapChart, SankeyChart,
-  GridComponent, TooltipComponent, LegendComponent,
+  GridComponent, TooltipComponent, LegendComponent, TitleComponent,
   DataZoomComponent, ToolboxComponent, GeoComponent,
   VisualMapComponent,
   CanvasRenderer,
