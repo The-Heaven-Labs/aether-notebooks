@@ -61,26 +61,39 @@ interface AgentPanelProps {
   onCellScrollTo?: (cellId: string) => void
   onClose: () => void
   onMinimize?: () => void
+  onDock?: () => void
+  docked?: boolean
 }
 
 const WS_URL = (import.meta.env.VITE_WS_URL || 'ws://localhost:8080') + '/api/v1/ws/agents/'
 const LAST_AGENT_KEY = 'hnb:lastAgentId'
 const CHAT_STATE_KEY = 'hnb:agentChat:'
 
+interface ChatMessage {
+  id?: string
+  role: string
+  content: string
+  reasoning?: string
+  params?: string
+  result?: string
+  created_at?: string
+}
+
 interface AgentChatState {
   agentId: string
   sessionId: string
-  messages: Array<{ role: string; content: string; reasoning?: string; params?: string; result?: string; created_at?: string }>
+  messages: ChatMessage[]
   tasks?: AgentTaskItem[]
   totalTokens?: TokenBreakdown
   contextWindow?: number
+  lastMessageId?: string
 }
 
-export function AgentPanel({ notebookId, pageContext, width, onResize, onCellCreated, onCellOutput, onCellScrollTo, onClose, onMinimize }: AgentPanelProps) {
+export function AgentPanel({ notebookId, pageContext, width, onResize, onCellCreated, onCellOutput, onCellScrollTo, onClose, onMinimize, onDock, docked }: AgentPanelProps) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
   const [_sessionId, setSessionId] = useState<string | null>(null)
-  const [messages, setMessages] = useState<Array<{ role: string; content: string; reasoning?: string; params?: string; result?: string; created_at?: string }>>([])
+  const [messages, setMessages] = useState<ChatMessage[]>([])
   const chatStateKey = CHAT_STATE_KEY + (notebookId || '__global__')
   const [tasks, setTasks] = useState<AgentTaskItem[]>([])
   const [sessionTitle, setSessionTitle] = useState<string | null>(null)
@@ -140,6 +153,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onCellCre
   const panelRef = useRef<HTMLDivElement>(null)
   const selectedAgentRef = useRef<Agent | null>(null)
   const userScrolledAwayRef = useRef(false)
+  const lastScrollTimeRef = useRef(0)
   selectedAgentRef.current = selectedAgent
 
   useEffect(() => {
@@ -211,9 +225,10 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onCellCre
     return null
   }
 
-  const saveChatState = (agentId: string, sessionId: string, msgs: Array<{ role: string; content: string; reasoning?: string; params?: string; result?: string; created_at?: string }>, tks?: AgentTaskItem[], tok?: TokenBreakdown, cw?: number) => {
+  const saveChatState = (agentId: string, sessionId: string, msgs: ChatMessage[], tks?: AgentTaskItem[], tok?: TokenBreakdown, cw?: number) => {
     try {
-      localStorage.setItem(chatStateKey, JSON.stringify({ agentId, sessionId, messages: msgs, tasks: tks, totalTokens: tok, contextWindow: cw }))
+      const lastId = msgs.length > 0 ? msgs[msgs.length - 1].id : undefined
+      localStorage.setItem(chatStateKey, JSON.stringify({ agentId, sessionId, messages: msgs, tasks: tks, totalTokens: tok, contextWindow: cw, lastMessageId: lastId }))
     } catch { /* ignore */ }
   }
 
@@ -241,6 +256,12 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onCellCre
           page_context: { type: pageContext.type, id: pageContext.id || '', title: pageContext.title || '' },
         }))
       }
+      // Fetch DB-completed messages we may have missed while disconnected
+      // (page navigation mid-stream). last_message_id filters out messages
+      // we already know about; empty string returns everything.
+      const savedState = loadChatState()
+      const lastId = savedState?.lastMessageId || ''
+      ws.send(JSON.stringify({ type: 'reconnect', last_message_id: lastId }))
     }
 
     ws.onmessage = (event) => {
@@ -248,6 +269,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onCellCre
 
       switch (msg.type) {
         case 'token':
+          setIsStreaming(true)
           setCurrentStreamingText((prev) => {
             const next = prev + msg.data
             streamingTextRef.current = next
@@ -255,6 +277,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onCellCre
           })
           break
         case 'reasoning':
+          setIsStreaming(true)
           appendStreamingReasoning(msg.data)
           break
         case 'tool_call':
@@ -294,6 +317,29 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onCellCre
         case 'cell_updated':
           onCellScrollTo?.(msg.cell_id)
           break
+        case 'reconnect_sync': {
+          // Server caught us up on messages we missed. Replace local state with
+          // the DB's authoritative version, then clear any in-flight streaming
+          // text so the buffer catch-up's done event doesn't create a duplicate.
+          const serverMsgs: ChatMessage[] = msg.messages.map((m: { id: string; role: string; content?: string; tool_calls?: Array<{ name: string; arguments: unknown; result?: unknown }>; created_at: string }) => {
+            const base: ChatMessage = { id: m.id, role: m.role, content: m.content || '', created_at: m.created_at }
+            if (m.tool_calls?.length) {
+              const tc = m.tool_calls[0]
+              base.content = tc.name
+              base.params = JSON.stringify(tc.arguments)
+              base.result = tc.result !== undefined ? JSON.stringify(tc.result) : undefined
+              base.role = 'tool'
+            }
+            return base
+          })
+          if (serverMsgs.length > 0) {
+            setMessages(serverMsgs)
+          }
+          streamingTextRef.current = ''
+          setCurrentStreamingText('')
+          setIsStreaming(false)
+          break
+        }
         case 'done': {
           setIsStreaming(false)
           updateStreamingReasoning('')
@@ -562,26 +608,39 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onCellCre
     }
   }
 
-  useEffect(() => {
-    const el = messageListRef.current
-    if (!el) return
-    const onScroll = () => {
-      userScrolledAwayRef.current = el.scrollHeight - el.scrollTop - el.clientHeight > 80
+  const scrollHandlerRef = useRef<((e: Event) => void) | null>(null)
+  const scrollRefCb = useCallback((el: HTMLDivElement | null) => {
+    if (messageListRef.current && scrollHandlerRef.current) {
+      messageListRef.current.removeEventListener('scroll', scrollHandlerRef.current)
     }
-    el.addEventListener('scroll', onScroll, { passive: true })
-    return () => el.removeEventListener('scroll', onScroll)
+    messageListRef.current = el
+    if (el) {
+      const handler = () => {
+        userScrolledAwayRef.current = el.scrollHeight - el.scrollTop - el.clientHeight > 80
+        lastScrollTimeRef.current = Date.now()
+      }
+      scrollHandlerRef.current = handler
+      el.addEventListener('scroll', handler, { passive: true })
+    } else {
+      scrollHandlerRef.current = null
+    }
   }, [])
 
   useEffect(() => {
     const el = messageListRef.current
-    if (el && !userScrolledAwayRef.current) {
-      el.scrollTop = el.scrollHeight
-    }
+    if (!el || userScrolledAwayRef.current) return
+    if (Date.now() - lastScrollTimeRef.current < 200) return
+    el.scrollTop = el.scrollHeight
   }, [messages, currentStreamingText, currentStreamingReasoning])
 
   useEffect(() => {
     if (_sessionId && selectedAgent && messages.length > 0) {
       saveChatState(selectedAgent.id, _sessionId, messages, tasks, totalTokens || undefined, contextWindow)
+    }
+    return () => {
+      if (_sessionId && selectedAgent) {
+        saveChatState(selectedAgent.id, _sessionId, messages, tasks, totalTokens || undefined, contextWindow)
+      }
     }
   }, [messages, tasks, _sessionId, selectedAgent])
 
@@ -671,6 +730,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onCellCre
         title={sessionTitle || (selectedAgent ? selectedAgent.name : 'AI Agent')}
         onClose={onClose}
         onMinimize={onMinimize}
+        onDock={onDock}
+        docked={docked}
         closeTitle="Close agent panel"
         style={{ borderBottom: '1px solid var(--border)', flexShrink: 0 }}
       />
@@ -906,7 +967,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onCellCre
 
           <TaskList tasks={tasks} />
 
-          <div ref={messageListRef} style={styles.messageList}>
+          <div ref={scrollRefCb} style={styles.messageList}>
             {messages.length === 0 && (
               <div style={styles.emptyState}>
                 {notebookId
@@ -1240,6 +1301,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     gap: 12,
+    overflowAnchor: 'auto' as const,
   },
   emptyState: {
     flex: 1,

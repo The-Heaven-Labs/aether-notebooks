@@ -168,6 +168,11 @@ func (s *SessionStore) GetMessagesWithLimit(ctx context.Context, sessionID strin
 	return messages, nil
 }
 
+func (s *SessionStore) DeleteSession(ctx context.Context, sessionID string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM agent_sessions WHERE id = $1`, sessionID)
+	return err
+}
+
 func (s *SessionStore) UpdateTitle(ctx context.Context, sessionID string, title *string) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE agent_sessions SET title = $1 WHERE id = $2
