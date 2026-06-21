@@ -27,6 +27,7 @@ type Engine struct {
 	toolConfirmPending sync.Map // sessionID -> chan ToolConfirmResult
 	pageContextMap     sync.Map // sessionID -> map[string]string
 	frontendURL        string
+	streams            *StreamManager
 }
 
 type ToolConfirmResult struct {
@@ -86,6 +87,7 @@ func NewEngine(ctx context.Context, pool *pgxpool.Pool) *Engine {
 		session:      NewSessionStore(pool),
 		pool:         pool,
 		tokenCounter: NewTokenCounter(),
+		streams:      NewStreamManager(),
 	}
 
 	RegisterNotebookTools(engine.registry, pool)
@@ -163,7 +165,7 @@ func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsg
 	return compacted
 }
 
-func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, tools []*ToolDef, masterKey []byte, onToken func(string), onReasoning func(string), onToolCall func(string, string, string), onToolResult func(string, string, string, string), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, *TokenBreakdown, error) {
+func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, tools []*ToolDef, masterKey []byte, capturedPageContext *PageContextInfo, onToken func(string), onReasoning func(string), onToolCall func(string, string, string), onToolResult func(string, string, string, string), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, *TokenBreakdown, error) {
 	var events []EngineEvent
 	slog.Debug("engine: ProcessMessage start", "session_id", sessionID, "msg_len", len(userMessage))
 	session, err := e.session.GetSession(ctx, sessionID)
@@ -364,7 +366,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	chatMsgs := make([]ChatMessage, 0)
 	notebookCtx := e.buildNotebookContext(ctx, session.NotebookID)
 	pageContextStr := ""
-	if pc := e.GetPageContext(sessionID); pc != nil {
+	pc := capturedPageContext
+	if pc == nil {
+		pc = e.GetPageContext(sessionID)
+	}
+	if pc != nil {
 		pageContextStr = fmt.Sprintf("\n\nCurrent page: %s", pc.Type)
 		if pc.ID != "" {
 			pageContextStr += fmt.Sprintf(" (id: %s)", pc.ID)
@@ -827,6 +833,14 @@ func (e *Engine) SetToolAllowedDomains(domains []string) {
 	e.toolAllowedDomains = domains
 }
 
+func (e *Engine) PublishSessionEvent(sessionID string, msg any) {
+	e.streams.Publish(sessionID, msg)
+}
+
+func (e *Engine) SubscribeSession(sessionID string, bufSize int, skipBuffer bool) (chan any, func()) {
+	return e.streams.Subscribe(sessionID, bufSize, skipBuffer)
+}
+
 func (e *Engine) SetFrontendURL(u string) {
 	e.frontendURL = u
 }
@@ -839,6 +853,9 @@ func (e *Engine) HandleSlashCommand(ctx context.Context, sessionID string, comma
 	case "agents":
 		return e.listAgents(ctx, orgID)
 	case "new":
+		if count, err := e.session.GetMessageCount(ctx, sessionID); err == nil && count == 0 {
+			e.session.DeleteSession(ctx, sessionID)
+		}
 		return map[string]string{"session_id": sessionID}, nil
 	case "summarize":
 		return e.summarizeAndNewSession(ctx, sessionID, masterKey)

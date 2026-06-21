@@ -555,7 +555,9 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 
 func makeListCellsHandler(db *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
-		var req struct{ NotebookID string }
+		var req struct {
+			NotebookID string `json:"notebook_id"`
+		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
@@ -650,18 +652,24 @@ func makeMoveCellHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("get cell position: %w", err)
 		}
 
+		if newPos == oldPos {
+			return map[string]any{"cell_id": req.CellID, "position": req.NewPosition, "status": "no change"}, nil
+		}
+
+		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = -1 WHERE id = $1`, req.CellID); err != nil {
+			return nil, fmt.Errorf("remove cell: %w", err)
+		}
+
 		if newPos > oldPos {
 			if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = position - 1 WHERE notebook_id = $1 AND position > $2 AND position <= $3`,
 				notebookID, oldPos, newPos); err != nil {
 				return nil, fmt.Errorf("shift cells down: %w", err)
 			}
-		} else if newPos < oldPos {
+		} else {
 			if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = position + 1 WHERE notebook_id = $1 AND position >= $2 AND position < $3`,
 				notebookID, newPos, oldPos); err != nil {
 				return nil, fmt.Errorf("shift cells up: %w", err)
 			}
-		} else {
-			return map[string]any{"cell_id": req.CellID, "position": req.NewPosition, "status": "no change"}, nil
 		}
 
 		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = $1, updated_at = NOW() WHERE id = $2`, newPos, req.CellID); err != nil {
