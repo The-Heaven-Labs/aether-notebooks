@@ -297,7 +297,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	}
 
 	chatMsgs := make([]ChatMessage, 0)
-	notebookCtx := e.buildNotebookContext(session.NotebookID)
+	notebookCtx := e.buildNotebookContext(ctx, session.NotebookID)
 	if systemPrompt != "" {
 		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: systemPrompt + notebookCtx + skillCatalogStr})
 	} else {
@@ -873,43 +873,43 @@ func chunk(s string, size int, fn func(string)) {
 
 // buildNotebookContext fetches notebook and connector info to build a context string
 // that tells the agent what it's working with.
-func (e *Engine) buildNotebookContext(notebookID string) string {
+func (e *Engine) buildNotebookContext(ctx context.Context, notebookID string) string {
 	if notebookID == "" {
 		return "No notebook selected."
 	}
 
 	var title string
 	var connectorID *string
-	err := e.pool.QueryRow(context.Background(),
+	err := e.pool.QueryRow(ctx,
 		`SELECT title, connector_id FROM notebooks WHERE id = $1`, notebookID).
 		Scan(&title, &connectorID)
 	if err != nil {
 		return fmt.Sprintf("Current notebook: %s", notebookID)
 	}
 
-	ctx := fmt.Sprintf("Current notebook: %s (title: %q)", notebookID, title)
+	result := fmt.Sprintf("Current notebook: %s (title: %q)", notebookID, title)
 
 	if connectorID != nil && *connectorID != "" {
 		var connName, connType string
-		err := e.pool.QueryRow(context.Background(),
+		err := e.pool.QueryRow(ctx,
 			`SELECT name, type FROM connectors WHERE id = $1`, *connectorID).
 			Scan(&connName, &connType)
 		if err == nil {
-			ctx += fmt.Sprintf("\nConnector: %q (type: %s, id: %s)", connName, connType, *connectorID)
-			ctx += "\nNotebook cells: type 'code' with language 'sql' for database queries, type 'text' with language 'markdown' for documentation."
-			ctx += "\nCharts: Use create_chart to turn a cell's table output into a chart. Types: bar, stacked_bar, line, area, scatter, pie, donut, timeline, hierarchy_tree. For timeline: use time_column, end_time_column (optional), label_column. For hierarchy_tree: use id_column, parent_id_column, label_column. Use update_chart to modify an existing chart's config. The frontend renders automatically from saved config."
+			result += fmt.Sprintf("\nConnector: %q (type: %s, id: %s)", connName, connType, *connectorID)
+			result += "\nNotebook cells: type 'code' with language 'sql' for database queries, type 'text' with language 'markdown' for documentation."
+			result += "\nCharts: Use create_chart to turn a cell's table output into a chart. Types: bar, stacked_bar, line, area, scatter, pie, donut, timeline, hierarchy_tree. For timeline: use time_column, end_time_column (optional), label_column. For hierarchy_tree: use id_column, parent_id_column, label_column. Use update_chart to modify an existing chart's config. The frontend renders automatically from saved config."
 		}
 	}
 
 	// Add cell count information
 	var cellCount int
 	var codeCellCount int
-	e.pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM cells WHERE notebook_id = $1`, notebookID).Scan(&cellCount)
-	e.pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM cells WHERE notebook_id = $1 AND type = 'code'`, notebookID).Scan(&codeCellCount)
+	e.pool.QueryRow(ctx, `SELECT COUNT(*) FROM cells WHERE notebook_id = $1`, notebookID).Scan(&cellCount)
+	e.pool.QueryRow(ctx, `SELECT COUNT(*) FROM cells WHERE notebook_id = $1 AND type = 'code'`, notebookID).Scan(&codeCellCount)
 	if cellCount > 0 {
-		ctx += fmt.Sprintf("\nCells: %d total (code: %d)", cellCount, codeCellCount)
-		ctx += "\nUse get_notebook_context tool to read full cell contents."
+		result += fmt.Sprintf("\nCells: %d total (code: %d)", cellCount, codeCellCount)
+		result += "\nUse get_notebook_context tool to read full cell contents."
 	}
 
-	return ctx
+	return result
 }
