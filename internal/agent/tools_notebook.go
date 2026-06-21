@@ -585,17 +585,42 @@ func makeMoveCellHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, err
 		}
 
-		if req.NewPosition > 0 {
-			req.NewPosition = req.NewPosition - 1
+		if req.NewPosition <= 0 {
+			return nil, fmt.Errorf("new_position must be >= 1")
 		}
-		_, err = db.Exec(ctx.Context, `UPDATE cells SET position = $1, updated_at = NOW() WHERE id = $2`, req.NewPosition, req.CellID)
+		newPos := req.NewPosition - 1
+
+		tx, err := db.Begin(ctx.Context)
 		if err != nil {
-			return nil, fmt.Errorf("move cell: %w", err)
+			return nil, fmt.Errorf("begin tx: %w", err)
+		}
+		defer tx.Rollback(ctx.Context)
+
+		var oldPos int
+		if err := tx.QueryRow(ctx.Context, `SELECT position FROM cells WHERE id=$1 AND notebook_id=$2`,
+			req.CellID, notebookID).Scan(&oldPos); err != nil {
+			return nil, fmt.Errorf("get cell position: %w", err)
+		}
+
+		if newPos > oldPos {
+			tx.Exec(ctx.Context, `UPDATE cells SET position = position - 1 WHERE notebook_id = $1 AND position > $2 AND position <= $3`,
+				notebookID, oldPos, newPos)
+		} else if newPos < oldPos {
+			tx.Exec(ctx.Context, `UPDATE cells SET position = position + 1 WHERE notebook_id = $1 AND position >= $2 AND position < $3`,
+				notebookID, newPos, oldPos)
+		} else {
+			return map[string]any{"cell_id": req.CellID, "position": req.NewPosition, "status": "no change"}, nil
+		}
+
+		tx.Exec(ctx.Context, `UPDATE cells SET position = $1, updated_at = NOW() WHERE id = $2`, newPos, req.CellID)
+
+		if err := tx.Commit(ctx.Context); err != nil {
+			return nil, fmt.Errorf("commit move: %w", err)
 		}
 
 		_ = ctx.AuditLog("cell.move", "cell", req.CellID)
 
-		return map[string]any{"cell_id": req.CellID, "position": req.NewPosition + 1}, nil
+		return map[string]any{"cell_id": req.CellID, "position": req.NewPosition, "status": "moved"}, nil
 	}
 }
 
