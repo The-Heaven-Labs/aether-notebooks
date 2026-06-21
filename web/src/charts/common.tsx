@@ -166,7 +166,7 @@ export function getAxisStyle(showGrid?: boolean) {
     axisLine: { show: false },
     axisTick: { show: false },
     axisLabel: { fontSize: 11, color: c.textMuted },
-    splitLine: showGrid !== false ? { lineStyle: { color: c.border, type: 'dashed' as const } } : { show: false },
+    splitLine: { show: showGrid !== false, lineStyle: { color: c.border, type: 'dashed' as const } },
   }
 }
 
