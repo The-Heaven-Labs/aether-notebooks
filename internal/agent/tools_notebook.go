@@ -106,8 +106,8 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "run_cell",
-			Description: "Execute a code cell's SQL query against the database connector. Only works on cells with type 'code' and language 'sql'. Returns tabular results. Use for SELECT, SHOW, DESCRIBE queries.",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (from list_cells output, not the position number)"}},"required":["cell_id"]}`,
+			Description: "Execute a code cell's SQL query against the database connector. Only works on cells with type 'code' and language 'sql'. Returns tabular results. Skips re-running if cell already has results (use force=true to override). Use for SELECT, SHOW, DESCRIBE queries.",
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (from list_cells output, not the position number)"},"force":{"type":"boolean","description":"Set to true to re-run even if the cell already has results"}},"required":["cell_id"]}`,
 		},
 		Handler: makeRunCellHandler(db),
 		ConfirmRequired: true,
@@ -442,6 +442,7 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
 			CellID string `json:"cell_id"`
+			Force  bool   `json:"force"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -453,6 +454,15 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 		}
 		if err := ctx.CheckPermission("notebook", notebookID, "run"); err != nil {
 			return nil, err
+		}
+
+		// Check if cell already has results
+		if !req.Force {
+			var hasOutputs bool
+			db.QueryRow(ctx.Context, `SELECT outputs IS NOT NULL AND outputs != '[]'::jsonb FROM cells WHERE id = $1`, req.CellID).Scan(&hasOutputs)
+			if hasOutputs {
+				return map[string]any{"cell_id": req.CellID, "status": "skipped", "reason": "cell already has results, use force=true to re-run"}, nil
+			}
 		}
 
 		var cell struct {

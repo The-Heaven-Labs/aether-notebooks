@@ -51,6 +51,19 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 		Handler: makeDeleteDashboardHandler(pool),
 	})
 
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "create_dashboard_widget",
+			Description: "Add a widget (chart/table from a notebook cell) to a dashboard. Requires the dashboard ID, notebook ID, cell ID, and layout position. The widget embeds the cell's output.",
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"notebook_id":{"type":"string"},"cell_id":{"type":"string"},"type":{"type":"string","enum":["chart","table","metric","text"],"description":"Widget type — use 'chart' for cells with chart config, 'table' for table output"},"row":{"type":"number","description":"Row position (0-based)"},"col":{"type":"number","description":"Column position (0-based)"},"width":{"type":"number","description":"Widget width in columns (default 6)"},"height":{"type":"number","description":"Widget height in rows (default 4)"}},"required":["dashboard_id","notebook_id","cell_id","type"]}`,
+		},
+		Handler: makeCreateDashboardWidgetHandler(pool),
+	})
+
 	// Schedule tools
 	reg.Register(&ToolDef{
 		Function: struct {
@@ -163,6 +176,59 @@ func makeCreateDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 
 		_ = ctx.AuditLog("dashboard.create", "dashboard", id)
 		return map[string]any{"dashboard_id": id, "title": req.Title}, nil
+	}
+}
+
+func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			DashboardID string `json:"dashboard_id"`
+			NotebookID  string `json:"notebook_id"`
+			CellID      string `json:"cell_id"`
+			Type        string `json:"type"`
+			Row         int    `json:"row"`
+			Col         int    `json:"col"`
+			Width       int    `json:"width"`
+			Height      int    `json:"height"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if req.Width == 0 {
+			req.Width = 6
+		}
+		if req.Height == 0 {
+			req.Height = 4
+		}
+
+		// Check permission on the dashboard
+		if err := ctx.CheckPermission("dashboard", req.DashboardID, "edit"); err != nil {
+			return nil, err
+		}
+
+		// Check notebook permissions
+		if err := ctx.CheckPermission("notebook", req.NotebookID, "view"); err != nil {
+			return nil, err
+		}
+
+		layoutJSON, _ := json.Marshal(map[string]any{
+			"row":    req.Row,
+			"col":    req.Col,
+			"width":  req.Width,
+			"height": req.Height,
+		})
+
+		id := uuid.New().String()
+		now := time.Now()
+		if _, err := pool.Exec(ctx.Context, `
+			INSERT INTO widgets (id, dashboard_id, notebook_id, cell_id, type, layout, config, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, '{}', $7, $7)
+		`, id, req.DashboardID, req.NotebookID, req.CellID, req.Type, layoutJSON, now); err != nil {
+			return nil, fmt.Errorf("create widget: %w", err)
+		}
+
+		_ = ctx.AuditLog("dashboard.add_widget", "dashboard", req.DashboardID)
+		return map[string]any{"widget_id": id}, nil
 	}
 }
 
