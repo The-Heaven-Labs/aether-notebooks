@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -566,13 +567,16 @@ func makeListCellsHandler(db *pgxpool.Pool) ToolHandler {
 				Position int     `json:"position"`
 			}
 			if err := rows.Scan(&c.ID, &c.Type, &c.Language, &c.Title, &c.Position); err != nil {
-				continue
+				return nil, fmt.Errorf("scan cell: %w", err)
 			}
 			title := ""
 			if c.Title != nil {
 				title = *c.Title
 			}
 			cells = append(cells, map[string]any{"id": c.ID, "type": c.Type, "language": c.Language, "title": title, "position": c.Position + 1})
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("list cells iter: %w", err)
 		}
 
 		return map[string]any{"cells": cells, "count": len(cells)}, nil
@@ -615,16 +619,22 @@ func makeMoveCellHandler(db *pgxpool.Pool) ToolHandler {
 		}
 
 		if newPos > oldPos {
-			tx.Exec(ctx.Context, `UPDATE cells SET position = position - 1 WHERE notebook_id = $1 AND position > $2 AND position <= $3`,
-				notebookID, oldPos, newPos)
+			if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = position - 1 WHERE notebook_id = $1 AND position > $2 AND position <= $3`,
+				notebookID, oldPos, newPos); err != nil {
+				return nil, fmt.Errorf("shift cells down: %w", err)
+			}
 		} else if newPos < oldPos {
-			tx.Exec(ctx.Context, `UPDATE cells SET position = position + 1 WHERE notebook_id = $1 AND position >= $2 AND position < $3`,
-				notebookID, newPos, oldPos)
+			if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = position + 1 WHERE notebook_id = $1 AND position >= $2 AND position < $3`,
+				notebookID, newPos, oldPos); err != nil {
+				return nil, fmt.Errorf("shift cells up: %w", err)
+			}
 		} else {
 			return map[string]any{"cell_id": req.CellID, "position": req.NewPosition, "status": "no change"}, nil
 		}
 
-		tx.Exec(ctx.Context, `UPDATE cells SET position = $1, updated_at = NOW() WHERE id = $2`, newPos, req.CellID)
+		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = $1, updated_at = NOW() WHERE id = $2`, newPos, req.CellID); err != nil {
+			return nil, fmt.Errorf("set cell position: %w", err)
+		}
 
 		if err := tx.Commit(ctx.Context); err != nil {
 			return nil, fmt.Errorf("commit move: %w", err)
@@ -748,7 +758,9 @@ func makeDeleteCellHandler(db *pgxpool.Pool) ToolHandler {
 		}
 
 		// Touch notebook timestamp
-		db.Exec(ctx.Context, `UPDATE notebooks SET updated_at = NOW() WHERE id = $1`, notebookID)
+		if _, err := db.Exec(ctx.Context, `UPDATE notebooks SET updated_at = NOW() WHERE id = $1`, notebookID); err != nil {
+			slog.Warn("touch notebook timestamp", "error", err)
+		}
 
 		_ = ctx.AuditLog("cell.delete", "cell", req.CellID)
 
@@ -815,7 +827,7 @@ func makeGetNotebookContextHandler(db *pgxpool.Pool) ToolHandler {
 			var id, cellType, lang, source string
 			var pos int
 			if err := rows.Scan(&id, &cellType, &lang, &source, &pos); err != nil {
-				continue
+				return nil, fmt.Errorf("scan cell: %w", err)
 			}
 
 			result.WriteString(fmt.Sprintf("--- Cell %d (%s, %s) ---\n", cellNum, cellType, lang))
@@ -825,10 +837,15 @@ func makeGetNotebookContextHandler(db *pgxpool.Pool) ToolHandler {
 				result.WriteString(source + "\n\n")
 			}
 		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("list cells iter: %w", err)
+		}
 
 		// Check if there are more cells
 		var totalCount int
-		db.QueryRow(ctx.Context, `SELECT COUNT(*) FROM cells WHERE notebook_id = $1`, params.NotebookID).Scan(&totalCount)
+		if err := db.QueryRow(ctx.Context, `SELECT COUNT(*) FROM cells WHERE notebook_id = $1`, params.NotebookID).Scan(&totalCount); err != nil {
+			slog.Warn("count cells", "error", err)
+		}
 		if totalCount > params.MaxCells {
 			result.WriteString(fmt.Sprintf("\n... and %d more cells (truncated)\n", totalCount-params.MaxCells))
 		}
@@ -880,7 +897,9 @@ func makeListSnapshotsHandler(db *pgxpool.Pool) ToolHandler {
 		var req struct {
 			NotebookID string `json:"notebook_id"`
 		}
-		json.Unmarshal(args, &req)
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
 		if req.NotebookID == "" {
 			req.NotebookID = ctx.NotebookID
 		}
@@ -913,7 +932,7 @@ func makeListSnapshotsHandler(db *pgxpool.Pool) ToolHandler {
 			var uID, uName, uEmail *string
 			if err := rows.Scan(&id, &name, &title, &createdByName, &createdAt, &auto,
 				&uID, &uName, &uEmail); err != nil {
-				continue
+				return nil, fmt.Errorf("scan snapshot: %w", err)
 			}
 			userName := createdByName
 			if uName != nil && *uName != "" {
@@ -927,6 +946,9 @@ func makeListSnapshotsHandler(db *pgxpool.Pool) ToolHandler {
 				"created_at": createdAt.Format(time.RFC3339),
 				"auto":       auto,
 			})
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("list snapshots iter: %w", err)
 		}
 		if snapshots == nil {
 			snapshots = []map[string]any{}
@@ -1088,7 +1110,9 @@ func makeCreateNotebookHandler(db *pgxpool.Pool) ToolHandler {
 		if err := db.QueryRow(ctx.Context,
 			`SELECT id FROM connectors WHERE org_id=$1 AND is_default=true LIMIT 1`, ctx.OrgID,
 		).Scan(&defaultID); err == nil {
-			db.Exec(ctx.Context, `UPDATE notebooks SET connector_id=$1 WHERE id=$2`, defaultID, id)
+			if _, err := db.Exec(ctx.Context, `UPDATE notebooks SET connector_id=$1 WHERE id=$2`, defaultID, id); err != nil {
+				slog.Warn("set default connector", "notebook_id", id, "error", err)
+			}
 		}
 
 		_ = ctx.AuditLog("notebook.create", "notebook", id)

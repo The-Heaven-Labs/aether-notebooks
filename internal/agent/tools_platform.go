@@ -68,7 +68,9 @@ func makeListNotebooksHandler(db *pgxpool.Pool) ToolHandler {
 			FolderID string `json:"folder_id"`
 			Search   string `json:"search"`
 		}
-		json.Unmarshal(args, &req)
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
 
 		query := `SELECT n.id, n.title, COALESCE(n.description, ''), n.folder_id, n.created_at
 			FROM notebooks n WHERE n.org_id = $1`
@@ -99,7 +101,7 @@ func makeListNotebooksHandler(db *pgxpool.Pool) ToolHandler {
 			var fID *string
 			var created time.Time
 			if err := rows.Scan(&id, &name, &desc, &fID, &created); err != nil {
-				continue
+				return nil, fmt.Errorf("scan notebook: %w", err)
 			}
 			folderID := ""
 			if fID != nil {
@@ -122,7 +124,9 @@ func makeListConnectorsHandler(db *pgxpool.Pool) ToolHandler {
 		var req struct {
 			Search string `json:"search"`
 		}
-		json.Unmarshal(args, &req)
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
 
 		query := `SELECT id, name, type, COALESCE(folder_id::text, ''), created_at
 			FROM connectors WHERE org_id = $1`
@@ -147,7 +151,7 @@ func makeListConnectorsHandler(db *pgxpool.Pool) ToolHandler {
 			var id, name, ctype, folderID string
 			var created time.Time
 			if err := rows.Scan(&id, &name, &ctype, &folderID, &created); err != nil {
-				continue
+				return nil, fmt.Errorf("scan connector: %w", err)
 			}
 			connectors = append(connectors, map[string]any{
 				"id": id, "name": name, "type": ctype,
@@ -166,7 +170,9 @@ func makeListFoldersHandler(db *pgxpool.Pool) ToolHandler {
 		var req struct {
 			ParentID string `json:"parent_id"`
 		}
-		json.Unmarshal(args, &req)
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
 
 		query := `SELECT id, name, parent_id, created_at FROM folders WHERE org_id = $1`
 		params := []any{ctx.OrgID}
@@ -189,7 +195,9 @@ func makeListFoldersHandler(db *pgxpool.Pool) ToolHandler {
 		for rows.Next() {
 			var id, name, created string
 			var parentID *string
-			rows.Scan(&id, &name, &parentID, &created)
+			if err := rows.Scan(&id, &name, &parentID, &created); err != nil {
+				return nil, fmt.Errorf("scan folder: %w", err)
+			}
 			pid := ""
 			if parentID != nil {
 				pid = *parentID
@@ -197,6 +205,9 @@ func makeListFoldersHandler(db *pgxpool.Pool) ToolHandler {
 			folders = append(folders, map[string]any{
 				"id": id, "name": name, "parent_id": pid, "created_at": created,
 			})
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("list folders iter: %w", err)
 		}
 		return map[string]any{"folders": folders, "count": len(folders)}, nil
 	}
@@ -224,7 +235,9 @@ func makeGetFolderTreeHandler(db *pgxpool.Pool) ToolHandler {
 			var id, name, path string
 			var parentID *string
 			var depth int
-			rows.Scan(&id, &name, &parentID, &depth, &path)
+			if err := rows.Scan(&id, &name, &parentID, &depth, &path); err != nil {
+				return nil, fmt.Errorf("scan folder tree: %w", err)
+			}
 			pid := ""
 			if parentID != nil {
 				pid = *parentID
@@ -232,6 +245,9 @@ func makeGetFolderTreeHandler(db *pgxpool.Pool) ToolHandler {
 			folders = append(folders, map[string]any{
 				"id": id, "name": name, "parent_id": pid, "depth": depth, "path": path,
 			})
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("get folder tree iter: %w", err)
 		}
 		return map[string]any{"folders": folders}, nil
 	}
