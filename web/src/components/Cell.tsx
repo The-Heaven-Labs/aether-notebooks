@@ -54,7 +54,7 @@ function normalizeChartConfig(raw: unknown): ChartConfig | undefined {
     decimalPlaces: obj.decimalPlaces as number | undefined,
     // Bar fields
     barWidth: obj.barWidth as string | undefined,
-    barGap: obj.barGap as string | undefined,
+    barCategoryGap: obj.barCategoryGap as string | undefined,
     // Line/Area fields
     smooth: obj.smooth as boolean | undefined,
     connectNulls: obj.connectNulls as boolean | undefined,

@@ -41,9 +41,9 @@ export interface ChartConfig {
   seriesColors?: Record<string, string>
   dataZoom?: boolean
   smooth?: boolean
-  // Bar
-  barWidth?: string
-  barGap?: string
+// Bar
+barWidth?: string
+barCategoryGap?: string
   // Line/Area
   connectNulls?: boolean
   // Sankey
