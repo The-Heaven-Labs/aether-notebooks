@@ -12,21 +12,22 @@ function AreaChartComponent({ data, config }: ChartProps) {
     tooltip: { trigger: 'axis' as const, ...getTooltipStyle() },
     legend: config.showLegend !== false ? { top: 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
     grid: { top: config.showLegend !== false ? 30 : 8, right: 16, bottom: 8, left: 16, containLabel: true },
-    xAxis: { type: 'category' as const, data: chartData.map(d => d[xAxis]), boundaryGap: false, ...getAxisStyle() },
-    yAxis: { type: 'value' as const, ...getAxisStyle() },
+    xAxis: { type: 'category' as const, data: chartData.map(d => d[xAxis]), boundaryGap: false, ...getAxisStyle(config.showGrid) },
+    yAxis: { type: 'value' as const, ...getAxisStyle(config.showGrid) },
     series: yAxes.map((y, i) => ({
       name: y,
       type: 'line' as const,
       data: chartData.map(d => d[y]),
       smooth: false,
       areaStyle: { opacity: 0.15 },
-      symbol: 'none',
+      symbol: 'circle',
+      symbolSize: 4,
       itemStyle: { color: config.seriesColors?.[y] ?? CHART_COLORS[i % CHART_COLORS.length] },
       lineStyle: { width: 2 },
-      label: config.showLabels ? { show: true, position: 'top', fontSize: 10, color: colors.text } : undefined,
+      label: config.showLabels ? { show: true, position: 'top' as const, fontSize: 10, color: colors.textMuted } : undefined,
       animation: false,
     })),
-  }), [chartData, xAxis, yAxes, config.seriesColors, config.showLegend, colors])
+  }), [chartData, xAxis, yAxes, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, colors])
 
   return <EChartsContainer option={option} />
 }

@@ -14,8 +14,8 @@ function BarChartComponent({ data, config }: ChartProps) {
     tooltip: { trigger: 'axis' as const, ...getTooltipStyle() },
     legend: config.showLegend !== false ? { top: 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
     grid: { top: config.showLegend !== false ? 30 : 8, right: 16, bottom: 8, left: 16, containLabel: true },
-    xAxis: { type: 'category' as const, data: chartData.map(d => d[xAxis]), ...getAxisStyle() },
-    yAxis: { type: 'value' as const, ...getAxisStyle() },
+    xAxis: { type: 'category' as const, data: chartData.map(d => d[xAxis]), ...getAxisStyle(config.showGrid) },
+    yAxis: { type: 'value' as const, ...getAxisStyle(config.showGrid) },
     series: yAxes.map((y, i) => ({
       name: y,
       type: 'bar' as const,
@@ -28,7 +28,7 @@ function BarChartComponent({ data, config }: ChartProps) {
       label: config.showLabels ? { show: true, position: 'top' as const, fontSize: 10, color: colors.textMuted } : undefined,
       animation: false,
     })),
-  }), [chartData, xAxis, yAxes, isStacked, config.seriesColors, config.showLegend, config.showLabels, colors])
+  }), [chartData, xAxis, yAxes, isStacked, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, colors])
 
   return <EChartsContainer option={option} />
 }
