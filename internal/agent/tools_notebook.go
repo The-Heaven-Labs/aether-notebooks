@@ -22,6 +22,19 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Description string `json:"description"`
 			Parameters  any    `json:"parameters"`
 		}{
+			Name:        "create_notebook",
+			Description: "Create a new notebook. Use this to start a new analysis project. The notebook will get the org's default connector if one exists.",
+			Parameters:  `{"type":"object","properties":{"title":{"type":"string","description":"Notebook title"},"description":{"type":"string","description":"Optional description"},"folder_id":{"type":"string","description":"Optional parent folder ID to place this notebook in"}},"required":["title"]}`,
+		},
+		Handler: makeCreateNotebookHandler(db),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
 			Name:        "read_cell",
 			Description: "Get a cell's complete information including source, outputs, type, language, connector, and metadata",
 			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"Cell identifier"}},"required":["cell_id"]}`,
@@ -888,5 +901,53 @@ func makeRestoreSnapshotHandler(db *pgxpool.Pool) ToolHandler {
 		}
 
 		return map[string]any{"notebook_id": nbID, "status": "restored"}, nil
+	}
+}
+
+func makeCreateNotebookHandler(db *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			Title       string  `json:"title"`
+			Description string  `json:"description"`
+			FolderID    *string `json:"folder_id"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if req.Title == "" {
+			return nil, fmt.Errorf("title is required")
+		}
+
+		now := time.Now()
+		id := uuid.New().String()
+
+		var folderID *string
+		if req.FolderID != nil && *req.FolderID != "" {
+			folderID = req.FolderID
+		}
+
+		_, err := db.Exec(ctx.Context, `
+			INSERT INTO notebooks (id, org_id, title, description, created_by, folder_id, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+		`, id, ctx.OrgID, req.Title, req.Description, ctx.UserID, folderID, now)
+		if err != nil {
+			return nil, fmt.Errorf("create notebook: %w", err)
+		}
+
+		// Set default connector if one exists
+		var defaultID string
+		if err := db.QueryRow(ctx.Context,
+			`SELECT id FROM connectors WHERE org_id=$1 AND is_default=true LIMIT 1`, ctx.OrgID,
+		).Scan(&defaultID); err == nil {
+			db.Exec(ctx.Context, `UPDATE notebooks SET connector_id=$1 WHERE id=$2`, defaultID, id)
+		}
+
+		_ = ctx.AuditLog("notebook.create", "notebook", id)
+
+		return map[string]any{
+			"notebook_id": id,
+			"title":       req.Title,
+			"description": req.Description,
+		}, nil
 	}
 }
