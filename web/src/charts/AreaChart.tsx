@@ -23,6 +23,7 @@ function AreaChartComponent({ data, config }: ChartProps) {
       symbol: 'none',
       itemStyle: { color: config.seriesColors?.[y] ?? CHART_COLORS[i % CHART_COLORS.length] },
       lineStyle: { width: 2 },
+      label: config.showLabels ? { show: true, position: 'top', fontSize: 10, color: colors.text } : undefined,
       animation: false,
     })),
   }), [chartData, xAxis, yAxes, config.seriesColors, config.showLegend, colors])
