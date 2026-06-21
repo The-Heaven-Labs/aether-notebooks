@@ -73,6 +73,7 @@ func (s *Server) SetPublicURL(u string) {
 // SetFrontendURL sets the base URL used for post-auth redirects.
 func (s *Server) SetFrontendURL(u string) {
 	s.frontendURL = u
+	s.agentEngine.SetFrontendURL(u)
 }
 
 // SetMaxAttachmentBytes sets the maximum allowed attachment upload size in bytes.
