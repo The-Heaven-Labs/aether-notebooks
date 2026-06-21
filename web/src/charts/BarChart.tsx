@@ -27,14 +27,14 @@ function BarChartComponent({ data, config }: ChartProps) {
       data: chartData.map(d => d[y]),
       stack: isStacked ? 'a' : undefined,
       barWidth: config.barWidth,
-      barGap: config.barGap,
+      barCategoryGap: config.barCategoryGap,
       itemStyle: {
         color: config.seriesColors?.[y] ?? CHART_COLORS[i % CHART_COLORS.length],
         borderRadius: [3, 3, 0, 0] as [number, number, number, number],
       },
       label: config.showLabels ? { show: true, position: 'top' as const, fontSize: 10, color: colors.textMuted } : undefined,
     })),
-  }), [chartData, xAxis, yAxes, isStacked, config.title, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, config.dataZoom, config.barWidth, config.barGap, colors])
+  }), [chartData, xAxis, yAxes, isStacked, config.title, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, config.dataZoom, config.barWidth, config.barCategoryGap, colors])
 
   return <EChartsContainer option={option} showReset />
 }
