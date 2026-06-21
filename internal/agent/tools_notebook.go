@@ -41,6 +41,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string","description":"ID of the notebook to delete"}},"required":["notebook_id"]}`,
 		},
 		Handler: makeDeleteNotebookHandler(db),
+		ConfirmRequired: true,
 	})
 
 	reg.Register(&ToolDef{
@@ -54,6 +55,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"connector_id":{"type":"string"}},"required":["notebook_id"]}`,
 		},
 		Handler: makeUpdateNotebookHandler(db),
+		ConfirmRequired: true,
 	})
 
 	reg.Register(&ToolDef{
@@ -64,7 +66,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		}{
 			Name:        "read_cell",
 			Description: "Get a cell's complete information including source, outputs, type, language, connector, and metadata",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"Cell identifier"}},"required":["cell_id"]}`,
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (from list_cells output, not the positional number)"}},"required":["cell_id"]}`,
 		},
 		Handler: makeReadCellHandler(db),
 	})
@@ -80,6 +82,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"type":{"type":"string","enum":["code","text"],"description":"Cell type: 'code' for executable queries, 'text' for markdown documentation"},"language":{"type":"string","enum":["sql","markdown"],"description":"Cell language. Defaults to 'sql' for code cells, 'markdown' for text cells. Currently only SQL and markdown are supported."},"source":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell. Required for code cells if the notebook has no default connector."},"position":{"type":"integer"}},"required":["notebook_id","type"]}`,
 		},
 		Handler: makeCreateCellHandler(db),
+		ConfirmRequired: true,
 	})
 
 	reg.Register(&ToolDef{
@@ -90,9 +93,10 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		}{
 			Name:        "update_cell",
 			Description: "Change a cell's source, title, description, connector, or other properties",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"source":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell"}},"required":["cell_id"]}`,
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (from list_cells output, NOT the position number)"},"source":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell"}},"required":["cell_id"]}`,
 		},
 		Handler: makeUpdateCellHandler(db),
+		ConfirmRequired: true,
 	})
 
 	reg.Register(&ToolDef{
@@ -103,9 +107,10 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		}{
 			Name:        "run_cell",
 			Description: "Execute a code cell's SQL query against the database connector. Only works on cells with type 'code' and language 'sql'. Returns tabular results. Use for SELECT, SHOW, DESCRIBE queries.",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"}},"required":["cell_id"]}`,
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (from list_cells output, not the position number)"}},"required":["cell_id"]}`,
 		},
 		Handler: makeRunCellHandler(db),
+		ConfirmRequired: true,
 	})
 
 	reg.Register(&ToolDef{
@@ -115,7 +120,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "list_cells",
-			Description: "List all cells in the notebook showing id, type (code/text), language (sql/markdown), position, and title",
+			Description: "List all cells in the notebook showing their UUID (id), type (code/text), language (sql/markdown), position, and title. Use the UUID from the id field for other cell operations.",
 			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"}},"required":["notebook_id"]}`,
 		},
 		Handler: makeListCellsHandler(db),
@@ -129,9 +134,10 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		}{
 			Name:        "move_cell",
 			Description: "Change a cell's position in the notebook",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"new_position":{"type":"integer"}},"required":["cell_id","new_position"]}`,
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (from list_cells output, not the position number)"},"new_position":{"type":"integer"}},"required":["cell_id","new_position"]}`,
 		},
 		Handler: makeMoveCellHandler(db),
+		ConfirmRequired: true,
 	})
 
 	reg.Register(&ToolDef{
@@ -145,6 +151,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"connector_id":{"type":"string","description":"ID of the connector to query"},"query":{"type":"string","description":"The SQL query to execute"},"limit":{"type":"integer","description":"Max rows to return (default 1000)"}},"required":["connector_id","query"]}`,
 		},
 		Handler: makeExecuteSQLHandler(db),
+		ConfirmRequired: true,
 	})
 
 	reg.Register(&ToolDef{
@@ -168,9 +175,10 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		}{
 			Name:        "delete_cell",
 			Description: "Delete a cell from a notebook. Use this to clean up cells that are no longer needed.",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"ID of the cell to delete"}},"required":["cell_id"]}`,
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (from list_cells output, not the position number)"}},"required":["cell_id"]}`,
 		},
 		Handler: makeDeleteCellHandler(db),
+		ConfirmRequired: true,
 	})
 
 	reg.Register(&ToolDef{
@@ -180,7 +188,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "get_notebook_context",
-			Description: "Get the full content of a notebook including all cell sources and optionally outputs. Use this to understand the complete notebook structure and content.",
+			Description: "Get the full content of a notebook including all cell UUIDs, sources and optionally outputs. Use this to understand the complete notebook structure and content.",
 			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string","description":"The notebook ID to read"},"max_cells":{"type":"integer","description":"Maximum number of cells to return (default 50)"},"include_outputs":{"type":"boolean","description":"Include cell outputs (default false, truncates to first 10 rows if true)"}},"required":["notebook_id"]}`,
 		},
 		Handler: makeGetNotebookContextHandler(db),

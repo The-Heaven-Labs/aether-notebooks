@@ -18,6 +18,8 @@ interface ModelConfigForm {
   api_key: string
   context_window: number
   compaction_threshold: number
+  reasoning_effort_options: string
+  reasoning_effort: string
 }
 
 const emptyForm = (): ModelConfigForm => ({
@@ -28,6 +30,8 @@ const emptyForm = (): ModelConfigForm => ({
   api_key: '',
   context_window: 128000,
   compaction_threshold: 70,
+  reasoning_effort_options: 'low, medium, high',
+  reasoning_effort: '',
 })
 
 const PROVIDERS = [
@@ -79,7 +83,14 @@ export function ModelsPage() {
     queryFn: () => api.get<ModelConfig[]>('/api/v1/model-configs'),
   })
 
-  const defaultParams = () => ({ compaction_threshold: form.compaction_threshold })
+  const defaultParams = () => {
+    const p: Record<string, unknown> = { compaction_threshold: form.compaction_threshold }
+    if (form.reasoning_effort_options) {
+      p['reasoning_effort_options'] = form.reasoning_effort_options.split(',').map(s => s.trim()).filter(Boolean)
+    }
+    if (form.reasoning_effort) p['reasoning_effort'] = form.reasoning_effort
+    return p
+  }
 
   const createMutation = useMutation({
     mutationFn: () => api.post<{ id: string }>('/api/v1/model-configs', {
@@ -143,6 +154,8 @@ export function ModelsPage() {
 
   const startEdit = (config: ModelConfig) => {
     const threshold = config.default_params?.['compaction_threshold']
+    const effortOpts = config.default_params?.['reasoning_effort_options']
+    const effort = config.default_params?.['reasoning_effort']
     setForm({
       name: config.name,
       provider: config.provider,
@@ -151,6 +164,8 @@ export function ModelsPage() {
       api_key: '',
       context_window: config.context_window,
       compaction_threshold: typeof threshold === 'number' ? threshold : 70,
+      reasoning_effort_options: Array.isArray(effortOpts) ? effortOpts.join(', ') : 'low, medium, high',
+      reasoning_effort: typeof effort === 'string' ? effort : '',
     })
     setEditingId(config.id)
   }
@@ -306,6 +321,19 @@ function ModelFormFields({ form, setForm }: { form: ModelConfigForm; setForm: Re
         <input style={styles.input} type="number" min={0} max={100} value={form.compaction_threshold} onChange={e => setForm(f => ({ ...f, compaction_threshold: parseInt(e.target.value) || 70 }))} />
         <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>Auto-summarize when context reaches this % of the window. 0 = disabled.</span>
       </label>
+      <label style={styles.label}>Reasoning Effort Options
+        <input style={styles.input} value={form.reasoning_effort_options} onChange={e => setForm(f => ({ ...f, reasoning_effort_options: e.target.value }))} placeholder="low, medium, high" />
+        <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>Comma-separated effort levels users can pick from the chat.</span>
+      </label>
+      <label style={styles.label}>Default Effort
+        <select style={styles.input} value={form.reasoning_effort} onChange={e => setForm(f => ({ ...f, reasoning_effort: e.target.value }))}>
+          <option value="">None</option>
+          {form.reasoning_effort_options.split(',').map(s => s.trim()).filter(Boolean).map(o => (
+            <option key={o} value={o}>{o}</option>
+          ))}
+        </select>
+        <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>Default effort level pre-selected in the chat.</span>
+      </label>
     </div>
   )
 }
@@ -314,7 +342,7 @@ const styles: Record<string, React.CSSProperties> = {
   body: { maxWidth: 1100, margin: '0 auto', padding: '32px 40px', width: '100%' },
   formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 },
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
-  input: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, fontFamily: 'var(--font-mono)', background: 'var(--bg-input)', color: 'var(--text-primary)', marginTop: 2 },
+  input: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, fontFamily: 'var(--font-mono)', background: 'var(--bg-input)', color: 'var(--text-primary)', marginTop: 2, appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none' },
   formActions: { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 },
   cancelBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   saveBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
