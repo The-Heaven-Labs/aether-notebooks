@@ -53,7 +53,15 @@ func RegisterMCPTools(reg *ToolRegistry, servers []*MCPClient) {
 
 func makeMCPToolListHandler(srv *MCPClient) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
-		resp, err := http.Get(srv.HTTPURL + "/tools/list")
+		httpCtx, cancel := context.WithTimeout(ctx.Context, 30*time.Second)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(httpCtx, "GET", srv.HTTPURL+"/tools/list", nil)
+		if err != nil {
+			return nil, fmt.Errorf("mcp list tools: %w", err)
+		}
+		client := &http.Client{Timeout: 30 * time.Second}
+		resp, err := client.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("mcp list tools: %w", err)
 		}
