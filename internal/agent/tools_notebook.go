@@ -563,6 +563,9 @@ func makeListCellsHandler(db *pgxpool.Pool) ToolHandler {
 		if req.NotebookID == "" {
 			req.NotebookID = ctx.NotebookID
 		}
+		if req.NotebookID == "" {
+			return nil, fmt.Errorf("notebook_id is required")
+		}
 		if err := ctx.CheckPermission("notebook", req.NotebookID, "view"); err != nil {
 			return nil, err
 		}
