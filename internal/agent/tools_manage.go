@@ -84,6 +84,20 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Description string `json:"description"`
 			Parameters  any    `json:"parameters"`
 		}{
+			Name:        "update_dashboard_widget",
+			Description: "Update a dashboard widget's properties: position (row, col), size (width, height), or type (chart/table/text).",
+			Parameters:  `{"type":"object","properties":{"widget_id":{"type":"string"},"dashboard_id":{"type":"string"},"row":{"type":"number"},"col":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"type":{"type":"string","enum":["chart","table","text"]}},"required":["widget_id","dashboard_id"]}`,
+		},
+		Handler: makeUpdateDashboardWidgetHandler(pool),
+	})
+
+	// Schedule tools
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
 			Name:        "delete_schedule",
 			Description: "Remove a notebook schedule.",
 			Parameters:  `{"type":"object","properties":{"schedule_id":{"type":"string"}},"required":["schedule_id"]}`,
@@ -218,17 +232,86 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 			"height": req.Height,
 		})
 
+		// Copy the cell's chart config into widget config as fallback
+		var cellChart json.RawMessage
+		pool.QueryRow(ctx.Context, `SELECT metadata->'chart' FROM cells WHERE id = $1`, req.CellID).Scan(&cellChart)
+		widgetConfig := json.RawMessage(`{}`)
+		if cellChart != nil && len(cellChart) > 0 && string(cellChart) != "null" {
+			widgetConfig = cellChart
+		}
+
 		id := uuid.New().String()
 		now := time.Now()
 		if _, err := pool.Exec(ctx.Context, `
 			INSERT INTO widgets (id, dashboard_id, notebook_id, cell_id, type, layout, config, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, '{}', $7, $7)
-		`, id, req.DashboardID, req.NotebookID, req.CellID, req.Type, layoutJSON, now); err != nil {
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+		`, id, req.DashboardID, req.NotebookID, req.CellID, req.Type, layoutJSON, widgetConfig, now); err != nil {
 			return nil, fmt.Errorf("create widget: %w", err)
 		}
 
 		_ = ctx.AuditLog("dashboard.add_widget", "dashboard", req.DashboardID)
 		return map[string]any{"widget_id": id}, nil
+	}
+}
+
+func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			WidgetID     string `json:"widget_id"`
+			DashboardID  string `json:"dashboard_id"`
+			Row          *int   `json:"row"`
+			Col          *int   `json:"col"`
+			Width        *int   `json:"width"`
+			Height       *int   `json:"height"`
+			WidgetType   string `json:"type"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if err := ctx.CheckPermission("dashboard", req.DashboardID, "edit"); err != nil {
+			return nil, err
+		}
+
+		// Build layout update
+		var layout *string
+		if req.Row != nil || req.Col != nil || req.Width != nil || req.Height != nil {
+			var cur struct {
+				Row, Col, Width, Height int
+			}
+			err := pool.QueryRow(ctx.Context, `SELECT layout->>'row', layout->>'col', layout->>'width', layout->>'height' FROM widgets WHERE id = $1`, req.WidgetID).Scan(&cur.Row, &cur.Col, &cur.Width, &cur.Height)
+			if err != nil {
+				return nil, fmt.Errorf("get current layout: %w", err)
+			}
+			l := map[string]int{
+				"row":    cur.Row,
+				"col":    cur.Col,
+				"width":  cur.Width,
+				"height": cur.Height,
+			}
+			if req.Row != nil { l["row"] = *req.Row }
+			if req.Col != nil { l["col"] = *req.Col }
+			if req.Width != nil { l["width"] = *req.Width }
+			if req.Height != nil { l["height"] = *req.Height }
+			b, _ := json.Marshal(l)
+			s := string(b)
+			layout = &s
+		}
+
+		if layout != nil {
+			_, err := pool.Exec(ctx.Context,
+				`UPDATE widgets SET layout = $1::jsonb WHERE id = $2 AND dashboard_id = $3`,
+				*layout, req.WidgetID, req.DashboardID)
+			if err != nil {
+				return nil, fmt.Errorf("update widget layout: %w", err)
+			}
+		}
+		if req.WidgetType != "" {
+			pool.Exec(ctx.Context,
+				`UPDATE widgets SET type = $1 WHERE id = $2 AND dashboard_id = $3`,
+				req.WidgetType, req.WidgetID, req.DashboardID)
+		}
+
+		return map[string]any{"widget_id": req.WidgetID}, nil
 	}
 }
 
