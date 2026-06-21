@@ -156,19 +156,30 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
   const queryClient = useQueryClient()
 
+  const scrollIntervalsRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set())
+  useEffect(() => {
+    return () => {
+      for (const id of scrollIntervalsRef.current) clearInterval(id)
+      scrollIntervalsRef.current.clear()
+    }
+  }, [])
+
   const scrollToCell = useCallback((cellId: string) => {
     let attempts = 0
     const interval = setInterval(() => {
       const el = document.getElementById('cell-' + cellId)
       if (el) {
         clearInterval(interval)
+        scrollIntervalsRef.current.delete(interval)
         el.scrollIntoView({ behavior: 'smooth', block: 'center' })
         el.classList.add('cell-flash')
         setTimeout(() => el.classList.remove('cell-flash'), 3000)
       } else if (++attempts >= 50) {
         clearInterval(interval)
+        scrollIntervalsRef.current.delete(interval)
       }
     }, 100)
+    scrollIntervalsRef.current.add(interval)
   }, [])
 
   useEffect(() => {
