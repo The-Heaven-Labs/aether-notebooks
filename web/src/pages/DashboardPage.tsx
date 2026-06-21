@@ -629,7 +629,7 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     maxWidth: 1280,
     margin: '0 auto',
-    padding: '40px 40px',
+    padding: '16px 16px',
     width: '100%',
     display: 'flex',
     flexDirection: 'column',
