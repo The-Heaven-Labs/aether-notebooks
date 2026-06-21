@@ -12,10 +12,9 @@ import { api } from '../api/client'
 interface Props {
   children: React.ReactNode
   noPadding?: boolean
-  hideGlobalFab?: boolean
 }
 
-export function AppShell({ children, noPadding, hideGlobalFab }: Props) {
+export function AppShell({ children, noPadding }: Props) {
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showGlobalAgent, setShowGlobalAgent] = useState(() => {
     try {
@@ -92,6 +91,10 @@ export function AppShell({ children, noPadding, hideGlobalFab }: Props) {
     if (path === '/') return { type: 'files' as const }
     return undefined
   }, [location.pathname])
+  const currentNotebookId = useMemo(() => {
+    const nbMatch = location.pathname.match(/^\/notebooks\/([a-f0-9-]+)/)
+    return nbMatch ? nbMatch[1] : ''
+  }, [location.pathname])
   const visibleMotds = motds.filter(m => {
     if (dismissedMotds.has(m.id)) return false
     if (m.visibility === 'specific' && m.pages?.length) {
@@ -151,7 +154,7 @@ export function AppShell({ children, noPadding, hideGlobalFab }: Props) {
         </main>
         {showGlobalAgent && !globalAgentMinimized && globalAgentDocked && (
           <AgentPanel
-            notebookId=""
+            notebookId={currentNotebookId}
             pageContext={currentPageContext}
             width={globalAgentWidth}
             onResize={(w) => { setGlobalAgentWidth(w); try { localStorage.setItem('hnb:agentPanelWidth:__global__', String(w)) } catch {} }}
@@ -165,9 +168,8 @@ export function AppShell({ children, noPadding, hideGlobalFab }: Props) {
       </div>
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
 
-      {!hideGlobalFab && (
-        <>
-          {/* Global Agent FAB (floating action button) */}
+      <>
+        {/* Global Agent FAB (floating action button) */}
           {!showGlobalAgent && (
             <button
               style={fabStyles.fab}
@@ -209,7 +211,7 @@ export function AppShell({ children, noPadding, hideGlobalFab }: Props) {
                   }}
                 />
                 <AgentPanel
-                  notebookId=""
+                  notebookId={currentNotebookId}
                   pageContext={currentPageContext}
                   width={globalAgentWidth}
                   onResize={(w) => { setGlobalAgentWidth(w); try { localStorage.setItem('hnb:agentPanelWidth:__global__', String(w)) } catch {} }}
@@ -237,8 +239,7 @@ export function AppShell({ children, noPadding, hideGlobalFab }: Props) {
               </button>
             </div>
           )}
-        </>
-      )}
+      </>
     </div>
   )
 }
