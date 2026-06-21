@@ -30,10 +30,10 @@
 - [x] Can't go back to past sessions in the global agent modal, error "Failed to load sessions"
 - [x] There is a scenario where the last 2 thinking blocks are expanded and with the same content in the global agent modal
 - [x] When the global agent modal is streaming a response, I cant scroll up to read something that has already passed
-- [ ] The notebook Agent modal must enable making the panel bigger width wise (make the limit higher than currently)
-- [ ] Agent modals (notebook and global) should show current token consumption and it should update as chat goes on
-- [ ] Chat messages should have a hover effect that shows at what time exactly they happened
-- [ ] It should be configurable in the chats (notebook and global) the thinking level/effort for the models. To do this, I think there should be configs for this at the model level
-- [ ] The agent selector uses default OS styling, should be a custom app one
-- [ ] There should be a permissioning system for potential problematic (not read-only) tool calls, e.g., the first time a tool is called, the user should be asked if want to proceed. Also, there should be a toggle to accept all by default (current behavior). Read-only tool calls should be accepted by default.
-- [ ]
+- [x] The notebook Agent modal must enable making the panel bigger width wise (make the limit higher than currently)
+- [x] Agent modals (notebook and global) should show current token consumption and it should update as chat goes on
+- [x] Chat messages should have a hover effect that shows at what time exactly they happened
+- [x] It should be configurable in the chats (notebook and global) the thinking level/effort for the models. To do this, I think there should be configs for this at the model level
+- [x] The agent selector uses default OS styling, should be a custom app one
+- [x] There should be a permissioning system for potential problematic (not read-only) tool calls, e.g., the first time a tool is called, the user should be asked if want to proceed. Also, there should be a toggle to accept all by default (current behavior). Read-only tool calls should be accepted by default.
+- [x]

@@ -80,6 +80,7 @@ type Agent struct {
 	MCPServers            []MCPServerOrg `json:"mcp_servers"`
 	ToolIDs               []string       `json:"tool_ids,omitempty"`
 	Tools                 []Tool         `json:"tools,omitempty"`
+	ModelConfigParams     JSONMap        `json:"model_config_params,omitempty"`
 	FolderID              *string        `json:"folder_id,omitempty"`
 	MaxTurns              *int           `json:"max_turns,omitempty"`
 	CreatedBy             string         `json:"created_by"`
@@ -118,6 +119,7 @@ type AgentMessage struct {
 	ReasoningContent string     `json:"reasoning_content,omitempty"`
 	TokensInput      int        `json:"tokens_input,omitempty"`
 	TokensOutput     int        `json:"tokens_output,omitempty"`
+	TokensReasoning  int        `json:"tokens_reasoning,omitempty"`
 	ModelCalls       int        `json:"model_calls,omitempty"`
 	DurationMs       int        `json:"duration_ms,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`

@@ -250,6 +250,32 @@ npx playwright test                        # Run all E2E tests
 npx playwright test --update-snapshots     # Update snapshots
 ```
 
+## Agent Token Tracking
+
+Token consumption is tracked across the session and displayed in the agent panel's info bar (clickable for detailed breakdown). The backend sends actual `prompt_tokens`/`completion_tokens` from the API response. `reasoning_tokens` from `completion_tokens_details` is tracked when the provider returns it. `cached_tokens` from `prompt_tokens_details` is tracked as `cache_read`.
+
+A per-component estimate (system prompt, history, user message, tool definitions, tool calls, tool results) is shown separately under "Estimated (tiktoken)" using `github.com/pkoukk/tiktoken-go`. The model-to-encoding mapping is in `internal/agent/tokens.go`.
+
+Chat messages now include `created_at` timestamps displayed as muted text at the top of each message bubble.
+
+## Reasoning Effort
+
+Reasoning effort is configurable per-chat via a dropdown in the agent info bar. The `default_params` JSONB on `model_configs` stores:
+- `reasoning_effort_options`: array of effort levels (e.g., `["low", "medium", "high"]`)
+- `reasoning_effort`: the default effort level pre-selected in chat
+
+The selected effort is sent to the backend via a `set_reasoning_effort` WS message, stored per-session in a `sync.Map` on the Engine, and merged into the LLM API request body via `ChatRequest.Extra` + custom `MarshalJSON`.
+
+## Tool Call Permissions
+
+The `ToolDef` struct has a `ConfirmRequired bool` field. When set, the backend sends a `tool_confirm_required` WS event and waits for user approval on a channel. The frontend shows a confirmation dialog with a character-level diff for `update_cell`. An "Auto-Approve" checkbox in the agent info bar bypasses the dialog.
+
+The confirm flow: backend → `tool_confirm_required` event → frontend shows dialog → user approves/denies → frontend sends `tool_confirm` → backend executes or skips the tool.
+
+## DB Migration
+
+Agent updates (`agent_updated_at`) now also update the local cell cache via WebSocket broadcast when `user_email` is `agent@hnb`. This ensures cell content changes made by the agent appear without requiring a page refresh.
+
 ## Planned Improvements
 
 See `IMPROVEMENTS.md` for the full backlog of UX and feature improvements tracked by the product owner.

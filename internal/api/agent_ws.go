@@ -19,10 +19,12 @@ type agentWSHandler struct {
 }
 
 type WSMessage struct {
-	Type          string `json:"type"`
-	Content       string `json:"content,omitempty"`
-	Command       string `json:"command,omitempty"`
-	LastMessageID string `json:"last_message_id,omitempty"`
+	Type            string `json:"type"`
+	Content         string `json:"content,omitempty"`
+	Command         string `json:"command,omitempty"`
+	LastMessageID   string `json:"last_message_id,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	Approved        bool   `json:"approved,omitempty"`
 }
 
 type WSResponse struct {
@@ -110,7 +112,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 
 			if msg.Type == "reconnect" {
 				rows, err := s.db.Pool.Query(ctx, `
-					SELECT id, role, content, tool_calls FROM agent_messages
+					SELECT id, role, content, tool_calls, created_at FROM agent_messages
 					WHERE session_id = $1 AND id > $2 ORDER BY created_at
 				`, currentSessionID, msg.LastMessageID)
 				if err == nil {
@@ -119,7 +121,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 						var m models.AgentMessage
 						var content *string
 						var toolCallsJSON []byte
-						rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON)
+						rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &m.CreatedAt)
 						if content != nil {
 							m.Content = *content
 						}
@@ -134,6 +136,17 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 						Messages []models.AgentMessage `json:"messages"`
 					}{Type: "reconnect_sync", Messages: messages}
 				}
+				continue
+			}
+
+			if msg.Type == "set_reasoning_effort" {
+				s.agentEngine.SetReasoningEffort(currentSessionID, msg.ReasoningEffort)
+				slog.Debug("ws: set reasoning effort", "session_id", currentSessionID, "effort", msg.ReasoningEffort)
+				continue
+			}
+
+			if msg.Type == "tool_confirm" {
+				s.agentEngine.ResolveToolConfirm(currentSessionID, msg.Approved, msg.Content)
 				continue
 			}
 
@@ -156,7 +169,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					currentCancel = msgCancel
 					mu.Unlock()
 
-					_, reasoning, _, events, err := s.agentEngine.ProcessMessage(msgCtx, sid, content, s.agentEngine.GetRegistry().List(), s.masterKey,
+					_, reasoning, _, events, tokBrk, err := s.agentEngine.ProcessMessage(msgCtx, sid, content, s.agentEngine.GetRegistry().List(), s.masterKey,
 						func(token string) {
 							writeChan <- WSResponse{Type: "token", Data: token}
 						},
@@ -204,6 +217,13 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 									Type string            `json:"type"`
 									Data []agent.AgentTask `json:"data"`
 								}{Type: "tasks_updated", Data: evt.Tasks}
+							case "tool_confirm_required":
+								writeChan <- struct {
+									Type          string `json:"type"`
+									ToolName      string `json:"tool_name"`
+									ToolArgs      string `json:"tool_args"`
+									CurrentSource string `json:"current_source,omitempty"`
+								}{Type: "tool_confirm_required", ToolName: evt.ToolName, ToolArgs: evt.ToolArgs, CurrentSource: evt.Source}
 										}
 						},
 					)
@@ -224,7 +244,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					}
 
 					_ = events
-					writeChan <- WSResponse{Type: "done", Data: map[string]any{"content": "", "reasoning": reasoning}}
+					writeChan <- WSResponse{Type: "done", Data: map[string]any{"content": "", "reasoning": reasoning, "tokens": tokBrk}}
 					slog.Debug("ws: message done", "session_id", sid, "reasoning_len", len(reasoning))
 				}(msg.Content, currentSessionID)
 			} else if msg.Type == "slash_command" {

@@ -14,10 +14,11 @@ import (
 )
 
 type LLMClient struct {
-	baseURL    string
-	model      string
-	apiKey     []byte
-	httpClient *http.Client
+	baseURL      string
+	model        string
+	apiKey       []byte
+	defaultParams map[string]any
+	httpClient   *http.Client
 }
 
 type ChatMessage struct {
@@ -33,6 +34,26 @@ type ChatRequest struct {
 	Messages []ChatMessage `json:"messages"`
 	Tools    []OpenAITool  `json:"tools,omitempty"`
 	Stream   bool          `json:"stream"`
+	Extra    map[string]any `json:"-"`
+}
+
+func (r ChatRequest) MarshalJSON() ([]byte, error) {
+	type alias ChatRequest
+	base, err := json.Marshal(alias(r))
+	if err != nil {
+		return nil, err
+	}
+	if len(r.Extra) == 0 {
+		return base, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(base, &m); err != nil {
+		return nil, err
+	}
+	for k, v := range r.Extra {
+		m[k] = v
+	}
+	return json.Marshal(m)
 }
 
 type OpenAITool struct {
@@ -67,16 +88,42 @@ type ToolCall struct {
 }
 
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens            int                      `json:"prompt_tokens"`
+	CompletionTokens        int                      `json:"completion_tokens"`
+	TotalTokens             int                      `json:"total_tokens"`
+	PromptTokensDetails     *PromptTokensDetails     `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails *CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
 }
 
-func NewLLMClient(baseURL, model string, apiKey []byte) *LLMClient {
+type PromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
+type CompletionTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
+}
+
+type TokenBreakdown struct {
+	Input               int `json:"input"`
+	Output              int `json:"output"`
+	Reasoning           int `json:"reasoning"`
+	CacheRead           int `json:"cache_read"`
+	ModelCalls          int `json:"model_calls"`
+	SystemPrompt        int `json:"system_prompt"`
+	SkillOverride       int `json:"skill_override"`
+	History             int `json:"history"`
+	UserMessage         int `json:"user_message"`
+	ToolDefinitions     int `json:"tool_definitions"`
+	ToolCalls           int `json:"tool_calls"`
+	ToolResults         int `json:"tool_results"`
+}
+
+func NewLLMClient(baseURL, model string, apiKey []byte, defaultParams map[string]any) *LLMClient {
 	return &LLMClient{
-		baseURL: baseURL,
-		model:   model,
-		apiKey:  apiKey,
+		baseURL:      baseURL,
+		model:        model,
+		apiKey:       apiKey,
+		defaultParams: defaultParams,
 		httpClient: &http.Client{
 			Timeout: 120 * time.Second,
 		},
@@ -84,11 +131,18 @@ func NewLLMClient(baseURL, model string, apiKey []byte) *LLMClient {
 }
 
 func (c *LLMClient) Chat(ctx context.Context, messages []ChatMessage, tools []OpenAITool, masterKey []byte) (*ChatResponse, error) {
+	extra := make(map[string]any)
+	for k, v := range c.defaultParams {
+		if k != "compaction_threshold" {
+			extra[k] = v
+		}
+	}
 	reqBody := ChatRequest{
 		Model:    c.model,
 		Messages: messages,
 		Tools:    tools,
 		Stream:   false,
+		Extra:    extra,
 	}
 
 	body, err := json.Marshal(reqBody)
@@ -163,11 +217,18 @@ type StreamResponse struct {
 }
 
 func (c *LLMClient) ChatStream(ctx context.Context, messages []ChatMessage, tools []OpenAITool, masterKey []byte, onToken func(string)) error {
+	extra := make(map[string]any)
+	for k, v := range c.defaultParams {
+		if k != "compaction_threshold" {
+			extra[k] = v
+		}
+	}
 	reqBody := ChatRequest{
 		Model:    c.model,
 		Messages: messages,
 		Tools:    tools,
 		Stream:   true,
+		Extra:    extra,
 	}
 
 	body, err := json.Marshal(reqBody)
