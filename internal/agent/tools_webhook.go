@@ -136,7 +136,7 @@ func makeWebhookToolDef(t *models.Tool, allowedDomains []string) (*ToolDef, erro
 				return nil, fmt.Errorf("webhook call: %w", err)
 			}
 			defer resp.Body.Close()
-			respBody, _ := io.ReadAll(resp.Body)
+			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20)) // 10MB max
 			var result any
 			json.Unmarshal(respBody, &result)
 			return map[string]any{
