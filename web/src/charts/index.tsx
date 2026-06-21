@@ -46,18 +46,12 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
 
   const [showConfig, setShowConfig] = useState(false)
 
-  const effectiveConfig: ChartConfig = cfg
-
-  const handleConfigChange = (newCfg: ChartConfig) => {
-    if (onConfigChange) {
-      onConfigChange(newCfg)
-    }
-  }
-
   const mod = CHART_MODULES[chartType]
   if (!mod) {
     return <div style={{ padding: 16, color: 'var(--text-muted)' }}>Unknown chart type: {chartType}</div>
   }
+
+  const effectiveConfig: ChartConfig = { ...mod.defaultConfig, ...cfg }
 
   if (!data || columns.length < (mod.requirements.minColumns ?? 2)) {
     return (
