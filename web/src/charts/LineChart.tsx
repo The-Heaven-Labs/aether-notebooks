@@ -33,7 +33,7 @@ function LineChartComponent({ data, config }: ChartProps) {
     })),
   }), [chartData, xAxis, yAxes, config.title, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, config.dataZoom, config.smooth, config.connectNulls, colors])
 
-  return <EChartsContainer option={option} />
+  return <EChartsContainer option={option} showReset />
 }
 
 function LineConfigPanel({ config, columns, onChange }: ConfigPanelProps) {

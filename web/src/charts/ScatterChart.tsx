@@ -45,7 +45,7 @@ function ScatterChartComponent({ data, config }: ChartProps) {
     })),
   }), [chartData, xAxis, yAxes, config.title, config.seriesColors, config.showLegend, config.showGrid, config.colorColumn, config.sizeColumn, colors])
 
-  return <EChartsContainer option={option} />
+  return <EChartsContainer option={option} showReset />
 }
 
 function ScatterConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
