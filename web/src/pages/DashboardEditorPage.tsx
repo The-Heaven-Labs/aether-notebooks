@@ -738,8 +738,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   body: {
     flex: 1,
-    maxWidth: 1280,
-    margin: '0 auto',
+    margin: 0,
     padding: '8px 12px',
     width: '100%',
   },
