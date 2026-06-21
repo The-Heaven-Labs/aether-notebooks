@@ -591,6 +591,7 @@ func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Reques
 			) as message_count
 		FROM agent_sessions s
 		WHERE s.agent_id = $1
+			AND s.id IN (SELECT DISTINCT session_id FROM agent_messages)
 		ORDER BY s.created_at DESC LIMIT 50
 	`, agentID)
 	if err != nil {

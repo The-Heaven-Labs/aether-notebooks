@@ -41,4 +41,7 @@
 - [ ] I can scroll up and read messages while new are coming in the notebook AI panel, but not in the global AI panel
 - [ ] The global agent panel should have a way to "dock" to the right side of the page, which then would get similar to what the notebook panel is (but docking would work in any page)
 - [ ] Global agent panel works in any page. Moving pages should not cancel the chat context, it should stay happening in background, and when going to another page it should automatically connect back to the chat and continue as nothing happened.
-- [ ] The global agent panel should not block scroll on the page behind
+- [ ] The global agent panel should not block scroll on the page 
+- [ ] Sometimes the scroll in the global agent will not be 100% following the last message streaming state, but seconds later it will catch up
+- [ ] The metrics of token usage only appear after the whole turn ends. It should appear as soon as the user sends the first message and update dynamically for every new intermediate step of the chat
+- [ ]

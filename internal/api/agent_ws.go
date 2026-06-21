@@ -65,11 +65,23 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
+	// Use a background context so in-flight processing isn't cancelled when the
+	// WebSocket disconnects (e.g. page navigation). The processing continues and
+	// the final result is stored in the DB for the next reconnect to pick up.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
 	writeChan := make(chan any, 256)
 	var wg sync.WaitGroup
+	var processWg sync.WaitGroup
+
+	// Subscribe to the shared session stream with catch-up buffer. The buffer
+	// contains events from any in-flight ProcessMessage that was running when
+	// we disconnected (page navigation). These events are replayed on the
+	// frontend, giving the user a live-streaming experience for the part of
+	// the response they missed. The reconnect_sync (DB query) runs in parallel
+	// and replaces messages with the authoritative state, preventing duplicates.
+	subChan, unsubscribe := s.agentEngine.SubscribeSession(sessionID, 512, false)
 
 	// Track cancel function for current message processing
 	var mu sync.Mutex
@@ -79,13 +91,42 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	// currentSessionID can be updated when rate-limit auto-continuation creates a new session
 	currentSessionID := sessionID
 
+	// safeSend sends a control message to writeChan without blocking.
+	safeSend := func(msg any) {
+		select {
+		case writeChan <- msg:
+		default:
+		}
+	}
+
+	// Writer goroutine reads from both the control channel (writeChan) and the
+	// shared session stream (subChan). The session stream carries real-time
+	// tokens/events from in-flight processing; writeChan carries control messages
+	// (slash results, reconnect_sync, errors, etc.).
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for out := range writeChan {
-			if err := conn.WriteJSON(out); err != nil {
-				slog.Debug("ws: write error, writer exiting", "error", err)
-				return
+		wc, sc := writeChan, subChan
+		for wc != nil || sc != nil {
+			select {
+			case out, ok := <-wc:
+				if !ok {
+					wc = nil
+					continue
+				}
+				if err := conn.WriteJSON(out); err != nil {
+					slog.Debug("ws: write error, writer exiting", "error", err)
+					return
+				}
+			case out, ok := <-sc:
+				if !ok {
+					sc = nil
+					continue
+				}
+				if err := conn.WriteJSON(out); err != nil {
+					slog.Debug("ws: write error, writer exiting", "error", err)
+					return
+				}
 			}
 		}
 	}()
@@ -93,7 +134,6 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer close(writeChan)
 		for {
 			var msg WSMessage
 			if err := conn.ReadJSON(&msg); err != nil {
@@ -111,7 +151,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 				}
 				processing = false
 				mu.Unlock()
-				writeChan <- WSResponse{Type: "cancelled"}
+				safeSend(WSResponse{Type: "cancelled"})
 				continue
 			}
 
@@ -136,10 +176,10 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 						messages = append(messages, m)
 					}
 					rows.Close()
-					writeChan <- struct {
+					safeSend(struct {
 						Type     string                `json:"type"`
 						Messages []models.AgentMessage `json:"messages"`
-					}{Type: "reconnect_sync", Messages: messages}
+					}{Type: "reconnect_sync", Messages: messages})
 				}
 				continue
 			}
@@ -182,69 +222,79 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 
 				slog.Info("ws: processing message", "session_id", sid, "content_len", len(msg.Content))
 
+				// Capture the page context at message-send time, not the (potentially
+				// changed) value when ProcessMessage builds its system prompt (the
+				// user may navigate mid-response).
+				capturedPageCtx := s.agentEngine.GetPageContext(sid)
+
 				// Run processing in separate goroutine so reader stays free for cancel
+				processWg.Add(1)
 				go func(content string, sid string) {
+					defer processWg.Done()
 					msgCtx, msgCancel := context.WithCancel(ctx)
 					mu.Lock()
 					currentCancel = msgCancel
 					mu.Unlock()
 
-					_, reasoning, _, events, tokBrk, err := s.agentEngine.ProcessMessage(msgCtx, sid, content, s.agentEngine.GetRegistry().List(), s.masterKey,
+					// Stream events are published to the SHARED session stream so that
+					// any WebSocket connection (including a new one that reconnects after
+					// page navigation) receives the real-time output.
+					_, reasoning, _, events, tokBrk, err := s.agentEngine.ProcessMessage(msgCtx, sid, content, s.agentEngine.GetRegistry().List(), s.masterKey, capturedPageCtx,
 						func(token string) {
-							writeChan <- WSResponse{Type: "token", Data: token}
+							s.agentEngine.PublishSessionEvent(sid, WSResponse{Type: "token", Data: token})
 						},
 						func(r string) {
-							writeChan <- WSResponse{Type: "reasoning", Data: r}
+							s.agentEngine.PublishSessionEvent(sid, WSResponse{Type: "reasoning", Data: r})
 						},
 						func(toolName, toolID, reasoning string) {
-							writeChan <- struct {
+							s.agentEngine.PublishSessionEvent(sid, struct {
 								Type      string `json:"type"`
 								Tool      string `json:"tool"`
 								Reasoning string `json:"reasoning,omitempty"`
-							}{Type: "tool_call", Tool: toolName, Reasoning: reasoning}
+							}{Type: "tool_call", Tool: toolName, Reasoning: reasoning})
 						},
 						func(toolName, params, result, errMsg string) {
-							writeChan <- struct {
+							s.agentEngine.PublishSessionEvent(sid, struct {
 								Type   string `json:"type"`
 								Tool   string `json:"tool"`
 								Params string `json:"params"`
 								Result string `json:"result"`
 								Error  string `json:"error,omitempty"`
-							}{Type: "tool_result", Tool: toolName, Params: params, Result: result, Error: errMsg}
+							}{Type: "tool_result", Tool: toolName, Params: params, Result: result, Error: errMsg})
 						},
 						func(evt agent.EngineEvent) {
 							switch evt.Type {
 							case "cell_created":
-								writeChan <- struct {
+								s.agentEngine.PublishSessionEvent(sid, struct {
 									Type     string `json:"type"`
 									CellID   string `json:"cell_id"`
 									Position int    `json:"position"`
-								}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position}
+								}{Type: evt.Type, CellID: evt.CellID, Position: evt.Position})
 							case "cell_output":
-								writeChan <- struct {
+								s.agentEngine.PublishSessionEvent(sid, struct {
 									Type    string `json:"type"`
 									CellID  string `json:"cell_id"`
 									Outputs any    `json:"outputs"`
-								}{Type: evt.Type, CellID: evt.CellID, Outputs: evt.Outputs}
+								}{Type: evt.Type, CellID: evt.CellID, Outputs: evt.Outputs})
 							case "cell_updated":
-								writeChan <- struct {
+								s.agentEngine.PublishSessionEvent(sid, struct {
 									Type   string `json:"type"`
 									CellID string `json:"cell_id"`
 									Source string `json:"source,omitempty"`
-								}{Type: "cell_updated", CellID: evt.CellID, Source: evt.Source}
+								}{Type: "cell_updated", CellID: evt.CellID, Source: evt.Source})
 							case "tasks_updated":
-								writeChan <- struct {
+								s.agentEngine.PublishSessionEvent(sid, struct {
 									Type string            `json:"type"`
 									Data []agent.AgentTask `json:"data"`
-								}{Type: "tasks_updated", Data: evt.Tasks}
+								}{Type: "tasks_updated", Data: evt.Tasks})
 							case "tool_confirm_required":
-								writeChan <- struct {
+								s.agentEngine.PublishSessionEvent(sid, struct {
 									Type          string `json:"type"`
 									ToolName      string `json:"tool_name"`
 									ToolArgs      string `json:"tool_args"`
 									CurrentSource string `json:"current_source,omitempty"`
-								}{Type: "tool_confirm_required", ToolName: evt.ToolName, ToolArgs: evt.ToolArgs, CurrentSource: evt.Source}
-										}
+								}{Type: "tool_confirm_required", ToolName: evt.ToolName, ToolArgs: evt.ToolArgs, CurrentSource: evt.Source})
+							}
 						},
 					)
 
@@ -255,32 +305,44 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 
 					if err != nil {
 						if msgCtx.Err() == context.Canceled {
-							// Cancelled by user - cancelled response already sent
 							return
 						}
 						slog.Error("ws: process message error", "session_id", sid, "error", err)
-						writeChan <- WSErrorResponse{Type: "error", Message: err.Error()}
+						s.agentEngine.PublishSessionEvent(sid, WSErrorResponse{Type: "error", Message: err.Error()})
 						return
 					}
 
 					_ = events
-					writeChan <- WSResponse{Type: "done", Data: map[string]any{"content": "", "reasoning": reasoning, "tokens": tokBrk}}
+					s.agentEngine.PublishSessionEvent(sid, WSResponse{Type: "done", Data: map[string]any{"content": "", "reasoning": reasoning, "tokens": tokBrk}})
 					slog.Debug("ws: message done", "session_id", sid, "reasoning_len", len(reasoning))
 				}(msg.Content, currentSessionID)
 			} else if msg.Type == "slash_command" {
 				result, err := s.agentEngine.HandleSlashCommand(ctx, sessionID, msg.Command, claims.OrgID, s.masterKey)
 				if err != nil {
-					writeChan <- WSErrorResponse{Type: "error", Message: err.Error()}
+					safeSend(WSErrorResponse{Type: "error", Message: err.Error()})
 					continue
 				}
-				writeChan <- struct {
+				safeSend(struct {
 					Type    string `json:"type"`
 					Command string `json:"command"`
 					Data    any    `json:"data"`
-				}{Type: "slash_result", Command: msg.Command, Data: result}
+				}{Type: "slash_result", Command: msg.Command, Data: result})
 			}
 		}
 	}()
 
+	// Wait for reader + writer to finish (WS disconnected, e.g. page navigation)
 	wg.Wait()
+
+	// Unsubscribe from the shared session stream. Any in-flight ProcessMessage
+	// continues running (it publishes to the stream); if a new WebSocket connects
+	// for the same session, it subscribes and receives the catch-up buffer.
+	unsubscribe()
+
+	// Wait for in-flight LLM processing to finish (response still continues in
+	// background; the DB gets the complete result via AppendMessage).
+	processWg.Wait()
+
+	// No more sends to writeChan from control messages.
+	close(writeChan)
 }

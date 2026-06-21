@@ -17,8 +17,19 @@ interface Props {
 
 export function AppShell({ children, noPadding, hideGlobalFab }: Props) {
   const [showShortcuts, setShowShortcuts] = useState(false)
-  const [showGlobalAgent, setShowGlobalAgent] = useState(false)
+  const [showGlobalAgent, setShowGlobalAgent] = useState(() => {
+    try {
+      return localStorage.getItem('hnb:agentDocked:__global__') === 'true'
+    } catch { return false }
+  })
   const [globalAgentMinimized, setGlobalAgentMinimized] = useState(false)
+  const [globalAgentDocked, setGlobalAgentDocked] = useState(() => {
+    try {
+      const saved = localStorage.getItem('hnb:agentDocked:__global__')
+      return saved === 'true'
+    } catch { /* ignore */ }
+    return false
+  })
   const [globalAgentWidth, setGlobalAgentWidth] = useState(() => {
     try {
       const saved = localStorage.getItem('hnb:agentPanelWidth:__global__')
@@ -138,6 +149,19 @@ export function AppShell({ children, noPadding, hideGlobalFab }: Props) {
           ))}
           {children}
         </main>
+        {showGlobalAgent && !globalAgentMinimized && globalAgentDocked && (
+          <AgentPanel
+            notebookId=""
+            pageContext={currentPageContext}
+            width={globalAgentWidth}
+            onResize={(w) => { setGlobalAgentWidth(w); try { localStorage.setItem('hnb:agentPanelWidth:__global__', String(w)) } catch {} }}
+            onClose={() => setShowGlobalAgent(false)}
+            onMinimize={() => setGlobalAgentMinimized(true)}
+            onDock={() => { setGlobalAgentDocked(false); try { localStorage.setItem('hnb:agentDocked:__global__', 'false') } catch {} }}
+            docked
+            onCellCreated={() => {}}
+          />
+        )}
       </div>
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
 
@@ -154,8 +178,8 @@ export function AppShell({ children, noPadding, hideGlobalFab }: Props) {
             </button>
           )}
 
-          {/* Global Agent modal */}
-          {showGlobalAgent && !globalAgentMinimized && (
+          {/* Global Agent floating modal */}
+          {showGlobalAgent && !globalAgentMinimized && !globalAgentDocked && (
             <>
               <div
                 style={globalAgentStyles.backdrop}
@@ -188,16 +212,11 @@ export function AppShell({ children, noPadding, hideGlobalFab }: Props) {
                   notebookId=""
                   pageContext={currentPageContext}
                   width={globalAgentWidth}
-                  onResize={setGlobalAgentWidth}
-                  onClose={() => {
-                    try {
-                      localStorage.removeItem('hnb:agentChat:__global__')
-                      localStorage.removeItem('hnb:lastAgentId')
-                      localStorage.removeItem('hnb:agentPanelHeight:__global__')
-                    } catch {}
-                    setShowGlobalAgent(false)
-                  }}
+                  onResize={(w) => { setGlobalAgentWidth(w); try { localStorage.setItem('hnb:agentPanelWidth:__global__', String(w)) } catch {} }}
+                  onClose={() => setShowGlobalAgent(false)}
                   onMinimize={() => setGlobalAgentMinimized(true)}
+                  onDock={() => { setGlobalAgentDocked(true); try { localStorage.setItem('hnb:agentDocked:__global__', 'true') } catch {} }}
+                  docked={false}
                   onCellCreated={() => {}}
                 />
               </div>
