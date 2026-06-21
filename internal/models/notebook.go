@@ -87,14 +87,39 @@ type SnapshotCell struct {
 	Description   string          `json:"description,omitempty"`
 }
 
+type CellDiffLine struct {
+	Type   string `json:"type"`   // "add", "del", "ctx"
+	Line   string `json:"line"`
+	OldNum int    `json:"old_num,omitempty"`
+	NewNum int    `json:"new_num,omitempty"`
+}
+
+type CellDiff struct {
+	CellID    string         `json:"cell_id"`
+	Position  int            `json:"position"`
+	Title     string         `json:"title,omitempty"`
+	OldSource string         `json:"old_source"`
+	NewSource string         `json:"new_source"`
+	DiffLines []CellDiffLine `json:"diff_lines"`
+	Summary   string         `json:"summary"`
+}
+
+type CellChange struct {
+	CellID      string `json:"cell_id"`
+	Position    int    `json:"position"`
+	OldPosition int    `json:"old_position,omitempty"`
+	Title       string `json:"title,omitempty"`
+}
+
 type SnapshotChanges struct {
-	TitleChanged   bool     `json:"title_changed"`
-	OldTitle       string   `json:"old_title"`
-	NewTitle       string   `json:"new_title"`
-	CellsAdded     []string `json:"cells_added"`
-	CellsDeleted   []string `json:"cells_deleted"`
-	CellsModified  []string `json:"cells_modified"`
-	PositionsChanged bool   `json:"positions_changed"`
+	TitleChanged    bool         `json:"title_changed"`
+	OldTitle        string       `json:"old_title"`
+	NewTitle        string       `json:"new_title"`
+	CellsAdded      []CellChange `json:"cells_added"`
+	CellsDeleted    []CellChange `json:"cells_deleted"`
+	CellsModified   []CellChange `json:"cells_modified"`
+	PositionsChanged []CellChange `json:"positions_changed"`
+	CellDiffs       []CellDiff   `json:"cell_diffs,omitempty"`
 }
 
 type NotebookSnapshot struct {
