@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -495,7 +496,7 @@ func TestAgentCreateCellAtEnd(t *testing.T) {
 	createCellHandler := createCellDef.Handler
 	ctx := setupToolContext(t, db, orgID, userID, nbID)
 
-	// Create a cell without position (should go to position 1)
+	// Create a cell without position (should go to position 2, 1-indexed)
 	args, _ := json.Marshal(map[string]any{
 		"notebook_id": nbID,
 		"type":        "code",
@@ -506,7 +507,101 @@ func TestAgentCreateCellAtEnd(t *testing.T) {
 		t.Fatalf("create cell at end: %v", err)
 	}
 	resultMap := result.(map[string]any)
-	if pos, ok := resultMap["position"].(int); !ok || pos != 1 {
-		t.Fatalf("expected position 1, got %v", resultMap["position"])
+	if pos, ok := resultMap["position"].(int); !ok || pos != 2 {
+		t.Fatalf("expected position 2, got %v", resultMap["position"])
+	}
+}
+
+func TestAgentMoveCell(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	createCellDef, _ := reg.Get("create_cell")
+	moveCellDef, _ := reg.Get("move_cell")
+	createCellHandler := createCellDef.Handler
+	moveCellHandler := moveCellDef.Handler
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+
+	// Create 25 cells like the agent does
+	var firstCellID string
+	for i := 0; i < 25; i++ {
+		args, _ := json.Marshal(map[string]any{
+			"notebook_id": nbID,
+			"type":        "code",
+			"source":      "SELECT " + fmt.Sprint(i),
+			"position":    i,
+		})
+		result, err := createCellHandler(args, ctx)
+		if err != nil {
+			t.Fatalf("create cell %d: %v", i, err)
+		}
+		if i == 0 {
+			firstCellID = result.(map[string]any)["cell_id"].(string)
+		}
+	}
+
+	// Verify 25 cells with contiguous positions
+	verifyPositions(t, db.Pool, nbID, 25)
+
+	// Move first-created cell (ends up at last position due to shifting) to position 1
+	args1, _ := json.Marshal(map[string]any{
+		"cell_id":      firstCellID,
+		"new_position": 1,
+	})
+	_, err := moveCellHandler(args1, ctx)
+	if err != nil {
+		t.Fatalf("move cell to position 1: %v", err)
+	}
+	verifyPositions(t, db.Pool, nbID, 25)
+
+	// Move it back to the end
+	args2, _ := json.Marshal(map[string]any{
+		"cell_id":      firstCellID,
+		"new_position": 25,
+	})
+	_, err = moveCellHandler(args2, ctx)
+	if err != nil {
+		t.Fatalf("move cell to position 25: %v", err)
+	}
+	verifyPositions(t, db.Pool, nbID, 25)
+
+	// Move middle cell
+	args3, _ := json.Marshal(map[string]any{
+		"cell_id":      firstCellID,
+		"new_position": 13,
+	})
+	_, err = moveCellHandler(args3, ctx)
+	if err != nil {
+		t.Fatalf("move cell to position 13: %v", err)
+	}
+	verifyPositions(t, db.Pool, nbID, 25)
+}
+
+func verifyPositions(t *testing.T, pool *pgxpool.Pool, nbID string, expectedCount int) {
+	t.Helper()
+	rows, err := pool.Query(context.Background(),
+		`SELECT position FROM cells WHERE notebook_id = $1 ORDER BY position`, nbID)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	seen := map[int]bool{}
+	var count int
+	for rows.Next() {
+		var pos int
+		if err := rows.Scan(&pos); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if seen[pos] {
+			t.Fatalf("DUPLICATE position %d", pos)
+		}
+		seen[pos] = true
+		count++
+	}
+	if count != expectedCount {
+		t.Fatalf("expected %d cells, got %d", expectedCount, count)
 	}
 }
