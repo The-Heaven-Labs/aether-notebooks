@@ -1100,6 +1100,9 @@ func (e *Engine) buildNotebookContext(ctx context.Context, notebookID string) st
 	// Add subagent capability mention
 	result += "\n\nYou have the spawn_subagents tool to run multiple independent tasks in parallel via separate AI sub-agents. Use it when a request contains several distinct subtasks that don't depend on each other's results. For example: exploring multiple schemas at once, generating several unrelated queries, or researching different topics simultaneously."
 
+	// Add dashboard tools mention
+	result += "\n\nDashboard tools: create_dashboard, get_dashboard (see widgets), create_dashboard_widget (add cell as widget), update_dashboard_widget (reposition), delete_dashboard_widget, update_dashboard (rename/grid), delete_dashboard, list_dashboards, share_dashboard. To build a dashboard: create it, then list_cells on the notebook, check each cell's chart config (shown in list_cells output as 'chart'), then create_dashboard_widget for each cell. Copy the notebook_id when adding widgets."
+
 	// Add resource link patterns
 	result += "\n\nResource link patterns (use these to provide clickable links to the user):"
 	result += "\n- Notebook: " + asLink(base, "/notebooks/{id}")
