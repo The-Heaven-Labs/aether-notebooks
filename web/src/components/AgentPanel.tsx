@@ -73,6 +73,7 @@ interface AgentChatState {
   tasks?: AgentTaskItem[]
   totalTokens?: TokenBreakdown
   maxTokens?: number
+  contextWindow?: number
 }
 
 export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellOutput, onCellScrollTo, onClose, onMinimize }: AgentPanelProps) {
@@ -98,6 +99,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
     return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
   }
   const [maxTokens, setMaxTokens] = useState<number>(0)
+  const [contextWindow, setContextWindow] = useState<number>(0)
   const [showTokenDetails, setShowTokenDetails] = useState(false)
   const [reasoningEffort, setReasoningEffort] = useState('')
   const [reasoningEffortOpts, setReasoningEffortOpts] = useState<string[]>([])
@@ -175,8 +177,9 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
           setSessionId(savedState.sessionId)
           setMessages(savedState.messages)
           setTasks(savedState.tasks || [])
-          if (savedState.totalTokens) setTotalTokens(savedState.totalTokens)
-          if (savedState.maxTokens) setMaxTokens(savedState.maxTokens)
+    if (savedState.totalTokens) setTotalTokens(savedState.totalTokens)
+    if (savedState.maxTokens) setMaxTokens(savedState.maxTokens)
+    if (savedState.contextWindow) setContextWindow(savedState.contextWindow)
           connectWebSocket(savedState.sessionId)
           return
         }
@@ -200,9 +203,9 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
     return null
   }
 
-  const saveChatState = (agentId: string, sessionId: string, msgs: Array<{ role: string; content: string; reasoning?: string; params?: string; result?: string; created_at?: string }>, tks?: AgentTaskItem[], tok?: TokenBreakdown, mTok?: number) => {
+  const saveChatState = (agentId: string, sessionId: string, msgs: Array<{ role: string; content: string; reasoning?: string; params?: string; result?: string; created_at?: string }>, tks?: AgentTaskItem[], tok?: TokenBreakdown, mTok?: number, cw?: number) => {
     try {
-      localStorage.setItem(chatStateKey, JSON.stringify({ agentId, sessionId, messages: msgs, tasks: tks, totalTokens: tok, maxTokens: mTok }))
+      localStorage.setItem(chatStateKey, JSON.stringify({ agentId, sessionId, messages: msgs, tasks: tks, totalTokens: tok, maxTokens: mTok, contextWindow: cw }))
     } catch { /* ignore */ }
   }
 
@@ -418,7 +421,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
 
   const startSession = async (agent: Agent) => {
     try {
-      const res = await api.post<{ session_id: string; max_tokens: number }>('/api/v1/agents/' + agent.id + '/session', {
+      const res = await api.post<{ session_id: string; max_tokens: number; context_window?: number }>('/api/v1/agents/' + agent.id + '/session', {
         notebook_id: notebookId || null,
       })
       setSessionId(res.session_id)
@@ -428,7 +431,8 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
       setMessages([])
       setTotalTokens(null)
       setMaxTokens(res.max_tokens)
-      saveChatState(agent.id, res.session_id, [], undefined, undefined, res.max_tokens)
+      setContextWindow(res.context_window ?? 0)
+      saveChatState(agent.id, res.session_id, [], undefined, undefined, res.max_tokens, res.context_window ?? 0)
       connectWebSocket(res.session_id)
     } catch {
       setError('Failed to start session')
@@ -561,7 +565,7 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
 
   useEffect(() => {
     if (_sessionId && selectedAgent && messages.length > 0) {
-      saveChatState(selectedAgent.id, _sessionId, messages, tasks, totalTokens || undefined, maxTokens)
+      saveChatState(selectedAgent.id, _sessionId, messages, tasks, totalTokens || undefined, maxTokens, contextWindow)
     }
   }, [messages, tasks, _sessionId, selectedAgent])
 
@@ -771,9 +775,9 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
                   style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8, whiteSpace: 'nowrap', cursor: 'pointer', borderBottom: '1px dashed var(--text-muted)' }}
                 >
                   {totalTokens.input.toLocaleString()}↑ / {totalTokens.output.toLocaleString()}↓
-                  {maxTokens > 0 && (
+                  {contextWindow > 0 && (
                     <span style={{ marginLeft: 6, opacity: 0.6 }}>
-                      ({Math.round((totalTokens.input + totalTokens.output) / maxTokens * 100)}%)
+                      ({Math.round((totalTokens.input + totalTokens.output) / contextWindow * 100)}%)
                     </span>
                   )}
                 </span>
@@ -823,10 +827,10 @@ export function AgentPanel({ notebookId, width, onResize, onCellCreated, onCellO
                           <span>{totalTokens.model_calls}</span>
                         </div>
                       )}
-                      {maxTokens > 0 && (
+                      {contextWindow > 0 && (
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, color: 'var(--text-muted)', fontSize: 11 }}>
-                          <span>Budget</span>
-                          <span>{maxTokens.toLocaleString()} ({Math.round((totalTokens.input + totalTokens.output) / maxTokens * 100)}%)</span>
+                          <span>Context window</span>
+                          <span>{contextWindow.toLocaleString()} ({Math.round((totalTokens.input + totalTokens.output) / contextWindow * 100)}%)</span>
                         </div>
                       )}
 

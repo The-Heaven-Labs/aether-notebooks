@@ -550,14 +550,27 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Look up the model's context window for display purposes
+	var contextWindow int
+	h.server.db.Pool.QueryRow(r.Context(), `
+		SELECT COALESCE(mc.context_window, 128000)
+		FROM agents a
+		JOIN model_configs mc ON mc.id = a.model_config_id
+		WHERE a.id = $1
+	`, agentID).Scan(&contextWindow)
+	if contextWindow == 0 {
+		contextWindow = 128000
+	}
+
 	h.server.audit.Log(r.Context(), audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "agent_session.create", ResourceType: "agent_session", ResourceID: sessionID,
 	})
 
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"session_id": sessionID,
-		"max_tokens": req.MaxTokens,
+		"session_id":     sessionID,
+		"max_tokens":     req.MaxTokens,
+		"context_window": contextWindow,
 	})
 }
 
