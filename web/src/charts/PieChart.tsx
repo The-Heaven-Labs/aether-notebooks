@@ -12,6 +12,7 @@ function PieChartComponent({ data, config }: ChartProps) {
 
   const option = useMemo(() => ({
     tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: '{b}: {c} ({d}%)' },
+    title: config.title ? { text: config.title, left: 'center', textStyle: { fontSize: 14, color: colors.text } } : undefined,
     legend: config.showLegend !== false ? { orient: 'vertical' as const, right: 10, top: 'center', textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
     series: [{
       type: 'pie' as const,
@@ -24,9 +25,11 @@ function PieChartComponent({ data, config }: ChartProps) {
       })),
       label: config.showLabels !== false ? { fontSize: 11, color: colors.text } : { show: false },
       emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.2)' } },
-      animation: false,
+      roseType: config.roseType,
+      startAngle: config.startAngle ?? 90,
+      padAngle: config.padAngle ?? 0,
     }],
-  }), [chartData, xAxis, valueKey, isDonut, config.seriesColors, config.showLegend, config.showLabels, colors])
+  }), [chartData, xAxis, valueKey, isDonut, config.title, config.seriesColors, config.showLegend, config.showLabels, config.roseType, config.startAngle, config.padAngle, colors])
 
   return <EChartsContainer option={option} />
 }
@@ -71,6 +74,45 @@ function PieConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
         Donut (ring)
       </label>
       <ConfigHint>Show as a ring chart with a hole in the center</ConfigHint>
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Rose type</div>
+        <select
+          aria-label="Rose type"
+          style={styles.select}
+          value={config.roseType ?? ''}
+          onChange={e => onChange({ ...config, roseType: e.target.value || undefined })}
+        >
+          <option value="">None (plain pie)</option>
+          <option value="radius">Radius (rose)</option>
+          <option value="area">Area (rose)</option>
+        </select>
+      </div>
+      <div style={styles.row}>
+        <div style={styles.section}>
+          <div style={styles.sectionLabel}>Start angle</div>
+          <input
+            aria-label="Start angle"
+            type="number"
+            min={0}
+            max={360}
+            style={styles.input}
+            value={config.startAngle ?? 90}
+            onChange={e => onChange({ ...config, startAngle: parseInt(e.target.value) || 90 })}
+          />
+        </div>
+        <div style={styles.section}>
+          <div style={styles.sectionLabel}>Pad angle</div>
+          <input
+            aria-label="Pad angle"
+            type="number"
+            min={0}
+            max={30}
+            style={styles.input}
+            value={config.padAngle ?? 0}
+            onChange={e => onChange({ ...config, padAngle: parseInt(e.target.value) || 0 })}
+          />
+        </div>
+      </div>
     </div>
   )
 }
@@ -81,6 +123,8 @@ const styles: Record<string, React.CSSProperties> = {
   sectionLabel: { fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' as const, letterSpacing: 0.5 },
   select: { fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4 },
   checkbox: { fontSize: 12, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 4 },
+  row: { display: 'flex', gap: 10 },
+  input: { fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4 },
 }
 
 export const PieChartModule: ChartModule = {

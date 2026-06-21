@@ -1071,7 +1071,19 @@ func (e *Engine) buildNotebookContext(ctx context.Context, notebookID string) st
 		if err == nil {
 			result += fmt.Sprintf("\nConnector: %q (type: %s, id: %s)", connName, connType, *connectorID)
 			result += "\nNotebook cells: type 'code' with language 'sql' for database queries, type 'text' with language 'markdown' for documentation."
-			result += "\nCharts: Use create_chart to turn a cell's table output into a chart. Types: bar, stacked_bar, line, area, scatter, pie, donut, timeline, hierarchy_tree, big_number, map, sankey. For timeline: use time_column, end_time_column (optional), label_column. For hierarchy_tree: use id_column, parent_id_column, label_column. For big_number: use value_column. For map: x_column=longitude, y_column[0]=latitude, y_column[1]=value (optional), label_column. For sankey: x_column=source, y_column[0]=target, y_column[1]=value. All chart types support show_labels, show_legend, show_grid, skip_empty flags. Use update_chart to modify an existing chart's config. The frontend renders automatically from saved config."
+			result += "\nCharts: Use create_chart to turn a cell's table output into a chart. Types: bar, stacked_bar, line, area, scatter, pie, donut, timeline, hierarchy_tree, big_number, map, sankey."
+			result += "\n  Common params (all types): title, show_labels, show_legend, show_grid, skip_empty, series_colors (dict of series name to hex color)"
+			result += "\n  Bar/stacked_bar: x_column (categories), y_columns (values). Also: bar_width (% string), bar_gap (% string), data_zoom."
+			result += "\n  Line: x_column (categories), y_columns (values). Also: smooth (boolean), connect_nulls, data_zoom."
+			result += "\n  Area: same as line with area fill. Also: smooth, connect_nulls, data_zoom."
+			result += "\n  Scatter: x_column (numeric), y_columns (values). Also: color_column (maps 3rd dim to color gradient), size_column (bubble size), data_zoom (always enabled)."
+			result += "\n  Pie/donut: label_column (slice name), y_columns (metric value). Also: rose_type (radius|area), start_angle (0-360), pad_angle (gap between slices)."
+			result += "\n  Timeline: time_column, end_time_column (optional for ranges), label_column, group_by (swim lanes). Also: show_connectors, show_time_deltas, max_label_length."
+			result += "\n  Hierarchy tree: id_column, parent_id_column, label_column, metric_columns, layout (top-down|left-to-right), node_spacing."
+			result += "\n  Big number: value_column, label (display text), prefix, suffix, decimal_places."
+			result += "\n  Map: x_column=longitude, y_columns[0]=latitude, y_columns[1]=value (optional), label_column."
+			result += "\n  Sankey: x_column=source, y_columns[0]=target, y_columns[1]=value. Also: node_align (justify|left|right), node_width, node_gap."
+			result += "\nUse update_chart to modify an existing chart's config. The frontend renders automatically from saved config."
 		}
 	}
 

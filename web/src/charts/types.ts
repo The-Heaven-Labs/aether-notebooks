@@ -39,6 +39,24 @@ export interface ChartConfig {
   showLabels?: boolean
   skipEmpty?: boolean
   seriesColors?: Record<string, string>
+  dataZoom?: boolean
+  smooth?: boolean
+  // Bar
+  barWidth?: string
+  barGap?: string
+  // Line/Area
+  connectNulls?: boolean
+  // Sankey
+  nodeAlign?: 'justify' | 'left' | 'right'
+  nodeWidth?: number
+  nodeGap?: number
+  // Scatter
+  colorColumn?: string
+  sizeColumn?: string
+  // Pie/Donut
+  roseType?: 'radius' | 'area'
+  startAngle?: number
+  padAngle?: number
   // Timeline-specific
   maxLabelLength?: number
   showConnectors?: boolean

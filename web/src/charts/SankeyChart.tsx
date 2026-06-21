@@ -85,13 +85,13 @@ function SankeyChartComponent({ data, config }: ChartProps) {
         return `${p.name}`
       },
     },
+    title: config.title ? { text: config.title, left: 'center', textStyle: { fontSize: 14, color: colors.text } } : undefined,
     series: [{
       type: 'sankey' as const,
-      layout: 'none' as const,
       layoutIterations: 32,
-      nodeAlign: 'justify' as const,
-      nodeWidth: 20,
-      nodeGap: 12,
+      nodeAlign: config.nodeAlign ?? 'justify',
+      nodeWidth: config.nodeWidth ?? 20,
+      nodeGap: config.nodeGap ?? 12,
       roam: true,
       data: nodes,
       links,
@@ -107,9 +107,8 @@ function SankeyChartComponent({ data, config }: ChartProps) {
       emphasis: {
         focus: 'adjacency' as const,
       },
-      animation: false,
     }],
-  }), [nodes, links, colors])
+  }), [nodes, links, colors, config.title, config.nodeWidth, config.nodeGap, config.nodeAlign])
 
   return <EChartsContainer option={option} showReset />
 }
@@ -157,12 +156,56 @@ function SankeyConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
         </select>
         <ConfigHint>Numeric column for flow width (volume, count, etc.)</ConfigHint>
       </div>
+      <div style={styles.row}>
+        <div style={styles.section}>
+          <div style={styles.sectionLabel}>Node width</div>
+          <select
+            aria-label="Node width"
+            style={styles.select}
+            value={String(config.nodeWidth ?? 20)}
+            onChange={e => onChange({ ...config, nodeWidth: Number(e.target.value) })}
+          >
+            <option value="10">Thin</option>
+            <option value="20">Normal</option>
+            <option value="30">Thick</option>
+            <option value="50">Wide</option>
+          </select>
+        </div>
+        <div style={styles.section}>
+          <div style={styles.sectionLabel}>Node gap</div>
+          <select
+            aria-label="Node gap"
+            style={styles.select}
+            value={String(config.nodeGap ?? 12)}
+            onChange={e => onChange({ ...config, nodeGap: Number(e.target.value) })}
+          >
+            <option value="4">Tight</option>
+            <option value="12">Normal</option>
+            <option value="24">Wide</option>
+            <option value="40">Extra</option>
+          </select>
+        </div>
+      </div>
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Node alignment</div>
+        <select
+          aria-label="Node alignment"
+          style={styles.select}
+          value={config.nodeAlign ?? 'justify'}
+          onChange={e => onChange({ ...config, nodeAlign: e.target.value as any })}
+        >
+          <option value="justify">Justify</option>
+          <option value="left">Left</option>
+          <option value="right">Right</option>
+        </select>
+      </div>
     </div>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
   panel: { padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 10 },
+  row: { display: 'flex', gap: 10 },
   section: { flex: 1, display: 'flex', flexDirection: 'column', gap: 4 },
   sectionLabel: { fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 },
   select: { fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4 },

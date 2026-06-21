@@ -87,6 +87,40 @@ export function AxisConfigPanel({
           </div>
         </div>
       )}
+      {(config.chartType === 'bar' || config.chartType === 'stacked_bar') ? (
+        <div style={styles.row}>
+          <div style={styles.section}>
+            <div style={styles.sectionLabel}>Bar width</div>
+            <select
+              aria-label="Bar width"
+              style={styles.select}
+              value={config.barWidth ?? ''}
+              onChange={e => onChange({ ...config, barWidth: e.target.value || undefined })}
+            >
+              <option value="">Auto</option>
+              <option value="30%">Narrow</option>
+              <option value="50%">Normal</option>
+              <option value="70%">Wide</option>
+              <option value="90%">Max</option>
+            </select>
+          </div>
+          <div style={styles.section}>
+            <div style={styles.sectionLabel}>Bar gap</div>
+            <select
+              aria-label="Bar gap"
+              style={styles.select}
+              value={config.barGap ?? ''}
+              onChange={e => onChange({ ...config, barGap: e.target.value || undefined })}
+            >
+              <option value="">Default</option>
+              <option value="10%">Tight</option>
+              <option value="30%">Normal</option>
+              <option value="60%">Wide</option>
+              <option value="100%">Extra</option>
+            </select>
+          </div>
+        </div>
+      ) : undefined}
 
       {/* Title */}
       <div style={styles.row}>
@@ -133,6 +167,37 @@ export function AxisConfigPanel({
         </div>
       )}
 
+      {config.chartType === 'scatter' && (
+        <div style={styles.row}>
+          <div style={styles.section}>
+            <div style={styles.sectionLabel}>Color by (optional)</div>
+            <select
+              aria-label="Color by"
+              style={styles.select}
+              value={config.colorColumn ?? ''}
+              onChange={e => onChange({ ...config, colorColumn: e.target.value || undefined })}
+            >
+              <option value="">None</option>
+              {columns.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <ConfigHint>Column to map to color gradient</ConfigHint>
+          </div>
+          <div style={styles.section}>
+            <div style={styles.sectionLabel}>Size by (optional)</div>
+            <select
+              aria-label="Size by"
+              style={styles.select}
+              value={config.sizeColumn ?? ''}
+              onChange={e => onChange({ ...config, sizeColumn: e.target.value || undefined })}
+            >
+              <option value="">None</option>
+              {columns.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <ConfigHint>Column to control bubble size</ConfigHint>
+          </div>
+        </div>
+      )}
+
       {/* Checkboxes */}
       <div style={styles.row}>
         <label style={styles.checkbox}>
@@ -158,6 +223,22 @@ export function AxisConfigPanel({
             onChange={e => onChange({ ...config, showLabels: e.target.checked })}
           />
           Labels
+        </label>
+        <label style={styles.checkbox}>
+          <input
+            type="checkbox"
+            checked={config.dataZoom ?? false}
+            onChange={e => onChange({ ...config, dataZoom: e.target.checked })}
+          />
+          Zoom
+        </label>
+        <label style={styles.checkbox}>
+          <input
+            type="checkbox"
+            checked={config.smooth ?? false}
+            onChange={e => onChange({ ...config, smooth: e.target.checked })}
+          />
+          Smooth
         </label>
       </div>
       <ConfigHint>Legend identifies each series, Grid shows background lines, Labels show values on data points</ConfigHint>
