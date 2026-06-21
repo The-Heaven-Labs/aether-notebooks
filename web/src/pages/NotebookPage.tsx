@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ChevronsRight, ChevronLeft, Loader2, X, Bot, Check, GripVertical, Shield, Clock } from 'lucide-react'
+import { ChevronsRight, ChevronLeft, Loader2, X, Check, GripVertical, Shield, Clock } from 'lucide-react'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -23,7 +23,6 @@ import { HistoryPanel } from '../components/HistoryPanel'
 import { NotebookHistoryPanel } from '../components/NotebookHistoryPanel'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { ErrorBanner } from '../components/ErrorBanner'
-import { AgentPanel } from '../components/AgentPanel'
 import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { useNotebookWs } from '../hooks/useNotebookWs'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -215,17 +214,6 @@ export function NotebookPage() {
   const pendingExecRef = useRef(new Set<string>())
   const [historyCell, setHistoryCell] = useState<string | null>(null)
   const [historyVersions, setHistoryVersions] = useState<CellVersion[]>([])
-  const [showAgent, setShowAgent] = useState(() => {
-    try { return localStorage.getItem(`hnb:agentPanel:${id}`) === 'true' } catch { return false }
-  })
-  const [agentPanelWidth, setAgentPanelWidth] = useState(() => {
-    try {
-      const saved = localStorage.getItem(`hnb:agentPanelWidth:${id}`)
-      if (saved) return Math.max(280, Math.min(960, parseInt(saved, 10)))
-    } catch { /* ignore */ }
-    return Math.max(280, Math.min(960, Math.round(window.innerWidth / 3)))
-  })
-
   // Drag-and-drop sensors
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
@@ -453,14 +441,6 @@ export function NotebookPage() {
   useEffect(() => {
     localStorage.setItem(paramStorageKey, JSON.stringify(paramValues))
   }, [paramValues, paramStorageKey])
-
-  useEffect(() => {
-    localStorage.setItem(`hnb:agentPanel:${id}`, String(showAgent))
-  }, [showAgent, id])
-
-  useEffect(() => {
-    localStorage.setItem(`hnb:agentPanelWidth:${id}`, String(agentPanelWidth))
-  }, [agentPanelWidth, id])
 
   const initializedRef = useRef(false)
   useEffect(() => {
@@ -1048,7 +1028,7 @@ export function NotebookPage() {
   )
 
   return (
-    <AppShell noPadding hideGlobalFab={showAgent}>
+    <AppShell noPadding>
     <div style={styles.page}>
       {/* Notebook Header */}
       <div style={styles.header}>
@@ -1172,7 +1152,7 @@ export function NotebookPage() {
             following={following}
             onFollow={(c) => setFollowing({ email: c.email, name: c.name })}
             onUnfollow={() => setFollowing(null)}
-            showAgent={showAgent}
+            showAgent={true}
             onFollowAgent={() => {
               if (following?.email === 'agent@hnb') {
                 setFollowing(null)
@@ -1247,15 +1227,6 @@ export function NotebookPage() {
           {/* Run All — standalone */}
           <button type="button" style={styles.runAllBtn} onClick={runAll} disabled={runningCount > 0}>
             <ChevronsRight size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />Run All
-          </button>
-
-          {/* AI — standalone */}
-          <button
-            type="button"
-            style={{ ...styles.schemaBtn, ...(showAgent ? styles.schemaBtnActive : {}), display: 'flex', alignItems: 'center', gap: 4 }}
-            onClick={() => setShowAgent((v) => !v)}
-          >
-            <Bot size={13} /> AI
           </button>
 
           {/* History — standalone */}
@@ -1448,43 +1419,7 @@ export function NotebookPage() {
             />
           )}
         </div>
-        {showAgent && (
-          <AgentPanel
-            notebookId={id!}
-            width={agentPanelWidth}
-            onResize={setAgentPanelWidth}
-            onClose={() => setShowAgent(false)}
-            onCellCreated={() => {
-              qc.invalidateQueries({ queryKey: ['notebook', id] })
-            }}
-            onCellOutput={(cellId, outputs) => {
-              setLocalCells((prev) =>
-                prev.map((c) => (c.id === cellId ? { ...c, outputs: outputs as Output[] } : c)),
-              )
-              setRunningCells((prev) => {
-                const next = new Set(prev)
-                next.delete(cellId)
-                return next
-              })
-              setCellRunAt((prev) => ({ ...prev, [cellId]: new Date() }))
-            }}
-            onCellScrollTo={(cellId) => {
-              let attempts = 0
-              const maxAttempts = 50
-              const interval = setInterval(() => {
-                const el = document.getElementById('cell-' + cellId)
-                if (el) {
-                  clearInterval(interval)
-                  el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                  el.classList.add('cell-flash')
-                  setTimeout(() => el.classList.remove('cell-flash'), 3000)
-                } else if (++attempts >= maxAttempts) {
-                  clearInterval(interval)
-                }
-              }, 100)
-            }}
-          />
-        )}
+
       </div>
 
       {/* Add to dashboard modal */}
