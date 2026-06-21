@@ -25,7 +25,7 @@ function PieChartComponent({ data, config }: ChartProps) {
       })),
       label: config.showLabels !== false ? { fontSize: 11, color: colors.text } : { show: false },
       emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.2)' } },
-      roseType: config.roseType,
+      roseType: config.roseType || false,
       startAngle: config.startAngle ?? 90,
       padAngle: config.padAngle ?? 0,
     }],
