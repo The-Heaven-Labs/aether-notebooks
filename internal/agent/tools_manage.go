@@ -329,12 +329,16 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		// Build layout update
 		var layout *string
 		if req.Row != nil || req.Col != nil || req.Width != nil || req.Height != nil {
+			var layoutJSON []byte
+			err := pool.QueryRow(ctx.Context, `SELECT layout FROM widgets WHERE id = $1`, req.WidgetID).Scan(&layoutJSON)
+			if err != nil {
+				return nil, fmt.Errorf("get current layout: %w", err)
+			}
 			var cur struct {
 				Row, Col, Width, Height int
 			}
-			err := pool.QueryRow(ctx.Context, `SELECT layout->>'row', layout->>'col', layout->>'width', layout->>'height' FROM widgets WHERE id = $1`, req.WidgetID).Scan(&cur.Row, &cur.Col, &cur.Width, &cur.Height)
-			if err != nil {
-				return nil, fmt.Errorf("get current layout: %w", err)
+			if err := json.Unmarshal(layoutJSON, &cur); err != nil {
+				return nil, fmt.Errorf("parse current layout: %w", err)
 			}
 			l := map[string]int{
 				"row":    cur.Row,
