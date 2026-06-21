@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/heavenlabs/hnb/internal/crypto"
 	"github.com/heavenlabs/hnb/internal/executor"
@@ -40,6 +42,10 @@ func makeSQLQueryToolDef(t *models.Tool, pool *pgxpool.Pool) (*ToolDef, error) {
 
 			if err := ctx.CheckPermission("connector", connectorID, "use"); err != nil {
 				return nil, err
+			}
+
+			if !isReadOnlyQuery(query) {
+				return nil, fmt.Errorf("only read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are allowed")
 			}
 
 			// Convert LLM params to executor string map
@@ -117,11 +123,57 @@ func makeExecuteSQLHandler(pool *pgxpool.Pool) ToolHandler {
 			req.Limit = 1000
 		}
 
+		if !isReadOnlyQuery(req.Query) {
+			return nil, fmt.Errorf("only read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are allowed")
+		}
+
 		result, err := executeAgentSQL(ctx.Context, pool, req.ConnectorID, req.Query, nil, ctx.MasterKey, ctx.OrgID)
 		if err != nil {
 			return nil, err
 		}
 
 		return result, nil
+	}
+}
+
+// isReadOnlyQuery checks whether a SQL query is read-only by examining the first
+// non-comment keyword. This is a best-effort guard, not a security boundary.
+func isReadOnlyQuery(query string) bool {
+	s := strings.TrimSpace(query)
+	// Strip leading SQL comments (both -- and /* */ styles)
+	for {
+		if strings.HasPrefix(s, "--") {
+			idx := strings.Index(s, "\n")
+			if idx < 0 {
+				return false
+			}
+			s = strings.TrimSpace(s[idx+1:])
+			continue
+		}
+		if strings.HasPrefix(s, "/*") {
+			idx := strings.Index(s, "*/")
+			if idx < 0 {
+				return false
+			}
+			s = strings.TrimSpace(s[idx+2:])
+			continue
+		}
+		break
+	}
+
+	// Extract the first word
+	firstWord := ""
+	for _, r := range s {
+		if unicode.IsSpace(r) || r == '(' {
+			break
+		}
+		firstWord += string(unicode.ToUpper(r))
+	}
+
+	switch firstWord {
+	case "SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "WITH":
+		return true
+	default:
+		return false
 	}
 }
