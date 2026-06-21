@@ -1,6 +1,6 @@
 import { useRef, useCallback, useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getChartColors, useRowsAsObjects, walkTree, applyCollapsedToTree } from './common'
+import { EChartsContainer, CHART_COLORS, getChartColors, useRowsAsObjects, walkTree, applyCollapsedToTree, ChartTypeSelect } from './common'
 import type { ECharts } from 'echarts/core'
 import { ConfigHint } from './ConfigHint'
 
@@ -193,6 +193,10 @@ function HierarchyTreeConfigPanel({ config, columns, onChange }: ConfigPanelProp
 
   return (
     <div style={styles.panel}>
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Chart type</div>
+        <ChartTypeSelect value={config.chartType ?? 'hierarchy_tree'} onChange={v => onChange({ ...config, chartType: v as any })} />
+      </div>
       <div style={styles.row}>
         <div style={styles.section}>
           <div style={styles.sectionLabel}>ID column</div>

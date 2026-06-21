@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns, ChartTypeSelect } from './common'
 import { ConfigHint } from './ConfigHint'
 
 function PieChartComponent({ data, config }: ChartProps) {
@@ -34,6 +34,10 @@ function PieChartComponent({ data, config }: ChartProps) {
 function PieConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
   return (
     <div style={styles.panel}>
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Chart type</div>
+        <ChartTypeSelect value={config.chartType ?? 'pie'} onChange={v => onChange({ ...config, chartType: v as any })} />
+      </div>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Name column</div>
         <select

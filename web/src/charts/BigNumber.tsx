@@ -1,4 +1,5 @@
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
+import { ChartTypeSelect } from './common'
 import { ConfigHint } from './ConfigHint'
 
 function formatNumber(value: unknown, decimalPlaces?: number): string {
@@ -64,6 +65,10 @@ function BigNumberComponent({ data, config }: ChartProps) {
 function BigNumberConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
   return (
     <div style={styles.panel}>
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Chart type</div>
+        <ChartTypeSelect value={config.chartType ?? 'big_number'} onChange={v => onChange({ ...config, chartType: v as any })} />
+      </div>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Value column</div>
         <select

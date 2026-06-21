@@ -104,32 +104,34 @@ export function AxisConfigPanel({
       </div>
 
       {/* Series Colors */}
-      <div style={styles.row}>
-        <div style={styles.section}>
-          <div style={styles.sectionLabel}>Series colors</div>
-          <div style={styles.colorRow}>
-            {CHART_COLORS.slice(0, 6).map((defaultColor, i) => {
-              const seriesName = config.yAxis?.[i] ?? `Series ${i + 1}`
-              const currentColor = config.seriesColors?.[seriesName] ?? defaultColor
-              return (
-                <label key={i} style={styles.colorLabel}>
-                  <input
-                    type="color"
-                    value={currentColor}
-                    onChange={e => {
-                      const newColors = { ...config.seriesColors, [seriesName]: e.target.value }
-                      onChange({ ...config, seriesColors: newColors })
-                    }}
-                    style={styles.colorInput}
-                  />
-                  <span style={styles.colorText}>{seriesName.substring(0, 8)}</span>
-                </label>
-              )
-            })}
+      {(config.yAxis?.length ?? 0) > 0 && (
+        <div style={styles.row}>
+          <div style={styles.section}>
+            <div style={styles.sectionLabel}>Series colors</div>
+            <div style={styles.colorRow}>
+              {config.yAxis!.map((seriesName, i) => {
+                const defaultColor = CHART_COLORS[i % CHART_COLORS.length]
+                const currentColor = config.seriesColors?.[seriesName] ?? defaultColor
+                return (
+                  <label key={seriesName} style={styles.colorLabel}>
+                    <input
+                      type="color"
+                      value={currentColor}
+                      onChange={e => {
+                        const newColors = { ...config.seriesColors, [seriesName]: e.target.value }
+                        onChange({ ...config, seriesColors: newColors })
+                      }}
+                      style={styles.colorInput}
+                    />
+                    <span style={styles.colorText}>{seriesName.substring(0, 8)}</span>
+                  </label>
+                )
+              })}
+            </div>
+            <ConfigHint>Customize the color for each data series</ConfigHint>
           </div>
-          <ConfigHint>Customize the color for each data series</ConfigHint>
         </div>
-      </div>
+      )}
 
       {/* Checkboxes */}
       <div style={styles.row}>
@@ -173,6 +175,6 @@ const styles: Record<string, React.CSSProperties> = {
   checkbox: { fontSize: 12, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 4 },
   colorRow: { display: 'flex', gap: 8, flexWrap: 'wrap' },
   colorLabel: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, fontSize: 10, color: 'var(--text-muted)' },
-  colorInput: { width: 24, height: 24, padding: 0, border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer' },
+  colorInput: { width: 24, height: 24, padding: 0, border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', background: 'transparent' },
   colorText: { fontSize: 9, maxWidth: 40, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
 }
