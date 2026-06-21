@@ -130,17 +130,21 @@ func RestoreNotebookSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, snap
 	json.Unmarshal(cellsJSON, &snapshotCells)
 
 	snapCellIDs := make(map[string]bool)
-	snapCellMap := make(map[string]models.SnapshotCell)
 	for _, c := range snapshotCells {
 		snapCellIDs[c.ID] = true
-		snapCellMap[c.ID] = c
 	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
 
 	if snapTitle != "" {
-		pool.Exec(ctx, `UPDATE notebooks SET title=$1, updated_at=NOW() WHERE id=$2`, snapTitle, nbID)
+		tx.Exec(ctx, `UPDATE notebooks SET title=$1, updated_at=NOW() WHERE id=$2`, snapTitle, nbID)
 	}
 
-	existingRows, err := pool.Query(ctx, `SELECT id FROM cells WHERE notebook_id=$1`, nbID)
+	existingRows, err := tx.Query(ctx, `SELECT id FROM cells WHERE notebook_id=$1`, nbID)
 	if err != nil {
 		return fmt.Errorf("query existing cells: %w", err)
 	}
@@ -159,13 +163,13 @@ func RestoreNotebookSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, snap
 
 	for _, id := range existingIDs {
 		if !snapCellIDs[id] {
-			pool.Exec(ctx, `DELETE FROM cells WHERE id=$1 AND notebook_id=$2`, id, nbID)
+			tx.Exec(ctx, `DELETE FROM cells WHERE id=$1 AND notebook_id=$2`, id, nbID)
 		}
 	}
 
 	for _, sc := range snapshotCells {
 		if existingSet[sc.ID] {
-			pool.Exec(ctx, `
+			tx.Exec(ctx, `
 				UPDATE cells SET type=$1, language=$2, source=$3, position=$4,
 					connector_id=$5, outputs=$6, "limit"=$7,
 					source_visible=$8, cell_collapsed=$9, slide_break=$10,
@@ -179,7 +183,7 @@ func RestoreNotebookSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, snap
 				sc.ID, nbID,
 			)
 		} else {
-			pool.Exec(ctx, `
+			tx.Exec(ctx, `
 				INSERT INTO cells (id, notebook_id, type, language, source, position,
 					connector_id, outputs, "limit", source_visible, cell_collapsed,
 					slide_break, metadata, title, description, created_at, updated_at)
@@ -196,7 +200,11 @@ func RestoreNotebookSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, snap
 		}
 	}
 
-	pool.Exec(ctx, `UPDATE notebooks SET updated_at=NOW() WHERE id=$1`, nbID)
+	tx.Exec(ctx, `UPDATE notebooks SET updated_at=NOW() WHERE id=$1`, nbID)
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit restore: %w", err)
+	}
 
 	return nil
 }
