@@ -19,14 +19,13 @@ func NewSessionStore(pool *pgxpool.Pool) *SessionStore {
 	return &SessionStore{pool: pool}
 }
 
-func (s *SessionStore) CreateSession(ctx context.Context, agentID, notebookID, userID string, maxTurns, maxTokens int, title *string) (*models.AgentSession, error) {
+func (s *SessionStore) CreateSession(ctx context.Context, agentID, notebookID, userID string, maxTurns int, title *string) (*models.AgentSession, error) {
 	session := &models.AgentSession{
 		ID:         uuid.New().String(),
 		AgentID:    agentID,
 		NotebookID: notebookID,
 		UserID:     userID,
 		MaxTurns:   maxTurns,
-		MaxTokens:  maxTokens,
 		Title:      title,
 		CreatedAt:  time.Now(),
 	}
@@ -36,9 +35,9 @@ func (s *SessionStore) CreateSession(ctx context.Context, agentID, notebookID, u
 		nbID = &session.NotebookID
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, max_tokens, title, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, session.ID, session.AgentID, nbID, session.UserID, session.MaxTurns, session.MaxTokens, session.Title, session.CreatedAt)
+		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, title, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, session.ID, session.AgentID, nbID, session.UserID, session.MaxTurns, session.Title, session.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
 	}
@@ -52,9 +51,9 @@ func (s *SessionStore) GetSession(ctx context.Context, sessionID string) (*model
 	var title *string
 	var notebookID *string
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, agent_id, notebook_id, user_id, max_turns, max_tokens, ended_at, title, created_at
+		SELECT id, agent_id, notebook_id, user_id, max_turns, ended_at, title, created_at
 		FROM agent_sessions WHERE id = $1
-	`, sessionID).Scan(&session.ID, &session.AgentID, &notebookID, &session.UserID, &session.MaxTurns, &session.MaxTokens, &endedAt, &title, &session.CreatedAt)
+	`, sessionID).Scan(&session.ID, &session.AgentID, &notebookID, &session.UserID, &session.MaxTurns, &endedAt, &title, &session.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get session: %w", err)
 	}
