@@ -35,6 +35,7 @@ func NewEngine(ctx context.Context, pool *pgxpool.Pool) *Engine {
 	RegisterAgentTools(engine.registry, pool, engine)
 	RegisterPlatformTools(engine.registry, pool)
 	RegisterChartTools(engine.registry, pool)
+	RegisterManageTools(engine.registry, pool)
 
 	// Seed built-in tools for all orgs
 	orgRows, err := pool.Query(ctx, `SELECT id FROM orgs`)
