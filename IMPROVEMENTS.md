@@ -44,4 +44,10 @@
 - [ ] The global agent panel should not block scroll on the page 
 - [ ] Sometimes the scroll in the global agent will not be 100% following the last message streaming state, but seconds later it will catch up
 - [ ] The metrics of token usage only appear after the whole turn ends. It should appear as soon as the user sends the first message and update dynamically for every new intermediate step of the chat
+- [ ] When asking the agent to interact with charts, almost always it will not be able to handle labels. Not sure if it is a problem on the agent side or the tooling side. Sometimes it will not be able to produce a chart (chart will be blank, potentially wrong parameters?). The label part seem to be more prevalent in pie/donut charts. Perhaps add some way for the current tools to access if a chart has actual content or is blank?
+- [ ] The chart title is on top/overrides the chart in some scenarios, there should be more space between it and the actual chart
+- [ ] When refreshing a page with a docked open agent modal, it should scroll to the end of the chat instead of being at the top
+- [ ] When the LLM chat gets long in a notebook page, the whole page slows down a lot
+- [ ] If I use /new in global agent undocked, then dock, the docked will be with the previous chat open
+- [ ] It seems cancel commands are not working in the global agent after page changing/refreshing, the chat continues in the background regardless of what I try. (It should be possible to have only one active chat at the same time)
 - [ ]
