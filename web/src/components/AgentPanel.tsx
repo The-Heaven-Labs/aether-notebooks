@@ -150,8 +150,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const resizeRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const selectedAgentRef = useRef<Agent | null>(null)
-  const userScrolledAwayRef = useRef(false)
   const lastScrollTimeRef = useRef(0)
+  const prevScrollHeightRef = useRef(0)
   selectedAgentRef.current = selectedAgent
 
   const queryClient = useQueryClient()
@@ -219,7 +219,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   useEffect(() => {
     if (!selectedAgent && agents.length > 0 && !isLoadingAgents) {
       const savedState = loadChatState()
-      if (savedState) {
+      if (savedState && savedState.messages && savedState.messages.length > 0) {
         const agent = agents.find((a) => a.id === savedState.agentId)
         if (agent) {
           setSelectedAgent(agent)
@@ -531,7 +531,6 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       setTasks([])
       setTotalTokens(null)
       setContextWindow(res.context_window ?? 0)
-      saveChatState(agent.id, res.session_id, [], undefined, undefined, res.context_window ?? 0)
       connectWebSocket(res.session_id)
     } catch {
       setError('Failed to start session')
@@ -543,9 +542,6 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     setSessionTitle(null)
     setMessages([])
     setTasks([])
-    if (selectedAgent) {
-      saveChatState(selectedAgent.id, sessionID, [], undefined)
-    }
     connectWebSocket(sessionID)
   }
 
@@ -654,7 +650,6 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     messageListRef.current = el
     if (el) {
       const handler = () => {
-        userScrolledAwayRef.current = el.scrollHeight - el.scrollTop - el.clientHeight > 80
         lastScrollTimeRef.current = Date.now()
       }
       scrollHandlerRef.current = handler
@@ -666,8 +661,12 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
   useEffect(() => {
     const el = messageListRef.current
-    if (!el || userScrolledAwayRef.current) return
+    if (!el) return
     if (Date.now() - lastScrollTimeRef.current < 200) return
+    if (el.scrollHeight < prevScrollHeightRef.current) return
+    prevScrollHeightRef.current = el.scrollHeight
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30
+    if (!nearBottom) return
     el.scrollTop = el.scrollHeight
   }, [messages, currentStreamingText, currentStreamingReasoning])
 
@@ -676,7 +675,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       saveChatState(selectedAgent.id, _sessionId, messages, tasks, totalTokens || undefined, contextWindow)
     }
     return () => {
-      if (_sessionId && selectedAgent) {
+      if (_sessionId && selectedAgent && messages.length > 0) {
         saveChatState(selectedAgent.id, _sessionId, messages, tasks, totalTokens || undefined, contextWindow)
       }
     }
@@ -1339,7 +1338,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     gap: 12,
-    overflowAnchor: 'auto' as const,
+    overscrollBehavior: 'contain',
   },
   emptyState: {
     flex: 1,
