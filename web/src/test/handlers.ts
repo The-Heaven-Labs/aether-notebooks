@@ -8,11 +8,13 @@ export const FOLDER_ROOT: FolderContents = {
     {
       id: 'f-home', org_id: 'org-1', name: "Alice's Home", is_home: true,
       owner_id: 'user-1', created_by: 'user-1',
+      can_edit: true, can_delete: true, can_share: true,
       created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     },
     {
       id: 'f-eng', org_id: 'org-1', name: 'Engineering', is_home: false,
       created_by: 'user-1',
+      can_edit: true, can_delete: true, can_share: true,
       created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     },
   ],

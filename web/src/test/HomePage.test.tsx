@@ -23,7 +23,8 @@ describe('Root view (T2.1)', () => {
 
   test('shows "Files" breadcrumb at root', async () => {
     renderWithProviders(<HomePage />)
-    expect(await screen.findByText('Files')).toBeInTheDocument()
+    const matches = await screen.findAllByText('Files')
+    expect(matches.length).toBeGreaterThan(0)
   })
 
   test('shows folders from root contents', async () => {
@@ -184,24 +185,30 @@ describe('Context menu (T2.6)', () => {
 // ── Rename (T2.7) ─────────────────────────────────────────────────────────────
 
 describe('Rename (T2.7)', () => {
+  beforeEach(() => {
+    server.use(http.get('/api/v1/home', () => HttpResponse.json([])))
+  })
+
+  async function openRenameForFolder(folderName: string) {
+    await screen.findAllByText(folderName)
+    const allBtns = screen.getAllByTitle('More options')
+    const menuBtn = Array.from(allBtns).find(b => b.parentElement?.textContent?.includes(folderName)) ?? allBtns[0]
+    fireEvent.click(menuBtn)
+    fireEvent.click(screen.getByText('Rename'))
+    const input = screen.getByDisplayValue(folderName)
+    expect(input).toBeInTheDocument()
+    return input
+  }
+
   test('clicking Rename shows inline input pre-filled with current name', async () => {
     renderWithProviders(<HomePage />)
-    await screen.findAllByText('Engineering')
-    const menuBtns = screen.getAllByTitle('More options')
-    // Engineering is the second folder (index 1)
-    fireEvent.click(menuBtns[1])
-    fireEvent.click(screen.getByText('Rename'))
-    const input = screen.getByDisplayValue('Engineering')
-    expect(input).toBeInTheDocument()
+    await openRenameForFolder('Engineering')
   })
 
   test('Escape cancels rename', async () => {
     renderWithProviders(<HomePage />)
     await screen.findAllByText('Engineering')
-    const menuBtns = screen.getAllByTitle('More options')
-    fireEvent.click(menuBtns[1])
-    fireEvent.click(screen.getByText('Rename'))
-    const input = screen.getByDisplayValue('Engineering')
+    const input = await openRenameForFolder('Engineering')
     fireEvent.keyDown(input, { key: 'Escape' })
     expect(screen.queryByDisplayValue('Engineering')).not.toBeInTheDocument()
     const engMatches = screen.getAllByText('Engineering')
@@ -217,11 +224,7 @@ describe('Rename (T2.7)', () => {
       })
     )
     renderWithProviders(<HomePage />)
-    await screen.findAllByText('Engineering')
-    const menuBtns = screen.getAllByTitle('More options')
-    fireEvent.click(menuBtns[1])
-    fireEvent.click(screen.getByText('Rename'))
-    const input = screen.getByDisplayValue('Engineering')
+    const input = await openRenameForFolder('Engineering')
     await userEvent.clear(input)
     await userEvent.type(input, 'New Name')
     fireEvent.keyDown(input, { key: 'Enter' })
@@ -235,7 +238,7 @@ describe('Rename (T2.7)', () => {
 
 describe('New Dashboard (T2.9)', () => {
   test('inline form appears after clicking New Dashboard button', async () => {
-    renderWithProviders(<HomePage />)
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-eng' })
     fireEvent.click(await screen.findByText('+ New Dashboard'))
     expect(screen.getByPlaceholderText('Dashboard title…')).toBeInTheDocument()
   })
@@ -251,7 +254,7 @@ describe('New Dashboard (T2.9)', () => {
         )
       })
     )
-    renderWithProviders(<HomePage />)
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-eng' })
     fireEvent.click(await screen.findByText('+ New Dashboard'))
     const input = screen.getByPlaceholderText('Dashboard title…')
     await userEvent.type(input, 'Sales Dashboard')

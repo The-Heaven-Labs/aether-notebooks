@@ -123,9 +123,11 @@ describe('Draft mode', () => {
     await screen.findAllByText('Alice Admin')
     await waitForAclLoaded()
     const entryRow = screen.getAllByText('Alice Admin')[0].closest('[tabIndex="0"]')
-    if (entryRow) fireEvent.mouseEnter(entryRow)
-    const checkboxes = screen.getAllByRole('checkbox')
-    fireEvent.click(checkboxes[0])
+    if (entryRow) fireEvent.click(entryRow)
+    const expandedCheckboxes = entryRow?.querySelectorAll('input[type="checkbox"]') || []
+    if (expandedCheckboxes.length > 0) {
+      fireEvent.click(expandedCheckboxes[0])
+    }
     expect(await screen.findByRole('button', { name: /save/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /discard/i })).toBeInTheDocument()
   })
@@ -135,9 +137,11 @@ describe('Draft mode', () => {
     await screen.findAllByText('Alice Admin')
     await waitForAclLoaded()
     const entryRow = screen.getAllByText('Alice Admin')[0].closest('[tabIndex="0"]')
-    if (entryRow) fireEvent.mouseEnter(entryRow)
-    const checkboxes = screen.getAllByRole('checkbox')
-    fireEvent.click(checkboxes[0])
+    if (entryRow) fireEvent.click(entryRow)
+    const expandedCheckboxes = entryRow?.querySelectorAll('input[type="checkbox"]') || []
+    if (expandedCheckboxes.length > 0) {
+      fireEvent.click(expandedCheckboxes[0])
+    }
     await screen.findByRole('button', { name: /discard/i })
     fireEvent.click(screen.getByRole('button', { name: /discard/i }))
     await waitFor(() =>
@@ -157,9 +161,11 @@ describe('Draft mode', () => {
     await screen.findAllByText('Alice Admin')
     await waitForAclLoaded()
     const entryRow = screen.getAllByText('Alice Admin')[0].closest('[tabIndex="0"]')
-    if (entryRow) fireEvent.mouseEnter(entryRow)
-    const checkboxes = screen.getAllByRole('checkbox')
-    fireEvent.click(checkboxes[0])
+    if (entryRow) fireEvent.click(entryRow)
+    const expandedCheckboxes = entryRow?.querySelectorAll('input[type="checkbox"]') || []
+    if (expandedCheckboxes.length > 0) {
+      fireEvent.click(expandedCheckboxes[0])
+    }
     await screen.findByRole('button', { name: /save/i })
     fireEvent.click(screen.getByRole('button', { name: /save/i }))
     await waitFor(() => expect(putBody).toBeDefined())
@@ -173,7 +179,7 @@ describe('Remove entry', () => {
     renderPanel()
     await screen.findAllByText('Alice Admin')
     const entryRow = screen.getAllByText('Alice Admin')[0].closest('[tabIndex="0"]')
-    if (entryRow) fireEvent.mouseEnter(entryRow)
+    if (entryRow) fireEvent.click(entryRow)
     await waitFor(() => {
       const btns = screen.queryAllByTitle('Remove')
       expect(btns.length).toBeGreaterThan(0)
