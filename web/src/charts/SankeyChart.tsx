@@ -85,7 +85,7 @@ function SankeyChartComponent({ data, config }: ChartProps) {
         return `${p.name}`
       },
     },
-    title: config.title ? { text: config.title, left: 'center', textStyle: { fontSize: 14, color: colors.text } } : undefined,
+    title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
     series: [{
       type: 'sankey' as const,
       layoutIterations: 32,

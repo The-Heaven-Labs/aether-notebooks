@@ -81,7 +81,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	// frontend, giving the user a live-streaming experience for the part of
 	// the response they missed. The reconnect_sync (DB query) runs in parallel
 	// and replaces messages with the authoritative state, preventing duplicates.
-	subChan, unsubscribe := s.agentEngine.SubscribeSession(sessionID, 512, false)
+	subChan, unsubscribe := s.agentEngine.SubscribeSession(sessionID, 512, true)
 
 	// Track cancel function for current message processing
 	var mu sync.Mutex
@@ -144,6 +144,10 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 			slog.Debug("ws: received message", "session_id", currentSessionID, "type", msg.Type, "content_len", len(msg.Content))
 
 			if msg.Type == "cancel" {
+				// Cancel via session-level map (handles reconnected connections)
+				if cancel, ok := s.sessionCancels.LoadAndDelete(currentSessionID); ok {
+					cancel.(context.CancelFunc)()
+				}
 				mu.Lock()
 				if currentCancel != nil {
 					currentCancel()
@@ -235,6 +239,8 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					mu.Lock()
 					currentCancel = msgCancel
 					mu.Unlock()
+					s.sessionCancels.Store(sid, msgCancel)
+					defer s.sessionCancels.Delete(sid)
 
 					// Stream events are published to the SHARED session stream so that
 					// any WebSocket connection (including a new one that reconnects after
@@ -294,6 +300,11 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 									ToolArgs      string `json:"tool_args"`
 									CurrentSource string `json:"current_source,omitempty"`
 								}{Type: "tool_confirm_required", ToolName: evt.ToolName, ToolArgs: evt.ToolArgs, CurrentSource: evt.Source})
+							case "token_update":
+								s.agentEngine.PublishSessionEvent(sid, struct {
+									Type   string              `json:"type"`
+									Tokens *agent.TokenBreakdown `json:"tokens"`
+								}{Type: "token_update", Tokens: evt.Tokens})
 							}
 						},
 					)

@@ -75,6 +75,33 @@ export interface ConfigPanelProps {
   onChange: (config: ChartConfig) => void
 }
 
+/**
+ * Chart positioning convention for ECharts-based charts:
+ *
+ * All charts must follow this layout pattern to prevent title/legend/grid overlap:
+ *
+ *   title: config.title ? {
+ *     text: config.title, left: 'center', top: 8,
+ *     textStyle: { fontSize: 14, color: colors.text }
+ *   } : undefined,
+ *
+ *   legend: config.showLegend !== false ? {
+ *     top: config.title ? 32 : 0,
+ *     textStyle: { fontSize: 11, color: colors.textMuted }
+ *   } : undefined,
+ *
+ *   grid: {
+ *     top: config.title ? 56 : config.showLegend !== false ? 30 : 8,
+ *     right: 16, bottom: config.dataZoom ? 32 : 8, left: 16,
+ *     containLabel: true,
+ *   }
+ *
+ * For chart types without a grid (pie, sankey, map geo), adjust the
+ * series center/top position to sit below the title+legend stack:
+ *
+ *   pie center: [x, config.title ? '58%' : '50%']
+ *   tree series top: config.title ? '16%' : '8%'
+ */
 export interface ChartModule {
   Component: React.FC<ChartProps>
   ConfigPanel: React.FC<ConfigPanelProps>

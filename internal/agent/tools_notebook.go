@@ -303,7 +303,62 @@ func makeReadCellHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("read cell: %w", err)
 		}
 
-		return cell, nil
+		// Build a chart/output summary to help the agent assess chart health
+		summary := map[string]any{}
+		if cell.Metadata != nil {
+			var meta struct {
+				Chart map[string]any `json:"chart"`
+			}
+			if json.Unmarshal(cell.Metadata, &meta) == nil && meta.Chart != nil {
+				summary["chart_type"] = meta.Chart["chartType"]
+				summary["chart_title"] = meta.Chart["title"]
+			}
+		}
+		if cell.Outputs != nil {
+			var outputs []struct {
+				Type string `json:"type"`
+				Data struct {
+					Columns []string        `json:"columns"`
+					Rows    []map[string]any `json:"rows"`
+				} `json:"data"`
+			}
+			if json.Unmarshal(cell.Outputs, &outputs) == nil {
+				for _, o := range outputs {
+					if o.Type == "table" {
+						summary["data_columns"] = o.Data.Columns
+						summary["data_rows"] = len(o.Data.Rows)
+						if len(o.Data.Rows) > 0 {
+							rowStr, _ := json.Marshal(o.Data.Rows[0])
+							summary["sample_row"] = string(rowStr)
+						}
+						break
+					}
+				}
+			}
+		}
+		cellWithSummary := map[string]any{
+			"id":             cell.ID,
+			"notebook_id":    cell.NotebookID,
+			"position":       cell.Position,
+			"type":           cell.Type,
+			"language":       cell.Language,
+			"connector_id":   cell.ConnectorID,
+			"source":         cell.Source,
+			"outputs":        cell.Outputs,
+			"limit":          cell.Limit,
+			"created_at":     cell.CreatedAt,
+			"updated_at":     cell.UpdatedAt,
+			"source_visible": cell.SourceVisible,
+			"cell_collapsed": cell.CellCollapsed,
+			"title":          cell.Title,
+			"description":    cell.Description,
+			"slug":           cell.Slug,
+			"parameters":     cell.Parameters,
+			"slide_break":    cell.SlideBreak,
+			"metadata":       cell.Metadata,
+			"chart_summary":  summary,
+		}
+		return cellWithSummary, nil
 	}
 }
 

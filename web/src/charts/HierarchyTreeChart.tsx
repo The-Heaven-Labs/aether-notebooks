@@ -111,7 +111,6 @@ function HierarchyTreeComponent({ data, config }: ChartProps) {
   const labelCol = config.labelColumn ?? columns.find(c => !c.includes('id') && !c.includes('parent') && c !== idCol && c !== parentCol) ?? idCol
   const metricCols = useMemo(() => config.metricColumns ?? [], [config.metricColumns])
   const isHorizontal = config.layout === 'left-to-right'
-  const nodeSpacing = config.nodeSpacing ?? 50
 
   const chartData = useRowsAsObjects(data)
 
@@ -123,8 +122,8 @@ function HierarchyTreeComponent({ data, config }: ChartProps) {
   const rowCount = data.rows.length
   const hasMetrics = metricCols.length > 0
 
-  const horizontalMargin = isHorizontal ? 15 : Math.max(5, 25 - nodeSpacing / 5)
-  const rightMargin = isHorizontal ? 20 : Math.max(5, 25 - nodeSpacing / 5)
+  const horizontalMargin = isHorizontal ? 15 : 8
+  const rightMargin = isHorizontal ? 20 : 8
   const bottomMargin = isHorizontal ? '8%' : (hasMetrics ? '30%' : '12%')
 
   const option = useMemo(() => ({
@@ -136,12 +135,12 @@ function HierarchyTreeComponent({ data, config }: ChartProps) {
         return val ? `${name}<br/>${val}` : name
       },
     },
-    title: config.title ? { text: config.title, left: 'center', textStyle: { fontSize: 14, color: chartColors.text } } : undefined,
+    title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: chartColors.text } } : undefined,
     series: [{
       type: 'tree' as const,
       data: treeDataWithState,
       orient: isHorizontal ? 'LR' as const : 'TB' as const,
-      top: '8%',
+      top: config.title ? '16%' : '8%',
       bottom: bottomMargin,
       left: `${horizontalMargin}%`,
       right: `${rightMargin}%`,
@@ -174,9 +173,9 @@ function HierarchyTreeComponent({ data, config }: ChartProps) {
       lineStyle: { color: chartColors.border, width: 1.5, curveness: 0.5 },
       itemStyle: { borderColor: chartColors.bgCard },
     }],
-  }), [treeDataWithState, isHorizontal, horizontalMargin, rightMargin, bottomMargin, config.title])
+  }), [treeDataWithState, isHorizontal, horizontalMargin, rightMargin, bottomMargin, config.title, config.layout])
 
-  const height = isHorizontal ? 500 : Math.min(600, 250 + rowCount * (nodeSpacing * 0.6))
+  const height = isHorizontal ? 500 : Math.min(600, 250 + rowCount * 30)
 
   return (
     <div style={{ position: 'relative' }}>

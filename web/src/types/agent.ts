@@ -151,3 +151,4 @@ export type WSMessage =
   | { type: 'reconnect_sync'; messages: AgentMessage[] | null }
   | { type: 'tasks_updated'; data: AgentTaskItem[] }
   | { type: 'tool_confirm_required'; tool_name: string; tool_args: string; current_source?: string }
+  | { type: 'token_update'; tokens: TokenBreakdown }

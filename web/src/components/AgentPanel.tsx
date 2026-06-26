@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, memo } from 'react'
 import { Send, Loader2, History, Copy, Check, Square } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -92,7 +92,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
   const [_sessionId, setSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const chatStateKey = CHAT_STATE_KEY + (notebookId || '__global__')
+  const chatStateKey = CHAT_STATE_KEY + '__global__'
   const [tasks, setTasks] = useState<AgentTaskItem[]>([])
   const [sessionTitle, setSessionTitle] = useState<string | null>(null)
   const [input, setInput] = useState('')
@@ -229,8 +229,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           setSessionId(savedState.sessionId)
           setMessages(savedState.messages)
           setTasks(savedState.tasks || [])
-    if (savedState.totalTokens) setTotalTokens(savedState.totalTokens)
-    if (savedState.contextWindow) setContextWindow(savedState.contextWindow)
+          if (savedState.totalTokens) setTotalTokens(savedState.totalTokens)
+          if (savedState.contextWindow) setContextWindow(savedState.contextWindow)
+          forceScrollRef.current = true
           connectWebSocket(savedState.sessionId)
           return
         }
@@ -266,258 +267,120 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   }
 
   const connectWebSocket = useCallback((sid: string) => {
+    // Close any existing connection, suppressing its reconnect logic
+    if (wsRef.current) {
+      reconnectTimerRef.current = setTimeout(() => {}, 0)
+      try { wsRef.current.close() } catch {}
+      wsRef.current = null
+    }
     const token = getToken()
-    // Note: JWT is sent as a query param because browsers don't support
-    // setting WebSocket headers natively. The token is short-lived (15min).
-    // If needed, migrate to first-message auth pattern.
     const ws = new WebSocket(WS_URL + sid + '?token=' + token)
     wsRef.current = ws
     reconnectAttemptsRef.current = 0
 
     ws.onopen = () => {
-      const e = reasoningEffortRef.current
-      if (e) {
-        ws.send(JSON.stringify({ type: 'set_reasoning_effort', reasoning_effort: e }))
+        const e = reasoningEffortRef.current
+        if (e) { ws.send(JSON.stringify({ type: 'set_reasoning_effort', reasoning_effort: e })) }
+        if (pageContext) { ws.send(JSON.stringify({ type: 'set_page_context', page_context: { type: pageContext.type, id: pageContext.id || '', title: pageContext.title || '' } })) }
+        const savedState = loadChatState()
+        const lastId = savedState?.lastMessageId || ''
+        ws.send(JSON.stringify({ type: 'reconnect', last_message_id: lastId }))
       }
-      if (pageContext) {
-        ws.send(JSON.stringify({
-          type: 'set_page_context',
-          page_context: { type: pageContext.type, id: pageContext.id || '', title: pageContext.title || '' },
-        }))
-      }
-      // Fetch DB-completed messages we may have missed while disconnected
-      // (page navigation mid-stream). last_message_id filters out messages
-      // we already know about; empty string returns everything.
-      const savedState = loadChatState()
-      const lastId = savedState?.lastMessageId || ''
-      ws.send(JSON.stringify({ type: 'reconnect', last_message_id: lastId }))
-    }
 
-    ws.onmessage = (event) => {
-      const msg: WSMessage = JSON.parse(event.data)
-
-      switch (msg.type) {
-        case 'token':
-          setIsStreaming(true)
-          setCurrentStreamingText((prev) => {
-            const next = prev + msg.data
-            streamingTextRef.current = next
-            return next
-          })
-          break
-        case 'reasoning':
-          setIsStreaming(true)
-          appendStreamingReasoning(msg.data)
-          break
-        case 'tool_call':
-          setMessages((prev) => [...prev, { role: 'tool', content: msg.tool, reasoning: msg.reasoning || streamingReasoningRef.current || undefined, created_at: ts() }])
-          if (streamingReasoningRef.current) {
-            needsCollapseRef.current = true
-            streamingReasoningRef.current = ''
-          }
-          break
-        case 'tool_confirm_required':
-          if (autoConfirmRef.current) {
-            wsRef.current?.send(JSON.stringify({ type: 'tool_confirm', approved: true, content: msg.tool_name }))
-          } else {
-            setPendingConfirm({ tool: msg.tool_name, args: msg.tool_args, currentSource: (msg as any).current_source || '' })
-          }
-          break
-        case 'tool_result':
-          setMessages((prev) => {
-            const updated = [...prev]
-            for (let i = updated.length - 1; i >= 0; i--) {
-              if (updated[i].role === 'tool' && updated[i].content === msg.tool) {
-                updated[i] = { ...updated[i], params: msg.params, result: msg.error || msg.result }
-                break
-              }
-            }
-            return updated
-          })
-          break
-        case 'cell_created':
-          if (notebookId) {
-            queryClient.invalidateQueries({ queryKey: ['notebook', notebookId] })
-          }
-          scrollToCell(msg.cell_id)
-          break
-        case 'cell_output':
-          if (notebookId) {
-            queryClient.setQueryData(['notebook', notebookId], (old: any) => {
-              if (!old) return old
-              return {
-                ...old,
-                cells: old.cells.map((c: any) =>
-                  c.id === msg.cell_id ? { ...c, outputs: msg.outputs as any[] } : c
-                )
-              }
+      ws.onmessage = (event) => {
+        const msg: WSMessage = JSON.parse(event.data)
+        switch (msg.type) {
+          case 'token':
+            setIsStreaming(true)
+            setCurrentStreamingText((prev) => { const next = prev + msg.data; streamingTextRef.current = next; return next })
+            break
+          case 'reasoning':
+            setIsStreaming(true); appendStreamingReasoning(msg.data); break
+          case 'tool_call':
+            setMessages((prev) => [...prev, { role: 'tool', content: msg.tool, reasoning: msg.reasoning || streamingReasoningRef.current || undefined, created_at: ts() }])
+            if (streamingReasoningRef.current) { needsCollapseRef.current = true; streamingReasoningRef.current = '' }
+            break
+          case 'tool_confirm_required':
+            if (autoConfirmRef.current) { wsRef.current?.send(JSON.stringify({ type: 'tool_confirm', approved: true, content: msg.tool_name })) }
+            else { setPendingConfirm({ tool: msg.tool_name, args: msg.tool_args, currentSource: (msg as any).current_source || '' }) }
+            break
+          case 'tool_result':
+            setMessages((prev) => { const updated = [...prev]; for (let i = updated.length - 1; i >= 0; i--) { if (updated[i].role === 'tool' && updated[i].content === msg.tool) { updated[i] = { ...updated[i], params: msg.params, result: msg.error || msg.result }; break } }; return updated }); break
+          case 'cell_created':
+            if (notebookId) queryClient.invalidateQueries({ queryKey: ['notebook', notebookId] }); scrollToCell(msg.cell_id); break
+          case 'cell_output':
+            if (notebookId) queryClient.setQueryData(['notebook', notebookId], (old: any) => old ? { ...old, cells: old.cells.map((c: any) => c.id === msg.cell_id ? { ...c, outputs: msg.outputs as any[] } : c) } : old); scrollToCell(msg.cell_id); break
+          case 'cell_updated': scrollToCell(msg.cell_id); break
+          case 'reconnect_sync': {
+            const serverMsgs: ChatMessage[] = (msg.messages || []).map((m: any) => {
+              const base: ChatMessage = { id: m.id, role: m.role, content: m.content || '', created_at: m.created_at }
+              if (m.tool_calls?.length) { base.content = m.tool_calls[0].name; base.params = JSON.stringify(m.tool_calls[0].arguments); base.result = m.tool_calls[0].result !== undefined ? JSON.stringify(m.tool_calls[0].result) : undefined; base.role = 'tool' }
+              return base
             })
+            if (serverMsgs.length > 0) setMessages(serverMsgs)
+            streamingTextRef.current = ''; setCurrentStreamingText('')
+            const lastNew = serverMsgs[serverMsgs.length - 1]; const saved = loadChatState(); const lastLocal = saved?.messages?.[saved.messages.length - 1]
+            setIsStreaming((lastNew?.role || lastLocal?.role) === 'user')
+            break
           }
-          scrollToCell(msg.cell_id)
-          break
-        case 'cell_updated':
-          scrollToCell(msg.cell_id)
-          break
-        case 'reconnect_sync': {
-          // Server caught us up on messages we missed. Replace local state with
-          // the DB's authoritative version, then clear any in-flight streaming
-          // text so the buffer catch-up's done event doesn't create a duplicate.
-          const serverMsgs: ChatMessage[] = (msg.messages || []).map((m: { id: string; role: string; content?: string; tool_calls?: Array<{ name: string; arguments: unknown; result?: unknown }>; created_at: string }) => {
-            const base: ChatMessage = { id: m.id, role: m.role, content: m.content || '', created_at: m.created_at }
-            if (m.tool_calls?.length) {
-              const tc = m.tool_calls[0]
-              base.content = tc.name
-              base.params = JSON.stringify(tc.arguments)
-              base.result = tc.result !== undefined ? JSON.stringify(tc.result) : undefined
-              base.role = 'tool'
+          case 'done': {
+            setIsStreaming(false); updateStreamingReasoning(''); needsCollapseRef.current = false
+            const finalText = streamingTextRef.current
+            if (finalText) { setMessages((prev) => [...prev, { role: 'assistant', content: finalText, reasoning: ((msg as any).data?.reasoning as string) || undefined, created_at: ts() }]); streamingTextRef.current = ''; setCurrentStreamingText('') }
+            else if (msg.data && 'content' in msg.data && msg.data.content) { setMessages((prev) => [...prev, { role: 'assistant', content: (msg.data as any).content, reasoning: ((msg.data as any)?.reasoning as string) || undefined, created_at: ts() }]) }
+            const tk = (msg as any).data?.tokens as TokenBreakdown | undefined
+            if (tk && typeof tk.input === 'number') setTotalTokens(prev => ({ input: (prev?.input || 0) + tk.input, output: (prev?.output || 0) + tk.output, reasoning: (prev?.reasoning || 0) + (tk.reasoning || 0), cache_read: (prev?.cache_read || 0) + (tk.cache_read || 0), model_calls: (prev?.model_calls || 0) + (tk.model_calls || 0), system_prompt: (prev?.system_prompt || 0) + (tk.system_prompt || 0), skill_override: (prev?.skill_override || 0) + (tk.skill_override || 0), history: (prev?.history || 0) + (tk.history || 0), user_message: (prev?.user_message || 0) + (tk.user_message || 0), tool_definitions: (prev?.tool_definitions || 0) + (tk.tool_definitions || 0), tool_calls: (prev?.tool_calls || 0) + (tk.tool_calls || 0), tool_results: (prev?.tool_results || 0) + (tk.tool_results || 0) }))
+            setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50); break
+          }
+          case 'error':
+            setMessages((prev) => [...prev, { role: 'assistant', content: 'Error: ' + msg.message, created_at: ts() }]); setIsStreaming(false); updateStreamingReasoning(''); needsCollapseRef.current = false; setTasks((prev) => prev.map((t) => t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t)); setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50); break
+          case 'cancelled':
+            setIsStreaming(false); updateStreamingReasoning(''); needsCollapseRef.current = false; setTasks((prev) => prev.map((t) => t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t))
+            const ct = streamingTextRef.current; setMessages((prev) => [...prev, { role: 'assistant', content: ct ? ct + '\n\n*[Cancelled]*' : '*[Cancelled]*', created_at: ts() }]); streamingTextRef.current = ''; setCurrentStreamingText(''); break
+          case 'slash_result':
+            setIsStreaming(false)
+            if (msg.command === 'new') { clearChatState(); if (selectedAgentRef.current) { closeWS(); startSession(selectedAgentRef.current) } }
+            else if (msg.command === 'summarize' && msg.data) {
+              const d = msg.data as { session_id: string; summary: string }
+              if (d.session_id) { closeWS(); connectToSession(d.session_id); const sm = [{ role: 'assistant', content: 'Previous session summary:\n\n' + d.summary, created_at: ts() }]; setMessages(sm); if (selectedAgentRef.current) saveChatState(selectedAgentRef.current.id, d.session_id, sm) }
+              else { setMessages((prev) => [...prev, { role: 'assistant', content: (msg.data as any).summary ? 'Summary: ' + (msg.data as any).summary : JSON.stringify(msg.data), created_at: ts() }]) }
             }
-            return base
-          })
-          if (serverMsgs.length > 0) {
-            setMessages(serverMsgs)
+            else if (msg.data) setMessages((prev) => [...prev, { role: 'assistant', content: JSON.stringify(msg.data, null, 2), created_at: ts() }])
+            break
+          case 'reconnect_sync': {
+            const sm = msg.messages as Array<any>; if (!sm?.length) break
+            const conv = sm.map((m: any) => {
+              const b: any = { created_at: m.created_at || ts() }
+              if (m.role === 'tool') return { ...b, role: 'tool', content: m.tool_call_id || 'tool', params: JSON.stringify(m.tool_calls?.[0]?.arguments || {}), result: m.content }
+              if (m.tool_calls?.length) return { ...b, role: 'tool', content: m.tool_calls.map((tc: any) => tc.name).join(', '), params: JSON.stringify(m.tool_calls.map((tc: any) => tc.arguments)), result: undefined }
+              return { ...b, role: m.role, content: m.content || '' }
+            })
+            setMessages(conv); setTasks([])
+            const ti = sm.reduce((s: number, m: any) => s + (m.tokens_input || 0), 0); const to = sm.reduce((s: number, m: any) => s + (m.tokens_output || 0), 0); const tr = sm.reduce((s: number, m: any) => s + (m.tokens_reasoning || 0), 0)
+            if (ti > 0 || to > 0) setTotalTokens({ input: ti, output: to, reasoning: tr, cache_read: 0, model_calls: 0, system_prompt: 0, skill_override: 0, history: 0, user_message: 0, tool_definitions: 0, tool_calls: 0, tool_results: 0 })
+            break
           }
-          streamingTextRef.current = ''
-          setCurrentStreamingText('')
-          setIsStreaming(false)
-          break
+          case 'token_update':
+            setTotalTokens(prev => { const t = msg.tokens; return { input: t?.input ?? (prev?.input || 0), output: t?.output ?? (prev?.output || 0), reasoning: t?.reasoning ?? (prev?.reasoning || 0), cache_read: t?.cache_read ?? (prev?.cache_read || 0), model_calls: t?.model_calls ?? (prev?.model_calls || 0), system_prompt: t?.system_prompt ?? (prev?.system_prompt || 0), skill_override: t?.skill_override ?? (prev?.skill_override || 0), history: t?.history ?? (prev?.history || 0), user_message: t?.user_message ?? (prev?.user_message || 0), tool_definitions: t?.tool_definitions ?? (prev?.tool_definitions || 0), tool_calls: t?.tool_calls ?? (prev?.tool_calls || 0), tool_results: t?.tool_results ?? (prev?.tool_results || 0) } }); break
+          case 'tasks_updated':
+            setTasks((prev) => { const inc = msg.data as AgentTaskItem[]; const m = [...prev]; for (const t of inc) { const idx = m.findIndex((x) => x.id === t.id); if (idx >= 0) m[idx] = { ...m[idx], ...t, ...(t.description ? {} : { description: m[idx].description }) }; else m.push(t) }; return m }); break
         }
-        case 'done': {
-          setIsStreaming(false)
-          updateStreamingReasoning('')
-          needsCollapseRef.current = false
-          const finalText = streamingTextRef.current
-          if (finalText) {
-            const r = (msg as any).data?.reasoning as string | undefined
-            setMessages((prev) => [...prev, { role: 'assistant', content: finalText, reasoning: r || undefined, created_at: ts() }])
-            streamingTextRef.current = ''
-            setCurrentStreamingText('')
-          } else if (msg.data && 'content' in msg.data && msg.data.content) {
-            const r = (msg as any).data?.reasoning as string | undefined
-            const c = (msg.data as any).content as string
-            setMessages((prev) => [...prev, { role: 'assistant', content: c, reasoning: r || undefined, created_at: ts() }])
-          }
-          const tk = (msg as any).data?.tokens as TokenBreakdown | undefined
-          if (tk && typeof tk.input === 'number') {
-            setTotalTokens(prev => ({
-              input: (prev?.input || 0) + tk.input,
-              output: (prev?.output || 0) + tk.output,
-              reasoning: (prev?.reasoning || 0) + (tk.reasoning || 0),
-              system_prompt: (prev?.system_prompt || 0) + (tk.system_prompt || 0),
-              skill_override: (prev?.skill_override || 0) + (tk.skill_override || 0),
-              history: (prev?.history || 0) + (tk.history || 0),
-              user_message: (prev?.user_message || 0) + (tk.user_message || 0),
-              tool_definitions: (prev?.tool_definitions || 0) + (tk.tool_definitions || 0),
-              tool_calls: (prev?.tool_calls || 0) + (tk.tool_calls || 0),
-              tool_results: (prev?.tool_results || 0) + (tk.tool_results || 0),
-            }))
-          }
-          setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50)
-          break
-        }
-        case 'error':
-          setMessages((prev) => [...prev, { role: 'assistant', content: 'Error: ' + msg.message, created_at: ts() }])
-          setIsStreaming(false)
-          updateStreamingReasoning('')
-          needsCollapseRef.current = false
-          setTasks((prev) => prev.map((t) => t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t))
-          setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50)
-          break
-        case 'cancelled':
-          setIsStreaming(false)
-          updateStreamingReasoning('')
-          needsCollapseRef.current = false
-          setTasks((prev) => prev.map((t) => t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t))
-          const cancelledText = streamingTextRef.current
-          if (cancelledText) {
-            setMessages((prev) => [...prev, { role: 'assistant', content: cancelledText + '\n\n*[Cancelled]*', created_at: ts() }])
-          } else {
-            setMessages((prev) => [...prev, { role: 'assistant', content: '*[Cancelled]*', created_at: ts() }])
-          }
-          streamingTextRef.current = ''
-          setCurrentStreamingText('')
-          setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50)
-          break
-        case 'slash_result':
-          setIsStreaming(false)
-          if (msg.command === 'new') {
-            if (selectedAgentRef.current) {
-              closeWS()
-              startSession(selectedAgentRef.current)
-            }
-          } else if (msg.command === 'summarize' && msg.data) {
-            const data = msg.data as { session_id: string; summary: string }
-            if (data.session_id) {
-              closeWS()
-              connectToSession(data.session_id)
-              const summaryMsgs = [{ role: 'assistant', content: 'Previous session summary:\n\n' + data.summary, created_at: ts() }]
-              setMessages(summaryMsgs)
-              if (selectedAgentRef.current) {
-                saveChatState(selectedAgentRef.current.id, data.session_id, summaryMsgs, undefined)
-              }
-            } else {
-              const s = (msg.data as any).summary
-              setMessages((prev) => [...prev, { role: 'assistant', content: s ? 'Summary: ' + s : JSON.stringify(msg.data), created_at: ts() }])
-            }
-          } else if (msg.data) {
-            setMessages((prev) => [...prev, { role: 'assistant', content: JSON.stringify(msg.data, null, 2), created_at: ts() }])
-          }
-          break
-        case 'reconnect_sync': {
-          const serverMsgs = msg.messages as Array<{ role: string; content?: string; tool_calls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>; tool_call_id?: string; tokens_input?: number; tokens_output?: number; created_at?: string }>
-          if (serverMsgs.length === 0) break
-          const converted = serverMsgs.map((m) => {
-            const base = { created_at: m.created_at || ts() }
-            if (m.role === 'tool') {
-              return { ...base, role: 'tool' as const, content: m.tool_call_id || 'tool', params: JSON.stringify(m.tool_calls?.[0]?.arguments || {}), result: m.content }
-            }
-            if (m.tool_calls && m.tool_calls.length > 0) {
-              return { ...base, role: 'tool' as const, content: m.tool_calls.map(tc => tc.name).join(', '), params: JSON.stringify(m.tool_calls.map(tc => tc.arguments)), result: undefined }
-            }
-            return { ...base, role: m.role as 'user' | 'assistant' | 'tool', content: m.content || '' }
-          })
-          setMessages(converted)
-          setTasks([])
-          const ti = serverMsgs.reduce((sum, m) => sum + ((m as any).tokens_input || 0), 0)
-          const to = serverMsgs.reduce((sum, m) => sum + ((m as any).tokens_output || 0), 0)
-          const tr = serverMsgs.reduce((sum, m) => sum + ((m as any).tokens_reasoning || 0), 0)
-          if (ti > 0 || to > 0) setTotalTokens({ input: ti, output: to, reasoning: tr, cache_read: 0, model_calls: 0, system_prompt: 0, skill_override: 0, history: 0, user_message: 0, tool_definitions: 0, tool_calls: 0, tool_results: 0 })
-          break
-        }
-        case 'tasks_updated':
-          setTasks((prev) => {
-            const incoming = msg.data as AgentTaskItem[]
-            const merged = [...prev]
-            for (const t of incoming) {
-              const idx = merged.findIndex((m) => m.id === t.id)
-              if (idx >= 0) {
-                merged[idx] = { ...merged[idx], ...t, ...(t.description ? {} : { description: merged[idx].description }) }
-              } else {
-                merged.push(t)
-              }
-            }
-            return merged
-          })
-          break
       }
-    }
 
     ws.onclose = () => {
-      if (reconnectTimerRef.current) return // closed intentionally, skip reconnect
+      if (reconnectTimerRef.current) return
       wsRef.current = null
       if (reconnectAttemptsRef.current < 5) {
         const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 15000)
         reconnectAttemptsRef.current += 1
-        reconnectTimerRef.current = setTimeout(() => {
-          reconnectTimerRef.current = null
-          connectWebSocket(sid)
-        }, delay)
+        reconnectTimerRef.current = setTimeout(() => { reconnectTimerRef.current = null; connectWebSocket(sid) }, delay)
+      } else {
+        clearChatState()
+        if (selectedAgentRef.current) startSession(selectedAgentRef.current)
       }
     }
 
-    ws.onerror = () => {
-      setError('WebSocket connection failed')
-      setIsStreaming(false)
-    }
+    ws.onerror = () => { setError('WebSocket connection failed'); setIsStreaming(false) }
   }, [notebookId, queryClient, scrollToCell])
 
   const startSession = async (agent: Agent) => {
@@ -569,22 +432,27 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     }
 
     forceScrollRef.current = true
+    setTotalTokens(prev => prev || { input: 0, output: 0, reasoning: 0, cache_read: 0, model_calls: 0, system_prompt: 0, skill_override: 0, history: 0, user_message: 0, tool_definitions: 0, tool_calls: 0, tool_results: 0 })
+
+    // Slash commands must bypass the queue — they need to reach the backend
+    // immediately, even while streaming.
+    if (text.startsWith('/') && !text.toLowerCase().startsWith('/skill:')) {
+      const command = text.slice(1).trim()
+      // Optimistic /new: clear UI immediately without waiting for backend
+      if (command === 'new') {
+        clearChatState()
+        closeWS()
+        if (selectedAgentRef.current) startSession(selectedAgentRef.current)
+        return
+      }
+      setMessages((prev) => [...prev, { role: 'user', content: text, created_at: ts() }])
+      wsRef.current.send(JSON.stringify({ type: 'slash_command', command }))
+      return
+    }
 
     if (!skipQueue && (isStreaming || pendingMessages.length > 0)) {
       setPendingMessages((prev) => [...prev, text])
       setMessages((prev) => [...prev, { role: 'user', content: text, created_at: ts() }])
-      return
-    }
-
-    // /skill: prefix is handled as a regular message by the backend engine,
-    // not as a slash command. Only send actual slash commands (/new, /summarize, etc.)
-    // as slash_command type.
-    if (text.startsWith('/') && !text.toLowerCase().startsWith('/skill:')) {
-      const command = text.slice(1).trim()
-      setMessages((prev) => [...prev, { role: 'user', content: text, created_at: ts() }])
-      setIsStreaming(true)
-      streamingStartedAt.current = ts()
-      wsRef.current.send(JSON.stringify({ type: 'slash_command', command }))
       return
     }
 
@@ -784,6 +652,52 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     return () => handle.removeEventListener('mousedown', onMouseDown)
   }, [width, onResize])
 
+  const MemoizedChatMessage = memo(({ msg, isStreaming: _isStreaming, isLastReasoning }: {
+    msg: ChatMessage; isStreaming: boolean; isLastReasoning: boolean
+  }) => (
+    <div>
+      {msg.reasoning && (
+        <details open={!_isStreaming && isLastReasoning} style={{ ...styles.message, ...styles.reasoningMessage, marginBottom: 4 }}>
+          <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>Thinking</summary>
+          {msg.created_at && <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginBottom: 4 }}>{fmtTime(msg.created_at)}</div>}
+          <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{msg.reasoning}</div>
+        </details>
+      )}
+      {msg.role !== 'reasoning' && (
+        <div style={{ ...styles.message, ...(msg.role === 'user' ? styles.userMessage : msg.role === 'tool' ? styles.toolMessage : styles.assistantMessage) }}>
+          {msg.created_at && (
+            <div style={{ fontSize: 9, color: msg.role === 'user' ? 'rgba(255,255,255,0.5)' : 'var(--text-muted)', marginBottom: 4, textAlign: msg.role === 'user' ? 'right' : 'left' }}>
+              {fmtTime(msg.created_at)}
+            </div>
+          )}
+          {msg.role === 'tool' ? (
+            <details>
+              <summary style={{ cursor: 'pointer', outline: 'none' }}>
+                <span style={{ opacity: 0.6, fontSize: 11 }}>TOOL </span>
+                {msg.content}
+              </summary>
+              <div style={{ marginTop: 6, fontSize: 11 }}>
+                {msg.params && (
+                  <div style={{ marginBottom: 4 }}>
+                    <span style={{ opacity: 0.5 }}>Params: </span>
+                    <code style={{ fontSize: 10 }}>{msg.params}</code>
+                  </div>
+                )}
+                {msg.result && (
+                  <div>
+                    <span style={{ opacity: 0.5 }}>Result: </span>
+                    <code style={{ fontSize: 10, whiteSpace: 'pre-wrap' }}>{msg.result.length > 300 ? msg.result.slice(0, 300) + '...' : msg.result}</code>
+                  </div>
+                )}
+              </div>
+            </details>
+          ) : (
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
+          )}
+        </div>
+      )}
+    </div>
+  ))
   return (
     <div ref={panelRef} style={{ ...styles.panel, width }}>
       <div
@@ -1040,49 +954,13 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               </div>
             )}
               {messages.map((msg, i) => (
-                <div key={i}>
-                    {msg.reasoning && (
-                      <details open={!isStreaming && i === messages.findLastIndex(m => !!m.reasoning)} style={{ ...styles.message, ...styles.reasoningMessage, marginBottom: 4 }}>
-                        <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>Thinking</summary>
-                        {msg.created_at && <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginBottom: 4 }}>{fmtTime(msg.created_at)}</div>}
-                        <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{msg.reasoning}</div>
-                      </details>
-                    )}
-                 {msg.role !== 'reasoning' && (
-                     <div style={{ ...styles.message, ...(msg.role === 'user' ? styles.userMessage : msg.role === 'tool' ? styles.toolMessage : styles.assistantMessage) }}>
-                      {msg.created_at && (
-                        <div style={{ fontSize: 9, color: msg.role === 'user' ? 'rgba(255,255,255,0.5)' : 'var(--text-muted)', marginBottom: 4, textAlign: msg.role === 'user' ? 'right' : 'left' }}>
-                          {fmtTime(msg.created_at)}
-                        </div>
-                      )}
-                      {msg.role === 'tool' ? (
-                       <details>
-                         <summary style={{ cursor: 'pointer', outline: 'none' }}>
-                           <span style={{ opacity: 0.6, fontSize: 11 }}>TOOL </span>
-                           {msg.content}
-                         </summary>
-                         <div style={{ marginTop: 6, fontSize: 11 }}>
-                           {msg.params && (
-                             <div style={{ marginBottom: 4 }}>
-                               <span style={{ opacity: 0.5 }}>Params: </span>
-                               <code style={{ fontSize: 10 }}>{msg.params}</code>
-                             </div>
-                           )}
-                           {msg.result && (
-                             <div>
-                               <span style={{ opacity: 0.5 }}>Result: </span>
-                               <code style={{ fontSize: 10, whiteSpace: 'pre-wrap' }}>{msg.result.length > 300 ? msg.result.slice(0, 300) + '...' : msg.result}</code>
-                             </div>
-                           )}
-                         </div>
-                       </details>
-                      ) : (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
-                      )}
-                   </div>
-                 )}
-               </div>
-             ))}
+                <MemoizedChatMessage
+                  key={i}
+                  msg={msg}
+                  isStreaming={isStreaming}
+                  isLastReasoning={i === messages.findLastIndex(m => !!m.reasoning)}
+                />
+              ))}
               {isStreaming && !currentStreamingText && (
                   <details open style={{ ...styles.message, ...styles.reasoningMessage }}>
                     <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>Thinking</summary>
@@ -1092,7 +970,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                     </div>
                   </details>
                 )}
-              {isStreaming && currentStreamingText && (
+              {currentStreamingText && (
               <div style={{ ...styles.message, ...styles.assistantMessage }}>
                 {streamingStartedAt.current && <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginBottom: 4 }}>{fmtTime(streamingStartedAt.current)}</div>}
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{currentStreamingText}</ReactMarkdown>
