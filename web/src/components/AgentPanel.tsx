@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { Send, Loader2, History, Copy, Check, Square } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -152,6 +152,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const selectedAgentRef = useRef<Agent | null>(null)
   const lastScrollTimeRef = useRef(0)
   const prevScrollHeightRef = useRef(0)
+  const isProgrammaticScrollRef = useRef(false)
+  const forceScrollRef = useRef(false)
+  const wasAtBottomRef = useRef(false)
   selectedAgentRef.current = selectedAgent
 
   const queryClient = useQueryClient()
@@ -359,7 +362,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           // Server caught us up on messages we missed. Replace local state with
           // the DB's authoritative version, then clear any in-flight streaming
           // text so the buffer catch-up's done event doesn't create a duplicate.
-          const serverMsgs: ChatMessage[] = msg.messages.map((m: { id: string; role: string; content?: string; tool_calls?: Array<{ name: string; arguments: unknown; result?: unknown }>; created_at: string }) => {
+          const serverMsgs: ChatMessage[] = (msg.messages || []).map((m: { id: string; role: string; content?: string; tool_calls?: Array<{ name: string; arguments: unknown; result?: unknown }>; created_at: string }) => {
             const base: ChatMessage = { id: m.id, role: m.role, content: m.content || '', created_at: m.created_at }
             if (m.tool_calls?.length) {
               const tc = m.tool_calls[0]
@@ -565,6 +568,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       return
     }
 
+    forceScrollRef.current = true
+
     if (!skipQueue && (isStreaming || pendingMessages.length > 0)) {
       setPendingMessages((prev) => [...prev, text])
       setMessages((prev) => [...prev, { role: 'user', content: text, created_at: ts() }])
@@ -649,8 +654,14 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     }
     messageListRef.current = el
     if (el) {
+      el.style.setProperty('overflow-anchor', 'none')
       const handler = () => {
+        if (isProgrammaticScrollRef.current) {
+          isProgrammaticScrollRef.current = false
+          return
+        }
         lastScrollTimeRef.current = Date.now()
+        wasAtBottomRef.current = false
       }
       scrollHandlerRef.current = handler
       el.addEventListener('scroll', handler, { passive: true })
@@ -659,15 +670,31 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     }
   }, [])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = messageListRef.current
     if (!el) return
-    if (Date.now() - lastScrollTimeRef.current < 200) return
-    if (el.scrollHeight < prevScrollHeightRef.current) return
-    prevScrollHeightRef.current = el.scrollHeight
+    const now = Date.now()
+    const scrollGuard = now - lastScrollTimeRef.current < 200
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30
-    if (!nearBottom) return
+    if (scrollGuard && !forceScrollRef.current) return
+    if (el.scrollHeight < prevScrollHeightRef.current) {
+      prevScrollHeightRef.current = el.scrollHeight
+      if (wasAtBottomRef.current) {
+        isProgrammaticScrollRef.current = true
+        el.scrollTop = el.scrollHeight
+      }
+      wasAtBottomRef.current = Math.max(0, el.scrollHeight - el.clientHeight) <= el.scrollTop + 5
+      return
+    }
+    prevScrollHeightRef.current = el.scrollHeight
+    if (!forceScrollRef.current && !nearBottom && !wasAtBottomRef.current) {
+      wasAtBottomRef.current = false
+      return
+    }
+    forceScrollRef.current = false
+    isProgrammaticScrollRef.current = true
     el.scrollTop = el.scrollHeight
+    wasAtBottomRef.current = true
   }, [messages, currentStreamingText, currentStreamingReasoning])
 
   useEffect(() => {
@@ -1339,6 +1366,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap: 12,
     overscrollBehavior: 'contain',
+    overflowAnchor: 'none',
   },
   emptyState: {
     flex: 1,

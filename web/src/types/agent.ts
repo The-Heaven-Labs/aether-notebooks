@@ -148,6 +148,6 @@ export type WSMessage =
   | { type: 'error'; message: string }
   | { type: 'slash_result'; command: string; data: unknown }
   | { type: 'backpressure_warning'; dropped_tokens: number }
-  | { type: 'reconnect_sync'; messages: AgentMessage[] }
+  | { type: 'reconnect_sync'; messages: AgentMessage[] | null }
   | { type: 'tasks_updated'; data: AgentTaskItem[] }
   | { type: 'tool_confirm_required'; tool_name: string; tool_args: string; current_source?: string }

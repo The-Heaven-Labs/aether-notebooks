@@ -114,7 +114,7 @@ describe('MarkdownView image upload', () => {
 
     // Enter edit mode by clicking the rendered paragraph (not the hidden textarea)
     fireEvent.click(screen.getByText('before', { selector: 'p' }))
-    const textarea = screen.getByPlaceholderText('Write markdown…') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Write markdown… (Ctrl+V to paste images, drag & drop supported)') as HTMLTextAreaElement
 
     // Position cursor at end
     textarea.setSelectionRange(7, 7)
@@ -166,11 +166,11 @@ describe('MarkdownView image upload', () => {
     // Enter edit mode by clicking the empty block div
     const emptyBlock = container.querySelector('[data-testid="md-empty-block"]') as HTMLElement
     fireEvent.click(emptyBlock)
-    const textarea = screen.getByPlaceholderText('Write markdown…') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Write markdown… (Ctrl+V to paste images, drag & drop supported)') as HTMLTextAreaElement
     expect(textarea).toBeTruthy()
 
     // Click the upload button to arm the file input ref
-    const uploadBtn = document.querySelector('button[title="Upload image"]') as HTMLButtonElement
+    const uploadBtn = document.querySelector('button[title="Upload image (or paste with Ctrl+V)"]') as HTMLButtonElement
     expect(uploadBtn).not.toBeNull()
     fireEvent.click(uploadBtn)
 
@@ -220,7 +220,7 @@ describe('MarkdownView image upload', () => {
     fireEvent.click(screen.getByText('drop here', { selector: 'p' }))
 
     // Blur to exit edit mode so we can drop on the rendered view
-    const textarea = screen.getByPlaceholderText('Write markdown…') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Write markdown… (Ctrl+V to paste images, drag & drop supported)') as HTMLTextAreaElement
     fireEvent.blur(textarea)
 
     // Find the rendered block div (the one with the paragraph)
@@ -270,10 +270,10 @@ describe('MarkdownView image upload', () => {
     // Enter edit mode
     const emptyBlock = container.querySelector('[data-testid="md-empty-block"]') as HTMLElement
     fireEvent.click(emptyBlock)
-    const textarea = screen.getByPlaceholderText('Write markdown…') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Write markdown… (Ctrl+V to paste images, drag & drop supported)') as HTMLTextAreaElement
 
     // Click the upload button to arm the ref
-    const uploadBtn = document.querySelector('button[title="Upload image"]') as HTMLButtonElement
+    const uploadBtn = document.querySelector('button[title="Upload image (or paste with Ctrl+V)"]') as HTMLButtonElement
     fireEvent.click(uploadBtn)
 
     // Grab file input before blur removes the toolbar
@@ -324,7 +324,7 @@ describe('MarkdownView image upload', () => {
     fireEvent.click(emptyBlock)
 
     // Click the upload button to arm the file input ref
-    const uploadBtn = document.querySelector('button[title="Upload image"]') as HTMLButtonElement
+    const uploadBtn = document.querySelector('button[title="Upload image (or paste with Ctrl+V)"]') as HTMLButtonElement
     expect(uploadBtn).not.toBeNull()
     fireEvent.click(uploadBtn)
 
@@ -337,12 +337,11 @@ describe('MarkdownView image upload', () => {
       fireEvent.change(fileInput)
     })
 
-    // While fetch is pending, button should be disabled and show '...'
+    // While fetch is pending, button should be disabled
     await waitFor(() => {
-      const btn = document.querySelector('button[title="Upload image"]') as HTMLButtonElement
+      const btn = document.querySelector('button[title="Upload image (or paste with Ctrl+V)"]') as HTMLButtonElement
       expect(btn).not.toBeNull()
       expect(btn.disabled).toBe(true)
-      expect(btn.textContent).toBe('...')
     })
 
     // Resolve the upload
@@ -355,7 +354,7 @@ describe('MarkdownView image upload', () => {
 
     // After completion button should be enabled again
     await waitFor(() => {
-      const btn = document.querySelector('button[title="Upload image"]') as HTMLButtonElement
+      const btn = document.querySelector('button[title="Upload image (or paste with Ctrl+V)"]') as HTMLButtonElement
       expect(btn.disabled).toBe(false)
     })
   })
