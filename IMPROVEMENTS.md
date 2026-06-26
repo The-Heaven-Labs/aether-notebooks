@@ -41,16 +41,16 @@
 - [x] I can scroll up and read messages while new are coming in the notebook AI panel, but not in the global AI panel
 - [x] The global agent panel should have a way to "dock" to the right side of the page, which then would get similar to what the notebook panel is (but docking would work in any page)
 - [x] Global agent panel works in any page. Moving pages should not cancel the chat context, it should stay happening in background, and when going to another page it should automatically connect back to the chat and continue as nothing happened.
-- [ ] The global agent panel should not block scroll on the page 
-- [ ] Sometimes the scroll in the global agent will not be 100% following the last message streaming state, but seconds later it will catch up
-- [ ] The metrics of token usage only appear after the whole turn ends. It should appear as soon as the user sends the first message and update dynamically for every new intermediate step of the chat
-- [ ] When asking the agent to interact with charts, almost always it will not be able to handle labels. Not sure if it is a problem on the agent side or the tooling side. Sometimes it will not be able to produce a chart (chart will be blank, potentially wrong parameters?). The label part seem to be more prevalent in pie/donut charts. Perhaps add some way for the current tools to access if a chart has actual content or is blank?
-- [ ] The chart title is on top/overrides the chart in some scenarios, there should be more space between it and the actual chart
-- [ ] When refreshing a page with a docked open agent modal, it should scroll to the end of the chat instead of being at the top
-- [ ] When the LLM chat gets long in a notebook page, the whole page slows down a lot
-- [ ] If I use /new in global agent undocked, then dock, the docked will be with the previous chat open
-- [ ] It seems cancel commands are not working in the global agent after page changing/refreshing, the chat continues in the background regardless of what I try. (It should be possible to have only one active chat at the same time)
-- [ ] The default color theme for the application should be dark, not light
+- [x] The global agent panel should not block scroll on the page 
+- [x] Sometimes the scroll in the global agent will not be 100% following the last message streaming state, but seconds later it will catch up
+- [x] The metrics of token usage only appear after the whole turn ends. It should appear as soon as the user sends the first message and update dynamically for every new intermediate step of the chat
+- [x] When asking the agent to interact with charts, almost always it will not be able to handle labels. Not sure if it is a problem on the agent side or the tooling side. Sometimes it will not be able to produce a chart (chart will be blank, potentially wrong parameters?). The label part seem to be more prevalent in pie/donut charts. Perhaps add some way for the current tools to access if a chart has actual content or is blank?
+- [x] The chart title is on top/overrides the chart in some scenarios, there should be more space between it and the actual chart
+- [x] When refreshing a page with a docked open agent modal, it should scroll to the end of the chat instead of being at the top
+- [x] When the LLM chat gets long in a notebook page, the whole page slows down a lot
+- [x] If I use /new in global agent undocked, then dock, the docked will be with the previous chat open
+- [x] It seems cancel commands are not working in the global agent after page changing/refreshing, the chat continues in the background regardless of what I try. (It should be possible to have only one active chat at the same time)
+- [x] The default color theme for the application should be dark, not light
 - [ ] The run_cell agent tool seem to not be automatically updating the screen, I needed to manually refresh the page to see the result
 - [ ] Asked the agent to update a map chart to add labels to it. When it called update_chart, the page didnt scroll to focus the cell.
 - [ ] When user refers to a cell by a number, it will always be the position. I asked the agent to update chart 12, and it updated the chart on the cell of position 13 instead.
