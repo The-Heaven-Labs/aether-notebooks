@@ -178,12 +178,8 @@ export function AppShell({ children, noPadding }: Props) {
 
           {/* Global Agent floating modal */}
           {showGlobalAgent && !globalAgentMinimized && !globalAgentDocked && (
-            <>
-              <div
-                style={globalAgentStyles.backdrop}
-                onClick={() => setShowGlobalAgent(false)}
-              />
-              <div style={{ ...globalAgentStyles.modal, width: globalAgentWidth, height: globalAgentHeight }} onClick={e => e.stopPropagation()}>
+            <div style={globalAgentStyles.floatingWrapper}>
+              <div style={{ ...globalAgentStyles.modal, width: globalAgentWidth, height: globalAgentHeight }}>
                 <div
                   style={globalAgentStyles.vResizeHandle}
                   onMouseDown={(e) => {
@@ -214,10 +210,10 @@ export function AppShell({ children, noPadding }: Props) {
                   onClose={() => setShowGlobalAgent(false)}
                   onMinimize={() => setGlobalAgentMinimized(true)}
                   onDock={() => { setGlobalAgentDocked(true); try { localStorage.setItem('hnb:agentDocked:__global__', 'true') } catch {} }}
-              docked={false}
-            />
+                  docked={false}
+                />
               </div>
-            </>
+            </div>
           )}
 
           {/* Minimized agent bar */}
@@ -240,9 +236,9 @@ export function AppShell({ children, noPadding }: Props) {
 }
 
 const globalAgentStyles: Record<string, React.CSSProperties> = {
-  backdrop: {
+  floatingWrapper: {
     position: 'fixed', inset: 0, zIndex: 1500,
-    background: 'transparent',
+    pointerEvents: 'none',
   },
   modal: {
     position: 'fixed', zIndex: 1501,
@@ -254,6 +250,7 @@ const globalAgentStyles: Record<string, React.CSSProperties> = {
     boxShadow: '0 16px 48px rgba(0,0,0,0.3)',
     background: 'var(--bg-primary)',
     display: 'flex', flexDirection: 'column',
+    pointerEvents: 'auto',
   },
   vResizeHandle: {
     position: 'absolute', top: 0, left: 0, right: 0,

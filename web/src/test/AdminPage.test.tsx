@@ -16,6 +16,7 @@ beforeEach(() => {
 })
 
 function renderAdmin() {
+  localStorage.setItem('hnb_is_platform_admin', 'true')
   return renderWithProviders(<AdminPage />, { initialPath: '/admin' })
 }
 

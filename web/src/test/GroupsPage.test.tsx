@@ -149,16 +149,15 @@ describe('Remove member', () => {
         return new HttpResponse(null, { status: 204 })
       })
     )
-    // Mock confirm to accept the removal
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     renderWithProviders(<GroupsPage />)
     await screen.findByText('Data Team')
     fireEvent.click(screen.getByText('Data Team'))
     await screen.findByText('Bob Editor')
-    // The remove button has title="Remove from group" (static title on the component)
+    // Click the remove button which opens ConfirmDialog
     fireEvent.click(screen.getByTitle('Remove from group'))
+    // Click the confirm button in the ConfirmDialog
+    fireEvent.click(screen.getByRole('button', { name: /remove/i }))
     await waitFor(() => expect(deletedUid).toBe('user-2'))
-    vi.restoreAllMocks()
   })
 })
 
@@ -202,7 +201,6 @@ describe('Rename group', () => {
 
 describe('Delete group', () => {
   test('clicking Delete calls DELETE /api/v1/groups/:id after confirm', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     let deletedId = ''
     server.use(
       http.delete('/api/v1/groups/:id', ({ params }) => {
@@ -217,6 +215,8 @@ describe('Delete group', () => {
     fireEvent.click(menuButtons[0])
     // Click Delete in the context menu
     fireEvent.click(screen.getByText('Delete'))
+    // Click the confirm button in the ConfirmDialog
+    fireEvent.click(screen.getByRole('button', { name: /delete/i }))
     await waitFor(() => expect(deletedId).toBe('g-1'))
   })
 

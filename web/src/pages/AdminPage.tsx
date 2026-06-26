@@ -487,6 +487,7 @@ const ssoStyles: Record<string, React.CSSProperties> = {
 export function AdminPage() {
   useEffect(() => { document.title = "Platform Admin — Heaven's Notebooks" }, [])
   const [tab, setTab] = useState<'orgs' | 'users' | 'sso'>('orgs')
+  const isPlatformAdmin = localStorage.getItem('hnb_is_platform_admin') === 'true'
   const [orgs, setOrgs] = useState<Org[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
