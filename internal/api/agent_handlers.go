@@ -532,6 +532,17 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 		req.MaxTurns = 100
 	}
 
+	// Clean up any empty sessions for this user+agent before creating a new one
+	_, err = h.server.db.Pool.Exec(r.Context(), `
+		DELETE FROM agent_sessions
+		WHERE agent_id = $1 AND user_id = $2
+			AND id NOT IN (SELECT DISTINCT session_id FROM agent_messages)
+	`, agentID, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	sessionID := uuid.New().String()
 	var notebookID *string
 	if req.NotebookID != "" {
