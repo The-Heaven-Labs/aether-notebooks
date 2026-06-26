@@ -76,7 +76,7 @@ function MapChartComponent({ data, config }: ChartProps) {
       const dark = document.documentElement.getAttribute('data-theme') === 'dark'
       return {
         tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: tooltipFmt },
-        title: config.title ? { text: config.title, left: 'center', textStyle: { fontSize: 14, color: colors.text } } : undefined,
+        title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
         geo: {
           map: 'world',
           roam: true,
@@ -118,8 +118,8 @@ function MapChartComponent({ data, config }: ChartProps) {
     // Fallback: scatter on plain axes
     return {
       tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: tooltipFmt },
-      title: config.title ? { text: config.title, left: 'center', textStyle: { fontSize: 14, color: colors.text } } : undefined,
-      grid: { top: 20, right: 16, bottom: 8, left: 16, containLabel: true },
+      title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
+      grid: { top: config.title ? 46 : 20, right: 16, bottom: 8, left: 16, containLabel: true },
       dataZoom: [
         { type: 'inside' as const, xAxisIndex: 0, filterMode: 'none' },
         { type: 'inside' as const, yAxisIndex: 0, filterMode: 'none' },

@@ -51,4 +51,10 @@
 - [ ] If I use /new in global agent undocked, then dock, the docked will be with the previous chat open
 - [ ] It seems cancel commands are not working in the global agent after page changing/refreshing, the chat continues in the background regardless of what I try. (It should be possible to have only one active chat at the same time)
 - [ ] The default color theme for the application should be dark, not light
+- [ ] The run_cell agent tool seem to not be automatically updating the screen, I needed to manually refresh the page to see the result
+- [ ] Asked the agent to update a map chart to add labels to it. When it called update_chart, the page didnt scroll to focus the cell.
+- [ ] When user refers to a cell by a number, it will always be the position. I asked the agent to update chart 12, and it updated the chart on the cell of position 13 instead.
+- [ ] Custom tools should have an option to always ask for confirmation before execution
+- [ ] Typing /new in agent chat then refreshing the page sends you back to the old content
+- [ ] When in folder `/`, there seem to be no relevant ordering of notebooks. Make it be by edit date. Recently edited on top
 - [ ]
