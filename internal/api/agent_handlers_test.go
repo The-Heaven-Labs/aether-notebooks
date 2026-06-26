@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -334,6 +335,15 @@ func TestAgentSessionCRUD(t *testing.T) {
 	})
 
 	t.Run("list sessions", func(t *testing.T) {
+		// Insert a message so the session isn't empty (empty sessions are filtered out)
+		_, err := srv.DB().Pool.Exec(context.Background(), `
+			INSERT INTO agent_messages (session_id, role, content, created_at)
+			VALUES ($1, 'user', 'hello', NOW())
+		`, sessionID)
+		if err != nil {
+			t.Fatalf("insert message: %v", err)
+		}
+
 		req := httptest.NewRequest("GET", "/api/v1/agents/"+agentID+"/sessions", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
