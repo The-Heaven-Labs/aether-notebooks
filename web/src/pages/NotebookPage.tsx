@@ -465,7 +465,7 @@ export function NotebookPage() {
           }
           changed = true
           if (local) {
-            return { ...nbCell, source: local.source }
+            return { ...nbCell, source: local.source, outputs: local.outputs }
           }
           return nbCell
         })
