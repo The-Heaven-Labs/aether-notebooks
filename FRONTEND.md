@@ -371,46 +371,44 @@ badge: { fontSize: 10, background: 'var(--bg-primary)', border: '1px solid var(-
 - **Bytes** (bytes/bytea): Binary icon
 - **Unknown**: "?"
 
-### ChartView
+### ChartView (ECharts)
 
-**Purpose**: Recharts visualization wrapper for table data
+**Purpose**: ECharts visualization wrapper for table data. Each chart type lives in `web/src/charts/{Name}Chart.tsx` and exports a `ChartModule`.
 
-**Visual**:
-- Full-width container
-- Chart config button (gear icon) if onConfigChange provided
-- Responsive chart (ResponsiveContainer)
+**Positioning Convention (critical)**:
+All ECharts-based charts must follow this layout pattern to prevent title/legend/grid overlap:
 
-**Chart Types**:
-- **Bar**: Vertical bars, X-axis bottom, Y-axis left, grid lines horizontal, tooltip on hover
-- **Line**: Lines with dots, X-axis bottom, Y-axis left, grid
-- **Area**: Filled areas under lines
-- **Scatter**: Dots only, no lines
-- **Pie**: Circular chart with slices
-
-**Colors** (7-color palette):
-- `#6366f1` (indigo)
-- `#22d3ee` (cyan)
-- `#f59e0b` (amber)
-- `#10b981` (emerald)
-- `#ef4444` (red)
-- `#8b5cf6` (violet)
-- `#ec4899` (pink)
-
-**Configurable Options**:
-- Chart type dropdown
-- X-axis column selector
-- Y-axis column(s) selector (multi-select)
-- Show/hide legend toggle
-- Show/hide grid toggle
-
-**Styling**:
-```javascript
-tooltip: { background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12, color: 'var(--text-primary)', boxShadow: '0 4px 12px rgba(0,0,0,0.12)' }
-axis: { tick: { fontSize: 11, fill: 'var(--text-muted)' }, axisLine: false, tickLine: false }
-legend: { fontSize: 12, color: 'var(--text-muted)' }
+```
+title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: ... } : undefined,
+legend: config.showLegend !== false ? { top: config.title ? 32 : 0, ... } : undefined,
+grid:   { top: config.title ? 56 : (showLegend ? 30 : 8), ... }
 ```
 
-**Component**: `web/src/components/ChartView.tsx`
+For non-grid charts (pie, sankey, map geo), adjust series center/top:
+```
+pie center:    [x, config.title ? '58%' : '50%']
+tree top:      config.title ? '16%' : '8%'
+```
+
+This matches all existing charts — see the JSDoc on `ChartModule` in `web/src/charts/types.ts`.
+
+**Chart Types**:
+- **Bar/Stacked Bar**: Vertical bars, X-axis bottom, Y-axis left, grid, tooltip
+- **Line**: Lines with dots, smooth/connectNulls optional, dataZoom
+- **Area**: Filled areas under lines
+- **Scatter**: Dots, optional color/size columns for 3rd/4th dimensions, dataZoom always on
+- **Pie/Donut**: Circular slices, roseType, startAngle, padAngle. Uses `labelColumn || xAxis` for names
+- **Timeline**: Gantt-style (range mode) or event dots (point mode), swim lanes via groupBy
+- **Sankey**: Flow diagram, auto-layout, nodeAlign/nodeWidth/nodeGap
+- **Hierarchy Tree**: Parent-child tree, configurable layout/top-down
+- **Big Number**: Plain HTML (no ECharts), valueColumn + label + prefix/suffix
+- **Map**: Geo scatter (world map) or fallback axis scatter
+
+**Colors** (7-color palette):
+- `#6366f1` (indigo), `#22d3ee` (cyan), `#f59e0b` (amber), `#10b981` (emerald)
+- `#ef4444` (red), `#8b5cf6` (violet), `#ec4899` (pink)
+
+**Component**: `web/src/charts/index.tsx` (`ChartView`)
 
 ## UI Controls
 

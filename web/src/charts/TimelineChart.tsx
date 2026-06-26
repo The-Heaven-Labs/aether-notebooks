@@ -52,9 +52,9 @@ function TimelineChartComponent({ data, config }: ChartProps) {
       return {
         option: {
           tooltip: { ...getTooltipStyle(), trigger: 'axis' as const },
-          title: config.title ? { text: config.title, left: 'center', textStyle: { fontSize: 14, color: colors.text } } : undefined,
-          legend: groups.length > 1 ? { top: 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
-          grid: { top: groups.length > 1 ? 30 : 12, right: 16, bottom: 16, left: 16, containLabel: true },
+          title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
+          legend: groups.length > 1 ? { top: config.title ? 30 : 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
+          grid: { top: config.title ? (groups.length > 1 ? 56 : 46) : groups.length > 1 ? 30 : 12, right: 16, bottom: 16, left: 16, containLabel: true },
           xAxis: { type: 'time' as const, ...getAxisStyle() },
           yAxis: { type: 'category' as const, data: groups, inverse: true, ...getAxisStyle(), splitLine: { show: config.showGrid !== false } },
           dataZoom: [{
@@ -112,9 +112,14 @@ function TimelineChartComponent({ data, config }: ChartProps) {
       }
     }
 
+    const gridTop = singleGroup
+      ? (config.title ? 76 : 50)
+      : config.title
+        ? (groups.length > 1 ? 66 : 46)
+        : (groups.length > 1 ? 40 : 12)
     const gridConfig = singleGroup
-      ? { top: 50, right: 16, bottom: 60, left: 16 }
-      : { top: groups.length > 1 ? 40 : 12, right: 16, bottom: 16, left: 16, containLabel: true }
+      ? { top: gridTop, right: 16, bottom: 60, left: 16 }
+      : { top: gridTop, right: 16, bottom: 16, left: 16, containLabel: true }
 
     const dataZoomConfig = [
       { type: 'inside' as const, xAxisIndex: 0 },
@@ -172,8 +177,8 @@ function TimelineChartComponent({ data, config }: ChartProps) {
             return `<b>${time}</b>${label}${groupInfo}${delta}`
           },
         },
-        title: config.title ? { text: config.title, left: 'center', textStyle: { fontSize: 14, color: colors.text } } : undefined,
-        legend: groups.length > 1 ? { top: 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
+        title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
+        legend: groups.length > 1 ? { top: config.title ? 30 : 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
         grid: gridConfig,
         xAxis: { type: 'time' as const, ...getAxisStyle() },
         ...yAxisConfig,

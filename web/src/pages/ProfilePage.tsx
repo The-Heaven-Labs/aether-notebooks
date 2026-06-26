@@ -69,7 +69,7 @@ export function ProfilePage() {
   const [name, setName] = useState('')
   const [status, setStatus] = useState('')
   const [theme, setTheme] = useState<'light' | 'dark'>(
-    (localStorage.getItem('hnb_theme') ?? 'light') as 'light' | 'dark'
+    (localStorage.getItem('hnb_theme') ?? 'dark') as 'light' | 'dark'
   )
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [adminMode, setAdminMode] = useState(() => localStorage.getItem('hnb_admin_mode') !== 'false')

@@ -10,9 +10,9 @@ function ScatterChartComponent({ data, config }: ChartProps) {
 
   const option = useMemo(() => ({
     tooltip: { ...getTooltipStyle() },
-    title: config.title ? { text: config.title, left: 'center', textStyle: { fontSize: 14, color: colors.text } } : undefined,
-    legend: config.showLegend !== false && yAxes.length > 1 ? { top: 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
-    grid: { top: config.showLegend !== false && yAxes.length > 1 ? 30 : 8, right: 16, bottom: 32, left: 16, containLabel: true },
+    title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
+    legend: config.showLegend !== false && yAxes.length > 1 ? { top: config.title ? 32 : 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
+    grid: { top: config.title ? 56 : config.showLegend !== false && yAxes.length > 1 ? 30 : 8, right: 16, bottom: 32, left: 16, containLabel: true },
     visualMap: config.colorColumn ? {
       dimension: 2,
       min: 0,

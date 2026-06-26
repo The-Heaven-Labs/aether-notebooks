@@ -596,6 +596,26 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			tokBrk.CacheRead += resp.Usage.PromptTokensDetails.CachedTokens
 		}
 
+		if onEvent != nil {
+			onEvent(EngineEvent{
+				Type: "token_update",
+				Tokens: &TokenBreakdown{
+					Input:           apiInputTotal,
+					Output:          tokBrk.Output,
+					Reasoning:       tokBrk.Reasoning,
+					CacheRead:       tokBrk.CacheRead,
+					ModelCalls:      modelCalls,
+					SystemPrompt:    sysTokens,
+					SkillOverride:   skillTokens,
+					History:         historyTokens,
+					UserMessage:     userTokens,
+					ToolDefinitions: toolDefTokens,
+					ToolCalls:       estimatedToolCalls,
+					ToolResults:     estimatedToolResults,
+				},
+			})
+		}
+
 		// Auto-compact if approaching context window limit
 		if compactionThreshold > 0 && apiInputTotal > contextWindow*compactionThreshold/100 && len(chatMsgs) > 10 {
 			chatMsgs = e.compactChatHistory(ctx, llmClient, chatMsgs, masterKey, sessionID)
@@ -1126,9 +1146,9 @@ func (e *Engine) buildNotebookContext(ctx context.Context, notebookID string) st
 			result += "\n  Line: x_column (categories), y_columns (values). Also: smooth (boolean), connect_nulls, data_zoom."
 			result += "\n  Area: same as line with area fill. Also: smooth, connect_nulls, data_zoom."
 			result += "\n  Scatter: x_column (numeric), y_columns (values). Also: color_column (maps 3rd dim to color gradient), size_column (bubble size), data_zoom (always enabled)."
-			result += "\n  Pie/donut: label_column (slice name), y_columns (metric value). Also: rose_type (radius|area), start_angle (0-360), pad_angle (gap between slices)."
+			result += "\n  Pie/donut: x_column (slice name) or label_column (slice name), y_columns (metric value). Also: rose_type (radius|area), start_angle (0-360), pad_angle (gap between slices)."
 			result += "\n  Timeline: time_column, end_time_column (optional for ranges), label_column, group_by (swim lanes). Also: show_connectors, show_time_deltas, max_label_length."
-			result += "\n  Hierarchy tree: id_column, parent_id_column, label_column, metric_columns, layout (top-down|left-to-right), node_spacing."
+			result += "\n  Hierarchy tree: id_column, parent_id_column, label_column, metric_columns, layout (top-down|left-to-right)."
 			result += "\n  Big number: value_column, label (display text), prefix, suffix, decimal_places."
 			result += "\n  Map: x_column=longitude, y_columns[0]=latitude, y_columns[1]=value (optional), label_column."
 			result += "\n  Sankey: x_column=source, y_columns[0]=target, y_columns[1]=value. Also: node_align (justify|left|right), node_width, node_gap."

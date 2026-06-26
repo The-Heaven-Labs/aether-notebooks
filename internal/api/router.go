@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"sync"
 
 	"github.com/gorilla/websocket"
 	"github.com/heavenlabs/hnb/internal/agent"
@@ -30,6 +31,7 @@ type Server struct {
 	agentEngine        *agent.Engine
 	upgrader           websocket.Upgrader
 	toolAllowedDomains []string
+	sessionCancels     sync.Map // sessionID -> context.CancelFunc
 }
 
 func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, redisCache *cache.Cache) *Server {

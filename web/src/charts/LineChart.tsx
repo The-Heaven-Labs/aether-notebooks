@@ -10,9 +10,9 @@ function LineChartComponent({ data, config }: ChartProps) {
 
   const option = useMemo(() => ({
     tooltip: { trigger: 'axis' as const, ...getTooltipStyle() },
-    title: config.title ? { text: config.title, left: 'center', textStyle: { fontSize: 14, color: colors.text } } : undefined,
-    legend: config.showLegend !== false ? { top: 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
-    grid: { top: config.title ? 46 : config.showLegend !== false ? 30 : 8, right: 16, bottom: config.dataZoom ? 32 : 8, left: 16, containLabel: true },
+    title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
+    legend: config.showLegend !== false ? { top: config.title ? 32 : 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
+    grid: { top: config.title ? 56 : config.showLegend !== false ? 30 : 8, right: 16, bottom: config.dataZoom ? 32 : 8, left: 16, containLabel: true },
     dataZoom: config.dataZoom ? [
       { type: 'inside' as const, start: 0, end: 100 },
       { type: 'slider' as const, start: 0, end: 100, bottom: 8, height: 20, borderColor: colors.border, textStyle: { fontSize: 10, color: colors.textMuted } },

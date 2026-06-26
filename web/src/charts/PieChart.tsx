@@ -8,20 +8,21 @@ function PieChartComponent({ data, config }: ChartProps) {
   const chartData = useRowsAsObjects(data)
   const colors = useMemo(() => getChartColors(), [])
   const valueKey = yAxes[0] ?? data.columns[1]?.name ?? ''
+  const nameKey = config.labelColumn || xAxis
   const isDonut = config.chartType === 'donut'
 
   const option = useMemo(() => ({
     tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: '{b}: {c} ({d}%)' },
-    title: config.title ? { text: config.title, left: 'center', textStyle: { fontSize: 14, color: colors.text } } : undefined,
-    legend: config.showLegend !== false ? { orient: 'vertical' as const, right: 10, top: 'center', textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
+    title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
+    legend: config.showLegend !== false ? { orient: 'vertical' as const, right: 10, top: config.title ? 36 : 'center', textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
     series: [{
       type: 'pie' as const,
       radius: isDonut ? ['40%', '70%'] as [string, string] : ['0%', '70%'] as [string, string],
-      center: config.showLegend !== false ? ['40%', '50%'] as [string, string] : ['50%', '50%'] as [string, string],
+      center: config.showLegend !== false ? ['40%', config.title ? '58%' : '50%'] as [string, string] : ['50%', '50%'] as [string, string],
       data: chartData.map((d, i) => ({
-        name: d[xAxis],
+        name: d[nameKey],
         value: d[valueKey],
-        itemStyle: { color: config.seriesColors?.[String(d[xAxis])] ?? CHART_COLORS[i % CHART_COLORS.length] },
+        itemStyle: { color: config.seriesColors?.[String(d[nameKey])] ?? CHART_COLORS[i % CHART_COLORS.length] },
       })),
       label: config.showLabels !== false ? { fontSize: 11, color: colors.text } : { show: false },
       emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.2)' } },
@@ -29,7 +30,7 @@ function PieChartComponent({ data, config }: ChartProps) {
       startAngle: config.startAngle ?? 90,
       padAngle: config.padAngle ?? 0,
     }],
-  }), [chartData, xAxis, valueKey, isDonut, config.title, config.seriesColors, config.showLegend, config.showLabels, config.roseType, config.startAngle, config.padAngle, colors])
+  }), [chartData, nameKey, valueKey, isDonut, config.title, config.seriesColors, config.showLegend, config.showLabels, config.roseType, config.startAngle, config.padAngle, colors])
 
   return <EChartsContainer option={option} showReset />
 }
