@@ -18,13 +18,13 @@ func (s *Server) handleGetRecent(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id::text, 'notebook' AS type, title AS name, updated_at
-		FROM notebooks WHERE org_id = $1
+		FROM notebooks WHERE org_id = $1 AND deleted_at IS NULL
 		UNION ALL
 		SELECT id::text, 'dashboard', title, updated_at
-		FROM dashboards WHERE org_id = $1
+		FROM dashboards WHERE org_id = $1 AND deleted_at IS NULL
 		UNION ALL
 		SELECT id::text, 'connector', name, updated_at
-		FROM connectors WHERE org_id = $1
+		FROM connectors WHERE org_id = $1 AND deleted_at IS NULL
 		ORDER BY updated_at DESC
 		LIMIT 20
 	`, claims.OrgID)

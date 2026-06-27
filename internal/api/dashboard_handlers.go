@@ -161,7 +161,7 @@ func (s *Server) handleListDashboards(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, org_id, title, settings, public_token, folder_id, created_by, created_at, updated_at
-		 FROM dashboards WHERE org_id = $1 ORDER BY updated_at DESC`,
+		 FROM dashboards WHERE org_id = $1 AND deleted_at IS NULL ORDER BY updated_at DESC`,
 		claims.OrgID,
 	)
 	if err != nil {
@@ -364,7 +364,7 @@ func (s *Server) handleDeleteDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	result, err := s.db.Pool.Exec(ctx,
-		`DELETE FROM dashboards WHERE id = $1 AND org_id = $2`,
+		`UPDATE dashboards SET deleted_at = NOW() WHERE id = $1 AND org_id = $2`,
 		dashID, claims.OrgID,
 	)
 	if err != nil {

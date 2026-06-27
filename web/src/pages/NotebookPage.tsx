@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { useParams, Link } from 'react-router-dom'
-import { ChevronsRight, ChevronLeft, Loader2, X, Check, GripVertical, Shield, Clock } from 'lucide-react'
+import { useParams, Link, useNavigate } from 'react-router-dom'
+import { ChevronsRight, ChevronLeft, Loader2, X, Check, GripVertical, Shield, Clock, Trash2 } from 'lucide-react'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -27,6 +27,7 @@ import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { useNotebookWs } from '../hooks/useNotebookWs'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { PermissionsPanel } from '../components/PermissionsPanel'
+import { exportNotebookHTML } from '../utils/notebookExport'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -414,7 +415,7 @@ export function NotebookPage() {
 
   const cellsContainerRef = useRef<HTMLDivElement>(null)
 
-  // Throttled scroll tracking
+  // Throttled scroll tracking + persist to sessionStorage
   useEffect(() => {
     const el = cellsContainerRef.current
     if (!el || !id) return
@@ -423,6 +424,7 @@ export function NotebookPage() {
       if (!ticking) {
         requestAnimationFrame(() => {
           updateCellScroll(id, el.scrollTop)
+          try { sessionStorage.setItem(`hnb_scroll_${id}`, String(el.scrollTop)) } catch {}
           ticking = false
         })
         ticking = true
@@ -433,12 +435,27 @@ export function NotebookPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, localCells.length])
 
+  // Restore scroll position on mount (after cells have loaded)
+  useEffect(() => {
+    if (!id || localCells.length === 0) return
+    const saved = (() => { try { return sessionStorage.getItem(`hnb_scroll_${id}`) } catch { return null } })()
+    if (saved) {
+      const el = cellsContainerRef.current
+      if (el) {
+        const scrollTop = parseInt(saved, 10)
+        if (!isNaN(scrollTop)) el.scrollTop = scrollTop
+      }
+    }
+  }, [id, localCells.length])
+
   const cellsEndRef = useRef<HTMLDivElement>(null)
 
   // Add-to-dashboard modal
   const [addToDashboardCellId, setAddToDashboardCellId] = useState<string | null>(null)
   const [addToDashboardToast, setAddToDashboardToast] = useState<string | null>(null)
   const [deleteCellTarget, setDeleteCellTarget] = useState<string | null>(null)
+  const [deleteNotebookConfirm, setDeleteNotebookConfirm] = useState(false)
+  const navigate = useNavigate()
 
   const { data: notebook, isLoading, error: notebookError } = useQuery({
     queryKey: ['notebook', id],
@@ -591,6 +608,15 @@ export function NotebookPage() {
     mutationFn: (params: Parameter[]) =>
       api.put(`/api/v1/notebooks/${id}`, { parameters: params }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['notebook', id] }),
+    onError: (err: Error) => setMutationError(err.message),
+  })
+
+  const deleteNotebookMut = useMutation({
+    mutationFn: () => api.delete(`/api/v1/notebooks/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['notebooks'] })
+      navigate('/')
+    },
     onError: (err: Error) => setMutationError(err.message),
   })
 
@@ -1259,6 +1285,18 @@ export function NotebookPage() {
             <Clock size={13} /> History
           </button>
 
+          {/* Delete notebook */}
+          {notebook?.can_edit && (
+            <button
+              type="button"
+              style={{ ...styles.schemaBtn, color: 'var(--text-muted)' }}
+              onClick={() => setDeleteNotebookConfirm(true)}
+              title="Delete notebook"
+            >
+              <Trash2 size={13} /> Delete
+            </button>
+          )}
+
           {/* Share dropdown */}
           <div style={{ position: 'relative' }}>
             <button
@@ -1297,6 +1335,16 @@ export function NotebookPage() {
                   <button
                     type="button"
                     style={styles.dropdownItem}
+                    onClick={() => {
+                      exportNotebookHTML(notebook)
+                      setShareOpen(false)
+                    }}
+                  >
+                    Export (HTML)
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.dropdownItem}
                     onClick={() => { window.open(`/notebooks/${id}/present`, '_blank'); setShareOpen(false) }}
                   >
                     Present mode
@@ -1313,6 +1361,7 @@ export function NotebookPage() {
                       </button>
                     </>
                   )}
+
                 </div>
               </>
             )}
@@ -1520,6 +1569,15 @@ export function NotebookPage() {
       destructive
       onConfirm={() => { if (deleteCellTarget) deleteCell.mutate(deleteCellTarget); setDeleteCellTarget(null) }}
       onCancel={() => setDeleteCellTarget(null)}
+    />
+    <ConfirmDialog
+      open={deleteNotebookConfirm}
+      title="Delete notebook"
+      message={`Delete "${notebook?.title ?? 'this notebook'}"? It will be moved to trash and automatically deleted after 7 days.`}
+      confirmLabel="Delete notebook"
+      destructive
+      onConfirm={() => { setDeleteNotebookConfirm(false); deleteNotebookMut.mutate() }}
+      onCancel={() => setDeleteNotebookConfirm(false)}
     />
     {showPermissions && notebook && (
       <PermissionsPanel

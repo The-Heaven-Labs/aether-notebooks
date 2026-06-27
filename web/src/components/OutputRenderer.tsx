@@ -292,12 +292,14 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
     }
     return 'table'
   })
-  // Sync when viewMode changes from broadcast
+  // Sync view when props change (viewMode, chart config added via broadcast)
   useEffect(() => {
     if (viewMode && viewMode !== view) {
       setView(viewMode)
+    } else if (!viewMode && hasChartConfig && view === 'table') {
+      setView('chart')
     }
-  }, [viewMode])
+  }, [viewMode, hasChartConfig, view])
   const [outputHeight, setOutputHeight] = useState(OUTPUT_DEFAULT_HEIGHT)
   const dragStartY = useRef<number | null>(null)
   const dragStartHeight = useRef<number>(OUTPUT_DEFAULT_HEIGHT)

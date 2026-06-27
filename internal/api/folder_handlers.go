@@ -212,6 +212,7 @@ type folderConnector struct {
 	FolderID  *string `json:"folder_id,omitempty"`
 	CreatedBy string  `json:"created_by"`
 	CreatedAt string  `json:"created_at"`
+	UpdatedAt string  `json:"updated_at"`
 	CanEdit   bool    `json:"can_edit"`
 	CanDelete bool    `json:"can_delete"`
 	CanShare  bool    `json:"can_share"`
@@ -600,7 +601,7 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 	// Notebooks at root (no folder) - filter by permission
 	nbRows, err := s.db.Pool.Query(ctx,
 		`SELECT id, org_id, title, description, connector_id, parameters, created_by, created_at, updated_at
-		 FROM notebooks WHERE org_id = $1 AND folder_id IS NULL
+		 FROM notebooks WHERE org_id = $1 AND folder_id IS NULL AND deleted_at IS NULL
 		 ORDER BY updated_at DESC`,
 		claims.OrgID,
 	)
@@ -630,7 +631,7 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 
 	// Connectors at root (no folder) - filter by permission
 	cRows, err := s.db.Pool.Query(ctx,
-		`SELECT id, name, type, is_default, folder_id, COALESCE(created_by::text, ''), created_at::text FROM connectors WHERE org_id = $1 AND folder_id IS NULL`,
+		`SELECT id, name, type, is_default, folder_id, COALESCE(created_by::text, ''), created_at::text, COALESCE(updated_at::text, '') FROM connectors WHERE org_id = $1 AND folder_id IS NULL AND deleted_at IS NULL`,
 		claims.OrgID,
 	)
 	if err != nil {
@@ -640,7 +641,7 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 	defer cRows.Close()
 	for cRows.Next() {
 		var c folderConnector
-		if err := cRows.Scan(&c.ID, &c.Name, &c.Type, &c.IsDefault, &c.FolderID, &c.CreatedBy, &c.CreatedAt); err != nil {
+		if err := cRows.Scan(&c.ID, &c.Name, &c.Type, &c.IsDefault, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
@@ -660,7 +661,7 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 	// Dashboards at root (no folder) - filter by permission
 	dRows, err := s.db.Pool.Query(ctx,
 		`SELECT id, org_id, title, settings, public_token, created_by, created_at, updated_at
-		 FROM dashboards WHERE org_id = $1 AND folder_id IS NULL`,
+		 FROM dashboards WHERE org_id = $1 AND folder_id IS NULL AND deleted_at IS NULL`,
 		claims.OrgID,
 	)
 	if err != nil {
@@ -763,7 +764,7 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 	// Sub-folders
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, org_id, parent_id, name, is_home, owner_id, created_by, created_at, updated_at
-		 FROM folders WHERE org_id = $1 AND parent_id = $2 ORDER BY name`,
+		 FROM folders WHERE org_id = $1 AND parent_id = $2 AND deleted_at IS NULL ORDER BY name`,
 		claims.OrgID, folderID,
 	)
 	if err != nil {
@@ -801,7 +802,7 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 	// Notebooks in folder
 	nbRows, err := s.db.Pool.Query(ctx,
 		`SELECT id, org_id, title, description, connector_id, parameters, created_by, created_at, updated_at
-		 FROM notebooks WHERE org_id = $1 AND folder_id = $2
+		 FROM notebooks WHERE org_id = $1 AND folder_id = $2 AND deleted_at IS NULL
 		 ORDER BY updated_at DESC`,
 		claims.OrgID, folderID,
 	)
@@ -832,7 +833,7 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 
 	// Connectors in folder
 	cRows, err := s.db.Pool.Query(ctx,
-		`SELECT id, name, type, is_default, folder_id, COALESCE(created_by::text, ''), created_at::text FROM connectors WHERE org_id = $1 AND folder_id = $2`,
+		`SELECT id, name, type, is_default, folder_id, COALESCE(created_by::text, ''), created_at::text, COALESCE(updated_at::text, '') FROM connectors WHERE org_id = $1 AND folder_id = $2 AND deleted_at IS NULL`,
 		claims.OrgID, folderID,
 	)
 	if err != nil {
@@ -843,7 +844,7 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 	var subConnectors []folderConnector
 	for cRows.Next() {
 		var c folderConnector
-		if err := cRows.Scan(&c.ID, &c.Name, &c.Type, &c.IsDefault, &c.FolderID, &c.CreatedBy, &c.CreatedAt); err != nil {
+		if err := cRows.Scan(&c.ID, &c.Name, &c.Type, &c.IsDefault, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
@@ -863,7 +864,7 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 	// Dashboards in folder
 	dRows, err := s.db.Pool.Query(ctx,
 		`SELECT id, org_id, title, settings, public_token, created_by, created_at, updated_at
-		 FROM dashboards WHERE org_id = $1 AND folder_id = $2`,
+		 FROM dashboards WHERE org_id = $1 AND folder_id = $2 AND deleted_at IS NULL`,
 		claims.OrgID, folderID,
 	)
 	if err != nil {
@@ -1186,13 +1187,13 @@ func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
 		var hasChildren bool
 		s.db.Pool.QueryRow(ctx,
 			`SELECT EXISTS(
-			   SELECT 1 FROM folders WHERE parent_id = $1 AND org_id = $2
+			   SELECT 1 FROM folders WHERE parent_id = $1 AND org_id = $2 AND deleted_at IS NULL
 			   UNION ALL
-			   SELECT 1 FROM notebooks WHERE folder_id = $1 AND org_id = $2
+			   SELECT 1 FROM notebooks WHERE folder_id = $1 AND org_id = $2 AND deleted_at IS NULL
 			   UNION ALL
-			   SELECT 1 FROM connectors WHERE folder_id = $1 AND org_id = $2
+			   SELECT 1 FROM connectors WHERE folder_id = $1 AND org_id = $2 AND deleted_at IS NULL
 			   UNION ALL
-			   SELECT 1 FROM dashboards WHERE folder_id = $1 AND org_id = $2
+			   SELECT 1 FROM dashboards WHERE folder_id = $1 AND org_id = $2 AND deleted_at IS NULL
 			 )`,
 			folderID, claims.OrgID,
 		).Scan(&hasChildren)
@@ -1203,7 +1204,7 @@ func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := s.db.Pool.Exec(ctx,
-		`DELETE FROM folders WHERE id = $1 AND org_id = $2`,
+		`UPDATE folders SET deleted_at = NOW() WHERE id = $1 AND org_id = $2`,
 		folderID, claims.OrgID,
 	)
 	if err != nil {

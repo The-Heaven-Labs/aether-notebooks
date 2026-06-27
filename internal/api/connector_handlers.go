@@ -171,7 +171,7 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, table_allowlist, table_denylist
-		 FROM connectors WHERE org_id = $1 ORDER BY name ASC`,
+		 FROM connectors WHERE org_id = $1 AND deleted_at IS NULL ORDER BY name ASC`,
 		claims.OrgID,
 	)
 	if err != nil {
@@ -401,7 +401,7 @@ func (s *Server) handleDeleteConnector(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	result, err := s.db.Pool.Exec(ctx,
-		`DELETE FROM connectors WHERE id = $1 AND org_id = $2`,
+		`UPDATE connectors SET deleted_at = NOW() WHERE id = $1 AND org_id = $2`,
 		connID, claims.OrgID,
 	)
 	if err != nil {

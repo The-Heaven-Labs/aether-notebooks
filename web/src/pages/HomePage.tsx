@@ -249,7 +249,7 @@ function MoveModal({ target, onConfirm, onClose }: MoveModalProps) {
 function MetaLine({ createdBy, createdAt, updatedAt }: { createdBy: string; createdAt: string; updatedAt?: string }) {
   const created = new Date(createdAt)
   const updated = updatedAt ? new Date(updatedAt) : null
-  const fmt = (d: Date) => isNaN(d.getTime()) ? '' : d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+  const fmt = (d: Date) => isNaN(d.getTime()) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
   const showUpdated = updated && !isNaN(updated.getTime()) && updated.getTime() - created.getTime() > 60_000
   return (
     <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2, display: 'block', lineHeight: 1.4 }}>
@@ -876,8 +876,8 @@ export function HomePage() {
               ))}
             </div>
 
-            {/* Recent section — root only, no active search */}
-            {!folderID && !searchQuery && recentItems.length > 0 && (
+            {/* Recent section — show in all folders when no search */}
+            {!searchQuery && recentItems.length > 0 && (
               <section style={{ ...s.section, marginBottom: 20 }}>
                 <div style={s.sectionLabel}>Recent</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -1157,7 +1157,7 @@ export function HomePage() {
                             <span style={s.itemName}>{c.name}</span>
                             {c.is_default && <span style={s.badge}>default</span>}
                           </div>
-                          <MetaLine createdBy={memberName(c.created_by)} createdAt={c.created_at} />
+                          <MetaLine createdBy={memberName(c.created_by)} createdAt={c.created_at} updatedAt={c.updated_at} />
                         </div>
                       </Link>
                       <div style={{ position: 'relative' }}>
@@ -1312,7 +1312,7 @@ export function HomePage() {
             <ConfirmDialog
               open={!!deleteConfirm}
               title="Delete item"
-              message={`Delete "${deleteConfirm?.name}"? This cannot be undone.`}
+              message={`Delete "${deleteConfirm?.name}"? It will be moved to trash and automatically deleted after 7 days.`}
               confirmLabel="Delete"
               destructive
               onConfirm={confirmDelete}
@@ -1321,7 +1321,7 @@ export function HomePage() {
             <ConfirmDialog
               open={bulkDeleteConfirm}
               title="Delete items"
-              message={`Delete ${selected.size} item(s)? This cannot be undone.`}
+              message={`Delete ${selected.size} item(s)? They will be moved to trash and automatically deleted after 7 days.`}
               confirmLabel="Delete"
               destructive
               onConfirm={() => { bulkDelete.mutate(); setBulkDeleteConfirm(false) }}

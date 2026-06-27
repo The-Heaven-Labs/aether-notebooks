@@ -13,9 +13,10 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 const fmtDate = (d: string) => {
   const date = new Date(d)
   const today = new Date()
-  return date.toDateString() === today.toDateString()
-    ? `Today ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-    : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  if (date.toDateString() === today.toDateString()) {
+    return `Today ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+  }
+  return date.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 export function DashboardsPage() {
@@ -123,7 +124,7 @@ export function DashboardsPage() {
       <ConfirmDialog
         open={!!deleteTarget}
         title="Delete dashboard"
-        message={`Delete "${deleteTarget?.title}"? This cannot be undone.`}
+        message={`Delete "${deleteTarget?.title}"? It will be moved to trash and automatically deleted after 7 days.`}
         confirmLabel="Delete"
         destructive
         onConfirm={() => { if (deleteTarget) deleteDashboard.mutate(deleteTarget.id); setDeleteTarget(null) }}
