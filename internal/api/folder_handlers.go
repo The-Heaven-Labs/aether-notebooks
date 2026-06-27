@@ -600,7 +600,8 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 	// Notebooks at root (no folder) - filter by permission
 	nbRows, err := s.db.Pool.Query(ctx,
 		`SELECT id, org_id, title, description, connector_id, parameters, created_by, created_at, updated_at
-		 FROM notebooks WHERE org_id = $1 AND folder_id IS NULL`,
+		 FROM notebooks WHERE org_id = $1 AND folder_id IS NULL
+		 ORDER BY updated_at DESC`,
 		claims.OrgID,
 	)
 	if err != nil {
@@ -800,7 +801,8 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 	// Notebooks in folder
 	nbRows, err := s.db.Pool.Query(ctx,
 		`SELECT id, org_id, title, description, connector_id, parameters, created_by, created_at, updated_at
-		 FROM notebooks WHERE org_id = $1 AND folder_id = $2`,
+		 FROM notebooks WHERE org_id = $1 AND folder_id = $2
+		 ORDER BY updated_at DESC`,
 		claims.OrgID, folderID,
 	)
 	if err != nil {

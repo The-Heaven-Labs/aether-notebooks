@@ -257,11 +257,11 @@ func makeReadCellHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
 
-		notebookID, err := ctx.GetNotebookIDForCell(req.CellID)
+		resolved, err := ctx.ResolveCell(req.CellID)
 		if err != nil {
-			return nil, fmt.Errorf("get cell notebook: %w", err)
+			return nil, err
 		}
-		if err := ctx.CheckPermission("notebook", notebookID, "view"); err != nil {
+		if err := ctx.CheckPermission("notebook", resolved.NotebookID, "view"); err != nil {
 			return nil, err
 		}
 
@@ -292,7 +292,7 @@ func makeReadCellHandler(db *pgxpool.Pool) ToolHandler {
 			       "limit", created_at, updated_at, source_visible, cell_collapsed, title, 
 			       description, slug, parameters, slide_break, metadata
 			FROM cells WHERE id = $1
-		`, req.CellID).Scan(
+		`, resolved.ID).Scan(
 			&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &cell.Language,
 			&cell.ConnectorID, &cell.Source, &cell.Outputs, &cell.Limit,
 			&cell.CreatedAt, &cell.UpdatedAt, &cell.SourceVisible, &cell.CellCollapsed,
@@ -305,6 +305,7 @@ func makeReadCellHandler(db *pgxpool.Pool) ToolHandler {
 
 		// Build a chart/output summary to help the agent assess chart health
 		summary := map[string]any{}
+		var groupByCol string
 		if cell.Metadata != nil {
 			var meta struct {
 				Chart map[string]any `json:"chart"`
@@ -312,6 +313,25 @@ func makeReadCellHandler(db *pgxpool.Pool) ToolHandler {
 			if json.Unmarshal(cell.Metadata, &meta) == nil && meta.Chart != nil {
 				summary["chart_type"] = meta.Chart["chartType"]
 				summary["chart_title"] = meta.Chart["title"]
+				if yAxis, ok := meta.Chart["yAxis"].([]any); ok {
+					var series []string
+					for _, y := range yAxis {
+						if s, ok := y.(string); ok {
+							series = append(series, s)
+						}
+					}
+					summary["configured_series"] = series
+				}
+				if xCol, ok := meta.Chart["xAxis"].(string); ok {
+					summary["x_axis"] = xCol
+				}
+				if gCol, ok := meta.Chart["groupBy"].(string); ok {
+					chartType, _ := meta.Chart["chartType"].(string)
+					if chartType == "timeline" {
+						summary["group_by"] = gCol
+					}
+					groupByCol = gCol
+				}
 			}
 		}
 		if cell.Outputs != nil {
@@ -331,34 +351,109 @@ func makeReadCellHandler(db *pgxpool.Pool) ToolHandler {
 							rowStr, _ := json.Marshal(o.Data.Rows[0])
 							summary["sample_row"] = string(rowStr)
 						}
+						// Extract actual series names from groupBy column
+						if groupByCol != "" && len(o.Data.Rows) > 0 {
+							seen := map[string]bool{}
+							var names []string
+							for _, row := range o.Data.Rows {
+								if v, ok := row[groupByCol]; ok {
+									s := fmt.Sprintf("%v", v)
+									if !seen[s] {
+										seen[s] = true
+										names = append(names, s)
+									}
+								}
+							}
+							if len(names) > 0 {
+								summary["data_series"] = names
+							}
+						}
 						break
 					}
 				}
 			}
 		}
-		cellWithSummary := map[string]any{
-			"id":             cell.ID,
-			"notebook_id":    cell.NotebookID,
-			"position":       cell.Position,
-			"type":           cell.Type,
-			"language":       cell.Language,
-			"connector_id":   cell.ConnectorID,
-			"source":         cell.Source,
-			"outputs":        cell.Outputs,
-			"limit":          cell.Limit,
-			"created_at":     cell.CreatedAt,
-			"updated_at":     cell.UpdatedAt,
-			"source_visible": cell.SourceVisible,
-			"cell_collapsed": cell.CellCollapsed,
-			"title":          cell.Title,
-			"description":    cell.Description,
-			"slug":           cell.Slug,
-			"parameters":     cell.Parameters,
-			"slide_break":    cell.SlideBreak,
-			"metadata":       cell.Metadata,
-			"chart_summary":  summary,
+	// Filter stale seriesColors keys from metadata for axis-based charts
+	filteredMetadata := cell.Metadata
+	if filteredMetadata != nil {
+		var metaMap map[string]any
+		if json.Unmarshal(filteredMetadata, &metaMap) == nil {
+			if chart, ok := metaMap["chart"].(map[string]any); ok {
+				ct, _ := chart["chartType"].(string)
+				if ct == "bar" || ct == "stacked_bar" || ct == "line" || ct == "area" || ct == "scatter" {
+					if sc, ok := chart["seriesColors"].(map[string]any); ok {
+						yCols := make(map[string]bool)
+						if yAxis, ok := chart["yAxis"].([]any); ok {
+							for _, y := range yAxis {
+								if s, ok := y.(string); ok {
+									yCols[s] = true
+								}
+							}
+						}
+						for k := range sc {
+							if !yCols[k] {
+								delete(sc, k)
+							}
+						}
+						if len(sc) == 0 {
+							delete(chart, "seriesColors")
+						}
+						metaMap["chart"] = chart
+						filtered, _ := json.Marshal(metaMap)
+						if filtered != nil {
+							filteredMetadata = filtered
+						}
+					} else if sc, ok := chart["seriesColors"].(map[string]string); ok {
+						yCols := make(map[string]bool)
+						if yAxis, ok := chart["yAxis"].([]any); ok {
+							for _, y := range yAxis {
+								if s, ok := y.(string); ok {
+									yCols[s] = true
+								}
+							}
+						}
+						for k := range sc {
+							if !yCols[k] {
+								delete(sc, k)
+							}
+						}
+						if len(sc) == 0 {
+							delete(chart, "seriesColors")
+						}
+						metaMap["chart"] = chart
+						filtered, _ := json.Marshal(metaMap)
+						if filtered != nil {
+							filteredMetadata = filtered
+						}
+					}
+				}
+			}
 		}
-		return cellWithSummary, nil
+	}
+
+	cellWithSummary := map[string]any{
+		"id":             cell.ID,
+		"notebook_id":    cell.NotebookID,
+		"position":       cell.Position + 1,
+		"type":           cell.Type,
+		"language":       cell.Language,
+		"connector_id":   cell.ConnectorID,
+		"source":         cell.Source,
+		"outputs":        cell.Outputs,
+		"limit":          cell.Limit,
+		"created_at":     cell.CreatedAt,
+		"updated_at":     cell.UpdatedAt,
+		"source_visible": cell.SourceVisible,
+		"cell_collapsed": cell.CellCollapsed,
+		"title":          cell.Title,
+		"description":    cell.Description,
+		"slug":           cell.Slug,
+		"parameters":     cell.Parameters,
+		"slide_break":    cell.SlideBreak,
+		"metadata":       filteredMetadata,
+		"chart_summary":  summary,
+	}
+	return cellWithSummary, nil
 	}
 }
 
@@ -438,6 +533,28 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 
 		ctx.EmitCellCreated(cellID, position+1)
 
+		if ctx.BroadcastFunc != nil {
+			ctx.BroadcastFunc(req.NotebookID, map[string]any{
+				"type":       "cell_created",
+				"cell": map[string]any{
+					"id":             cellID,
+					"notebook_id":    req.NotebookID,
+					"position":       position,
+					"type":           req.Type,
+					"language":       language,
+					"source":         req.Source,
+					"outputs":        []models.Output{},
+					"source_visible": true,
+					"outputs_hidden": false,
+					"cell_collapsed": false,
+					"slide_break":    false,
+					"created_at":     now,
+					"updated_at":     now,
+				},
+				"user_email": "agent@hnb",
+			})
+		}
+
 		return map[string]any{"cell_id": cellID, "position": position + 1}, nil
 	}
 }
@@ -455,17 +572,19 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
 
-		notebookID, err := ctx.GetNotebookIDForCell(req.CellID)
+		resolved, err := ctx.ResolveCell(req.CellID)
 		if err != nil {
-			return nil, fmt.Errorf("get cell notebook: %w", err)
-		}
-		if err := ctx.CheckPermission("notebook", notebookID, "edit"); err != nil {
 			return nil, err
 		}
+		if err := ctx.CheckPermission("notebook", resolved.NotebookID, "edit"); err != nil {
+			return nil, err
+		}
+		notebookID := resolved.NotebookID
+		cellID := resolved.ID
 
 		// 1. Update Yjs document (source of truth) if source is changing
 		if req.Source != "" {
-			if err := UpdateCellInYjs(ctx.Context, db, notebookID, req.CellID, req.Source); err != nil {
+			if err := UpdateCellInYjs(ctx.Context, db, notebookID, cellID, req.Source); err != nil {
 				return nil, fmt.Errorf("update yjs: %w", err)
 			}
 		}
@@ -483,27 +602,27 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 				agent_updated_at = NOW(),
 				updated_at = NOW()
 			WHERE id = $1
-		`, req.CellID, req.Source, req.Title, req.Description, connID)
+		`, cellID, req.Source, req.Title, req.Description, connID)
 		if err != nil {
 			return nil, fmt.Errorf("update cache: %w", err)
 		}
 
-		_ = ctx.AuditLog("cell.update", "cell", req.CellID)
+		_ = ctx.AuditLog("cell.update", "cell", cellID)
 
 		// Notify agent panel via event
-		ctx.EmitCellUpdated(req.CellID, req.Source)
+		ctx.EmitCellUpdated(cellID, req.Source)
 
 		// Broadcast to all notebook viewers via WebSocket
 		if ctx.BroadcastFunc != nil {
 			ctx.BroadcastFunc(notebookID, map[string]any{
 				"type":       "cell_updated",
-				"cell_id":    req.CellID,
+				"cell_id":    cellID,
 				"source":     req.Source,
 				"user_email": "agent@hnb",
 			})
 		}
 
-		return map[string]any{"cell_id": req.CellID}, nil
+		return map[string]any{"cell_id": cellID}, nil
 	}
 }
 
@@ -517,20 +636,22 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
 
-		notebookID, err := ctx.GetNotebookIDForCell(req.CellID)
+		resolved, err := ctx.ResolveCell(req.CellID)
 		if err != nil {
-			return nil, fmt.Errorf("get cell notebook: %w", err)
-		}
-		if err := ctx.CheckPermission("notebook", notebookID, "run"); err != nil {
 			return nil, err
 		}
+		if err := ctx.CheckPermission("notebook", resolved.NotebookID, "run"); err != nil {
+			return nil, err
+		}
+		notebookID := resolved.NotebookID
+		cellID := resolved.ID
 
 		// Check if cell already has results
 		if !req.Force {
 			var hasOutputs bool
-			db.QueryRow(ctx.Context, `SELECT outputs IS NOT NULL AND outputs != '[]'::jsonb FROM cells WHERE id = $1`, req.CellID).Scan(&hasOutputs)
+			db.QueryRow(ctx.Context, `SELECT outputs IS NOT NULL AND outputs != '[]'::jsonb FROM cells WHERE id = $1`, cellID).Scan(&hasOutputs)
 			if hasOutputs {
-				return map[string]any{"cell_id": req.CellID, "status": "skipped", "reason": "cell already has results, use force=true to re-run"}, nil
+				return map[string]any{"cell_id": cellID, "status": "skipped", "reason": "cell already has results, use force=true to re-run"}, nil
 			}
 		}
 
@@ -542,7 +663,7 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 		}
 		err = db.QueryRow(ctx.Context, `
 			SELECT connector_id, language, source, COALESCE("limit", 0) FROM cells WHERE id = $1
-		`, req.CellID).Scan(&cell.ConnectorID, &cell.Language, &cell.Source, &cell.Limit)
+		`, cellID).Scan(&cell.ConnectorID, &cell.Language, &cell.Source, &cell.Limit)
 		if err != nil {
 			return nil, fmt.Errorf("get cell: %w", err)
 		}
@@ -595,11 +716,19 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 		if err != nil {
 			errOutput := models.Output{Type: "error", Data: map[string]string{"message": err.Error()}}
 			outJSON, _ := json.Marshal([]models.Output{errOutput})
-			db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, updated_at = NOW() WHERE id = $2", outJSON, req.CellID)
-			ctx.EmitCellOutput(req.CellID, []models.Output{errOutput})
+			db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, updated_at = NOW() WHERE id = $2", outJSON, cellID)
+			ctx.EmitCellOutput(cellID, []models.Output{errOutput})
+			if ctx.BroadcastFunc != nil {
+				ctx.BroadcastFunc(notebookID, map[string]any{
+					"type":       "cell_output",
+					"cell_id":    cellID,
+					"outputs":    []models.Output{errOutput},
+					"user_email": "agent@hnb",
+				})
+			}
 
 			return map[string]any{
-				"cell_id": req.CellID,
+				"cell_id": cellID,
 				"status":  "error",
 				"error":   err.Error(),
 			}, nil
@@ -608,13 +737,21 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 		tableOutput := models.Output{Type: "table", Data: result}
 		outputs := []models.Output{tableOutput}
 		outJSON, _ := json.Marshal(outputs)
-		db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, updated_at = NOW() WHERE id = $2", outJSON, req.CellID)
-		ctx.EmitCellOutput(req.CellID, outputs)
+		db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, updated_at = NOW() WHERE id = $2", outJSON, cellID)
+		ctx.EmitCellOutput(cellID, outputs)
+		if ctx.BroadcastFunc != nil {
+			ctx.BroadcastFunc(notebookID, map[string]any{
+				"type":       "cell_output",
+				"cell_id":    cellID,
+				"outputs":    outputs,
+				"user_email": "agent@hnb",
+			})
+		}
 
-		_ = ctx.AuditLog("cell.run", "cell", req.CellID)
+		_ = ctx.AuditLog("cell.run", "cell", cellID)
 
 		return map[string]any{
-			"cell_id": req.CellID,
+			"cell_id": cellID,
 			"status":  "completed",
 			"rows":    len(result.Rows),
 			"columns": len(result.Columns),
@@ -696,13 +833,15 @@ func makeMoveCellHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
 
-		notebookID, err := ctx.GetNotebookIDForCell(req.CellID)
+		resolved, err := ctx.ResolveCell(req.CellID)
 		if err != nil {
-			return nil, fmt.Errorf("get cell notebook: %w", err)
-		}
-		if err := ctx.CheckPermission("notebook", notebookID, "edit"); err != nil {
 			return nil, err
 		}
+		if err := ctx.CheckPermission("notebook", resolved.NotebookID, "edit"); err != nil {
+			return nil, err
+		}
+		notebookID := resolved.NotebookID
+		cellID := resolved.ID
 
 		if req.NewPosition <= 0 {
 			return nil, fmt.Errorf("new_position must be >= 1")
@@ -717,19 +856,19 @@ func makeMoveCellHandler(db *pgxpool.Pool) ToolHandler {
 
 		var oldPos int
 		if err := tx.QueryRow(ctx.Context, `SELECT position FROM cells WHERE id=$1 AND notebook_id=$2`,
-			req.CellID, notebookID).Scan(&oldPos); err != nil {
+			cellID, notebookID).Scan(&oldPos); err != nil {
 			return nil, fmt.Errorf("get cell position: %w", err)
 		}
 
 		if newPos == oldPos {
-			return map[string]any{"cell_id": req.CellID, "position": req.NewPosition, "status": "no change"}, nil
+			return map[string]any{"cell_id": cellID, "position": req.NewPosition, "status": "no change"}, nil
 		}
 
 		// Move source cell to a negative position that won't collide with the
 		// negative-intermediate shift pattern. -(oldPos+1) is always outside the
 		// range of shifted intermediate values for both increment and decrement.
 		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = $1 WHERE id = $2`,
-			-(oldPos+1), req.CellID); err != nil {
+			-(oldPos+1), cellID); err != nil {
 			return nil, fmt.Errorf("remove cell: %w", err)
 		}
 
@@ -737,27 +876,27 @@ func makeMoveCellHandler(db *pgxpool.Pool) ToolHandler {
 			// Shift cells in (oldPos, newPos] down by 1 using negative-intermediate pattern
 			// decrement: position -> position - 1
 			if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = -(position + 1) WHERE notebook_id = $1 AND position > $2 AND position <= $3 AND id != $4`,
-				notebookID, oldPos, newPos, req.CellID); err != nil {
+				notebookID, oldPos, newPos, cellID); err != nil {
 				return nil, fmt.Errorf("shift cells down: %w", err)
 			}
 			if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = -position - 2 WHERE notebook_id = $1 AND position < 0 AND id != $2`,
-				notebookID, req.CellID); err != nil {
+				notebookID, cellID); err != nil {
 				return nil, fmt.Errorf("shift cells down back: %w", err)
 			}
 		} else {
 			// Shift cells in [newPos, oldPos) up by 1 using negative-intermediate pattern
 			// increment: position -> position + 1
 			if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = -position - 1 WHERE notebook_id = $1 AND position >= $2 AND position < $3 AND id != $4`,
-				notebookID, newPos, oldPos, req.CellID); err != nil {
+				notebookID, newPos, oldPos, cellID); err != nil {
 				return nil, fmt.Errorf("shift cells up: %w", err)
 			}
 			if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = -position WHERE notebook_id = $1 AND position < 0 AND id != $2`,
-				notebookID, req.CellID); err != nil {
+				notebookID, cellID); err != nil {
 				return nil, fmt.Errorf("shift cells up back: %w", err)
 			}
 		}
 
-		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = $1, updated_at = NOW() WHERE id = $2`, newPos, req.CellID); err != nil {
+		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = $1, updated_at = NOW() WHERE id = $2`, newPos, cellID); err != nil {
 			return nil, fmt.Errorf("set cell position: %w", err)
 		}
 
@@ -765,9 +904,19 @@ func makeMoveCellHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("commit move: %w", err)
 		}
 
-		_ = ctx.AuditLog("cell.move", "cell", req.CellID)
+		_ = ctx.AuditLog("cell.move", "cell", cellID)
 
-		return map[string]any{"cell_id": req.CellID, "position": req.NewPosition, "status": "moved"}, nil
+		ctx.EmitCellUpdated(cellID, "")
+
+		if ctx.BroadcastFunc != nil {
+			ctx.BroadcastFunc(notebookID, map[string]any{
+				"type":       "notebook_refresh",
+				"reason":     "cell_moved",
+				"user_email": "agent@hnb",
+			})
+		}
+
+		return map[string]any{"cell_id": cellID, "position": req.NewPosition, "status": "moved"}, nil
 	}
 }
 
@@ -787,20 +936,23 @@ func makeSwapCellsHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("cannot swap a cell with itself")
 		}
 
-		notebookID, err := ctx.GetNotebookIDForCell(req.CellA)
+		resolvedA, err := ctx.ResolveCell(req.CellA)
 		if err != nil {
-			return nil, fmt.Errorf("get notebook for cell A: %w", err)
+			return nil, fmt.Errorf("cell A: %w", err)
 		}
-		nbID2, err := ctx.GetNotebookIDForCell(req.CellB)
+		resolvedB, err := ctx.ResolveCell(req.CellB)
 		if err != nil {
-			return nil, fmt.Errorf("get notebook for cell B: %w", err)
+			return nil, fmt.Errorf("cell B: %w", err)
 		}
-		if notebookID != nbID2 {
+		if resolvedA.NotebookID != resolvedB.NotebookID {
 			return nil, fmt.Errorf("cells must be in the same notebook")
 		}
-		if err := ctx.CheckPermission("notebook", notebookID, "edit"); err != nil {
+		if err := ctx.CheckPermission("notebook", resolvedA.NotebookID, "edit"); err != nil {
 			return nil, err
 		}
+		notebookID := resolvedA.NotebookID
+		cellA := resolvedA.ID
+		cellB := resolvedB.ID
 
 		tx, err := db.Begin(ctx.Context)
 		if err != nil {
@@ -809,20 +961,20 @@ func makeSwapCellsHandler(db *pgxpool.Pool) ToolHandler {
 		defer tx.Rollback(ctx.Context)
 
 		var posA, posB int
-		if err := tx.QueryRow(ctx.Context, `SELECT position FROM cells WHERE id=$1 AND notebook_id=$2`, req.CellA, notebookID).Scan(&posA); err != nil {
+		if err := tx.QueryRow(ctx.Context, `SELECT position FROM cells WHERE id=$1 AND notebook_id=$2`, cellA, notebookID).Scan(&posA); err != nil {
 			return nil, fmt.Errorf("get cell A position: %w", err)
 		}
-		if err := tx.QueryRow(ctx.Context, `SELECT position FROM cells WHERE id=$1 AND notebook_id=$2`, req.CellB, notebookID).Scan(&posB); err != nil {
+		if err := tx.QueryRow(ctx.Context, `SELECT position FROM cells WHERE id=$1 AND notebook_id=$2`, cellB, notebookID).Scan(&posB); err != nil {
 			return nil, fmt.Errorf("get cell B position: %w", err)
 		}
 
-		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = -(position + 1), updated_at = NOW() WHERE id = $1`, req.CellA); err != nil {
+		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = -(position + 1), updated_at = NOW() WHERE id = $1`, cellA); err != nil {
 			return nil, fmt.Errorf("move cell A aside: %w", err)
 		}
-		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = $1, updated_at = NOW() WHERE id = $2`, posA, req.CellB); err != nil {
+		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = $1, updated_at = NOW() WHERE id = $2`, posA, cellB); err != nil {
 			return nil, fmt.Errorf("set cell B position: %w", err)
 		}
-		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = $1, updated_at = NOW() WHERE id = $2`, posB, req.CellA); err != nil {
+		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = $1, updated_at = NOW() WHERE id = $2`, posB, cellA); err != nil {
 			return nil, fmt.Errorf("set cell A position: %w", err)
 		}
 
@@ -830,10 +982,20 @@ func makeSwapCellsHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("commit swap: %w", err)
 		}
 
-		_ = ctx.AuditLog("cell.swap", "cell", req.CellA)
-		_ = ctx.AuditLog("cell.swap", "cell", req.CellB)
+		_ = ctx.AuditLog("cell.swap", "cell", cellA)
+		_ = ctx.AuditLog("cell.swap", "cell", cellB)
 
-		return map[string]any{"cell_id_a": req.CellA, "cell_id_b": req.CellB, "status": "swapped"}, nil
+		ctx.EmitCellUpdated(cellA, "")
+
+		if ctx.BroadcastFunc != nil {
+			ctx.BroadcastFunc(notebookID, map[string]any{
+				"type":       "notebook_refresh",
+				"reason":     "cells_swapped",
+				"user_email": "agent@hnb",
+			})
+		}
+
+		return map[string]any{"cell_id_a": cellA, "cell_id_b": cellB, "status": "swapped"}, nil
 	}
 }
 
@@ -925,13 +1087,15 @@ func makeDeleteCellHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
 
-	notebookID, err := ctx.GetNotebookIDForCell(req.CellID)
+	resolved, err := ctx.ResolveCell(req.CellID)
 	if err != nil {
-		return nil, fmt.Errorf("get cell notebook: %w", err)
-	}
-	if err := ctx.CheckPermission("notebook", notebookID, "edit"); err != nil {
 		return nil, err
 	}
+	if err := ctx.CheckPermission("notebook", resolved.NotebookID, "edit"); err != nil {
+		return nil, err
+	}
+	notebookID := resolved.NotebookID
+	cellID := resolved.ID
 
 	// Auto-snapshot before destructive action
 	go EnsureAutoSnapshot(context.Background(), db, notebookID, ctx.UserID)
@@ -939,7 +1103,7 @@ func makeDeleteCellHandler(db *pgxpool.Pool) ToolHandler {
 	result, err := db.Exec(ctx.Context,
 			`DELETE FROM cells WHERE id = $1 AND notebook_id = $2
 			 AND notebook_id IN (SELECT id FROM notebooks WHERE org_id = $3)`,
-			req.CellID, notebookID, ctx.OrgID,
+			cellID, notebookID, ctx.OrgID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("delete cell: %w", err)
@@ -953,20 +1117,20 @@ func makeDeleteCellHandler(db *pgxpool.Pool) ToolHandler {
 			slog.Warn("touch notebook timestamp", "error", err)
 		}
 
-		_ = ctx.AuditLog("cell.delete", "cell", req.CellID)
+		_ = ctx.AuditLog("cell.delete", "cell", cellID)
 
-		ctx.EmitCellDeleted(req.CellID)
+		ctx.EmitCellDeleted(cellID)
 
 		// Broadcast to all notebook viewers via WebSocket
 		if ctx.BroadcastFunc != nil {
 			ctx.BroadcastFunc(notebookID, map[string]any{
 				"type":       "cell_deleted",
-				"cell_id":    req.CellID,
+				"cell_id":    cellID,
 				"user_email": "agent@hnb",
 			})
 		}
 
-		return map[string]any{"cell_id": req.CellID, "status": "deleted"}, nil
+		return map[string]any{"cell_id": cellID, "status": "deleted"}, nil
 	}
 }
 
@@ -1002,7 +1166,7 @@ func makeGetNotebookContextHandler(db *pgxpool.Pool) ToolHandler {
 		}
 
 		// Get cells
-		rows, err := db.Query(ctx.Context, `SELECT id, type, language, source, position FROM cells WHERE notebook_id = $1 ORDER BY position LIMIT $2`, params.NotebookID, params.MaxCells)
+		rows, err := db.Query(ctx.Context, `SELECT c.id, c.type, c.language, c.source, c.position, COALESCE(c.metadata->'chart'->>'chartType', '') FROM cells c WHERE notebook_id = $1 ORDER BY position LIMIT $2`, params.NotebookID, params.MaxCells)
 		if err != nil {
 			return nil, err
 		}
@@ -1010,18 +1174,23 @@ func makeGetNotebookContextHandler(db *pgxpool.Pool) ToolHandler {
 
 		var result strings.Builder
 		result.WriteString(fmt.Sprintf("Notebook: %q\n", title))
+		result.WriteString(fmt.Sprintf("Cell link format: /notebooks/%s#cell-{cell_id}\n", params.NotebookID))
 		result.WriteString(fmt.Sprintf("Cells (showing up to %d):\n\n", params.MaxCells))
 
 		cellNum := 0
 		for rows.Next() {
 			cellNum++
-			var id, cellType, lang, source string
+			var id, cellType, lang, source, chartType string
 			var pos int
-			if err := rows.Scan(&id, &cellType, &lang, &source, &pos); err != nil {
+			if err := rows.Scan(&id, &cellType, &lang, &source, &pos, &chartType); err != nil {
 				return nil, fmt.Errorf("scan cell: %w", err)
 			}
 
-			result.WriteString(fmt.Sprintf("--- Cell %d (%s, %s) ---\n", cellNum, cellType, lang))
+			header := fmt.Sprintf("--- Cell %d (%s, %s, id=%s) ---\n", cellNum, cellType, lang, id)
+			if chartType != "" {
+				header = fmt.Sprintf("--- Cell %d (%s, %s, chart=%s, id=%s) ---\n", cellNum, cellType, lang, chartType, id)
+			}
+			result.WriteString(header)
 			if len(source) > 2000 {
 				result.WriteString(source[:2000] + "\n... (truncated)\n\n")
 			} else {
@@ -1261,6 +1430,14 @@ func makeUpdateNotebookHandler(db *pgxpool.Pool) ToolHandler {
 		}
 
 		_ = ctx.AuditLog("notebook.update", "notebook", req.NotebookID)
+
+		if ctx.BroadcastFunc != nil {
+			ctx.BroadcastFunc(req.NotebookID, map[string]any{
+				"type":       "notebook_refresh",
+				"reason":     "notebook_updated",
+				"user_email": "agent@hnb",
+			})
+		}
 
 		return map[string]any{"notebook_id": req.NotebookID, "status": "updated"}, nil
 	}

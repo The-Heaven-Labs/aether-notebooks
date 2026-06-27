@@ -53,17 +53,18 @@ const (
 )
 
 type Tool struct {
-	ID          string    `json:"id"`
-	OrgID       string    `json:"org_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Type        ToolType  `json:"type"`
-	Schema      JSONMap   `json:"schema"`
-	Config      JSONMap   `json:"config"`
-	FolderID    *string   `json:"folder_id,omitempty"`
-	CreatedBy   string    `json:"created_by"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID                  string    `json:"id"`
+	OrgID               string    `json:"org_id"`
+	Name                string    `json:"name"`
+	Description         string    `json:"description"`
+	Type                ToolType  `json:"type"`
+	Schema              JSONMap   `json:"schema"`
+	Config              JSONMap   `json:"config"`
+	RequireConfirmation bool      `json:"require_confirmation"`
+	FolderID            *string   `json:"folder_id,omitempty"`
+	CreatedBy           string    `json:"created_by"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 type Agent struct {

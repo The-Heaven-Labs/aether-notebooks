@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/heavenlabs/hnb/internal/models"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -129,6 +131,42 @@ func (tc *ToolContext) GetNotebookIDForCell(cellID string) (string, error) {
 		return "", fmt.Errorf("get cell notebook: %w", err)
 	}
 	return notebookID, nil
+}
+
+type ResolvedCell struct {
+	ID         string
+	NotebookID string
+}
+
+func (tc *ToolContext) ResolveCell(cellID string) (*ResolvedCell, error) {
+	if _, err := uuid.Parse(cellID); err == nil {
+		var nbID string
+		err := tc.DB.QueryRow(tc.Context, `SELECT notebook_id FROM cells WHERE id = $1`, cellID).Scan(&nbID)
+		if err != nil {
+			return nil, fmt.Errorf("get cell notebook: %w", err)
+		}
+		return &ResolvedCell{ID: cellID, NotebookID: nbID}, nil
+	}
+
+	pos, err := strconv.Atoi(cellID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid cell_id: must be a UUID or position number")
+	}
+
+	if tc.NotebookID == "" {
+		return nil, fmt.Errorf("cannot resolve cell position without a notebook context")
+	}
+
+	var actualID string
+	err = tc.DB.QueryRow(tc.Context,
+		`SELECT id FROM cells WHERE notebook_id = $1 AND position = $2`,
+		tc.NotebookID, pos-1,
+	).Scan(&actualID)
+	if err != nil {
+		return nil, fmt.Errorf("no cell at position %d in this notebook", pos)
+	}
+
+	return &ResolvedCell{ID: actualID, NotebookID: tc.NotebookID}, nil
 }
 
 func (tc *ToolContext) AuditLog(action, resourceType, resourceID string) error {

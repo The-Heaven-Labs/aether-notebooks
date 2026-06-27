@@ -69,6 +69,7 @@ export interface Tool {
   type: ToolType
   schema: Record<string, any>
   config: Record<string, any>
+  require_confirmation?: boolean
   folder_id?: string
   created_by: string
   created_at: string

@@ -119,6 +119,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const autoConfirmRef = useRef(true)
   autoConfirmRef.current = autoConfirmTool
   const [pendingConfirm, setPendingConfirm] = useState<{ tool: string; args: string; currentSource?: string } | null>(null)
+  const sessionApprovedRef = useRef<Set<string>>(new Set())
+  const chatClearedRef = useRef(false)
 
   const appendStreamingReasoning = (chunk: string) => {
     if (needsCollapseRef.current) {
@@ -301,8 +303,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             if (streamingReasoningRef.current) { needsCollapseRef.current = true; streamingReasoningRef.current = '' }
             break
           case 'tool_confirm_required':
-            if (autoConfirmRef.current) { wsRef.current?.send(JSON.stringify({ type: 'tool_confirm', approved: true, content: msg.tool_name })) }
-            else { setPendingConfirm({ tool: msg.tool_name, args: msg.tool_args, currentSource: (msg as any).current_source || '' }) }
+            if (autoConfirmRef.current || sessionApprovedRef.current.has(msg.tool_name)) {
+              wsRef.current?.send(JSON.stringify({ type: 'tool_confirm', approved: true, content: msg.tool_name }))
+            } else {
+              setPendingConfirm({ tool: msg.tool_name, args: msg.tool_args, currentSource: (msg as any).current_source || '' })
+            }
             break
           case 'tool_result':
             setMessages((prev) => { const updated = [...prev]; for (let i = updated.length - 1; i >= 0; i--) { if (updated[i].role === 'tool' && updated[i].content === msg.tool) { updated[i] = { ...updated[i], params: msg.params, result: msg.error || msg.result }; break } }; return updated }); break
@@ -440,7 +445,10 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       const command = text.slice(1).trim()
       // Optimistic /new: clear UI immediately without waiting for backend
       if (command === 'new') {
+        chatClearedRef.current = true
         clearChatState()
+        setMessages([])
+        setTasks([])
         closeWS()
         if (selectedAgentRef.current) startSession(selectedAgentRef.current)
         return
@@ -566,11 +574,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   }, [messages, currentStreamingText, currentStreamingReasoning])
 
   useEffect(() => {
-    if (_sessionId && selectedAgent && messages.length > 0) {
+    if (_sessionId && selectedAgent && messages.length > 0 && !chatClearedRef.current) {
       saveChatState(selectedAgent.id, _sessionId, messages, tasks, totalTokens || undefined, contextWindow)
     }
     return () => {
-      if (_sessionId && selectedAgent && messages.length > 0) {
+      if (_sessionId && selectedAgent && messages.length > 0 && !chatClearedRef.current) {
         saveChatState(selectedAgent.id, _sessionId, messages, tasks, totalTokens || undefined, contextWindow)
       }
     }
@@ -1057,7 +1065,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 </div>
               )
             })() : pendingConfirm.args && formatToolArgs(pendingConfirm.args)}
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 6, flexWrap: 'wrap' }}>
               <button onClick={() => {
                 wsRef.current?.send(JSON.stringify({ type: 'tool_confirm', approved: false, content: pendingConfirm.tool }))
                 setMessages((prev) => [...prev, { role: 'assistant', content: `⛔ Denied tool call: **${pendingConfirm.tool}**`, created_at: ts() }])
@@ -1067,10 +1075,18 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               </button>
               <button onClick={() => {
                 wsRef.current?.send(JSON.stringify({ type: 'tool_confirm', approved: true, content: pendingConfirm.tool }))
-                setMessages((prev) => [...prev, { role: 'assistant', content: `✅ Approved tool call: **${pendingConfirm.tool}**`, created_at: ts() }])
+                setMessages((prev) => [...prev, { role: 'assistant', content: `✅ Approved: **${pendingConfirm.tool}**`, created_at: ts() }])
+                setPendingConfirm(null)
+              }} style={{ padding: '6px 14px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
+                Approve Once
+              </button>
+              <button onClick={() => {
+                sessionApprovedRef.current.add(pendingConfirm.tool)
+                wsRef.current?.send(JSON.stringify({ type: 'tool_confirm', approved: true, content: pendingConfirm.tool }))
+                setMessages((prev) => [...prev, { role: 'assistant', content: `✅ Always allow **${pendingConfirm.tool}** for this session`, created_at: ts() }])
                 setPendingConfirm(null)
               }} style={{ padding: '6px 14px', border: 'none', borderRadius: 4, background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
-                Approve
+                Always Allow in Session
               </button>
             </div>
           </div>
