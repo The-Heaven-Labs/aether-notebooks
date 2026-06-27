@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import type React from 'react'
 import type { ChartConfig, ChartType } from './types'
 import { ALL_CHART_TYPES, CHART_COLORS } from './index'
@@ -9,12 +10,65 @@ interface AxisConfigPanelProps {
   onChange: (config: ChartConfig) => void
   showStack?: boolean
   showPieOptions?: boolean
+  data?: { columns: { name: string; type?: string }[]; rows: unknown[][] }
+}
+
+function useGroupValues(config: ChartConfig, columns: string[], data?: { columns: { name: string; type?: string }[]; rows: unknown[][] }): string[] {
+  return useMemo(() => {
+    if (!config.groupBy) return []
+    const colIndex = data
+      ? data.columns.findIndex(c => c.name === config.groupBy)
+      : columns.indexOf(config.groupBy)
+    if (colIndex < 0) return []
+    const seen = new Set<string>()
+    const groups: string[] = []
+    if (data) {
+      for (const row of data.rows) {
+        const val = String(row[colIndex] ?? '')
+        if (val && !seen.has(val)) {
+          seen.add(val)
+          groups.push(val)
+        }
+      }
+    }
+    return groups
+  }, [config.groupBy, data, columns])
+}
+
+function detectSeriesNames(config: ChartConfig, columns: string[], data?: { columns: { name: string; type?: string }[]; rows: unknown[][] }): string[] {
+  if (config.yAxis?.length) return config.yAxis
+  const exclude = new Set([config.xAxis, config.groupBy].filter(Boolean))
+  // Try type-based detection from data.columns
+  if (data?.columns?.length) {
+    const numericTypes = new Set([
+      'int','int2','int4','int8','int16','int32','int64','int128','int256',
+      'uint8','uint16','uint32','uint64','uint128','uint256',
+      'float','float4','float8','float32','float64','double',
+      'decimal','numeric','real','bigint','smallint','serial','bigserial','number',
+    ])
+    function isNum(t: string): boolean {
+      const base = t.replace(/\(.*\)/, '').trim().toLowerCase()
+      if (numericTypes.has(base)) return true
+      const inner = t.replace(/^(nullable|lowcardinality)\(/i, '').replace(/\)$/, '').trim()
+      return inner !== t && isNum(inner)
+    }
+    const detected = data.columns
+      .filter(c => c.type && isNum(c.type))
+      .map(c => c.name)
+      .filter(n => !exclude.has(n))
+    if (detected.length > 0) return detected
+  }
+  // Fallback: use columns string array (always available as prop)
+  return columns.filter(n => !exclude.has(n))
 }
 
 export function AxisConfigPanel({ 
   config, columns, onChange, 
-  showStack, showPieOptions 
+  showStack, showPieOptions, data, groupValues: groupValuesProp
 }: AxisConfigPanelProps) {
+  const localGroupValues = useGroupValues(config, columns, data)
+  const groupValues = (groupValuesProp?.length ? groupValuesProp : localGroupValues) ?? []
+  const seriesNames = detectSeriesNames(config, columns, data)
   return (
     <div style={styles.panel}>
       {/* Chart Type Selector */}
@@ -122,6 +176,27 @@ export function AxisConfigPanel({
         </div>
       ) : undefined}
 
+      {/* Group By */}
+      {!showPieOptions && (
+        <div style={styles.row}>
+          <div style={styles.section}>
+            <div style={styles.sectionLabel}>Group by</div>
+            <select
+              aria-label="Group by"
+              style={styles.select}
+              value={config.groupBy ?? ''}
+              onChange={e => onChange({ ...config, groupBy: e.target.value || undefined })}
+            >
+              <option value="">— None —</option>
+              {columns.filter(c => c !== config.xAxis && !(config.yAxis ?? []).includes(c)).map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+            <ConfigHint>Split into separate series per value in this column</ConfigHint>
+          </div>
+        </div>
+      )}
+
       {/* Title */}
       <div style={styles.row}>
         <div style={styles.section}>
@@ -137,13 +212,13 @@ export function AxisConfigPanel({
         </div>
       </div>
 
-      {/* Series Colors */}
-      {(config.yAxis?.length ?? 0) > 0 && (
+      {/* Series Colors — without group_by, show per-y_column */}
+      {seriesNames.length > 0 && !config.groupBy && (
         <div style={styles.row}>
           <div style={styles.section}>
             <div style={styles.sectionLabel}>Series colors</div>
             <div style={styles.colorRow}>
-              {config.yAxis!.map((seriesName, i) => {
+              {seriesNames.map((seriesName, i) => {
                 const defaultColor = CHART_COLORS[i % CHART_COLORS.length]
                 const currentColor = config.seriesColors?.[seriesName] ?? defaultColor
                 return (
@@ -163,6 +238,35 @@ export function AxisConfigPanel({
               })}
             </div>
             <ConfigHint>Customize the color for each data series</ConfigHint>
+          </div>
+        </div>
+      )}
+      {/* Series Colors — with group_by, show per-group-value */}
+      {config.groupBy && groupValues.length > 0 && (
+        <div style={styles.row}>
+          <div style={styles.section}>
+            <div style={styles.sectionLabel}>Series colors</div>
+            <div style={styles.colorRow}>
+              {groupValues.map((group, i) => {
+                const defaultColor = CHART_COLORS[i % CHART_COLORS.length]
+                const currentColor = config.seriesColors?.[group] ?? defaultColor
+                return (
+                  <label key={group} style={styles.colorLabel}>
+                    <input
+                      type="color"
+                      value={currentColor}
+                      onChange={e => {
+                        const newColors = { ...config.seriesColors, [group]: e.target.value }
+                        onChange({ ...config, seriesColors: newColors })
+                      }}
+                      style={styles.colorInput}
+                    />
+                    <span style={styles.colorText}>{group.substring(0, 8)}</span>
+                  </label>
+                )
+              })}
+            </div>
+            <ConfigHint>Colors by group value from the &quot;{config.groupBy}&quot; column</ConfigHint>
           </div>
         </div>
       )}
