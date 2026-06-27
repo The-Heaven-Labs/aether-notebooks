@@ -21,6 +21,7 @@ import { AgentsPage } from './pages/AgentsPage'
 import { ModelsPage } from './pages/ModelsPage'
 import { SkillsPage } from './pages/SkillsPage'
 import { ToolsPage } from './pages/ToolsPage'
+import { TrashPage } from './pages/TrashPage'
 import { MCPPage } from './pages/MCPPage'
 import { JoinPage } from './pages/JoinPage'
 import './styles/theme.css'
@@ -118,6 +119,7 @@ function AppRoutes() {
       <Route path="/models" element={<ProtectedRoute><ModelsPage /></ProtectedRoute>} />
       <Route path="/skills" element={<ProtectedRoute><SkillsPage /></ProtectedRoute>} />
       <Route path="/tools" element={<ProtectedRoute><ToolsPage /></ProtectedRoute>} />
+      <Route path="/trash" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
       <Route path="/mcps" element={<ProtectedRoute><MCPPage /></ProtectedRoute>} />
       <Route path="/onboarding" element={<OrgOnboardingPage />} />
       <Route path="/public/dashboards/:token" element={<PublicDashboardPage />} />

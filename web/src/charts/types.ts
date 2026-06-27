@@ -2,7 +2,7 @@ import type React from 'react'
 import type { ResultSet } from '../types'
 
 export type ChartType =
-  | 'bar' | 'stacked_bar' | 'line' | 'area' | 'scatter'
+  | 'bar' | 'stacked_bar' | 'line' | 'area' | 'stacked_area' | 'scatter'
   | 'pie' | 'donut'
   | 'timeline'
   | 'hierarchy_tree'

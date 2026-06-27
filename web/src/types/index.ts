@@ -136,6 +136,7 @@ export interface Connector {
   folder_id?: string
   created_by?: string
   created_at: string
+  updated_at?: string
   can_use?: boolean
   table_allowlist?: string[]
   table_denylist?: string[]
@@ -232,6 +233,7 @@ export interface FolderContents {
     folder_id?: string
     created_by: string
     created_at: string
+    updated_at?: string
     can_edit?: boolean
     can_delete?: boolean
     can_share?: boolean

@@ -7,7 +7,7 @@ function LineChartComponent({ data, config }: ChartProps) {
   const { xAxis, yAxes } = useAxisColumns(data, config)
   const chartData = useRowsAsObjects(data)
   const colors = useMemo(() => getChartColors(), [])
-  const { series: groupSeries, xValues } = useGroupBySeries(chartData, { ...config, yAxis: yAxes })
+  const { series: groupSeries, xValues } = useGroupBySeries(chartData, { ...config, xAxis, yAxis: yAxes })
   const hasGroupBy = !!(config.groupBy && chartData.some(row => config.groupBy! in row))
 
   const option = useMemo(() => {

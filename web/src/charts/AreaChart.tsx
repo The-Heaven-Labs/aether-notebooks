@@ -7,8 +7,9 @@ function AreaChartComponent({ data, config }: ChartProps) {
   const { xAxis, yAxes } = useAxisColumns(data, config)
   const chartData = useRowsAsObjects(data)
   const colors = useMemo(() => getChartColors(), [])
-  const { series: groupSeries, xValues } = useGroupBySeries(chartData, { ...config, yAxis: yAxes })
+  const { series: groupSeries, xValues } = useGroupBySeries(chartData, { ...config, xAxis, yAxis: yAxes })
   const hasGroupBy = !!(config.groupBy && chartData.some(row => config.groupBy! in row))
+  const isStacked = config.chartType === 'stacked_area'
 
   const option = useMemo(() => {
     const effectiveXData = hasGroupBy ? xValues : chartData.map(d => d[xAxis])
@@ -17,6 +18,7 @@ function AreaChartComponent({ data, config }: ChartProps) {
       ? groupSeries.map(s => ({
           ...s,
           type: 'line' as const,
+          stack: isStacked ? 'a' : undefined,
           smooth: config.smooth ?? false,
           connectNulls: config.connectNulls ?? false,
           areaStyle: { opacity: 0.15 },
@@ -28,6 +30,7 @@ function AreaChartComponent({ data, config }: ChartProps) {
       : yAxes.map((y, i) => ({
           name: y,
           type: 'line' as const,
+          stack: isStacked ? 'a' : undefined,
           data: chartData.map(d => d[y]),
           smooth: config.smooth ?? false,
           connectNulls: config.connectNulls ?? false,
@@ -59,7 +62,8 @@ function AreaChartComponent({ data, config }: ChartProps) {
 }
 
 function AreaConfigPanel({ config, columns, onChange, data, groupValues }: ConfigPanelProps) {
-  return <AxisConfigPanel config={config} columns={columns} onChange={onChange} data={data} groupValues={groupValues} />
+  const isAreaType = config.chartType === 'area' || config.chartType === 'stacked_area'
+  return <AxisConfigPanel config={config} columns={columns} onChange={onChange} showStack={isAreaType} showPieOptions={false} data={data} groupValues={groupValues} />
 }
 
 export const AreaChartModule: ChartModule = {

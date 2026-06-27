@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Home, LayoutDashboard, Database, Users, UserCircle, ClipboardList, ChevronLeft, ChevronRight, Bot, Brain, Wrench, Puzzle, X, Settings, Zap } from 'lucide-react'
+import { Home, LayoutDashboard, Database, Users, UserCircle, ClipboardList, ChevronLeft, ChevronRight, Bot, Brain, Wrench, Puzzle, X, Settings, Zap, Trash2 } from 'lucide-react'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useAuth } from '../hooks/useAuth'
 
@@ -11,6 +11,7 @@ const ALL_NAV_ITEMS = [
   { to: '/members',    title: 'Members',     icon: <UserCircle size={16} /> },
   { to: '/groups',     title: 'Groups',      icon: <Users size={16} /> },
   { to: '/audit',      title: 'Audit',       icon: <ClipboardList size={16} /> },
+  { to: '/trash',      title: 'Trash',       icon: <Trash2 size={16} /> },
   { to: '/admin',      title: 'Admin',       icon: <Settings size={16} /> },
 ]
 

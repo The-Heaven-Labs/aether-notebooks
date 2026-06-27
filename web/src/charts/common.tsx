@@ -29,6 +29,7 @@ export const ALL_CHART_TYPES = [
   { value: 'stacked_bar', label: 'Stack', symbol: '▊≡' },
   { value: 'line', label: 'Line', symbol: '╱╲' },
   { value: 'area', label: 'Area', symbol: '▓' },
+  { value: 'stacked_area', label: 'Stack Area', symbol: '▓≡' },
   { value: 'scatter', label: 'Scatter', symbol: '·:' },
   { value: 'pie', label: 'Pie', symbol: '◕' },
   { value: 'donut', label: 'Donut', symbol: '◎' },

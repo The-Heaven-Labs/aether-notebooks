@@ -495,7 +495,7 @@ export function ConnectorsPage() {
       <ConfirmDialog
         open={!!deleteTarget}
         title="Delete connector"
-        message={`Delete "${deleteTarget?.name}"? This cannot be undone.`}
+        message={`Delete "${deleteTarget?.name}"? It will be moved to trash and automatically deleted after 7 days.`}
         confirmLabel="Delete"
         destructive
         onConfirm={() => { if (deleteTarget) deleteConnector.mutate(deleteTarget.id); setDeleteTarget(null) }}

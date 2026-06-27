@@ -10,7 +10,7 @@ function BarChartComponent({ data, config }: ChartProps) {
   const isStacked = config.chartType === 'stacked_bar'
   const colors = useMemo(() => getChartColors(), [])
 
-  const { series: groupSeries, xValues } = useGroupBySeries(chartData, { ...config, yAxis: yAxes })
+  const { series: groupSeries, xValues } = useGroupBySeries(chartData, { ...config, xAxis, yAxis: yAxes })
   const hasGroupBy = !!(config.groupBy && chartData.some(row => config.groupBy! in row))
 
   const option = useMemo(() => {
@@ -60,7 +60,8 @@ function BarChartComponent({ data, config }: ChartProps) {
 
 function BarConfigPanel({ config, columns, onChange, data, groupValues }: ConfigPanelProps) {
   const isPie = config.chartType === 'pie' || config.chartType === 'donut'
-  return <AxisConfigPanel config={config} columns={columns} onChange={onChange} showStack={!isPie} showPieOptions={isPie} data={data} groupValues={groupValues} />
+  const isBarType = config.chartType === 'bar' || config.chartType === 'stacked_bar'
+  return <AxisConfigPanel config={config} columns={columns} onChange={onChange} showStack={isBarType} showPieOptions={isPie} data={data} groupValues={groupValues} />
 }
 
 export const BarChartModule: ChartModule = {

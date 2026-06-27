@@ -182,6 +182,23 @@ export function makeMarkdownComponents(onResize: (src: string, newWidth: number)
         </h6>
       )
     },
+    table: ({ children, style, ...props }: React.HTMLAttributes<HTMLTableElement>) => (
+      <div style={{ overflowX: 'auto', margin: '8px 0' }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13, ...style, border: '1px solid var(--border)' }} {...props}>
+          {children}
+        </table>
+      </div>
+    ),
+    th: ({ children, style, ...props }: React.HTMLAttributes<HTMLTableHeaderCellElement>) => (
+      <th style={{ ...style, border: '1px solid var(--border)', padding: '6px 10px', textAlign: 'left', fontWeight: 600, background: 'var(--bg-secondary)', whiteSpace: 'nowrap' }} {...props}>
+        {children}
+      </th>
+    ),
+    td: ({ children, style, ...props }: React.HTMLAttributes<HTMLTableDataCellElement>) => (
+      <td style={{ ...style, border: '1px solid var(--border)', padding: '5px 10px', whiteSpace: 'nowrap' }} {...props}>
+        {children}
+      </td>
+    ),
   }
 }
 

@@ -19,6 +19,7 @@ export const CHART_MODULES: Record<string, ChartModule> = {
   stacked_bar: BarChartModule,
   line: LineChartModule,
   area: AreaChartModule,
+  stacked_area: AreaChartModule,
   scatter: ScatterChartModule,
   pie: PieChartModule,
   donut: PieChartModule,
