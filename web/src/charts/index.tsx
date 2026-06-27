@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import type React from 'react'
 import { Settings2 } from 'lucide-react'
 import type { ResultSet } from '../types'
@@ -44,6 +44,21 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
   const cfg = (output?.config ?? {}) as ChartConfig
   const chartType = cfg.chartType ?? 'bar'
 
+  // Compute group values from data for the config panel (data may not propagate as a prop)
+  const groupValues = useMemo(() => {
+    const gb = cfg.groupBy
+    if (!data?.columns?.length || !gb) return []
+    const colIndex = data.columns.findIndex(c => c.name === gb)
+    if (colIndex < 0) return []
+    const seen = new Set<string>()
+    const vals: string[] = []
+    for (const row of data.rows) {
+      const v = String(row[colIndex] ?? '')
+      if (v && !seen.has(v)) { seen.add(v); vals.push(v) }
+    }
+    return vals
+  }, [data, cfg.groupBy])
+
   const [showConfig, setShowConfig] = useState(false)
 
   const handleConfigChange = (newCfg: ChartConfig) => {
@@ -81,7 +96,7 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
               {showConfig ? ' Close' : ' Configure'}
             </button>
             {showConfig && (
-              <mod.ConfigPanel config={effectiveConfig} columns={columns} onChange={handleConfigChange} />
+              <mod.ConfigPanel config={effectiveConfig} columns={columns} data={data} groupValues={groupValues} onChange={handleConfigChange} />
             )}
           </div>
         )}
@@ -103,7 +118,7 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
             {showConfig ? ' Close' : ' Configure'}
           </button>
           {showConfig && (
-            <mod.ConfigPanel config={effectiveConfig} columns={columns} onChange={handleConfigChange} />
+            <mod.ConfigPanel config={effectiveConfig} columns={columns} data={data} groupValues={groupValues} onChange={handleConfigChange} />
           )}
         </div>
       )}
