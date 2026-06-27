@@ -326,10 +326,7 @@ func makeReadCellHandler(db *pgxpool.Pool) ToolHandler {
 					summary["x_axis"] = xCol
 				}
 				if gCol, ok := meta.Chart["groupBy"].(string); ok {
-					chartType, _ := meta.Chart["chartType"].(string)
-					if chartType == "timeline" {
-						summary["group_by"] = gCol
-					}
+					summary["group_by"] = gCol
 					groupByCol = gCol
 				}
 			}
@@ -373,64 +370,6 @@ func makeReadCellHandler(db *pgxpool.Pool) ToolHandler {
 				}
 			}
 		}
-	// Filter stale seriesColors keys from metadata for axis-based charts
-	filteredMetadata := cell.Metadata
-	if filteredMetadata != nil {
-		var metaMap map[string]any
-		if json.Unmarshal(filteredMetadata, &metaMap) == nil {
-			if chart, ok := metaMap["chart"].(map[string]any); ok {
-				ct, _ := chart["chartType"].(string)
-				if ct == "bar" || ct == "stacked_bar" || ct == "line" || ct == "area" || ct == "scatter" {
-					if sc, ok := chart["seriesColors"].(map[string]any); ok {
-						yCols := make(map[string]bool)
-						if yAxis, ok := chart["yAxis"].([]any); ok {
-							for _, y := range yAxis {
-								if s, ok := y.(string); ok {
-									yCols[s] = true
-								}
-							}
-						}
-						for k := range sc {
-							if !yCols[k] {
-								delete(sc, k)
-							}
-						}
-						if len(sc) == 0 {
-							delete(chart, "seriesColors")
-						}
-						metaMap["chart"] = chart
-						filtered, _ := json.Marshal(metaMap)
-						if filtered != nil {
-							filteredMetadata = filtered
-						}
-					} else if sc, ok := chart["seriesColors"].(map[string]string); ok {
-						yCols := make(map[string]bool)
-						if yAxis, ok := chart["yAxis"].([]any); ok {
-							for _, y := range yAxis {
-								if s, ok := y.(string); ok {
-									yCols[s] = true
-								}
-							}
-						}
-						for k := range sc {
-							if !yCols[k] {
-								delete(sc, k)
-							}
-						}
-						if len(sc) == 0 {
-							delete(chart, "seriesColors")
-						}
-						metaMap["chart"] = chart
-						filtered, _ := json.Marshal(metaMap)
-						if filtered != nil {
-							filteredMetadata = filtered
-						}
-					}
-				}
-			}
-		}
-	}
-
 	cellWithSummary := map[string]any{
 		"id":             cell.ID,
 		"notebook_id":    cell.NotebookID,
@@ -450,7 +389,7 @@ func makeReadCellHandler(db *pgxpool.Pool) ToolHandler {
 		"slug":           cell.Slug,
 		"parameters":     cell.Parameters,
 		"slide_break":    cell.SlideBreak,
-		"metadata":       filteredMetadata,
+		"metadata":       cell.Metadata,
 		"chart_summary":  summary,
 	}
 	return cellWithSummary, nil
