@@ -10,9 +10,7 @@ function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;')
 }
 
-function escapeAttr(val: string): string {
-  return val.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
-}
+
 
 function normalizeChartConfig(raw: unknown): ChartConfig | undefined {
   if (!raw || typeof raw !== 'object') return undefined
@@ -372,8 +370,9 @@ function renderOutputs(cell: Cell): { html: string; height: number } {
     try {
       const option = buildChartOption(rs, chartConfig!)
       if (option && Object.keys(option).length > 0) {
-        const optJson = escapeAttr(JSON.stringify(option))
-        return { html: `<div class="cell-output chart"><div class="chart-wrap" data-echarts="${optJson}" style="width:100%;height:300px;min-height:300px"></div></div>`, height: 300 }
+        const optId = `chart-${cell.id}`
+        const optJson = JSON.stringify(option)
+        return { html: `<div class="cell-output chart"><div class="chart-wrap" id="${optId}" style="width:100%;height:300px;min-height:300px"></div><script type="application/json" data-chart-for="${optId}">${optJson}<\/script></div>`, height: 300 }
       }
     } catch {}
   }
@@ -484,13 +483,13 @@ body { font-family:var(--font-sans);background:var(--bg-primary);color:var(--tex
 
 const CHART_INIT_SCRIPT = `
 (function(){
-var els = document.querySelectorAll('[data-echarts]');
 if (typeof echarts === 'undefined') return;
-els.forEach(function(el){
+document.querySelectorAll('script[data-chart-for]').forEach(function(script) {
   try {
-    var opt = JSON.parse(el.getAttribute('data-echarts'));
-    var theme = document.documentElement.getAttribute('data-theme');
-    var dark = theme === 'dark';
+    var id = script.getAttribute('data-chart-for');
+    var el = document.getElementById(id);
+    if (!el) return;
+    var opt = JSON.parse(script.textContent || '');
     var chart = echarts.init(el);
     chart.setOption(opt, { notMerge: true });
   } catch(e) { console.error('Chart:', e); }
