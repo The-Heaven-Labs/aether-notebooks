@@ -16,8 +16,8 @@ func RegisterChartTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "create_chart",
-			Description: "Turn a cell's table output into a chart. NOTE: group_by only works with chart_type='timeline'; other chart types (bar, line, area) ignore group_by and derive series from y_columns instead.",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex colors. Keys must match y_columns (bar/line/area) or group values (timeline). E.g. {\"revenue\":\"#ff0000\"}"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"color_column":{"type":"string"},"size_column":{"type":"string"}},"required":["cell_id","chart_type"]}`,
+			Description: "Turn a cell's table output into a chart. For axis-based charts (bar, line, area, scatter), series are derived from y_columns. When group_by is set, one series is created per unique group value (cross-product with y_columns if multiple). Use series_colors to set colors per series.",
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex colors. Keys match y_columns (no group_by) or group values (with group_by). E.g. {\"revenue\":\"#ff0000\"}"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"color_column":{"type":"string"},"size_column":{"type":"string"}},"required":["cell_id","chart_type"]}`,
 		},
 		Handler: makeCreateChartHandler(db),
 	})
@@ -29,8 +29,8 @@ func RegisterChartTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "update_chart",
-			Description: "Modify chart config on an existing cell. NOTE: group_by only works with chart_type='timeline'; other chart types (bar, line, area) ignore group_by and derive series from y_columns instead. Colors in series_colors must match series names from the chart's y_columns (for bar/line/area) or group values (for timeline).",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex colors. Keys must match y_columns (bar/line/area) or group values (timeline). E.g. {\"revenue\":\"#ff0000\"}"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"color_column":{"type":"string"},"size_column":{"type":"string"}},"required":["cell_id"]}`,
+			Description: "Modify chart config on an existing cell. For axis-based charts (bar, line, area, scatter), series are derived from y_columns. When group_by is set, one series is created per unique group value (cross-product with y_columns if multiple). Colors in series_colors keys match y_columns (no group_by) or group values (with group_by). For timeline, series_colors keys match group values.",
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex colors. Keys match y_columns (no group_by) or group values (with group_by). E.g. {\"revenue\":\"#ff0000\"}"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"color_column":{"type":"string"},"size_column":{"type":"string"}},"required":["cell_id"]}`,
 		},
 		Handler: makeUpdateChartHandler(db),
 	})
@@ -41,26 +41,30 @@ var chartAllowedFields = map[string]map[string]bool{
 		"title": true, "showLegend": true, "showGrid": true,
 		"dataZoom": true, "showLabels": true, "smooth": true,
 		"connectNulls": true, "seriesColors": true, "xAxis": true, "yAxis": true,
+		"groupBy": true,
 	},
 	"area": {
 		"title": true, "showLegend": true, "showGrid": true,
 		"dataZoom": true, "showLabels": true, "smooth": true,
 		"connectNulls": true, "seriesColors": true, "xAxis": true, "yAxis": true,
+		"groupBy": true,
 	},
 	"bar": {
 		"title": true, "showLegend": true, "showGrid": true,
 		"dataZoom": true, "showLabels": true, "seriesColors": true,
 		"xAxis": true, "yAxis": true, "barWidth": true, "barCategoryGap": true,
+		"groupBy": true,
 	},
 	"stacked_bar": {
 		"title": true, "showLegend": true, "showGrid": true,
 		"dataZoom": true, "showLabels": true, "seriesColors": true,
 		"xAxis": true, "yAxis": true, "barWidth": true, "barCategoryGap": true,
+		"groupBy": true,
 	},
 	"scatter": {
 		"title": true, "showLegend": true, "showGrid": true,
 		"seriesColors": true, "colorColumn": true, "sizeColumn": true,
-		"xAxis": true, "yAxis": true,
+		"xAxis": true, "yAxis": true, "groupBy": true,
 	},
 	"pie": {
 		"title": true, "showLegend": true, "showLabels": true,
@@ -113,47 +117,7 @@ func filterChartConfig(config map[string]any, chartType string) []string {
 		}
 	}
 
-	// For axis-based charts, filter seriesColors keys against yAxis column names
-	if chartType == "bar" || chartType == "stacked_bar" || chartType == "line" || chartType == "area" || chartType == "scatter" {
-		yCols := make(map[string]bool)
-		if yAxis, ok := config["yAxis"].([]any); ok {
-			for _, y := range yAxis {
-				if s, ok := y.(string); ok {
-					yCols[s] = true
-				}
-			}
-		}
-		if sc, ok := config["seriesColors"].(map[string]any); ok {
-			for k := range sc {
-				if !yCols[k] {
-					delete(sc, k)
-					warnings = append(warnings, fmt.Sprintf("series_colors key %q ignored — does not match any y_columns %v for chart type %q. Use chart_type='timeline' for group_by-based colors", k, mapKeys(yCols), chartType))
-				}
-			}
-			if len(sc) == 0 {
-				delete(config, "seriesColors")
-			}
-		} else if sc, ok := config["seriesColors"].(map[string]string); ok {
-			for k := range sc {
-				if !yCols[k] {
-					delete(sc, k)
-					warnings = append(warnings, fmt.Sprintf("series_colors key %q ignored — does not match any y_columns %v for chart type %q. Use chart_type='timeline' for group_by-based colors", k, mapKeys(yCols), chartType))
-				}
-			}
-			if len(sc) == 0 {
-				delete(config, "seriesColors")
-			}
-		}
-	}
 	return warnings
-}
-
-func mapKeys(m map[string]bool) []string {
-	var keys []string
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
 }
 
 func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
@@ -228,8 +192,7 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 			"layout":         req.Layout,
 			"created_at":     time.Now().Format(time.RFC3339),
 		}
-		// groupBy is only used by timeline charts; silently ignore for others
-		if req.GroupBy != "" && req.ChartType == "timeline" {
+		if req.GroupBy != "" {
 			chartConfig["groupBy"] = req.GroupBy
 		}
 		if req.ShowLabels != nil {
@@ -436,10 +399,7 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 			existingConfig["labelColumn"] = req.LabelColumn
 		}
 		if req.GroupBy != "" {
-			ct, _ := existingConfig["chartType"].(string)
-			if ct == "timeline" {
-				existingConfig["groupBy"] = req.GroupBy
-			}
+			existingConfig["groupBy"] = req.GroupBy
 		}
 		if req.IDColumn != "" {
 			existingConfig["idColumn"] = req.IDColumn
