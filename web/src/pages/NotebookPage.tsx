@@ -1336,7 +1336,7 @@ export function NotebookPage() {
                     type="button"
                     style={styles.dropdownItem}
                     onClick={() => {
-                      exportNotebookHTML(notebook)
+                      exportNotebookHTML({ ...notebook, cells: localCellsRef.current })
                       setShareOpen(false)
                     }}
                   >
