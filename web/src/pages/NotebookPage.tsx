@@ -265,7 +265,7 @@ export function NotebookPage() {
     setLocalCells((prev) =>
       prev.map((c) => (c.id === cellId ? { ...c, metadata } : c)),
     )
-    if (!pendingExecRef.current.has(cellId) && shouldScroll(userEmail)) {
+    if (!pendingExecRef.current.has(cellId) && (userEmail === 'agent@hnb' || shouldScroll(userEmail))) {
       flashCell(cellId)
     }
   }, [shouldScroll]), useCallback((cellId: string, updates: Record<string, unknown>, userEmail?: string) => {
@@ -309,7 +309,28 @@ export function NotebookPage() {
     qc.setQueryData<NotebookWithCells>(['notebook', id], (old) =>
       old ? { ...old, cells: old.cells.filter((c) => c.id !== cellId) } : old,
     )
+  }, [id, qc]), useCallback(() => {
+    qc.invalidateQueries({ queryKey: ['notebook', id] })
   }, [id, qc]))
+
+  // Scroll to cell from URL hash (#cell-{id})
+  useEffect(() => {
+    if (!id) return
+    const hash = window.location.hash
+    if (hash.startsWith('#cell-')) {
+      const cellId = hash.slice(6)
+      const timer = setInterval(() => {
+        const el = document.getElementById('cell-' + cellId)
+        if (el) {
+          clearInterval(timer)
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          el.classList.add('cell-flash')
+          setTimeout(() => el.classList.remove('cell-flash'), 1500)
+        }
+      }, 100)
+      return () => clearInterval(timer)
+    }
+  }, [id])
 
   // Awareness: follow the followed user's focus
   useEffect(() => {

@@ -23,7 +23,7 @@ func (h *toolHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT id, org_id, name, description, type, schema, config, folder_id, created_by, created_at, updated_at
+		SELECT id, org_id, name, description, type, schema, config, require_confirmation, folder_id, created_by, created_at, updated_at
 		FROM tools WHERE org_id = $1 ORDER BY CASE WHEN type = 'builtin' THEN 1 ELSE 0 END, type, name
 	`, claims.OrgID)
 	if err != nil {
@@ -37,7 +37,7 @@ func (h *toolHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 		var t models.Tool
 		var desc *string
 		var schemaRaw, configRaw []byte
-		if err := rows.Scan(&t.ID, &t.OrgID, &t.Name, &desc, &t.Type, &schemaRaw, &configRaw, &t.FolderID, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.OrgID, &t.Name, &desc, &t.Type, &schemaRaw, &configRaw, &t.RequireConfirmation, &t.FolderID, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt); err != nil {
 			continue
 		}
 		if desc != nil {
@@ -80,9 +80,9 @@ func (h *toolHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
 	var desc *string
 	var schemaRaw, configRaw []byte
 	err = h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT id, org_id, name, description, type, schema, config, folder_id, created_by, created_at, updated_at
+		SELECT id, org_id, name, description, type, schema, config, require_confirmation, folder_id, created_by, created_at, updated_at
 		FROM tools WHERE id = $1 AND org_id = $2
-	`, id, claims.OrgID).Scan(&t.ID, &t.OrgID, &t.Name, &desc, &t.Type, &schemaRaw, &configRaw, &t.FolderID, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt)
+	`, id, claims.OrgID).Scan(&t.ID, &t.OrgID, &t.Name, &desc, &t.Type, &schemaRaw, &configRaw, &t.RequireConfirmation, &t.FolderID, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "tool not found")
 		return
@@ -110,12 +110,13 @@ func (h *toolHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
 func (h *toolHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req struct {
-		Name        string         `json:"name"`
-		Description string         `json:"description"`
-		Type        string         `json:"type"`
-		Schema      models.JSONMap `json:"schema"`
-		Config      models.JSONMap `json:"config"`
-		FolderID    *string        `json:"folder_id"`
+		Name                string         `json:"name"`
+		Description         string         `json:"description"`
+		Type                string         `json:"type"`
+		Schema              models.JSONMap `json:"schema"`
+		Config              models.JSONMap `json:"config"`
+		RequireConfirmation bool           `json:"require_confirmation"`
+		FolderID            *string        `json:"folder_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -151,9 +152,9 @@ func (h *toolHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 	toolID := uuid.New().String()
 
 	_, err := h.server.db.Pool.Exec(r.Context(), `
-		INSERT INTO tools (id, org_id, name, description, type, schema, config, folder_id, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
-	`, toolID, claims.OrgID, req.Name, req.Description, req.Type, req.Schema, req.Config, req.FolderID, claims.UserID)
+		INSERT INTO tools (id, org_id, name, description, type, schema, config, require_confirmation, folder_id, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+	`, toolID, claims.OrgID, req.Name, req.Description, req.Type, req.Schema, req.Config, req.RequireConfirmation, req.FolderID, claims.UserID)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -178,12 +179,13 @@ func (h *toolHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
 	var req struct {
-		Name        *string          `json:"name"`
-		Description *string          `json:"description"`
-		Type        *string          `json:"type"`
-		Schema      *models.JSONMap  `json:"schema"`
-		Config      *models.JSONMap  `json:"config"`
-		FolderID    *string          `json:"folder_id"`
+		Name                *string          `json:"name"`
+		Description         *string          `json:"description"`
+		Type                *string          `json:"type"`
+		Schema              *models.JSONMap  `json:"schema"`
+		Config              *models.JSONMap  `json:"config"`
+		RequireConfirmation *bool            `json:"require_confirmation"`
+		FolderID            *string          `json:"folder_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -208,10 +210,11 @@ func (h *toolHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
 			type = COALESCE($4, type),
 			schema = COALESCE($5, schema),
 			config = COALESCE($6, config),
-			folder_id = COALESCE($7, folder_id),
+			require_confirmation = COALESCE($7, require_confirmation),
+			folder_id = COALESCE($8, folder_id),
 			updated_at = NOW()
-		WHERE id = $1 AND org_id = $8
-	`, toolID, req.Name, req.Description, req.Type, req.Schema, req.Config, req.FolderID, claims.OrgID)
+		WHERE id = $1 AND org_id = $9
+	`, toolID, req.Name, req.Description, req.Type, req.Schema, req.Config, req.RequireConfirmation, req.FolderID, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
