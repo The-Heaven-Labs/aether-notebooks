@@ -73,6 +73,8 @@ export interface ConfigPanelProps {
   config: ChartConfig
   columns: string[]
   onChange: (config: ChartConfig) => void
+  data?: { columns: { name: string; type?: string }[]; rows: unknown[][] }
+  groupValues?: string[]
 }
 
 /**
