@@ -53,6 +53,7 @@ func makeWebhookToolDef(t *models.Tool, allowedDomains []string) (*ToolDef, erro
 			Description: t.Description,
 			Parameters:  t.Schema,
 		},
+		ConfirmRequired: t.RequireConfirmation,
 		Handler: func(args json.RawMessage, ctx *ToolContext) (any, error) {
 			var params map[string]any
 			if len(args) > 0 {

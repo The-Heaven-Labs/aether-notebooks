@@ -8,6 +8,7 @@ export function useNotebookWs(
   onCellUpdated?: (cellId: string, updates: Record<string, unknown>, userEmail?: string) => void,
   onCellCreated?: (cell: import('../types').Cell, userEmail?: string) => void,
   onCellDeleted?: (cellId: string, userEmail?: string) => void,
+  onNotebookRefresh?: (reason?: string) => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -21,6 +22,8 @@ export function useNotebookWs(
   onCellCreatedRef.current = onCellCreated
   const onCellDeletedRef = useRef(onCellDeleted)
   onCellDeletedRef.current = onCellDeleted
+  const onNotebookRefreshRef = useRef(onNotebookRefresh)
+  onNotebookRefreshRef.current = onNotebookRefresh
 
   const connect = useCallback(() => {
     if (!notebookId) return
@@ -56,6 +59,8 @@ export function useNotebookWs(
           onCellCreatedRef.current(msg.cell, msg.user_email)
         } else if (msg.type === 'cell_deleted' && onCellDeletedRef.current) {
           onCellDeletedRef.current(msg.cell_id, msg.user_email)
+        } else if (msg.type === 'notebook_refresh' && onNotebookRefreshRef.current) {
+          onNotebookRefreshRef.current(msg.reason)
         }
       } catch {
         // ignore non-JSON messages

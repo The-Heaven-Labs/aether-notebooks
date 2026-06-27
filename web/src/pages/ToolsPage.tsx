@@ -28,6 +28,7 @@ interface ToolForm {
   connector_id: string
   sql: string
   parameters: ParamDef[]
+  require_confirmation: boolean
 }
 
 interface Connector {
@@ -47,6 +48,7 @@ const emptyForm = (): ToolForm => ({
   connector_id: '',
   sql: '',
   parameters: [],
+  require_confirmation: false,
 })
 
 const PARAM_TYPES = ['string', 'number', 'boolean', 'integer']
@@ -91,6 +93,7 @@ export function ToolsPage() {
       name: form.name,
       description: form.description,
       type: form.type,
+      require_confirmation: form.require_confirmation,
     }
     if (form.parameters.length > 0) {
       const props: Record<string, any> = {}
@@ -199,6 +202,7 @@ export function ToolsPage() {
       connector_id: config.connector_id ?? '',
       sql: config.query ?? config.sql ?? '',
       parameters,
+      require_confirmation: tool.require_confirmation ?? false,
     })
   }
 
@@ -422,6 +426,13 @@ function ToolFormFields({ form, setForm, connectors, editing }: {
             <textarea style={{ ...styles.input, minHeight: 120, resize: 'vertical', fontFamily: 'var(--font-mono)' }} value={form.sql} onChange={setField('sql')} placeholder="SELECT * FROM table LIMIT 10" />
           </label>
         </>
+      )}
+
+      {form.type !== 'builtin' && (
+        <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer', marginTop: 4 }}>
+          <input type="checkbox" checked={form.require_confirmation} onChange={e => setForm(f => ({ ...f, require_confirmation: e.target.checked }))} />
+          Require confirmation for every execution (overrides session-level "Always Allow")
+        </label>
       )}
 
       {form.type !== 'builtin' && (

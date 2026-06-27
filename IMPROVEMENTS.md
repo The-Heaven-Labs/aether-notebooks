@@ -51,10 +51,10 @@
 - [x] If I use /new in global agent undocked, then dock, the docked will be with the previous chat open
 - [x] It seems cancel commands are not working in the global agent after page changing/refreshing, the chat continues in the background regardless of what I try. (It should be possible to have only one active chat at the same time)
 - [x] The default color theme for the application should be dark, not light
-- [ ] The run_cell agent tool seem to not be automatically updating the screen, I needed to manually refresh the page to see the result
-- [ ] Asked the agent to update a map chart to add labels to it. When it called update_chart, the page didnt scroll to focus the cell.
-- [ ] When user refers to a cell by a number, it will always be the position. I asked the agent to update chart 12, and it updated the chart on the cell of position 13 instead.
-- [ ] Custom tools should have an option to always ask for confirmation before execution
-- [ ] Typing /new in agent chat then refreshing the page sends you back to the old content
-- [ ] When in folder `/`, there seem to be no relevant ordering of notebooks. Make it be by edit date. Recently edited on top
-- [ ]
+- [x] The run_cell agent tool seem to not be automatically updating the screen, I needed to manually refresh the page to see the result
+- [x] Asked the agent to update a map chart to add labels to it. When it called update_chart, the page didnt scroll to focus the cell.
+- [x] When user refers to a cell by a number, it will always be the position. I asked the agent to update chart 12, and it updated the chart on the cell of position 13 instead.
+- [x] Custom tools should have an option to always ask for confirmation before execution
+- [x] Typing /new in agent chat then refreshing the page sends you back to the old content
+- [x] When in folder `/`, there seem to be no relevant ordering of notebooks. Make it be by edit date. Recently edited on top
+- [x] Agent panel knows how to send links, but doesnt know how to send direct links to the cells. It should, as sometimes it says things regarding specific cell changes, the links it send in these scenarios should be the direct links

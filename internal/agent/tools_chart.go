@@ -97,10 +97,11 @@ var chartAllowedFields = map[string]map[string]bool{
 	},
 }
 
-func filterChartConfig(config map[string]any, chartType string) {
+func filterChartConfig(config map[string]any, chartType string) []string {
+	var warnings []string
 	allowed, ok := chartAllowedFields[chartType]
 	if !ok {
-		return
+		return warnings
 	}
 	for k := range config {
 		if k == "chartType" || k == "created_at" {
@@ -108,8 +109,51 @@ func filterChartConfig(config map[string]any, chartType string) {
 		}
 		if !allowed[k] {
 			delete(config, k)
+			warnings = append(warnings, fmt.Sprintf("field %q ignored — not supported by chart type %q", k, chartType))
 		}
 	}
+
+	// For axis-based charts, filter seriesColors keys against yAxis column names
+	if chartType == "bar" || chartType == "stacked_bar" || chartType == "line" || chartType == "area" || chartType == "scatter" {
+		yCols := make(map[string]bool)
+		if yAxis, ok := config["yAxis"].([]any); ok {
+			for _, y := range yAxis {
+				if s, ok := y.(string); ok {
+					yCols[s] = true
+				}
+			}
+		}
+		if sc, ok := config["seriesColors"].(map[string]any); ok {
+			for k := range sc {
+				if !yCols[k] {
+					delete(sc, k)
+					warnings = append(warnings, fmt.Sprintf("series_colors key %q ignored — does not match any y_columns %v for chart type %q. Use chart_type='timeline' for group_by-based colors", k, mapKeys(yCols), chartType))
+				}
+			}
+			if len(sc) == 0 {
+				delete(config, "seriesColors")
+			}
+		} else if sc, ok := config["seriesColors"].(map[string]string); ok {
+			for k := range sc {
+				if !yCols[k] {
+					delete(sc, k)
+					warnings = append(warnings, fmt.Sprintf("series_colors key %q ignored — does not match any y_columns %v for chart type %q. Use chart_type='timeline' for group_by-based colors", k, mapKeys(yCols), chartType))
+				}
+			}
+			if len(sc) == 0 {
+				delete(config, "seriesColors")
+			}
+		}
+	}
+	return warnings
+}
+
+func mapKeys(m map[string]bool) []string {
+	var keys []string
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
@@ -264,7 +308,7 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 			chartConfig["sizeColumn"] = req.SizeColumn
 		}
 
-		filterChartConfig(chartConfig, req.ChartType)
+		warnings := filterChartConfig(chartConfig, req.ChartType)
 
 		configJSON, _ := json.Marshal(chartConfig)
 
@@ -275,6 +319,9 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 		if err != nil {
 			return nil, fmt.Errorf("create chart: %w", err)
 		}
+
+		// Notify agent panel to scroll
+		ctx.EmitCellUpdated(req.CellID, "")
 
 		// Broadcast to all notebook viewers via WebSocket
 		if ctx.BroadcastFunc != nil {
@@ -292,7 +339,11 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 			})
 		}
 
-		return map[string]any{"cell_id": req.CellID, "chart_type": req.ChartType}, nil
+		result := map[string]any{"cell_id": req.CellID, "chart_type": req.ChartType}
+		if len(warnings) > 0 {
+			result["config_warnings"] = warnings
+		}
+		return result, nil
 	}
 }
 
@@ -481,9 +532,10 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 			existingConfig["sizeColumn"] = req.SizeColumn
 		}
 
+		var warnings []string
 		ct, _ := existingConfig["chartType"].(string)
 		if ct != "" {
-			filterChartConfig(existingConfig, ct)
+			warnings = filterChartConfig(existingConfig, ct)
 		}
 
 		configJSON, _ := json.Marshal(existingConfig)
@@ -495,6 +547,9 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("update chart: %w", err)
 		}
 
+		// Notify agent panel to scroll
+		ctx.EmitCellUpdated(cellID, "")
+
 		// Broadcast to all notebook viewers via WebSocket
 		if ctx.BroadcastFunc != nil {
 			var updatedMetadata []byte
@@ -504,12 +559,17 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 				json.Unmarshal(updatedMetadata, &metadataMap)
 			}
 			ctx.BroadcastFunc(notebookID, map[string]any{
-				"type":     "cell_metadata_changed",
-				"cell_id":  cellID,
-				"metadata": metadataMap,
+				"type":       "cell_metadata_changed",
+				"cell_id":    cellID,
+				"metadata":   metadataMap,
+				"user_email": "agent@hnb",
 			})
 		}
 
-		return map[string]any{"cell_id": cellID}, nil
+		result := map[string]any{"cell_id": cellID}
+		if len(warnings) > 0 {
+			result["config_warnings"] = warnings
+		}
+		return result, nil
 	}
 }
