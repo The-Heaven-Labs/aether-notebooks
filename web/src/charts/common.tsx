@@ -133,6 +133,54 @@ export function useAxisColumns(
   }, [data.columns, data.rows, config.xAxis, config.yAxis, columns])
 }
 
+export function useGroupBySeries(
+  chartData: Record<string, unknown>[],
+  config: { xAxis?: string; yAxis?: string[]; groupBy?: string; seriesColors?: Record<string, string> },
+): { series: any[]; xValues: string[] } {
+  return useMemo(() => {
+    const groupByCol = config.groupBy
+    if (!groupByCol || !config.xAxis || !config.yAxis?.length || chartData.length === 0) {
+      return { series: [], xValues: [] }
+    }
+
+    const xKey = config.xAxis
+    const yCols = config.yAxis
+
+    // Build Map: xVal → Map(groupVal → row)
+    const xMap = new Map<string, Map<string, Record<string, unknown>>>()
+    const groupOrder: string[] = []
+
+    for (const row of chartData) {
+      const xVal = String(row[xKey] ?? '')
+      const gVal = String(row[groupByCol] ?? '')
+      if (!xMap.has(xVal)) xMap.set(xVal, new Map())
+      const gMap = xMap.get(xVal)!
+      if (!gMap.has(gVal)) gMap.set(gVal, row)
+      if (!groupOrder.includes(gVal)) groupOrder.push(gVal)
+    }
+
+    const xValues = [...xMap.keys()]
+
+    const series = groupOrder.flatMap((group, gi) =>
+      yCols.map((y) => ({
+        name: yCols.length > 1 ? `${group} (${y})` : group,
+        type: 'line' as const,
+        data: xValues.map(x => xMap.get(x)?.get(group)?.[y] ?? null),
+        smooth: false,
+        connectNulls: false,
+        symbol: 'circle',
+        symbolSize: 4,
+        lineStyle: { width: 2 },
+        itemStyle: {
+          color: config.seriesColors?.[group] ?? CHART_COLORS[gi % CHART_COLORS.length],
+        },
+      }))
+    )
+
+    return { series, xValues }
+  }, [chartData, config.xAxis, config.yAxis, config.groupBy, config.seriesColors])
+}
+
 // Detect dark mode and provide explicit colors for ECharts (canvas doesn't support CSS vars)
 function isDarkMode(): boolean {
   return document.documentElement.getAttribute('data-theme') === 'dark'
@@ -202,7 +250,7 @@ export function applyCollapsedToTree(data: any, collapsed: Set<string>): any {
   return node
 }
 
-export const EChartsContainer = memo(function EChartsContainer({ option, height = 300, onChartReady, notMerge = false, showReset = false }: EChartsContainerProps) {
+export const EChartsContainer = memo(function EChartsContainer({ option, height = 300, onChartReady, notMerge = true, showReset = false }: EChartsContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
 
