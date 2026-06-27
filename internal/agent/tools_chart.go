@@ -16,8 +16,8 @@ func RegisterChartTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "create_chart",
-			Description: "Turn a cell's table output into a chart",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex color values (e.g. {\"revenue\": \"#ff0000\"})"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"color_column":{"type":"string"},"size_column":{"type":"string"}},"required":["cell_id","chart_type"]}`,
+			Description: "Turn a cell's table output into a chart. NOTE: group_by only works with chart_type='timeline'; other chart types (bar, line, area) ignore group_by and derive series from y_columns instead.",
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex colors. Keys must match y_columns (bar/line/area) or group values (timeline). E.g. {\"revenue\":\"#ff0000\"}"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"color_column":{"type":"string"},"size_column":{"type":"string"}},"required":["cell_id","chart_type"]}`,
 		},
 		Handler: makeCreateChartHandler(db),
 	})
@@ -29,11 +29,87 @@ func RegisterChartTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "update_chart",
-			Description: "Modify chart config on an existing cell",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex color values (e.g. {\"revenue\": \"#ff0000\"})"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"color_column":{"type":"string"},"size_column":{"type":"string"}},"required":["cell_id"]}`,
+			Description: "Modify chart config on an existing cell. NOTE: group_by only works with chart_type='timeline'; other chart types (bar, line, area) ignore group_by and derive series from y_columns instead. Colors in series_colors must match series names from the chart's y_columns (for bar/line/area) or group values (for timeline).",
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex colors. Keys must match y_columns (bar/line/area) or group values (timeline). E.g. {\"revenue\":\"#ff0000\"}"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"color_column":{"type":"string"},"size_column":{"type":"string"}},"required":["cell_id"]}`,
 		},
 		Handler: makeUpdateChartHandler(db),
 	})
+}
+
+var chartAllowedFields = map[string]map[string]bool{
+	"line": {
+		"title": true, "showLegend": true, "showGrid": true,
+		"dataZoom": true, "showLabels": true, "smooth": true,
+		"connectNulls": true, "seriesColors": true, "xAxis": true, "yAxis": true,
+	},
+	"area": {
+		"title": true, "showLegend": true, "showGrid": true,
+		"dataZoom": true, "showLabels": true, "smooth": true,
+		"connectNulls": true, "seriesColors": true, "xAxis": true, "yAxis": true,
+	},
+	"bar": {
+		"title": true, "showLegend": true, "showGrid": true,
+		"dataZoom": true, "showLabels": true, "seriesColors": true,
+		"xAxis": true, "yAxis": true, "barWidth": true, "barCategoryGap": true,
+	},
+	"stacked_bar": {
+		"title": true, "showLegend": true, "showGrid": true,
+		"dataZoom": true, "showLabels": true, "seriesColors": true,
+		"xAxis": true, "yAxis": true, "barWidth": true, "barCategoryGap": true,
+	},
+	"scatter": {
+		"title": true, "showLegend": true, "showGrid": true,
+		"seriesColors": true, "colorColumn": true, "sizeColumn": true,
+		"xAxis": true, "yAxis": true,
+	},
+	"pie": {
+		"title": true, "showLegend": true, "showLabels": true,
+		"labelColumn": true, "seriesColors": true, "xAxis": true, "yAxis": true,
+		"roseType": true, "startAngle": true, "padAngle": true,
+	},
+	"donut": {
+		"title": true, "showLegend": true, "showLabels": true,
+		"labelColumn": true, "seriesColors": true, "xAxis": true, "yAxis": true,
+		"roseType": true, "startAngle": true, "padAngle": true,
+	},
+	"timeline": {
+		"title": true, "showLegend": true, "showGrid": true,
+		"showLabels": true, "showConnectors": true, "showTimeDeltas": true,
+		"maxLabelLength": true, "timeColumn": true, "endTimeColumn": true,
+		"labelColumn": true, "groupBy": true, "seriesColors": true,
+	},
+	"hierarchy_tree": {
+		"title": true, "seriesColors": true, "idColumn": true,
+		"parentIdColumn": true, "labelColumn": true, "metricColumns": true,
+		"layout": true,
+	},
+	"sankey": {
+		"title": true, "seriesColors": true, "xAxis": true, "yAxis": true,
+		"nodeAlign": true, "nodeWidth": true, "nodeGap": true,
+	},
+	"map": {
+		"title": true, "showLabels": true, "seriesColors": true,
+		"labelColumn": true, "xAxis": true, "yAxis": true,
+	},
+	"big_number": {
+		"valueColumn": true, "label": true, "prefix": true, "suffix": true,
+		"decimalPlaces": true, "skipEmpty": true, "seriesColors": true,
+	},
+}
+
+func filterChartConfig(config map[string]any, chartType string) {
+	allowed, ok := chartAllowedFields[chartType]
+	if !ok {
+		return
+	}
+	for k := range config {
+		if k == "chartType" || k == "created_at" {
+			continue
+		}
+		if !allowed[k] {
+			delete(config, k)
+		}
+	}
 }
 
 func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
@@ -83,13 +159,15 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
 
-		notebookID, err := ctx.GetNotebookIDForCell(req.CellID)
+		resolved, err := ctx.ResolveCell(req.CellID)
 		if err != nil {
-			return nil, fmt.Errorf("get cell notebook: %w", err)
-		}
-		if err := ctx.CheckPermission("notebook", notebookID, "edit"); err != nil {
 			return nil, err
 		}
+		if err := ctx.CheckPermission("notebook", resolved.NotebookID, "edit"); err != nil {
+			return nil, err
+		}
+		notebookID := resolved.NotebookID
+		req.CellID = resolved.ID
 
 		chartConfig := map[string]any{
 			"chartType":      req.ChartType,
@@ -99,13 +177,16 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 			"timeColumn":     req.TimeColumn,
 			"endTimeColumn":  req.EndTimeColumn,
 			"labelColumn":    req.LabelColumn,
-			"groupBy":        req.GroupBy,
 			"idColumn":       req.IDColumn,
 			"parentIdColumn": req.ParentIDColumn,
 			"metricColumns":  req.MetricColumns,
 			"valueColumn":    req.ValueColumn,
 			"layout":         req.Layout,
 			"created_at":     time.Now().Format(time.RFC3339),
+		}
+		// groupBy is only used by timeline charts; silently ignore for others
+		if req.GroupBy != "" && req.ChartType == "timeline" {
+			chartConfig["groupBy"] = req.GroupBy
 		}
 		if req.ShowLabels != nil {
 			chartConfig["showLabels"] = *req.ShowLabels
@@ -182,6 +263,8 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 		if req.SizeColumn != "" {
 			chartConfig["sizeColumn"] = req.SizeColumn
 		}
+
+		filterChartConfig(chartConfig, req.ChartType)
 
 		configJSON, _ := json.Marshal(chartConfig)
 
@@ -260,17 +343,19 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
 
-		notebookID, err := ctx.GetNotebookIDForCell(req.CellID)
+		resolved, err := ctx.ResolveCell(req.CellID)
 		if err != nil {
-			return nil, fmt.Errorf("get cell notebook: %w", err)
-		}
-		if err := ctx.CheckPermission("notebook", notebookID, "edit"); err != nil {
 			return nil, err
 		}
+		if err := ctx.CheckPermission("notebook", resolved.NotebookID, "edit"); err != nil {
+			return nil, err
+		}
+		notebookID := resolved.NotebookID
+		cellID := resolved.ID
 
 		var existingConfig map[string]any
 		var chartJSON []byte
-		err = db.QueryRow(ctx.Context, `SELECT metadata->'chart' FROM cells WHERE id = $1`, req.CellID).Scan(&chartJSON)
+		err = db.QueryRow(ctx.Context, `SELECT metadata->'chart' FROM cells WHERE id = $1`, cellID).Scan(&chartJSON)
 		if err == nil && chartJSON != nil {
 			json.Unmarshal(chartJSON, &existingConfig)
 		}
@@ -300,7 +385,10 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 			existingConfig["labelColumn"] = req.LabelColumn
 		}
 		if req.GroupBy != "" {
-			existingConfig["groupBy"] = req.GroupBy
+			ct, _ := existingConfig["chartType"].(string)
+			if ct == "timeline" {
+				existingConfig["groupBy"] = req.GroupBy
+			}
 		}
 		if req.IDColumn != "" {
 			existingConfig["idColumn"] = req.IDColumn
@@ -393,11 +481,16 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 			existingConfig["sizeColumn"] = req.SizeColumn
 		}
 
+		ct, _ := existingConfig["chartType"].(string)
+		if ct != "" {
+			filterChartConfig(existingConfig, ct)
+		}
+
 		configJSON, _ := json.Marshal(existingConfig)
 		_, err = db.Exec(ctx.Context, `
 			UPDATE cells SET metadata = jsonb_set(COALESCE(metadata, '{}'), '{chart}', $1), updated_at = NOW()
 			WHERE id = $2
-		`, configJSON, req.CellID)
+		`, configJSON, cellID)
 		if err != nil {
 			return nil, fmt.Errorf("update chart: %w", err)
 		}
@@ -405,18 +498,18 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 		// Broadcast to all notebook viewers via WebSocket
 		if ctx.BroadcastFunc != nil {
 			var updatedMetadata []byte
-			db.QueryRow(ctx.Context, `SELECT metadata FROM cells WHERE id = $1`, req.CellID).Scan(&updatedMetadata)
+			db.QueryRow(ctx.Context, `SELECT metadata FROM cells WHERE id = $1`, cellID).Scan(&updatedMetadata)
 			var metadataMap map[string]any
 			if updatedMetadata != nil {
 				json.Unmarshal(updatedMetadata, &metadataMap)
 			}
 			ctx.BroadcastFunc(notebookID, map[string]any{
 				"type":     "cell_metadata_changed",
-				"cell_id":  req.CellID,
+				"cell_id":  cellID,
 				"metadata": metadataMap,
 			})
 		}
 
-		return map[string]any{"cell_id": req.CellID}, nil
+		return map[string]any{"cell_id": cellID}, nil
 	}
 }
