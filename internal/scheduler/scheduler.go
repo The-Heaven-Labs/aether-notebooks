@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
@@ -50,6 +51,7 @@ func (s *Scheduler) tick() {
 	now := time.Now()
 	if now.Hour() == 0 && now.Minute() == 0 {
 		s.runAgentStatsRollup(ctx)
+		s.purgeTrash(ctx)
 	}
 
 	rows, err := s.db.Pool.Query(ctx,
@@ -118,5 +120,17 @@ func (s *Scheduler) runAgentStatsRollup(ctx context.Context) {
 	`, yesterday)
 	if err != nil {
 		log.Printf("scheduler: agent stats rollup: %v", err)
+	}
+}
+
+func (s *Scheduler) purgeTrash(ctx context.Context) {
+	tables := []string{"notebooks", "connectors", "dashboards", "folders"}
+	for _, table := range tables {
+		_, err := s.db.Pool.Exec(ctx,
+			fmt.Sprintf(`DELETE FROM %s WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '7 days'`, table),
+		)
+		if err != nil {
+			log.Printf("scheduler: purge trash %s: %v", table, err)
+		}
 	}
 }

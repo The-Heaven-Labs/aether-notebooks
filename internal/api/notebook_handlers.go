@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"sort"
+
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/models"
 	"github.com/jackc/pgx/v5"
@@ -101,7 +103,7 @@ func (s *Server) handleListNotebooks(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, org_id, title, COALESCE(description,''), connector_id, parameters, created_by, created_at, updated_at, folder_id
-		 FROM notebooks WHERE org_id = $1 ORDER BY updated_at DESC`,
+		 FROM notebooks WHERE org_id = $1 AND deleted_at IS NULL ORDER BY updated_at DESC`,
 		claims.OrgID,
 	)
 	if err != nil {
@@ -298,7 +300,7 @@ func (s *Server) handleDeleteNotebook(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	result, err := s.db.Pool.Exec(ctx,
-		`DELETE FROM notebooks WHERE id = $1 AND org_id = $2`,
+		`UPDATE notebooks SET deleted_at = NOW() WHERE id = $1 AND org_id = $2`,
 		nbID, claims.OrgID,
 	)
 	if err != nil {
@@ -316,6 +318,117 @@ func (s *Server) handleDeleteNotebook(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleListTrash(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	ctx := r.Context()
+
+	type trashItem struct {
+		ID        string    `json:"id"`
+		Type      string    `json:"type"`
+		Name      string    `json:"name"`
+		DeletedAt time.Time `json:"deleted_at"`
+	}
+
+	var items []trashItem
+
+	nRows, err := s.db.Pool.Query(ctx, `SELECT id, title, deleted_at FROM notebooks WHERE org_id = $1 AND deleted_at IS NOT NULL ORDER BY deleted_at DESC`, claims.OrgID)
+	if err == nil {
+		for nRows.Next() {
+			var item trashItem
+			if err := nRows.Scan(&item.ID, &item.Name, &item.DeletedAt); err == nil {
+				item.Type = "notebook"
+				allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", item.ID, "view")
+				if allowed {
+					items = append(items, item)
+				}
+			}
+		}
+		nRows.Close()
+	}
+
+	cRows, err := s.db.Pool.Query(ctx, `SELECT id, name, deleted_at FROM connectors WHERE org_id = $1 AND deleted_at IS NOT NULL ORDER BY deleted_at DESC`, claims.OrgID)
+	if err == nil {
+		for cRows.Next() {
+			var item trashItem
+			if err := cRows.Scan(&item.ID, &item.Name, &item.DeletedAt); err == nil {
+				item.Type = "connector"
+				allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", item.ID, "view")
+				if allowed {
+					items = append(items, item)
+				}
+			}
+		}
+		cRows.Close()
+	}
+
+	dRows, err := s.db.Pool.Query(ctx, `SELECT id, title, deleted_at FROM dashboards WHERE org_id = $1 AND deleted_at IS NOT NULL ORDER BY deleted_at DESC`, claims.OrgID)
+	if err == nil {
+		for dRows.Next() {
+			var item trashItem
+			if err := dRows.Scan(&item.ID, &item.Name, &item.DeletedAt); err == nil {
+				item.Type = "dashboard"
+				allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", item.ID, "view")
+				if allowed {
+					items = append(items, item)
+				}
+			}
+		}
+		dRows.Close()
+	}
+
+	sort.Slice(items, func(i, j int) bool { return items[i].DeletedAt.After(items[j].DeletedAt) })
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (s *Server) handleRestoreFromTrash(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	ctx := r.Context()
+
+	var req struct {
+		Type string `json:"type"`
+		ID   string `json:"id"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, req.Type, req.ID, "edit")
+	if !allowed {
+		writeError(w, http.StatusForbidden, "no permission to restore this resource")
+		return
+	}
+
+	var table string
+	switch req.Type {
+	case "notebook":
+		table = "notebooks"
+	case "connector":
+		table = "connectors"
+	case "dashboard":
+		table = "dashboards"
+	default:
+		writeError(w, http.StatusBadRequest, "invalid type")
+		return
+	}
+
+	result, err := s.db.Pool.Exec(ctx, fmt.Sprintf(`UPDATE %s SET deleted_at = NULL WHERE id = $1 AND org_id = $2`, table), req.ID, claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "restore failed")
+		return
+	}
+	if result.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: req.Type + ".restore", ResourceType: req.Type, ResourceID: req.ID,
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "restored"})
 }
 
 type updateNotebookRequest struct {

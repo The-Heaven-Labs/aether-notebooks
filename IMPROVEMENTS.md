@@ -58,3 +58,16 @@
 - [x] Typing /new in agent chat then refreshing the page sends you back to the old content
 - [x] When in folder `/`, there seem to be no relevant ordering of notebooks. Make it be by edit date. Recently edited on top
 - [x] Agent panel knows how to send links, but doesnt know how to send direct links to the cells. It should, as sometimes it says things regarding specific cell changes, the links it send in these scenarios should be the direct links
+- [x] Metadata in notebooks/connectors/dashboards should also show last edit time, not only dates
+- [x] Since now the notebook ordering is by last edit, we can make the recent section be global, showing the same recents in all folders, instead of per folder
+- [x] It should be possible to export a notebook in the current state (e.g., respect cells collapsed, outputs collapsed, charts showing with current config, cell outputs etc) as HTML files (which would look exactly the same as the viewing page, but as a single file)
+- [x] Add a stacked area chart. Make it an option instead of a different chart type. Move the stacked bar chart to be a config of the bar instead of a new type aswell (if feasible. If not they can stay separate.)
+- [x] Group by in charts do not work everytime, e.g., this query, with x=hour, y=count(), groupby=service. Query: SELECT toStartOfHour (timestamp) as hour, service, count(*) FROM analytics.timeline_events GROUP BY hour, service;
+- [x] When the agent panel is open, there appear an icon for it, but it always has a +1, even where there is no one else with the notebook open
+- [x] There should be a button to delete a notebook while inside of it
+- [x] When in notebook, if I close the agent panel (docked) and refresh the page, the panel will be opened again
+- [x] Markdown table rendering in notebooks do not show row/column separators
+- [x] When refreshing a notebook page, it should take you back to the scrolling position you were before
+- [x] When asking the agent to create a new cell and change it to a chart, it will do so, but it will appear as a data table until refresh the page
+- [x] When resources are deleted, they should be in a Trash state for a configurable time (default 7 days) before ceasing to exist
+- [ ]

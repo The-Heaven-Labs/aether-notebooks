@@ -16,6 +16,7 @@ type Connector struct {
 	TableDenylist  []string        `json:"table_denylist,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
+	DeletedAt      *time.Time      `json:"deleted_at,omitempty"`
 }
 
 type ConnectorType string

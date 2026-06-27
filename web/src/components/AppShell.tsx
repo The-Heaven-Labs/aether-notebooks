@@ -155,7 +155,7 @@ export function AppShell({ children, noPadding }: Props) {
             pageContext={currentPageContext}
             width={globalAgentWidth}
             onResize={(w) => { setGlobalAgentWidth(w); try { localStorage.setItem('hnb:agentPanelWidth:__global__', String(w)) } catch {} }}
-            onClose={() => setShowGlobalAgent(false)}
+            onClose={() => { setShowGlobalAgent(false); try { localStorage.setItem('hnb:agentDocked:__global__', 'false') } catch {} }}
             onMinimize={() => setGlobalAgentMinimized(true)}
             onDock={() => { setGlobalAgentDocked(false); try { localStorage.setItem('hnb:agentDocked:__global__', 'false') } catch {} }}
             docked
@@ -207,7 +207,7 @@ export function AppShell({ children, noPadding }: Props) {
                   pageContext={currentPageContext}
                   width={globalAgentWidth}
                   onResize={(w) => { setGlobalAgentWidth(w); try { localStorage.setItem('hnb:agentPanelWidth:__global__', String(w)) } catch {} }}
-                  onClose={() => setShowGlobalAgent(false)}
+            onClose={() => { setShowGlobalAgent(false); try { localStorage.setItem('hnb:agentDocked:__global__', 'false') } catch {} }}
                   onMinimize={() => setGlobalAgentMinimized(true)}
                   onDock={() => { setGlobalAgentDocked(true); try { localStorage.setItem('hnb:agentDocked:__global__', 'true') } catch {} }}
                   docked={false}

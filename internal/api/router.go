@@ -219,6 +219,10 @@ func (s *Server) routes() {
 	// Recent route
 	s.mux.Handle("GET /api/v1/recent", authMW(http.HandlerFunc(s.handleGetRecent)))
 
+	// Trash routes
+	s.mux.Handle("GET /api/v1/trash", authMW(http.HandlerFunc(s.handleListTrash)))
+	s.mux.Handle("POST /api/v1/trash/restore", authMW(http.HandlerFunc(s.handleRestoreFromTrash)))
+
 	// Home route - lists all home folders for the current org
 	s.mux.Handle("GET /api/v1/home", authMW(http.HandlerFunc(s.handleListHomeFolders)))
 	// Ensure home folder exists for current user (creates if missing)

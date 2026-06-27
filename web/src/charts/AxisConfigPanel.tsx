@@ -131,8 +131,12 @@ export function AxisConfigPanel({
             <select
               aria-label="Stack"
               style={styles.select}
-              value={config.chartType === 'stacked_bar' ? 'yes' : 'no'}
-              onChange={e => onChange({ ...config, chartType: e.target.value === 'yes' ? 'stacked_bar' : 'bar' })}
+              value={config.chartType === 'stacked_bar' || config.chartType === 'stacked_area' ? 'yes' : 'no'}
+              onChange={e => {
+                const baseType = config.chartType === 'stacked_bar' ? 'bar' : config.chartType === 'stacked_area' ? 'area' : config.chartType
+                const stackedType = baseType === 'bar' ? 'stacked_bar' : baseType === 'area' ? 'stacked_area' : baseType
+                onChange({ ...config, chartType: e.target.value === 'yes' ? stackedType : baseType })
+              }}
             >
               <option value="no">No</option>
               <option value="yes">Yes</option>

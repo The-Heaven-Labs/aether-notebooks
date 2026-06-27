@@ -114,7 +114,7 @@ export function CollaboratorAvatars({
 
   const visible = collaborators.slice(0, MAX_VISIBLE)
   const overflow = collaborators.slice(MAX_VISIBLE)
-  const overflowCount = overflow.length + (showAgent && !visible.some(c => c.email === AGENT_EMAIL) ? 1 : 0)
+  const overflowCount = overflow.length
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, position: 'relative' }}>
