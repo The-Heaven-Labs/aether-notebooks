@@ -417,6 +417,39 @@ func (s *Server) handleCreateInviteLink(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (s *Server) handleGetOrgSharingSettings(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	var enabled bool
+	err := s.db.Pool.QueryRow(r.Context(),
+		`SELECT public_sharing_enabled FROM orgs WHERE id=$1`, claims.OrgID,
+	).Scan(&enabled)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"public_sharing_enabled": enabled})
+}
+
+func (s *Server) handleUpdateOrgSharingSettings(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	var req struct {
+		Enabled bool `json:"public_sharing_enabled"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	_, err := s.db.Pool.Exec(r.Context(),
+		`UPDATE orgs SET public_sharing_enabled=$1 WHERE id=$2`,
+		req.Enabled, claims.OrgID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "update failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"public_sharing_enabled": req.Enabled})
+}
+
 // generateSecureToken returns a hex-encoded random token of the given byte length.
 func generateSecureToken(byteLen int) (string, error) {
 	b := make([]byte, byteLen)

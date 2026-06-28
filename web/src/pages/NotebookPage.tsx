@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { ChevronsRight, ChevronLeft, Loader2, X, Check, GripVertical, Shield, Clock, Trash2 } from 'lucide-react'
+import { ChevronsRight, ChevronLeft, Loader2, X, Check, GripVertical, Shield, Clock, Trash2, Globe } from 'lucide-react'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -27,6 +27,7 @@ import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { useNotebookWs } from '../hooks/useNotebookWs'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { PermissionsPanel } from '../components/PermissionsPanel'
+import { ShareModal } from '../components/ShareModal'
 import { exportNotebookHTML } from '../utils/notebookExport'
 
 interface NotebookWithCells extends Notebook {
@@ -163,6 +164,7 @@ export function NotebookPage() {
   const [notebookConnectorId, setNotebookConnectorId] = useState<string>('')
   const [mutationError, setMutationError] = useState<string | null>(null)
   const [showPermissions, setShowPermissions] = useState(false)
+  const [showShare, setShowShare] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
   const [historySnapshots, setHistorySnapshots] = useState<NotebookSnapshot[]>([])
   const [cellSaveState, setCellSaveState] = useState<Record<string, { saving: boolean; savedAt: Date | null; error: string | null }>>({})
@@ -1361,6 +1363,14 @@ export function NotebookPage() {
                       </button>
                     </>
                   )}
+                  <div style={styles.dropdownSeparator} />
+                  <button
+                    type="button"
+                    style={styles.dropdownItem}
+                    onClick={() => { setShowShare(true); setShareOpen(false) }}
+                  >
+                    <Globe size={13} style={{ marginRight: 6 }} /> Public link
+                  </button>
 
                 </div>
               </>
@@ -1588,6 +1598,13 @@ export function NotebookPage() {
         resourceOwnerId={notebook.created_by}
         canEdit={notebook.can_edit}
         onClose={() => setShowPermissions(false)}
+      />
+    )}
+    {showShare && notebook && (
+      <ShareModal
+        resourceType="notebook"
+        resourceId={notebook.id}
+        onClose={() => setShowShare(false)}
       />
     )}
     </AppShell>

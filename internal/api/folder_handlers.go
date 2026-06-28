@@ -660,7 +660,7 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 
 	// Dashboards at root (no folder) - filter by permission
 	dRows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, title, settings, public_token, created_by, created_at, updated_at
+		`SELECT id, org_id, title, settings, created_by, created_at, updated_at
 		 FROM dashboards WHERE org_id = $1 AND folder_id IS NULL AND deleted_at IS NULL`,
 		claims.OrgID,
 	)
@@ -863,7 +863,7 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 
 	// Dashboards in folder
 	dRows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, title, settings, public_token, created_by, created_at, updated_at
+		`SELECT id, org_id, title, settings, created_by, created_at, updated_at
 		 FROM dashboards WHERE org_id = $1 AND folder_id = $2 AND deleted_at IS NULL`,
 		claims.OrgID, folderID,
 	)
@@ -1256,14 +1256,14 @@ func scanNotebook(rows interface {
 	return nb, nil
 }
 
-// scanDashboard scans a dashboard row (id, org_id, title, settings, public_token,
+// scanDashboard scans a dashboard row (id, org_id, title, settings,
 // created_by, created_at, updated_at).
 func scanDashboard(rows interface {
 	Scan(dest ...any) error
 }) (models.Dashboard, error) {
 	var d models.Dashboard
 	var settingsJSON []byte
-	if err := rows.Scan(&d.ID, &d.OrgID, &d.Title, &settingsJSON, &d.PublicToken,
+	if err := rows.Scan(&d.ID, &d.OrgID, &d.Title, &settingsJSON,
 		&d.CreatedBy, &d.CreatedAt, &d.UpdatedAt); err != nil {
 		return d, err
 	}

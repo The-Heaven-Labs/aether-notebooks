@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
@@ -283,6 +283,18 @@ export function OrgSettingsPage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
+  const [sharingEnabled, setSharingEnabled] = useState(true)
+
+  useEffect(() => {
+    api.get<{ public_sharing_enabled: boolean }>('/api/v1/org/sharing')
+      .then(r => setSharingEnabled(r.public_sharing_enabled))
+      .catch(() => {})
+  }, [])
+
+  async function handleToggleSharing(enabled: boolean) {
+    await api.put('/api/v1/org/sharing', { public_sharing_enabled: enabled })
+    setSharingEnabled(enabled)
+  }
 
   const createProvider = useMutation({
     mutationFn: (body: Record<string, unknown>) => api.post('/api/v1/sso/providers', body),
@@ -739,7 +751,25 @@ const formInput: React.CSSProperties = {
           </label>
         </section>
 
-        {/* ── D. Message of the Day ── */}
+        {/* ── D. Public Sharing ── */}
+        <section style={styles.section}>
+          <div style={styles.sectionTitle}>Public Sharing</div>
+          <p style={styles.sectionDesc}>
+            Allow sharing notebooks and dashboards via public links.
+          </p>
+          <label style={styles.checkRow}>
+            <input
+              type="checkbox"
+              checked={sharingEnabled}
+              onChange={e => handleToggleSharing(e.target.checked)}
+            />
+            <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>
+              Enable public sharing
+            </span>
+          </label>
+        </section>
+
+        {/* ── E. Message of the Day ── */}
         <section style={styles.section}>
           <div style={styles.sectionTitle}>Message of the Day</div>
           <p style={styles.sectionDesc}>

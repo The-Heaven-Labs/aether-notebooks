@@ -78,4 +78,11 @@
 - [x] When SSO users login for the first time, it seems their home folder is not created
 - [x] It seems that SSO providers (both platform and org) are disappearing of the settings menu. SSO domains dont work on login, so likely being removed altogether, not only disappearing
 - [ ] After restoring an item from the trash and going to the files, I need to hard refresh for it to appear in the notebooks list
+- [ ] If a user has no rights, in the members page, other people's role should appear grayed out, just like it appears for yourself
+- [ ] When creating an agent now, there are just too many tools to choose from, and it will have even more things with user-defined ones. What can we do? Perhaps have only one toggle for the built-in ones? What else?
+- [ ] The copy link button for public links in notebooks is not working
+- [ ] The public link view of notebooks is completely broken, no cell clear separation, content of outputs not showing, no charts
+- [ ] When re-clicking the public link menu after having already created a link, it shows no links to revoke, only to create
+- [ ] Logged in org B as platform admin, I can see content I created in org A
+- [ ] A brand newly created org which no one had yet logged-in, already had another user there (that was created in other orgs), so likely the guardrails between orgs is not being used correctly.
 - [ ]

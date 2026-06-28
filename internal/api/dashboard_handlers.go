@@ -64,9 +64,9 @@ func (s *Server) handleCreateDashboard(w http.ResponseWriter, r *http.Request) {
 	err := s.db.Pool.QueryRow(ctx,
 		`INSERT INTO dashboards (org_id, title, settings, created_by, folder_id)
 		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id, org_id, title, settings, public_token, folder_id, created_by, created_at, updated_at`,
+		 RETURNING id, org_id, title, settings, folder_id, created_by, created_at, updated_at`,
 		claims.OrgID, req.Title, settingsJSON, claims.UserID, req.FolderID,
-	).Scan(&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.PublicToken, &dash.FolderID,
+	).Scan(&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.FolderID,
 		&dash.CreatedBy, &dash.CreatedAt, &dash.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create dashboard")
@@ -120,14 +120,14 @@ func (s *Server) handleUpdateDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updates = append(updates, "updated_at=NOW()")
-	query := fmt.Sprintf("UPDATE dashboards SET %s WHERE id=$%d AND org_id=$%d RETURNING id, org_id, title, settings, public_token, folder_id, created_by, created_at, updated_at",
+	query := fmt.Sprintf("UPDATE dashboards SET %s WHERE id=$%d AND org_id=$%d RETURNING id, org_id, title, settings, folder_id, created_by, created_at, updated_at",
 		strings.Join(updates, ", "), argIdx, argIdx+1)
 	args = append(args, dashID, claims.OrgID)
 
 	var dash models.Dashboard
 	var settingsOut []byte
 	err := s.db.Pool.QueryRow(ctx, query, args...).Scan(
-		&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.PublicToken, &dash.FolderID,
+		&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.FolderID,
 		&dash.CreatedBy, &dash.CreatedAt, &dash.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "dashboard not found")
@@ -160,7 +160,7 @@ func (s *Server) handleListDashboards(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, title, settings, public_token, folder_id, created_by, created_at, updated_at
+		`SELECT id, org_id, title, settings, folder_id, created_by, created_at, updated_at
 		 FROM dashboards WHERE org_id = $1 AND deleted_at IS NULL ORDER BY updated_at DESC`,
 		claims.OrgID,
 	)
@@ -174,7 +174,7 @@ func (s *Server) handleListDashboards(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var d models.Dashboard
 		var settingsOut []byte
-		if err := rows.Scan(&d.ID, &d.OrgID, &d.Title, &settingsOut, &d.PublicToken, &d.FolderID,
+		if err := rows.Scan(&d.ID, &d.OrgID, &d.Title, &settingsOut, &d.FolderID,
 			&d.CreatedBy, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
@@ -209,10 +209,10 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 	var dash models.Dashboard
 	var settingsOut []byte
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, org_id, title, settings, public_token, folder_id, created_by, created_at, updated_at
+		`SELECT id, org_id, title, settings, folder_id, created_by, created_at, updated_at
 		 FROM dashboards WHERE id = $1 AND org_id = $2`,
 		dashID, claims.OrgID,
-	).Scan(&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.PublicToken, &dash.FolderID,
+	).Scan(&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.FolderID,
 		&dash.CreatedBy, &dash.CreatedAt, &dash.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "dashboard not found")
@@ -583,45 +583,57 @@ func (s *Server) handleShareDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !allowed {
-		writeError(w, http.StatusForbidden, "you don't have permission to share this dashboard")
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
+	var sharingEnabled bool
+	s.db.Pool.QueryRow(ctx, `SELECT public_sharing_enabled FROM orgs WHERE id=$1`, claims.OrgID).Scan(&sharingEnabled)
+	if !sharingEnabled {
+		writeError(w, http.StatusForbidden, "public sharing is disabled for this organization")
+		return
+	}
+
+	var token string
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT token FROM public_tokens WHERE resource_type='dashboard' AND resource_id=$1`,
+		dashID,
+	).Scan(&token)
+	if err == nil {
+		writeJSON(w, http.StatusOK, map[string]string{"token": token})
 		return
 	}
 
 	tokenBytes := make([]byte, 16)
 	rand.Read(tokenBytes)
-	token := hex.EncodeToString(tokenBytes)
+	token = hex.EncodeToString(tokenBytes)
 
-	result, err := s.db.Pool.Exec(ctx,
-		`UPDATE dashboards SET public_token = $1, updated_at = NOW()
-		 WHERE id = $2 AND org_id = $3`,
-		token, dashID, claims.OrgID,
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO public_tokens (org_id, resource_type, resource_id, token, created_by)
+		 VALUES ($1, 'dashboard', $2, $3, $4)`,
+		claims.OrgID, dashID, token, claims.UserID,
 	)
-	if err != nil || result.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "dashboard not found")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create share link")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"public_token": token})
+	writeJSON(w, http.StatusCreated, map[string]string{"token": token})
 }
 
-func (s *Server) handlePublicDashboard(w http.ResponseWriter, r *http.Request) {
-	token := r.PathValue("token")
+func (s *Server) servePublicDashboard(w http.ResponseWriter, r *http.Request, dashID string) {
 	ctx := r.Context()
 
 	var dash models.Dashboard
 	var settingsOut []byte
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, org_id, title, settings, public_token, folder_id, created_by, created_at, updated_at
-		 FROM dashboards WHERE public_token = $1`,
-		token,
-	).Scan(&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.PublicToken, &dash.FolderID,
+		`SELECT id, org_id, title, settings, folder_id, created_by, created_at, updated_at
+		 FROM dashboards WHERE id = $1`,
+		dashID,
+	).Scan(&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.FolderID,
 		&dash.CreatedBy, &dash.CreatedAt, &dash.UpdatedAt)
-	if err == pgx.ErrNoRows {
-		writeError(w, http.StatusNotFound, "dashboard not found")
-		return
-	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+		writeError(w, http.StatusNotFound, "dashboard not found")
 		return
 	}
 	json.Unmarshal(settingsOut, &dash.Settings)
