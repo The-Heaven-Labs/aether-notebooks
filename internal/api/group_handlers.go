@@ -101,6 +101,10 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "insert failed")
 		return
 	}
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "group.create", ResourceType: "group", ResourceID: g.ID, ResourceName: g.Name,
+	})
 	writeJSON(w, http.StatusCreated, g)
 }
 
@@ -141,6 +145,10 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "group not found")
 		return
 	}
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "group.update", ResourceType: "group", ResourceID: groupID, ResourceName: req.Name,
+	})
 	writeJSON(w, http.StatusOK, g)
 }
 
@@ -169,6 +177,10 @@ func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "group not found")
 		return
 	}
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "group.delete", ResourceType: "group", ResourceID: groupID,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

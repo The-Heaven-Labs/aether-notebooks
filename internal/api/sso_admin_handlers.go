@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/sso"
 	"github.com/jackc/pgx/v5"
 )
@@ -88,6 +89,8 @@ func (s *Server) handleAdminListSSOProviders(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleAdminCreateSSOProvider(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+
 	var req ssoProviderRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -127,11 +130,16 @@ func (s *Server) handleAdminCreateSSOProvider(w http.ResponseWriter, r *http.Req
 	}
 
 	s.invalidateSSOPlatformCache(r)
+	s.audit.Log(r.Context(), audit.Entry{
+		UserID: claims.UserID,
+		Action: "sso_provider.create", ResourceType: "sso_provider", ResourceID: created.ID, ResourceName: created.Name,
+	})
 	writeJSON(w, http.StatusCreated, providerToResponse(created))
 }
 
 func (s *Server) handleAdminUpdateSSOProvider(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	claims := ClaimsFromContext(r.Context())
 
 	var req ssoProviderRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -180,11 +188,16 @@ func (s *Server) handleAdminUpdateSSOProvider(w http.ResponseWriter, r *http.Req
 	}
 
 	s.invalidateSSOPlatformCache(r)
+	s.audit.Log(r.Context(), audit.Entry{
+		UserID: claims.UserID,
+		Action: "sso_provider.update", ResourceType: "sso_provider", ResourceID: id, ResourceName: req.Name,
+	})
 	writeJSON(w, http.StatusOK, providerToResponse(updated))
 }
 
 func (s *Server) handleAdminDeleteSSOProvider(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	claims := ClaimsFromContext(r.Context())
 
 	if err := sso.DeleteProvider(r.Context(), s.db.Pool, id); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete provider")
@@ -192,6 +205,10 @@ func (s *Server) handleAdminDeleteSSOProvider(w http.ResponseWriter, r *http.Req
 	}
 
 	s.invalidateSSOPlatformCache(r)
+	s.audit.Log(r.Context(), audit.Entry{
+		UserID: claims.UserID,
+		Action: "sso_provider.delete", ResourceType: "sso_provider", ResourceID: id,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

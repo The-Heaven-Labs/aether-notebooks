@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/sso"
 	"github.com/jackc/pgx/v5"
 )
@@ -101,6 +102,10 @@ func (s *Server) handleOrgCreateSSOProvider(w http.ResponseWriter, r *http.Reque
 	}
 
 	s.invalidateSSOOrgCache(r, claims.OrgID)
+	s.audit.Log(r.Context(), audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "sso_provider.create", ResourceType: "sso_provider", ResourceID: created.ID, ResourceName: created.Name,
+	})
 	writeJSON(w, http.StatusCreated, providerToResponse(created))
 }
 
@@ -170,6 +175,10 @@ func (s *Server) handleOrgUpdateSSOProvider(w http.ResponseWriter, r *http.Reque
 	}
 
 	s.invalidateSSOOrgCache(r, claims.OrgID)
+	s.audit.Log(r.Context(), audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "sso_provider.update", ResourceType: "sso_provider", ResourceID: id, ResourceName: req.Name,
+	})
 	writeJSON(w, http.StatusOK, providerToResponse(updated))
 }
 
@@ -200,6 +209,10 @@ func (s *Server) handleOrgDeleteSSOProvider(w http.ResponseWriter, r *http.Reque
 	}
 
 	s.invalidateSSOOrgCache(r, claims.OrgID)
+	s.audit.Log(r.Context(), audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "sso_provider.delete", ResourceType: "sso_provider", ResourceID: id, ResourceName: existing.Name,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -301,6 +314,10 @@ func (s *Server) handleOrgEnablePlatformProvider(w http.ResponseWriter, r *http.
 	}
 
 	s.invalidateSSOOrgCache(r, claims.OrgID)
+	s.audit.Log(r.Context(), audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "sso_provider.enable", ResourceType: "sso_provider", ResourceID: id, ResourceName: existing.Name,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -315,6 +332,10 @@ func (s *Server) handleOrgDisablePlatformProvider(w http.ResponseWriter, r *http
 	}
 
 	s.invalidateSSOOrgCache(r, claims.OrgID)
+	s.audit.Log(r.Context(), audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "sso_provider.disable", ResourceType: "sso_provider", ResourceID: id,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -358,6 +379,11 @@ func (s *Server) handleOrgUpdateSSOSettings(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	s.audit.Log(r.Context(), audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "sso_settings.update", ResourceType: "org", ResourceID: claims.OrgID,
+		Metadata: map[string]any{"sso_password_login": req.SSOPasswordLogin},
+	})
 	writeJSON(w, http.StatusOK, ssoSettingsResponse{SSOPasswordLogin: req.SSOPasswordLogin})
 }
 
