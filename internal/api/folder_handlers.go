@@ -983,6 +983,19 @@ func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check create permission on the parent folder (or root-level if no parent)
+	if req.ParentID != nil && *req.ParentID != "" {
+		allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", *req.ParentID, "create")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "permission check failed")
+			return
+		}
+		if !allowed {
+			writeError(w, http.StatusForbidden, "insufficient permissions to create folder here")
+			return
+		}
+	}
+
 	var folder models.Folder
 	err := s.db.Pool.QueryRow(ctx,
 		`INSERT INTO folders (org_id, parent_id, name, owner_id, created_by)
