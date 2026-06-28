@@ -206,6 +206,15 @@ const formStyles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     cursor: 'pointer',
   },
+  input: {
+    padding: '7px 12px',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    fontSize: 13,
+    outline: 'none',
+    color: 'var(--text-primary)',
+    background: 'var(--bg-input)',
+  },
   error: {
     marginTop: 10,
     fontSize: 12,
@@ -536,6 +545,38 @@ export function AdminPage() {
   const [orgs, setOrgs] = useState<Org[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
+  const [createOrgName, setCreateOrgName] = useState('')
+  const [createOrgSlug, setCreateOrgSlug] = useState('')
+  const [creatingOrg, setCreatingOrg] = useState(false)
+  const [createOrgError, setCreateOrgError] = useState<string | null>(null)
+
+  async function handleCreateOrg() {
+    if (!createOrgName.trim() || !createOrgSlug.trim()) return
+    setCreatingOrg(true)
+    setCreateOrgError(null)
+    try {
+      const token = localStorage.getItem('hnb_token')
+      const res = await fetch('/api/v1/admin/orgs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: createOrgName.trim(), slug: createOrgSlug.trim() }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.error || 'Failed to create org')
+      }
+      const token2 = localStorage.getItem('hnb_token')
+      const headers2: Record<string, string> = token2 ? { Authorization: `Bearer ${token2}` } : {}
+      const d = await (await fetch('/api/v1/admin/orgs', { headers: headers2 })).json()
+      setOrgs(d.orgs ?? [])
+      setCreateOrgName('')
+      setCreateOrgSlug('')
+    } catch (e) {
+      setCreateOrgError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setCreatingOrg(false)
+    }
+  }
 
   const togglePlatformAdmin = useMutation({
     mutationFn: ({ id, isPlatformAdmin }: { id: string; isPlatformAdmin: boolean }) =>
@@ -594,24 +635,48 @@ export function AdminPage() {
       </div>
 
       {isPlatformAdmin && tab === 'orgs' && (
-        <table style={styles.table}>
-          <thead><tr>
-            <th style={styles.th}>Name</th>
-            <th style={styles.th}>Slug</th>
-            <th style={styles.th}>Members</th>
-            <th style={styles.th}>Created</th>
-          </tr></thead>
-          <tbody>
-            {orgs.map(o => (
-              <tr key={o.id}>
-                <td style={styles.td}>{o.name}</td>
-                <td style={styles.td}>{o.slug}</td>
-                <td style={styles.td}>{o.member_count}</td>
-                <td style={styles.td}>{new Date(o.created_at).toLocaleDateString()}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' }}>
+            <input
+              style={{ ...styles.input, flex: 1, maxWidth: 300 }}
+              placeholder="Org name"
+              value={createOrgName}
+              onChange={e => setCreateOrgName(e.target.value)}
+            />
+            <input
+              style={{ ...styles.input, flex: 0, maxWidth: 200 }}
+              placeholder="slug (e.g. org1)"
+              value={createOrgSlug}
+              onChange={e => setCreateOrgSlug(e.target.value)}
+            />
+            <button
+              style={styles.btn}
+              disabled={!createOrgName.trim() || !createOrgSlug.trim() || creatingOrg}
+              onClick={handleCreateOrg}
+            >
+              {creatingOrg ? 'Creating…' : '+ Create Org'}
+            </button>
+            {createOrgError && <span style={styles.error}>{createOrgError}</span>}
+          </div>
+          <table style={styles.table}>
+            <thead><tr>
+              <th style={styles.th}>Name</th>
+              <th style={styles.th}>Slug</th>
+              <th style={styles.th}>Members</th>
+              <th style={styles.th}>Created</th>
+            </tr></thead>
+            <tbody>
+              {orgs.map(o => (
+                <tr key={o.id}>
+                  <td style={styles.td}>{o.name}</td>
+                  <td style={styles.td}>{o.slug}</td>
+                  <td style={styles.td}>{o.member_count}</td>
+                  <td style={styles.td}>{new Date(o.created_at).toLocaleDateString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
 
       {isPlatformAdmin && tab === 'users' && (
