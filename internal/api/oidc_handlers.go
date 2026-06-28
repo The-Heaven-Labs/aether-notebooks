@@ -70,10 +70,10 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// In Docker dev environments, the redirect URL may contain internal hostnames
-	// (e.g. host.docker.internal) that the browser can't resolve. Rewrite to localhost.
+	// In Docker dev environments, the auth URL may contain internal service hostnames
+	// (e.g. keycloak:8080) that the browser can't resolve. Rewrite to the public endpoint.
 	authURL := provider.AuthURL(state)
-	authURL = strings.Replace(authURL, "host.docker.internal", "localhost", 1)
+	authURL = strings.Replace(authURL, "keycloak:8080", "localhost:5557", 1)
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
