@@ -180,6 +180,11 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reconcile group membership via SSO
+	if dbProvider.AutoSyncGroups && len(claims.Groups) > 0 {
+		SyncSSOGroups(ctx, s.db.Pool, s.audit, dbProvider, orgID, userID, claims.Groups)
+	}
+
 	token, err := s.jwt.Issue(userID, orgID, role)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to issue token")
