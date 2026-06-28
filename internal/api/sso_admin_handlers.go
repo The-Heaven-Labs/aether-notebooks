@@ -228,7 +228,7 @@ func (s *Server) handleAdminTestSSOProvider(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Try to fetch the discovery document
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := oidcHTTPClient(wellKnown)
 	resp, err := client.Get(wellKnown)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
