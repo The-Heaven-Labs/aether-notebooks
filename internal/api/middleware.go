@@ -64,10 +64,13 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool) func(http.Handle
 				return
 			}
 
-			// Validate subdomain org matches JWT org when both are present
-			if subdomainOrg := OrgIDFromContext(r.Context()); subdomainOrg != "" && subdomainOrg != claims.OrgID {
-				writeError(w, http.StatusForbidden, "organization mismatch between subdomain and token")
-				return
+			// Validate subdomain org matches JWT org when both are present.
+			// Platform admins operate at the instance level and are exempt.
+			if !claims.IsPlatformAdmin {
+				if subdomainOrg := OrgIDFromContext(r.Context()); subdomainOrg != "" && subdomainOrg != claims.OrgID {
+					writeError(w, http.StatusForbidden, "organization mismatch between subdomain and token")
+					return
+				}
 			}
 
 			ctx := context.WithValue(r.Context(), claimsKey, claims)
