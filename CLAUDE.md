@@ -34,6 +34,27 @@ docker compose -f docker-compose.dev.yml logs -f web  # Follow web logs
 
 Services: API (Go), Relay (TypeScript), Web (Vite), Postgres, Redis, ClickHouse, OpenSearch
 
+### Subdomain Testing
+
+For local multi-tenancy testing with subdomains (`org1.hnb.test` → Org 1):
+
+1. Add to `/etc/hosts`:
+   ```
+   127.0.0.1  hnb.test
+   127.0.0.1  org1.hnb.test org2.hnb.test
+   ```
+
+2. Create orgs with slugs matching subdomains:
+   ```bash
+   # Via API
+   curl -s -X POST http://localhost:8080/api/v1/auth/org/create \
+     -H "Authorization: Bearer $TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{"name": "Org 1", "slug": "org1"}' | jq .
+   ```
+
+3. Visit `http://org1.hnb.test:5173` — the app resolves the org from the subdomain.
+
 ## Commands
 
 **Preferred task runner: `task` (Taskfile.yml). `make` is a thin alias.**
