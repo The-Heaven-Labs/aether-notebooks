@@ -123,6 +123,29 @@ func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler,
 	writeError(w, http.StatusUnauthorized, "invalid or expired API token")
 }
 
+func SubdomainMiddleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			host := strings.Split(r.Host, ":")[0]
+			parts := strings.SplitN(host, ".", 2)
+			if len(parts) == 2 && parts[1] != "" && parts[0] != "www" && parts[0] != "localhost" {
+				var orgID string
+				err := pool.QueryRow(r.Context(),
+					`SELECT id FROM orgs WHERE slug = $1`, parts[0],
+				).Scan(&orgID)
+				if err == nil {
+					ctx := context.WithValue(r.Context(), subdomainKey, orgID)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
+				writeError(w, http.StatusNotFound, "unknown organization")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func ClaimsFromContext(ctx context.Context) *auth.Claims {
 	claims, _ := ctx.Value(claimsKey).(*auth.Claims)
 	return claims
