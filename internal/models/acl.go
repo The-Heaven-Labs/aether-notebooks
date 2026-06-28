@@ -1,4 +1,4 @@
-// Package models defines shared data structures used across the hnb codebase.
+// Package models defines shared data structures used across the Aether codebase.
 // These structs map to database tables and API response formats.
 package models
 

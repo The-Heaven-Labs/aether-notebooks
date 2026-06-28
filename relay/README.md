@@ -1,6 +1,6 @@
-# hnb Relay — Hocuspocus Yjs WebSocket Relay
+# Aether Relay — Hocuspocus Yjs WebSocket Relay
 
-This directory contains the Hocuspocus WebSocket relay for real-time collaborative editing in hnb notebooks.
+This directory contains the Hocuspocus WebSocket relay for real-time collaborative editing in Aether notebooks.
 
 ## Architecture
 
@@ -14,8 +14,8 @@ The relay sits between the browser clients and the Go API server:
 
 | Variable | Default | Description |
 |---|---|---|
-| `HNB_RELAY_PORT` | `3001` | WebSocket listen port |
-| `HNB_API_URL` | `http://localhost:8080` | Internal Go API URL for auth and document storage |
+| `AETHER_RELAY_PORT` | `3001` | WebSocket listen port |
+| `AETHER_API_URL` | `http://localhost:8080` | Internal Go API URL for auth and document storage |
 
 ## Development
 

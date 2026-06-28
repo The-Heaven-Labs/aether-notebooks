@@ -19,7 +19,7 @@ export function PresentationPage() {
   const [index, setIndex] = useState(0)
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     try {
-      return (localStorage.getItem('hnb_theme') ?? 'dark') as 'light' | 'dark'
+      return (localStorage.getItem('aether_theme') ?? 'dark') as 'light' | 'dark'
     } catch { return 'dark' }
   })
   const contentRef = useRef<HTMLDivElement>(null)
@@ -33,13 +33,13 @@ export function PresentationPage() {
   const toggleTheme = useCallback(() => {
     setTheme(prev => {
       const next = prev === 'dark' ? 'light' : 'dark'
-      try { localStorage.setItem('hnb_theme', next) } catch {}
+      try { localStorage.setItem('aether_theme', next) } catch {}
       return next
     })
   }, [])
 
   useEffect(() => {
-    const token = localStorage.getItem('hnb_token')
+    const token = localStorage.getItem('aether_token')
     fetch(`/api/v1/notebooks/${id}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {}
     })

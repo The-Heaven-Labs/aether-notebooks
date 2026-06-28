@@ -24,14 +24,14 @@ const AGENT_NAV_ITEMS = [
 ]
 
 // Custom event to open the mobile drawer from outside (e.g. TopBar hamburger)
-const MOBILE_OPEN_EVENT = 'hnb-sidebar-mobile-open'
+const MOBILE_OPEN_EVENT = 'aether-sidebar-mobile-open'
 export function openMobileSidebar() {
   window.dispatchEvent(new CustomEvent(MOBILE_OPEN_EVENT))
 }
 
 export function Sidebar() {
   const { user } = useAuth()
-  const isPlatformAdmin = localStorage.getItem('hnb_is_platform_admin') === 'true'
+  const isPlatformAdmin = localStorage.getItem('aether_is_platform_admin') === 'true'
   const location = useLocation()
   const isMobile = useMediaQuery(768)
   const isTablet = useMediaQuery(1024)
@@ -45,7 +45,7 @@ export function Sidebar() {
   )
 
   const [expanded, setExpanded] = useState(() => {
-    return localStorage.getItem('hnb_sidebar_expanded') !== 'false'
+    return localStorage.getItem('aether_sidebar_expanded') !== 'false'
   })
   const [drawerOpen, setDrawerOpen] = useState(false)
 
@@ -68,7 +68,7 @@ export function Sidebar() {
     if (isTablet) return // Can't expand on tablet
     const next = !expanded
     setExpanded(next)
-    localStorage.setItem('hnb_sidebar_expanded', String(next))
+    localStorage.setItem('aether_sidebar_expanded', String(next))
   }
 
   const width = effectiveExpanded ? 200 : 48

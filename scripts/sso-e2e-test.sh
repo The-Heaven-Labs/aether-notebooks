@@ -11,9 +11,9 @@
 #
 set -euo pipefail
 
-BASE_URL="${HNB_URL:-http://localhost:8080/api/v1}"
+BASE_URL="${AETHER_URL:-http://localhost:8080/api/v1}"
 KC_BASE="http://localhost:5557"
-KC_REALM="hnb-dev"
+KC_REALM="aether-dev"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@heaven-labs.com}"
 ADMIN_PASS="${ADMIN_PASS:-admin123}"
 KC_USER="${KC_USER:-alice}"
@@ -70,14 +70,14 @@ CREATE=$(/usr/bin/curl -s -X POST "$BASE_URL/admin/sso/providers" \
   -H "$AUTH" -H "Content-Type: application/json" \
   -d '{
     "name": "Keycloak Dev",
-    "client_id": "hnb-dev",
-    "client_secret": "hnb-dev-keycloak-secret",
-    "discovery_url": "http://localhost:5557/realms/hnb-dev",
+    "client_id": "aether-dev",
+    "client_secret": "aether-dev-keycloak-secret",
+    "discovery_url": "http://localhost:5557/realms/aether-dev",
     "allowed_domains": [],
     "enabled": true,
     "scopes": [],
     "groups_claim": "groups",
-    "group_prefix": "hnb-",
+    "group_prefix": "aether-",
     "auto_sync_groups": true,
     "get_user_info": true
   }' 2>/dev/null || echo '{}')
@@ -114,7 +114,7 @@ echo "  State: $STATE"
 
 # ── 4. Log in at Keycloak ────────────────────────────────────────────────────
 step "Log in to Keycloak as $KC_USER"
-KC_JAR="/tmp/hnb-e2e-kc-jar"
+KC_JAR="/tmp/aether-e2e-kc-jar"
 rm -f "$KC_JAR"
 
 KC_AUTH="$AUTH_URL"
@@ -167,7 +167,7 @@ TOKEN=$(echo "$LOCATION" | grep -oP 'token=\K[^&]+' | python3 -c "import sys,url
 
 if [ -z "$TOKEN" ]; then
   echo "WARN (no callback token)"
-  echo "  Check user $KC_USER@hnb-dev.test was created and has groups"
+  echo "  Check user $KC_USER@aether-dev.test was created and has groups"
   echo "  via admin API..."
   GROUPS=$(/usr/bin/curl -s -X GET "$BASE_URL/groups" -H "$AUTH" 2>/dev/null || echo '{}')
   echo "  All groups: $(echo "$GROUPS" | python3 -c "import sys,json;d=json.load(sys.stdin);print([g['name'] for g in d.get('groups',[])])" 2>/dev/null || echo 'N/A')"
@@ -175,7 +175,7 @@ else
   GROUPS=$(/usr/bin/curl -s -X GET "$BASE_URL/groups" -H "Authorization: Bearer $TOKEN" 2>/dev/null || echo '{}')
   NAMES=$(echo "$GROUPS" | python3 -c "import sys,json;d=json.load(sys.stdin);print([g['name'] for g in d.get('groups',[])])" 2>/dev/null || echo '[]')
   echo "User groups: $NAMES"
-  echo "Expected: hnb-analysts, hnb-engineering (hnb- prefix)"
+  echo "Expected: aether-analysts, aether-engineering (aether- prefix)"
 fi
 ok
 

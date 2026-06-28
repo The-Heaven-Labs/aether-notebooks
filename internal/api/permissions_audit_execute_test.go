@@ -19,7 +19,7 @@ func TestExecuteCell_Vulnerability(t *testing.T) {
 		"type": "postgres",
 		"config": map[string]any{
 			"host": "localhost", "port": 5432,
-			"user": "hnb", "password": "hnb_dev", "database": "hnb",
+			"user": "aether", "password": "aether_dev", "database": "aether",
 		},
 	})
 	require.Equal(t, http.StatusCreated, status, "connector creation failed: %s", connResp)
@@ -100,7 +100,7 @@ func TestExecuteCell_NoConnectorUse(t *testing.T) {
 		"type": "postgres",
 		"config": map[string]any{
 			"host": "localhost", "port": 5432,
-			"user": "hnb", "password": "hnb_dev", "database": "hnb",
+			"user": "aether", "password": "aether_dev", "database": "aether",
 		},
 	})
 	require.Equal(t, http.StatusCreated, status, "connector creation failed: %s", connResp)

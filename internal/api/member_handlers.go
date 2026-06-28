@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/audit"
 )
 
 type memberResponse struct {

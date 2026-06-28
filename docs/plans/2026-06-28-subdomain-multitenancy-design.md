@@ -1,14 +1,14 @@
 # Subdomain-Based Multi-Tenancy
 
-Enable org-level subdomains (`org1.hnb.test` → Org 1, `org2.hnb.test` → Org 2) so that a single platform SSO provider works across all orgs, first-login provisioning routes to the correct org, and the org context is unambiguous on every request.
+Enable org-level subdomains (`org1.aether.test` → Org 1, `org2.aether.test` → Org 2) so that a single platform SSO provider works across all orgs, first-login provisioning routes to the correct org, and the org context is unambiguous on every request.
 
 ## 1. Org Resolution Middleware
 
 A new middleware runs before auth on every non-public route. It extracts the subdomain from the `Host` header, looks up the org by slug in the `orgs` table, and sets the org ID in the request context.
 
 ```
-org1.hnb.test  → subdomain="org1",  look up orgs WHERE slug='org1'
-hnb.test        → no subdomain, default behavior (login page, etc.)
+org1.aether.test  → subdomain="org1",  look up orgs WHERE slug='org1'
+aether.test        → no subdomain, default behavior (login page, etc.)
 ```
 
 - The `orgs.slug` column already exists, computed via `slugify()` on org creation (e.g., "Acme Corp" → `acme-corp`). Each org slug must be unique and DNS-safe to function as a subdomain.
@@ -56,7 +56,7 @@ The probe endpoint `GET /api/v1/auth/sso-providers?email=...` is currently unaut
 - If an org is resolved from the subdomain → return only providers enabled **for that org**:
   - Org-level providers (`scope='org'` with matching `org_id`)
   - Platform providers (`scope='platform'`) that the org has opted into via `org_platform_providers`
-- If no org (bare domain `hnb.test`) → return empty list (login page shows only password form)
+- If no org (bare domain `aether.test`) → return empty list (login page shows only password form)
 
 **Query:**
 
@@ -104,7 +104,7 @@ if dbProvider.AutoSyncGroups && len(claims.Groups) > 0 {
 }
 ```
 
-The `orgID` is now the subdomain-resolved org. Group records are created in that org if they don't exist. The same group name ("hnb-analysts") maps to different ACLs in different orgs.
+The `orgID` is now the subdomain-resolved org. Group records are created in that org if they don't exist. The same group name ("aether-analysts") maps to different ACLs in different orgs.
 
 ## 5. Cookie / Auth Scope
 
@@ -123,8 +123,8 @@ The frontend should include the subdomain in API requests naturally (the browser
 Add to `/etc/hosts`:
 
 ```
-127.0.0.1  hnb.test
-127.0.0.1  org1.hnb.test org2.hnb.test
+127.0.0.1  aether.test
+127.0.0.1  org1.aether.test org2.aether.test
 ```
 
 The Vite dev server and Go API already listen on `0.0.0.0` so subdomain requests reach them. Keycloak's redirect URI already uses a wildcard pattern (`http://*localhost:8080/...`).

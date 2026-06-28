@@ -20,7 +20,7 @@ func SeedCmd() *cobra.Command {
 		Long: `Seeds demo data into the current org to demonstrate folder hierarchy and permissions.
 
 Example:
-  hnb seed --email demo@example.com --password secret
+  aether seed --email demo@example.com --password secret
 
 This creates:
 - Folders: Shared Projects > Analytics, Shared Projects > Engineering, Angel Home > ML Research

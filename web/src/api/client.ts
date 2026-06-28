@@ -1,15 +1,15 @@
 const BASE_URL = import.meta.env.VITE_API_URL || ''
 
 export function getToken(): string | null {
-  return localStorage.getItem('hnb_token')
+  return localStorage.getItem('aether_token')
 }
 
 export function setToken(token: string): void {
-  localStorage.setItem('hnb_token', token)
+  localStorage.setItem('aether_token', token)
 }
 
 export function clearToken(): void {
-  localStorage.removeItem('hnb_token')
+  localStorage.removeItem('aether_token')
 }
 
 export class ApiError extends Error {
@@ -36,8 +36,8 @@ async function request<T>(
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
   }
-  if (localStorage.getItem('hnb_admin_mode') === 'false') {
-    headers['X-HNB-Admin-Mode'] = 'false'
+  if (localStorage.getItem('aether_admin_mode') === 'false') {
+    headers['X-AETHER-Admin-Mode'] = 'false'
   }
 
   const res = await fetch(BASE_URL + path, {

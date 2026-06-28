@@ -298,7 +298,7 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 				"type":       "cell_metadata_changed",
 				"cell_id":    req.CellID,
 				"metadata":   metadataMap,
-				"user_email": "agent@hnb",
+				"user_email": "agent@aether",
 			})
 		}
 
@@ -522,7 +522,7 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 				"type":       "cell_metadata_changed",
 				"cell_id":    cellID,
 				"metadata":   metadataMap,
-				"user_email": "agent@hnb",
+				"user_email": "agent@aether",
 			})
 		}
 

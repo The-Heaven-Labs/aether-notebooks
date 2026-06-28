@@ -38,7 +38,7 @@ const defaultForm = (): ConnectorForm => ({
 })
 
 export function ConnectorsPage() {
-  useEffect(() => { document.title = "Connectors — Heaven's Notebooks" }, [])
+  useEffect(() => { document.title = "Connectors — Aether Notebooks" }, [])
   const qc = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const [creating, setCreating] = useState(false)

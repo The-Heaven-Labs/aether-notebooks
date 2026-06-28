@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/heavenlabs/hnb/internal/cache"
+	"github.com/the-heaven-labs/aether/internal/cache"
 )
 
 func TestCacheNew(t *testing.T) {

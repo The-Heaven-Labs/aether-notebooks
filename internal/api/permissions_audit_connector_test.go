@@ -113,7 +113,7 @@ func TestConnector_Create(t *testing.T) {
 		"type": "postgres",
 		"config": map[string]any{
 			"host": "localhost", "port": 5432,
-			"user": "hnb", "password": "hnb_dev", "database": "hnb",
+			"user": "aether", "password": "aether_dev", "database": "aether",
 		},
 	}
 
@@ -210,7 +210,7 @@ func TestConnector_TestConfig(t *testing.T) {
 		"type": "postgres",
 		"config": map[string]any{
 			"host": "localhost", "port": 5432,
-			"user": "hnb", "password": "hnb_dev", "database": "hnb",
+			"user": "aether", "password": "aether_dev", "database": "aether",
 		},
 	}
 

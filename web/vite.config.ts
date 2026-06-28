@@ -21,7 +21,7 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    allowedHosts: ['.hnb.test'],
+    allowedHosts: ['.aether.test'],
     proxy: {
       '/api': {
         target: apiTarget,

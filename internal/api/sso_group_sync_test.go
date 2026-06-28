@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/api"
-	"github.com/heavenlabs/hnb/internal/audit"
-	"github.com/heavenlabs/hnb/internal/crypto"
-	"github.com/heavenlabs/hnb/internal/sso"
+	"github.com/the-heaven-labs/aether/internal/api"
+	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/sso"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -126,14 +126,14 @@ func TestSyncSSOGroups_PrefixFilter(t *testing.T) {
 		Scopes:         []string{},
 		Enabled:        true,
 		AutoSyncGroups: true,
-		GroupPrefix:    "hnb-",
+		GroupPrefix:    "aether-",
 	})
 	require.NoError(t, err)
 
 	logger := audit.NewLogger(s.DB())
 
 	api.SyncSSOGroups(ctx, s.DB().Pool, logger, provider, orgID, userID,
-		[]string{"hnb-engineering", "hnb-analysts", "all-employees", "system-admins"})
+		[]string{"aether-engineering", "aether-analysts", "all-employees", "system-admins"})
 
 	var count int
 	err = s.DB().Pool.QueryRow(ctx,
@@ -143,7 +143,7 @@ func TestSyncSSOGroups_PrefixFilter(t *testing.T) {
 		userID, orgID,
 	).Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 2, count, "only hnb- prefixed groups should be synced")
+	assert.Equal(t, 2, count, "only aether- prefixed groups should be synced")
 }
 
 func TestSyncSSOGroups_PreservesManualMemberships(t *testing.T) {

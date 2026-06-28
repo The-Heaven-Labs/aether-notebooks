@@ -54,7 +54,7 @@ test('shows progress indicator', async () => {
 })
 
 test('renders authenticated images via ResizableImage in markdown cells', async () => {
-  localStorage.setItem('hnb_token', 'test-token')
+  localStorage.setItem('aether_token', 'test-token')
   const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock')
   const revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
 
@@ -76,5 +76,5 @@ test('renders authenticated images via ResizableImage in markdown cells', async 
 
   createObjectURLSpy.mockRestore()
   revokeObjectURLSpy.mockRestore()
-  localStorage.removeItem('hnb_token')
+  localStorage.removeItem('aether_token')
 })

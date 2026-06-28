@@ -4,7 +4,7 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o /hnb-server ./cmd/hnb-server
+RUN go build -o /aether-server ./cmd/aether-server
 
 # ---- Web build ----
 FROM node:20-alpine AS web-build
@@ -17,7 +17,7 @@ RUN npm run build
 # ---- Final image ----
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates
-COPY --from=go-build /hnb-server /usr/local/bin/
-COPY --from=web-build /app/web/dist /var/www/hnb
+COPY --from=go-build /aether-server /usr/local/bin/
+COPY --from=web-build /app/web/dist /var/www/aether
 EXPOSE 8080
-CMD ["hnb-server"]
+CMD ["aether-server"]

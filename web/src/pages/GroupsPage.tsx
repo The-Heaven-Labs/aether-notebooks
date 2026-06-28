@@ -272,7 +272,7 @@ const dd: Record<string, React.CSSProperties> = {
 }
 
 export function GroupsPage() {
-  useEffect(() => { document.title = "Groups — Heaven's Notebooks" }, [])
+  useEffect(() => { document.title = "Groups — Aether Notebooks" }, [])
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
   const qc = useQueryClient()

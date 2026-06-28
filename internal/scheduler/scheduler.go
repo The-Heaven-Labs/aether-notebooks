@@ -8,7 +8,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/database"
+	"github.com/the-heaven-labs/aether/internal/database"
 	"github.com/robfig/cron/v3"
 )
 

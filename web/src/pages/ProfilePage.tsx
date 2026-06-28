@@ -69,10 +69,10 @@ export function ProfilePage() {
   const [name, setName] = useState('')
   const [status, setStatus] = useState('')
   const [theme, setTheme] = useState<'light' | 'dark'>(
-    (localStorage.getItem('hnb_theme') ?? 'dark') as 'light' | 'dark'
+    (localStorage.getItem('aether_theme') ?? 'dark') as 'light' | 'dark'
   )
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
-  const [adminMode, setAdminMode] = useState(() => localStorage.getItem('hnb_admin_mode') !== 'false')
+  const [adminMode, setAdminMode] = useState(() => localStorage.getItem('aether_admin_mode') !== 'false')
 
   // Token management state
   const [showTokenForm, setShowTokenForm] = useState(false)
@@ -125,7 +125,7 @@ export function ProfilePage() {
 
   const handleThemeToggle = (newTheme: 'light' | 'dark') => {
     setTheme(newTheme)
-    localStorage.setItem('hnb_theme', newTheme)
+    localStorage.setItem('aether_theme', newTheme)
     document.documentElement.setAttribute('data-theme', newTheme)
     update.mutate({ theme: newTheme })
   }
@@ -188,7 +188,7 @@ export function ProfilePage() {
                 {(['on', 'off'] as const).map(v => (
                   <button key={v} type="button"
                     style={adminMode === (v === 'on') ? styles.themeActive : styles.themeBtn}
-                    onClick={() => { setAdminMode(v === 'on'); localStorage.setItem('hnb_admin_mode', String(v === 'on')) }}>
+                    onClick={() => { setAdminMode(v === 'on'); localStorage.setItem('aether_admin_mode', String(v === 'on')) }}>
                     {v === 'on' ? 'ON' : 'OFF'}
                   </button>
                 ))}

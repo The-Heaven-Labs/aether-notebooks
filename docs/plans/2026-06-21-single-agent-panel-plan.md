@@ -202,11 +202,11 @@ git commit -m "feat: derive notebookId from route in AppShell"
 Remove these state declarations (lines 218-227):
 ```tsx
 const [showAgent, setShowAgent] = useState(() => {
-  try { return localStorage.getItem(`hnb:agentPanel:${id}`) === 'true' } catch { return false }
+  try { return localStorage.getItem(`aether:agentPanel:${id}`) === 'true' } catch { return false }
 })
 const [agentPanelWidth, setAgentPanelWidth] = useState(() => {
   try {
-    const saved = localStorage.getItem(`hnb:agentPanelWidth:${id}`)
+    const saved = localStorage.getItem(`aether:agentPanelWidth:${id}`)
     if (saved) return Math.max(280, Math.min(960, parseInt(saved, 10)))
   } catch { /* ignore */ }
   return Math.max(280, Min(960, Math.round(window.innerWidth / 3)))
@@ -218,11 +218,11 @@ const [agentPanelWidth, setAgentPanelWidth] = useState(() => {
 Remove these two `useEffect` hooks (lines 457-463):
 ```tsx
 useEffect(() => {
-  localStorage.setItem(`hnb:agentPanel:${id}`, String(showAgent))
+  localStorage.setItem(`aether:agentPanel:${id}`, String(showAgent))
 }, [showAgent, id])
 
 useEffect(() => {
-  localStorage.setItem(`hnb:agentPanelWidth:${id}`, String(agentPanelWidth))
+  localStorage.setItem(`aether:agentPanelWidth:${id}`, String(agentPanelWidth))
 }, [agentPanelWidth, id])
 ```
 

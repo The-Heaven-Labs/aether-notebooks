@@ -2,15 +2,15 @@ version: '3'
 
 vars:
   BIN_DIR: bin
-  SERVER_BIN: "{{.BIN_DIR}}/hnb-server"
-  CLI_BIN: "{{.BIN_DIR}}/hnb"
-  DB_URL: "postgres://hnb:hnb_dev@localhost:5432/hnb?sslmode=disable"
+  SERVER_BIN: "{{.BIN_DIR}}/aether-server"
+  CLI_BIN: "{{.BIN_DIR}}/aether"
+  DB_URL: "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
 
 env:
-  HNB_DATABASE_URL: "{{.DB_URL}}"
-  HNB_MASTER_KEY: dev-master-key-change-in-production
-  HNB_JWT_SECRET: dev-jwt-secret-change-in-production
-  HNB_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com
+  AETHER_DATABASE_URL: "{{.DB_URL}}"
+  AETHER_MASTER_KEY: dev-master-key-change-in-production
+  AETHER_JWT_SECRET: dev-jwt-secret-change-in-production
+  AETHER_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com
 
 tasks:
 
@@ -68,8 +68,8 @@ tasks:
     desc: Build both server and CLI binaries into ./bin
     cmds:
       - mkdir -p {{.BIN_DIR}}
-      - go build -o {{.SERVER_BIN}} ./cmd/hnb-server
-      - go build -o {{.CLI_BIN}} ./cmd/hnb
+      - go build -o {{.SERVER_BIN}} ./cmd/aether-server
+      - go build -o {{.CLI_BIN}} ./cmd/aether
     sources:
       - "**/*.go"
       - go.mod
@@ -82,13 +82,13 @@ tasks:
     desc: Build only the API server
     cmds:
       - mkdir -p {{.BIN_DIR}}
-      - go build -o {{.SERVER_BIN}} ./cmd/hnb-server
+      - go build -o {{.SERVER_BIN}} ./cmd/aether-server
 
   build:cli:
     desc: Build only the CLI
     cmds:
       - mkdir -p {{.BIN_DIR}}
-      - go build -o {{.CLI_BIN}} ./cmd/hnb
+      - go build -o {{.CLI_BIN}} ./cmd/aether
 
   build:web:
     desc: Build the React frontend
@@ -112,7 +112,7 @@ tasks:
     desc: Run the API server with hot-reload (requires infra:up)
     deps: [infra:up]
     cmds:
-      - go run ./cmd/hnb-server
+      - go run ./cmd/aether-server
 
   dev:web:
     desc: Start the Vite dev server (proxies /api to localhost:8080)
@@ -237,25 +237,25 @@ tasks:
   db:migrate:
     desc: Apply pending schema migrations
     cmds:
-      - go run ./cmd/hnb-server
+      - go run ./cmd/aether-server
 
   db:psql:
     desc: Open a psql shell against the dev database
     cmds:
-      - docker exec -it hnb-claude-postgres-1 psql -U hnb -d hnb
+      - docker exec -it aether-claude-postgres-1 psql -U aether -d aether
 
   db:reset:
     desc: Drop and recreate the dev database (destroys all data)
     cmds:
-      - docker exec hnb-claude-postgres-1 psql -U hnb -c "DROP DATABASE IF EXISTS hnb;"
-      - docker exec hnb-claude-postgres-1 psql -U hnb -c "CREATE DATABASE hnb;"
+      - docker exec aether-claude-postgres-1 psql -U aether -c "DROP DATABASE IF EXISTS aether;"
+      - docker exec aether-claude-postgres-1 psql -U aether -c "CREATE DATABASE hnb;"
 
   # ── Docker ───────────────────────────────────────────────────────────────────
 
   docker:build:
     desc: Build the production Docker image
     cmds:
-      - docker build -t hnb:latest .
+      - docker build -t aether:latest .
 
   docker:up:
     desc: Start the full stack (api + relay + infra) via docker compose
@@ -292,7 +292,7 @@ tasks:
   install:
     desc: Install CLI binary to $GOPATH/bin
     cmds:
-      - go install ./cmd/hnb
+      - go install ./cmd/aether
 
   # ── Utility ──────────────────────────────────────────────────────────────────
 

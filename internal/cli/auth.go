@@ -15,7 +15,7 @@ func LoginCmd() *cobra.Command {
 	var apiURL string
 	cmd := &cobra.Command{
 		Use:   "login",
-		Short: "Authenticate with a Heaven's Notebooks server",
+		Short: "Authenticate with a Aether Notebooks server",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var email, password string
 			fmt.Print("Email: ")
