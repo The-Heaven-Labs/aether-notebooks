@@ -23,10 +23,10 @@ export default defineConfig({
     host: '0.0.0.0',
     allowedHosts: ['.hnb.test'],
     proxy: {
-      '/api': apiTarget,
-      '/internal': apiTarget,
-      '/docs': apiTarget,
-      '/swagger.json': apiTarget
+      '/api': { target: apiTarget, changeOrigin: false },
+      '/internal': { target: apiTarget, changeOrigin: false },
+      '/docs': { target: apiTarget, changeOrigin: false },
+      '/swagger.json': { target: apiTarget, changeOrigin: false }
     }
   },
   test: {
