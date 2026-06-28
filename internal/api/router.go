@@ -153,7 +153,6 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/auth/org/create", authMW(http.HandlerFunc(s.handleOrgCreate)))
 	s.mux.Handle("POST /api/v1/auth/org/join", authMW(http.HandlerFunc(s.handleOrgJoin)))
 	// Invite routes (org admin)
-	s.mux.Handle("POST /api/v1/members/invite", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateInvite))))
 	s.mux.Handle("POST /api/v1/members/invite-link", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateInviteLink))))
 
 	// User routes
@@ -175,6 +174,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/notebooks/{id}/export", authMW(http.HandlerFunc(s.handleExportNotebook)))
 	s.mux.Handle("POST /api/v1/notebooks/import", authMW(http.HandlerFunc(s.handleImportNotebook)))
 	s.mux.Handle("POST /api/v1/notebooks/{id}/clone", authMW(http.HandlerFunc(s.handleCloneNotebook)))
+	s.mux.Handle("GET /api/v1/notebooks/{id}/share", authMW(s.requirePermission("notebook", "id", "view")(http.HandlerFunc(s.handleGetNotebookShare))))
 	s.mux.Handle("POST /api/v1/notebooks/{id}/share", authMW(s.requirePermission("notebook", "id", "share")(http.HandlerFunc(s.handleShareNotebook))))
 	s.mux.Handle("DELETE /api/v1/notebooks/{id}/share", authMW(s.requirePermission("notebook", "id", "share")(http.HandlerFunc(s.handleRevokeNotebookShare))))
 
@@ -211,7 +211,9 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/dashboards/{id}/widgets", authMW(http.HandlerFunc(s.handleAddWidget)))
 	s.mux.Handle("PUT /api/v1/dashboards/{id}/widgets/{widget_id}", authMW(http.HandlerFunc(s.handleUpdateWidget)))
 	s.mux.Handle("DELETE /api/v1/dashboards/{id}/widgets/{widget_id}", authMW(http.HandlerFunc(s.handleDeleteWidget)))
-	s.mux.Handle("POST /api/v1/dashboards/{id}/share", authMW(http.HandlerFunc(s.handleShareDashboard)))
+	s.mux.Handle("GET /api/v1/dashboards/{id}/share", authMW(s.requirePermission("dashboard", "id", "view")(http.HandlerFunc(s.handleGetDashboardShare))))
+	s.mux.Handle("POST /api/v1/dashboards/{id}/share", authMW(s.requirePermission("dashboard", "id", "share")(http.HandlerFunc(s.handleShareDashboard))))
+	s.mux.Handle("DELETE /api/v1/dashboards/{id}/share", authMW(s.requirePermission("dashboard", "id", "share")(http.HandlerFunc(s.handleRevokeDashboardShare))))
 	s.mux.Handle("GET /api/v1/dashboards/{id}/permissions", authMW(http.HandlerFunc(s.handleGetDashboardPermissions)))
 	s.mux.HandleFunc("GET /api/v1/public/{token}", s.handlePublicResource)
 	s.mux.HandleFunc("GET /api/v1/public/motd", s.handleListLoginMOTD)
@@ -219,6 +221,14 @@ func (s *Server) routes() {
 	// Public sharing settings
 	s.mux.Handle("GET /api/v1/org/sharing", authMW(http.HandlerFunc(s.handleGetOrgSharingSettings)))
 	s.mux.Handle("PUT /api/v1/org/sharing", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateOrgSharingSettings))))
+
+	// Invitation settings
+	s.mux.Handle("GET /api/v1/org/invitations", authMW(http.HandlerFunc(s.handleGetOrgInvitationSettings)))
+	s.mux.Handle("PUT /api/v1/org/invitations", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateOrgInvitationSettings))))
+
+	// Registration settings
+	s.mux.Handle("GET /api/v1/org/registration", authMW(http.HandlerFunc(s.handleGetOrgRegistrationSettings)))
+	s.mux.Handle("PUT /api/v1/org/registration", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateOrgRegistrationSettings))))
 
 	// WebSocket routes
 	s.mux.Handle("GET /api/v1/ws/notebooks/{id}", authMW(http.HandlerFunc(s.handleNotebookWS)))
@@ -312,7 +322,6 @@ func (s *Server) routes() {
 
 	// Member routes
 	s.mux.Handle("GET /api/v1/members", authMW(http.HandlerFunc(s.handleListMembers)))
-	s.mux.Handle("POST /api/v1/members", authMW(RequireRole("admin")(http.HandlerFunc(s.handleInviteMember))))
 	s.mux.Handle("PUT /api/v1/members/{user_id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateMemberRole))))
 	s.mux.Handle("DELETE /api/v1/members/{user_id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleRemoveMember))))
 

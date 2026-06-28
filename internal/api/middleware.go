@@ -64,16 +64,20 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool) func(http.Handle
 				return
 			}
 
+			ctx := context.WithValue(r.Context(), claimsKey, claims)
+
 			// Validate subdomain org matches JWT org when both are present.
-			// Platform admins operate at the instance level and are exempt.
-			if !claims.IsPlatformAdmin {
-				if subdomainOrg := OrgIDFromContext(r.Context()); subdomainOrg != "" && subdomainOrg != claims.OrgID {
+			// Platform admins operate at the instance level — override their org
+			// to the subdomain org so they see the correct org's data.
+			if subdomainOrg := OrgIDFromContext(r.Context()); subdomainOrg != "" && subdomainOrg != claims.OrgID {
+				if claims.IsPlatformAdmin {
+					claims.OrgID = subdomainOrg
+				} else {
 					writeError(w, http.StatusForbidden, "organization mismatch between subdomain and token")
 					return
 				}
 			}
 
-			ctx := context.WithValue(r.Context(), claimsKey, claims)
 			adminMode := r.Header.Get("X-HNB-Admin-Mode") != "false"
 			ctx = context.WithValue(ctx, adminModeKey, adminMode)
 			next.ServeHTTP(w, r.WithContext(ctx))

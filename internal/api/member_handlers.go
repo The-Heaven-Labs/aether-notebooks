@@ -69,9 +69,8 @@ func (s *Server) handleUpdateMemberRole(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	validRoles := map[string]bool{"admin": true, "editor": true, "viewer": true}
-	if !validRoles[req.Role] {
-		writeError(w, http.StatusBadRequest, "role must be admin, editor, or viewer")
+	if req.Role != "admin" && req.Role != "non-admin" {
+		writeError(w, http.StatusBadRequest, "role must be admin or non-admin")
 		return
 	}
 	if targetUserID == claims.UserID {

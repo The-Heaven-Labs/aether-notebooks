@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/models"
@@ -594,19 +595,21 @@ func (s *Server) handleShareDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var token string
+	var token, createdBy string
+	var createdAt time.Time
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT token FROM public_tokens WHERE resource_type='dashboard' AND resource_id=$1`,
+		`SELECT token, created_by, created_at FROM public_tokens WHERE resource_type='dashboard' AND resource_id=$1`,
 		dashID,
-	).Scan(&token)
+	).Scan(&token, &createdBy, &createdAt)
 	if err == nil {
-		writeJSON(w, http.StatusOK, map[string]string{"token": token})
+		writeJSON(w, http.StatusOK, map[string]any{"token": token, "created_by": createdBy, "created_at": createdAt})
 		return
 	}
 
 	tokenBytes := make([]byte, 16)
 	rand.Read(tokenBytes)
 	token = hex.EncodeToString(tokenBytes)
+	createdAt = time.Now()
 
 	_, err = s.db.Pool.Exec(ctx,
 		`INSERT INTO public_tokens (org_id, resource_type, resource_id, token, created_by)
@@ -618,7 +621,70 @@ func (s *Server) handleShareDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]string{"token": token})
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "dashboard.share", ResourceType: "dashboard", ResourceID: dashID,
+	})
+
+	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "created_by": claims.UserID, "created_at": createdAt})
+}
+
+func (s *Server) handleGetDashboardShare(w http.ResponseWriter, r *http.Request) {
+	// Requires "view" permission — anyone who can see the dashboard can see the link
+	dashID := r.PathValue("id")
+	ctx := r.Context()
+
+	claims := ClaimsFromContext(r.Context())
+	var exists bool
+	s.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM dashboards WHERE id=$1 AND org_id=$2)`, dashID, claims.OrgID).Scan(&exists)
+	if !exists {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	var token, createdBy string
+	var createdAt time.Time
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT token, created_by, created_at FROM public_tokens WHERE resource_type='dashboard' AND resource_id=$1`,
+		dashID,
+	).Scan(&token, &createdBy, &createdAt)
+	if err != nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"token": token, "created_by": createdBy, "created_at": createdAt})
+}
+
+func (s *Server) handleRevokeDashboardShare(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	dashID := r.PathValue("id")
+	ctx := r.Context()
+
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "share")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
+	_, err = s.db.Pool.Exec(ctx,
+		`DELETE FROM public_tokens WHERE resource_type='dashboard' AND resource_id=$1`,
+		dashID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to revoke share link")
+		return
+	}
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "dashboard.share_revoke", ResourceType: "dashboard", ResourceID: dashID,
+	})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) servePublicDashboard(w http.ResponseWriter, r *http.Request, dashID string) {

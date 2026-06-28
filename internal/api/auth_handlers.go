@@ -20,7 +20,6 @@ type registerRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 	Name     string `json:"name"`
-	OrgName  string `json:"org_name"`
 }
 
 type loginRequest struct {
@@ -78,113 +77,8 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-
 	isPlatformAdmin := s.platformAdminEmail != "" && req.Email == s.platformAdminEmail
 
-	// Legacy / backcompat flow: org_name provided → create user + org atomically
-	if req.OrgName != "" {
-		tx, err := s.db.Pool.Begin(ctx)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "database error")
-			return
-		}
-		defer tx.Rollback(ctx)
-
-		var userID string
-		err = tx.QueryRow(ctx,
-			`INSERT INTO users (email, password_hash, name, email_verified, is_platform_admin)
-			 VALUES ($1, $2, $3, FALSE, $4) RETURNING id`,
-			req.Email, hash, req.Name, isPlatformAdmin,
-		).Scan(&userID)
-		if err != nil {
-			writeError(w, http.StatusConflict, "email already registered")
-			return
-		}
-
-		var orgID string
-		slug := slugify(req.OrgName)
-		err = tx.QueryRow(ctx,
-			`SELECT id FROM orgs WHERE slug = $1`,
-			slug,
-		).Scan(&orgID)
-		if err == pgx.ErrNoRows {
-			err = tx.QueryRow(ctx,
-				`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
-				req.OrgName, slug,
-			).Scan(&orgID)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to create organization")
-				return
-			}
-		} else if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to check organization")
-			return
-		}
-
-		_, err = tx.Exec(ctx,
-			`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin') ON CONFLICT DO NOTHING`,
-			orgID, userID,
-		)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to add member")
-			return
-		}
-
-		if err := createHomeFolder(ctx, tx, orgID, userID, req.Name); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create home folder")
-			return
-		}
-
-		_, err = tx.Exec(ctx,
-			`INSERT INTO groups (org_id, name) VALUES ($1, 'Everyone') ON CONFLICT DO NOTHING`,
-			orgID,
-		)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create everyone group")
-			return
-		}
-
-		_, err = tx.Exec(ctx,
-			`INSERT INTO group_members (group_id, user_id)
-			 SELECT g.id, $1 FROM groups g WHERE g.org_id = $2 AND g.name = 'Everyone'
-			 ON CONFLICT (group_id, user_id) DO NOTHING`,
-			userID, orgID,
-		)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to add user to everyone group")
-			return
-		}
-
-		if err := tx.Commit(ctx); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to commit")
-			return
-		}
-
-		token, err := s.jwt.IssueFull(userID, orgID, "admin", isPlatformAdmin)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to issue token")
-			return
-		}
-
-		s.audit.Log(ctx, audit.Entry{
-			OrgID: orgID, UserID: userID,
-			Action: "user.register", ResourceType: "user", ResourceID: userID,
-		})
-
-		resp := authResponse{}
-		resp.Token = token
-		resp.User.ID = userID
-		resp.User.Email = req.Email
-		resp.User.Name = req.Name
-		resp.Org.ID = orgID
-		resp.Org.Name = req.OrgName
-		resp.Org.Role = "admin"
-
-		writeJSON(w, http.StatusCreated, resp)
-		return
-	}
-
-	// New account-only flow: create user, no org yet
 	var userID string
 	err = s.db.Pool.QueryRow(ctx,
 		`INSERT INTO users (email, password_hash, name, email_verified, is_platform_admin)
@@ -196,74 +90,55 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check for domain-based auto-join
-	domain := emailDomain(req.Email)
-	var autoJoinOrgID, autoJoinRole string
-	err = s.db.Pool.QueryRow(ctx,
-		`SELECT org_id, 'viewer' FROM org_allowed_domains WHERE domain = $1 AND auto_join = true LIMIT 1`,
-		domain,
-	).Scan(&autoJoinOrgID, &autoJoinRole)
-	if err != nil && err != pgx.ErrNoRows {
-		writeError(w, http.StatusInternalServerError, "database error")
-		return
+	// Resolve target org: subdomain takes priority, then domain auto-join
+	targetOrgID := OrgIDFromContext(ctx)
+	if targetOrgID == "" {
+		domain := emailDomain(req.Email)
+		s.db.Pool.QueryRow(ctx,
+			`SELECT org_id FROM org_allowed_domains WHERE domain = $1 AND auto_join = true LIMIT 1`,
+			domain,
+		).Scan(&targetOrgID)
 	}
 
-	if autoJoinOrgID != "" {
-		autoJoinTx, txErr := s.db.Pool.Begin(ctx)
-		if txErr != nil {
-			// Log the error but fall through to issue an onboarding token instead
-			fmt.Printf("auto-join begin tx failed: %v\n", txErr)
-			autoJoinOrgID = ""
-		} else {
-			if _, execErr := autoJoinTx.Exec(ctx,
+	if targetOrgID != "" {
+		// Check if registration is enabled for this org
+		var regEnabled bool
+		s.db.Pool.QueryRow(ctx,
+			`SELECT registration_enabled FROM orgs WHERE id=$1`, targetOrgID,
+		).Scan(&regEnabled)
+		if !regEnabled {
+			writeError(w, http.StatusForbidden, "registration is disabled for this organization")
+			return
+		}
+
+		tx, txErr := s.db.Pool.Begin(ctx)
+		if txErr == nil {
+			if _, execErr := tx.Exec(ctx,
 				`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'viewer') ON CONFLICT DO NOTHING`,
-				autoJoinOrgID, userID,
-			); execErr != nil {
-				autoJoinTx.Rollback(ctx)
-				fmt.Printf("auto-join org_members insert failed: %v\n", execErr)
-				autoJoinOrgID = ""
+				targetOrgID, userID,
+			); execErr == nil {
+				var userName string
+				tx.QueryRow(ctx, `SELECT name FROM users WHERE id = $1`, userID).Scan(&userName)
+				createHomeFolder(ctx, tx, targetOrgID, userID, userName)
+				tx.Exec(ctx, `INSERT INTO groups (org_id, name) VALUES ($1, 'Everyone') ON CONFLICT DO NOTHING`, targetOrgID)
+				tx.Exec(ctx, `INSERT INTO group_members (group_id, user_id) SELECT g.id, $1 FROM groups g WHERE g.org_id = $2 AND g.name = 'Everyone' ON CONFLICT (group_id, user_id) DO NOTHING`, userID, targetOrgID)
+				tx.Commit(ctx)
 			} else {
-				var autoJoinUserName string
-				autoJoinTx.QueryRow(ctx, `SELECT name FROM users WHERE id = $1`, userID).Scan(&autoJoinUserName)
-				if hmErr := createHomeFolder(ctx, autoJoinTx, autoJoinOrgID, userID, autoJoinUserName); hmErr != nil {
-					autoJoinTx.Rollback(ctx)
-					fmt.Printf("auto-join createHomeFolder failed: %v\n", hmErr)
-					autoJoinOrgID = ""
-				} else if _, gErr := autoJoinTx.Exec(ctx,
-					`INSERT INTO groups (org_id, name) VALUES ($1, 'Everyone') ON CONFLICT DO NOTHING`,
-					autoJoinOrgID,
-				); gErr != nil {
-					autoJoinTx.Rollback(ctx)
-					fmt.Printf("auto-join Everyone group creation failed: %v\n", gErr)
-					autoJoinOrgID = ""
-				} else if _, gErr := autoJoinTx.Exec(ctx,
-					`INSERT INTO group_members (group_id, user_id)
-					 SELECT g.id, $1 FROM groups g WHERE g.org_id = $2 AND g.name = 'Everyone'
-					 ON CONFLICT (group_id, user_id) DO NOTHING`,
-					userID, autoJoinOrgID,
-				); gErr != nil {
-					autoJoinTx.Rollback(ctx)
-					fmt.Printf("auto-join group_members insert failed: %v\n", gErr)
-					autoJoinOrgID = ""
-				} else if commitErr := autoJoinTx.Commit(ctx); commitErr != nil {
-					fmt.Printf("auto-join commit failed: %v\n", commitErr)
-					autoJoinOrgID = ""
-				}
+				tx.Rollback(ctx)
 			}
 		}
-	}
 
-	if autoJoinOrgID != "" {
-		token, err := s.jwt.IssueFull(userID, autoJoinOrgID, "viewer", isPlatformAdmin)
-		if err != nil {
+		var orgName string
+		s.db.Pool.QueryRow(ctx, `SELECT name FROM orgs WHERE id = $1`, targetOrgID).Scan(&orgName)
+
+		token, tErr := s.jwt.IssueFull(userID, targetOrgID, "non-admin", isPlatformAdmin)
+		if tErr != nil {
 			writeError(w, http.StatusInternalServerError, "failed to issue token")
 			return
 		}
-		var orgName string
-		s.db.Pool.QueryRow(ctx, `SELECT name FROM orgs WHERE id = $1`, autoJoinOrgID).Scan(&orgName)
 
 		s.audit.Log(ctx, audit.Entry{
-			OrgID: autoJoinOrgID, UserID: userID,
+			OrgID: targetOrgID, UserID: userID,
 			Action: "user.register", ResourceType: "user", ResourceID: userID,
 		})
 
@@ -272,17 +147,17 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		resp.User.ID = userID
 		resp.User.Email = req.Email
 		resp.User.Name = req.Name
-		resp.Org.ID = autoJoinOrgID
+		resp.Org.ID = targetOrgID
 		resp.Org.Name = orgName
-		resp.Org.Role = "viewer"
-
+		resp.Org.Role = "non-admin"
 		writeJSON(w, http.StatusCreated, resp)
 		return
 	}
 
+	// No org to join — issue onboarding token
 	onboardingToken, err := s.jwt.IssueOnboarding(userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to issue token")
+		writeError(w, http.StatusInternalServerError, "failed to issue onboarding token")
 		return
 	}
 

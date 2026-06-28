@@ -1,0 +1,1 @@
+ALTER TABLE orgs ADD COLUMN IF NOT EXISTS invitations_enabled BOOLEAN NOT NULL DEFAULT true;

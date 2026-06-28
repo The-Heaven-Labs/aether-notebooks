@@ -1363,14 +1363,16 @@ export function NotebookPage() {
                       </button>
                     </>
                   )}
-                  <div style={styles.dropdownSeparator} />
-                  <button
-                    type="button"
-                    style={styles.dropdownItem}
-                    onClick={() => { setShowShare(true); setShareOpen(false) }}
-                  >
-                    <Globe size={13} style={{ marginRight: 6 }} /> Public link
-                  </button>
+                  <>
+                    <div style={styles.dropdownSeparator} />
+                    <button
+                      type="button"
+                      style={styles.dropdownItem}
+                      onClick={() => { setShowShare(true); setShareOpen(false) }}
+                    >
+                      <Globe size={13} style={{ marginRight: 6 }} /> Public link
+                    </button>
+                  </>
 
                 </div>
               </>
@@ -1604,6 +1606,7 @@ export function NotebookPage() {
       <ShareModal
         resourceType="notebook"
         resourceId={notebook.id}
+        canShare={notebook.can_share ?? false}
         onClose={() => setShowShare(false)}
       />
     )}
