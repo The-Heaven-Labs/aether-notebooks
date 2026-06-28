@@ -27,6 +27,11 @@ type Provider struct {
 	Enabled        bool
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+	Scopes         []string `json:"scopes"`
+	GroupsClaim    string   `json:"groups_claim"`
+	GroupPrefix    string   `json:"group_prefix"`
+	AutoSyncGroups bool     `json:"auto_sync_groups"`
+	GetUserInfo    bool     `json:"get_user_info"`
 }
 
 // encryptSecret encrypts the client secret and encodes it as hex for text storage.
@@ -58,7 +63,8 @@ func scanProvider(row pgx.Row) (Provider, string, error) {
 	err := row.Scan(
 		&p.ID, &p.Scope, &p.OrgID, &p.Name, &p.ProviderType,
 		&p.ClientID, &encSecret, &p.DiscoveryURL,
-		&p.AllowedDomains, &p.Enabled, &p.CreatedAt, &p.UpdatedAt,
+		&p.AllowedDomains, &p.Enabled, &p.Scopes, &p.GroupsClaim, &p.GroupPrefix, &p.AutoSyncGroups, &p.GetUserInfo,
+		&p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
 		return Provider{}, "", err
@@ -66,10 +72,13 @@ func scanProvider(row pgx.Row) (Provider, string, error) {
 	if p.AllowedDomains == nil {
 		p.AllowedDomains = []string{}
 	}
+	if p.Scopes == nil {
+		p.Scopes = []string{}
+	}
 	return p, encSecret, nil
 }
 
-const selectProviderCols = `id, scope, org_id, name, provider_type, client_id, client_secret_enc, discovery_url, allowed_domains, enabled, created_at, updated_at`
+const selectProviderCols = `id, scope, org_id, name, provider_type, client_id, client_secret_enc, discovery_url, allowed_domains, enabled, scopes, groups_claim, group_prefix, auto_sync_groups, get_user_info, created_at, updated_at`
 
 // CreateProvider inserts a new provider, encrypting the client_secret before storing.
 func CreateProvider(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, p Provider) (Provider, error) {
@@ -79,10 +88,11 @@ func CreateProvider(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, p
 	}
 
 	row := pool.QueryRow(ctx,
-		`INSERT INTO sso_providers (scope, org_id, name, provider_type, client_id, client_secret_enc, discovery_url, allowed_domains, enabled)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`INSERT INTO sso_providers (scope, org_id, name, provider_type, client_id, client_secret_enc, discovery_url, allowed_domains, enabled, scopes, groups_claim, group_prefix, auto_sync_groups, get_user_info)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		 RETURNING `+selectProviderCols,
 		p.Scope, p.OrgID, p.Name, p.ProviderType, p.ClientID, encSecret, p.DiscoveryURL, p.AllowedDomains, p.Enabled,
+		p.Scopes, p.GroupsClaim, p.GroupPrefix, p.AutoSyncGroups, p.GetUserInfo,
 	)
 
 	result, encFromDB, err := scanProvider(row)
@@ -182,12 +192,16 @@ func collectProviders(rows pgx.Rows, masterKey []byte) ([]Provider, error) {
 		if err := rows.Scan(
 			&p.ID, &p.Scope, &p.OrgID, &p.Name, &p.ProviderType,
 			&p.ClientID, &encSecret, &p.DiscoveryURL,
-			&p.AllowedDomains, &p.Enabled, &p.CreatedAt, &p.UpdatedAt,
+			&p.AllowedDomains, &p.Enabled, &p.Scopes, &p.GroupsClaim, &p.GroupPrefix, &p.AutoSyncGroups, &p.GetUserInfo,
+			&p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan provider: %w", err)
 		}
 		if p.AllowedDomains == nil {
 			p.AllowedDomains = []string{}
+		}
+		if p.Scopes == nil {
+			p.Scopes = []string{}
 		}
 		var err error
 		p.ClientSecret, err = decryptSecret(masterKey, encSecret)
@@ -214,10 +228,13 @@ func UpdateProvider(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, p
 
 	row := pool.QueryRow(ctx,
 		`UPDATE sso_providers
-		 SET name=$1, client_id=$2, client_secret_enc=$3, discovery_url=$4, allowed_domains=$5, enabled=$6, updated_at=now()
-		 WHERE id=$7
+		 SET name=$1, client_id=$2, client_secret_enc=$3, discovery_url=$4, allowed_domains=$5, enabled=$6,
+		     scopes=$7, groups_claim=$8, group_prefix=$9, auto_sync_groups=$10, get_user_info=$11,
+		     updated_at=now()
+		 WHERE id=$12
 		 RETURNING `+selectProviderCols,
-		p.Name, p.ClientID, encSecret, p.DiscoveryURL, p.AllowedDomains, p.Enabled, p.ID,
+		p.Name, p.ClientID, encSecret, p.DiscoveryURL, p.AllowedDomains, p.Enabled,
+		p.Scopes, p.GroupsClaim, p.GroupPrefix, p.AutoSyncGroups, p.GetUserInfo, p.ID,
 	)
 
 	result, encFromDB, err := scanProvider(row)
