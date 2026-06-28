@@ -383,7 +383,7 @@ func (s *Server) handleOrgTestSSOProvider(w http.ResponseWriter, r *http.Request
 		wellKnown = strings.TrimRight(wellKnown, "/") + "/.well-known/openid-configuration"
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := oidcHTTPClient(wellKnown)
 	resp, err := client.Get(wellKnown)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
