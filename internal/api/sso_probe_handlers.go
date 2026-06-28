@@ -63,3 +63,8 @@ func (s *Server) handleSSOProbe(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, providers)
 }
+
+// handleRegistrationStatus returns whether self-registration is disabled.
+func (s *Server) handleRegistrationStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]bool{"registration_disabled": s.disableRegistration})
+}
