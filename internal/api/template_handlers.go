@@ -121,7 +121,7 @@ func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
 // @Description Delete a notebook template
 // @Tags templates
 // @Param id path string true "Template ID"
-// @Success 200
+// @Success 204
 // @Failure 404 {object} map[string]string
 // @Security BearerAuth
 // @Router /templates/{id} [delete]

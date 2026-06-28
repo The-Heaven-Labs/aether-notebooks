@@ -1,6 +1,6 @@
 # Design: Split Tools and Skills into First-Class Resources
 
-**Status:** ✅ Design Approved — Awaiting Implementation  
+**Status**: ✅ Implemented
 **Author:** AI Assistant  
 **Date:** 2026-06-19  
 **Related Issue:** Agent resource architecture UX concerns

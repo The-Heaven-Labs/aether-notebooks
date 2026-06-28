@@ -355,7 +355,7 @@ func (s *Server) handleGetDashboardPermissions(w http.ResponseWriter, r *http.Re
 // @Description Delete a dashboard by ID
 // @Tags dashboards
 // @Param id path string true "Dashboard ID"
-// @Success 200
+// @Success 204
 // @Failure 404 {object} map[string]string
 // @Security BearerAuth
 // @Router /dashboards/{id} [delete]
@@ -536,7 +536,7 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 // @Tags dashboards
 // @Param id path string true "Dashboard ID"
 // @Param widget_id path string true "Widget ID"
-// @Success 200
+// @Success 204
 // @Failure 404 {object} map[string]string
 // @Security BearerAuth
 // @Router /dashboards/{id}/widgets/{widget_id} [delete]

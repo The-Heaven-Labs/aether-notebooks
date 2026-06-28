@@ -1,3 +1,4 @@
+// Package database provides PostgreSQL connection pool management and schema migrations.
 package database
 
 import (
@@ -7,10 +8,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// DB manages the PostgreSQL connection pool and schema migrations.
 type DB struct {
 	Pool *pgxpool.Pool
 }
 
+// Connect establishes a PostgreSQL connection pool using the provided URL.
 func Connect(ctx context.Context, dsn string) (*DB, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
@@ -23,6 +26,7 @@ func Connect(ctx context.Context, dsn string) (*DB, error) {
 	return &DB{Pool: pool}, nil
 }
 
+// Close closes the database connection pool.
 func (db *DB) Close() {
 	db.Pool.Close()
 }

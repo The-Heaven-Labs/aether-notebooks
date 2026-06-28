@@ -1,73 +1,61 @@
-# React + TypeScript + Vite
+# hnb Frontend — React + Vite + TypeScript
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This is the web frontend for hnb, a collaborative SQL/data notebook platform.
 
-Currently, two official plugins are available:
+## Development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```bash
+# Install dependencies
+cd web && npm install
 
-## React Compiler
+# Start dev server (port 5173, proxies /api to :8080)
+task dev:web
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+# Or directly:
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Tech Stack
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- React 18 + TypeScript
+- Vite (build tool)
+- @tanstack/react-query (data fetching)
+- CodeMirror 6 (SQL editor)
+- ECharts (charts)
+- react-grid-layout (dashboards)
+- Lucide React (icons)
+- Storybook (component development)
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Testing
+
+```bash
+npx vitest           # Run tests
+npx vitest --ui      # UI mode
+npx vitest --coverage # With coverage
 ```
+
+## Storybook
+
+```bash
+npm run storybook
+```
+
+## Environment
+
+- `VITE_RELAY_URL` — WebSocket URL for the Hocuspocus relay (default: `ws://localhost:3001`)
+
+## Project Structure
+
+```
+src/
+  components/    — Reusable UI components (Cell, OutputRenderer, Sidebar, etc.)
+  pages/         — Page-level components (HomePage, NotebookPage, etc.)
+  charts/        — ECharts chart type modules
+  hooks/         — Custom React hooks
+  lib/           — Utility functions
+  styles/        — CSS and theme files
+  types/         — TypeScript type definitions
+  test/          — Test setup and utilities
+```
+
+See `FRONTEND.md` for detailed visual component documentation.

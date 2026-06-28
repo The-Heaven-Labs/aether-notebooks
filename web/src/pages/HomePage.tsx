@@ -451,7 +451,7 @@ export function HomePage() {
   // Move modal
   const [moving, setMoving] = useState<MoveTarget | null>(null)
 
-  // Permissions (stub — Task 13 will wire this up)
+  // Permissions modal — wired up via permissionsTarget state
   const [permissionsTarget, setPermissionsTarget] = useState<PermissionsTarget | null>(null)
 
   // Bulk selection

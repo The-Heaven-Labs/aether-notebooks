@@ -156,7 +156,7 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 // @Description Delete a group
 // @Tags groups
 // @Param id path string true "Group ID"
-// @Success 200
+// @Success 204
 // @Failure 404 {object} map[string]string
 // @Security BearerAuth
 // @Router /groups/{id} [delete]
@@ -307,7 +307,7 @@ func (s *Server) handleAddGroupMember(w http.ResponseWriter, r *http.Request) {
 // @Tags groups
 // @Param id path string true "Group ID"
 // @Param user_id path string true "User ID"
-// @Success 200
+// @Success 204
 // @Failure 404 {object} map[string]string
 // @Security BearerAuth
 // @Router /groups/{id}/members/{user_id} [delete]

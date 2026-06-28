@@ -126,14 +126,15 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, conn)
 }
 
-// @Summary List connectors
-// @Description List all connectors for the current organization
+// @Summary Get connector
+// @Description Get a single connector by ID
 // @Tags connectors
 // @Produce json
-// @Success 200 {array} models.Connector
-// @Failure 401 {object} map[string]string
+// @Param id path string true "Connector ID"
+// @Success 200 {object} models.Connector
+// @Failure 404 {object} map[string]string
 // @Security BearerAuth
-// @Router /connectors [get]
+// @Router /connectors/{id} [get]
 func (s *Server) handleGetConnector(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	id := r.PathValue("id")
@@ -165,6 +166,14 @@ func (s *Server) handleGetConnector(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, c)
 }
 
+// @Summary List connectors
+// @Description List all connectors for the current organization
+// @Tags connectors
+// @Produce json
+// @Success 200 {array} models.Connector
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /connectors [get]
 func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -391,7 +400,7 @@ func (s *Server) handleSetDefaultConnector(w http.ResponseWriter, r *http.Reques
 // @Description Delete a database connector
 // @Tags connectors
 // @Param id path string true "Connector ID"
-// @Success 200
+// @Success 204
 // @Failure 404 {object} map[string]string
 // @Security BearerAuth
 // @Router /connectors/{id} [delete]

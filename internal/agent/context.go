@@ -1,3 +1,5 @@
+// Package agent implements the AI agent engine that processes chat sessions, executes tools,
+// and manages LLM interactions within notebooks.
 package agent
 
 import (

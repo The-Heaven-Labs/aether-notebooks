@@ -7,6 +7,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// Claims represents the JWT claims used by hnb for authentication.
 type Claims struct {
 	UserID          string `json:"uid"`
 	OrgID           string `json:"oid"`
@@ -15,15 +16,18 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+// JWTIssuer handles JWT token creation and validation.
 type JWTIssuer struct {
 	secret []byte
 	ttl    time.Duration
 }
 
+// NewJWTIssuer creates a new JWTIssuer with the given secret key.
 func NewJWTIssuer(secret string, ttl time.Duration) *JWTIssuer {
 	return &JWTIssuer{secret: []byte(secret), ttl: ttl}
 }
 
+// Issue creates a signed JWT token with the provided claims.
 func (j *JWTIssuer) Issue(userID, orgID, role string) (string, error) {
 	return j.IssueFull(userID, orgID, role, false)
 }

@@ -107,8 +107,11 @@ docker compose -f docker-compose.dev.yml up -d    # Keycloak starts automaticall
 
 | User | Password | Groups |
 |---|---|---|
-| `alice` / `alice@hnb-dev.test` | `alice123` | `hnb-analysts`, `hnb-engineering` |
-| `bob` / `bob@hnb-dev.test` | `bob123` | `hnb-analysts`, `all-employees` |
+| alice@hnb-dev.test | alice123 | hnb-analysts, all-employees |
+| bob@hnb-dev.test | bob123 | hnb-engineering |
+| charlie@hnb-dev.test | charlie123 | all-employees |
+| dave@hnb-dev.test | dave123 | hnb-engineering, all-employees |
+| eve@hnb-dev.test | eve123 | hnb-analysts |
 
 Login as `alice` — you'll be auto-added to `hnb-analysts` and `hnb-engineering`. The `all-employees` group is filtered by the `hnb-` prefix.
 
