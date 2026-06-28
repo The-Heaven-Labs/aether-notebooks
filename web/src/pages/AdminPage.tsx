@@ -79,7 +79,7 @@ function ProviderForm({
 
   const set = (field: keyof ProviderFormValues) =>
     (e: React.ChangeEvent<HTMLInputElement>) =>
-      setValues(v => ({ ...v, [field]: field === 'enabled' ? (e.target as HTMLInputElement).checked : e.target.value }))
+      setValues(v => ({ ...v, [field]: field === 'enabled' || field === 'auto_sync_groups' || field === 'get_user_info' ? (e.target as HTMLInputElement).checked : e.target.value }))
 
   return (
     <div style={formStyles.container}>
