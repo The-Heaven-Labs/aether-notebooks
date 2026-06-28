@@ -332,7 +332,8 @@ function renderOutputs(cell: Cell): { html: string; height: number } {
     } catch {}
   }
 
-  return { html: `<div class="cell-output">${renderTable(rs)}</div>`, height: 0 }
+  const dbg = `hasCC=${hasChartConfig} vm=${viewMode} ct=${chartConfig?.chartType} ya=${JSON.stringify((chartConfig as any)?.yAxis || [])}`
+  return { html: `<div class="cell-output" data-dbg="${escapeHtml(dbg)}">${renderTable(rs)}</div>`, height: 0 }
 }
 
 function renderCell(cell: Cell, index: number): string {
