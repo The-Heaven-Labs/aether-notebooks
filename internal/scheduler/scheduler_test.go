@@ -3,7 +3,7 @@ package scheduler_test
 import (
 	"testing"
 
-	"github.com/heavenlabs/hnb/internal/scheduler"
+	"github.com/the-heaven-labs/aether/internal/scheduler"
 )
 
 func TestNextRunTime(t *testing.T) {

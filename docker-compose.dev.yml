@@ -1,4 +1,4 @@
-name: hnb-dev
+name: aether-dev
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Development stack — a single `docker compose -f docker-compose.dev.yml up`
@@ -16,28 +16,28 @@ services:
 
   # ── Infrastructure ───────────────────────────────────────────────────────
 
-  hnb-postgres:
+  aether-postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: hnb
-      POSTGRES_PASSWORD: hnb_dev
-      POSTGRES_DB: hnb
+      POSTGRES_USER: aether
+      POSTGRES_PASSWORD: aether_dev
+      POSTGRES_DB: aether
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hnb -d hnb"]
+      test: ["CMD-SHELL", "pg_isready -U aether -d aether"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  hnb-redis:
+  aether-redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
 
-  hnb-clickhouse:
+  aether-clickhouse:
     image: clickhouse/clickhouse-server:24-alpine
     ports:
       - "9000:9000"   # native protocol (used by the Go connector)
@@ -65,7 +65,7 @@ services:
       timeout: 5s
       retries: 20
 
-  hnb-opensearch:
+  aether-opensearch:
     image: opensearchproject/opensearch:2.19.0
     environment:
       - discovery.type=single-node
@@ -90,7 +90,7 @@ services:
       - ./dev/cloudtrail-logs:/logs:ro
       - ./dev/scripts/load-cloudtrail.py:/app/load-cloudtrail.py:ro
     environment:
-      CLICKHOUSE_HOST: hnb-clickhouse
+      CLICKHOUSE_HOST: aether-clickhouse
       CLICKHOUSE_PORT: "8123"
       CLICKHOUSE_DB: analytics
       CLICKHOUSE_USER: dev
@@ -99,7 +99,7 @@ services:
       BATCH_SIZE: "5000"
       # MAX_FILES: "3"   # Uncomment to limit number of files processed
     depends_on:
-      hnb-clickhouse:
+      aether-clickhouse:
         condition: service_healthy
     entrypoint: ["python3", "/app/load-cloudtrail.py"]
     # Service exits after loading; use `docker compose up cloudtrail-loader`
@@ -108,7 +108,7 @@ services:
   opensearch-loader:
     image: alpine:3.20
     depends_on:
-      hnb-opensearch:
+      aether-opensearch:
         condition: service_healthy
     volumes:
       - ./dev/opensearch-seed.sh:/seed.sh:ro
@@ -140,14 +140,14 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      HNB_DATABASE_URL: postgres://hnb:hnb_dev@hnb-postgres:5432/hnb?sslmode=disable
-      HNB_REDIS_URL: redis://hnb-redis:6379
-      HNB_MASTER_KEY: dev-master-key-change-in-production
-      HNB_JWT_SECRET: dev-jwt-secret-change-in-production
-      HNB_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com
-      HNB_PUBLIC_URL: http://localhost:8080
-      HNB_FRONTEND_URL: http://localhost:5173
-      HNB_OIDC_HOST_REWRITE: localhost:5557=host.docker.internal:5557
+      AETHER_DATABASE_URL: postgres://aether:aether_dev@aether-postgres:5432/aether?sslmode=disable
+      AETHER_REDIS_URL: redis://aether-redis:6379
+      AETHER_MASTER_KEY: dev-master-key-change-in-production
+      AETHER_JWT_SECRET: dev-jwt-secret-change-in-production
+      AETHER_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com
+      AETHER_PUBLIC_URL: http://localhost:8080
+      AETHER_FRONTEND_URL: http://localhost:5173
+      AETHER_OIDC_HOST_REWRITE: localhost:5557=host.docker.internal:5557
     volumes:
       # Mount entire repo so Air can watch and rebuild on Go file changes.
       # Named volumes for the Go caches survive container restarts, making
@@ -165,9 +165,9 @@ services:
       retries: 20
       start_period: 60s
     depends_on:
-      hnb-postgres:
+      aether-postgres:
         condition: service_healthy
-      hnb-redis:
+      aether-redis:
         condition: service_started
 
   # ── Hocuspocus relay (TypeScript + tsx --watch) ───────────────────────────
@@ -179,8 +179,8 @@ services:
     ports:
       - "3001:3001"
     environment:
-      HNB_API_URL: http://api:8080
-      HNB_RELAY_PORT: "3001"
+      AETHER_API_URL: http://api:8080
+      AETHER_RELAY_PORT: "3001"
     volumes:
       # Mount the whole relay directory; keep node_modules in a named volume
       # so the container-built binaries aren't overwritten by the host.

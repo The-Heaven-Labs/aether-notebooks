@@ -1,14 +1,14 @@
 {
-  "realm": "hnb-dev",
+  "realm": "aether-dev",
   "enabled": true,
   "sslRequired": "none",
 
   "clients": [
     {
-      "clientId": "hnb-dev",
+      "clientId": "aether-dev",
       "enabled": true,
       "publicClient": false,
-      "secret": "hnb-dev-keycloak-secret",
+      "secret": "aether-dev-keycloak-secret",
       "redirectUris": [
         "http://localhost:8080/api/v1/auth/oidc/*"
       ],
@@ -33,12 +33,12 @@
 
   "groups": [
     {
-      "name": "hnb-analysts",
-      "path": "/hnb-analysts"
+      "name": "aether-analysts",
+      "path": "/aether-analysts"
     },
     {
-      "name": "hnb-engineering",
-      "path": "/hnb-engineering"
+      "name": "aether-engineering",
+      "path": "/aether-engineering"
     },
     {
       "name": "all-employees",
@@ -49,7 +49,7 @@
   "users": [
     {
       "username": "alice",
-      "email": "alice@hnb-dev.test",
+      "email": "alice@aether-dev.test",
       "firstName": "Alice",
       "lastName": "Test",
       "enabled": true,
@@ -61,13 +61,13 @@
         }
       ],
       "groups": [
-        "/hnb-analysts",
-        "/hnb-engineering"
+        "/aether-analysts",
+        "/aether-engineering"
       ]
     },
     {
       "username": "bob",
-      "email": "bob@hnb-dev.test",
+      "email": "bob@aether-dev.test",
       "firstName": "Bob",
       "lastName": "Test",
       "enabled": true,
@@ -79,7 +79,7 @@
         }
       ],
       "groups": [
-        "/hnb-analysts",
+        "/aether-analysts",
         "/all-employees"
       ]
     }

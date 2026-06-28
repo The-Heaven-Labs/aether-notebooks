@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Enable org-level subdomains (`org1.hnb.test` → Org 1) so a single platform SSO provider works across orgs and first-login provisioning routes correctly.
+**Goal:** Enable org-level subdomains (`org1.aether.test` → Org 1) so a single platform SSO provider works across orgs and first-login provisioning routes correctly.
 
 **Architecture:** A middleware resolves the org from the `Host` header subdomain before auth. SSO probe and OIDC callback use the resolved org to scope providers and provision new users into the correct org.
 
@@ -70,7 +70,7 @@ func SubdomainMiddleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
         return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
             host := strings.Split(r.Host, ":")[0]
             parts := strings.SplitN(host, ".", 2)
-            // Must have exactly two parts (e.g. "org1.hnb.test"),
+            // Must have exactly two parts (e.g. "org1.aether.test"),
             // second part must be non-empty, first must not be "www" or "localhost".
             if len(parts) == 2 && parts[1] != "" && parts[0] != "www" && parts[0] != "localhost" {
                 var orgID string
@@ -405,9 +405,9 @@ git commit -m "feat: route OIDC callback users to subdomain org instead of creat
 
 Update tests that exercise the OIDC callback to verify the subdomain org behavior. The existing tests for OIDC callback should still pass for the no-subdomain case. Add new test cases:
 
-- User visits `org1.hnb.test` with a new email → provisioned into Org 1
+- User visits `org1.aether.test` with a new email → provisioned into Org 1
 - User visits bare domain with a new email → new org created (existing behavior preserved)
-- Existing user visits `org1.hnb.test` with a token for Org 2 → re-issued token for Org 1 (if member)
+- Existing user visits `org1.aether.test` with a token for Org 2 → re-issued token for Org 1 (if member)
 
 The test server helper `setupTestServer` has `SubdomainMiddleware` wired — tests that don't set a specific Host header will hit the bare domain path (existing behavior preserved).
 
@@ -426,7 +426,7 @@ func TestOIDCCallbackWithSubdomain(t *testing.T) {
 
     // Simulate callback with subdomain Host header
     req := ts.Request("GET", "/api/v1/auth/oidc/"+provider.ID+"/callback?code=test&state=test", nil)
-    req.Host = org.Slug + ".hnb.test"
+    req.Host = org.Slug + ".aether.test"
 
     // ... exchange mock, verify user is in org
 }
@@ -458,8 +458,8 @@ Add to the dev setup section in `CLAUDE.md`:
 ```
 Add to /etc/hosts for local testing:
 
-127.0.0.1  hnb.test
-127.0.0.1  org1.hnb.test org2.hnb.test
+127.0.0.1  aether.test
+127.0.0.1  org1.aether.test org2.aether.test
 ```
 
 **Step 2: Test end-to-end**
@@ -467,8 +467,8 @@ Add to /etc/hosts for local testing:
 1. Start the dev stack: `docker compose -f docker-compose.dev.yml up -d`
 2. Create an org with slug `org1` (via API or UI)
 3. Enable the platform SSO provider for Org 1 (via API or UI)
-4. Visit `http://org1.hnb.test:5173` — login page should work
-5. Enter `alice@hnb-dev.test` — should see Keycloak SSO button
+4. Visit `http://org1.aether.test:5173` — login page should work
+5. Enter `alice@aether-dev.test` — should see Keycloak SSO button
 6. Log in via Keycloak — should be provisioned into Org 1
 
 **Step 3: Commit**

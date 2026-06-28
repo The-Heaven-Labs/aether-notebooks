@@ -13,7 +13,7 @@ import { Pagination } from '../components/Pagination'
 const PAGE_SIZE = 50
 
 export function AuditPage() {
-  useEffect(() => { document.title = "Audit — Heaven's Notebooks" }, [])
+  useEffect(() => { document.title = "Audit — Aether Notebooks" }, [])
   const [page, setPage] = useState(0)
   const [actionFilter, setActionFilter] = useState('')
   const [resourceTypeFilter, setResourceTypeFilter] = useState('')

@@ -39,7 +39,7 @@ export function PublicNotebookPage() {
     <div style={s.page}>
       <header style={s.header}>
         <div style={s.headerInner}>
-          <span style={s.brandMark}>hnb</span>
+          <span style={s.brandMark}>Aether</span>
           <h1 style={s.title}>{data.notebook.title}</h1>
           <span style={s.readOnlyBadge}>Read-only</span>
         </div>
@@ -89,7 +89,7 @@ export function PublicNotebookPage() {
         })}
       </main>
       <footer style={s.footer}>
-        <span style={s.footerText}>Powered by hnb</span>
+        <span style={s.footerText}>Powered by Aether</span>
       </footer>
     </div>
   )

@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/agent"
-	"github.com/heavenlabs/hnb/internal/audit"
-	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/the-heaven-labs/aether/internal/agent"
+	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/jackc/pgx/v5"
 	"github.com/pmezard/go-difflib/difflib"
 )

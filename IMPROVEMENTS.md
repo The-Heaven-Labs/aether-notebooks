@@ -90,3 +90,5 @@
 - [x] Remove legacy org_name registration flow (arbitrary org creation)
 - [x] Remove direct email invite endpoint (no email infrastructure)
 - [x] Rename viewer role to non-admin, remove unused editor/no_access roles
+- [ ] In the org creation modal after user registration, the create button do not capture the enter button
+- [ ]

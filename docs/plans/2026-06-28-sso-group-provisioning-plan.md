@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Auto-provision users into hnb groups based on OIDC claims (groups from ID token and/or UserInfo), with prefix filtering and full bidirectional sync on each login.
+**Goal:** Auto-provision users into Aether groups based on OIDC claims (groups from ID token and/or UserInfo), with prefix filtering and full bidirectional sync on each login.
 
 **Architecture:** Extend `sso_providers` table with group-sync config columns, add `sso_group_memberships` tracking table, extend `GenericOIDCProvider.Exchange` to optionally parse groups from ID token + UserInfo endpoint, and add reconciliation logic in the OIDC callback handler.
 
@@ -131,7 +131,7 @@ func TestCreateProviderWithGroupSettings(t *testing.T) {
         Enabled:        true,
         Scopes:         []string{"openid", "profile", "email", "groups"},
         GroupsClaim:    "custom_groups",
-        GroupPrefix:    "hnb-",
+        GroupPrefix:    "aether-",
         AutoSyncGroups: true,
         GetUserInfo:    true,
     }
@@ -415,8 +415,8 @@ import (
     "fmt"
     "strings"
 
-    "github.com/heavenlabs/hnb/internal/audit"
-    "github.com/heavenlabs/hnb/internal/sso"
+    "github.com/the-heaven-labs/aether/internal/audit"
+    "github.com/the-heaven-labs/aether/internal/sso"
     "github.com/jackc/pgx/v5"
     "github.com/jackc/pgx/v5/pgxpool"
 )
@@ -596,8 +596,8 @@ import (
     "context"
     "testing"
 
-    "github.com/heavenlabs/hnb/internal/audit"
-    "github.com/heavenlabs/hnb/internal/sso"
+    "github.com/the-heaven-labs/aether/internal/audit"
+    "github.com/the-heaven-labs/aether/internal/sso"
     "github.com/stretchr/testify/assert"
     "github.com/stretchr/testify/require"
 )
@@ -680,7 +680,7 @@ func TestSyncSSOGroupsPrefixFilter(t *testing.T) {
         AllowedDomains: []string{},
         Enabled:        true,
         AutoSyncGroups: true,
-        GroupPrefix:    "hnb-",
+        GroupPrefix:    "aether-",
     })
     require.NoError(t, err)
 
@@ -688,7 +688,7 @@ func TestSyncSSOGroupsPrefixFilter(t *testing.T) {
 
     // Mix of prefixed and non-prefixed groups
     syncSSOGroups(ctx, s.db.Pool, logger, provider, orgID, userID,
-        []string{"hnb-engineering", "hnb-analysts", "all-employees", "system-admins"})
+        []string{"aether-engineering", "aether-analysts", "all-employees", "system-admins"})
 
     var count int
     err = s.db.Pool.QueryRow(ctx,
@@ -698,7 +698,7 @@ func TestSyncSSOGroupsPrefixFilter(t *testing.T) {
         userID, orgID,
     ).Scan(&count)
     require.NoError(t, err)
-    assert.Equal(t, 2, count, "only hnb- prefixed groups should be synced")
+    assert.Equal(t, 2, count, "only aether- prefixed groups should be synced")
 }
 
 func TestSyncSSOGroupsPreservesManualMemberships(t *testing.T) {
@@ -1115,7 +1115,7 @@ Add after the "Enabled" checkbox (around line 111):
 </label>
 <label style={formStyles.label}>
   Group Prefix <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(only sync groups starting with this)</span>
-  <input style={formStyles.input} value={values.group_prefix} onChange={set('group_prefix')} placeholder="hnb-" />
+  <input style={formStyles.input} value={values.group_prefix} onChange={set('group_prefix')} placeholder="aether-" />
 </label>
 <label style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
   <input type="checkbox" checked={values.auto_sync_groups} onChange={set('auto_sync_groups')} />

@@ -134,7 +134,7 @@ function ProviderForm({
         </label>
         <label style={formStyles.label}>
           Group Prefix <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(only sync groups with this prefix)</span>
-          <input style={formStyles.input} value={values.group_prefix} onChange={set('group_prefix')} placeholder="hnb-" />
+          <input style={formStyles.input} value={values.group_prefix} onChange={set('group_prefix')} placeholder="aether-" />
         </label>
         <label style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <input type="checkbox" checked={values.auto_sync_groups} onChange={set('auto_sync_groups')} />
@@ -539,9 +539,9 @@ const ssoStyles: Record<string, React.CSSProperties> = {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export function AdminPage() {
-  useEffect(() => { document.title = "Platform Admin — Heaven's Notebooks" }, [])
+  useEffect(() => { document.title = "Platform Admin — Aether Notebooks" }, [])
   const [tab, setTab] = useState<'orgs' | 'users' | 'sso'>('orgs')
-  const isPlatformAdmin = localStorage.getItem('hnb_is_platform_admin') === 'true'
+  const isPlatformAdmin = localStorage.getItem('aether_is_platform_admin') === 'true'
   const [orgs, setOrgs] = useState<Org[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
@@ -555,7 +555,7 @@ export function AdminPage() {
     setCreatingOrg(true)
     setCreateOrgError(null)
     try {
-      const token = localStorage.getItem('hnb_token')
+      const token = localStorage.getItem('aether_token')
       const res = await fetch('/api/v1/admin/orgs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -565,7 +565,7 @@ export function AdminPage() {
         const err = await res.json()
         throw new Error(err.error || 'Failed to create org')
       }
-      const token2 = localStorage.getItem('hnb_token')
+      const token2 = localStorage.getItem('aether_token')
       const headers2: Record<string, string> = token2 ? { Authorization: `Bearer ${token2}` } : {}
       const d = await (await fetch('/api/v1/admin/orgs', { headers: headers2 })).json()
       setOrgs(d.orgs ?? [])
@@ -591,7 +591,7 @@ export function AdminPage() {
   })
 
   useEffect(() => {
-    const token = localStorage.getItem('hnb_token')
+    const token = localStorage.getItem('aether_token')
     const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
     fetch('/api/v1/admin/orgs', { headers }).then(r => r.json()).then(d => setOrgs(d.orgs ?? []))
     fetch('/api/v1/admin/users', { headers }).then(r => r.json()).then(d => setUsers(d.users ?? []))

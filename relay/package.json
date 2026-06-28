@@ -1,7 +1,7 @@
 {
-  "name": "hnb-relay",
+  "name": "aether-relay",
   "version": "1.0.0",
-  "description": "Hocuspocus Yjs relay for Heaven's Notebooks",
+  "description": "Hocuspocus Yjs relay for Aether Notebooks",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

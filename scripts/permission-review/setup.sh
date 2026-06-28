@@ -123,7 +123,7 @@ log "Dashboard: $DASHBOARD_ID"
 CONN_RESP=$(curl -s -X POST "$API/connectors" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"Permission Test Connector","type":"postgres","config":{"host":"hnb-postgres","port":5432,"user":"hnb","password":"hnb_dev","database":"hnb"}}')
+  -d '{"name":"Permission Test Connector","type":"postgres","config":{"host":"aether-postgres","port":5432,"user":"aether","password":"aether_dev","database":"aether"}}')
 CONNECTOR_ID=$(echo "$CONN_RESP" | json_field "['id']")
 [ -z "$CONNECTOR_ID" ] && fail "Connector creation failed: $CONN_RESP"
 log "Connector: $CONNECTOR_ID"

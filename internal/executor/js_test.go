@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/executor"
+	"github.com/the-heaven-labs/aether/internal/executor"
 )
 
 func denoAvailable() bool {

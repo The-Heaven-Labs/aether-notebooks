@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/crypto"
 )
 
 type LLMClient struct {

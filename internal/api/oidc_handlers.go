@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/heavenlabs/hnb/internal/audit"
-	"github.com/heavenlabs/hnb/internal/auth"
-	"github.com/heavenlabs/hnb/internal/sso"
+	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/auth"
+	"github.com/the-heaven-labs/aether/internal/sso"
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 )
@@ -71,7 +71,7 @@ func issuerURL(raw string) string {
 }
 
 // callbackURL builds the absolute callback URL for the given provider ID.
-// If HNB_PUBLIC_URL is set it takes precedence; otherwise it is inferred from the request.
+// If AETHER_PUBLIC_URL is set it takes precedence; otherwise it is inferred from the request.
 func (s *Server) callbackURL(r *http.Request, providerID string) string {
 	base := s.publicURL
 	if base == "" {

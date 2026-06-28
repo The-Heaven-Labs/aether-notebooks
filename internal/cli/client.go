@@ -22,7 +22,7 @@ type Credentials struct {
 
 func credentialsPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".hnb", "credentials.json")
+	return filepath.Join(home, ".aether", "credentials.json")
 }
 
 func SaveCredentials(token, apiURL string) error {
@@ -41,7 +41,7 @@ func RemoveCredentials() {
 func LoadClient() (*Client, error) {
 	data, err := os.ReadFile(credentialsPath())
 	if err != nil {
-		return nil, fmt.Errorf("not logged in — run 'hnb login'")
+		return nil, fmt.Errorf("not logged in — run 'aether login'")
 	}
 	var creds Credentials
 	json.Unmarshal(data, &creds)

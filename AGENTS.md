@@ -6,7 +6,7 @@
 
 ```
 cmd/aether-server      → Go API server (port 8080)
-cmd/aether          → CLI client
+cmd/aether             → CLI client
 internal/
   api/              → HTTP handlers + router (net/http ServeMux, no framework)
   auth/             → JWT issuer + OIDC providers
@@ -101,7 +101,7 @@ task db:reset          # Drop + recreate dev DB (data loss!)
 ## Environment Variables
 
 | Variable | Required | Default | Notes |
-|---|---|---|---|
+|---|---|---|---|---|
 | `AETHER_MASTER_KEY` | **yes** | — | AES key for encrypting connector credentials |
 | `AETHER_JWT_SECRET` | **yes** | — | JWT signing secret |
 | `AETHER_DATABASE_URL` | no | `postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable` | |

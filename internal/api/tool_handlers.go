@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -263,7 +263,7 @@ func (h *toolHandlers) handleTest(w http.ResponseWriter, r *http.Request) {
 				headers[k] = fmt.Sprintf("%v", v)
 			}
 		}
-		body := map[string]string{"test": "hnb-tool-probe"}
+		body := map[string]string{"test": "aether-tool-probe"}
 		bodyBytes, _ := json.Marshal(body)
 		req, _ := http.NewRequest(method, url, bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
@@ -322,7 +322,7 @@ func (h *toolHandlers) handleDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusNoContent, nil)
 }
 
-const redactedSentinel = "__HNB_REDACTED__"
+const redactedSentinel = "__AETHER_REDACTED__"
 
 func redactToolConfig(t *models.Tool) {
 	if t.Type != "webhook" {

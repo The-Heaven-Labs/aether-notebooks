@@ -7,7 +7,7 @@ extracts individual records, flattens nested fields, and inserts
 them into the analytics.cloudtrail_events table via ClickHouse HTTP API.
 
 Environment:
-    CLICKHOUSE_HOST     ClickHouse HTTP host (default: hnb-clickhouse)
+    CLICKHOUSE_HOST     ClickHouse HTTP host (default: aether-clickhouse)
     CLICKHOUSE_PORT     ClickHouse HTTP port (default: 8123)
     CLICKHOUSE_DB       Database name (default: analytics)
     CLICKHOUSE_USER     Username (default: dev)
@@ -119,7 +119,7 @@ def wait_for_clickhouse(host: str, port: str, user: str, password: str, max_retr
 
 
 def main():
-    ch_host = get_env("CLICKHOUSE_HOST", "hnb-clickhouse")
+    ch_host = get_env("CLICKHOUSE_HOST", "aether-clickhouse")
     ch_port = get_env("CLICKHOUSE_PORT", "8123")
     ch_db = get_env("CLICKHOUSE_DB", "analytics")
     ch_user = get_env("CLICKHOUSE_USER", "dev")

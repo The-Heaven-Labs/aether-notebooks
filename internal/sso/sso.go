@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"

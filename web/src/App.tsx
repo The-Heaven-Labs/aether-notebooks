@@ -37,7 +37,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth()
   const location = useLocation()
   if (!isAuthenticated) {
-    sessionStorage.setItem('hnb_redirect_after_login', location.pathname + location.search)
+    sessionStorage.setItem('aether_redirect_after_login', location.pathname + location.search)
     return <Navigate to="/login" replace />
   }
   return <>{children}</>
