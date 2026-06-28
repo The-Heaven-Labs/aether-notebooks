@@ -278,6 +278,36 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Existing user logging in with a subdomain org that differs from their
+	// primary org — auto-join them if they're not already a member.
+	if subdomainOrgID != "" && subdomainOrgID != orgID {
+		var isMember bool
+		s.db.Pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2)`,
+			subdomainOrgID, userID,
+		).Scan(&isMember)
+		if !isMember {
+			tx, txErr := s.db.Pool.Begin(ctx)
+			if txErr == nil {
+				_, txErr = tx.Exec(ctx,
+					`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'viewer')`,
+					subdomainOrgID, userID,
+				)
+				if txErr == nil {
+					txErr = createHomeFolder(ctx, tx, subdomainOrgID, userID, "")
+				}
+				if txErr != nil {
+					tx.Rollback(ctx)
+				} else {
+					tx.Commit(ctx)
+				}
+			}
+		}
+		// Switch to the subdomain org for this session
+		orgID = subdomainOrgID
+		role = "viewer"
+	}
+
 	// Reconcile group membership via SSO
 	if dbProvider.AutoSyncGroups && len(claims.Groups) > 0 {
 		SyncSSOGroups(ctx, s.db.Pool, s.audit, dbProvider, orgID, userID, claims.Groups)
