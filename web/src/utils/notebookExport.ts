@@ -1,18 +1,4 @@
 import type { Cell, Notebook, ResultSet, ChartConfig } from '../types'
-import * as echarts from 'echarts/core'
-import { BarChart, LineChart, ScatterChart, PieChart, TreeChart, MapChart, SankeyChart } from 'echarts/charts'
-import {
-  GridComponent, TooltipComponent, LegendComponent, TitleComponent,
-  DataZoomComponent, GeoComponent,
-} from 'echarts/components'
-import { SVGRenderer } from 'echarts/renderers'
-
-echarts.use([
-  BarChart, LineChart, ScatterChart, PieChart, TreeChart, MapChart, SankeyChart,
-  GridComponent, TooltipComponent, LegendComponent, TitleComponent,
-  DataZoomComponent, GeoComponent,
-  SVGRenderer,
-])
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -265,9 +251,12 @@ function buildOption(data: ResultSet, config: ChartConfig): any {
         xAxis: { type: 'time' as const, ...axisSt(config.showGrid, c) },
         yAxis: sg ? { type: 'value' as const, show: false, min: 0, max: 1 } : { type: 'category' as const, data: grps, inverse: true, ...axisSt(config.showGrid, c) },
         series: grps.map((g, gi) => ({
-          name: g, type: 'scatter' as const, symbolSize: 14, itemStyle: { color: config.seriesColors?.[g] ?? CHART_COLORS[gi % CHART_COLORS.length] },
-          data: cd.filter(d => gbC ? String(d[gbC] ?? 'Unknown') === g : true).map(d => { const st = new Date(String(d[tiC])).getTime(); const et = new Date(String(d[etC])).getTime(); return [st, sg ? 0.2 : gi, et] }),
-          encode: { x: [0, 2], y: 1 },
+          name: g, type: 'custom' as const,
+          renderItem: (params: any, api: any) => {
+            const st = api.value(0); const et = api.value(1); const s = api.coord([st, gi]); const e = api.coord([et, gi]); const bh = api.size([0, 1])[1] * 0.6
+            return { type: 'rect', shape: { x: s[0], y: s[1] - bh / 2, width: e[0] - s[0], height: bh }, style: { fill: config.seriesColors?.[g] ?? CHART_COLORS[gi % CHART_COLORS.length], opacity: 0.85 } }
+          },
+          data: cd.filter(d => gbC ? String(d[gbC] ?? 'Unknown') === g : true).map(d => [new Date(String(d[tiC])).getTime(), new Date(String(d[etC])).getTime(), g]),
         })),
       }
     }
@@ -290,23 +279,6 @@ function buildOption(data: ResultSet, config: ChartConfig): any {
   }
 
   return {}
-}
-
-function renderChartSVG(data: ResultSet, config: ChartConfig): string {
-  try {
-    const option = buildOption(data, config)
-    if (!option || Object.keys(option).length === 0) return ''
-    const div = document.createElement('div')
-    div.style.cssText = 'width:600px;height:300px;position:absolute;top:-9999px;left:-9999px'
-    document.body.appendChild(div)
-    const chart = echarts.init(div, undefined, { renderer: 'svg' })
-    chart.resize({ width: 600, height: 300 })
-    chart.setOption({ ...option, backgroundColor: 'transparent' }, { notMerge: true })
-    const dataUrl = chart.getDataURL({ type: 'svg', backgroundColor: 'transparent' })
-    chart.dispose()
-    document.body.removeChild(div)
-    return dataUrl || ''
-  } catch { return '' }
 }
 
 function renderTable(rs: ResultSet): string {
@@ -351,10 +323,13 @@ function renderOutputs(cell: Cell): { html: string; height: number } {
       const value = colIdx >= 0 && rs.rows[0] ? rs.rows[0][colIdx] : null
       return { html: `<div class="cell-output big-number"><div class="big-number-body">${chartConfig!.label ? `<div class="big-number-label">${escapeHtml(chartConfig!.label)}</div>` : ''}<div class="big-number-value">${chartConfig!.prefix ? `<span class="big-number-prefix">${escapeHtml(chartConfig!.prefix)}</span>` : ''}${formatNumber(value, chartConfig!.decimalPlaces)}${chartConfig!.suffix ? `<span class="big-number-suffix">${escapeHtml(chartConfig!.suffix)}</span>` : ''}</div></div></div>`, height: 0 }
     }
-    const svgUrl = renderChartSVG(rs, chartConfig!)
-    if (svgUrl) {
-      return { html: `<div class="cell-output chart" style="text-align:center;padding:8px;background:var(--bg-card)"><img src="${svgUrl}" alt="Chart" style="max-width:100%;height:auto;display:inline-block" /></div>`, height: 300 }
-    }
+    try {
+      const option = buildOption(rs, chartConfig!)
+      if (option && Object.keys(option).length > 0) {
+        const optJson = JSON.stringify(option)
+        return { html: `<div class="cell-output chart"><div class="chart-wrap" id="cht-${cell.id}" style="width:100%;height:300px;min-height:300px"></div><script type="application/json" data-chart-for="cht-${cell.id}">${optJson}<\/script></div>`, height: 300 }
+      }
+    } catch {}
   }
 
   return { html: `<div class="cell-output">${renderTable(rs)}</div>`, height: 0 }
@@ -458,6 +433,25 @@ body { font-family:var(--font-sans);background:var(--bg-primary);color:var(--tex
 .big-number-value{font-size:56px;font-weight:700;color:var(--text-primary);line-height:1.1;letter-spacing:-1.5px;text-align:center;word-break:break-word}
 .big-number-prefix{font-size:28px;font-weight:400;color:var(--text-muted);margin-right:4px}
 .big-number-suffix{font-size:28px;font-weight:400;color:var(--text-muted);margin-left:4px}
+.chart-wrap{width:100%;height:300px;min-height:300px}
+`
+
+const CHART_INIT_SCRIPT = `
+(function(){
+if (typeof echarts === 'undefined') return;
+document.querySelectorAll('script[data-chart-for]').forEach(function(script) {
+  try {
+    var id = script.getAttribute('data-chart-for');
+    var el = document.getElementById(id);
+    if (!el) return;
+    var opt = JSON.parse(script.textContent || '');
+    var chart = echarts.init(el);
+    var theme = document.documentElement.getAttribute('data-theme');
+    chart.setOption(opt, { notMerge: true });
+    window.addEventListener('resize', function() { chart.resize(); });
+  } catch(e) { console.error('Chart:', e); }
+});
+})();
 `
 
 function generateHTML(notebook: NotebookWithCells): string {
@@ -484,7 +478,9 @@ ${notebook.description ? `<p class="description">${escapeHtml(notebook.descripti
 ${cellsHtml}
 </div>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"><\/script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>
+<script>${CHART_INIT_SCRIPT}<\/script>
 <script>
 document.querySelectorAll('.markdown-body script[type="text/plain"]').forEach(function(el) {
   try { el.parentElement.innerHTML = marked.parse(el.textContent || '') } catch(e) { console.error(e) }
