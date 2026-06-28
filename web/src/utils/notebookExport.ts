@@ -60,6 +60,27 @@ function colIdx(columns: { name: string }[], name: string): number {
   return idx >= 0 ? idx : 0
 }
 
+const NUMERIC_TYPES = new Set([
+  'int', 'int2', 'int4', 'int8', 'bigint', 'smallint', 'serial', 'bigserial',
+  'float', 'float4', 'float8', 'double', 'decimal', 'numeric', 'real',
+  'int16', 'int32', 'int64', 'int128', 'int256',
+  'uint8', 'uint16', 'uint32', 'uint64', 'uint128', 'uint256',
+  'float32', 'float64',
+])
+
+function isNumericType(type?: string): boolean {
+  if (!type) return false
+  const base = type.toLowerCase().replace(/\(.*\)/, '').trim()
+  if (NUMERIC_TYPES.has(base)) return true
+  for (const wrapper of ['nullable', 'lowcardinality']) {
+    if (type.toLowerCase().startsWith(wrapper + '(') && type.endsWith(')')) {
+      const inner = type.slice(wrapper.length + 1, -1).trim().replace(/\(.*\)/, '').trim()
+      if (NUMERIC_TYPES.has(inner)) return true
+    }
+  }
+  return false
+}
+
 function themeColors() {
   const dark = document.documentElement.getAttribute('data-theme') === 'dark'
   return {
@@ -88,7 +109,7 @@ function buildOption(data: ResultSet, config: ChartConfig): any {
     const isSt = t === 'stacked_bar' || t === 'stacked_area'
     const isBa = t === 'bar' || isSt
     const xKey = config.xAxis ?? cols[0]?.name ?? ''
-    const yKeys = config.yAxis?.length ? config.yAxis : cols.slice(1, 2).map(c => c.name)
+    const yKeys = config.yAxis?.length ? config.yAxis : cols.filter(c => isNumericType(c.type)).map(c => c.name)
     const gb = config.groupBy
     const xI = colIdx(cols, xKey)
     const gbI = gb ? colIdx(cols, gb) : -1
