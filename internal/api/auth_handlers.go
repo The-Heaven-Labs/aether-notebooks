@@ -55,6 +55,11 @@ type authResponse struct {
 // @Failure 409 {object} map[string]string
 // @Router /auth/register [post]
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if s.disableRegistration {
+		writeError(w, http.StatusForbidden, "registration is disabled — contact your administrator")
+		return
+	}
+
 	var req registerRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")

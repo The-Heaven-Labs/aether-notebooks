@@ -143,6 +143,7 @@ func main() {
 	srv.SetMaxAttachmentBytes(cfg.MaxAttachmentBytes)
 	srv.SetToolAllowedDomains(cfg.ToolAllowedDomains)
 	srv.SetOIDCHostRewrite(cfg.OIDCHostRewrite)
+	srv.SetDisableRegistration(cfg.DisableRegistration)
 	httpSrv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      srv,
