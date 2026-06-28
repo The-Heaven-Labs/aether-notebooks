@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/heavenlabs/hnb/internal/auth"
@@ -69,7 +70,11 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, provider.AuthURL(state), http.StatusFound)
+	// In Docker dev environments, the redirect URL may contain internal hostnames
+	// (e.g. host.docker.internal) that the browser can't resolve. Rewrite to localhost.
+	authURL := provider.AuthURL(state)
+	authURL = strings.Replace(authURL, "host.docker.internal", "localhost", 1)
+	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
 func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
