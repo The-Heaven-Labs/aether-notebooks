@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { Folder, FolderContents } from '../types'
+import type { Cell, Folder, FolderContents } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
@@ -51,13 +51,14 @@ interface ContextMenuProps {
   onPermissions: (t: PermissionsTarget) => void
   onDelete: (type: ResourceType, id: string, name: string) => void
   onEdit: (type: ResourceType, id: string) => void
+  onDuplicate: (type: ResourceType, id: string, name: string) => void
   onClose: () => void
   canEdit?: boolean
   canDelete?: boolean
   canShare?: boolean
 }
 
-function ContextMenu({ target, onRename, onMove, onPermissions, onDelete, onEdit, onClose, canEdit, canDelete: canDeletePerm, canShare }: ContextMenuProps) {
+function ContextMenu({ target, onRename, onMove, onPermissions, onDelete, onEdit, onDuplicate, onClose, canEdit, canDelete: canDeletePerm, canShare }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
   const showRename = target.type === 'folder' || target.type === 'notebook'
   const showDelete = target.type === 'folder' || target.type === 'notebook'
@@ -96,6 +97,12 @@ function ContextMenu({ target, onRename, onMove, onPermissions, onDelete, onEdit
         onMove({ type: target.type, id: target.id, name: target.name })
         onClose()
       }}>Move to…</button>
+      {target.type === 'notebook' && (
+        <button style={ms.item} onClick={() => {
+          onDuplicate(target.type, target.id, target.name)
+          onClose()
+        }}>Duplicate</button>
+      )}
       {target.type === 'connector' ? (
         <>
           <button style={canEdit === false ? { ...ms.item, ...disabledStyle } : ms.item} disabled={canEdit === false} onClick={() => {
@@ -584,6 +591,19 @@ export function HomePage() {
     onError: (e: Error) => setError(e.message),
   })
 
+  const duplicateNotebook = useMutation({
+    mutationFn: ({ id, title, folderID }: { id: string; title?: string; folderID?: string }) =>
+      api.post<{ notebook: Notebook; cells: Cell[] }>(`/api/v1/notebooks/${id}/clone`, { title, folder_id: folderID }),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['folder-contents'] })
+      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
+      qc.invalidateQueries({ queryKey: ['folder-home'] })
+      if (folderID) sessionStorage.setItem('hnb_last_folder', folderID)
+      navigate(`/notebooks/${result.notebook.id}`)
+    },
+    onError: (e: Error) => setError(e.message),
+  })
+
   const moveItem = useMutation({
     mutationFn: ({ type, id, destFolderID }: { type: ResourceType; id: string; destFolderID: string | null }) => {
       if (type === 'folder') {
@@ -687,6 +707,10 @@ export function HomePage() {
 
   function handleEdit(type: ResourceType, id: string) {
     if (type === 'connector') navigate(`/connectors?edit=${id}`)
+  }
+
+  function handleDuplicate(type: ResourceType, id: string, _name: string) {
+    duplicateNotebook.mutate({ id, folderID: folderID ?? undefined })
   }
 
   // ── Bulk selection helpers ──
@@ -1054,6 +1078,7 @@ export function HomePage() {
                             onPermissions={handlePermissions}
                             onDelete={handleDelete}
                             onEdit={handleEdit}
+                            onDuplicate={handleDuplicate}
                             onClose={() => setOpenMenu(null)}
                             canEdit={f.can_edit}
                             canDelete={f.can_delete}
@@ -1118,6 +1143,7 @@ export function HomePage() {
                               onPermissions={handlePermissions}
                               onDelete={handleDelete}
                               onEdit={handleEdit}
+                              onDuplicate={handleDuplicate}
                               onClose={() => setOpenMenu(null)}
                               canEdit={nb.can_edit}
                               canDelete={nb.can_delete}
@@ -1176,6 +1202,7 @@ export function HomePage() {
                               onPermissions={handlePermissions}
                               onDelete={handleDelete}
                               onEdit={handleEdit}
+                              onDuplicate={handleDuplicate}
                               onClose={() => setOpenMenu(null)}
                               canEdit={c.can_edit}
                               canDelete={c.can_delete}
@@ -1232,6 +1259,7 @@ export function HomePage() {
                               onDelete={handleDelete}
                               onEdit={handleEdit}
                               onClose={() => setOpenMenu(null)}
+                              onDuplicate={handleDuplicate}
                               canEdit={d.can_edit}
                               canDelete={d.can_delete}
                               canShare={d.can_share}

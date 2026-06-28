@@ -14,20 +14,27 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+type createCellInput struct {
+	Type     string `json:"type"`
+	Language string `json:"language,omitempty"`
+	Source   string `json:"source"`
+}
+
 type createNotebookRequest struct {
 	Title       string             `json:"title"`
 	Description string             `json:"description"`
 	Parameters  []models.Parameter `json:"parameters"`
 	FolderID    *string            `json:"folder_id,omitempty"`
+	Cells       []createCellInput  `json:"cells,omitempty"`
 }
 
 // @Summary Create a notebook
-// @Description Create a new notebook
+// @Description Create a new notebook. Optionally include cells to populate the notebook with content in one request.
 // @Tags notebooks
 // @Accept json
 // @Produce json
-// @Param request body object true "Notebook details"
-// @Success 201 {object} models.Notebook
+// @Param request body object true "Notebook details (title required; cells optional with type, language, source)"
+// @Success 201 {object} object
 // @Failure 400 {object} map[string]string
 // @Security BearerAuth
 // @Router /notebooks [post]
@@ -81,12 +88,66 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var createdCells []models.Cell
+	for i, cell := range req.Cells {
+		if cell.Type != "code" && cell.Type != "text" {
+			continue
+		}
+		lang := cell.Language
+		if lang == "" {
+			if cell.Type == "text" {
+				lang = "markdown"
+			} else {
+				lang = "sql"
+			}
+		}
+
+		inserted := models.Cell{}
+		var cellLang, cellConnID *string
+		var cellOutputs, cellParams []byte
+		err := s.db.Pool.QueryRow(ctx,
+			`INSERT INTO cells (notebook_id, position, type, language, source, outputs)
+			 VALUES ($1, $2, $3, $4, $5, '[]')
+			 RETURNING id, notebook_id, position, type, language, connector_id, source, outputs,
+			           source_visible, outputs_hidden, cell_collapsed, slide_break, parameters,
+			           COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), "limit",
+			           COALESCE(metadata, '{}'), created_at, updated_at`,
+			nb.ID, i, cell.Type, lang, cell.Source,
+		).Scan(&inserted.ID, &inserted.NotebookID, &inserted.Position, &inserted.Type,
+			&cellLang, &cellConnID, &inserted.Source, &cellOutputs,
+			&inserted.SourceVisible, &inserted.OutputsHidden, &inserted.CellCollapsed, &inserted.SlideBreak, &cellParams,
+			&inserted.Title, &inserted.Description, &inserted.Slug, &inserted.Limit,
+			&inserted.Metadata, &inserted.CreatedAt, &inserted.UpdatedAt)
+		if err != nil {
+			continue
+		}
+		if cellLang != nil {
+			inserted.Language = *cellLang
+		}
+		json.Unmarshal(cellOutputs, &inserted.Outputs)
+		json.Unmarshal(cellParams, &inserted.Parameters)
+		if inserted.Outputs == nil {
+			inserted.Outputs = []models.Output{}
+		}
+		createdCells = append(createdCells, inserted)
+	}
+	if createdCells == nil {
+		createdCells = []models.Cell{}
+	}
+
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "notebook.create", ResourceType: "notebook", ResourceID: nb.ID,
 	})
 
-	writeJSON(w, http.StatusCreated, nb)
+	if len(req.Cells) > 0 {
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"notebook": nb,
+			"cells":    createdCells,
+		})
+	} else {
+		writeJSON(w, http.StatusCreated, nb)
+	}
 }
 
 // @Summary List notebooks
@@ -733,4 +794,172 @@ func (s *Server) handleImportNotebook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]string{"id": notebookID, "title": title})
+}
+
+type cloneNotebookRequest struct {
+	Title    *string `json:"title,omitempty"`
+	FolderID *string `json:"folder_id,omitempty"`
+}
+
+// @Summary Clone a notebook
+// @Description Create a copy of a notebook with all its cells (without outputs)
+// @Tags notebooks
+// @Accept json
+// @Produce json
+// @Param id path string true "Source notebook ID"
+// @Param request body object false "Optional new title and folder"
+// @Success 201 {object} map[string]any
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{id}/clone [post]
+func (s *Server) handleCloneNotebook(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	sourceID := r.PathValue("id")
+	ctx := r.Context()
+
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", sourceID, "view")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
+	var req cloneNotebookRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	var srcTitle, srcDesc string
+	var srcParams []byte
+	var srcConnID *string
+	var srcFolderID *string
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT title, COALESCE(description,''), parameters, connector_id, folder_id
+		 FROM notebooks WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
+		sourceID, claims.OrgID,
+	).Scan(&srcTitle, &srcDesc, &srcParams, &srcConnID, &srcFolderID)
+	if err == pgx.ErrNoRows {
+		writeError(w, http.StatusNotFound, "notebook not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	newTitle := srcTitle + " (copy)"
+	if req.Title != nil && *req.Title != "" {
+		newTitle = *req.Title
+	}
+	newFolderID := srcFolderID
+	if req.FolderID != nil {
+		newFolderID = req.FolderID
+	}
+
+	var newNB models.Notebook
+	var paramsOut []byte
+	var retFolderID *string
+	err = s.db.Pool.QueryRow(ctx,
+		`INSERT INTO notebooks (org_id, title, description, parameters, created_by, connector_id, folder_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 RETURNING id, org_id, title, COALESCE(description,''), parameters, created_by, created_at, updated_at, folder_id`,
+		claims.OrgID, newTitle, srcDesc, srcParams, claims.UserID, srcConnID, newFolderID,
+	).Scan(&newNB.ID, &newNB.OrgID, &newNB.Title, &newNB.Description, &paramsOut, &newNB.CreatedBy, &newNB.CreatedAt, &newNB.UpdatedAt, &retFolderID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create notebook")
+		return
+	}
+	json.Unmarshal(paramsOut, &newNB.Parameters)
+	newNB.FolderID = retFolderID
+	if srcConnID != nil {
+		newNB.ConnectorID = *srcConnID
+	}
+
+	cellRows, err := s.db.Pool.Query(ctx,
+		`SELECT type, language, connector_id, source, source_visible, outputs_hidden,
+		        cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''),
+		        "limit", COALESCE(metadata, '{}')
+		 FROM cells WHERE notebook_id = $1 ORDER BY position ASC`,
+		sourceID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read source cells")
+		return
+	}
+	defer cellRows.Close()
+
+	var newCells []models.Cell
+	pos := 0
+	for cellRows.Next() {
+		var cellType, source string
+		var lang, connID, title, desc, slug *string
+		var sourceVisible, outputsHidden, cellCollapsed, slideBreak bool
+		var cellParams, metadata []byte
+		var limit *int
+
+		if err := cellRows.Scan(&cellType, &lang, &connID, &source,
+			&sourceVisible, &outputsHidden, &cellCollapsed, &slideBreak, &cellParams,
+			&title, &desc, &slug, &limit, &metadata); err != nil {
+			continue
+		}
+
+		var newCell models.Cell
+		var newParams []byte
+		var newLimit *int
+		err = s.db.Pool.QueryRow(ctx,
+			`INSERT INTO cells (notebook_id, position, type, language, connector_id, source, outputs,
+			                  source_visible, outputs_hidden, cell_collapsed, slide_break, parameters,
+			                  title, description, slug, "limit", metadata)
+			 VALUES ($1,$2,$3,$4,$5,$6,'[]',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+			 RETURNING id, notebook_id, position, type, language, connector_id, source, outputs,
+			           source_visible, outputs_hidden, cell_collapsed, slide_break, parameters,
+			           COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), "limit",
+			           COALESCE(metadata, '{}'), created_at, updated_at`,
+			newNB.ID, pos, cellType, lang, connID, source,
+			sourceVisible, outputsHidden, cellCollapsed, slideBreak, cellParams,
+			title, desc, slug, limit, metadata,
+		).Scan(&newCell.ID, &newCell.NotebookID, &newCell.Position, &newCell.Type,
+			&lang, &connID, &newCell.Source, &newCell.Outputs,
+			&newCell.SourceVisible, &newCell.OutputsHidden, &newCell.CellCollapsed, &newCell.SlideBreak, &newParams,
+			&newCell.Title, &newCell.Description, &newCell.Slug, &newLimit,
+			&newCell.Metadata, &newCell.CreatedAt, &newCell.UpdatedAt)
+		if err != nil {
+			continue
+		}
+		if lang != nil {
+			newCell.Language = *lang
+		}
+		if connID != nil {
+			newCell.ConnectorID = *connID
+		}
+		if newLimit != nil {
+			newCell.Limit = newLimit
+		}
+		json.Unmarshal(newParams, &newCell.Parameters)
+		if newCell.Outputs == nil {
+			newCell.Outputs = []models.Output{}
+		}
+		newCells = append(newCells, newCell)
+		pos++
+	}
+
+	if newCells == nil {
+		newCells = []models.Cell{}
+	}
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "notebook.clone", ResourceType: "notebook", ResourceID: newNB.ID,
+		Metadata: map[string]any{"source_id": sourceID},
+	})
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"notebook": newNB,
+		"cells":    newCells,
+	})
 }
