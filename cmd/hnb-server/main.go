@@ -91,6 +91,9 @@ func main() {
 		log.Fatalf("master key validation: decryption failed — HNB_MASTER_KEY may have changed since server start")
 	}
 
+	// Seed dev SSO providers (Keycloak) if none exist yet
+	api.SeedDevSSOProviders(ctx, db.Pool, masterKey)
+
 	auditLogger := audit.NewLogger(db)
 
 	// Start scheduler (runs due notebook schedules every minute)
