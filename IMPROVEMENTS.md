@@ -76,6 +76,6 @@
 - [x] It should be possible to create new notebooks in a given path from a "template" (perhaps cloning?). This should be doable via API.
 - [x] While editing an SSO provider, I can't leave secret as is, it errors out about the field being blank
 - [x] When SSO users login for the first time, it seems their home folder is not created
-- [ ] It seems that SSO providers (both platform and org) are disappearing of the settings menu. SSO domains dont work on login, so likely being removed altogether, not only disappearing
+- [x] It seems that SSO providers (both platform and org) are disappearing of the settings menu. SSO domains dont work on login, so likely being removed altogether, not only disappearing
 - [ ] After restoring an item from the trash and going to the files, I need to hard refresh for it to appear in the notebooks list
 - [ ]
