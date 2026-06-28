@@ -116,14 +116,6 @@ services:
 
   # ── API server (Go + Air hot-reload) ─────────────────────────────────────
 
-  dex:
-    image: ghcr.io/dexidp/dex:v2.38.0
-    command: dex serve /etc/dex/config.yaml
-    ports:
-      - "5556:5556"
-    volumes:
-      - ./dev/dex-config.yaml:/etc/dex/config.yaml:ro
-
   keycloak:
     image: quay.io/keycloak/keycloak:26.1
     command: start-dev --import-realm
