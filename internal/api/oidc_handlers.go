@@ -111,11 +111,16 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Store the state in Redis. If a subdomain org is resolved, include it
-	// so the callback can retrieve it regardless of the Host header.
+	// Store the state in Redis. If a subdomain org is resolved, include the
+	// org ID and the frontend host so the callback can redirect to the correct
+	// subdomain URL regardless of what Host header the callback arrives on.
 	stateValue := "1"
 	if subdomainOrgID := OrgIDFromContext(ctx); subdomainOrgID != "" {
-		stateValue = "org:" + subdomainOrgID
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		stateValue = fmt.Sprintf("org:%s|frontend:%s://%s", subdomainOrgID, scheme, r.Host)
 	}
 	key := fmt.Sprintf("oidc:state:%s", state)
 	stored, err := s.Cache.Client().SetNX(ctx, key, stateValue, 10*time.Minute).Result()
@@ -170,9 +175,17 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If a subdomain org was stored in the state, use it (overrides Host-based resolution)
-	if subdomainOrgID == "" && strings.HasPrefix(stateVal, "org:") {
-		subdomainOrgID = strings.TrimPrefix(stateVal, "org:")
+	// Parse state value: may contain org ID and frontend URL
+	// Format: "org:<uuid>|frontend:<url>" or just "1"
+	subdomainFrontendURL := ""
+	if strings.HasPrefix(stateVal, "org:") {
+		parts := strings.SplitN(stateVal, "|", 2)
+		if len(parts) > 0 {
+			subdomainOrgID = strings.TrimPrefix(parts[0], "org:")
+		}
+		if len(parts) > 1 && strings.HasPrefix(parts[1], "frontend:") {
+			subdomainFrontendURL = strings.TrimPrefix(parts[1], "frontend:")
+		}
 	}
 
 	claims, err := provider.Exchange(oidcCtx, code)
@@ -277,7 +290,10 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Redirect to the frontend with the token as a query param so LoginPage can pick it up.
-	// In dev the frontend runs on a different port (Vite), so HNB_FRONTEND_URL overrides the base.
+	// Use the subdomain-aware frontend URL if available (preserved in state from login handler).
 	redirectURL := s.frontendURL + "/login?token=" + url.QueryEscape(token)
+	if subdomainFrontendURL != "" {
+		redirectURL = subdomainFrontendURL + "/login?token=" + url.QueryEscape(token)
+	}
 	http.Redirect(w, r, redirectURL, http.StatusFound)
 }
