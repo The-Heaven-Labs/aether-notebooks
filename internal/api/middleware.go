@@ -64,6 +64,12 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool) func(http.Handle
 				return
 			}
 
+			// Validate subdomain org matches JWT org when both are present
+			if subdomainOrg := OrgIDFromContext(r.Context()); subdomainOrg != "" && subdomainOrg != claims.OrgID {
+				writeError(w, http.StatusForbidden, "organization mismatch between subdomain and token")
+				return
+			}
+
 			ctx := context.WithValue(r.Context(), claimsKey, claims)
 			adminMode := r.Header.Get("X-HNB-Admin-Mode") != "false"
 			ctx = context.WithValue(ctx, adminModeKey, adminMode)
@@ -105,6 +111,12 @@ func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler,
 				UserID: userID,
 				OrgID:  orgID,
 				Role:   role,
+			}
+
+			// Validate subdomain org matches API token org when both are present
+			if subdomainOrg := OrgIDFromContext(r.Context()); subdomainOrg != "" && subdomainOrg != orgID {
+				writeError(w, http.StatusForbidden, "organization mismatch between subdomain and token")
+				return
 			}
 
 			ctx := context.WithValue(r.Context(), claimsKey, claims)
