@@ -25,18 +25,23 @@ func generateState() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// dockerOIDCClient creates an HTTP client that rewrites the connection target
-// for OIDC providers behind Docker port mapping, so the API (inside a container)
-// can reach them while using the correct public hostname for token issuer validation.
-func dockerOIDCClient() *http.Client {
-	return &http.Client{
-		Transport: &hostRewriteTransport{
-			from: "localhost:5557",
-			to:   "host.docker.internal:5557",
-			next: http.DefaultTransport,
-		},
-		Timeout: 10 * time.Second,
+// oidcHTTPClient returns an HTTP client tailored to the OIDC provider's discovery URL.
+// In Docker dev environments where the provider is at localhost:5557 (host side)
+// but the API runs in a container, it rewrites the connection to host.docker.internal:5557
+// while preserving the original Host header for correct token issuer validation.
+// For all other URLs, it uses the default transport with no rewrite.
+func oidcHTTPClient(discoveryURL string) *http.Client {
+	if strings.Contains(discoveryURL, "localhost:5557") {
+		return &http.Client{
+			Transport: &hostRewriteTransport{
+				from: "localhost:5557",
+				to:   "host.docker.internal:5557",
+				next: http.DefaultTransport,
+			},
+			Timeout: 10 * time.Second,
+		}
 	}
+	return http.DefaultClient
 }
 
 type hostRewriteTransport struct {
@@ -84,7 +89,7 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Use a custom HTTP client for Docker dev environments so the API can reach
 	// Keycloak via host.docker.internal while keeping localhost:5557 in the issuer.
-	oidcCtx := oidc.ClientContext(ctx, dockerOIDCClient())
+	oidcCtx := oidc.ClientContext(ctx, oidcHTTPClient(dbProvider.DiscoveryURL))
 	provider, err := auth.NewGenericOIDCProvider(oidcCtx, dbProvider.Name, dbProvider.DiscoveryURL, dbProvider.ClientID, dbProvider.ClientSecret, s.callbackURL(r, providerID), dbProvider.Scopes, dbProvider.GroupsClaim, dbProvider.GetUserInfo)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to initialize OIDC provider: "+err.Error())
@@ -120,7 +125,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	oidcCtx := oidc.ClientContext(ctx, dockerOIDCClient())
+	oidcCtx := oidc.ClientContext(ctx, oidcHTTPClient(dbProvider.DiscoveryURL))
 	provider, err := auth.NewGenericOIDCProvider(oidcCtx, dbProvider.Name, dbProvider.DiscoveryURL, dbProvider.ClientID, dbProvider.ClientSecret, s.callbackURL(r, providerID), dbProvider.Scopes, dbProvider.GroupsClaim, dbProvider.GetUserInfo)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to initialize OIDC provider: "+err.Error())
