@@ -23,10 +23,26 @@ export default defineConfig({
     host: '0.0.0.0',
     allowedHosts: ['.hnb.test'],
     proxy: {
-      '/api': { target: apiTarget, changeOrigin: false },
-      '/internal': { target: apiTarget, changeOrigin: false },
-      '/docs': { target: apiTarget, changeOrigin: false },
-      '/swagger.json': { target: apiTarget, changeOrigin: false }
+      '/api': {
+        target: apiTarget,
+        changeOrigin: false,
+        on: { proxyReq: (proxyReq, req) => proxyReq.setHeader('host', req.headers.host ?? apiTarget) }
+      },
+      '/internal': {
+        target: apiTarget,
+        changeOrigin: false,
+        on: { proxyReq: (proxyReq, req) => proxyReq.setHeader('host', req.headers.host ?? apiTarget) }
+      },
+      '/docs': {
+        target: apiTarget,
+        changeOrigin: false,
+        on: { proxyReq: (proxyReq, req) => proxyReq.setHeader('host', req.headers.host ?? apiTarget) }
+      },
+      '/swagger.json': {
+        target: apiTarget,
+        changeOrigin: false,
+        on: { proxyReq: (proxyReq, req) => proxyReq.setHeader('host', req.headers.host ?? apiTarget) }
+      }
     }
   },
   test: {
