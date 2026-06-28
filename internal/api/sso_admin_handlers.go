@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/heavenlabs/hnb/internal/sso"
@@ -215,9 +216,15 @@ func (s *Server) handleAdminTestSSOProvider(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Append well-known path if not already present (the stored URL is the issuer URL)
+	wellKnown := discoveryURL
+	if !strings.HasSuffix(wellKnown, "/openid-configuration") {
+		wellKnown = strings.TrimRight(wellKnown, "/") + "/.well-known/openid-configuration"
+	}
+
 	// Try to fetch the discovery document
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(discoveryURL)
+	resp, err := client.Get(wellKnown)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"success": false,
