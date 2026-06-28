@@ -220,10 +220,23 @@ func collectProviders(rows pgx.Rows, masterKey []byte) ([]Provider, error) {
 }
 
 // UpdateProvider updates name, client_id, client_secret, discovery_url, allowed_domains, enabled.
+// If p.ClientSecret is empty, the stored secret is preserved.
 func UpdateProvider(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, p Provider) (Provider, error) {
-	encSecret, err := encryptSecret(masterKey, p.ClientSecret)
-	if err != nil {
-		return Provider{}, err
+	var encSecret string
+	var err error
+
+	if p.ClientSecret != "" {
+		encSecret, err = encryptSecret(masterKey, p.ClientSecret)
+		if err != nil {
+			return Provider{}, err
+		}
+	} else {
+		var existingEnc string
+		err := pool.QueryRow(ctx, `SELECT client_secret_enc FROM sso_providers WHERE id=$1`, p.ID).Scan(&existingEnc)
+		if err != nil {
+			return Provider{}, fmt.Errorf("update provider: failed to read existing secret: %w", err)
+		}
+		encSecret = existingEnc
 	}
 
 	row := pool.QueryRow(ctx,

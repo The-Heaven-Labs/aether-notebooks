@@ -66,7 +66,7 @@ func (s *Server) handleOrgCreateSSOProvider(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if req.Name == "" || req.ClientID == "" || req.ClientSecret == "" || req.DiscoveryURL == "" {
+	if req.Name == "" || req.ClientID == "" || req.ClientSecret == nil || *req.ClientSecret == "" || req.DiscoveryURL == "" {
 		writeError(w, http.StatusBadRequest, "name, client_id, client_secret, and discovery_url are required")
 		return
 	}
@@ -83,7 +83,7 @@ func (s *Server) handleOrgCreateSSOProvider(w http.ResponseWriter, r *http.Reque
 		Name:           req.Name,
 		ProviderType:   "oidc",
 		ClientID:       req.ClientID,
-		ClientSecret:   req.ClientSecret,
+		ClientSecret:   *req.ClientSecret,
 		DiscoveryURL:   req.DiscoveryURL,
 		AllowedDomains: domains,
 		Enabled:        req.Enabled,
@@ -129,8 +129,8 @@ func (s *Server) handleOrgUpdateSSOProvider(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if req.Name == "" || req.ClientID == "" || req.ClientSecret == "" || req.DiscoveryURL == "" {
-		writeError(w, http.StatusBadRequest, "name, client_id, client_secret, and discovery_url are required")
+	if req.Name == "" || req.ClientID == "" || req.DiscoveryURL == "" {
+		writeError(w, http.StatusBadRequest, "name, client_id, and discovery_url are required")
 		return
 	}
 
@@ -139,11 +139,16 @@ func (s *Server) handleOrgUpdateSSOProvider(w http.ResponseWriter, r *http.Reque
 		domains = []string{}
 	}
 
+	secret := ""
+	if req.ClientSecret != nil {
+		secret = *req.ClientSecret
+	}
+
 	p := sso.Provider{
 		ID:             id,
 		Name:           req.Name,
 		ClientID:       req.ClientID,
-		ClientSecret:   req.ClientSecret,
+		ClientSecret:   secret,
 		DiscoveryURL:   req.DiscoveryURL,
 		AllowedDomains: domains,
 		Enabled:        req.Enabled,
