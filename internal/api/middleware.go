@@ -162,6 +162,9 @@ func RequireRole(role string) func(http.Handler) http.Handler {
 // OrgIDFromContext returns the org ID resolved from the subdomain, or falls
 // back to the org ID in the JWT claims. Returns empty string if neither is available.
 func OrgIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
 	if v := ctx.Value(subdomainKey); v != nil {
 		if id, ok := v.(string); ok && id != "" {
 			return id
