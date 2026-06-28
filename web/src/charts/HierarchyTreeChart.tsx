@@ -1,6 +1,6 @@
 import { useRef, useCallback, useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getChartColors, useRowsAsObjects, walkTree, applyCollapsedToTree, ChartTypeSelect } from './common'
+import { EChartsContainer, CHART_COLORS, getChartColors, useChartColors, useRowsAsObjects, walkTree, applyCollapsedToTree, ChartTypeSelect } from './common'
 import type { ECharts } from 'echarts/core'
 import { ConfigHint } from './ConfigHint'
 
@@ -74,7 +74,7 @@ function buildTree(
 }
 
 function HierarchyTreeComponent({ data, config }: ChartProps) {
-  const chartColors = useMemo(() => getChartColors(), [])
+  const chartColors = useChartColors()
   const chartInstance = useRef<echarts.ECharts | null>(null)
   const handleChartReady = useCallback((chart: echarts.ECharts) => {
     chartInstance.current = chart
