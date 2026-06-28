@@ -17,6 +17,8 @@ const claimsKey contextKey = "claims"
 
 const adminModeKey contextKey = "admin_mode"
 
+const subdomainKey contextKey = "subdomain_org"
+
 // adminModeFromContext returns whether admin mode is enabled.
 // Defaults to false (admin mode OFF) unless explicitly set.
 func adminModeFromContext(ctx context.Context) bool {
@@ -155,4 +157,18 @@ func RequireRole(role string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// OrgIDFromContext returns the org ID resolved from the subdomain, or falls
+// back to the org ID in the JWT claims. Returns empty string if neither is available.
+func OrgIDFromContext(ctx context.Context) string {
+	if v := ctx.Value(subdomainKey); v != nil {
+		if id, ok := v.(string); ok && id != "" {
+			return id
+		}
+	}
+	if claims := ClaimsFromContext(ctx); claims != nil {
+		return claims.OrgID
+	}
+	return ""
 }
