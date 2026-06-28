@@ -51,7 +51,7 @@ func (s *Server) servePublicNotebook(w http.ResponseWriter, r *http.Request, nbI
 	json.Unmarshal(params, &nb.Parameters)
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT position, type, language, source, outputs, parameters
+		`SELECT position, type, language, source, outputs, parameters, metadata, outputs_hidden
 		 FROM cells WHERE notebook_id=$1 ORDER BY position ASC`,
 		nbID,
 	)
@@ -62,19 +62,21 @@ func (s *Server) servePublicNotebook(w http.ResponseWriter, r *http.Request, nbI
 	defer rows.Close()
 
 	type publicCell struct {
-		Position   int                `json:"position"`
-		Type       string             `json:"type"`
-		Language   string             `json:"language,omitempty"`
-		Source     string             `json:"source"`
-		Outputs    []models.Output    `json:"outputs"`
-		Parameters []models.Parameter `json:"parameters"`
+		Position      int                    `json:"position"`
+		Type          string                 `json:"type"`
+		Language      string                 `json:"language,omitempty"`
+		Source        string                 `json:"source"`
+		Outputs       []models.Output        `json:"outputs"`
+		Parameters    []models.Parameter     `json:"parameters"`
+		Metadata      map[string]interface{} `json:"metadata"`
+		OutputsHidden bool                   `json:"outputs_hidden"`
 	}
 	var cells []publicCell
 	for rows.Next() {
 		var c publicCell
 		var lang *string
-		var outputs, cellParams []byte
-		if err := rows.Scan(&c.Position, &c.Type, &lang, &c.Source, &outputs, &cellParams); err != nil {
+		var outputs, cellParams, meta []byte
+		if err := rows.Scan(&c.Position, &c.Type, &lang, &c.Source, &outputs, &cellParams, &meta, &c.OutputsHidden); err != nil {
 			continue
 		}
 		if lang != nil {
@@ -82,8 +84,12 @@ func (s *Server) servePublicNotebook(w http.ResponseWriter, r *http.Request, nbI
 		}
 		json.Unmarshal(outputs, &c.Outputs)
 		json.Unmarshal(cellParams, &c.Parameters)
+		json.Unmarshal(meta, &c.Metadata)
 		if c.Outputs == nil {
 			c.Outputs = []models.Output{}
+		}
+		if c.Metadata == nil {
+			c.Metadata = map[string]interface{}{}
 		}
 		cells = append(cells, c)
 	}

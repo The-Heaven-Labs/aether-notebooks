@@ -262,6 +262,7 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 
 	editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "edit")
 	runOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "run")
+	shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "share")
 
 	cellRows, err := s.db.Pool.Query(ctx,
 		`SELECT id, notebook_id, position, type, language, connector_id, source, outputs,
@@ -311,6 +312,7 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 		OwnerEmail string        `json:"owner_email"`
 		CanEdit    bool          `json:"can_edit"`
 		CanRun     bool          `json:"can_run"`
+		CanShare   bool          `json:"can_share"`
 	}
 
 	resp := notebookWithCells{
@@ -320,6 +322,7 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 		OwnerEmail: ownerEmail,
 		CanEdit:    editOK,
 		CanRun:     runOK,
+		CanShare:   shareOK,
 	}
 	if resp.Cells == nil {
 		resp.Cells = []models.Cell{}
@@ -988,19 +991,21 @@ func (s *Server) handleShareNotebook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var token string
+	var token, createdBy string
+	var createdAt time.Time
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT token FROM public_tokens WHERE resource_type='notebook' AND resource_id=$1`,
+		`SELECT token, created_by, created_at FROM public_tokens WHERE resource_type='notebook' AND resource_id=$1`,
 		nbID,
-	).Scan(&token)
+	).Scan(&token, &createdBy, &createdAt)
 	if err == nil {
-		writeJSON(w, http.StatusOK, map[string]string{"token": token})
+		writeJSON(w, http.StatusOK, map[string]any{"token": token, "created_by": createdBy, "created_at": createdAt})
 		return
 	}
 
 	tokenBytes := make([]byte, 16)
 	rand.Read(tokenBytes)
 	token = hex.EncodeToString(tokenBytes)
+	createdAt = time.Now()
 
 	_, err = s.db.Pool.Exec(ctx,
 		`INSERT INTO public_tokens (org_id, resource_type, resource_id, token, created_by)
@@ -1012,14 +1017,48 @@ func (s *Server) handleShareNotebook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]string{"token": token})
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "notebook.share", ResourceType: "notebook", ResourceID: nbID,
+	})
+
+	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "created_by": claims.UserID, "created_at": createdAt})
+}
+
+func (s *Server) handleGetNotebookShare(w http.ResponseWriter, r *http.Request) {
+	// Requires "view" permission — anyone who can see the notebook can see the link
+	nbID := r.PathValue("id")
+	ctx := r.Context()
+
+	// Verify the resource exists and belongs to the user's org
+	claims := ClaimsFromContext(r.Context())
+	var exists bool
+	s.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM notebooks WHERE id=$1 AND org_id=$2)`, nbID, claims.OrgID).Scan(&exists)
+	if !exists {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	var token, createdBy string
+	var createdAt time.Time
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT token, created_by, created_at FROM public_tokens WHERE resource_type='notebook' AND resource_id=$1`,
+		nbID,
+	).Scan(&token, &createdBy, &createdAt)
+	if err != nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"token": token, "created_by": createdBy, "created_at": createdAt})
 }
 
 func (s *Server) handleRevokeNotebookShare(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("id")
+	ctx := r.Context()
 
-	allowed, err := s.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "share")
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "share")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "permission check failed")
 		return
@@ -1029,7 +1068,7 @@ func (s *Server) handleRevokeNotebookShare(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	_, err = s.db.Pool.Exec(r.Context(),
+	_, err = s.db.Pool.Exec(ctx,
 		`DELETE FROM public_tokens WHERE resource_type='notebook' AND resource_id=$1`,
 		nbID,
 	)
@@ -1037,5 +1076,10 @@ func (s *Server) handleRevokeNotebookShare(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to revoke share link")
 		return
 	}
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "notebook.share_revoke", ResourceType: "notebook", ResourceID: nbID,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }

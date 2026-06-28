@@ -318,11 +318,10 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Role == "" {
-		req.Role = "viewer"
+		req.Role = "admin"
 	}
-	validRoles := map[string]bool{"viewer": true, "editor": true, "admin": true}
-	if !validRoles[req.Role] {
-		writeError(w, http.StatusBadRequest, "role must be admin, editor, or viewer")
+	if req.Role != "admin" {
+		writeError(w, http.StatusBadRequest, "role must be admin")
 		return
 	}
 
@@ -369,17 +368,25 @@ func (s *Server) handleCreateInviteLink(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	var invitationsEnabled bool
+	s.db.Pool.QueryRow(r.Context(),
+		`SELECT invitations_enabled FROM orgs WHERE id=$1`, claims.OrgID,
+	).Scan(&invitationsEnabled)
+	if !invitationsEnabled {
+		writeError(w, http.StatusForbidden, "invitations are disabled for this organization")
+		return
+	}
+
 	var req createInviteLinkRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if req.Role == "" {
-		req.Role = "viewer"
+		req.Role = "non-admin"
 	}
-	validRolesLink := map[string]bool{"viewer": true, "editor": true, "admin": true}
-	if !validRolesLink[req.Role] {
-		writeError(w, http.StatusBadRequest, "role must be admin, editor, or viewer")
+	if req.Role != "admin" && req.Role != "non-admin" {
+		writeError(w, http.StatusBadRequest, "role must be admin or non-admin")
 		return
 	}
 
@@ -448,6 +455,72 @@ func (s *Server) handleUpdateOrgSharingSettings(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"public_sharing_enabled": req.Enabled})
+}
+
+func (s *Server) handleGetOrgRegistrationSettings(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	var enabled bool
+	err := s.db.Pool.QueryRow(r.Context(),
+		`SELECT registration_enabled FROM orgs WHERE id=$1`, claims.OrgID,
+	).Scan(&enabled)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"registration_enabled": enabled})
+}
+
+func (s *Server) handleUpdateOrgRegistrationSettings(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	var req struct {
+		Enabled bool `json:"registration_enabled"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	_, err := s.db.Pool.Exec(r.Context(),
+		`UPDATE orgs SET registration_enabled=$1 WHERE id=$2`,
+		req.Enabled, claims.OrgID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "update failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"registration_enabled": req.Enabled})
+}
+
+func (s *Server) handleGetOrgInvitationSettings(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	var enabled bool
+	err := s.db.Pool.QueryRow(r.Context(),
+		`SELECT invitations_enabled FROM orgs WHERE id=$1`, claims.OrgID,
+	).Scan(&enabled)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"invitations_enabled": enabled})
+}
+
+func (s *Server) handleUpdateOrgInvitationSettings(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	var req struct {
+		Enabled bool `json:"invitations_enabled"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	_, err := s.db.Pool.Exec(r.Context(),
+		`UPDATE orgs SET invitations_enabled=$1 WHERE id=$2`,
+		req.Enabled, claims.OrgID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "update failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"invitations_enabled": req.Enabled})
 }
 
 // generateSecureToken returns a hex-encoded random token of the given byte length.
