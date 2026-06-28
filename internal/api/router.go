@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -31,7 +32,9 @@ type Server struct {
 	agentEngine        *agent.Engine
 	upgrader           websocket.Upgrader
 	toolAllowedDomains []string
-	sessionCancels     sync.Map // sessionID -> context.CancelFunc
+	sessionCancels     sync.Map    // sessionID -> context.CancelFunc
+	oidcRewriteFrom    string      // host rewrite for OIDC discovery inside Docker (e.g. "localhost:5557")
+	oidcRewriteTo      string      // target host rewrite (e.g. "host.docker.internal:5557")
 }
 
 func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, redisCache *cache.Cache) *Server {
@@ -87,6 +90,17 @@ func (s *Server) SetMaxAttachmentBytes(n int64) {
 func (s *Server) SetToolAllowedDomains(domains []string) {
 	s.toolAllowedDomains = domains
 	s.agentEngine.SetToolAllowedDomains(domains)
+}
+
+// SetOIDCHostRewrite configures host rewriting for OIDC discovery requests.
+// Used in Docker dev setups where the API container reaches Keycloak via
+// a different hostname than what's in the discovery URL.
+// Format: from=to, e.g. "localhost:5557=host.docker.internal:5557".
+func (s *Server) SetOIDCHostRewrite(rule string) {
+	if parts := strings.SplitN(rule, "=", 2); len(parts) == 2 {
+		s.oidcRewriteFrom = parts[0]
+		s.oidcRewriteTo = parts[1]
+	}
 }
 
 // DB returns the database connection (used in tests).

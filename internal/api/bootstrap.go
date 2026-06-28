@@ -38,7 +38,7 @@ func SeedDevSSOProviders(ctx context.Context, pool *pgxpool.Pool, masterKey []by
 		ProviderType: "oidc",
 		ClientID:     "hnb-dev",
 		ClientSecret: "hnb-dev-keycloak-secret",
-		DiscoveryURL: "http://localhost:5557/realms/hnb-dev/.well-known/openid-configuration",
+		DiscoveryURL: "http://localhost:5557/realms/hnb-dev",
 		AllowedDomains: []string{"hnb-dev.test"},
 		Enabled:      true,
 		Scopes:       []string{"openid", "profile", "email", "groups"},

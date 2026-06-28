@@ -25,6 +25,7 @@ type Config struct {
 	S3SecretKey        string
 	MaxAttachmentBytes int64
 	ToolAllowedDomains []string // comma-separated domains allowed for webhook tools (bypasses private IP block)
+	OIDCHostRewrite    string   // "from=to" pair for rewriting OIDC discovery host (e.g. "localhost:5557=host.docker.internal:5557")
 }
 
 func parseCommaList(s string) []string {
@@ -64,6 +65,7 @@ func Load() (*Config, error) {
 		S3SecretKey:        os.Getenv("HNB_S3_SECRET_KEY"),
 		MaxAttachmentBytes: maxAttachmentBytes,
 		ToolAllowedDomains: parseCommaList(os.Getenv("HNB_TOOL_ALLOWED_DOMAINS")),
+		OIDCHostRewrite:    os.Getenv("HNB_OIDC_HOST_REWRITE"),
 	}
 	if cfg.MasterKey == "" {
 		return nil, fmt.Errorf("HNB_MASTER_KEY is required")
