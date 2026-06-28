@@ -134,6 +134,8 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	subdomainOrgID := OrgIDFromContext(ctx)
+
 	issuer := issuerURL(dbProvider.DiscoveryURL)
 	oidcCtx := oidc.ClientContext(ctx, s.oidcHTTPClient(issuer))
 	provider, err := auth.NewGenericOIDCProvider(oidcCtx, dbProvider.Name, issuer, dbProvider.ClientID, dbProvider.ClientSecret, s.callbackURL(r, providerID), dbProvider.Scopes, dbProvider.GroupsClaim, dbProvider.GetUserInfo)
@@ -178,7 +180,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	).Scan(&userID, &orgID, &role)
 
 	if err == pgx.ErrNoRows {
-		// New user — provision user + org in a transaction
+		// New user — provision into subdomain org or create new org
 		tx, txErr := s.db.Pool.Begin(ctx)
 		if txErr != nil {
 			writeError(w, http.StatusInternalServerError, "database error")
@@ -200,24 +202,40 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		orgName := displayName + "'s Org"
-		orgSlug := slugify(displayName)
-		txErr = tx.QueryRow(ctx,
-			`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
-			orgName, orgSlug,
-		).Scan(&orgID)
-		if txErr != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create org")
-			return
-		}
+		if subdomainOrgID != "" {
+			// Provision into the subdomain-resolved org
+			orgID = subdomainOrgID
+			_, txErr = tx.Exec(ctx,
+				`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'member')`,
+				orgID, userID,
+			)
+			if txErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to add member")
+				return
+			}
+			role = "member"
+		} else {
+			// No subdomain — create a new org (existing behavior)
+			orgName := displayName + "'s Org"
+			orgSlug := slugify(displayName)
+			txErr = tx.QueryRow(ctx,
+				`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
+				orgName, orgSlug,
+			).Scan(&orgID)
+			if txErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to create org")
+				return
+			}
 
-		_, txErr = tx.Exec(ctx,
-			`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin')`,
-			orgID, userID,
-		)
-		if txErr != nil {
-			writeError(w, http.StatusInternalServerError, "failed to add member")
-			return
+			_, txErr = tx.Exec(ctx,
+				`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin')`,
+				orgID, userID,
+			)
+			if txErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to add member")
+				return
+			}
+			role = "admin"
 		}
 
 		if txErr = createHomeFolder(ctx, tx, orgID, userID, displayName); txErr != nil {
@@ -229,8 +247,6 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to commit")
 			return
 		}
-
-		role = "admin"
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "database error")
 		return
