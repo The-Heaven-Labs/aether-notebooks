@@ -21,6 +21,11 @@ type providerResponse struct {
 	DiscoveryURL   string    `json:"discovery_url"`
 	AllowedDomains []string  `json:"allowed_domains"`
 	Enabled        bool      `json:"enabled"`
+	Scopes         []string  `json:"scopes"`
+	GroupsClaim    string    `json:"groups_claim"`
+	GroupPrefix    string    `json:"group_prefix"`
+	AutoSyncGroups bool      `json:"auto_sync_groups"`
+	GetUserInfo    bool      `json:"get_user_info"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -29,6 +34,10 @@ func providerToResponse(p sso.Provider) providerResponse {
 	domains := p.AllowedDomains
 	if domains == nil {
 		domains = []string{}
+	}
+	scopes := p.Scopes
+	if scopes == nil {
+		scopes = []string{}
 	}
 	return providerResponse{
 		ID:             p.ID,
@@ -39,6 +48,11 @@ func providerToResponse(p sso.Provider) providerResponse {
 		DiscoveryURL:   p.DiscoveryURL,
 		AllowedDomains: domains,
 		Enabled:        p.Enabled,
+		Scopes:         scopes,
+		GroupsClaim:    p.GroupsClaim,
+		GroupPrefix:    p.GroupPrefix,
+		AutoSyncGroups: p.AutoSyncGroups,
+		GetUserInfo:    p.GetUserInfo,
 		CreatedAt:      p.CreatedAt,
 		UpdatedAt:      p.UpdatedAt,
 	}
@@ -51,6 +65,11 @@ type ssoProviderRequest struct {
 	DiscoveryURL   string   `json:"discovery_url"`
 	AllowedDomains []string `json:"allowed_domains"`
 	Enabled        bool     `json:"enabled"`
+	Scopes         []string `json:"scopes"`
+	GroupsClaim    string   `json:"groups_claim"`
+	GroupPrefix    string   `json:"group_prefix"`
+	AutoSyncGroups bool     `json:"auto_sync_groups"`
+	GetUserInfo    bool     `json:"get_user_info"`
 }
 
 func (s *Server) handleAdminListSSOProviders(w http.ResponseWriter, r *http.Request) {
@@ -93,6 +112,11 @@ func (s *Server) handleAdminCreateSSOProvider(w http.ResponseWriter, r *http.Req
 		DiscoveryURL:   req.DiscoveryURL,
 		AllowedDomains: domains,
 		Enabled:        req.Enabled,
+		Scopes:         req.Scopes,
+		GroupsClaim:    req.GroupsClaim,
+		GroupPrefix:    req.GroupPrefix,
+		AutoSyncGroups: req.AutoSyncGroups,
+		GetUserInfo:    req.GetUserInfo,
 	}
 
 	created, err := sso.CreateProvider(r.Context(), s.db.Pool, s.masterKey, p)
@@ -132,6 +156,11 @@ func (s *Server) handleAdminUpdateSSOProvider(w http.ResponseWriter, r *http.Req
 		DiscoveryURL:   req.DiscoveryURL,
 		AllowedDomains: domains,
 		Enabled:        req.Enabled,
+		Scopes:         req.Scopes,
+		GroupsClaim:    req.GroupsClaim,
+		GroupPrefix:    req.GroupPrefix,
+		AutoSyncGroups: req.AutoSyncGroups,
+		GetUserInfo:    req.GetUserInfo,
 	}
 
 	updated, err := sso.UpdateProvider(r.Context(), s.db.Pool, s.masterKey, p)
