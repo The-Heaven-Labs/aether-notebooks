@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/audit"
-	"github.com/heavenlabs/hnb/internal/crypto"
-	"github.com/heavenlabs/hnb/internal/executor"
-	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/executor"
+	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/jackc/pgx/v5"
 )
 

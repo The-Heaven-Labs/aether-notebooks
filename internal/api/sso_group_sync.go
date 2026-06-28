@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/heavenlabs/hnb/internal/audit"
-	"github.com/heavenlabs/hnb/internal/sso"
+	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/sso"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )

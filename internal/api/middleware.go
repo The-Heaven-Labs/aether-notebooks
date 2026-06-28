@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/auth"
+	"github.com/the-heaven-labs/aether/internal/auth"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
@@ -53,8 +53,8 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool) func(http.Handle
 				return
 			}
 
-			// Check if this is a personal access token (starts with hnb_tok_)
-			if strings.HasPrefix(token, "hnb_tok_") {
+			// Check if this is a personal access token (starts with aether_tok_)
+			if strings.HasPrefix(token, "aether_tok_") {
 				validateAPIToken(w, r, next, pool, token)
 				return
 			}
@@ -79,7 +79,7 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool) func(http.Handle
 				}
 			}
 
-			adminMode := r.Header.Get("X-HNB-Admin-Mode") != "false"
+			adminMode := r.Header.Get("X-AETHER-Admin-Mode") != "false"
 			ctx = context.WithValue(ctx, adminModeKey, adminMode)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -128,7 +128,7 @@ func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler,
 			}
 
 			ctx := context.WithValue(r.Context(), claimsKey, claims)
-			adminMode := r.Header.Get("X-HNB-Admin-Mode") != "false"
+			adminMode := r.Header.Get("X-AETHER-Admin-Mode") != "false"
 			ctx = context.WithValue(ctx, adminModeKey, adminMode)
 
 			// Update last_used_at in background

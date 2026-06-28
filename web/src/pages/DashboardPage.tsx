@@ -228,7 +228,7 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId }: { widget: AnyWidg
         <button
           style={{ color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, padding: 0 }}
           onClick={() => {
-            const token = localStorage.getItem('hnb_token')
+            const token = localStorage.getItem('aether_token')
             fetch(`/api/v1/notebooks/${widget.notebook_id}/cells/${widget.cell_id}/execute`, {
               method: 'POST',
               headers: {
@@ -268,7 +268,7 @@ function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit }: { widget: 
     if (loading || !widget.notebook_id || !widget.cell_id) return
     setLoading(true)
     try {
-      const token = localStorage.getItem('hnb_token')
+      const token = localStorage.getItem('aether_token')
       await fetch(`/api/v1/notebooks/${widget.notebook_id}/cells/${widget.cell_id}/execute`, {
         method: 'POST',
         headers: {
@@ -358,12 +358,12 @@ function DashboardContent({ id }: { id: string }) {
   })
 
   useEffect(() => {
-    if (dashboard) document.title = `${dashboard.title} — Heaven's Notebooks`
-    return () => { document.title = "Heaven's Notebooks" }
+    if (dashboard) document.title = `${dashboard.title} — Aether Notebooks`
+    return () => { document.title = "Aether Notebooks" }
   }, [dashboard])
 
   async function executeAllWidgets(widgetList: AnyWidget[]) {
-    const token = localStorage.getItem('hnb_token')
+    const token = localStorage.getItem('aether_token')
     const queryWidgets = widgetList.filter(w => !INPUT_WIDGET_TYPES.has(w.type))
     if (!queryWidgets.length) return
     setIsRefreshing(true)

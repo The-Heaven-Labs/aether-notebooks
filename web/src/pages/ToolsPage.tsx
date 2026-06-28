@@ -66,7 +66,7 @@ const TYPE_COLORS: Record<ToolType, string> = {
 }
 
 export function ToolsPage() {
-  useEffect(() => { document.title = "Tools — Heaven's Notebooks" }, [])
+  useEffect(() => { document.title = "Tools — Aether Notebooks" }, [])
 
   const qc = useQueryClient()
   const [creating, setCreating] = useState(false)
@@ -392,7 +392,7 @@ function ToolFormFields({ form, setForm, connectors, editing }: {
               {form.headers.map((h, i) => (
                 <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                   <input style={{ ...styles.input, flex: 1 }} placeholder="Key" value={h.key} onChange={e => updateHeader(i, 'key', e.target.value)} />
-                  <input type={h.sensitive ? 'password' : 'text'} style={{ ...styles.input, flex: 1 }} placeholder="Value" value={h.sensitive && h.value === '__HNB_REDACTED__' ? '' : h.value} onChange={e => updateHeader(i, 'value', e.target.value)} />
+                  <input type={h.sensitive ? 'password' : 'text'} style={{ ...styles.input, flex: 1 }} placeholder="Value" value={h.sensitive && h.value === '__AETHER_REDACTED__' ? '' : h.value} onChange={e => updateHeader(i, 'value', e.target.value)} />
                   <label style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                     <input
                       type="checkbox"

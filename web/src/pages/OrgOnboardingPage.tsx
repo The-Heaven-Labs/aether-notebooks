@@ -2,12 +2,17 @@ import { useState } from 'react'
 import type React from 'react'
 import { ErrorBanner } from '../components/ErrorBanner'
 
-function finishOnboarding(data: { token: string; user: { name: string; email: string }; org: { name: string } }) {
-  localStorage.setItem('hnb_token', data.token)
-  localStorage.setItem('hnb_user_name', data.user.name)
-  localStorage.setItem('hnb_user_email', data.user.email)
-  localStorage.setItem('hnb_org_name', data.org.name)
-  localStorage.removeItem('hnb_onboarding_token')
+function finishOnboarding(data: { token: string; user: { name: string; email: string; is_platform_admin?: boolean }; org: { name: string } }) {
+  localStorage.setItem('aether_token', data.token)
+  localStorage.setItem('aether_user_name', data.user.name)
+  localStorage.setItem('aether_user_email', data.user.email)
+  localStorage.setItem('aether_org_name', data.org.name)
+  if (data.user.is_platform_admin) {
+    localStorage.setItem('aether_is_platform_admin', 'true')
+  } else {
+    localStorage.removeItem('aether_is_platform_admin')
+  }
+  localStorage.removeItem('aether_onboarding_token')
   // Full reload so useAuth re-reads the new token from localStorage
   window.location.href = '/'
 }
@@ -19,7 +24,7 @@ export function OrgOnboardingPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const onboardingToken = localStorage.getItem('hnb_onboarding_token') ?? ''
+  const onboardingToken = localStorage.getItem('aether_onboarding_token') ?? ''
 
   async function createOrg() {
     if (!orgName.trim()) { setError('Organization name is required'); return }
@@ -61,7 +66,7 @@ export function OrgOnboardingPage() {
     <div style={styles.page}>
       <div style={styles.card}>
         <div style={styles.logo}>▦</div>
-        <h1 style={styles.heading}>Welcome to Heaven's Notebooks</h1>
+        <h1 style={styles.heading}>Welcome to Aether Notebooks</h1>
         <p style={styles.sub}>Your account is ready. Now set up your workspace.</p>
 
         {mode === 'choose' && (

@@ -64,8 +64,8 @@ interface AgentPanelProps {
 }
 
 const WS_URL = (import.meta.env.VITE_WS_URL || 'ws://localhost:8080') + '/api/v1/ws/agents/'
-const LAST_AGENT_KEY = 'hnb:lastAgentId'
-const CHAT_STATE_KEY = 'hnb:agentChat:'
+const LAST_AGENT_KEY = 'aether:lastAgentId'
+const CHAT_STATE_KEY = 'aether:agentChat:'
 
 interface ChatMessage {
   id?: string

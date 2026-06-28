@@ -9,7 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/heavenlabs/hnb/internal/storage"
+	"github.com/the-heaven-labs/aether/internal/storage"
 	"github.com/stretchr/testify/require"
 )
 

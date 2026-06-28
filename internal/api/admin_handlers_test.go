@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/api"
+	"github.com/the-heaven-labs/aether/internal/api"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

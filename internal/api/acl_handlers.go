@@ -1,4 +1,4 @@
-// Package api provides HTTP handlers, middleware, and routing for the hnb API server.
+// Package api provides HTTP handlers, middleware, and routing for the Aether API server.
 // Handlers are organized by resource type (notebooks, cells, connectors, etc.)
 // and use net/http ServeMux with no external framework.
 package api
@@ -6,8 +6,8 @@ package api
 import (
 	"net/http"
 
-	"github.com/heavenlabs/hnb/internal/audit"
-	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 type aclEntryInput struct {

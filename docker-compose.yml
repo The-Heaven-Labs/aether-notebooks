@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: hnb
-      POSTGRES_PASSWORD: hnb_dev
-      POSTGRES_DB: hnb
+      POSTGRES_USER: aether
+      POSTGRES_PASSWORD: aether_dev
+      POSTGRES_DB: aether
     ports:
       - "5432:5432"
     volumes:
@@ -30,10 +30,10 @@ services:
     ports:
       - "8080:8080"
     environment:
-      HNB_DATABASE_URL: postgres://hnb:hnb_dev@postgres:5432/hnb?sslmode=disable
-      HNB_REDIS_URL: redis://redis:6379
-      HNB_MASTER_KEY: ${HNB_MASTER_KEY}
-      HNB_JWT_SECRET: ${HNB_JWT_SECRET}
+      AETHER_DATABASE_URL: postgres://aether:aether_dev@postgres:5432/aether?sslmode=disable
+      AETHER_REDIS_URL: redis://redis:6379
+      AETHER_MASTER_KEY: ${AETHER_MASTER_KEY}
+      AETHER_JWT_SECRET: ${AETHER_JWT_SECRET}
     depends_on:
       - postgres
       - redis
@@ -43,8 +43,8 @@ services:
     ports:
       - "3001:3001"
     environment:
-      HNB_API_URL: http://api:8080
-      HNB_RELAY_PORT: "3001"
+      AETHER_API_URL: http://api:8080
+      AETHER_RELAY_PORT: "3001"
     depends_on:
       - postgres
 

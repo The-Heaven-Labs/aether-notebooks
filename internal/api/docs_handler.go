@@ -20,7 +20,7 @@ func (s *Server) handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`<!DOCTYPE html>
 <html>
 <head>
-  <title>hnb API Documentation</title>
+  <title>Aether API Documentation</title>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" >
@@ -292,7 +292,7 @@ func (s *Server) handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
   <script>
     // Theme toggle
     const docHtml = document.documentElement;
-    const savedTheme = localStorage.getItem('hnb-docs-theme') || 'light';
+    const savedTheme = localStorage.getItem('aether-docs-theme') || 'light';
     if (savedTheme === 'dark') {
       docHtml.setAttribute('data-theme', 'dark');
     }
@@ -301,7 +301,7 @@ func (s *Server) handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
       const current = docHtml.getAttribute('data-theme');
       const next = current === 'dark' ? 'light' : 'dark';
       docHtml.setAttribute('data-theme', next);
-      localStorage.setItem('hnb-docs-theme', next);
+      localStorage.setItem('aether-docs-theme', next);
       document.getElementById('theme-icon').textContent = next === 'dark' ? '☀️' : '🌙';
     }
 

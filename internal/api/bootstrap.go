@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/heavenlabs/hnb/internal/sso"
+	"github.com/the-heaven-labs/aether/internal/sso"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -36,10 +36,10 @@ func SeedDevSSOProviders(ctx context.Context, pool *pgxpool.Pool, masterKey []by
 	keycloakProvider := sso.Provider{
 		Name:         "Keycloak (Dev)",
 		ProviderType: "oidc",
-		ClientID:     "hnb-dev",
-		ClientSecret: "hnb-dev-keycloak-secret",
-		DiscoveryURL: "http://localhost:5557/realms/hnb-dev",
-		AllowedDomains: []string{"hnb-dev.test"},
+		ClientID:     "aether-dev",
+		ClientSecret: "aether-dev-keycloak-secret",
+		DiscoveryURL: "http://localhost:5557/realms/aether-dev",
+		AllowedDomains: []string{"aether-dev.test"},
 		Enabled:      true,
 		Scopes:       []string{"openid", "profile", "email"},
 		GroupsClaim:  "groups",

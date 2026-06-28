@@ -4,7 +4,7 @@
 
 set -e
 
-OS_HOST="http://hnb-opensearch:9200"
+OS_HOST="http://aether-opensearch:9200"
 
 echo "Waiting for OpenSearch..."
 until curl -sf "$OS_HOST/_cluster/health?wait_for_status=yellow&timeout=5s" > /dev/null 2>&1; do

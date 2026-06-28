@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/heavenlabs/hnb/internal/crypto"
-	"github.com/heavenlabs/hnb/internal/executor"
-	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/executor"
+	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -490,7 +490,7 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 					"created_at":     now,
 					"updated_at":     now,
 				},
-				"user_email": "agent@hnb",
+				"user_email": "agent@aether",
 			})
 		}
 
@@ -557,7 +557,7 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 				"type":       "cell_updated",
 				"cell_id":    cellID,
 				"source":     req.Source,
-				"user_email": "agent@hnb",
+				"user_email": "agent@aether",
 			})
 		}
 
@@ -662,7 +662,7 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 					"type":       "cell_output",
 					"cell_id":    cellID,
 					"outputs":    []models.Output{errOutput},
-					"user_email": "agent@hnb",
+					"user_email": "agent@aether",
 				})
 			}
 
@@ -683,7 +683,7 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 				"type":       "cell_output",
 				"cell_id":    cellID,
 				"outputs":    outputs,
-				"user_email": "agent@hnb",
+				"user_email": "agent@aether",
 			})
 		}
 
@@ -851,7 +851,7 @@ func makeMoveCellHandler(db *pgxpool.Pool) ToolHandler {
 			ctx.BroadcastFunc(notebookID, map[string]any{
 				"type":       "notebook_refresh",
 				"reason":     "cell_moved",
-				"user_email": "agent@hnb",
+				"user_email": "agent@aether",
 			})
 		}
 
@@ -930,7 +930,7 @@ func makeSwapCellsHandler(db *pgxpool.Pool) ToolHandler {
 			ctx.BroadcastFunc(notebookID, map[string]any{
 				"type":       "notebook_refresh",
 				"reason":     "cells_swapped",
-				"user_email": "agent@hnb",
+				"user_email": "agent@aether",
 			})
 		}
 
@@ -1065,7 +1065,7 @@ func makeDeleteCellHandler(db *pgxpool.Pool) ToolHandler {
 			ctx.BroadcastFunc(notebookID, map[string]any{
 				"type":       "cell_deleted",
 				"cell_id":    cellID,
-				"user_email": "agent@hnb",
+				"user_email": "agent@aether",
 			})
 		}
 
@@ -1293,7 +1293,7 @@ func makeRestoreSnapshotHandler(db *pgxpool.Pool) ToolHandler {
 			ctx.BroadcastFunc(nbID, map[string]any{
 				"type":       "notebook_refresh",
 				"reason":     "snapshot_restore",
-				"user_email": "agent@hnb",
+				"user_email": "agent@aether",
 			})
 		}
 
@@ -1374,7 +1374,7 @@ func makeUpdateNotebookHandler(db *pgxpool.Pool) ToolHandler {
 			ctx.BroadcastFunc(req.NotebookID, map[string]any{
 				"type":       "notebook_refresh",
 				"reason":     "notebook_updated",
-				"user_email": "agent@hnb",
+				"user_email": "agent@aether",
 			})
 		}
 

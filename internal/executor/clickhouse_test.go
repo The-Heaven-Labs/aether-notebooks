@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/heavenlabs/hnb/internal/executor"
-	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/the-heaven-labs/aether/internal/executor"
+	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 func testClickHouseConfig(t *testing.T) models.ConnectorConfig {

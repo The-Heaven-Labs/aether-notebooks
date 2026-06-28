@@ -17,7 +17,7 @@ function formatRole(role: string): string {
 }
 
 export function MembersPage() {
-  useEffect(() => { document.title = "Members — Heaven's Notebooks" }, [])
+  useEffect(() => { document.title = "Members — Aether Notebooks" }, [])
   const { user } = useAuth()
   const qc = useQueryClient()
   const isAdmin = user?.role === 'admin'

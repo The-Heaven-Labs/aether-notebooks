@@ -61,7 +61,7 @@ export function PublicDashboardPage() {
     <div style={styles.page}>
       <header style={styles.header}>
         <div style={styles.headerInner}>
-          <span style={styles.brandMark}>hnb</span>
+          <span style={styles.brandMark}>Aether</span>
           <h1 style={styles.title}>{dashboard.title}</h1>
           <span style={styles.readOnlyBadge}>Read-only</span>
         </div>
@@ -97,7 +97,7 @@ export function PublicDashboardPage() {
       </main>
 
       <footer style={styles.footer}>
-        <span style={styles.footerText}>Powered by hnb</span>
+        <span style={styles.footerText}>Powered by Aether</span>
       </footer>
     </div>
   )

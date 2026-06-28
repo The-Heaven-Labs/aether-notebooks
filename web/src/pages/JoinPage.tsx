@@ -14,7 +14,7 @@ export function JoinPage() {
   useEffect(() => {
     // If no token in URL, check sessionStorage for a pending join token
     // (set before redirecting to login from a previous visit)
-    const effectiveToken = token || sessionStorage.getItem('hnb_pending_join_token')
+    const effectiveToken = token || sessionStorage.getItem('aether_pending_join_token')
     if (!effectiveToken) {
       setError('No invite token provided')
       setLoading(false)
@@ -25,12 +25,12 @@ export function JoinPage() {
       try {
         // Check if user is already authenticated
         // Also check for onboarding_token which is set after registration
-        const onboardingToken = localStorage.getItem('hnb_onboarding_token')
+        const onboardingToken = localStorage.getItem('aether_onboarding_token')
         if (!isAuthenticated && !onboardingToken) {
           const userRes = await api.get('/api/v1/users/me').catch(() => null)
           if (!userRes) {
             // Store the token in sessionStorage so it survives the login redirect
-            sessionStorage.setItem('hnb_pending_join_token', effectiveToken)
+            sessionStorage.setItem('aether_pending_join_token', effectiveToken)
             navigate('/login')
             return
           }
@@ -44,8 +44,8 @@ export function JoinPage() {
         })
         loginWithToken(result.token)
         // Clear the pending token after successful join
-        sessionStorage.removeItem('hnb_pending_join_token')
-        localStorage.removeItem('hnb_onboarding_token')
+        sessionStorage.removeItem('aether_pending_join_token')
+        localStorage.removeItem('aether_onboarding_token')
         navigate('/')
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to join organization')

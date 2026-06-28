@@ -35,7 +35,7 @@ const emptyForm = (): AgentForm => ({
 })
 
 export function AgentsPage() {
-  useEffect(() => { document.title = "Agents — Heaven's Notebooks" }, [])
+  useEffect(() => { document.title = "Agents — Aether Notebooks" }, [])
 
   const qc = useQueryClient()
   const [creating, setCreating] = useState(false)

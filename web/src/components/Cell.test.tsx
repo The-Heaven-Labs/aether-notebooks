@@ -94,12 +94,12 @@ describe('ResizableImage', () => {
 describe('MarkdownView image upload', () => {
   beforeEach(() => {
     // Provide a token so getToken() returns non-null
-    localStorage.setItem('hnb_token', 'test-token')
+    localStorage.setItem('aether_token', 'test-token')
     vi.stubGlobal('fetch', vi.fn())
   })
 
   afterEach(() => {
-    localStorage.removeItem('hnb_token')
+    localStorage.removeItem('aether_token')
     vi.unstubAllGlobals()
   })
 
@@ -435,13 +435,13 @@ describe('CodeEditorView accessibility', () => {
 
 describe('MarkdownView image resize', () => {
   beforeEach(() => {
-    localStorage.setItem('hnb_token', 'test-token')
+    localStorage.setItem('aether_token', 'test-token')
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(['x'], { type: 'image/png' }) }))
     vi.stubGlobal('URL', { createObjectURL: vi.fn(() => 'blob:mock'), revokeObjectURL: vi.fn() })
   })
 
   afterEach(() => {
-    localStorage.removeItem('hnb_token')
+    localStorage.removeItem('aether_token')
     vi.unstubAllGlobals()
   })
 

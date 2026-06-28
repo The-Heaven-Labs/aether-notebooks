@@ -38,10 +38,10 @@ const preview: Preview = {
       },
     },
     backgrounds: {
-      default: 'hnb-light',
+      default: 'aether-light',
       values: [
-        { name: 'hnb-light', value: '#f8f7f4' },
-        { name: 'hnb-dark', value: '#1a1814' },
+        { name: 'aether-light', value: '#f8f7f4' },
+        { name: 'aether-dark', value: '#1a1814' },
       ],
     },
     a11y: {
