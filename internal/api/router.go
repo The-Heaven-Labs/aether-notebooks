@@ -16,6 +16,7 @@ import (
 	"github.com/heavenlabs/hnb/internal/storage"
 )
 
+// Server is the HTTP server for the hnb API, holding all dependencies.
 type Server struct {
 	db                 *database.DB
 	jwt                *auth.JWTIssuer
@@ -39,6 +40,7 @@ type Server struct {
 	oidcRewriteTo      string      // target host rewrite (e.g. "host.docker.internal:5557")
 }
 
+// NewServer creates a new hnb API server with the provided dependencies.
 func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, redisCache *cache.Cache) *Server {
 	s := &Server{
 		db:        db,

@@ -1,3 +1,5 @@
+// Package executor defines the Executor interface for executing queries against various database backends.
+// Implementations exist for PostgreSQL, ClickHouse, and JavaScript (inline execution).
 package executor
 
 import (

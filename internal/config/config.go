@@ -1,3 +1,4 @@
+// Package config provides environment-based configuration loading for the hnb server.
 package config
 
 import (

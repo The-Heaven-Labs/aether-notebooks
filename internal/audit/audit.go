@@ -1,3 +1,4 @@
+// Package audit provides a ClickHouse-backed audit logging system for tracking user actions.
 package audit
 
 import (

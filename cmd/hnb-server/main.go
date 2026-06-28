@@ -1,3 +1,4 @@
+//go:generate swag init -g cmd/hnb-server/main.go -o internal/api/docs
 package main
 
 // @title hnb API

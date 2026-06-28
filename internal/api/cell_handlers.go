@@ -388,7 +388,7 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 // @Tags cells
 // @Param notebook_id path string true "Notebook ID"
 // @Param cell_id path string true "Cell ID"
-// @Success 200
+// @Success 204
 // @Failure 404 {object} map[string]string
 // @Security BearerAuth
 // @Router /notebooks/{notebook_id}/cells/{cell_id} [delete]
@@ -440,6 +440,7 @@ func (s *Server) handleDeleteCell(w http.ResponseWriter, r *http.Request) {
 // @Summary Duplicate a cell
 // @Description Create a copy of a cell
 // @Tags cells
+// @Accept json
 // @Produce json
 // @Param notebook_id path string true "Notebook ID"
 // @Param cell_id path string true "Cell ID"

@@ -1,3 +1,4 @@
+// Package crypto provides AES-based encryption/decryption for connector credentials.
 package crypto
 
 import (
