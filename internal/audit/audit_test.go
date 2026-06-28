@@ -5,14 +5,14 @@ import (
 	"os"
 	"testing"
 
-	"github.com/heavenlabs/hnb/internal/audit"
-	"github.com/heavenlabs/hnb/internal/database"
+	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/database"
 )
 
 func TestLogAndQuery(t *testing.T) {
-	dsn := os.Getenv("HNB_DATABASE_URL")
+	dsn := os.Getenv("AETHER_DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres://hnb:hnb_dev@localhost:5432/hnb?sslmode=disable"
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
 	}
 
 	db, err := database.Connect(context.Background(), dsn)

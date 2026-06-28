@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/heavenlabs/hnb/internal/agent"
-	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/the-heaven-labs/aether/internal/agent"
+	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 type agentWSHandler struct {

@@ -20,18 +20,18 @@ const fmtDate = (d: string) => {
 }
 
 export function DashboardsPage() {
-  useEffect(() => { document.title = "Dashboards — Heaven's Notebooks" }, [])
+  useEffect(() => { document.title = "Dashboards — Aether Notebooks" }, [])
   const qc = useQueryClient()
   const [newTitle, setNewTitle] = useState('')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [layout, setLayout] = useState<'grid' | 'list'>(() =>
-    (localStorage.getItem('hnb_dashboards_layout') as 'grid' | 'list') ?? 'list'
+    (localStorage.getItem('aether_dashboards_layout') as 'grid' | 'list') ?? 'list'
   )
   const toggleLayout = () => {
     const next = layout === 'list' ? 'grid' : 'list'
     setLayout(next)
-    localStorage.setItem('hnb_dashboards_layout', next)
+    localStorage.setItem('aether_dashboards_layout', next)
   }
 
   const { data: dashboards = [], isLoading } = useQuery({

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

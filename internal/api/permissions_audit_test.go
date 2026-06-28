@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/api"
+	"github.com/the-heaven-labs/aether/internal/api"
 	"github.com/stretchr/testify/require"
 )
 
@@ -312,7 +312,7 @@ func createConnectorResource(t *testing.T, srv *api.Server, token, label string)
 		"type": "postgres",
 		"config": map[string]any{
 			"host": "localhost", "port": 5432,
-			"user": "hnb", "password": "hnb_dev", "database": "hnb",
+			"user": "aether", "password": "aether_dev", "database": "aether",
 		},
 	}
 	code, resp := doRequest(t, srv, token, "POST", "/api/v1/connectors", body)

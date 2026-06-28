@@ -13,13 +13,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/api"
-	"github.com/heavenlabs/hnb/internal/audit"
-	"github.com/heavenlabs/hnb/internal/auth"
-	"github.com/heavenlabs/hnb/internal/cache"
-	"github.com/heavenlabs/hnb/internal/crypto"
-	"github.com/heavenlabs/hnb/internal/database"
-	"github.com/heavenlabs/hnb/internal/storage"
+	"github.com/the-heaven-labs/aether/internal/api"
+	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/auth"
+	"github.com/the-heaven-labs/aether/internal/cache"
+	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/database"
+	"github.com/the-heaven-labs/aether/internal/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,9 +50,9 @@ func withPlatformAdminClaims(r *http.Request) *http.Request {
 
 func setupTestDB(t *testing.T) *database.DB {
 	t.Helper()
-	dsn := os.Getenv("HNB_DATABASE_URL")
+	dsn := os.Getenv("AETHER_DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres://hnb:hnb_dev@localhost:5432/hnb?sslmode=disable"
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
 	}
 	db, err := database.Connect(context.Background(), dsn)
 	if err != nil {
@@ -67,7 +67,7 @@ func setupTestDB(t *testing.T) *database.DB {
 
 func setupTestCache(t *testing.T) *cache.Cache {
 	t.Helper()
-	redisURL := os.Getenv("HNB_REDIS_URL")
+	redisURL := os.Getenv("AETHER_REDIS_URL")
 	if redisURL == "" {
 		redisURL = "redis://localhost:6379"
 	}
@@ -136,7 +136,7 @@ func createConnector(t *testing.T, srv *api.Server, token string) string {
 		"type": "postgres",
 		"config": map[string]any{
 			"host": "localhost", "port": 5432,
-			"user": "hnb", "password": "hnb_dev", "database": "hnb",
+			"user": "aether", "password": "aether_dev", "database": "aether",
 		},
 	})
 	req := httptest.NewRequest("POST", "/api/v1/connectors", bytes.NewReader(body))

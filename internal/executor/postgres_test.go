@@ -4,22 +4,22 @@ import (
 	"context"
 	"testing"
 
-	"github.com/heavenlabs/hnb/internal/executor"
-	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/the-heaven-labs/aether/internal/executor"
+	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 func testConnectorConfig(t *testing.T) models.ConnectorConfig {
 	t.Helper()
 	return models.ConnectorConfig{
 		Host: "localhost", Port: 5432,
-		User: "hnb", Password: "hnb_dev", Database: "hnb",
+		User: "aether", Password: "aether_dev", Database: "aether",
 	}
 }
 
 func TestPostgresExecutor(t *testing.T) {
 	cfg := models.ConnectorConfig{
 		Host: "localhost", Port: 5432,
-		User: "hnb", Password: "hnb_dev", Database: "hnb",
+		User: "aether", Password: "aether_dev", Database: "aether",
 	}
 
 	pg, err := executor.NewPostgresExecutor(cfg)

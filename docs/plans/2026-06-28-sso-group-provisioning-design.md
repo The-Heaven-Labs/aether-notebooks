@@ -5,12 +5,12 @@
 
 ## Problem
 
-When users authenticate via SSO/OIDC, hnb only extracts `email` and `name` from the ID token. Many organizations use IDP groups (Azure AD groups, Keycloak groups, Okta groups, etc.) to manage access, and users expect those group memberships to carry over into hnb automatically.
+When users authenticate via SSO/OIDC, Aether only extracts `email` and `name` from the ID token. Many organizations use IDP groups (Azure AD groups, Keycloak groups, Okta groups, etc.) to manage access, and users expect those group memberships to carry over into Aether automatically.
 
 ## Goals
 
 1. Extract group membership from the OIDC ID token and/or UserInfo endpoint
-2. Auto-create hnb groups that match IDP groups (scoped to the user's org)
+2. Auto-create Aether groups that match IDP groups (scoped to the user's org)
 3. Add/remove users from groups in sync with the IDP on each login
 4. Support a group name prefix filter to avoid syncing irrelevant cross-system groups
 5. Preserve manually-added group memberships (only reconcile SSO-provisioned ones)
@@ -52,7 +52,7 @@ CREATE TABLE sso_group_memberships (
 |---|---|
 | `scopes` | Additional OIDC scopes beyond `openid profile email`. E.g., `["groups"]` to request group claims |
 | `groups_claim` | The claim key in the ID token/UserInfo that contains the groups array. Default `"groups"` handles Azure AD, Keycloak, Okta. Can be overridden for non-standard claim names |
-| `group_prefix` | Only sync groups whose names start with this prefix. Empty string = sync all. E.g., `"hnb-"` only syncs `hnb-analysts`, `hnb-viewers` but skips `all-employees` |
+| `group_prefix` | Only sync groups whose names start with this prefix. Empty string = sync all. E.g., `"aether-"` only syncs `aether-analysts`, `aether-viewers` but skips `all-employees` |
 | `auto_sync_groups` | Master toggle to enable group provisioning for this provider |
 | `get_user_info` | Whether to call the UserInfo endpoint for additional claims after token exchange |
 
@@ -131,7 +131,7 @@ After user lookup/creation succeeds:
            filtered = claims.Groups
 
     2. For each group name in filtered:
-       a. Find or create hnb group (within user's org)
+       a. Find or create Aether group (within user's org)
           - Check case-insensitive match first (groups have UNIQUE(org_id, name))
           - INSERT group if not found
           - Audit log: group.sso.create

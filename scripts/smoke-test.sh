@@ -14,7 +14,7 @@
 #
 set -euo pipefail
 
-BASE_URL="${HNB_URL:-http://localhost:8080/api/v1}"
+BASE_URL="${AETHER_URL:-http://localhost:8080/api/v1}"
 COOKIE_JAR=$(mktemp)
 PASS=0
 FAIL=0
@@ -37,7 +37,7 @@ register_and_get_token() {
   echo "$result" | grep -o '"token":"[^"]*"' | cut -d'"' -f4
 }
 
-echo "=== Smoke Test: hnb bug fixes ==="
+echo "=== Smoke Test: aether rename ==="
 echo ""
 
 # ── 1. Register and get auth token ──
@@ -53,7 +53,7 @@ echo "OK"
 # ── 2. Create a connector ──
 echo -n "2. Creating Postgres connector... "
 CONN_RESULT=$(REQUEST POST /connectors -H "$AUTH_HEADER" -d \
-  '{"name":"Smoke Test PG","type":"postgres","config":{"host":"localhost","port":5432,"user":"hnb","password":"hnb_dev","database":"hnb"}}')
+  '{"name":"Smoke Test PG","type":"postgres","config":{"host":"localhost","port":5432,"user":"aether","password":"aether_dev","database":"aether"}}')
 CONN_ID=$(echo "$CONN_RESULT" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 if [ -z "$CONN_ID" ]; then
   echo "FAIL"

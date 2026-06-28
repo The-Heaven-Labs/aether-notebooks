@@ -18,27 +18,27 @@ export function AppShell({ children, noPadding }: Props) {
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showGlobalAgent, setShowGlobalAgent] = useState(() => {
     try {
-      return localStorage.getItem('hnb:agentDocked:__global__') === 'true'
+      return localStorage.getItem('aether:agentDocked:__global__') === 'true'
     } catch { return false }
   })
   const [globalAgentMinimized, setGlobalAgentMinimized] = useState(false)
   const [globalAgentDocked, setGlobalAgentDocked] = useState(() => {
     try {
-      const saved = localStorage.getItem('hnb:agentDocked:__global__')
+      const saved = localStorage.getItem('aether:agentDocked:__global__')
       return saved === 'true'
     } catch { /* ignore */ }
     return false
   })
   const [globalAgentWidth, setGlobalAgentWidth] = useState(() => {
     try {
-      const saved = localStorage.getItem('hnb:agentPanelWidth:__global__')
+      const saved = localStorage.getItem('aether:agentPanelWidth:__global__')
       if (saved) return Math.max(320, Math.min(600, parseInt(saved, 10)))
     } catch { /* ignore */ }
     return 460
   })
   const [globalAgentHeight, setGlobalAgentHeight] = useState(() => {
     try {
-      const saved = localStorage.getItem('hnb:agentPanelHeight:__global__')
+      const saved = localStorage.getItem('aether:agentPanelHeight:__global__')
       if (saved) return Math.max(200, Math.min(800, parseInt(saved, 10)))
     } catch { /* ignore */ }
     return 640
@@ -46,7 +46,7 @@ export function AppShell({ children, noPadding }: Props) {
   const [motds, setMotds] = useState<Array<{id: string; title: string; content: string; visibility: string; pages: string[]}>>([])
   const [dismissedMotds, setDismissedMotds] = useState<Set<string>>(() => {
     try {
-      const stored = localStorage.getItem('hnb:dismissed_motds')
+      const stored = localStorage.getItem('aether:dismissed_motds')
       if (stored) {
         const parsed = JSON.parse(stored)
         const now = Date.now()
@@ -70,7 +70,7 @@ export function AppShell({ children, noPadding }: Props) {
       const next = new Set(prev)
       next.add(id)
       const stored = Object.fromEntries([...next].map(k => [k, Date.now()]))
-      localStorage.setItem('hnb:dismissed_motds', JSON.stringify(stored))
+      localStorage.setItem('aether:dismissed_motds', JSON.stringify(stored))
       return next
     })
   }
@@ -128,7 +128,7 @@ export function AppShell({ children, noPadding }: Props) {
   }, [])
 
   useEffect(() => {
-    localStorage.setItem('hnb:agentPanelWidth:__global__', String(globalAgentWidth))
+    localStorage.setItem('aether:agentPanelWidth:__global__', String(globalAgentWidth))
   }, [globalAgentWidth])
 
   return (
@@ -154,10 +154,10 @@ export function AppShell({ children, noPadding }: Props) {
             notebookId={currentNotebookId}
             pageContext={currentPageContext}
             width={globalAgentWidth}
-            onResize={(w) => { setGlobalAgentWidth(w); try { localStorage.setItem('hnb:agentPanelWidth:__global__', String(w)) } catch {} }}
-            onClose={() => { setShowGlobalAgent(false); try { localStorage.setItem('hnb:agentDocked:__global__', 'false') } catch {} }}
+            onResize={(w) => { setGlobalAgentWidth(w); try { localStorage.setItem('aether:agentPanelWidth:__global__', String(w)) } catch {} }}
+            onClose={() => { setShowGlobalAgent(false); try { localStorage.setItem('aether:agentDocked:__global__', 'false') } catch {} }}
             onMinimize={() => setGlobalAgentMinimized(true)}
-            onDock={() => { setGlobalAgentDocked(false); try { localStorage.setItem('hnb:agentDocked:__global__', 'false') } catch {} }}
+            onDock={() => { setGlobalAgentDocked(false); try { localStorage.setItem('aether:agentDocked:__global__', 'false') } catch {} }}
             docked
           />
         )}
@@ -194,7 +194,7 @@ export function AppShell({ children, noPadding }: Props) {
                       setGlobalAgentHeight(clamped)
                     }
                     const onUp = () => {
-                      try { localStorage.setItem('hnb:agentPanelHeight:__global__', String(lastClamped)) } catch {}
+                      try { localStorage.setItem('aether:agentPanelHeight:__global__', String(lastClamped)) } catch {}
                       document.removeEventListener('mousemove', onMove)
                       document.removeEventListener('mouseup', onUp)
                     }
@@ -206,10 +206,10 @@ export function AppShell({ children, noPadding }: Props) {
                   notebookId={currentNotebookId}
                   pageContext={currentPageContext}
                   width={globalAgentWidth}
-                  onResize={(w) => { setGlobalAgentWidth(w); try { localStorage.setItem('hnb:agentPanelWidth:__global__', String(w)) } catch {} }}
-            onClose={() => { setShowGlobalAgent(false); try { localStorage.setItem('hnb:agentDocked:__global__', 'false') } catch {} }}
+                  onResize={(w) => { setGlobalAgentWidth(w); try { localStorage.setItem('aether:agentPanelWidth:__global__', String(w)) } catch {} }}
+            onClose={() => { setShowGlobalAgent(false); try { localStorage.setItem('aether:agentDocked:__global__', 'false') } catch {} }}
                   onMinimize={() => setGlobalAgentMinimized(true)}
-                  onDock={() => { setGlobalAgentDocked(true); try { localStorage.setItem('hnb:agentDocked:__global__', 'true') } catch {} }}
+                  onDock={() => { setGlobalAgentDocked(true); try { localStorage.setItem('aether:agentDocked:__global__', 'true') } catch {} }}
                   docked={false}
                 />
               </div>

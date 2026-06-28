@@ -1,4 +1,4 @@
-// Package config provides environment-based configuration loading for the hnb server.
+// Package config provides environment-based configuration loading for the Aether server.
 package config
 
 import (
@@ -45,46 +45,46 @@ func parseCommaList(s string) []string {
 }
 
 func Load() (*Config, error) {
-	maxAttachmentBytes, err := strconv.ParseInt(envOrDefault("HNB_MAX_ATTACHMENT_BYTES", "10485760"), 10, 64)
+	maxAttachmentBytes, err := strconv.ParseInt(envOrDefault("AETHER_MAX_ATTACHMENT_BYTES", "10485760"), 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("invalid HNB_MAX_ATTACHMENT_BYTES: %w", err)
+		return nil, fmt.Errorf("invalid AETHER_MAX_ATTACHMENT_BYTES: %w", err)
 	}
 	cfg := &Config{
-		Port:               envOrDefault("HNB_PORT", "8080"),
-		DatabaseURL:        envOrDefault("HNB_DATABASE_URL", "postgres://hnb:hnb_dev@localhost:5432/hnb?sslmode=disable"),
-		RedisURL:           envOrDefault("HNB_REDIS_URL", "redis://localhost:6379"),
-		MasterKey:          os.Getenv("HNB_MASTER_KEY"),
-		JWTSecret:          os.Getenv("HNB_JWT_SECRET"),
-		AttachmentDir:      envOrDefault("HNB_ATTACHMENT_DIR", "./attachments"),
-		PlatformAdminEmail: os.Getenv("HNB_PLATFORM_ADMIN_EMAIL"),
-		PublicURL:          os.Getenv("HNB_PUBLIC_URL"),
-		FrontendURL:        os.Getenv("HNB_FRONTEND_URL"),
-		StorageBackend:     envOrDefault("HNB_STORAGE_BACKEND", "local"),
-		S3Endpoint:         os.Getenv("HNB_S3_ENDPOINT"),
-		S3Bucket:           os.Getenv("HNB_S3_BUCKET"),
-		S3Region:           envOrDefault("HNB_S3_REGION", "us-east-1"),
-		S3AccessKey:        os.Getenv("HNB_S3_ACCESS_KEY"),
-		S3SecretKey:        os.Getenv("HNB_S3_SECRET_KEY"),
+		Port:               envOrDefault("AETHER_PORT", "8080"),
+		DatabaseURL:        envOrDefault("AETHER_DATABASE_URL", "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"),
+		RedisURL:           envOrDefault("AETHER_REDIS_URL", "redis://localhost:6379"),
+		MasterKey:          os.Getenv("AETHER_MASTER_KEY"),
+		JWTSecret:          os.Getenv("AETHER_JWT_SECRET"),
+		AttachmentDir:      envOrDefault("AETHER_ATTACHMENT_DIR", "./attachments"),
+		PlatformAdminEmail: os.Getenv("AETHER_PLATFORM_ADMIN_EMAIL"),
+		PublicURL:          os.Getenv("AETHER_PUBLIC_URL"),
+		FrontendURL:        os.Getenv("AETHER_FRONTEND_URL"),
+		StorageBackend:     envOrDefault("AETHER_STORAGE_BACKEND", "local"),
+		S3Endpoint:         os.Getenv("AETHER_S3_ENDPOINT"),
+		S3Bucket:           os.Getenv("AETHER_S3_BUCKET"),
+		S3Region:           envOrDefault("AETHER_S3_REGION", "us-east-1"),
+		S3AccessKey:        os.Getenv("AETHER_S3_ACCESS_KEY"),
+		S3SecretKey:        os.Getenv("AETHER_S3_SECRET_KEY"),
 		MaxAttachmentBytes:   maxAttachmentBytes,
-		ToolAllowedDomains:   parseCommaList(os.Getenv("HNB_TOOL_ALLOWED_DOMAINS")),
-		OIDCHostRewrite:      os.Getenv("HNB_OIDC_HOST_REWRITE"),
-		DisableRegistration:  envOrDefault("HNB_DISABLE_REGISTRATION", "false") == "true",
+		ToolAllowedDomains:   parseCommaList(os.Getenv("AETHER_TOOL_ALLOWED_DOMAINS")),
+		OIDCHostRewrite:      os.Getenv("AETHER_OIDC_HOST_REWRITE"),
+		DisableRegistration:  envOrDefault("AETHER_DISABLE_REGISTRATION", "false") == "true",
 	}
 	if cfg.MasterKey == "" {
-		return nil, fmt.Errorf("HNB_MASTER_KEY is required")
+		return nil, fmt.Errorf("AETHER_MASTER_KEY is required")
 	}
 	if cfg.JWTSecret == "" {
-		return nil, fmt.Errorf("HNB_JWT_SECRET is required")
+		return nil, fmt.Errorf("AETHER_JWT_SECRET is required")
 	}
 	if cfg.StorageBackend == "s3" {
 		if cfg.S3Bucket == "" {
-			return nil, fmt.Errorf("HNB_S3_BUCKET is required when HNB_STORAGE_BACKEND=s3")
+			return nil, fmt.Errorf("AETHER_S3_BUCKET is required when AETHER_STORAGE_BACKEND=s3")
 		}
 		if cfg.S3AccessKey == "" {
-			return nil, fmt.Errorf("HNB_S3_ACCESS_KEY is required when HNB_STORAGE_BACKEND=s3")
+			return nil, fmt.Errorf("AETHER_S3_ACCESS_KEY is required when AETHER_STORAGE_BACKEND=s3")
 		}
 		if cfg.S3SecretKey == "" {
-			return nil, fmt.Errorf("HNB_S3_SECRET_KEY is required when HNB_STORAGE_BACKEND=s3")
+			return nil, fmt.Errorf("AETHER_S3_SECRET_KEY is required when AETHER_STORAGE_BACKEND=s3")
 		}
 	}
 	return cfg, nil

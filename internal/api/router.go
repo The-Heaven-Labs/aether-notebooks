@@ -7,16 +7,16 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
-	"github.com/heavenlabs/hnb/internal/agent"
-	"github.com/heavenlabs/hnb/internal/audit"
-	"github.com/heavenlabs/hnb/internal/auth"
-	"github.com/heavenlabs/hnb/internal/cache"
-	"github.com/heavenlabs/hnb/internal/crypto"
-	"github.com/heavenlabs/hnb/internal/database"
-	"github.com/heavenlabs/hnb/internal/storage"
+	"github.com/the-heaven-labs/aether/internal/agent"
+	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/auth"
+	"github.com/the-heaven-labs/aether/internal/cache"
+	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/database"
+	"github.com/the-heaven-labs/aether/internal/storage"
 )
 
-// Server is the HTTP server for the hnb API, holding all dependencies.
+// Server is the HTTP server for the Aether API, holding all dependencies.
 type Server struct {
 	db                 *database.DB
 	jwt                *auth.JWTIssuer
@@ -40,7 +40,7 @@ type Server struct {
 	oidcRewriteTo      string      // target host rewrite (e.g. "host.docker.internal:5557")
 }
 
-// NewServer creates a new hnb API server with the provided dependencies.
+// NewServer creates a new Aether API server with the provided dependencies.
 func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, redisCache *cache.Cache) *Server {
 	s := &Server{
 		db:        db,

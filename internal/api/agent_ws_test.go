@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/heavenlabs/hnb/internal/api"
+	"github.com/the-heaven-labs/aether/internal/api"
 )
 
 func createModelConfig(t *testing.T, srv *api.Server, token string) string {

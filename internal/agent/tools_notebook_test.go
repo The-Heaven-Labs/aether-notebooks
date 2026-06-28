@@ -9,18 +9,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/heavenlabs/hnb/internal/agent"
-	"github.com/heavenlabs/hnb/internal/crypto"
-	"github.com/heavenlabs/hnb/internal/database"
-	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/the-heaven-labs/aether/internal/agent"
+	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/database"
+	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func setupTestDB(t *testing.T) *database.DB {
 	t.Helper()
-	dsn := os.Getenv("HNB_DATABASE_URL")
+	dsn := os.Getenv("AETHER_DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres://hnb:hnb_dev@localhost:5432/hnb?sslmode=disable"
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
 	}
 	db, err := database.Connect(context.Background(), dsn)
 	if err != nil {
@@ -168,7 +168,7 @@ func TestAgentRunCellWithLimitQuotedColumn(t *testing.T) {
 	// Create a Postgres connector for this org
 	connID := uuid.New().String()
 	now := time.Now()
-	cfg := models.ConnectorConfig{Host: "localhost", Port: 5432, User: "hnb", Password: "hnb_dev", Database: "hnb"}
+	cfg := models.ConnectorConfig{Host: "localhost", Port: 5432, User: "aether", Password: "aether_dev", Database: "aether"}
 	cfgJSON, _ := json.Marshal(cfg)
 	masterKey := crypto.DeriveKey("test-master-key-for-tests-only!")
 	configEncrypted, err := crypto.Encrypt(cfgJSON, masterKey)
@@ -233,7 +233,7 @@ func TestAgentCreateCellWithConnectorID(t *testing.T) {
 
 	connID := uuid.New().String()
 	now := time.Now()
-	cfg := models.ConnectorConfig{Host: "localhost", Port: 5432, User: "hnb", Password: "hnb_dev", Database: "hnb"}
+	cfg := models.ConnectorConfig{Host: "localhost", Port: 5432, User: "aether", Password: "aether_dev", Database: "aether"}
 	cfgJSON, _ := json.Marshal(cfg)
 	masterKey := crypto.DeriveKey("test-master-key-for-tests-only!")
 	configEncrypted, err := crypto.Encrypt(cfgJSON, masterKey)
@@ -286,7 +286,7 @@ func TestAgentUpdateCellConnectorID(t *testing.T) {
 
 	connID := uuid.New().String()
 	now := time.Now()
-	cfg := models.ConnectorConfig{Host: "localhost", Port: 5432, User: "hnb", Password: "hnb_dev", Database: "hnb"}
+	cfg := models.ConnectorConfig{Host: "localhost", Port: 5432, User: "aether", Password: "aether_dev", Database: "aether"}
 	cfgJSON, _ := json.Marshal(cfg)
 	masterKey := crypto.DeriveKey("test-master-key-for-tests-only!")
 	configEncrypted, err := crypto.Encrypt(cfgJSON, masterKey)
@@ -346,7 +346,7 @@ func TestAgentRunCellNotebookConnectorFallback(t *testing.T) {
 
 	connID := uuid.New().String()
 	now := time.Now()
-	cfg := models.ConnectorConfig{Host: "localhost", Port: 5432, User: "hnb", Password: "hnb_dev", Database: "hnb"}
+	cfg := models.ConnectorConfig{Host: "localhost", Port: 5432, User: "aether", Password: "aether_dev", Database: "aether"}
 	cfgJSON, _ := json.Marshal(cfg)
 	masterKey := crypto.DeriveKey("test-master-key-for-tests-only!")
 	configEncrypted, err := crypto.Encrypt(cfgJSON, masterKey)
@@ -408,7 +408,7 @@ func TestAgentRunCellPersistsOutputs(t *testing.T) {
 
 	connID := uuid.New().String()
 	now := time.Now()
-	cfg := models.ConnectorConfig{Host: "localhost", Port: 5432, User: "hnb", Password: "hnb_dev", Database: "hnb"}
+	cfg := models.ConnectorConfig{Host: "localhost", Port: 5432, User: "aether", Password: "aether_dev", Database: "aether"}
 	cfgJSON, _ := json.Marshal(cfg)
 	masterKey := crypto.DeriveKey("test-master-key-for-tests-only!")
 	configEncrypted, err := crypto.Encrypt(cfgJSON, masterKey)

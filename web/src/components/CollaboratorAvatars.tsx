@@ -21,7 +21,7 @@ interface CollaboratorAvatarsProps {
 
 const MAX_VISIBLE = 4
 const AGENT_COLOR = '#8b5cf6'
-const AGENT_EMAIL = 'agent@hnb'
+const AGENT_EMAIL = 'agent@aether'
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/)
@@ -81,7 +81,7 @@ export function CollaboratorAvatars({
 
       setCollaborators(list)
       setFollowersOfMe(followers)
-      setFollowedByMe(following?.email === 'agent@hnb')
+      setFollowedByMe(following?.email === 'agent@aether')
     }
 
     awareness.on('change', handler)

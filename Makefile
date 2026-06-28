@@ -7,14 +7,14 @@ down:
 	docker compose down
 
 build:
-	go build -o bin/hnb-server ./cmd/hnb-server
-	go build -o bin/hnb ./cmd/hnb
+	go build -o bin/aether-server ./cmd/aether-server
+	go build -o bin/aether ./cmd/aether
 
 dev:
-	go run ./cmd/hnb-server
+	go run ./cmd/aether-server
 
 test:
 	go test ./... -v
 
 migrate:
-	go run ./cmd/hnb-server migrate
+	go run ./cmd/aether-server migrate

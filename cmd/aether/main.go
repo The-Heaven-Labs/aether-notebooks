@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/heavenlabs/hnb/internal/cli"
+	"github.com/the-heaven-labs/aether/internal/cli"
 	"github.com/spf13/cobra"
 )
 
 func main() {
 	root := &cobra.Command{
-		Use:   "hnb",
-		Short: "Heaven's Notebooks CLI",
+		Use:   "aether",
+		Short: "Aether Notebooks CLI",
 	}
 
 	root.AddCommand(

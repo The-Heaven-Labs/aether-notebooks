@@ -1,7 +1,7 @@
 import { Server } from '@hocuspocus/server'
 
-const API_URL = process.env.HNB_API_URL || 'http://localhost:8080'
-const PORT = parseInt(process.env.HNB_RELAY_PORT || '3001')
+const API_URL = process.env.AETHER_API_URL || 'http://localhost:8080'
+const PORT = parseInt(process.env.AETHER_RELAY_PORT || '3001')
 
 const server = new Server({
   port: PORT,

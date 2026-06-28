@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/heavenlabs/hnb/internal/audit"
-	"github.com/heavenlabs/hnb/internal/models"
-	"github.com/heavenlabs/hnb/internal/scheduler"
+	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/models"
+	"github.com/the-heaven-labs/aether/internal/scheduler"
 	"github.com/jackc/pgx/v5"
 )
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/heavenlabs/hnb/internal/sso"
+	"github.com/the-heaven-labs/aether/internal/sso"
 )
 
 func TestOIDCProviderLoadedFromDB(t *testing.T) {

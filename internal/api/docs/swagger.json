@@ -1,8 +1,8 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "Heaven's Notebooks API — collaborative SQL/data notebook platform",
-        "title": "hnb API",
+        "description": "Aether Notebooks API — collaborative SQL/data notebook platform",
+        "title": "Aether API",
         "contact": {},
         "version": "1.0.0"
     },
@@ -316,6 +316,47 @@
             }
         },
         "/connectors/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get a single connector by ID",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "connectors"
+                ],
+                "summary": "Get connector",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Connector ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.Connector"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
             "put": {
                 "security": [
                     {
@@ -399,8 +440,8 @@
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK"
+                    "204": {
+                        "description": "No Content"
                     },
                     "404": {
                         "description": "Not Found",
@@ -657,8 +698,8 @@
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK"
+                    "204": {
+                        "description": "No Content"
                     },
                     "404": {
                         "description": "Not Found",
@@ -822,8 +863,8 @@
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK"
+                    "204": {
+                        "description": "No Content"
                     },
                     "404": {
                         "description": "Not Found",
@@ -1042,8 +1083,8 @@
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK"
+                    "204": {
+                        "description": "No Content"
                     },
                     "404": {
                         "description": "Not Found",
@@ -1224,8 +1265,8 @@
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK"
+                    "204": {
+                        "description": "No Content"
                     },
                     "404": {
                         "description": "Not Found",
@@ -1373,8 +1414,8 @@
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK"
+                    "204": {
+                        "description": "No Content"
                     },
                     "404": {
                         "description": "Not Found",
@@ -1721,8 +1762,8 @@
                     }
                 ],
                 "responses": {
-                    "201": {
-                        "description": "Created"
+                    "204": {
+                        "description": "No Content"
                     },
                     "400": {
                         "description": "Bad Request",
@@ -1931,7 +1972,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Create a new notebook",
+                "description": "Create a new notebook. Optionally include cells to populate the notebook with content in one request.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1944,7 +1985,7 @@
                 "summary": "Create a notebook",
                 "parameters": [
                     {
-                        "description": "Notebook details",
+                        "description": "Notebook details (title required; cells optional with type, language, source)",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -1957,7 +1998,7 @@
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.Notebook"
+                            "type": "object"
                         }
                     },
                     "400": {
@@ -2146,8 +2187,72 @@
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK"
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/notebooks/{id}/clone": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Create a copy of a notebook with all its cells (without outputs)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notebooks"
+                ],
+                "summary": "Clone a notebook",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source notebook ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional new title and folder",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     },
                     "404": {
                         "description": "Not Found",
@@ -2357,8 +2462,8 @@
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK"
+                    "204": {
+                        "description": "No Content"
                     },
                     "404": {
                         "description": "Not Found",
@@ -2380,6 +2485,9 @@
                     }
                 ],
                 "description": "Create a copy of a cell",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
@@ -2655,8 +2763,8 @@
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK"
+                    "204": {
+                        "description": "No Content"
                     },
                     "404": {
                         "description": "Not Found",
@@ -2775,8 +2883,8 @@
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK"
+                    "204": {
+                        "description": "No Content"
                     },
                     "404": {
                         "description": "Not Found",
@@ -3064,9 +3172,6 @@
                 "name": {
                     "type": "string"
                 },
-                "org_name": {
-                    "type": "string"
-                },
                 "password": {
                     "type": "string"
                 }
@@ -3079,6 +3184,9 @@
                     "$ref": "#/definitions/models.ConnectorConfig"
                 },
                 "created_at": {
+                    "type": "string"
+                },
+                "deleted_at": {
                     "type": "string"
                 },
                 "folder_id": {
@@ -3167,6 +3275,9 @@
                 "created_by": {
                     "type": "string"
                 },
+                "deleted_at": {
+                    "type": "string"
+                },
                 "folder_id": {
                     "type": "string"
                 },
@@ -3174,9 +3285,6 @@
                     "type": "string"
                 },
                 "org_id": {
-                    "type": "string"
-                },
-                "public_token": {
                     "type": "string"
                 },
                 "settings": {
@@ -3217,6 +3325,9 @@
                     "type": "string"
                 },
                 "created_by": {
+                    "type": "string"
+                },
+                "deleted_at": {
                     "type": "string"
                 },
                 "description": {

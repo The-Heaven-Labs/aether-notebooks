@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/heavenlabs/hnb/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/audit"
 )
 
 type auditListResponse struct {

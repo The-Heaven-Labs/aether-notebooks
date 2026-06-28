@@ -1,6 +1,6 @@
-# hnb Frontend — React + Vite + TypeScript
+# Aether Frontend — React + Vite + TypeScript
 
-This is the web frontend for hnb, a collaborative SQL/data notebook platform.
+This is the web frontend for Aether, a collaborative SQL/data notebook platform.
 
 ## Development
 

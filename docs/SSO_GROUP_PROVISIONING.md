@@ -1,20 +1,20 @@
 # SSO Group Provisioning
 
-Auto-provision users into hnb groups based on group membership claims from an OIDC identity provider. Groups are created on demand, memberships are synced bidirectionally on each SSO login, and a prefix filter prevents syncing unrelated groups.
+Auto-provision users into Aether groups based on group membership claims from an OIDC identity provider. Groups are created on demand, memberships are synced bidirectionally on each SSO login, and a prefix filter prevents syncing unrelated groups.
 
 ## How It Works
 
 ```
 User clicks "Login with {provider}" 
-  → hnb redirects to IDP
+  → Aether redirects to IDP
   → User authenticates
   → IDP redirects back with auth code
-  → hnb exchanges code for ID token (+ optionally calls UserInfo)
-  → hnb creates/finds user by email
-  → hnb syncs group memberships:
-      1. Filter groups by prefix (if configured)
-      2. For each matching group: find-or-create in hnb, add user
-      3. Remove user from groups the IDP no longer lists them in
+  → Aether exchanges code for ID token (+ optionally calls UserInfo)
+  → Aether creates/finds user by email
+  → Aether syncs group memberships:
+       1. Filter groups by prefix (if configured)
+       2. For each matching group: find-or-create in Aether, add user
+       3. Remove user from groups the IDP no longer lists them in
   → Login complete, user redirected to frontend with token
 ```
 
@@ -26,7 +26,7 @@ New fields on the SSO provider create/edit form:
 |---|---|---|---|
 | `scopes` | `string[]` | `[]` (defaults to `openid profile email`) | Additional OIDC scopes to request. E.g., `["groups"]` if the IDP requires an explicit scope. |
 | `groups_claim` | `string` | `"groups"` | Which claim in the ID token / UserInfo response contains the group list. Use `"cognito:groups"` for AWS Cognito, `"memberOf"` for Azure AD, etc. |
-| `group_prefix` | `string` | `""` | Only sync groups whose names start with this prefix. Empty = sync all. E.g., `"hnb-"` syncs `hnb-analysts` but skips `all-employees`. |
+| `group_prefix` | `string` | `""` | Only sync groups whose names start with this prefix. Empty = sync all. E.g., `"aether-"` syncs `aether-analysts` but skips `all-employees`. |
 | `auto_sync_groups` | `boolean` | `false` | Master toggle to enable group provisioning for this provider. |
 | `get_user_info` | `boolean` | `false` | Whether to call the UserInfo endpoint for additional claims after token exchange. Some IDPs include groups only in UserInfo, not in the ID token (or hit token size limits). |
 
@@ -79,7 +79,7 @@ If an admin **adds** a user to a group that isn't in the IDP's list, the sync ne
 
 ## Group Renames
 
-If the IDP renames a group, the old hnb group persists with stale memberships and a new group is created. There is no rename tracking — the old group must be cleaned up manually. This is a known limitation.
+If the IDP renames a group, the old Aether group persists with stale memberships and a new group is created. There is no rename tracking — the old group must be cleaned up manually. This is a known limitation.
 
 ## Development: Testing with Keycloak
 
@@ -94,12 +94,12 @@ docker compose -f docker-compose.dev.yml up -d    # Keycloak starts automaticall
 | Field | Value |
 |---|---|
 | Name | `Keycloak Dev` |
-| Client ID | `hnb-dev` |
-| Client Secret | `hnb-dev-keycloak-secret` |
-| Discovery URL | `http://localhost:5557/realms/hnb-dev` |
+| Client ID | `aether-dev` |
+| Client Secret | `aether-dev-keycloak-secret` |
+| Discovery URL | `http://localhost:5557/realms/aether-dev` |
 | Scopes | *(leave empty)* |
 | Groups Claim | `groups` |
-| Group Prefix | `hnb-` |
+| Group Prefix | `aether-` |
 | Auto-sync Groups | ✅ |
 | Call UserInfo | ✅ |
 
@@ -107,13 +107,13 @@ docker compose -f docker-compose.dev.yml up -d    # Keycloak starts automaticall
 
 | User | Password | Groups |
 |---|---|---|
-| alice@hnb-dev.test | alice123 | hnb-analysts, all-employees |
-| bob@hnb-dev.test | bob123 | hnb-engineering |
-| charlie@hnb-dev.test | charlie123 | all-employees |
-| dave@hnb-dev.test | dave123 | hnb-engineering, all-employees |
-| eve@hnb-dev.test | eve123 | hnb-analysts |
+| alice@aether-dev.test | alice123 | aether-analysts, all-employees |
+| bob@aether-dev.test | bob123 | aether-engineering |
+| charlie@aether-dev.test | charlie123 | all-employees |
+| dave@aether-dev.test | dave123 | aether-engineering, all-employees |
+| eve@aether-dev.test | eve123 | aether-analysts |
 
-Login as `alice` — you'll be auto-added to `hnb-analysts` and `hnb-engineering`. The `all-employees` group is filtered by the `hnb-` prefix.
+Login as `alice` — you'll be auto-added to `aether-analysts` and `aether-engineering`. The `all-employees` group is filtered by the `aether-` prefix.
 
 ### E2E test script:
 

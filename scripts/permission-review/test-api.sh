@@ -4,7 +4,7 @@
 #
 set -euo pipefail
 
-API="${HNB_API_URL:-http://localhost:8080}"
+API="${AETHER_API_URL:-http://localhost:8080}"
 source /tmp/permission-review-state.env
 
 PASS=0

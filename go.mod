@@ -1,4 +1,4 @@
-module github.com/heavenlabs/hnb
+module github.com/the-heaven-labs/aether
 
 go 1.25.7
 
@@ -13,7 +13,10 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.9.1
+	github.com/pkoukk/tiktoken-go v0.1.8
+	github.com/pmezard/go-difflib v1.0.0
 	github.com/redis/go-redis/v9 v9.19.0
+	github.com/reearth/ygo v1.25.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/shopspring/decimal v1.4.0
 	github.com/spf13/cobra v1.10.2
@@ -60,9 +63,6 @@ require (
 	github.com/mailru/easyjson v0.7.6 // indirect
 	github.com/paulmach/orb v0.12.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.25 // indirect
-	github.com/pkoukk/tiktoken-go v0.1.8 // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/reearth/ygo v1.25.0 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect

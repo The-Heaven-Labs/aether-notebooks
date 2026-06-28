@@ -124,12 +124,12 @@ Also, remove the now-unnecessary `groupBy` cleanup and `series_colors` validatio
 
 **Step 5: Build**
 
-Run: `cd /home/jesus/Projects/hnb-claude && rtk go build ./internal/agent/...`
+Run: `cd /home/jesus/Projects/hnb-claude && go build ./internal/agent/...`
 Expected: Success
 
 **Step 6: Test**
 
-Run: `cd /home/jesus/Projects/hnb-claude && rtk go test ./internal/agent/... -count=1 -short`
+Run: `cd /home/jesus/Projects/hnb-claude && go test ./internal/agent/... -count=1 -short`
 Expected: 13 passed
 
 **Step 7: Commit**
@@ -226,7 +226,7 @@ If already handled, this task is no-op.
 
 **Step 3: Build and test**
 
-Run: `cd /home/jesus/Projects/hnb-claude && rtk go build ./internal/agent/... && rtk go test ./internal/agent/... -count=1 -short`
+Run: `cd /home/jesus/Projects/hnb-claude && go build ./internal/agent/... && go test ./internal/agent/... -count=1 -short`
 Expected: Success
 
 **Step 4: Commit**

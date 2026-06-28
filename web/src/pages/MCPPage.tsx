@@ -25,7 +25,7 @@ const emptyForm = (): MCPForm => ({
 })
 
 export function MCPPage() {
-  useEffect(() => { document.title = "MCP Servers — Heaven's Notebooks" }, [])
+  useEffect(() => { document.title = "MCP Servers — Aether Notebooks" }, [])
 
   const qc = useQueryClient()
   const [creating, setCreating] = useState(false)

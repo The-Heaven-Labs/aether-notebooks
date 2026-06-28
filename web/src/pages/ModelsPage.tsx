@@ -69,7 +69,7 @@ const PROVIDER_DEFAULTS: Record<string, { base_url: string; model: string }> = {
 }
 
 export function ModelsPage() {
-  useEffect(() => { document.title = "Models — Heaven's Notebooks" }, [])
+  useEffect(() => { document.title = "Models — Aether Notebooks" }, [])
 
   const qc = useQueryClient()
   const [creating, setCreating] = useState(false)

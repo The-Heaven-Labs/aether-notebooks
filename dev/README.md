@@ -53,12 +53,12 @@ Sample CloudTrail data from the [flaws.cloud](https://flaws.cloud/) CTF challeng
 To reload fresh data:
 ```bash
 # Drop the table
-docker compose -f docker-compose.dev.yml exec hnb-clickhouse clickhouse-client \
+docker compose -f docker-compose.dev.yml exec aether-clickhouse clickhouse-client \
   --user dev --password dev --database analytics \
   --query "DROP TABLE IF EXISTS cloudtrail_events"
 
 # Recreate table
-docker compose -f docker-compose.dev.yml exec hnb-clickhouse clickhouse-client \
+docker compose -f docker-compose.dev.yml exec aether-clickhouse clickhouse-client \
   --user dev --password dev --database analytics \
   --query "$(cat dev/clickhouse-seed-cloudtrail.sql)"
 
@@ -67,7 +67,7 @@ docker compose -f docker-compose.dev.yml up -d --force-recreate cloudtrail-loade
 ```
 
 **Connection:** Use the existing ClickHouse connector settings:
-- Host: `hnb-clickhouse`
+- Host: `aether-clickhouse`
 - Port: `9000` (native) / `8123` (HTTP)
 - Database: `analytics`
 - User: `dev`

@@ -3,7 +3,7 @@ package crypto_test
 import (
 	"testing"
 
-	"github.com/heavenlabs/hnb/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/crypto"
 )
 
 func TestEncryptDecrypt(t *testing.T) {
