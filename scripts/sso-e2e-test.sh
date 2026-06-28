@@ -72,7 +72,7 @@ CREATE=$(/usr/bin/curl -s -X POST "$BASE_URL/admin/sso/providers" \
     "name": "Keycloak Dev",
     "client_id": "hnb-dev",
     "client_secret": "hnb-dev-keycloak-secret",
-    "discovery_url": "http://host.docker.internal:5557/realms/hnb-dev",
+    "discovery_url": "http://keycloak:8080/realms/hnb-dev",
     "allowed_domains": [],
     "enabled": true,
     "scopes": [],
@@ -117,7 +117,7 @@ step "Log in to Keycloak as $KC_USER"
 KC_JAR="/tmp/hnb-e2e-kc-jar"
 rm -f "$KC_JAR"
 
-KC_AUTH=$(echo "$AUTH_URL" | sed 's|http://host.docker.internal:5557|http://localhost:5557|g')
+KC_AUTH=$(echo "$AUTH_URL" | sed 's|http://keycloak:8080|http://localhost:5557|g' | sed 's|http://host.docker.internal:5557|http://localhost:5557|g')
 PAGE=$(/usr/bin/curl -s -c "$KC_JAR" -b "$KC_JAR" "$KC_AUTH" 2>/dev/null || true)
 FORM=$(echo "$PAGE" | grep -oP 'action="\K[^"]*login-actions[^"]*' | head -1 || true)
 
@@ -125,7 +125,7 @@ if [ -z "$FORM" ]; then
   # Follow possible redirect to login page
   REDIR=$(/usr/bin/curl -s -o /dev/null -w "%{redirect_url}" -c "$KC_JAR" -b "$KC_JAR" "$KC_AUTH" 2>/dev/null || true)
   if [ -n "$REDIR" ]; then
-    REDIR=$(echo "$REDIR" | sed 's|http://host.docker.internal:5557|http://localhost:5557|g')
+    REDIR=$(echo "$REDIR" | sed 's|http://keycloak:8080|http://localhost:5557|g' | sed 's|http://host.docker.internal:5557|http://localhost:5557|g')
     PAGE=$(/usr/bin/curl -s -c "$KC_JAR" -b "$KC_JAR" "$REDIR" 2>/dev/null || true)
     FORM=$(echo "$PAGE" | grep -oP 'action="\K[^"]*login-actions[^"]*' | head -1 || true)
   fi
@@ -133,7 +133,7 @@ fi
 
 [ -n "$FORM" ] || { fail; echo "  No login form"; exit 1; }
 
-FORM=$(echo "$FORM" | sed 's|http://host.docker.internal:5557|http://localhost:5557|g' | sed 's|&amp;|\&|g')
+FORM=$(echo "$FORM" | sed 's|http://keycloak:8080|http://localhost:5557|g' | sed 's|http://host.docker.internal:5557|http://localhost:5557|g' | sed 's|&amp;|\&|g')
 echo "$FORM" | grep -q "^/" && FORM="http://localhost:5557$FORM"
 
 CB_URL=$(/usr/bin/curl -s -o /dev/null -w "%{redirect_url}" \
