@@ -151,6 +151,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/notebooks/{id}/permissions", authMW(http.HandlerFunc(s.handleGetNotebookPermissions)))
 	s.mux.Handle("GET /api/v1/notebooks/{id}/export", authMW(http.HandlerFunc(s.handleExportNotebook)))
 	s.mux.Handle("POST /api/v1/notebooks/import", authMW(http.HandlerFunc(s.handleImportNotebook)))
+	s.mux.Handle("POST /api/v1/notebooks/{id}/clone", authMW(http.HandlerFunc(s.handleCloneNotebook)))
 
 	// Cell routes
 	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/cells", authMW(http.HandlerFunc(s.handleCreateCell)))
