@@ -210,6 +210,11 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if txErr = createHomeFolder(ctx, tx, orgID, userID, displayName); txErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create home folder")
+			return
+		}
+
 		if txErr = tx.Commit(ctx); txErr != nil {
 			writeError(w, http.StatusInternalServerError, "failed to commit")
 			return
