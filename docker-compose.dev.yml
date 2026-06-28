@@ -124,6 +124,22 @@ services:
     volumes:
       - ./dev/dex-config.yaml:/etc/dex/config.yaml:ro
 
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1
+    command: start-dev --import-realm
+    ports:
+      - "5557:8080"
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin123
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: "5557"
+      KC_HTTP_PORT: "8080"
+      KC_HOSTNAME_STRICT: "false"
+      KC_PROXY: edge
+    volumes:
+      - ./dev/keycloak-realm.json:/opt/keycloak/data/import/keycloak-realm.json:ro
+
   api:
     build:
       context: .

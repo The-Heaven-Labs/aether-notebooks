@@ -1,0 +1,87 @@
+{
+  "realm": "hnb-dev",
+  "enabled": true,
+  "sslRequired": "none",
+
+  "clients": [
+    {
+      "clientId": "hnb-dev",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "hnb-dev-keycloak-secret",
+      "redirectUris": [
+        "http://localhost:8080/api/v1/auth/oidc/*"
+      ],
+      "directAccessGrantsEnabled": true,
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "full.path": "false"
+          }
+        }
+      ]
+    }
+  ],
+
+  "groups": [
+    {
+      "name": "hnb-analysts",
+      "path": "/hnb-analysts"
+    },
+    {
+      "name": "hnb-engineering",
+      "path": "/hnb-engineering"
+    },
+    {
+      "name": "all-employees",
+      "path": "/all-employees"
+    }
+  ],
+
+  "users": [
+    {
+      "username": "alice",
+      "email": "alice@hnb-dev.test",
+      "firstName": "Alice",
+      "lastName": "Test",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice123",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/hnb-analysts",
+        "/hnb-engineering"
+      ]
+    },
+    {
+      "username": "bob",
+      "email": "bob@hnb-dev.test",
+      "firstName": "Bob",
+      "lastName": "Test",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "bob123",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/hnb-analysts",
+        "/all-employees"
+      ]
+    }
+  ]
+}
