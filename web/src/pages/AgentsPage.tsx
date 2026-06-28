@@ -289,15 +289,18 @@ function AgentFormFields({ form, setForm, modelConfigs, skills, tools, mcpServer
     s.name.toLowerCase().includes(skillSearch.toLowerCase()) ||
     (s.description ?? '').toLowerCase().includes(skillSearch.toLowerCase())
   )
-  const filteredTools = [...tools]
-    .sort((a, b) => {
-      const typeOrder: Record<string, number> = { builtin: 1, sql_query: 0, webhook: 0 }
-      const cmp = (typeOrder[a.type] ?? 0) - (typeOrder[b.type] ?? 0)
-      if (cmp !== 0) return cmp
-      if (a.type !== b.type) return a.type.localeCompare(b.type)
-      return a.name.localeCompare(b.name)
-    })
-    .filter(t => t.name.toLowerCase().includes(toolSearch.toLowerCase()))
+  const builtinTools = tools.filter(t => t.type === 'builtin')
+  const userTools = tools.filter(t => t.type !== 'builtin').sort((a, b) => a.name.localeCompare(b.name))
+  const builtinEnabled = builtinTools.length > 0 && builtinTools.every(t => form.tool_ids.includes(t.id))
+  const toggleBuiltinAll = () => {
+    const ids = builtinTools.map(t => t.id)
+    const newIds = builtinEnabled
+      ? form.tool_ids.filter(id => !ids.includes(id))
+      : [...form.tool_ids, ...ids.filter(id => !form.tool_ids.includes(id))]
+    setForm(f => ({ ...f, tool_ids: newIds }))
+  }
+  const filteredUserTools = userTools.filter(t => t.name.toLowerCase().includes(toolSearch.toLowerCase()))
+  const filteredBuiltinTools = builtinTools.filter(t => t.name.toLowerCase().includes(toolSearch.toLowerCase()))
   const filteredMCPs = mcpServers.filter(m =>
     m.name.toLowerCase().includes(mcpSearch.toLowerCase())
   )
@@ -381,7 +384,7 @@ function AgentFormFields({ form, setForm, modelConfigs, skills, tools, mcpServer
         )}
       </div>
 
-      {/* Tools — searchable checkbox grid */}
+      {/* Tools — grouped by type */}
       <div style={{ gridColumn: '1 / -1' }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>Tools</div>
         <input
@@ -390,20 +393,55 @@ function AgentFormFields({ form, setForm, modelConfigs, skills, tools, mcpServer
           value={toolSearch}
           onChange={e => setToolSearch(e.target.value)}
         />
-        <div style={styles.selectorGrid}>
-          {tools.length === 0 && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No tools yet — <a href="/tools" style={{ color: 'var(--accent)' }}>create one</a></span>}
-          {tools.length > 0 && filteredTools.length === 0 && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No tools match "{toolSearch}"</span>}
-          {filteredTools.map(t => (
-            <label key={t.id} style={styles.checkboxLabel}>
-              <input
-                type="checkbox"
-                checked={form.tool_ids.includes(t.id)}
-                onChange={() => toggleTool(t.id)}
-              />
-              <span style={styles.checkboxText}>{t.name} <span style={{ opacity: 0.6, fontSize: 10 }}>({t.type})</span></span>
-            </label>
-          ))}
-        </div>
+        {tools.length === 0 && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No tools yet — <a href="/tools" style={{ color: 'var(--accent)' }}>create one</a></span>}
+
+        {tools.length > 0 && (
+          <>
+            {/* Built-in tools: single toggle */}
+            {filteredBuiltinTools.length > 0 && (
+              <div style={{ marginBottom: 6 }}>
+                <label style={{ ...styles.checkboxLabel, fontWeight: 600, color: 'var(--text-primary)' }}>
+                  <input
+                    type="checkbox"
+                    checked={builtinEnabled}
+                    onChange={toggleBuiltinAll}
+                    ref={el => { if (el) el.indeterminate = builtinTools.some(t => form.tool_ids.includes(t.id)) && !builtinEnabled }}
+                  />
+                  <span>Built-in Tools ({builtinTools.length})</span>
+                </label>
+                {!toolSearch && (
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 22, marginTop: 2 }}>
+                    {builtinTools.map(t => t.name).join(', ')}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* User-defined tools: individual checkboxes */}
+            {filteredUserTools.length > 0 && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4, marginTop: 4 }}>User-defined Tools</div>
+                <div style={styles.selectorGrid}>
+                  {filteredUserTools.map(t => (
+                    <label key={t.id} style={styles.checkboxLabel}>
+                      <input
+                        type="checkbox"
+                        checked={form.tool_ids.includes(t.id)}
+                        onChange={() => toggleTool(t.id)}
+                      />
+                      <span style={styles.checkboxText}>{t.name} <span style={{ opacity: 0.6, fontSize: 10 }}>({t.type})</span></span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {filteredBuiltinTools.length === 0 && filteredUserTools.length === 0 && (
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>No tools match "{toolSearch}"</span>
+            )}
+          </>
+        )}
+
         {form.tool_ids.length > 0 && (
           <div style={styles.chipsRow}>
             {form.tool_ids.map(id => {

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Trash2, RotateCcw, BookOpen, LayoutDashboard, Database } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { AppShell } from '../components/AppShell'
 
@@ -20,6 +21,7 @@ const TYPE_CONFIG: Record<string, { label: string; icon: React.ReactNode; link: 
 export function TrashPage() {
   const [items, setItems] = useState<TrashItem[]>([])
   const [loading, setLoading] = useState(true)
+  const qc = useQueryClient()
 
   const fetchTrash = () => {
     setLoading(true)
@@ -35,6 +37,9 @@ export function TrashPage() {
     try {
       await api.post('/api/v1/trash/restore', { type: item.type, id: item.id })
       setItems((prev) => prev.filter((i) => i.id !== item.id))
+      qc.invalidateQueries({ queryKey: ['folder-contents'] })
+      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
+      qc.invalidateQueries({ queryKey: ['folder-home'] })
     } catch {}
   }
 

@@ -189,6 +189,26 @@ export function makeMarkdownComponents(onResize: (src: string, newWidth: number)
         </table>
       </div>
     ),
+    p: ({ children, ...props }: React.HTMLAttributes<HTMLParagraphElement>) => (
+      <p style={{ margin: '0.5em 0' }} {...props}>
+        {children}
+      </p>
+    ),
+    ol: ({ children, ...props }: React.HTMLAttributes<HTMLOListElement>) => (
+      <ol style={{ paddingLeft: 24, margin: '0.5em 0' }} {...props}>
+        {children}
+      </ol>
+    ),
+    ul: ({ children, ...props }: React.HTMLAttributes<HTMLUListElement>) => (
+      <ul style={{ paddingLeft: 24, margin: '0.5em 0' }} {...props}>
+        {children}
+      </ul>
+    ),
+    li: ({ children, ...props }: React.HTMLAttributes<HTMLLIElement>) => (
+      <li style={{ margin: '0.25em 0' }} {...props}>
+        {children}
+      </li>
+    ),
     th: ({ children, style, ...props }: React.HTMLAttributes<HTMLTableHeaderCellElement>) => (
       <th style={{ ...style, border: '1px solid var(--border)', padding: '6px 10px', textAlign: 'left', fontWeight: 600, background: 'var(--bg-secondary)', whiteSpace: 'nowrap' }} {...props}>
         {children}

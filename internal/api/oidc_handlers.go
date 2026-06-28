@@ -232,15 +232,15 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		if subdomainOrgID != "" {
 			// Provision into the subdomain-resolved org
 			orgID = subdomainOrgID
-			_, txErr = tx.Exec(ctx,
-				`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'viewer')`,
-				orgID, userID,
-			)
-			if txErr != nil {
-				writeError(w, http.StatusInternalServerError, "failed to add member")
-				return
-			}
-			role = "viewer"
+		_, txErr = tx.Exec(ctx,
+			`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'non-admin')`,
+			orgID, userID,
+		)
+		if txErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to add member")
+			return
+		}
+		role = "non-admin"
 		} else {
 			// No subdomain — create a new org (existing behavior)
 			orgName := displayName + "'s Org"
@@ -284,37 +284,58 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Existing user logging in with a subdomain org that differs from their
-	// primary org — auto-join them if they're not already a member.
+	// primary org — auto-join them if their email domain is allowed for that org.
 	if subdomainOrgID != "" && subdomainOrgID != orgID {
+		var userEmail string
+		s.db.Pool.QueryRow(ctx, `SELECT email FROM users WHERE id=$1`, userID).Scan(&userEmail)
+
+		var domainAllowed bool
+		if userEmail != "" {
+			domain := userEmail[strings.LastIndex(userEmail, "@")+1:]
+			s.db.Pool.QueryRow(ctx,
+				`SELECT EXISTS(SELECT 1 FROM org_allowed_domains WHERE org_id=$1 AND domain=$2 AND auto_join=true)`,
+				subdomainOrgID, domain,
+			).Scan(&domainAllowed)
+		}
+
+		if domainAllowed {
+			var isMember bool
+			s.db.Pool.QueryRow(ctx,
+				`SELECT EXISTS(SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2)`,
+				subdomainOrgID, userID,
+			).Scan(&isMember)
+			if !isMember {
+				tx, txErr := s.db.Pool.Begin(ctx)
+				if txErr == nil {
+					_, txErr = tx.Exec(ctx,
+						`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'viewer')`,
+						subdomainOrgID, userID,
+					)
+					if txErr == nil {
+						txErr = createHomeFolder(ctx, tx, subdomainOrgID, userID, "")
+					}
+					if txErr != nil {
+						tx.Rollback(ctx)
+					} else {
+						tx.Commit(ctx)
+						s.audit.Log(ctx, audit.Entry{
+							OrgID: subdomainOrgID, UserID: userID,
+							Action: "org.auto_join", ResourceType: "org", ResourceID: subdomainOrgID,
+						})
+					}
+				}
+			}
+		}
+		// Only switch if member (either pre-existing or just auto-joined)
 		var isMember bool
 		s.db.Pool.QueryRow(ctx,
 			`SELECT EXISTS(SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2)`,
 			subdomainOrgID, userID,
 		).Scan(&isMember)
-		if !isMember {
-			tx, txErr := s.db.Pool.Begin(ctx)
-			if txErr == nil {
-				_, txErr = tx.Exec(ctx,
-					`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'viewer')`,
-					subdomainOrgID, userID,
-				)
-				if txErr == nil {
-					txErr = createHomeFolder(ctx, tx, subdomainOrgID, userID, "")
-				}
-				if txErr != nil {
-					tx.Rollback(ctx)
-				} else {
-					tx.Commit(ctx)
-					s.audit.Log(ctx, audit.Entry{
-						OrgID: subdomainOrgID, UserID: userID,
-						Action: "org.auto_join", ResourceType: "org", ResourceID: subdomainOrgID,
-					})
-				}
-			}
+		if isMember {
+			orgID = subdomainOrgID
+			role = "non-admin"
 		}
-		// Switch to the subdomain org for this session
-		orgID = subdomainOrgID
-		role = "viewer"
 	}
 
 	// Reconcile group membership via SSO
@@ -322,7 +343,10 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		SyncSSOGroups(ctx, s.db.Pool, s.audit, dbProvider, orgID, userID, claims.Groups)
 	}
 
-	token, err := s.jwt.Issue(userID, orgID, role)
+	var isPlatformAdmin bool
+	s.db.Pool.QueryRow(ctx, `SELECT is_platform_admin FROM users WHERE id=$1`, userID).Scan(&isPlatformAdmin)
+
+	token, err := s.jwt.IssueFull(userID, orgID, role, isPlatformAdmin)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to issue token")
 		return

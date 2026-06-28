@@ -284,16 +284,34 @@ export function OrgSettingsPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
   const [sharingEnabled, setSharingEnabled] = useState(true)
+  const [invitationsEnabled, setInvitationsEnabled] = useState(true)
+  const [registrationEnabled, setRegistrationEnabled] = useState(true)
 
   useEffect(() => {
     api.get<{ public_sharing_enabled: boolean }>('/api/v1/org/sharing')
       .then(r => setSharingEnabled(r.public_sharing_enabled))
+      .catch(() => {})
+    api.get<{ invitations_enabled: boolean }>('/api/v1/org/invitations')
+      .then(r => setInvitationsEnabled(r.invitations_enabled))
+      .catch(() => {})
+    api.get<{ registration_enabled: boolean }>('/api/v1/org/registration')
+      .then(r => setRegistrationEnabled(r.registration_enabled))
       .catch(() => {})
   }, [])
 
   async function handleToggleSharing(enabled: boolean) {
     await api.put('/api/v1/org/sharing', { public_sharing_enabled: enabled })
     setSharingEnabled(enabled)
+  }
+
+  async function handleToggleInvitations(enabled: boolean) {
+    await api.put('/api/v1/org/invitations', { invitations_enabled: enabled })
+    setInvitationsEnabled(enabled)
+  }
+
+  async function handleToggleRegistration(enabled: boolean) {
+    await api.put('/api/v1/org/registration', { registration_enabled: enabled })
+    setRegistrationEnabled(enabled)
   }
 
   const createProvider = useMutation({
@@ -769,7 +787,43 @@ const formInput: React.CSSProperties = {
           </label>
         </section>
 
-        {/* ── E. Message of the Day ── */}
+        {/* ── E. Invite Links ── */}
+        <section style={styles.section}>
+          <div style={styles.sectionTitle}>Invite Links</div>
+          <p style={styles.sectionDesc}>
+            Allow org admins to generate shareable invite links. Direct email invites are unaffected.
+          </p>
+          <label style={styles.checkRow}>
+            <input
+              type="checkbox"
+              checked={invitationsEnabled}
+              onChange={e => handleToggleInvitations(e.target.checked)}
+            />
+            <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>
+              Enable invite links
+            </span>
+          </label>
+        </section>
+
+        {/* ── F. Registration ── */}
+        <section style={styles.section}>
+          <div style={styles.sectionTitle}>Registration</div>
+          <p style={styles.sectionDesc}>
+            Allow new users to register and join this organization via its subdomain.
+          </p>
+          <label style={styles.checkRow}>
+            <input
+              type="checkbox"
+              checked={registrationEnabled}
+              onChange={e => handleToggleRegistration(e.target.checked)}
+            />
+            <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>
+              Enable registration
+            </span>
+          </label>
+        </section>
+
+        {/* ── G. Message of the Day ── */}
         <section style={styles.section}>
           <div style={styles.sectionTitle}>Message of the Day</div>
           <p style={styles.sectionDesc}>

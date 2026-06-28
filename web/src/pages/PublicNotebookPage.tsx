@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
@@ -5,7 +6,10 @@ import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import { api } from '../api/client'
 import { Skeleton } from '../components/Skeleton'
-import type { Notebook, Parameter } from '../types'
+import { OutputRenderer } from '../components/OutputRenderer'
+import { makeMarkdownComponents } from '../components/MarkdownCell'
+import type { Notebook, Parameter, Output, ResultSet } from '../types'
+import type { ChartConfig } from '../charts'
 
 interface PublicCell {
   position: number
@@ -14,15 +18,12 @@ interface PublicCell {
   source: string
   outputs: Output[]
   parameters?: Parameter[]
-}
-
-interface Output {
-  type: string
-  data: unknown
-  config?: unknown
+  metadata?: Record<string, unknown>
+  outputs_hidden: boolean
 }
 
 export function PublicNotebookPage() {
+  const mdComponents = useMemo(() => makeMarkdownComponents(() => {}, true), [])
   const { token } = useParams<{ token: string }>()
   const { data, isLoading, error } = useQuery({
     queryKey: ['public', token],
@@ -47,74 +48,49 @@ export function PublicNotebookPage() {
         {data.notebook.description && (
           <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 24 }}>{data.notebook.description}</p>
         )}
-        {data.cells.map(cell => (
-          <div key={cell.position} style={{ marginBottom: 16 }}>
-            {cell.type === 'text' ? (
-              <div style={{ padding: '8px 0', fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.6 }}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>{cell.source}</ReactMarkdown>
-              </div>
-            ) : (
-              <>
-                {cell.source && (
-                  <pre style={{ background: 'var(--bg-code)', padding: 12, borderRadius: 4, overflow: 'auto', fontSize: 13, color: 'var(--text-primary)', margin: 0 }}>{cell.source}</pre>
-                )}
-                {cell.outputs?.map((out, i) => (
-                  <div key={i} style={{ marginTop: 8 }}>
-                    {out.type === 'text' && typeof out.data === 'string' && (
-                      <pre style={{ background: 'var(--bg-secondary)', padding: 10, borderRadius: 4, fontSize: 13, color: 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>{out.data}</pre>
-                    )}
-                    {out.type === 'error' && typeof out.data === 'string' && (
-                      <pre style={{ background: '#fef2f2', padding: 10, borderRadius: 4, fontSize: 13, color: '#dc2626', whiteSpace: 'pre-wrap' }}>{out.data}</pre>
-                    )}
-                    {out.type === 'table' && out.data && typeof out.data === 'object' && (
-                      <TableView data={out.data as TableData} />
-                    )}
+        {data.cells.map(cell => {
+          const isCode = cell.type === 'code'
+          const meta = cell.metadata ?? {}
+          const chartConfig = meta.chart as ChartConfig | undefined
+          const viewMode = meta.viewMode as 'table' | 'chart' | undefined
+          return (
+            <div key={cell.position} style={{
+              ...s.cell,
+              borderLeft: `3px solid ${isCode ? 'var(--accent)' : 'var(--success)'}`,
+            }}>
+              {cell.type === 'text' ? (
+                <div style={s.mdContainer}>
+                  <div style={s.mdPreview}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={mdComponents}>{cell.source}</ReactMarkdown>
                   </div>
-                ))}
-              </>
-            )}
-          </div>
-        ))}
+                </div>
+              ) : (
+                <>
+                  {cell.source && (
+                    <div style={s.codeEditor}>
+                      <pre style={{ margin: 0, fontFamily: 'var(--font-mono)', fontSize: 13, lineHeight: 1.65, color: 'var(--text-primary)' }}>{cell.source}</pre>
+                    </div>
+                  )}
+                  {!cell.outputs_hidden && cell.outputs.length > 0 && (
+                    <div style={s.outputWrap}>
+                      <OutputRenderer
+                        outputs={cell.outputs}
+                        chartConfig={chartConfig}
+                        viewMode={viewMode}
+                        hideExport
+                        fixedView={viewMode === 'chart' ? 'chart' : undefined}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )
+        })}
       </main>
       <footer style={s.footer}>
         <span style={s.footerText}>Powered by hnb</span>
       </footer>
-    </div>
-  )
-}
-
-interface TableData {
-  columns: { name: string; type: string }[]
-  rows: Record<string, unknown>[]
-}
-
-function TableView({ data }: { data: TableData }) {
-  if (!data.columns || !data.rows) return null
-  return (
-    <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 4 }}>
-      <table style={{ borderCollapse: 'collapse', fontSize: 13, width: '100%' }}>
-        <thead>
-          <tr style={{ background: 'var(--bg-secondary)' }}>
-            {data.columns.map(col => (
-              <th key={col.name} style={{ padding: '6px 10px', textAlign: 'left', fontWeight: 600, color: 'var(--text-primary)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>{col.name}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.rows.slice(0, 100).map((row, i) => (
-            <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : 'var(--bg-secondary)' }}>
-              {data.columns.map(col => (
-                <td key={col.name} style={{ padding: '4px 10px', color: 'var(--text-primary)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap' }}>{String(row[col.name] ?? '')}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {data.rows.length > 100 && (
-        <div style={{ padding: '8px 10px', fontSize: 12, color: 'var(--text-muted)', borderTop: '1px solid var(--border)', textAlign: 'center' }}>
-          Showing 100 of {data.rows.length} rows
-        </div>
-      )}
     </div>
   )
 }
@@ -172,6 +148,39 @@ const s: Record<string, React.CSSProperties> = {
     textTransform: 'uppercase',
     letterSpacing: '0.05em',
     flexShrink: 0,
+  },
+  cell: {
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 12,
+  },
+  codeEditor: {
+    borderTop: '1px solid var(--border-light)',
+    borderBottom: '1px solid var(--border-light)',
+    padding: '14px 16px',
+    background: 'var(--cm-editor-bg)',
+    fontFamily: 'var(--font-mono)',
+    fontSize: 13,
+    lineHeight: 1.65,
+    color: 'var(--text-primary)',
+    overflow: 'auto',
+  },
+  mdContainer: {
+    borderTop: '1px solid var(--border-light)',
+    borderBottom: '1px solid var(--border-light)',
+    padding: '14px 20px',
+    fontSize: 14,
+    lineHeight: 1.75,
+    color: 'var(--text-primary)',
+    fontFamily: 'var(--font-sans)',
+  },
+  mdPreview: {
+    minHeight: 48,
+  },
+  outputWrap: {
+    borderBottom: '1px solid var(--border-light)',
   },
   footer: {
     borderTop: '1px solid var(--border)',

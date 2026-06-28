@@ -9,9 +9,10 @@ import { FormCard } from '../components/FormCard'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 
-const ROLES = ['admin', 'editor', 'viewer', 'no_access'] as const
+const ROLES = ['admin', 'non-admin'] as const
 
 function formatRole(role: string): string {
+  if (role === 'non-admin') return 'Non-Admin'
   return role.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 }
 
@@ -19,10 +20,14 @@ export function MembersPage() {
   useEffect(() => { document.title = "Members — Heaven's Notebooks" }, [])
   const { user } = useAuth()
   const qc = useQueryClient()
+  const isAdmin = user?.role === 'admin'
 
-  const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteRole, setInviteRole] = useState('viewer')
-  const [inviteError, setInviteError] = useState<string | null>(null)
+  useEffect(() => {
+    api.get<{ invitations_enabled: boolean }>('/api/v1/org/invitations')
+      .then(r => setInvitationsEnabled(r.invitations_enabled))
+      .catch(() => {})
+  }, [])
+
   const [showLinkForm, setShowLinkForm] = useState(false)
   const [linkRole, setLinkRole] = useState('viewer')
   const [generatedLink, setGeneratedLink] = useState<string | null>(null)
@@ -30,6 +35,7 @@ export function MembersPage() {
   const [linkLoading, setLinkLoading] = useState(false)
   const [linkCopied, setLinkCopied] = useState(false)
 
+  const [invitationsEnabled, setInvitationsEnabled] = useState(true)
   const [roleError, setRoleError] = useState<string | null>(null)
   const [removeError, setRemoveError] = useState<string | null>(null)
   const [removeTarget, setRemoveTarget] = useState<Member | null>(null)
@@ -37,17 +43,6 @@ export function MembersPage() {
   const { data: members = [], isLoading } = useQuery({
     queryKey: ['members'],
     queryFn: () => api.get<Member[]>('/api/v1/members'),
-  })
-
-  const inviteMember = useMutation({
-    mutationFn: () => api.post<Member>('/api/v1/members', { email: inviteEmail.trim(), role: inviteRole }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['members'] })
-      setInviteEmail('')
-      setInviteRole('viewer')
-      setInviteError(null)
-    },
-    onError: (err: Error) => setInviteError(err.message),
   })
 
   const updateRole = useMutation({
@@ -87,11 +82,6 @@ export function MembersPage() {
     },
   })
 
-  const handleInvite = () => {
-    if (!inviteEmail.trim()) return
-    inviteMember.mutate()
-  }
-
   const handleRemove = (member: Member) => {
     setRemoveTarget(member)
   }
@@ -99,50 +89,20 @@ export function MembersPage() {
   return (
     <AppShell>
       <div style={styles.body}>
-        {/* Invite form */}
-        <FormCard title="Invite Member">
-          <div style={styles.inviteRow}>
-            <input
-              style={styles.emailInput}
-              type="email"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              placeholder="colleague@example.com"
-              onKeyDown={(e) => { if (e.key === 'Enter' && inviteEmail.trim()) handleInvite() }}
-            />
-            <select
-              style={styles.roleSelect}
-              value={inviteRole}
-              onChange={(e) => setInviteRole(e.target.value)}
-            >
-              {ROLES.map((r) => (
-                <option key={r} value={r}>{formatRole(r)}</option>
-              ))}
-            </select>
+        {/* Invite link generator — admin only when enabled */}
+        {isAdmin && invitationsEnabled && (
+          <div style={{ marginTop: 16 }}>
             <button
               type="button"
-              style={styles.inviteBtn}
-              disabled={!inviteEmail.trim() || inviteMember.isPending}
-              onClick={handleInvite}
+              style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '6px 12px', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 13 }}
+              onClick={() => setShowLinkForm(!showLinkForm)}
             >
-              {inviteMember.isPending ? 'Inviting…' : 'Invite'}
+              {showLinkForm ? '− Hide' : '+ Generate invite link'}
             </button>
           </div>
-          {inviteError && <ErrorBanner message={inviteError} onDismiss={() => setInviteError(null)} />}
-        </FormCard>
+        )}
 
-        {/* Invite link generator */}
-        <div style={{ marginTop: 16 }}>
-          <button
-            type="button"
-            style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '6px 12px', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 13 }}
-            onClick={() => setShowLinkForm(!showLinkForm)}
-          >
-            {showLinkForm ? '− Hide' : '+ Generate invite link'}
-          </button>
-        </div>
-
-        {showLinkForm && (
+        {isAdmin && invitationsEnabled && showLinkForm && (
           <FormCard title="Invite Link">
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12 }}>
               <select
@@ -231,9 +191,9 @@ export function MembersPage() {
                 <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{m.email}</td>
                 <td style={cellStyle}>
                   <select
-                    style={isSelf ? styles.roleSelectDisabled : styles.roleSelectInline}
+                    style={isSelf || !isAdmin ? styles.roleSelectDisabled : styles.roleSelectInline}
                     value={m.role}
-                    disabled={isSelf}
+                    disabled={isSelf || !isAdmin}
                     onChange={(e) => updateRole.mutate({ userId: m.user_id, role: e.target.value })}
                   >
                     {ROLES.map((r) => (
@@ -245,10 +205,10 @@ export function MembersPage() {
                 <td style={styles.tdActions}>
                   <button
                     type="button"
-                    style={isSelf ? styles.removeBtnDisabled : styles.removeBtn}
-                    disabled={isSelf || removeMember.isPending}
+                    style={isSelf || !isAdmin ? styles.removeBtnDisabled : styles.removeBtn}
+                    disabled={isSelf || !isAdmin || removeMember.isPending}
                     onClick={() => handleRemove(m)}
-                    title={isSelf ? 'You cannot remove yourself from the organization' : undefined}
+                    title={isSelf ? 'You cannot remove yourself from the organization' : !isAdmin ? 'Only admins can remove members' : undefined}
                   >
                     Remove
                   </button>
