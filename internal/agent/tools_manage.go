@@ -497,19 +497,27 @@ func makeShareDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 			return nil, err
 		}
 
-		tokenBytes := make([]byte, 16)
-		cryptorand.Read(tokenBytes)
-		token := hex.EncodeToString(tokenBytes)
+		var token string
+		err := pool.QueryRow(ctx.Context,
+			`SELECT token FROM public_tokens WHERE resource_type='dashboard' AND resource_id=$1`,
+			req.DashboardID,
+		).Scan(&token)
+		if err != nil {
+			tokenBytes := make([]byte, 16)
+			cryptorand.Read(tokenBytes)
+			token = hex.EncodeToString(tokenBytes)
 
-		result, err := pool.Exec(ctx.Context,
-			`UPDATE dashboards SET public_token = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3`,
-			token, req.DashboardID, ctx.OrgID)
-		if err != nil || result.RowsAffected() == 0 {
-			return nil, fmt.Errorf("dashboard not found")
+			_, err = pool.Exec(ctx.Context,
+				`INSERT INTO public_tokens (org_id, resource_type, resource_id, token, created_by)
+				 VALUES ($1, 'dashboard', $2, $3, $4)`,
+				ctx.OrgID, req.DashboardID, token, ctx.UserID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create share link")
+			}
 		}
 
 		_ = ctx.AuditLog("dashboard.share", "dashboard", req.DashboardID)
-		return map[string]any{"public_token": token, "url": "/public/dashboards/" + token}, nil
+		return map[string]any{"token": token, "url": "/public/" + token}, nil
 	}
 }
 

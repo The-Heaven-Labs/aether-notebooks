@@ -20,7 +20,7 @@ export function PublicDashboardPage() {
       return
     }
 
-    fetch(`/api/v1/public/dashboards/${token}`)
+    fetch(`/api/v1/public/${token}`)
       .then((res) => {
         if (res.status === 404) throw new Error('Dashboard not found or is not public')
         if (!res.ok) throw new Error(`Failed to load dashboard (${res.status})`)
