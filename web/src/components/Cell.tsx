@@ -99,9 +99,9 @@ export function getOrCreateCollab(notebookId: string): NotebookCollab {
   if (existing) { existing.refCount++; return existing }
 
   const doc = new Y.Doc()
-  const token = localStorage.getItem('hnb_token') ?? ''
-  const userName = localStorage.getItem('hnb_user_name') ?? ''
-  const userEmail = localStorage.getItem('hnb_user_email') ?? ''
+  const token = localStorage.getItem('aether_token') ?? ''
+  const userName = localStorage.getItem('aether_user_name') ?? ''
+  const userEmail = localStorage.getItem('aether_user_email') ?? ''
 
   const provider = new HocuspocusProvider({
     url: RELAY_URL,
@@ -120,7 +120,7 @@ export function getOrCreateCollab(notebookId: string): NotebookCollab {
   const entry: NotebookCollab = { doc, provider, refCount: 1, synced: false }
   provider.on('synced', ({ state }: { state: boolean }) => { if (state) entry.synced = true })
   collabCache.set(notebookId, entry)
-  window.dispatchEvent(new CustomEvent('hnb-collab', { detail: { notebookId } }))
+  window.dispatchEvent(new CustomEvent('aether-collab', { detail: { notebookId } }))
   return entry
 }
 

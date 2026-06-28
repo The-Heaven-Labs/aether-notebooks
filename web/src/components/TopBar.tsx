@@ -31,10 +31,10 @@ export function TopBar({ onShowShortcuts }: TopBarProps) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
-  const name = localStorage.getItem('hnb_user_name') ?? ''
-  const email = localStorage.getItem('hnb_user_email') ?? ''
-  const orgName = localStorage.getItem('hnb_org_name') ?? ''
-  const isPlatformAdmin = localStorage.getItem('hnb_is_platform_admin') === 'true'
+  const name = localStorage.getItem('aether_user_name') ?? ''
+  const email = localStorage.getItem('aether_user_email') ?? ''
+  const orgName = localStorage.getItem('aether_org_name') ?? ''
+  const isPlatformAdmin = localStorage.getItem('aether_is_platform_admin') === 'true'
   const initials = name ? name[0].toUpperCase() : email ? email[0].toUpperCase() : '?'
 
   useEffect(() => {
@@ -50,7 +50,7 @@ export function TopBar({ onShowShortcuts }: TopBarProps) {
   return (
     <header style={styles.bar}>
       <button
-        className="hnb-hamburger"
+        className="aether-hamburger"
         style={styles.hamburger}
         onClick={openMobileSidebar}
         aria-label="Open navigation menu"

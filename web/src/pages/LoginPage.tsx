@@ -65,8 +65,8 @@ export function LoginPage() {
   }, [showPasswordStep, ssoProviders.length])
 
   function redirectAfterLogin() {
-    const redirectTo = sessionStorage.getItem('hnb_redirect_after_login')
-    sessionStorage.removeItem('hnb_redirect_after_login')
+    const redirectTo = sessionStorage.getItem('aether_redirect_after_login')
+    sessionStorage.removeItem('aether_redirect_after_login')
     return redirectTo || '/'
   }
 
@@ -82,9 +82,9 @@ export function LoginPage() {
       })
         .then(res => res.json())
         .then(user => {
-          if (user.name) localStorage.setItem('hnb_user_name', user.name)
-          if (user.email) localStorage.setItem('hnb_user_email', user.email)
-          if (user.is_platform_admin) localStorage.setItem('hnb_is_platform_admin', 'true')
+          if (user.name) localStorage.setItem('aether_user_name', user.name)
+          if (user.email) localStorage.setItem('aether_user_email', user.email)
+          if (user.is_platform_admin) localStorage.setItem('aether_is_platform_admin', 'true')
         })
         .catch(err => console.warn('[OIDC] Failed to fetch user info:', err))
         .finally(() => {
@@ -130,7 +130,7 @@ export function LoginPage() {
       if (mode === 'login') {
         await login(email, password)
         // Check if there's a pending join token from an invite link
-        const pendingJoinToken = sessionStorage.getItem('hnb_pending_join_token')
+        const pendingJoinToken = sessionStorage.getItem('aether_pending_join_token')
         if (pendingJoinToken) {
           navigate('/join')
         } else {
@@ -139,7 +139,7 @@ export function LoginPage() {
       } else {
         const onboardingToken = await register(email, password, name)
         // Check if there's a pending join token from an invite link
-        const pendingJoinToken = sessionStorage.getItem('hnb_pending_join_token')
+        const pendingJoinToken = sessionStorage.getItem('aether_pending_join_token')
         if (pendingJoinToken) {
           navigate('/join')
         } else if (onboardingToken) {
@@ -179,7 +179,7 @@ export function LoginPage() {
           <div style={styles.logoMark}>
             <span style={styles.logoIcon}>▦</span>
           </div>
-          <h1 style={styles.brandTitle}>Heaven's<br />Notebooks</h1>
+          <h1 style={styles.brandTitle}>Aether<br />Notebooks</h1>
           <p style={styles.brandTagline}>
             Collaborative SQL notebooks<br />built for data teams.
           </p>

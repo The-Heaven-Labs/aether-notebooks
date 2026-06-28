@@ -14,7 +14,7 @@ interface FolderTreeProps {
 export function FolderTree({ onSelectFolder, selectedFolderId, onMoveFolder, onPermissionsFolder }: FolderTreeProps) {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     try {
-      const saved = localStorage.getItem('hnb_tree_expanded')
+      const saved = localStorage.getItem('aether_tree_expanded')
       return saved ? new Set(JSON.parse(saved)) : new Set()
     } catch {
       return new Set()
@@ -23,7 +23,7 @@ export function FolderTree({ onSelectFolder, selectedFolderId, onMoveFolder, onP
 
   const [sectionsCollapsed, setSectionsCollapsed] = useState<Set<string>>(() => {
     try {
-      const saved = localStorage.getItem('hnb_tree_sections')
+      const saved = localStorage.getItem('aether_tree_sections')
       return saved ? new Set(JSON.parse(saved)) : new Set()
     } catch { return new Set() }
   })
@@ -33,7 +33,7 @@ export function FolderTree({ onSelectFolder, selectedFolderId, onMoveFolder, onP
       const next = new Set(prev)
       if (next.has(name)) next.delete(name)
       else next.add(name)
-      localStorage.setItem('hnb_tree_sections', JSON.stringify([...next]))
+      localStorage.setItem('aether_tree_sections', JSON.stringify([...next]))
       return next
     })
   }
@@ -123,7 +123,7 @@ export function FolderTree({ onSelectFolder, selectedFolderId, onMoveFolder, onP
         next.add(id)
         fetchChildren(id) // Fetch children when expanding
       }
-      localStorage.setItem('hnb_tree_expanded', JSON.stringify([...next]))
+      localStorage.setItem('aether_tree_expanded', JSON.stringify([...next]))
       return next
     })
   }

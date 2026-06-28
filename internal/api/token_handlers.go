@@ -40,13 +40,13 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate token: hnb_tok_ + 32 random bytes hex-encoded
+	// Generate token: aether_tok_ + 32 random bytes hex-encoded
 	rawBytes := make([]byte, 32)
 	if _, err := rand.Read(rawBytes); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
 	}
-	rawToken := "hnb_tok_" + hex.EncodeToString(rawBytes)
+	rawToken := "aether_tok_" + hex.EncodeToString(rawBytes)
 
 	// Hash the token for storage
 	hash, err := bcrypt.GenerateFromPassword([]byte(rawToken), bcrypt.DefaultCost)

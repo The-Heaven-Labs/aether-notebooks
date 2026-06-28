@@ -41,8 +41,6 @@ definitions:
         type: string
       name:
         type: string
-      org_name:
-        type: string
       password:
         type: string
     type: object
@@ -51,6 +49,8 @@ definitions:
       config:
         $ref: '#/definitions/models.ConnectorConfig'
       created_at:
+        type: string
+      deleted_at:
         type: string
       folder_id:
         type: string
@@ -110,13 +110,13 @@ definitions:
         type: string
       created_by:
         type: string
+      deleted_at:
+        type: string
       folder_id:
         type: string
       id:
         type: string
       org_id:
-        type: string
-      public_token:
         type: string
       settings:
         $ref: '#/definitions/models.DashboardSettings'
@@ -143,6 +143,8 @@ definitions:
       created_at:
         type: string
       created_by:
+        type: string
+      deleted_at:
         type: string
       description:
         type: string
@@ -249,8 +251,8 @@ definitions:
 host: localhost:8080
 info:
   contact: {}
-  description: Heaven's Notebooks API — collaborative SQL/data notebook platform
-  title: hnb API
+  description: Aether Notebooks API — collaborative SQL/data notebook platform
+  title: Aether API
   version: 1.0.0
 paths:
   /acl/{resource_type}/{resource_id}:
@@ -460,8 +462,8 @@ paths:
         required: true
         type: string
       responses:
-        "200":
-          description: OK
+        "204":
+          description: No Content
         "404":
           description: Not Found
           schema:
@@ -471,6 +473,32 @@ paths:
       security:
       - BearerAuth: []
       summary: Delete a connector
+      tags:
+      - connectors
+    get:
+      description: Get a single connector by ID
+      parameters:
+      - description: Connector ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Connector'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get connector
       tags:
       - connectors
     put:
@@ -637,8 +665,8 @@ paths:
         required: true
         type: string
       responses:
-        "200":
-          description: OK
+        "204":
+          description: No Content
         "404":
           description: Not Found
           schema:
@@ -726,8 +754,8 @@ paths:
         required: true
         type: string
       responses:
-        "200":
-          description: OK
+        "204":
+          description: No Content
         "404":
           description: Not Found
           schema:
@@ -842,8 +870,8 @@ paths:
         required: true
         type: string
       responses:
-        "200":
-          description: OK
+        "204":
+          description: No Content
         "404":
           description: Not Found
           schema:
@@ -983,8 +1011,8 @@ paths:
         required: true
         type: string
       responses:
-        "200":
-          description: OK
+        "204":
+          description: No Content
         "404":
           description: Not Found
           schema:
@@ -1118,8 +1146,8 @@ paths:
         required: true
         type: string
       responses:
-        "200":
-          description: OK
+        "204":
+          description: No Content
         "404":
           description: Not Found
           schema:
@@ -1337,8 +1365,8 @@ paths:
       produces:
       - application/json
       responses:
-        "201":
-          description: Created
+        "204":
+          description: No Content
         "400":
           description: Bad Request
           schema:
@@ -1473,9 +1501,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: Create a new notebook
+      description: Create a new notebook. Optionally include cells to populate the
+        notebook with content in one request.
       parameters:
-      - description: Notebook details
+      - description: Notebook details (title required; cells optional with type, language,
+          source)
         in: body
         name: request
         required: true
@@ -1487,7 +1517,7 @@ paths:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/models.Notebook'
+            type: object
         "400":
           description: Bad Request
           schema:
@@ -1509,8 +1539,8 @@ paths:
         required: true
         type: string
       responses:
-        "200":
-          description: OK
+        "204":
+          description: No Content
         "404":
           description: Not Found
           schema:
@@ -1586,6 +1616,47 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a notebook
+      tags:
+      - notebooks
+  /notebooks/{id}/clone:
+    post:
+      consumes:
+      - application/json
+      description: Create a copy of a notebook with all its cells (without outputs)
+      parameters:
+      - description: Source notebook ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Optional new title and folder
+        in: body
+        name: request
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Clone a notebook
       tags:
       - notebooks
   /notebooks/{id}/export:
@@ -1665,8 +1736,8 @@ paths:
         required: true
         type: string
       responses:
-        "200":
-          description: OK
+        "204":
+          description: No Content
         "404":
           description: Not Found
           schema:
@@ -1725,6 +1796,8 @@ paths:
       - cells
   /notebooks/{notebook_id}/cells/{cell_id}/duplicate:
     post:
+      consumes:
+      - application/json
       description: Create a copy of a cell
       parameters:
       - description: Notebook ID
@@ -1905,8 +1978,8 @@ paths:
         required: true
         type: string
       responses:
-        "200":
-          description: OK
+        "204":
+          description: No Content
         "404":
           description: Not Found
           schema:
@@ -2006,8 +2079,8 @@ paths:
         required: true
         type: string
       responses:
-        "200":
-          description: OK
+        "204":
+          description: No Content
         "404":
           description: Not Found
           schema:

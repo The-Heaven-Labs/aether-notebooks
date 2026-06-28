@@ -49,7 +49,7 @@ body {
 
 /* ── Responsive: show hamburger on mobile ── */
 @media (max-width: 767px) {
-  .hnb-hamburger {
+  .aether-hamburger {
     display: flex !important;
   }
 }

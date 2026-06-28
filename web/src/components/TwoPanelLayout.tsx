@@ -9,7 +9,7 @@ interface TwoPanelLayoutProps {
 
 export function TwoPanelLayout({ leftPanel, rightPanel, leftWidth = 240 }: TwoPanelLayoutProps) {
   const [collapsed, setCollapsed] = useState(() => {
-    return localStorage.getItem('hnb_tree_collapsed') === 'true'
+    return localStorage.getItem('aether_tree_collapsed') === 'true'
   })
 
   const [isMobile, setIsMobile] = useState(false)
@@ -25,7 +25,7 @@ export function TwoPanelLayout({ leftPanel, rightPanel, leftWidth = 240 }: TwoPa
   const toggle = () => {
     setCollapsed(prev => {
       const next = !prev
-      localStorage.setItem('hnb_tree_collapsed', String(next))
+      localStorage.setItem('aether_tree_collapsed', String(next))
       return next
     })
   }

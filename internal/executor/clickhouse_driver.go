@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 // clickhouseConfig is the typed config for the ClickHouse connector.

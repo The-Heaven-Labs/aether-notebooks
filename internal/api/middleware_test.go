@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/api"
-	"github.com/heavenlabs/hnb/internal/auth"
+	"github.com/the-heaven-labs/aether/internal/api"
+	"github.com/the-heaven-labs/aether/internal/auth"
 )
 
 func TestAuthMiddleware(t *testing.T) {
@@ -79,7 +79,7 @@ func TestSubdomainMiddlewareResolvesOrg(t *testing.T) {
 	wrapped := api.SubdomainMiddleware(s.DB().Pool)(handler)
 
 	req := httptest.NewRequest("GET", "/", nil)
-	req.Host = slug + ".hnb.test"
+	req.Host = slug + ".aether.test"
 	wrapped.ServeHTTP(httptest.NewRecorder(), req)
 }
 
@@ -93,7 +93,7 @@ func TestSubdomainMiddlewareSkipsSinglePartHost(t *testing.T) {
 	wrapped := api.SubdomainMiddleware(nil)(handler)
 
 	req := httptest.NewRequest("GET", "/", nil)
-	req.Host = "hnb"
+	req.Host = "aether"
 	wrapped.ServeHTTP(httptest.NewRecorder(), req)
 }
 
@@ -120,7 +120,7 @@ func TestSubdomainMiddlewareUnknownOrg(t *testing.T) {
 	wrapped := api.SubdomainMiddleware(s.DB().Pool)(handler)
 
 	req := httptest.NewRequest("GET", "/", nil)
-	req.Host = "nonexistent.hnb.test"
+	req.Host = "nonexistent.aether.test"
 	rec := httptest.NewRecorder()
 	wrapped.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {

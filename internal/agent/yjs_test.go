@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/heavenlabs/hnb/internal/agent"
+	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

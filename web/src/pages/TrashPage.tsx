@@ -31,7 +31,7 @@ export function TrashPage() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { document.title = "Trash — Heaven's Notebooks"; fetchTrash() }, [])
+  useEffect(() => { document.title = "Trash — Aether Notebooks"; fetchTrash() }, [])
 
   const handleRestore = async (item: TrashItem) => {
     try {

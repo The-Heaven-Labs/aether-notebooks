@@ -50,7 +50,7 @@ test.describe('Authentication', () => {
     await page.getByLabel('Profile menu').click()
     await page.getByRole('button', { name: /sign out/i }).click()
     await expect(page).toHaveURL('/login')
-    // hnb_token should be gone — visiting protected route redirects to login
+    // aether_token should be gone — visiting protected route redirects to login
     await page.goto('/')
     await expect(page).toHaveURL('/login')
   })

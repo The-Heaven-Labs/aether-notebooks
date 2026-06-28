@@ -1,9 +1,9 @@
-//go:generate swag init -g cmd/hnb-server/main.go -o internal/api/docs
+//go:generate swag init -g cmd/aether-server/main.go -o internal/api/docs
 package main
 
-// @title hnb API
+// @title Aether API
 // @version 1.0.0
-// @description Heaven's Notebooks API — collaborative SQL/data notebook platform
+// @description Aether Notebooks API — collaborative SQL/data notebook platform
 // @host localhost:8080
 // @BasePath /api/v1
 // @securityDefinitions.apikey BearerAuth
@@ -20,15 +20,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/api"
-	"github.com/heavenlabs/hnb/internal/audit"
-	"github.com/heavenlabs/hnb/internal/auth"
-	"github.com/heavenlabs/hnb/internal/cache"
-	"github.com/heavenlabs/hnb/internal/config"
-	"github.com/heavenlabs/hnb/internal/crypto"
-	"github.com/heavenlabs/hnb/internal/database"
-	"github.com/heavenlabs/hnb/internal/scheduler"
-	"github.com/heavenlabs/hnb/internal/storage"
+	"github.com/the-heaven-labs/aether/internal/api"
+	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/auth"
+	"github.com/the-heaven-labs/aether/internal/cache"
+	"github.com/the-heaven-labs/aether/internal/config"
+	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/database"
+	"github.com/the-heaven-labs/aether/internal/scheduler"
+	"github.com/the-heaven-labs/aether/internal/storage"
 )
 
 func main() {
@@ -89,7 +89,7 @@ func main() {
 	}
 	decrypted, err := crypto.Decrypt(testCiphertext, masterKey)
 	if err != nil || string(decrypted) != string(testPlaintext) {
-		log.Fatalf("master key validation: decryption failed — HNB_MASTER_KEY may have changed since server start")
+		log.Fatalf("master key validation: decryption failed — AETHER_MASTER_KEY may have changed since server start")
 	}
 
 	// Seed dev SSO providers (Keycloak) if none exist yet
@@ -158,7 +158,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("hnb-server listening on :%s", cfg.Port)
+		log.Printf("aether-server listening on :%s", cfg.Port)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("listen: %v", err)
 		}

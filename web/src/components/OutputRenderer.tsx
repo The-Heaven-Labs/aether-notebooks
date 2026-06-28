@@ -280,7 +280,7 @@ function exportJSON(rs: ResultSet): void {
 }
 
 const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange, hideExport, viewMode, onViewModeChange }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void }) {
-  const storageKey = cellId ? `hnb_cell_view_${cellId}` : null
+  const storageKey = cellId ? `aether_cell_view_${cellId}` : null
   const hasChartConfig = !!chartConfig?.chartType
   const [view, setView] = useState<'table' | 'chart'>(() => {
     if (fixedView) return fixedView

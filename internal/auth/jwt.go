@@ -7,7 +7,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// Claims represents the JWT claims used by hnb for authentication.
+// Claims represents the JWT claims used by Aether for authentication.
 type Claims struct {
 	UserID          string `json:"uid"`
 	OrgID           string `json:"oid"`
@@ -56,14 +56,16 @@ func (j *JWTIssuer) IssueFull(userID, orgID, role string, isPlatformAdmin bool) 
 
 // IssueOnboarding issues a 15-minute token for the post-registration wizard.
 // Role="onboarding", no org_id.
-func (j *JWTIssuer) IssueOnboarding(userID string) (string, error) {
-	claims := Claims{
-		UserID: userID,
-		OrgID:  "",
-		Role:   "onboarding",
+func (j *JWTIssuer) IssueOnboarding(userID string, isPlatformAdmin bool) (string, error) {
+	now := time.Now()
+	claims := &Claims{
+		UserID:          userID,
+		OrgID:           "",
+		Role:            "onboarding",
+		IsPlatformAdmin: isPlatformAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(now.Add(15 * time.Minute)),
+			IssuedAt:  jwt.NewNumericDate(now),
 		},
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(j.secret)
