@@ -111,8 +111,14 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Store the state in Redis. If a subdomain org is resolved, include it
+	// so the callback can retrieve it regardless of the Host header.
+	stateValue := "1"
+	if subdomainOrgID := OrgIDFromContext(ctx); subdomainOrgID != "" {
+		stateValue = "org:" + subdomainOrgID
+	}
 	key := fmt.Sprintf("oidc:state:%s", state)
-	stored, err := s.Cache.Client().SetNX(ctx, key, "1", 10*time.Minute).Result()
+	stored, err := s.Cache.Client().SetNX(ctx, key, stateValue, 10*time.Minute).Result()
 	if err != nil || !stored {
 		writeError(w, http.StatusInternalServerError, "failed to store state")
 		return
@@ -134,11 +140,13 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve subdomain org: first check the Host header (if the callback
+	// arrives on the subdomain), then fall back to the state stored in Redis
+	// during the login handler.
 	subdomainOrgID := OrgIDFromContext(ctx)
-
-	issuer := issuerURL(dbProvider.DiscoveryURL)
-	oidcCtx := oidc.ClientContext(ctx, s.oidcHTTPClient(issuer))
-	provider, err := auth.NewGenericOIDCProvider(oidcCtx, dbProvider.Name, issuer, dbProvider.ClientID, dbProvider.ClientSecret, s.callbackURL(r, providerID), dbProvider.Scopes, dbProvider.GroupsClaim, dbProvider.GetUserInfo)
+	oidcIssuer := issuerURL(dbProvider.DiscoveryURL)
+	oidcCtx := oidc.ClientContext(ctx, s.oidcHTTPClient(oidcIssuer))
+	provider, err := auth.NewGenericOIDCProvider(oidcCtx, dbProvider.Name, oidcIssuer, dbProvider.ClientID, dbProvider.ClientSecret, s.callbackURL(r, providerID), dbProvider.Scopes, dbProvider.GroupsClaim, dbProvider.GetUserInfo)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to initialize OIDC provider: "+err.Error())
 		return
@@ -152,7 +160,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := fmt.Sprintf("oidc:state:%s", state)
-	_, err = s.Cache.Client().GetDel(ctx, key).Result()
+	stateVal, err := s.Cache.Client().GetDel(ctx, key).Result()
 	if err == redis.Nil {
 		writeError(w, http.StatusBadRequest, "invalid or expired state")
 		return
@@ -160,6 +168,11 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "state validation error")
 		return
+	}
+
+	// If a subdomain org was stored in the state, use it (overrides Host-based resolution)
+	if subdomainOrgID == "" && strings.HasPrefix(stateVal, "org:") {
+		subdomainOrgID = strings.TrimPrefix(stateVal, "org:")
 	}
 
 	claims, err := provider.Exchange(oidcCtx, code)
