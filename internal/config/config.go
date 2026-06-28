@@ -24,8 +24,9 @@ type Config struct {
 	S3AccessKey        string
 	S3SecretKey        string
 	MaxAttachmentBytes int64
-	ToolAllowedDomains []string // comma-separated domains allowed for webhook tools (bypasses private IP block)
-	OIDCHostRewrite    string   // "from=to" pair for rewriting OIDC discovery host (e.g. "localhost:5557=host.docker.internal:5557")
+	ToolAllowedDomains  []string // comma-separated domains allowed for webhook tools (bypasses private IP block)
+	OIDCHostRewrite     string   // "from=to" pair for rewriting OIDC discovery host (e.g. "localhost:5557=host.docker.internal:5557")
+	DisableRegistration bool     // when true, new users cannot register via email/password (SSO only)
 }
 
 func parseCommaList(s string) []string {
@@ -63,9 +64,10 @@ func Load() (*Config, error) {
 		S3Region:           envOrDefault("HNB_S3_REGION", "us-east-1"),
 		S3AccessKey:        os.Getenv("HNB_S3_ACCESS_KEY"),
 		S3SecretKey:        os.Getenv("HNB_S3_SECRET_KEY"),
-		MaxAttachmentBytes: maxAttachmentBytes,
-		ToolAllowedDomains: parseCommaList(os.Getenv("HNB_TOOL_ALLOWED_DOMAINS")),
-		OIDCHostRewrite:    os.Getenv("HNB_OIDC_HOST_REWRITE"),
+		MaxAttachmentBytes:   maxAttachmentBytes,
+		ToolAllowedDomains:   parseCommaList(os.Getenv("HNB_TOOL_ALLOWED_DOMAINS")),
+		OIDCHostRewrite:      os.Getenv("HNB_OIDC_HOST_REWRITE"),
+		DisableRegistration:  envOrDefault("HNB_DISABLE_REGISTRATION", "false") == "true",
 	}
 	if cfg.MasterKey == "" {
 		return nil, fmt.Errorf("HNB_MASTER_KEY is required")

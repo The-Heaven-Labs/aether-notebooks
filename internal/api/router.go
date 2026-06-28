@@ -25,6 +25,7 @@ type Server struct {
 	mux                *http.ServeMux
 	store              storage.Storage
 	platformAdminEmail string
+	disableRegistration bool
 	publicURL          string
 	frontendURL        string
 	Cache              *cache.Cache
@@ -70,6 +71,11 @@ func (s *Server) SetStorage(st storage.Storage) {
 // SetPlatformAdminEmail configures which email gets platform admin on registration.
 func (s *Server) SetPlatformAdminEmail(email string) {
 	s.platformAdminEmail = email
+}
+
+// SetDisableRegistration disables email/password registration (SSO-only mode).
+func (s *Server) SetDisableRegistration(disabled bool) {
+	s.disableRegistration = disabled
 }
 
 // SetPublicURL sets the base URL used when building OAuth callback URLs.
@@ -141,6 +147,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/auth/oidc/{provider}", s.handleOIDCLogin)
 	s.mux.HandleFunc("GET /api/v1/auth/oidc/{provider}/callback", s.handleOIDCCallback)
 	s.mux.HandleFunc("GET /api/v1/auth/sso-providers", s.handleSSOProbe)
+	s.mux.HandleFunc("GET /api/v1/auth/config", s.handleRegistrationStatus)
 
 	// Onboarding routes (require auth but allow onboarding role)
 	s.mux.Handle("POST /api/v1/auth/org/create", authMW(http.HandlerFunc(s.handleOrgCreate)))

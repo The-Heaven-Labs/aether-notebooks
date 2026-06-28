@@ -44,10 +44,14 @@ export function LoginPage() {
   const [ssoProviders, setSsoProviders] = useState<SSOProvider[]>([])
   const [showPassword, setShowPassword] = useState(false)
   const [loginMotds, setLoginMotds] = useState<Array<{id: string; title: string; content: string}>>([])
+  const [registrationDisabled, setRegistrationDisabled] = useState(false)
 
   useEffect(() => {
     api.get<Array<{id: string; title: string; content: string}>>('/api/v1/public/motd')
       .then(setLoginMotds)
+      .catch(() => {})
+    api.get<{ registration_disabled: boolean }>('/api/v1/auth/config')
+      .then(c => setRegistrationDisabled(c.registration_disabled))
       .catch(() => {})
   }, [])
 
@@ -206,12 +210,14 @@ export function LoginPage() {
             >
               Sign In
             </button>
-            <button
-              style={{ ...styles.tab, ...(mode === 'register' ? styles.tabActive : {}) }}
-              onClick={() => { setMode('register'); setError('') }}
-            >
-              Create account
-            </button>
+            {!registrationDisabled && (
+              <button
+                style={{ ...styles.tab, ...(mode === 'register' ? styles.tabActive : {}) }}
+                onClick={() => { setMode('register'); setError('') }}
+              >
+                Create account
+              </button>
+            )}
           </div>
 
           {loginMotds.length > 0 && (
