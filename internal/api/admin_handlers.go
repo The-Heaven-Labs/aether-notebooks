@@ -134,6 +134,11 @@ func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.audit.Log(r.Context(), audit.Entry{
+		UserID: claims.UserID,
+		Action: "user.platform_admin.update", ResourceType: "user", ResourceID: targetID,
+		Metadata: map[string]any{"is_platform_admin": req.IsPlatformAdmin},
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 

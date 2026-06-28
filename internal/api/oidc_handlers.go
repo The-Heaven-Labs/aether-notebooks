@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/heavenlabs/hnb/internal/audit"
 	"github.com/heavenlabs/hnb/internal/auth"
 	"github.com/heavenlabs/hnb/internal/sso"
 	"github.com/jackc/pgx/v5"
@@ -273,6 +274,10 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to commit")
 			return
 		}
+		s.audit.Log(ctx, audit.Entry{
+			OrgID: orgID, UserID: userID,
+			Action: "org.auto_join", ResourceType: "org", ResourceID: orgID,
+		})
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "database error")
 		return
@@ -300,6 +305,10 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 					tx.Rollback(ctx)
 				} else {
 					tx.Commit(ctx)
+					s.audit.Log(ctx, audit.Entry{
+						OrgID: subdomainOrgID, UserID: userID,
+						Action: "org.auto_join", ResourceType: "org", ResourceID: subdomainOrgID,
+					})
 				}
 			}
 		}
