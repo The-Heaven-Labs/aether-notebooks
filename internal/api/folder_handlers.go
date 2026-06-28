@@ -1174,7 +1174,7 @@ func (s *Server) handleEnsureHomeFolder(w http.ResponseWriter, r *http.Request) 
 // @Description Delete a folder and all its contents
 // @Tags folders
 // @Param id path string true "Folder ID"
-// @Success 200
+// @Success 204
 // @Failure 404 {object} map[string]string
 // @Security BearerAuth
 // @Router /folders/{id} [delete]

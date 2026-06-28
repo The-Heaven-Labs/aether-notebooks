@@ -35,6 +35,7 @@ func adminModeFromContext(ctx context.Context) bool {
 	return ok && enabled
 }
 
+// AuthMiddleware validates JWT tokens and sets user claims in the request context.
 func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -144,6 +145,7 @@ func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler,
 	writeError(w, http.StatusUnauthorized, "invalid or expired API token")
 }
 
+// SubdomainMiddleware resolves the organization from the request's host subdomain and sets the org context.
 func SubdomainMiddleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

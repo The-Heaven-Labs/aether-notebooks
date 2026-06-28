@@ -356,7 +356,7 @@ func (s *Server) handleGetNotebookPermissions(w http.ResponseWriter, r *http.Req
 // @Description Delete a notebook by ID
 // @Tags notebooks
 // @Param id path string true "Notebook ID"
-// @Success 200
+// @Success 204
 // @Failure 404 {object} map[string]string
 // @Security BearerAuth
 // @Router /notebooks/{id} [delete]

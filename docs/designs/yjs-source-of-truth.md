@@ -9,7 +9,7 @@
 
 **Completed:** 2026-06-12  
 **Commits:** 10 commits (85b7742..fb6b928)  
-**Review:** E2E browser testing passed — see `docs/reviews/yjs-sot/REVIEW.md`
+**Review:** E2E browser testing passed — see `internal/agent/yjs.go` for the implementation
 
 ---
 
@@ -78,7 +78,7 @@ Make **Yjs the single source of truth** for all cell content. The database `cell
 Add the `ygo` library (Go Yjs implementation, binary-compatible with JS Yjs):
 
 ```go
-go get github.com/reearth/ygo
+go get github.com/reearth/ygo/crdt
 ```
 
 **Why ygo?**
@@ -114,7 +114,7 @@ import (
     "context"
     "github.com/jackc/pgx/v5"
     "github.com/jackc/pgx/v5/pgxpool"
-    "github.com/reearth/ygo"
+    "github.com/reearth/ygo/crdt"
 )
 
 // UpdateCellInYjs updates a cell's source in the Yjs document.
@@ -131,9 +131,9 @@ func UpdateCellInYjs(ctx context.Context, db *pgxpool.Pool, notebookID, cellID, 
     }
     
     // 2. Create/decode Yjs document
-    doc := ygo.NewDoc()
+    doc := crdt.New()
     if len(state) > 0 {
-        if err := ygo.ApplyUpdate(doc, state); err != nil {
+        if err := crdt.ApplyUpdateV1(doc, state, nil); err != nil {
             return fmt.Errorf("decode yjs state: %w", err)
         }
     }
@@ -145,7 +145,7 @@ func UpdateCellInYjs(ctx context.Context, db *pgxpool.Pool, notebookID, cellID, 
     ytext.Insert(0, newSource)
     
     // 4. Encode the updated state
-    newState := ygo.EncodeStateAsUpdate(doc)
+    newState := doc.EncodeStateAsUpdate()
     
     // 5. Store back to database
     _, err = db.Exec(ctx,
@@ -456,7 +456,7 @@ The notebook API response should include `agent_updated_at`:
 
 ## References
 
-- [ygo Library](https://github.com/reearth/ygo) - Go Yjs implementation
+- [ygo Library](https://github.com/reearth/ygo/crdt) - Go Yjs implementation
 - [Hocuspocus](https://hocuspocus.dev/) - Yjs backend for collaboration
 - [JupyterLab RTC Architecture](https://jupyterlab-realtime-collaboration.readthedocs.io/en/latest/developer/architecture.html) - Reference implementation
 - [Marimo RTC](https://github.com/marimo-team/marimo/pull/3319) - CRDT-based collaboration

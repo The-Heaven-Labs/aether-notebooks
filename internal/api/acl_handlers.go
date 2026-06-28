@@ -1,3 +1,6 @@
+// Package api provides HTTP handlers, middleware, and routing for the hnb API server.
+// Handlers are organized by resource type (notebooks, cells, connectors, etc.)
+// and use net/http ServeMux with no external framework.
 package api
 
 import (

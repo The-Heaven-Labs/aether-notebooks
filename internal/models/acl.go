@@ -1,3 +1,5 @@
+// Package models defines shared data structures used across the hnb codebase.
+// These structs map to database tables and API response formats.
 package models
 
 import "time"

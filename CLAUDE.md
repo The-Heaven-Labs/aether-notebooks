@@ -32,7 +32,7 @@ docker compose -f docker-compose.dev.yml ps       # Check status
 docker compose -f docker-compose.dev.yml logs -f web  # Follow web logs
 ```
 
-Services: API (Go), Relay (TypeScript), Web (Vite), Postgres, Redis, ClickHouse, OpenSearch
+Services: API (Go), Relay (TypeScript), Web (Vite), Postgres, Redis, ClickHouse, OpenSearch, Keycloak
 
 ### Subdomain Testing
 
@@ -57,7 +57,7 @@ For local multi-tenancy testing with subdomains (`org1.hnb.test` → Org 1):
 
 ## Commands
 
-**Preferred task runner: `task` (Taskfile.yml). `make` is a thin alias.**
+**Preferred task runner: `task` (Taskfile.yml). `make` provides equivalent commands independently.**
 
 ```bash
 # Infrastructure
@@ -108,8 +108,21 @@ task db:reset          # Drop + recreate dev DB (data loss!)
 | `HNB_REDIS_URL` | no | `redis://localhost:6379` | |
 | `HNB_PORT` | no | `8080` | |
 | `HNB_OIDC_HOST_REWRITE` | no | — | `from=to` pair for rewriting the OIDC discovery host (e.g. `localhost:5557=host.docker.internal:5557`). Used in Docker dev where the API container must reach Keycloak via a different hostname than what's in the discovery URL. |
+| `HNB_PLATFORM_ADMIN_EMAIL` | no | — | Email of the user to auto-promote to platform admin on startup |
+| `HNB_PUBLIC_URL` | no | `http://localhost:8080` | Public-facing URL for link generation |
+| `HNB_FRONTEND_URL` | no | `http://localhost:5173` | Frontend URL for CORS and OIDC redirect |
+| `HNB_ATTACHMENT_DIR` | no | `./attachments` | Directory for local file attachments |
+| `HNB_STORAGE_BACKEND` | no | `local` | Storage backend type (`local` or `s3`) |
+| `HNB_S3_ENDPOINT` | no | — | S3-compatible storage endpoint |
+| `HNB_S3_BUCKET` | no | — | S3 bucket name |
+| `HNB_S3_REGION` | no | `us-east-1` | S3 region |
+| `HNB_S3_ACCESS_KEY` | no | — | S3 access key |
+| `HNB_S3_SECRET_KEY` | no | — | S3 secret key |
+| `HNB_MAX_ATTACHMENT_BYTES` | no | `10485760` | Maximum attachment file size in bytes |
+| `HNB_TOOL_ALLOWED_DOMAINS` | no | — | Comma-separated list of allowed domains for webhook tools |
+| `HNB_DISABLE_REGISTRATION` | no | `false` | If set to `true`, disables new user registration |
 
-`Taskfile.yml` sets dev values for all of these automatically when using `task`.
+`Taskfile.yml` sets dev values for `HNB_DATABASE_URL`, `HNB_MASTER_KEY`, `HNB_JWT_SECRET`, and `HNB_PLATFORM_ADMIN_EMAIL` automatically when using `task`. Other vars rely on defaults or are set in `docker-compose.dev.yml`.
 
 ## Test Users
 
@@ -204,7 +217,7 @@ Every member of an organization has a role in `org_members`. The only meaningful
 
 **How org admin is assigned**: The **person who creates the org automatically becomes its admin**. Additional admins can be assigned by existing admins via:
 - `PUT /api/v1/members/{user_id}` (change a member's role)
-- `POST /api/v1/members/invite` or `POST /api/v1/members/invite-link` (invite with role `admin`)
+- `POST /api/v1/members/invite-link` (invite with role `admin`)
 
 ### Platform Admin (instance-level super-admin)
 
@@ -237,7 +250,7 @@ In dev, `Taskfile.yml` sets `HNB_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com` �
 
 **Filesystem**: Folders live in `folders` table with self-referential `parent_id` (adjacency list). All resource types (notebooks, connectors, dashboards) have a nullable `folder_id`. Each user gets a personal home folder created on registration/org-join, seeded with a full-access ACL entry. Home folders use the user's email as the name (e.g., `user@example.com`).
 
-**Permissions**: `acl_entries` table stores per-resource ACL. Resolution walks the ancestor folder chain via recursive CTE, ordered by specificity (resource entry beats parent folder beats grandparent; within same depth: user beats group beats org_role). Deny by default if no ACL matches. Use `checkPermission(ctx, pool, orgID, userID, resourceType, resourceID, action)` from `internal/api/permissions.go`. Route middleware: `requirePermission(resourceType, idParam, action)`.
+**Permissions**: `acl_entries` table stores per-resource ACL. Resolution walks the ancestor folder chain via recursive CTE, ordered by specificity (resource entry beats parent folder beats grandparent; within same depth: user beats group beats org_role). Deny by default if no ACL matches. Use `s.checkPermission(ctx, userID, orgID, orgRole, resourceType, resourceID, action)` (method on `*Server`) from `internal/api/permissions.go`. Route middleware: `requirePermission(resourceType, idParam, action)`.
 
 **Groups**: Custom groups (`groups` + `group_members` tables) are first-class permission subjects. Group management (create/rename/delete/members) requires `admin` role; viewing groups is open to all members.
 
@@ -245,13 +258,13 @@ In dev, `Taskfile.yml` sets `HNB_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com` �
 
 **Migrations run automatically** on server startup (not a separate migration tool).
 
-**Vite proxy**: In dev, Vite forwards `/api` and `/internal` to `localhost:8080`. The `API_URL` env var overrides the target (used inside Docker).
+**Vite proxy**: In dev, Vite forwards `/api`, `/internal`, `/docs`, and `/swagger.json` to `localhost:8080`. The `API_URL` env var overrides the target (used inside Docker).
 
 **Connector credentials** are AES-encrypted using `crypto.DeriveKey(masterKey)` before storing in Postgres.
 
 **Hocuspocus relay** fetches/stores Yjs document state via `/internal/yjs/{notebook_id}` on the Go backend (binary `application/octet-stream`). JWT auth is passed inside the Hocuspocus auth message, not as a URL param.
 
-**Yjs as single source of truth** for cell content: Agent `update_cell` writes to Yjs first (via `ygo` Go library), then updates `cells.source` as a derived cache. The `agent_updated_at` column on `cells` suppresses frontend auto-save after agent updates. See `docs/designs/yjs-source-of-truth.md` for full architecture.
+**Yjs as single source of truth** for cell content: Agent `update_cell` writes to Yjs first (via `ygo/crdt` Go library), then updates `cells.source` as a derived cache. The `agent_updated_at` column on `cells` suppresses frontend auto-save after agent updates. See `docs/designs/yjs-source-of-truth.md` for full architecture.
 
 **SQL executor LIMIT behavior**: When a cell has a `limit` value > 0 and the query doesn't already contain `LIMIT`, the executor trims any trailing semicolon before appending ` LIMIT N`. This prevents `SELECT 1; LIMIT 1000` (broken) vs `SELECT 1 LIMIT 1000` (correct).
 
@@ -259,14 +272,14 @@ In dev, `Taskfile.yml` sets `HNB_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com` �
 
 ## OIDC / SSO
 
-OIDC providers are configured at startup and stored in `Server.oidcProviders`. The `nil` value (in tests) disables SSO routes gracefully. OAuth2 state is a random token; callback validates it from a short-lived cookie.
+OIDC providers are loaded dynamically from the database. SSO routes are disabled when no providers are configured (e.g., in tests). OAuth2 state is a random token; callback validates it from a short-lived cookie.
 
 ## Frontend
 
 - React + React Query (`@tanstack/react-query`) for data fetching
 - Cell sources auto-save with 1.5s debounce after keystroke (suppressed for 5s after agent updates via `agent_updated_at` check)
 - Markdown cells persist on blur via `PUT /cells/:id`
-- Real-time collaboration: `HocuspocusProvider` in `CodeCell` connects to relay on `:3001`
+- Real-time collaboration: `HocuspocusProvider` in `Cell` connects to relay on `:3001`
 - Yjs document key convention: `cell:{cellID}` for each cell's text content
 
 ### Debugging with agent-browser
@@ -301,7 +314,7 @@ See `FRONTEND.md` for comprehensive visual documentation including:
 
 **Visual regression tests:**
 ```bash
-npx playwright test                        # Run all E2E tests
+npx playwright test --config=e2e/playwright.config.ts   # Run all E2E tests
 npx playwright test --update-snapshots     # Update snapshots
 ```
 

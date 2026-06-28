@@ -161,7 +161,7 @@ type inviteMemberRequest struct {
 // @Accept json
 // @Produce json
 // @Param request body object true "Invitation details"
-// @Success 201
+// @Success 204
 // @Failure 400 {object} map[string]string
 // @Security BearerAuth
 // @Router /members/invite [post]

@@ -1,3 +1,4 @@
+// Package scheduler provides cron-based notebook scheduling for automated notebook execution.
 package scheduler
 
 import (

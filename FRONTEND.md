@@ -7,27 +7,27 @@
 All colors are defined as CSS variables in `web/src/styles/theme.css`:
 
 **Backgrounds**
-- `--bg-primary: #f8f7f4` - Page background, main canvas
-- `--bg-secondary: #f0ede7` - Secondary surfaces (toolbars, panels, card backgrounds)
-- `--bg-cell-code: #ffffff` - Code cell background (unused, same as white)
-- `--bg-cell-text: #fefefe` - Text cell background (unused, same as white)
+- `--bg-primary: #f5f5f5` - Page background, main canvas
+- `--bg-secondary: #f9f9f9` - Secondary surfaces (toolbars, panels, card backgrounds)
+- `--bg-cell-code: #f7f7f7` - Code cell background
+- `--bg-cell-text: #ffffff` - Text cell background
 
 **Text**
-- `--text-primary: #1a1814` - Headings, primary text
-- `--text-secondary: #6b6258` - Secondary text, descriptions
-- `--text-muted: #9b9289` - Muted text, placeholders, timestamps
+- `--text-primary: #111` - Headings, primary text
+- `--text-secondary: #555` - Secondary text, descriptions
+- `--text-muted: #6e6e6e` - Muted text, placeholders, timestamps
 
 **Accent (Primary brand color)**
 - `--accent: #7c6faa` - Primary actions, links, highlights (purple)
 - `--accent-hover: #6a5e96` - Accent hover state (darker purple)
-- `--accent-light: #ede9f8` - Accent background for nav active state (light purple)
+- `--accent-light: #f5f5f5` - Accent background for nav active state (light purple)
 
 **Borders**
-- `--border: #e3ddd5` - Primary border color
-- `--border-light: #ece8e1` - Lighter borders for separators
+- `--border: #e8e8e8` - Primary border color
+- `--border-light: #efefef` - Lighter borders for separators
 
 **Status**
-- `--success: #5a9970` - Success states (green)
+- `--success: #2e7d32` - Success states (green)
 - `--error: #b85c5c` - Error states (red)
 - `--warning: #b89a4a` - Warning states (amber)
 
@@ -65,17 +65,19 @@ All colors are defined as CSS variables in `web/src/styles/theme.css`:
 - `12px` - Gap between list items
 
 **Common Border Radius**
-- `--radius: 8px` - Standard radius (unused, for reference)
-- `--radius-sm: 5px` - Small radius
-- `10px` - Card/cell radius (most common)
-- `6px` - Input/select radius
+- `--radius: 4px` - Standard radius
+- `--radius-sm: 4px` - Small radius
+- `4px` - Cell/input border radius (most common)
+- `3px` - Some input border radius
 - `4px` - Badge/type icon radius
 - `50%` - Avatar circle
 
 ### Shadows
 
-- `--shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)` - Cards, cells, elevated surfaces
+- `--shadow-sm: none` - Cards, cells, elevated surfaces (no box-shadow, uses border)
 - `--shadow-md: 0 4px 16px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.04)` - Dropdowns, modals
+- `--shadow-lg: 0 8px 32px rgba(0,0,0,0.12)` - Large overlays
+- `--shadow-overlay: 0 4px 24px rgba(0,0,0,0.16)` - Modal overlays
 
 ## Layout Components
 
@@ -103,6 +105,8 @@ main: { flex: 1, overflow: 'auto', padding: '32px' } // or padding: 0 with noPad
 
 **Component**: `web/src/components/AppShell.tsx`
 
+**Missing from docs** (features exist in code but not documented here): AI Agent Panel (docked/floating/minimized modes), MOTD (Message of the Day) banners, Keyboard shortcut `?` for shortcuts modal, Skip to content link for accessibility.
+
 ### TopBar
 
 **Purpose**: Header with logo, org name, and user dropdown
@@ -110,9 +114,14 @@ main: { flex: 1, overflow: 'auto', padding: '32px' } // or padding: 0 with noPad
 **Visual**:
 - Dark background (`var(--nav-bg)`)
 - Height: 52px, fixed at top
-- Left: Logo mark (36x36 purple square with white "N" icon), brand divider, "Heaven's Notebooks" text
+- Left: SVG logo grid (rectangles), brand divider, "HNB" text
 - Center: Spacer (flex: 1)
 - Right: Org name, avatar circle with initials
+- Hamburger menu button (mobile)
+- Keyboard shortcuts button (`?`)
+- API Documentation dropdown link
+- Settings link (admins)
+- Profile settings link
 - Admin link visible to platform admins only
 
 **States**:
@@ -128,8 +137,8 @@ main: { flex: 1, overflow: 'auto', padding: '32px' } // or padding: 0 with noPad
 **Styling**:
 ```javascript
 bar: { height: 52, background: 'var(--nav-bg)', borderBottom: '1px solid var(--nav-border)', display: 'flex', alignItems: 'center', padding: '0 16px 0 8px', gap: 12 }
-avatar: { width: 30, height: 30, borderRadius: '50%', background: 'var(--accent-light)', border: '1.5px solid var(--accent)', color: 'var(--accent)', fontSize: 13, fontWeight: 700 }
-dropdown: { position: 'absolute', right: 0, top: 38, background: 'white', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', minWidth: 200 }
+avatar: { width: 30, height: 30, borderRadius: '50%', background: 'var(--accent-light)', border: '1.5px solid var(--accent)', color: 'var(--accent-hover)', fontSize: 13, fontWeight: 700 }
+dropdown: { position: 'absolute', right: 0, top: 38, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', minWidth: 200 }
 ```
 
 **Component**: `web/src/components/TopBar.tsx`
@@ -145,14 +154,21 @@ dropdown: { position: 'absolute', right: 0, top: 38, background: 'white', border
 - Nav items: vertical stack, icons centered, text appears on expand
 - Bottom: Chevron toggle button (collapse/expand)
 
-**Nav Items** (top to bottom):
+**Nav Items — Main section** (top to bottom):
 1. Files / Notebooks (BookOpen icon) — routes to `/` (file browser)
 2. Dashboards (LayoutDashboard icon)
 3. Connectors (Database icon)
-4. Members (Users icon)
-5. Groups (UsersRound icon) — shows "Admin" pill badge when user is admin + sidebar is expanded
+4. Members (UserCircle icon)
+5. Groups (Users icon) — shows "Admin" pill badge when user is admin + sidebar is expanded
 6. Audit (ClipboardList icon)
-7. Profile (User icon)
+7. Trash (Trash2 icon)
+
+**Nav Items — AI Agents section**:
+8. Agents (Bot icon)
+9. Models (Brain icon)
+10. Tools (Wrench icon)
+11. Skills (Zap icon)
+12. MCPs (Puzzle icon)
 
 **States**:
 - Collapsed: Width 48px, icons only (centered), padding: 8px 0
@@ -170,142 +186,76 @@ dropdown: { position: 'absolute', right: 0, top: 38, background: 'white', border
 ```javascript
 sidebar: { display: 'flex', flexDirection: 'column', background: 'var(--nav-bg)', borderRight: '1px solid var(--nav-border)', transition: 'width 0.2s ease' }
 item: { display: 'flex', alignItems: 'center', gap: 10, padding: expanded ? '8px 12px' : '8px 0', fontWeight: 500, fontSize: 13, borderRadius: 6 }
-toggle: { display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px', background: 'transparent', border: 'none', borderTop: '1px solid var(--nav-border)', color: 'var(--text-muted)' }
+toggle: { display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px', background: 'transparent', border: 'none', borderTop: '1px solid var(--nav-border)', color: 'var(--text-secondary)' }
 ```
 
 **Component**: `web/src/components/Sidebar.tsx`
 
 ## Cell Components
 
-### CodeCell
+### Cell (Code & Text)
 
-**Purpose**: SQL editor cell with toolbar, header, code editor, output, and status bar
+**Purpose**: Combined SQL + Markdown editor cell with toolbar, header, editor, output, and status bar. Both code and text cells share the same `Cell.tsx` component — behavior is controlled by the `type` prop (`code` or `text`).
 
 **Visual**:
-- White card, `border-radius: 10px`, `box-shadow: var(--shadow-sm)`
-- Border: `1px solid var(--border)`
-- Vertical layout: Toolbar → Header → Editor → Output → Status bar
+- Card background (`var(--bg-card)`), `borderRadius: 4`, `border: 1px solid var(--border)`
+- Vertical layout: Meta bar (toolbar) → Editor → Output → Footer
+
+**Cell Parts** (all inline in `Cell.tsx`):
+1. **Meta bar**: Run button, type badge, connector dropdown (code cells), action icons
+2. **Title**: Inline editable input that appears onClick, supports markdown rendering
+3. **Editor**: CodeMirror editor (code cells) or textarea + ReactMarkdown preview (text cells), padding 14x16px, min-height 72px
+4. **Output**: Table or chart or error display (code cells only)
+5. **Footer**: Timing/metrics info
 
 **States**:
-- **Default (editing)**: Toolbar visible, header visible, editor visible, output visible (if exists), status bar visible
-- **Running**: Toolbar shows spinner icon + "Running" text in run button (grayed out)
-- **Collapsed**: Gray background (`var(--bg-secondary)`), shows title or "Code cell" in italics, "Expand" button on right, compact height (no editor/output visible)
-- **Source hidden**: Toolbar + Header + Output visible, editor hidden (toggle with EyeOff icon)
-- **Saving**: Status bar shows "Saving…" text
-- **Saved**: Status bar shows "Saved Xs ago" / "Saved Xm ago" / "Saved HH:MM"
-- **Save error**: Status bar shows "Save failed: {error}" in red (`var(--error)`)
-
-**Parts**:
-1. **CellToolbar**: Gray toolbar with run button, type badge, connector dropdown, action icons
-2. **CellHeader**: Title + description inputs (collapsible cell shows title in collapsed state)
-3. **Editor**: CodeMirror editor, monospace font, padding 14x16px, min-height 72px, light yellow background (`#fdfcfb`)
-4. **Output**: Table or chart or error display
-5. **Status bar**: Light background (`#faf9f7`), border top, shows Save time + Last run time
-
-**Collaboration**:
-- Uses Yjs for real-time collaboration
-- Connects to Hocuspocus relay via WebSocket
-- Remote cursors show user names + colored highlights
+- **Default (editing)**: All parts visible
+- **Running**: Spinner icon + "Running" text in run button
+- **Collapsed**: `var(--bg-card)` background, compact height, title + "Expand" button
+- **Source hidden**: Meta bar + output visible, editor hidden
+- **Saving**: Footer shows "Saving…"
+- **Saved**: Footer shows "Saved Xs ago"
 
 **Interactions**:
 - Ctrl+Enter / Cmd+Enter → Run cell
 - Ctrl+Shift+F / Cmd+Shift+F → Format SQL
+- Click cell → focused state (box-shadow border highlight)
 - Editor auto-saves on every keystroke (debounced 1.5s)
-- Click cell → Focus cell (passed up to parent via `onFocus`)
+- Image paste (text cells): Uploads to `/api/v1/notebooks/:id/attachments`
 
-**Styling**:
-```javascript
-cell: { border: '1px solid var(--border)', borderRadius: 10, background: 'white', overflow: 'hidden', boxShadow: 'var(--shadow-sm)' }
-cellCollapsed: { border: '1px solid var(--border)', borderRadius: 10, background: 'var(--bg-secondary)', padding: '6px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }
-editor: { borderBottom: '1px solid var(--border-light)', background: '#fdfcfb' }
-statusBar: { display: 'flex', justifyContent: 'space-between', padding: '4px 16px', fontSize: 11, background: '#faf9f7', borderTop: '1px solid var(--border-light)' }
-```
+**Actions in meta bar**: Run, Duplicate, Copy link to cell, Merge with previous slide, Add to dashboard, Hide output (code only), LIMIT selector (code only), Cell number indicator, Move up/down, Toggle source, Toggle collapse, History, Delete
 
-**Component**: `web/src/components/CodeCell.tsx`
+**Component**: `web/src/components/Cell.tsx`
 
-### TextCell
+### Cell Meta Bar
 
-**Purpose**: Markdown editor cell with live preview
+**Purpose**: Inline action bar for Cell (unified for code and text types). Not a separate component — embedded in `Cell.tsx`.
 
 **Visual**:
-- Same white card styling as CodeCell
-- Border radius 10px, shadow-sm, border
-
-**States**:
-- **Default (editing)**: Toolbar + Editor visible, current line shows markdown syntax, other lines rendered as HTML
-- **Collapsed**: Gray background, shows title or "Markdown cell" in italics, "Expand" button on right
-- **Source hidden**: Toolbar visible, editor hidden (markdown rendered as output)
-- Blurring editor → Save content to backend
-
-**Live Preview Mechanism**:
-- Current active line: Shows markdown source syntax
-- Inactive lines: Replaced with rendered HTML widgets using ReactMarkdown
-- No "preview mode" toggle needed – live preview always on except for current editing line
-
-**Image Paste**:
-- Ctrl+V with image in clipboard → Inserts `![pasted image](data:image/...;base64,...)`
-
-**Styling**:
-```javascript
-cell: { border: '1px solid var(--border)', borderRadius: 10, background: 'white', overflow: 'hidden', boxShadow: 'var(--shadow-sm)' }
-collapsed: { border: '1px solid var(--border)', borderRadius: 10, background: 'var(--bg-secondary)', padding: '6px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }
-editor: { padding: '14px 16px', minHeight: '80px' } // CodeMirror editor container
-```
-
-**Component**: `web/src/components/TextCell.tsx`
-
-### CellToolbar
-
-**Purpose**: Unified toolbar for CodeCell and TextCell
-
-**Visual**:
-- Background: `var(--bg-secondary)` (light gray)
-- Height: 36px
+- Background: `var(--bg-cell-code)` or `var(--bg-cell-text)`
+- Min-height: 32px
 - Border bottom: `1px solid var(--border-light)`
 - Two sections: Left (actions) and Right (controls)
 
 **Left Side** (actions):
-- **Run button** (code cells only): Purple accent button, white text, 12px font, 600 weight, "Run" text + Play icon (13px), or "Running" + Loader2 spinner when running
-- **Type badge**: Small pill badge showing "SQL" or "MD", monospace font, 10px, 700 weight, gray background (`var(--border)`), arrow icon ")"  to switch type
-- **Connector dropdown** (code cells only, if connectors exist): Select dropdown, max-width 180px, shows connector name or "— Inherit from notebook —"
+- **Run button** (code cells only): Purple accent button, white text, 12px font, 600 weight, "Run" + Play icon
+- **Type badge**: Small pill badge showing "SQL" or "MD", monospace font, 10px, 700 weight
+- **Connector dropdown** (code cells only): Inline `<select>`, monospace, max-width 180px
+- **LIMIT selector** (code cells only): Inline `<select>` for result row limit
 
-**Right Side** (controls, ordered):
-- **Move up**: ChevronUp icon, border button, 13px icon
-- **Move down**: ChevronDown icon, border button, 13px icon
-- **Toggle source visibility**: EyeOff (hidden) / Eye (shown), border button, 13px icon
-- **Toggle collapse**: ChevronRight (collapsed) / ChevronDown (expanded), border button, 13px icon
-- **History**: Clock icon, border button, 13px icon, opens history panel
-- **Delete**: X icon, transparent background (no border), gray text, hover reveals, 13px icon
+**Right Side** (controls):
+- Cell number indicator
+- Duplicate, Copy link, Merge with previous slide, Add to dashboard, Hide output
+- Move up/down, Toggle source, Toggle collapse, History, Delete
 
-**States**:
-- **Default**: All buttons enabled
-- **Running**: Run button disabled, shows spinner
-- **Collapsed**: Toolbar still visible, controls still functional
+### Cell Title
 
-**Styling**:
-```javascript
-toolbar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 10px', background: 'var(--bg-secondary)', minHeight: 36, borderBottom: '1px solid var(--border-light)' }
-runBtn: { padding: '4px 12px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: 5, fontSize: 12, fontWeight: 600 }
-iconBtn: { padding: '3px 7px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 4, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }
-deleteBtn: { padding: '3px 7px', background: 'transparent', border: '1px solid transparent', borderRadius: 4, fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer' }
-```
-
-**Component**: `web/src/components/CellToolbar.tsx`
-
-### CellHeader
-
-**Purpose**: Optional title and description fields for cells
+**Purpose**: Inline editable title for cells. Not a separate component — embedded in `Cell.tsx`.
 
 **Visual**:
-- Inline editable inputs
-- Title: Large text, bold, 14-16px
-- Description: Smaller text, muted, 12-13px
-
-**States**:
-- **Default**: Text visible, click to edit
-- **Editing**: Input field focused, border visible
-
-**Component**: `web/src/components/CellHeader.tsx`
+- Inline `<input>` that appears onClick
+- Supports markdown rendering in title
+- Slug-based placeholder generator
 
 ### OutputRenderer
 
@@ -325,14 +275,14 @@ deleteBtn: { padding: '3px 7px', background: 'transparent', border: '1px solid t
      - White header background, `border-bottom: 1px solid var(--border)`
      - Column names: Bold, 12px, monospace
      - Type badges: Small pill, 10px, background `var(--bg-primary)`, border `var(--border-light)`, shows type icon (e.g., "#", "Aa", calendar icon)
-     - Rows: Alternating white and `#faf9f7` background
+      - Rows: White background (no alternating row colors)
      - Max height: 340px, scroll horizontally and vertically
      - Cells: Monospace 13px, null values italicized and gray, JSON objects stringified
    - **Chart view**: Opens ChartView component (see below)
 
 2. **Error** (type: 'error'):
-   - **Visual**: Light red background (`#fff5f5`), red text
-   - **Label**: Bold "ERROR" uppercase, 11px, red
+   - **Visual**: Background `var(--error-light)`, border-color `var(--error-border)`, red text
+   - **Label**: Bold "ERROR" uppercase, 11px, `var(--error-text)`
    - **Message**: Monospace, 13px, pre-wrap, preserves newlines
    - No table rows or charts
 
@@ -346,9 +296,9 @@ deleteBtn: { padding: '3px 7px', background: 'transparent', border: '1px solid t
 **Styling**:
 ```javascript
 table: { width: '100%', borderCollapse: 'collapse', fontSize: 13, fontFamily: 'var(--font-mono)' }
-th: { padding: '9px 16px', textAlign: 'left', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0 }
+th: { padding: '9px 16px', textAlign: 'left', background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0 }
 td: { padding: '7px 16px', borderBottom: '1px solid var(--border-light)', fontSize: 13 }
-rowAlt: { background: '#faf9f7' }
+
 null: { color: 'var(--text-muted)', fontStyle: 'italic' }
 badge: { fontSize: 10, background: 'var(--bg-primary)', border: '1px solid var(--border-light)', borderRadius: 4, padding: '1px 5px' }
 ```
@@ -370,6 +320,8 @@ badge: { fontSize: 10, background: 'var(--bg-primary)', border: '1px solid var(-
 - **Null** (null): Ban icon
 - **Bytes** (bytes/bytea): Binary icon
 - **Unknown**: "?"
+
+**Missing from docs** (features exist but not documented): Row number column, detailed cell panel with navigation, sortable columns, CSV export, JSON export, resizable output height.
 
 ### ChartView (ECharts)
 
@@ -418,9 +370,9 @@ This matches all existing charts — see the JSDoc on `ChartModule` in `web/src/
 
 **Visual**:
 - Native `<select>` element
-- Monospace font, 11px, font-weight 600
-- Background: white, border: 1px solid var(--border), border-radius: 6px
-- Padding: 2px 6px
+- Monospace font, 12px, font-weight 600
+- Background: white, border: 1px solid var(--border), border-radius: 4px
+- Padding: 4px 8px
 - Max-width: 180px
 
 **Options**:
@@ -480,7 +432,7 @@ manageBtn: { padding: '3px 8px', fontSize: 11, fontWeight: 600, background: 'var
 **Purpose**: Explore database tables, columns, and types
 
 **Visual**:
-- Right sidebar panel
+- Left sidebar panel
 - Tree structure with expansion arrows
 - Tables > columns > types
 
@@ -489,6 +441,8 @@ manageBtn: { padding: '3px 8px', fontSize: 11, fontWeight: 600, background: 'var
 - Click column → copy name to clipboard (?)
 
 **Component**: `web/src/components/SchemaBrowser.tsx`
+
+**Missing**: Search/filter input, loading/error states, TreeItem and PanelHeader subcomponents.
 
 ## Page Components
 
@@ -499,17 +453,20 @@ manageBtn: { padding: '3px 8px', fontSize: 11, fontWeight: 600, background: 'var
 **Navigation**: Controlled by `?folder=<uuid>` query param. Absent = root level.
 
 **Visual**:
-- AppShell wrapper, max-width 1280px centered
+- AppShell wrapper with TwoPanelLayout: left FolderTree sidebar + right content area
 - **Breadcrumb** (top): "Files" root crumb (with Home icon) + clickable ancestor segments separated by "/"
-- **Toolbar**: "+ New Folder", "+ New Notebook", "+ New Dashboard" buttons
-- **Inline create form**: Input + Create/Cancel buttons, Enter to submit, Escape to cancel
-- **Folders section**: Auto-fill grid (`minmax(180px, 1fr)`), white cards with folder icon + name + optional "home" badge
-- **Notebooks / Connectors / Dashboards sections**: Vertical lists, white rows with type icon + name + link
-- **Empty state**: Folder icon, "This folder is empty", "New Notebook" CTA
+- **Toolbar**: "+ New Folder", "+ New Notebook", "+ New Dashboard", "Import .ipynb" buttons
+- **Search/filter**: Input field for filtering items
+- **Inline create form**: Input + Create/Cancel buttons
+- **Folders section**: Auto-fill grid, cards with folder icon + name + optional "home" badge
+- **Notebooks / Connectors / Dashboards sections**: Vertical lists, rows with type icon + name + link
+- **Recent items** section below folders
+- **Bulk selection**: Checkboxes for batch operations
+- **Empty state**: Folder icon, "This folder is empty"
 
 **Context menu (`⋯` button on every item)**:
 - Opens a fixed-position dropdown (z-index 1000)
-- Items: Rename (folders + notebooks only), Move to…, Permissions, Delete
+- Items: Rename (folders + notebooks only), Duplicate (notebooks only), Move to…, Permissions, Delete
 - Closes on outside click
 - Menu clamps to viewport bottom edge
 
@@ -550,7 +507,7 @@ manageBtn: { padding: '3px 8px', fontSize: 11, fontWeight: 600, background: 'var
 **Cell Management**:
 - Cells stack vertically, 16px gap between cells
 - Add cell buttons: Bottom of page or floating
-- Drag to reorder (?) (not implemented yet)
+- Drag to reorder (dnd-kit) — implemented
 - Keyboard shortcuts: Ctrl+Enter run, Ctrl+Shift+F format
 
 **Visual**:
@@ -579,11 +536,11 @@ manageBtn: { padding: '3px 8px', fontSize: 11, fontWeight: 600, background: 'var
 - Grid of widgets (react-grid-layout)
 - Each widget: Output from a cell (table or chart)
 - Edit mode: Add/remove widgets, resize, drag
-
-**Styling**:
-- Not implemented yet (placeholder)
+- Dashboard parameter inputs
 
 **Component**: `web/src/pages/DashboardPage.tsx`
+
+See also: `DashboardEditorPage.tsx` for the dedicated editor.
 
 ### ConnectorsPage
 
@@ -669,19 +626,24 @@ manageBtn: { padding: '3px 8px', fontSize: 11, fontWeight: 600, background: 'var
 **Trigger**: "Permissions" option in the `⋯` context menu on any file-browser item
 
 **Visual**:
-- Fixed-position right drawer, width 420px, height 100vh, z-index 1501
+- Fixed-position right drawer, width 480px, height 100vh, z-index 1501
 - Semi-transparent backdrop (rgba(0,0,0,0.3)), z-index 1500, clicking closes panel
 - **Header**: Resource name (bold) + resource-type badge (color-coded) + × close button
 - **Inheritance note**: "Inheriting N permissions from parent folder" or "No inherited permissions"
 - **ACL entries list**: Avatar circle (initials / `#` for groups) + name + per-action checkboxes + × remove
 - **Draft mode**: Checkboxes and removes update local draft; Save/Discard buttons appear when there are unsaved changes
-- **Add entry row**: `<select>` with Users/Groups optgroups + action checkboxes + Add button
+- **Add entry row**: Searchable combobox (`SubjectSearch`) with Users/Groups optgroups + action checkboxes + Add button
 
 **Actions per resource type**:
 - `folder`: view, create, edit, manage, delete
 - `notebook`: view, run, edit, share, delete
 - `connector`: view, use, edit, share, delete
-- `dashboard`: view, edit, share, delete
+- `dashboard`: view, view_with_data, edit, share, delete
+- `agent`: view, use, edit, delete
+- `model_config`: view, use, edit, delete
+- `skill`: view, use, edit, delete
+- `tool`: view, use, edit, delete
+- `mcp_server`: view, use, edit, delete
 
 **API calls**:
 - `GET /api/v1/acl/:resource_type/:resource_id` — load entries
@@ -691,10 +653,12 @@ manageBtn: { padding: '3px 8px', fontSize: 11, fontWeight: 600, background: 'var
 **Props**:
 ```tsx
 interface PermissionsPanelProps {
-  resourceType: 'folder' | 'notebook' | 'connector' | 'dashboard'
+  resourceType: 'folder' | 'notebook' | 'connector' | 'dashboard' | 'agent' | 'model_config' | 'skill' | 'tool' | 'mcp_server'
   resourceId: string
   resourceName: string
   parentFolderId?: string
+  resourceOwnerId?: string
+  canEdit?: boolean
   onClose: () => void
 }
 ```
@@ -729,7 +693,7 @@ interface PermissionsPanelProps {
 
 **Visual**:
 - Center-aligned column
-- Icon circle: 56x56px, gray background (`var(--bg-secondary)`), border-radius 14px
+- Icon circle: 56x56px, background (`var(--accent-light)`), border-radius 4px, border 1px solid var(--border)
 - Title: Bold, 18px, primary text
 - Description: 14px, secondary text
 - CTA button: Primary action button
@@ -741,7 +705,7 @@ interface PermissionsPanelProps {
 **Styling**:
 ```javascript
 empty: { textAlign: 'center', padding: '80px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }
-emptyIcon: { width: 56, height: 56, background: 'var(--bg-secondary)', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 4 }
+emptyIcon: { width: 56, height: 56, background: 'var(--accent-light)', borderRadius: 4, border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 4 }
 emptyTitle: { fontSize: 18, fontWeight: 700, color: 'var(--text-primary)' }
 emptyText: { fontSize: 14, color: 'var(--text-secondary)', marginBottom: 8 }
 ```
@@ -753,7 +717,7 @@ emptyText: { fontSize: 14, color: 'var(--text-secondary)', marginBottom: 8 }
 **Visual**:
 - **Inline error**: Red text (`var(--error)`), monospace font, 13px
 - **Card error**: Light red background (`#fff5f5`), border top divider, "ERROR" label in bold uppercase red 11px
-- **Toast/Alert**: Not implemented yet (no toast system)
+- **ErrorBanner**: Reusable error notification component at `web/src/components/ErrorBanner.tsx`
 
 **Examples**:
 - Cell output error: Red card with "Error" label + stack trace in monospace
@@ -1006,10 +970,8 @@ card: {
 - **Arrow keys**: Not implemented for cell reordering
 
 ### Focus States
-
-- **Current**: Browser default outline (no custom focus ring)
-- **Missing**: Explicit `:focus-visible` styles not defined
-- **Recommendation**: Add custom focus rings (2px outline, 2px offset, `var(--accent)` color)
+- **Current**: Custom focus ring implemented in `theme.css` — `:focus-visible` with 2px outline, 2px offset, `var(--accent)` color
+- **Override exceptions**: Buttons, inputs, selects, textareas, and links have specific focus styles
 
 ### ARIA Labels
 
@@ -1031,6 +993,8 @@ card: {
 - **Recommendation**: Add `aria-live="polite"` regions for dynamic content (errors, save status)
 
 ## Visual Regression Testing
+
+**Note**: Playwright E2E visual tests are planned but not fully set up. The primary test runner is vitest (`npx vitest`). This section represents the target workflow once E2E tests are implemented.
 
 ### Running Tests
 

@@ -150,7 +150,7 @@ func (s *Server) handleListSchedules(w http.ResponseWriter, r *http.Request) {
 // @Description Delete a schedule
 // @Tags schedules
 // @Param id path string true "Schedule ID"
-// @Success 200
+// @Success 204
 // @Failure 404 {object} map[string]string
 // @Security BearerAuth
 // @Router /schedules/{id} [delete]
