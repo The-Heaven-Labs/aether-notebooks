@@ -208,6 +208,13 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   useEffect(() => {
     return () => {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+      if (wsRef.current) {
+        wsRef.current.onclose = null
+        wsRef.current.onerror = null
+        wsRef.current.onmessage = null
+        wsRef.current.close()
+        wsRef.current = null
+      }
     }
   }, [])
 
@@ -431,6 +438,19 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
   const sendText = (text: string, skipQueue = false) => {
     if (!text.trim()) return
+
+    // Optimistic /new: handle before connection check so it can recover
+    // from a disconnected state by starting a fresh session.
+    if (text.startsWith('/') && text.slice(1).trim().toLowerCase() === 'new') {
+      chatClearedRef.current = true
+      clearChatState()
+      setMessages([])
+      setTasks([])
+      closeWS()
+      if (selectedAgentRef.current) startSession(selectedAgentRef.current)
+      return
+    }
+
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
       setError('Not connected. Attempting to reconnect...')
       return
@@ -443,16 +463,6 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     // immediately, even while streaming.
     if (text.startsWith('/') && !text.toLowerCase().startsWith('/skill:')) {
       const command = text.slice(1).trim()
-      // Optimistic /new: clear UI immediately without waiting for backend
-      if (command === 'new') {
-        chatClearedRef.current = true
-        clearChatState()
-        setMessages([])
-        setTasks([])
-        closeWS()
-        if (selectedAgentRef.current) startSession(selectedAgentRef.current)
-        return
-      }
       setMessages((prev) => [...prev, { role: 'user', content: text, created_at: ts() }])
       wsRef.current.send(JSON.stringify({ type: 'slash_command', command }))
       return

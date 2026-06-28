@@ -1,12 +1,12 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns, ChartTypeSelect } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getChartColors, useChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns, ChartTypeSelect } from './common'
 import { ConfigHint } from './ConfigHint'
 
 function PieChartComponent({ data, config }: ChartProps) {
   const { xAxis, yAxes } = useAxisColumns(data, config)
   const chartData = useRowsAsObjects(data)
-  const colors = useMemo(() => getChartColors(), [])
+  const colors = useChartColors()
   const valueKey = yAxes[0] ?? data.columns[1]?.name ?? ''
   const nameKey = config.labelColumn || xAxis
   const isDonut = config.chartType === 'donut'

@@ -1,12 +1,12 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, useChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns } from './common'
 import { AxisConfigPanel } from './AxisConfigPanel'
 
 function ScatterChartComponent({ data, config }: ChartProps) {
   const { xAxis, yAxes } = useAxisColumns(data, config)
   const chartData = useRowsAsObjects(data)
-  const colors = useMemo(() => getChartColors(), [])
+  const colors = useChartColors()
   const hasGroupBy = !!(config.groupBy && chartData.some(row => config.groupBy! in row))
 
   const option = useMemo(() => {

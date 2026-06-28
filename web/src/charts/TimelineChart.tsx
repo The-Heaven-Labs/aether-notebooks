@@ -1,6 +1,6 @@
 import { useMemo, useCallback } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, useRowsAsObjects, isTimeType, ChartTypeSelect } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, useChartColors, useRowsAsObjects, isTimeType, ChartTypeSelect } from './common'
 import { ConfigHint } from './ConfigHint'
 
 function detectTimeColumns(columns: { name: string; type?: string }[]): string[] {
@@ -15,7 +15,7 @@ function TimelineChartComponent({ data, config }: ChartProps) {
   const groupByCol = config.groupBy
   const showLabels = config.showLabels ?? true
   const maxLabelLength = config.maxLabelLength ?? 15
-  const colors = useMemo(() => getChartColors(), [])
+  const colors = useChartColors()
 
   const rowsAsObjects = useRowsAsObjects(data)
   const chartData = useMemo(() => {

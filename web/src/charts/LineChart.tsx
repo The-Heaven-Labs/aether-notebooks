@@ -1,12 +1,12 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, useRowsAsObjects, useAxisColumns, useGroupBySeries, detectAxisColumns } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, useChartColors, useRowsAsObjects, useAxisColumns, useGroupBySeries, detectAxisColumns } from './common'
 import { AxisConfigPanel } from './AxisConfigPanel'
 
 function LineChartComponent({ data, config }: ChartProps) {
   const { xAxis, yAxes } = useAxisColumns(data, config)
   const chartData = useRowsAsObjects(data)
-  const colors = useMemo(() => getChartColors(), [])
+  const colors = useChartColors()
   const { series: groupSeries, xValues } = useGroupBySeries(chartData, { ...config, xAxis, yAxis: yAxes })
   const hasGroupBy = !!(config.groupBy && chartData.some(row => config.groupBy! in row))
 

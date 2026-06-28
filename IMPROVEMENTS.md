@@ -70,4 +70,7 @@
 - [x] When refreshing a notebook page, it should take you back to the scrolling position you were before
 - [x] When asking the agent to create a new cell and change it to a chart, it will do so, but it will appear as a data table until refresh the page
 - [x] When resources are deleted, they should be in a Trash state for a configurable time (default 7 days) before ceasing to exist
+- [x] When moving agent panel from undocked to dock, I just got a websocket connection failure and lost the chat. The error toast was still in the chat but I could start a new conversation there though. 
+- [x] Color of markdown rendered tables in present mode, while in light theme is not correct, headers have white color, rest is dark. Make the present mode have a toggle for light/dark mode
+- [x] In present mode, currently content can be larger than the screen, which enables scrolling. During presentation, scrolling should not be an option. What can we do to improve this behavior? Use the brainstorming skill.
 - [ ]
