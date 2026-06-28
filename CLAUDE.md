@@ -86,6 +86,7 @@ task db:reset          # Drop + recreate dev DB (data loss!)
 | `HNB_DATABASE_URL` | no | `postgres://hnb:hnb_dev@localhost:5432/hnb?sslmode=disable` | |
 | `HNB_REDIS_URL` | no | `redis://localhost:6379` | |
 | `HNB_PORT` | no | `8080` | |
+| `HNB_OIDC_HOST_REWRITE` | no | — | `from=to` pair for rewriting the OIDC discovery host (e.g. `localhost:5557=host.docker.internal:5557`). Used in Docker dev where the API container must reach Keycloak via a different hostname than what's in the discovery URL. |
 
 `Taskfile.yml` sets dev values for all of these automatically when using `task`.
 
@@ -99,6 +100,39 @@ When using the dev stack (`docker-compose.dev.yml`), use these test users:
 | `angel@heaven-labs.com` | `angel123` | Secondary test user |
 
 **Note**: Home folders are named using the user's email address (e.g., `demon@heaven-labs.com`). This ensures uniqueness and avoids confusion with similar names.
+
+## SSO / OIDC (Dev Stack)
+
+The dev stack includes **Keycloak** as the OIDC identity provider (Dex was removed — Keycloak handles all OIDC testing including group provisioning).
+
+On first startup, the server auto-seeds a **platform-level** Keycloak SSO provider. This appears in the Admin > SSO settings page. You can also create org-level providers via Org Settings > SSO.
+
+### Provider Details
+
+| Field | Value |
+|---|---|
+| Name | `Keycloak (Dev)` (auto-seeded, platform-level) |
+| Issuer URL | `http://localhost:5557/realms/hnb-dev` |
+| Client ID | `hnb-dev` |
+| Client Secret | `hnb-dev-keycloak-secret` |
+| Allowed Domains | `hnb-dev.test` |
+| Scopes | `openid`, `profile`, `email`, `groups` |
+
+### Keycloak Test Users (from `dev/keycloak-realm.json`)
+
+| Email | Password | Groups |
+|---|---|---|
+| `alice@hnb-dev.test` | `alice123` | hnb-analysts, all-employees |
+| `bob@hnb-dev.test` | `bob123` | hnb-engineering |
+| `charlie@hnb-dev.test` | `charlie123` | all-employees |
+| `dave@hnb-dev.test` | `dave123` | hnb-engineering, all-employees |
+| `eve@hnb-dev.test` | `eve123` | hnb-analysts |
+
+**Admin console**: `http://localhost:5557` (admin / admin123)
+
+### Docker Networking
+
+The API server runs inside Docker and needs to reach Keycloak. The discovery URL uses `localhost:5557` (the host-facing port) so the browser redirects work correctly. Inside the container, `HNB_OIDC_HOST_REWRITE=localhost:5557=host.docker.internal:5557` rewrites the connection target to `host.docker.internal` while preserving the `Host` header. This is configured in `docker-compose.dev.yml` — no action needed.
 
 ## API Documentation (Swagger/OpenAPI)
 
