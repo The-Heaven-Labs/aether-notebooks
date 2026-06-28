@@ -62,7 +62,7 @@ func providerToResponse(p sso.Provider) providerResponse {
 type ssoProviderRequest struct {
 	Name           string   `json:"name"`
 	ClientID       string   `json:"client_id"`
-	ClientSecret   string   `json:"client_secret"`
+	ClientSecret   *string  `json:"client_secret"`
 	DiscoveryURL   string   `json:"discovery_url"`
 	AllowedDomains []string `json:"allowed_domains"`
 	Enabled        bool     `json:"enabled"`
@@ -94,7 +94,7 @@ func (s *Server) handleAdminCreateSSOProvider(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if req.Name == "" || req.ClientID == "" || req.ClientSecret == "" || req.DiscoveryURL == "" {
+	if req.Name == "" || req.ClientID == "" || req.ClientSecret == nil || *req.ClientSecret == "" || req.DiscoveryURL == "" {
 		writeError(w, http.StatusBadRequest, "name, client_id, client_secret, and discovery_url are required")
 		return
 	}
@@ -109,7 +109,7 @@ func (s *Server) handleAdminCreateSSOProvider(w http.ResponseWriter, r *http.Req
 		Name:           req.Name,
 		ProviderType:   "oidc",
 		ClientID:       req.ClientID,
-		ClientSecret:   req.ClientSecret,
+		ClientSecret:   *req.ClientSecret,
 		DiscoveryURL:   req.DiscoveryURL,
 		AllowedDomains: domains,
 		Enabled:        req.Enabled,
@@ -139,8 +139,8 @@ func (s *Server) handleAdminUpdateSSOProvider(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if req.Name == "" || req.ClientID == "" || req.ClientSecret == "" || req.DiscoveryURL == "" {
-		writeError(w, http.StatusBadRequest, "name, client_id, client_secret, and discovery_url are required")
+	if req.Name == "" || req.ClientID == "" || req.DiscoveryURL == "" {
+		writeError(w, http.StatusBadRequest, "name, client_id, and discovery_url are required")
 		return
 	}
 
@@ -149,11 +149,16 @@ func (s *Server) handleAdminUpdateSSOProvider(w http.ResponseWriter, r *http.Req
 		domains = []string{}
 	}
 
+	secret := ""
+	if req.ClientSecret != nil {
+		secret = *req.ClientSecret
+	}
+
 	p := sso.Provider{
 		ID:             id,
 		Name:           req.Name,
 		ClientID:       req.ClientID,
-		ClientSecret:   req.ClientSecret,
+		ClientSecret:   secret,
 		DiscoveryURL:   req.DiscoveryURL,
 		AllowedDomains: domains,
 		Enabled:        req.Enabled,
