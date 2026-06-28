@@ -302,6 +302,46 @@ func ListProvidersByDomain(ctx context.Context, pool *pgxpool.Pool, domain strin
 	return results, nil
 }
 
+// ListProvidersByDomainForOrg returns providers for a specific org whose allowed_domains contains domain.
+// Includes both org-scoped providers and platform providers enabled for that org.
+func ListProvidersByDomainForOrg(ctx context.Context, pool *pgxpool.Pool, domain, orgID string) ([]ProbeResult, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT sp.id, sp.name, sp.provider_type
+		 FROM sso_providers sp
+		 WHERE sp.enabled = true
+		   AND $1 = ANY(sp.allowed_domains)
+		   AND (
+		     (sp.scope = 'org' AND sp.org_id = $2)
+		     OR
+		     (sp.scope = 'platform' AND EXISTS (
+		       SELECT 1 FROM org_platform_providers opp
+		       WHERE opp.provider_id = sp.id AND opp.org_id = $2
+		     ))
+		   )`,
+		domain, orgID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list providers by domain for org: %w", err)
+	}
+	defer rows.Close()
+
+	var results []ProbeResult
+	for rows.Next() {
+		var r ProbeResult
+		if err := rows.Scan(&r.ID, &r.Name, &r.ProviderType); err != nil {
+			return nil, fmt.Errorf("scan probe result: %w", err)
+		}
+		results = append(results, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error: %w", err)
+	}
+	if results == nil {
+		results = []ProbeResult{}
+	}
+	return results, nil
+}
+
 // DeleteProvider removes a provider by ID.
 func DeleteProvider(ctx context.Context, pool *pgxpool.Pool, id string) error {
 	_, err := pool.Exec(ctx, `DELETE FROM sso_providers WHERE id=$1`, id)
