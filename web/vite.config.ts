@@ -21,6 +21,7 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
+    allowedHosts: ['.hnb.test'],
     proxy: {
       '/api': apiTarget,
       '/internal': apiTarget,
