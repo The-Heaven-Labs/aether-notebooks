@@ -137,7 +137,7 @@ On first startup, the server auto-seeds a **platform-level** Keycloak SSO provid
 | Client ID | `hnb-dev` |
 | Client Secret | `hnb-dev-keycloak-secret` |
 | Allowed Domains | `hnb-dev.test` |
-| Scopes | `openid`, `profile`, `email`, `groups` |
+| Scopes | `openid`, `profile`, `email` |
 
 ### Keycloak Test Users (from `dev/keycloak-realm.json`)
 

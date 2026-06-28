@@ -41,7 +41,7 @@ func SeedDevSSOProviders(ctx context.Context, pool *pgxpool.Pool, masterKey []by
 		DiscoveryURL: "http://localhost:5557/realms/hnb-dev",
 		AllowedDomains: []string{"hnb-dev.test"},
 		Enabled:      true,
-		Scopes:       []string{"openid", "profile", "email", "groups"},
+		Scopes:       []string{"openid", "profile", "email"},
 		GroupsClaim:  "groups",
 		AutoSyncGroups: true,
 		GetUserInfo:  true,
