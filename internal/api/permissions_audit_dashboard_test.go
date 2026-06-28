@@ -385,14 +385,14 @@ func TestDashboard_Public(t *testing.T) {
 	// Create a public token via adminA
 	status, resp := f.DoRequest(t, "adminA", "POST",
 		"/api/v1/dashboards/"+f.OrgA.Dashboards.NoACL+"/share", nil)
-	require.Equal(t, http.StatusOK, status, "share failed: %s", resp)
+	require.Equal(t, http.StatusCreated, status, "share failed: %s", resp)
 	var m map[string]any
 	json.Unmarshal([]byte(resp), &m)
-	token, ok := m["public_token"].(string)
-	require.True(t, ok, "no public_token: %s", resp)
+	token, ok := m["token"].(string)
+	require.True(t, ok, "no token: %s", resp)
 
 	t.Run("public access without auth — 200", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/public/dashboards/"+token, nil)
+		req := httptest.NewRequest("GET", "/api/v1/public/"+token, nil)
 		rec := httptest.NewRecorder()
 		f.srv.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)

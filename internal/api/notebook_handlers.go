@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -962,4 +964,78 @@ func (s *Server) handleCloneNotebook(w http.ResponseWriter, r *http.Request) {
 		"notebook": newNB,
 		"cells":    newCells,
 	})
+}
+
+func (s *Server) handleShareNotebook(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	nbID := r.PathValue("id")
+	ctx := r.Context()
+
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "share")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
+	var sharingEnabled bool
+	s.db.Pool.QueryRow(ctx, `SELECT public_sharing_enabled FROM orgs WHERE id=$1`, claims.OrgID).Scan(&sharingEnabled)
+	if !sharingEnabled {
+		writeError(w, http.StatusForbidden, "public sharing is disabled for this organization")
+		return
+	}
+
+	var token string
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT token FROM public_tokens WHERE resource_type='notebook' AND resource_id=$1`,
+		nbID,
+	).Scan(&token)
+	if err == nil {
+		writeJSON(w, http.StatusOK, map[string]string{"token": token})
+		return
+	}
+
+	tokenBytes := make([]byte, 16)
+	rand.Read(tokenBytes)
+	token = hex.EncodeToString(tokenBytes)
+
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO public_tokens (org_id, resource_type, resource_id, token, created_by)
+		 VALUES ($1, 'notebook', $2, $3, $4)`,
+		claims.OrgID, nbID, token, claims.UserID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create share link")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]string{"token": token})
+}
+
+func (s *Server) handleRevokeNotebookShare(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	nbID := r.PathValue("id")
+
+	allowed, err := s.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "share")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
+	_, err = s.db.Pool.Exec(r.Context(),
+		`DELETE FROM public_tokens WHERE resource_type='notebook' AND resource_id=$1`,
+		nbID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to revoke share link")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

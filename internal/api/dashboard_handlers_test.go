@@ -58,18 +58,18 @@ func TestDashboardCRUD(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("share: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("share: expected 201, got %d: %s", rec.Code, rec.Body.String())
 	}
 	var shareResp map[string]interface{}
 	json.NewDecoder(rec.Body).Decode(&shareResp)
-	publicToken := shareResp["public_token"].(string)
+	publicToken := shareResp["token"].(string)
 	if publicToken == "" {
 		t.Fatal("expected non-empty public token")
 	}
 
 	// Public view
-	req = httptest.NewRequest("GET", "/api/v1/public/dashboards/"+publicToken, nil)
+	req = httptest.NewRequest("GET", "/api/v1/public/"+publicToken, nil)
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

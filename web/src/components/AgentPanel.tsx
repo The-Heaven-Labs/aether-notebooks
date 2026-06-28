@@ -149,6 +149,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const reconnectAttemptsRef = useRef(0)
   const processingRef = useRef(false)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const sessionReqIdRef = useRef(0)
   const resizeRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const selectedAgentRef = useRef<Agent | null>(null)
@@ -251,6 +252,14 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
         if (agent) {
           startSession(agent)
         }
+      }
+    }
+    return () => {
+      sessionReqIdRef.current++ // invalidate any in-flight startSession
+      if (wsRef.current) {
+        reconnectTimerRef.current = setTimeout(() => {}, 0)
+        try { wsRef.current.close() } catch {}
+        wsRef.current = null
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -396,11 +405,13 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   }, [notebookId, queryClient, scrollToCell])
 
   const startSession = async (agent: Agent) => {
+    const reqId = ++sessionReqIdRef.current
     try {
       const res = await api.post<{ session_id: string; context_window?: number }>('/api/v1/agents/' + agent.id + '/session', {
         notebook_id: notebookId || null,
         page_context: pageContext || (notebookId ? { type: 'notebook', id: notebookId } : null),
       })
+      if (reqId !== sessionReqIdRef.current) return // stale — superseded by newer startSession
       setSessionId(res.session_id)
       setSessionTitle(null)
       setSelectedAgent(agent)
@@ -411,6 +422,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       setContextWindow(res.context_window ?? 0)
       connectWebSocket(res.session_id)
     } catch {
+      if (reqId !== sessionReqIdRef.current) return
       setError('Failed to start session')
     }
   }

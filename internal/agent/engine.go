@@ -464,8 +464,19 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	}
 
 	allTools := make([]*ToolDef, 0)
-	allTools = append(allTools, agentTools...)
-	allTools = append(allTools, tools...)
+	seen := make(map[string]bool, len(agentTools)+len(tools))
+	for _, t := range agentTools {
+		if !seen[t.Function.Name] {
+			seen[t.Function.Name] = true
+			allTools = append(allTools, t)
+		}
+	}
+	for _, t := range tools {
+		if !seen[t.Function.Name] {
+			seen[t.Function.Name] = true
+			allTools = append(allTools, t)
+		}
+	}
 
 	if len(agent.MCPServers) > 0 {
 		for _, ms := range agent.MCPServers {
