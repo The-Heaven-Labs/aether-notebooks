@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 	"time"
+
+	"github.com/heavenlabs/hnb/internal/audit"
 )
 
 func (s *Server) handleAdminListOrgs(w http.ResponseWriter, r *http.Request) {
@@ -133,4 +135,44 @@ func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+type adminCreateOrgRequest struct {
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+func (s *Server) handleAdminCreateOrg(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+
+	var req adminCreateOrgRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if req.Slug == "" {
+		writeError(w, http.StatusBadRequest, "slug is required")
+		return
+	}
+
+	var orgID string
+	err := s.db.Pool.QueryRow(r.Context(),
+		`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
+		req.Name, req.Slug,
+	).Scan(&orgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create organization")
+		return
+	}
+
+	s.audit.Log(r.Context(), audit.Entry{
+		OrgID: orgID, UserID: claims.UserID,
+		Action: "org.create", ResourceType: "org", ResourceID: orgID,
+	})
+
+	writeJSON(w, http.StatusCreated, map[string]string{"id": orgID, "name": req.Name, "slug": req.Slug})
 }
