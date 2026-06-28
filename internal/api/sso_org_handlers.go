@@ -62,7 +62,7 @@ func (s *Server) handleOrgCreateSSOProvider(w http.ResponseWriter, r *http.Reque
 
 	var req ssoProviderRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
 
@@ -104,8 +104,6 @@ func (s *Server) handleOrgCreateSSOProvider(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusCreated, providerToResponse(created))
 }
 
-// handleOrgUpdateSSOProvider updates an org-scoped provider.
-// Returns 403 if the provider doesn't belong to the caller's org.
 func (s *Server) handleOrgUpdateSSOProvider(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	id := r.PathValue("id")
