@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/heavenlabs/hnb/internal/sso"
@@ -373,8 +374,14 @@ func (s *Server) handleOrgTestSSOProvider(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Append well-known path if not already present
+	wellKnown := req.DiscoveryURL
+	if !strings.HasSuffix(wellKnown, "/openid-configuration") {
+		wellKnown = strings.TrimRight(wellKnown, "/") + "/.well-known/openid-configuration"
+	}
+
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(req.DiscoveryURL)
+	resp, err := client.Get(wellKnown)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"success": false,
