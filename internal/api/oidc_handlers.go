@@ -219,14 +219,14 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 			// Provision into the subdomain-resolved org
 			orgID = subdomainOrgID
 			_, txErr = tx.Exec(ctx,
-				`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'member')`,
+				`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'viewer')`,
 				orgID, userID,
 			)
 			if txErr != nil {
 				writeError(w, http.StatusInternalServerError, "failed to add member")
 				return
 			}
-			role = "member"
+			role = "viewer"
 		} else {
 			// No subdomain — create a new org (existing behavior)
 			orgName := displayName + "'s Org"
