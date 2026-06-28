@@ -49,7 +49,13 @@ func (s *Server) handleSSOProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	providers, err := sso.ListProvidersByDomain(ctx, s.db.Pool, domain)
+	orgID := OrgIDFromContext(ctx)
+	var providers []sso.ProbeResult
+	if orgID != "" {
+		providers, err = sso.ListProvidersByDomainForOrg(ctx, s.db.Pool, domain, orgID)
+	} else {
+		providers, err = sso.ListProvidersByDomain(ctx, s.db.Pool, domain)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list providers")
 		return
