@@ -33,6 +33,7 @@ type Server struct {
 	upgrader           websocket.Upgrader
 	toolAllowedDomains []string
 	sessionCancels     sync.Map    // sessionID -> context.CancelFunc
+	subdomainMW        func(http.Handler) http.Handler // host → org resolution
 	oidcRewriteFrom    string      // host rewrite for OIDC discovery inside Docker (e.g. "localhost:5557")
 	oidcRewriteTo      string      // target host rewrite (e.g. "host.docker.internal:5557")
 }
@@ -52,12 +53,13 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 	s.agentEngine.BroadcastFunc = func(notebookID string, msg any) {
 		s.hub.Broadcast(notebookID, msg)
 	}
+	s.subdomainMW = SubdomainMiddleware(s.db.Pool)
 	s.routes()
 	return s
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.mux.ServeHTTP(w, r)
+	s.subdomainMW(s.mux).ServeHTTP(w, r)
 }
 
 // SetStorage sets the object storage backend.
