@@ -97,6 +97,10 @@ func TestListPlatformProviders(t *testing.T) {
 	db := setupTestDB(t)
 	ctx := context.Background()
 
+	// Clean stale providers that may have been created by the running API server
+	// with a different master key, to avoid decryption failures.
+	db.Pool.Exec(ctx, `DELETE FROM sso_providers`)
+
 	p1, err := sso.CreateProvider(ctx, db.Pool, testMasterKey, makePlatformProvider("list-p1"))
 	require.NoError(t, err)
 	p2, err := sso.CreateProvider(ctx, db.Pool, testMasterKey, makePlatformProvider("list-p2"))
