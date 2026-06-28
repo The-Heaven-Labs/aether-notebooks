@@ -1,6 +1,8 @@
 package api_test
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -48,5 +50,80 @@ func TestAuthMiddlewareNoToken(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestSubdomainMiddlewareResolvesOrg(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+
+	slug := fmt.Sprintf("test-org-%d", time.Now().UnixNano())
+	var orgID string
+	err := s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
+		slug, slug,
+	).Scan(&orgID)
+	if err != nil {
+		t.Fatalf("create org: %v", err)
+	}
+	t.Cleanup(func() {
+		s.DB().Pool.Exec(ctx, `DELETE FROM orgs WHERE id = $1`, orgID)
+	})
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got := api.OrgIDFromContext(r.Context())
+		if got != orgID {
+			t.Errorf("expected org %q, got %q", orgID, got)
+		}
+	})
+	wrapped := api.SubdomainMiddleware(s.DB().Pool)(handler)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = slug + ".hnb.test"
+	wrapped.ServeHTTP(httptest.NewRecorder(), req)
+}
+
+func TestSubdomainMiddlewareSkipsSinglePartHost(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got := api.OrgIDFromContext(r.Context())
+		if got != "" {
+			t.Errorf("expected empty org for single-part host, got %q", got)
+		}
+	})
+	wrapped := api.SubdomainMiddleware(nil)(handler)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "hnb"
+	wrapped.ServeHTTP(httptest.NewRecorder(), req)
+}
+
+func TestSubdomainMiddlewareSkipsLocalhost(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got := api.OrgIDFromContext(r.Context())
+		if got != "" {
+			t.Errorf("expected empty org for localhost, got %q", got)
+		}
+	})
+	wrapped := api.SubdomainMiddleware(nil)(handler)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "localhost:8080"
+	wrapped.ServeHTTP(httptest.NewRecorder(), req)
+}
+
+func TestSubdomainMiddlewareUnknownOrg(t *testing.T) {
+	s := setupTestServer(t)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called for unknown org")
+	})
+	wrapped := api.SubdomainMiddleware(s.DB().Pool)(handler)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "nonexistent.hnb.test"
+	rec := httptest.NewRecorder()
+	wrapped.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
 	}
 }
