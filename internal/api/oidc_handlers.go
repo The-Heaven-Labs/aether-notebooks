@@ -41,7 +41,7 @@ func oidcHTTPClient(discoveryURL string) *http.Client {
 			Timeout: 10 * time.Second,
 		}
 	}
-	return http.DefaultClient
+	return http.DefaultClient // production: replace with a client matching your TLS config
 }
 
 type hostRewriteTransport struct {
