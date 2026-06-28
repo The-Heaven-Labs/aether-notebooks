@@ -269,6 +269,11 @@ export interface ACLEntry {
 export interface SSOProvider {
   id: string
   scope: string
+  scopes: string[]
+  groups_claim: string
+  group_prefix: string
+  auto_sync_groups: boolean
+  get_user_info: boolean
   org_id?: string
   name: string
   provider_type: string

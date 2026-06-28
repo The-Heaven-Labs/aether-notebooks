@@ -21,6 +21,11 @@ interface ProviderFormValues {
   discovery_url: string
   allowed_domains: string
   enabled: boolean
+  scopes: string
+  groups_claim: string
+  group_prefix: string
+  auto_sync_groups: boolean
+  get_user_info: boolean
 }
 
 const emptyForm: ProviderFormValues = {
@@ -30,6 +35,11 @@ const emptyForm: ProviderFormValues = {
   discovery_url: '',
   allowed_domains: '',
   enabled: true,
+  scopes: '',
+  groups_claim: 'groups',
+  group_prefix: '',
+  auto_sync_groups: false,
+  get_user_info: false,
 }
 
 function providerToForm(p: SSOProvider): ProviderFormValues {
@@ -40,6 +50,11 @@ function providerToForm(p: SSOProvider): ProviderFormValues {
     discovery_url: p.discovery_url,
     allowed_domains: (p.allowed_domains ?? []).join(', '),
     enabled: p.enabled,
+    scopes: (p.scopes ?? []).join(', '),
+    groups_claim: p.groups_claim ?? 'groups',
+    group_prefix: p.group_prefix ?? '',
+    auto_sync_groups: p.auto_sync_groups ?? false,
+    get_user_info: p.get_user_info ?? false,
   }
 }
 
@@ -108,6 +123,26 @@ function ProviderForm({
         <label style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <input type="checkbox" checked={values.enabled} onChange={set('enabled')} />
           Enabled
+        </label>
+        <label style={formStyles.label}>
+          Scopes <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(comma-separated)</span>
+          <input style={formStyles.input} value={values.scopes} onChange={set('scopes')} placeholder="openid, profile, email, groups" />
+        </label>
+        <label style={formStyles.label}>
+          Groups Claim
+          <input style={formStyles.input} value={values.groups_claim} onChange={set('groups_claim')} placeholder="groups" />
+        </label>
+        <label style={formStyles.label}>
+          Group Prefix <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(only sync groups with this prefix)</span>
+          <input style={formStyles.input} value={values.group_prefix} onChange={set('group_prefix')} placeholder="hnb-" />
+        </label>
+        <label style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <input type="checkbox" checked={values.auto_sync_groups} onChange={set('auto_sync_groups')} />
+          Auto-sync Groups
+        </label>
+        <label style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <input type="checkbox" checked={values.get_user_info} onChange={set('get_user_info')} />
+          Call UserInfo Endpoint
         </label>
       </div>
       {error && <div style={formStyles.error}>{error}</div>}
@@ -260,6 +295,11 @@ function SSOProvidersTab() {
         .map(s => s.trim())
         .filter(Boolean),
       enabled: values.enabled,
+      scopes: values.scopes.split(',').map(s => s.trim()).filter(Boolean),
+      groups_claim: values.groups_claim,
+      group_prefix: values.group_prefix,
+      auto_sync_groups: values.auto_sync_groups,
+      get_user_info: values.get_user_info,
     }
     createProvider.mutate(body)
   }
@@ -274,6 +314,11 @@ function SSOProvidersTab() {
         .map(s => s.trim())
         .filter(Boolean),
       enabled: values.enabled,
+      scopes: values.scopes.split(',').map(s => s.trim()).filter(Boolean),
+      groups_claim: values.groups_claim,
+      group_prefix: values.group_prefix,
+      auto_sync_groups: values.auto_sync_groups,
+      get_user_info: values.get_user_info,
     }
     if (values.client_secret) body.client_secret = values.client_secret
     updateProvider.mutate({ id, body })

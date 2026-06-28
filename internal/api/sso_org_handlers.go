@@ -22,6 +22,11 @@ type platformProviderResponse struct {
 	AllowedDomains []string  `json:"allowed_domains"`
 	Enabled        bool      `json:"enabled"`
 	EnabledForOrg  bool      `json:"enabled_for_org"`
+	Scopes         []string  `json:"scopes"`
+	GroupsClaim    string    `json:"groups_claim"`
+	GroupPrefix    string    `json:"group_prefix"`
+	AutoSyncGroups bool      `json:"auto_sync_groups"`
+	GetUserInfo    bool      `json:"get_user_info"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -81,6 +86,11 @@ func (s *Server) handleOrgCreateSSOProvider(w http.ResponseWriter, r *http.Reque
 		DiscoveryURL:   req.DiscoveryURL,
 		AllowedDomains: domains,
 		Enabled:        req.Enabled,
+		Scopes:         req.Scopes,
+		GroupsClaim:    req.GroupsClaim,
+		GroupPrefix:    req.GroupPrefix,
+		AutoSyncGroups: req.AutoSyncGroups,
+		GetUserInfo:    req.GetUserInfo,
 	}
 
 	created, err := sso.CreateProvider(r.Context(), s.db.Pool, s.masterKey, p)
@@ -138,6 +148,11 @@ func (s *Server) handleOrgUpdateSSOProvider(w http.ResponseWriter, r *http.Reque
 		DiscoveryURL:   req.DiscoveryURL,
 		AllowedDomains: domains,
 		Enabled:        req.Enabled,
+		Scopes:         req.Scopes,
+		GroupsClaim:    req.GroupsClaim,
+		GroupPrefix:    req.GroupPrefix,
+		AutoSyncGroups: req.AutoSyncGroups,
+		GetUserInfo:    req.GetUserInfo,
 	}
 
 	updated, err := sso.UpdateProvider(r.Context(), s.db.Pool, s.masterKey, p)
@@ -230,6 +245,10 @@ func (s *Server) handleOrgListPlatformProviders(w http.ResponseWriter, r *http.R
 
 	resp := make([]platformProviderResponse, len(providers))
 	for i, p := range providers {
+		scopes := p.Scopes
+		if scopes == nil {
+			scopes = []string{}
+		}
 		resp[i] = platformProviderResponse{
 			ID:             p.ID,
 			Scope:          p.Scope,
@@ -240,6 +259,11 @@ func (s *Server) handleOrgListPlatformProviders(w http.ResponseWriter, r *http.R
 			AllowedDomains: domains(p.AllowedDomains),
 			Enabled:        p.Enabled,
 			EnabledForOrg:  enabledSet[p.ID],
+			Scopes:         scopes,
+			GroupsClaim:    p.GroupsClaim,
+			GroupPrefix:    p.GroupPrefix,
+			AutoSyncGroups: p.AutoSyncGroups,
+			GetUserInfo:    p.GetUserInfo,
 			CreatedAt:      p.CreatedAt,
 			UpdatedAt:      p.UpdatedAt,
 		}

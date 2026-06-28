@@ -20,6 +20,7 @@ func TestOIDCProviderLoadedFromDB(t *testing.T) {
 		ClientSecret:   "test-secret",
 		DiscoveryURL:   "https://example.com/.well-known/openid-configuration",
 		AllowedDomains: []string{"example.com"},
+		Scopes:         []string{},
 		Enabled:        true,
 	}
 
