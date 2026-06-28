@@ -1,4 +1,18 @@
 import type { Cell, Notebook, ResultSet, ChartConfig } from '../types'
+import * as echarts from 'echarts/core'
+import { BarChart, LineChart, ScatterChart, PieChart, TreeChart, MapChart, SankeyChart } from 'echarts/charts'
+import {
+  GridComponent, TooltipComponent, LegendComponent, TitleComponent,
+  DataZoomComponent, GeoComponent,
+} from 'echarts/components'
+import { SVGRenderer } from 'echarts/renderers'
+
+echarts.use([
+  BarChart, LineChart, ScatterChart, PieChart, TreeChart, MapChart, SankeyChart,
+  GridComponent, TooltipComponent, LegendComponent, TitleComponent,
+  DataZoomComponent, GeoComponent,
+  SVGRenderer,
+])
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -7,10 +21,8 @@ interface NotebookWithCells extends Notebook {
 const CHART_COLORS = ['#6366f1', '#06b6d4', '#10b981', '#f59e0b', '#f43f5e', '#8b5cf6', '#0ea5e9', '#84cc16']
 
 function escapeHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;')
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
-
-
 
 function normalizeChartConfig(raw: unknown): ChartConfig | undefined {
   if (!raw || typeof raw !== 'object') return undefined
@@ -69,260 +81,232 @@ function themeColors() {
     textMuted: dark ? '#888' : '#6e6e6e',
     border: dark ? '#2e2e2e' : '#e8e8e8',
     bgCard: dark ? '#1c1c1c' : '#ffffff',
-    shadow: dark ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)',
   }
 }
 
-function axisStyle() {
-  const c = themeColors()
-  return { axisLine: { show: false }, axisTick: { show: false }, axisLabel: { fontSize: 11, color: c.textMuted }, splitLine: { show: true, lineStyle: { color: c.border, type: 'dashed' as const } } }
+function axisSt(showGrid?: boolean, c?: ReturnType<typeof themeColors>) {
+  const col = c ?? themeColors()
+  return { axisLine: { show: false }, axisTick: { show: false }, axisLabel: { fontSize: 11, color: col.textMuted }, splitLine: { show: showGrid !== false, lineStyle: { color: col.border, type: 'dashed' as const } } }
 }
 
-function tooltipStyle() {
+function buildOption(data: ResultSet, config: ChartConfig): any {
   const c = themeColors()
-  return { backgroundColor: c.bgCard, borderColor: c.border, borderRadius: 4, textStyle: { fontSize: 12, color: c.text }, extraCssText: `box-shadow: 0 2px 16px ${c.shadow}` }
-}
+  const t = config.chartType
+  const cols = data.columns
+  const rows = data.rows
 
-function buildAxisOption(data: ResultSet, config: ChartConfig): any {
-  const c = themeColors()
-  const isScatter = config.chartType === 'scatter'
-  const isArea = config.chartType === 'area'
-  const isStacked = config.chartType === 'stacked_bar' || config.chartType === 'stacked_area'
-  const isBar = config.chartType === 'bar' || isStacked
-  const xKey = config.xAxis ?? data.columns[0]?.name ?? ''
-  const yKeys = config.yAxis?.length ? config.yAxis : data.columns.slice(1, 2).map(c => c.name)
-  const gb = config.groupBy
-  const xIdx = colIdx(data.columns, xKey)
-  const gbIdx = gb ? colIdx(data.columns, gb) : -1
+  // Axis-based: bar, stacked_bar, line, area, scatter
+  if (['bar', 'stacked_bar', 'line', 'area', 'scatter'].includes(t)) {
+    const isSc = t === 'scatter'
+    const isAr = t === 'area'
+    const isSt = t === 'stacked_bar' || t === 'stacked_area'
+    const isBa = t === 'bar' || isSt
+    const xKey = config.xAxis ?? cols[0]?.name ?? ''
+    const yKeys = config.yAxis?.length ? config.yAxis : cols.slice(1, 2).map(c => c.name)
+    const gb = config.groupBy
+    const xI = colIdx(cols, xKey)
+    const gbI = gb ? colIdx(cols, gb) : -1
 
-  let series: any[], xData: any[]
-
-  if (gb && gbIdx >= 0) {
-    const xMap: Record<string, Record<string, any[]>> = {}
-    const groupOrder: string[] = []
-    for (const r of data.rows) {
-      const xVal = String(r[xIdx] ?? '')
-      const gVal = String(r[gbIdx] ?? '')
-      if (!xMap[xVal]) xMap[xVal] = {}
-      if (!xMap[xVal][gVal]) xMap[xVal][gVal] = r
-      if (!groupOrder.includes(gVal)) groupOrder.push(gVal)
-    }
-    xData = Object.keys(xMap)
-    series = []
-    for (let gi = 0; gi < groupOrder.length; gi++) {
-      const g = groupOrder[gi]
-      for (let yi = 0; yi < yKeys.length; yi++) {
-        const yName = yKeys.length > 1 ? `${g} (${yKeys[yi]})` : g
-        const sData = xData.map(xv => xMap[xv]?.[g]?.[colIdx(data.columns, yKeys[yi])] ?? null)
-        const s: any = {
-          name: yName,
-          type: isArea ? 'line' : isScatter ? 'scatter' : isBar ? 'bar' : 'line',
-          data: isScatter ? sData.map((v, vi) => [xData[vi], v]) : sData,
-          itemStyle: { color: CHART_COLORS[(gi * yKeys.length + yi) % CHART_COLORS.length] },
+    let series: any[], xData: any[]
+    if (gb && gbI >= 0) {
+      const xMap: Record<string, Record<string, any[]>> = {}
+      const gOrder: string[] = []
+      for (const r of rows) {
+        const xV = String(r[xI] ?? ''); const gV = String(r[gbI] ?? '')
+        if (!xMap[xV]) xMap[xV] = {}
+        if (!xMap[xV][gV]) xMap[xV][gV] = r
+        if (!gOrder.includes(gV)) gOrder.push(gV)
+      }
+      xData = Object.keys(xMap)
+      series = []
+      for (let gi = 0; gi < gOrder.length; gi++) {
+        const g = gOrder[gi]
+        for (let yi = 0; yi < yKeys.length; yi++) {
+          const yN = yKeys.length > 1 ? `${g} (${yKeys[yi]})` : g
+          const si: any = {
+            name: yN,
+            type: isAr ? 'line' : isSc ? 'scatter' : isBa ? 'bar' : 'line',
+            data: isSc ? xData.map((xv, vi) => [xv, xMap[xv]?.[g]?.[colIdx(cols, yKeys[yi])] ?? null]) : xData.map(xv => xMap[xv]?.[g]?.[colIdx(cols, yKeys[yi])] ?? null),
+            itemStyle: { color: CHART_COLORS[(gi * yKeys.length + yi) % CHART_COLORS.length] },
+          }
+          if (!isSc) {
+            si.symbol = 'circle'; si.symbolSize = 4; si.lineStyle = { width: 2 }
+            si.smooth = config.smooth ?? false; si.connectNulls = config.connectNulls ?? false
+            if (isAr) si.areaStyle = { opacity: 0.15 }
+            if (isSt) si.stack = 'a'
+            if (config.showLabels) si.label = { show: true, position: 'top', fontSize: 10, color: c.textMuted }
+          } else { si.itemStyle.opacity = 0.8 }
+          series.push(si)
         }
-        if (isScatter) { s.itemStyle = { ...s.itemStyle, opacity: 0.8 } }
-        else {
-          s.symbol = 'circle'; s.symbolSize = 4; s.lineStyle = { width: 2 }
-          s.smooth = config.smooth ?? false; s.connectNulls = config.connectNulls ?? false
-          if (isArea) s.areaStyle = { opacity: 0.15 }
-          if (isStacked) s.stack = 'a'
-          if (config.showLabels) s.label = { show: true, position: 'top', fontSize: 10, color: c.textMuted }
+      }
+    } else {
+      xData = rows.map(r => r[xI])
+      series = yKeys.map((y, i) => {
+        const si: any = {
+          name: y,
+          type: isAr ? 'line' : isSc ? 'scatter' : isBa ? 'bar' : 'line',
+          data: isSc ? rows.map(r => [r[xI], r[colIdx(cols, y)]]) : rows.map(r => r[colIdx(cols, y)]),
+          itemStyle: { color: config.seriesColors?.[y] ?? CHART_COLORS[i % CHART_COLORS.length] },
         }
-        series.push(s)
-      }
+        if (!isSc) {
+          si.symbol = 'circle'; si.symbolSize = 4; si.lineStyle = { width: 2 }
+          si.smooth = config.smooth ?? false; si.connectNulls = config.connectNulls ?? false
+          if (isAr) si.areaStyle = { opacity: 0.15 }
+          if (isSt) si.stack = 'a'
+          if (isBa) si.itemStyle = { ...si.itemStyle, borderRadius: [3, 3, 0, 0] }
+          if (config.showLabels) si.label = { show: true, position: 'top', fontSize: 10, color: c.textMuted }
+        } else { si.itemStyle.opacity = 0.8 }
+        return si
+      })
     }
-  } else {
-    xData = data.rows.map(r => r[xIdx])
-    series = yKeys.map((y, i) => {
-      const s: any = {
-        name: y,
-        type: isArea ? 'line' : isScatter ? 'scatter' : isBar ? 'bar' : 'line',
-        data: isScatter ? data.rows.map(r => [r[xIdx], r[colIdx(data.columns, y)]]) : data.rows.map(r => r[colIdx(data.columns, y)]),
-        itemStyle: { color: config.seriesColors?.[y] ?? CHART_COLORS[i % CHART_COLORS.length] },
-      }
-      if (isScatter) { s.itemStyle = { ...s.itemStyle, opacity: 0.8 } }
-      else {
-        s.symbol = 'circle'; s.symbolSize = 4; s.lineStyle = { width: 2 }
-        s.smooth = config.smooth ?? false; s.connectNulls = config.connectNulls ?? false
-        if (isArea) s.areaStyle = { opacity: 0.15 }
-        if (isStacked) s.stack = 'a'
-        if (isBar) s.itemStyle = { ...s.itemStyle, borderRadius: [3, 3, 0, 0] }
-        if (config.showLabels) s.label = { show: true, position: 'top', fontSize: 10, color: c.textMuted }
-      }
-      return s
-    })
-  }
 
-  const showLegend = config.showLegend !== false && !(isScatter && !config.groupBy && yKeys.length <= 1)
-  const as = axisStyle()
-
-  return {
-    tooltip: { trigger: 'axis' as const, backgroundColor: c.bgCard, borderColor: c.border, textStyle: { fontSize: 12, color: c.text } },
-    title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: c.text } } : undefined,
-    legend: showLegend ? { show: true, top: config.title ? 32 : 0, textStyle: { fontSize: 11, color: c.textMuted } } : { show: false },
-    grid: { top: config.title ? 56 : showLegend ? 30 : 8, right: 16, bottom: isScatter || config.dataZoom ? 32 : 8, left: 16, containLabel: true },
-    dataZoom: isScatter || config.dataZoom ? [{ type: 'inside' as const, start: 0, end: 100 }, { type: 'slider' as const, backgroundColor: c.bgCard, borderColor: c.border, start: 0, end: 100, bottom: 8, textStyle: { fontSize: 10, color: c.textMuted } }] : undefined,
-    xAxis: isScatter ? { type: 'value' as const, ...as } : { type: 'category' as const, data: xData, ...(isArea ? { boundaryGap: false } : {}), ...as },
-    yAxis: { type: 'value' as const, ...as },
-    series,
-  }
-}
-
-function buildPieOption(data: ResultSet, config: ChartConfig): any {
-  const c = themeColors()
-  const nameKey = config.labelColumn || config.xAxis || data.columns[0]?.name || ''
-  const valueKey = config.yAxis?.[0] || data.columns[1]?.name || ''
-  const isDonut = config.chartType === 'donut'
-  return {
-    tooltip: { trigger: 'item' as const, formatter: '{b}: {c} ({d}%)', backgroundColor: c.bgCard, borderColor: c.border, textStyle: { fontSize: 12, color: c.text } },
-    title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: c.text } } : undefined,
-    legend: config.showLegend !== false ? { show: true, orient: 'vertical' as const, right: 10, top: config.title ? 36 : 'center', textStyle: { fontSize: 11, color: c.textMuted } } : { show: false },
-    series: [{
-      type: 'pie' as const, radius: isDonut ? ['40%', '70%'] : ['0%', '70%'],
-      center: config.showLegend !== false ? ['40%', config.title ? '58%' : '50%'] : ['50%', '50%'],
-      data: data.rows.map((r, i) => ({ name: r[colIdx(data.columns, nameKey)], value: r[colIdx(data.columns, valueKey)], itemStyle: { color: config.seriesColors?.[String(r[colIdx(data.columns, nameKey)])] ?? CHART_COLORS[i % CHART_COLORS.length] } })),
-      label: config.showLabels !== false ? { fontSize: 11, color: c.text } : { show: false },
-      emphasis: { itemStyle: { shadowBlur: 10, shadowColor: c.shadow } },
-      roseType: config.roseType || false, startAngle: config.startAngle ?? 90, padAngle: config.padAngle ?? 0,
-    }],
-  }
-}
-
-function buildSankeyOption(data: ResultSet, config: ChartConfig): any {
-  const c = themeColors()
-  const sourceCol = config.xAxis ?? data.columns[0]?.name ?? ''
-  const targetCol = config.yAxis?.[0] ?? data.columns[1]?.name ?? ''
-  const valueCol = config.yAxis?.[1] ?? data.columns[2]?.name ?? ''
-  const nodeSet = new Set<string>()
-  const links: Array<{ source: string; target: string; value: number }> = []
-  for (const row of data.rows) {
-    const src = String(row[colIdx(data.columns, sourceCol)] ?? '')
-    const tgt = String(row[colIdx(data.columns, targetCol)] ?? '')
-    const val = Number(row[colIdx(data.columns, valueCol)] ?? 1)
-    if (src && tgt && !isNaN(val)) { nodeSet.add(src); nodeSet.add(tgt); links.push({ source: src, target: tgt, value: val }) }
-  }
-  const nodes = Array.from(nodeSet).map((name, i) => ({ name, itemStyle: { color: config.seriesColors?.[name] ?? CHART_COLORS[i % CHART_COLORS.length] } }))
-  return {
-    tooltip: { trigger: 'item' as const, backgroundColor: c.bgCard, borderColor: c.border, textStyle: { fontSize: 12, color: c.text } },
-    title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: c.text } } : undefined,
-    series: [{ type: 'sankey' as const, layoutIterations: 32, nodeAlign: config.nodeAlign ?? 'justify', nodeWidth: config.nodeWidth ?? 20, nodeGap: config.nodeGap ?? 12, roam: true, data: nodes, links, lineStyle: { color: 'gradient' as const, curveness: 0.5, opacity: 0.4 }, label: { fontSize: 11, color: c.text }, emphasis: { focus: 'adjacency' as const } }],
-  }
-}
-
-function buildMapOption(data: ResultSet, config: ChartConfig): any {
-  const c = themeColors()
-  const as = axisStyle()
-  const latCol = config.yAxis?.[0] ?? data.columns.find(c => /^lat/i.test(c.name))?.name ?? ''
-  const lonCol = config.xAxis ?? data.columns.find(c => /^lon/i.test(c.name) || /^lng/i.test(c.name))?.name ?? ''
-  const labelCol = config.labelColumn ?? ''
-  const lti = colIdx(data.columns, latCol)
-  const lni = colIdx(data.columns, lonCol)
-  const lbi = labelCol ? colIdx(data.columns, labelCol) : -1
-  const pts = data.rows.map(r => ({ lon: Number(r[lni]), lat: Number(r[lti]), name: lbi >= 0 ? String(r[lbi] ?? '') : '' })).filter(d => !isNaN(d.lon) && !isNaN(d.lat))
-  if (pts.length === 0) return {}
-  return {
-    tooltip: { trigger: 'item' as const, backgroundColor: c.bgCard, borderColor: c.border, textStyle: { fontSize: 12, color: c.text } },
-    title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: c.text } } : undefined,
-    grid: { top: config.title ? 46 : 20, right: 16, bottom: 8, left: 16, containLabel: true },
-    xAxis: { type: 'value' as const, name: lonCol || 'Longitude', min: -180, max: 180, ...as },
-    yAxis: { type: 'value' as const, name: latCol || 'Latitude', min: -90, max: 90, ...as },
-    series: [{ type: 'scatter' as const, data: pts.map(p => [p.lon, p.lat]), symbolSize: 10, itemStyle: { color: CHART_COLORS[0], opacity: 0.85 } }],
-  }
-}
-
-function buildTreeOption(data: ResultSet, config: ChartConfig): any {
-  const c = themeColors()
-  const columns = data.columns.map(c => c.name)
-  const idCol = config.idColumn ?? columns[0]
-  const parentCol = config.parentIdColumn ?? columns[1]
-  const labelCol = config.labelColumn ?? columns.find(c => !c.toLowerCase().includes('id') && !c.includes('parent') && c !== idCol && c !== parentCol) ?? idCol
-  const metricCols = config.metricColumns ?? []
-  const isHorizontal = config.layout === 'left-to-right'
-  const nodeMap = new Map<string, any>()
-  const roots: any[] = []
-  data.rows.forEach((row, i) => {
-    const id = String(row[colIdx(data.columns, idCol)] ?? `node-${i}`)
-    const label = labelCol ? String(row[colIdx(data.columns, labelCol)] ?? id) : id
-    const node: any = { name: label, parentId: String(row[colIdx(data.columns, parentCol)] ?? ''), itemStyle: { color: config.seriesColors?.[label] ?? CHART_COLORS[i % CHART_COLORS.length] } }
-    if (metricCols.length > 0) node.name = `${label}\n${metricCols.map(mc => `${mc}: ${row[colIdx(data.columns, mc)]}`).join(', ')}`
-    nodeMap.set(id, node)
-  })
-  nodeMap.forEach((node, id) => {
-    if (node.parentId && node.parentId !== id && nodeMap.has(node.parentId)) {
-      const parent = nodeMap.get(node.parentId)
-      if (!parent.children) parent.children = []
-      parent.children.push(node)
-    } else { roots.push(node) }
-  })
-  return {
-    tooltip: { trigger: 'item' as const, backgroundColor: c.bgCard, borderColor: c.border, textStyle: { fontSize: 12, color: c.text } },
-    title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: c.text } } : undefined,
-    series: [{ type: 'tree' as const, data: roots, orient: isHorizontal ? 'LR' as const : 'TB' as const, top: config.title ? '16%' : '8%', bottom: metricCols.length > 0 ? '30%' : '12%', left: `${isHorizontal ? 15 : 8}%`, right: `${isHorizontal ? 20 : 8}%`, roam: true, initialTreeDepth: -1, symbolSize: 12, edgeShape: 'curve' as const, label: { position: isHorizontal ? 'right' as const : 'top' as const, verticalAlign: 'middle' as const, fontSize: 11, color: c.text }, lineStyle: { color: c.border, width: 1.5, curveness: 0.5 }, itemStyle: { borderColor: c.bgCard }, expandAndCollapse: true }],
-  }
-}
-
-function buildTimelineOption(data: ResultSet, config: ChartConfig): any {
-  const c = themeColors()
-  const columns = data.columns.map(c => c.name)
-  const timeCol = config.timeColumn ?? columns[0]
-  const labelCol = config.labelColumn
-  const groupByCol = config.groupBy
-  const chartData = data.rows.map(r => {
-    const o: Record<string, unknown> = {}; data.columns.forEach((c, i) => { o[c.name] = r[i] }); return o
-  }).filter(d => d[timeCol] != null).sort((a, b) => new Date(String(a[timeCol])).getTime() - new Date(String(b[timeCol])).getTime())
-
-  const groups = groupByCol ? [...new Set(chartData.map(d => String(d[groupByCol] ?? 'Unknown')))] : ['Events']
-  const singleGroup = groups.length === 1
-  const isRange = !!config.endTimeColumn
-
-  if (isRange) {
-    const etCol = config.endTimeColumn!
+    const showLegend = config.showLegend !== false && !(isSc && !config.groupBy && yKeys.length <= 1)
+    const as = axisSt(config.showGrid, c)
     return {
       tooltip: { trigger: 'axis' as const, backgroundColor: c.bgCard, borderColor: c.border, textStyle: { fontSize: 12, color: c.text } },
       title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: c.text } } : undefined,
-      legend: groups.length > 1 ? { top: config.title ? 30 : 0, textStyle: { fontSize: 11, color: c.textMuted } } : undefined,
-      grid: { top: groups.length > 1 ? 56 : 40, right: 16, bottom: 16, left: 16, containLabel: true },
-      xAxis: { type: 'time' as const, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { fontSize: 11, color: c.textMuted } },
-      yAxis: singleGroup ? { type: 'value' as const, show: false, min: 0, max: 1 } : { type: 'category' as const, data: groups, inverse: true, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { fontSize: 11, color: c.textMuted }, splitLine: { show: config.showGrid !== false, lineStyle: { color: c.border, type: 'dashed' as const } } },
-      series: groups.map((group, gi) => ({
-        name: group, type: 'scatter' as const, symbolSize: 14, itemStyle: { color: config.seriesColors?.[group] ?? CHART_COLORS[gi % CHART_COLORS.length] },
-        data: chartData.filter(d => groupByCol ? String(d[groupByCol] ?? 'Unknown') === group : true).map(d => {
-          const st = new Date(String(d[timeCol])).getTime()
-          const et = new Date(String(d[etCol])).getTime()
-          return [st, singleGroup ? 0.2 : gi, et]
-        }),
-        encode: { x: [0, 2], y: 1 },
-      })),
+      legend: showLegend ? { show: true, top: config.title ? 32 : 0, textStyle: { fontSize: 11, color: c.textMuted } } : { show: false },
+      grid: { top: config.title ? 56 : showLegend ? 30 : 8, right: 16, bottom: isSc || config.dataZoom ? 32 : 8, left: 16, containLabel: true },
+      dataZoom: isSc || config.dataZoom ? [{ type: 'inside' as const, start: 0, end: 100 }, { type: 'slider' as const, start: 0, end: 100, bottom: 8, textStyle: { fontSize: 10, color: c.textMuted } }] : undefined,
+      xAxis: isSc ? { type: 'value' as const, ...as } : { type: 'category' as const, data: xData, ...(isAr ? { boundaryGap: false } : {}), ...as },
+      yAxis: { type: 'value' as const, ...as },
+      series,
     }
   }
 
-  return {
-    tooltip: { trigger: 'item' as const, backgroundColor: c.bgCard, borderColor: c.border, textStyle: { fontSize: 12, color: c.text } },
-    title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: c.text } } : undefined,
-    legend: groups.length > 1 ? { top: config.title ? 30 : 0, textStyle: { fontSize: 11, color: c.textMuted } } : undefined,
-    grid: { top: 56, right: 16, bottom: 60, left: 16 },
-    xAxis: { type: 'time' as const, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { fontSize: 11, color: c.textMuted } },
-    yAxis: singleGroup ? { type: 'value' as const, show: false, min: 0, max: 1 } : { type: 'category' as const, data: groups, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { fontSize: 11, color: c.textMuted }, splitLine: { show: config.showGrid !== false, lineStyle: { color: c.border, type: 'dashed' as const } } },
-    series: groups.flatMap((group, gi) => {
-      const groupData = chartData.filter(d => groupByCol ? String(d[groupByCol] ?? 'Unknown') === group : true)
-      const cl = config.seriesColors?.[group] ?? CHART_COLORS[gi % CHART_COLORS.length]
-      return [
-        { name: group, type: 'scatter' as const, symbolSize: 14, itemStyle: { color: cl, borderColor: c.text, borderWidth: 1 }, data: groupData.filter((_, i) => i % 2 === 0).map(d => [new Date(String(d[timeCol])).getTime(), singleGroup ? 0.2 : group, labelCol ? d[labelCol] : null]) },
-        { name: `${group}_bottom`, type: 'scatter' as const, symbolSize: 14, itemStyle: { color: cl, borderColor: c.text, borderWidth: 1 }, data: groupData.filter((_, i) => i % 2 === 1).map(d => [new Date(String(d[timeCol])).getTime(), singleGroup ? 0.2 : group, labelCol ? d[labelCol] : null]) },
-      ]
-    }),
+  // Pie / Donut
+  if (t === 'pie' || t === 'donut') {
+    const nk = config.labelColumn || config.xAxis || cols[0]?.name || ''
+    const vk = config.yAxis?.[0] || cols[1]?.name || ''
+    const dn = t === 'donut'
+    return {
+      tooltip: { trigger: 'item' as const, backgroundColor: c.bgCard, borderColor: c.border, textStyle: { fontSize: 12, color: c.text }, formatter: '{b}: {c} ({d}%)' },
+      title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: c.text } } : undefined,
+      legend: config.showLegend !== false ? { show: true, orient: 'vertical' as const, right: 10, top: config.title ? 36 : 'center', textStyle: { fontSize: 11, color: c.textMuted } } : { show: false },
+      series: [{
+        type: 'pie' as const, radius: dn ? ['40%', '70%'] : ['0%', '70%'],
+        center: config.showLegend !== false ? ['40%', config.title ? '58%' : '50%'] : ['50%', '50%'],
+        data: rows.map((r, i) => ({ name: r[colIdx(cols, nk)], value: r[colIdx(cols, vk)], itemStyle: { color: config.seriesColors?.[String(r[colIdx(cols, nk)])] ?? CHART_COLORS[i % CHART_COLORS.length] } })),
+        label: config.showLabels !== false ? { fontSize: 11, color: c.text } : { show: false },
+        emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.2)' } },
+        roseType: config.roseType || false, startAngle: config.startAngle ?? 90, padAngle: config.padAngle ?? 0,
+      }],
+    }
   }
+
+  // Sankey
+  if (t === 'sankey') {
+    const sc = config.xAxis ?? cols[0]?.name ?? ''; const tc = config.yAxis?.[0] ?? cols[1]?.name ?? ''; const vc = config.yAxis?.[1] ?? cols[2]?.name ?? ''
+    const ns = new Set<string>(); const lks: Array<{ source: string; target: string; value: number }> = []
+    for (const r of rows) {
+      const s = String(r[colIdx(cols, sc)] ?? ''); const tg = String(r[colIdx(cols, tc)] ?? ''); const v = Number(r[colIdx(cols, vc)] ?? 1)
+      if (s && tg && !isNaN(v)) { ns.add(s); ns.add(tg); lks.push({ source: s, target: tg, value: v }) }
+    }
+    const nds = Array.from(ns).map((n, i) => ({ name: n, itemStyle: { color: config.seriesColors?.[n] ?? CHART_COLORS[i % CHART_COLORS.length] } }))
+    return {
+      tooltip: { trigger: 'item' as const, backgroundColor: c.bgCard, borderColor: c.border, textStyle: { fontSize: 12, color: c.text } },
+      title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: c.text } } : undefined,
+      series: [{ type: 'sankey' as const, layoutIterations: 32, nodeAlign: config.nodeAlign ?? 'justify', nodeWidth: config.nodeWidth ?? 20, nodeGap: config.nodeGap ?? 12, roam: true, data: nds, links: lks, lineStyle: { color: 'gradient' as const, curveness: 0.5, opacity: 0.4 }, label: { fontSize: 11, color: c.text }, emphasis: { focus: 'adjacency' as const } }],
+    }
+  }
+
+  // Map (scatter fallback on plain axes)
+  if (t === 'map') {
+    const latC = config.yAxis?.[0] ?? cols.find(c => /^lat/i.test(c.name))?.name ?? ''
+    const lonC = config.xAxis ?? cols.find(c => /^lon/i.test(c.name) || /^lng/i.test(c.name))?.name ?? ''
+    const lti = colIdx(cols, latC); const lni = colIdx(cols, lonC)
+    const pts = rows.map(r => ({ lon: Number(r[lni]), lat: Number(r[lti]) })).filter(d => !isNaN(d.lon) && !isNaN(d.lat))
+    if (pts.length === 0) return {}
+    return {
+      tooltip: { trigger: 'item' as const, backgroundColor: c.bgCard, borderColor: c.border, textStyle: { fontSize: 12, color: c.text } },
+      title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: c.text } } : undefined,
+      grid: { top: config.title ? 46 : 20, right: 16, bottom: 8, left: 16, containLabel: true },
+      xAxis: { type: 'value' as const, name: lonC || 'Longitude', min: -180, max: 180, ...axisSt(config.showGrid, c) },
+      yAxis: { type: 'value' as const, name: latC || 'Latitude', min: -90, max: 90, ...axisSt(config.showGrid, c) },
+      series: [{ type: 'scatter' as const, data: pts.map(p => [p.lon, p.lat]), symbolSize: 10, itemStyle: { color: CHART_COLORS[0], opacity: 0.85 } }],
+    }
+  }
+
+  // Hierarchy tree
+  if (t === 'hierarchy_tree') {
+    const columns = cols.map(c => c.name)
+    const idC = config.idColumn ?? columns[0]; const pC = config.parentIdColumn ?? columns[1]
+    const lC = config.labelColumn ?? columns.find(c => !c.toLowerCase().includes('id') && !c.includes('parent') && c !== idC && c !== pC) ?? idC
+    const mC = config.metricColumns ?? []; const h = config.layout === 'left-to-right'
+    const nm = new Map<string, any>(); const rs2: any[] = []
+    rows.forEach((r, i) => {
+      const id = String(r[colIdx(cols, idC)] ?? `node-${i}`); const lb = lC ? String(r[colIdx(cols, lC)] ?? id) : id
+      const n: any = { name: lb, parentId: String(r[colIdx(cols, pC)] ?? ''), itemStyle: { color: config.seriesColors?.[lb] ?? CHART_COLORS[i % CHART_COLORS.length] } }
+      if (mC.length > 0) n.name = `${lb}\n${mC.map(m => `${m}: ${r[colIdx(cols, m)]}`).join(', ')}`
+      nm.set(id, n)
+    })
+    nm.forEach((n, id) => { if (n.parentId && n.parentId !== id && nm.has(n.parentId)) { const p = nm.get(n.parentId); if (!p.children) p.children = []; p.children.push(n) } else { rs2.push(n) } })
+    return {
+      tooltip: { trigger: 'item' as const, backgroundColor: c.bgCard, borderColor: c.border, textStyle: { fontSize: 12, color: c.text } },
+      title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: c.text } } : undefined,
+      series: [{ type: 'tree' as const, data: rs2, orient: h ? 'LR' as const : 'TB' as const, top: config.title ? '16%' : '8%', bottom: mC.length > 0 ? '30%' : '12%', left: `${h ? 15 : 8}%`, right: `${h ? 20 : 8}%`, roam: true, initialTreeDepth: -1, symbolSize: 12, edgeShape: 'curve' as const, label: { position: h ? 'right' as const : 'top' as const, verticalAlign: 'middle' as const, fontSize: 11, color: c.text }, lineStyle: { color: c.border, width: 1.5, curveness: 0.5 }, itemStyle: { borderColor: c.bgCard }, expandAndCollapse: true }],
+    }
+  }
+
+  // Timeline
+  if (t === 'timeline') {
+    const columns = cols.map(c => c.name)
+    const tiC = config.timeColumn ?? columns[0]; const lbC = config.labelColumn; const gbC = config.groupBy
+    const cd = rows.map(r => { const o: Record<string, unknown> = {}; cols.forEach((co, i) => { o[co.name] = r[i] }); return o }).filter(d => d[tiC] != null).sort((a, b) => new Date(String(a[tiC])).getTime() - new Date(String(b[tiC])).getTime())
+    const grps = gbC ? [...new Set(cd.map(d => String(d[gbC] ?? 'Unknown')))] : ['Events']
+    const sg = grps.length === 1
+    if (config.endTimeColumn) {
+      const etC = config.endTimeColumn
+      return {
+        tooltip: { trigger: 'axis' as const, backgroundColor: c.bgCard, borderColor: c.border, textStyle: { fontSize: 12, color: c.text } },
+        title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: c.text } } : undefined,
+        legend: grps.length > 1 ? { top: config.title ? 30 : 0, textStyle: { fontSize: 11, color: c.textMuted } } : undefined,
+        grid: { top: grps.length > 1 ? 56 : 40, right: 16, bottom: 16, left: 16, containLabel: true },
+        xAxis: { type: 'time' as const, ...axisSt(config.showGrid, c) },
+        yAxis: sg ? { type: 'value' as const, show: false, min: 0, max: 1 } : { type: 'category' as const, data: grps, inverse: true, ...axisSt(config.showGrid, c) },
+        series: grps.map((g, gi) => ({
+          name: g, type: 'scatter' as const, symbolSize: 14, itemStyle: { color: config.seriesColors?.[g] ?? CHART_COLORS[gi % CHART_COLORS.length] },
+          data: cd.filter(d => gbC ? String(d[gbC] ?? 'Unknown') === g : true).map(d => { const st = new Date(String(d[tiC])).getTime(); const et = new Date(String(d[etC])).getTime(); return [st, sg ? 0.2 : gi, et] }),
+          encode: { x: [0, 2], y: 1 },
+        })),
+      }
+    }
+    return {
+      tooltip: { trigger: 'item' as const, backgroundColor: c.bgCard, borderColor: c.border, textStyle: { fontSize: 12, color: c.text } },
+      title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: c.text } } : undefined,
+      legend: grps.length > 1 ? { top: config.title ? 30 : 0, textStyle: { fontSize: 11, color: c.textMuted } } : undefined,
+      grid: { top: 56, right: 16, bottom: 60, left: 16 },
+      xAxis: { type: 'time' as const, ...axisSt(config.showGrid, c) },
+      yAxis: sg ? { type: 'value' as const, show: false, min: 0, max: 1 } : { type: 'category' as const, data: grps, ...axisSt(config.showGrid, c) },
+      series: grps.flatMap((g, gi) => {
+        const gd = cd.filter(d => gbC ? String(d[gbC] ?? 'Unknown') === g : true)
+        const cl = config.seriesColors?.[g] ?? CHART_COLORS[gi % CHART_COLORS.length]
+        return [
+          { name: g, type: 'scatter' as const, symbolSize: 14, itemStyle: { color: cl, borderColor: c.text, borderWidth: 1 }, data: gd.filter((_, i) => i % 2 === 0).map(d => [new Date(String(d[tiC])).getTime(), sg ? 0.2 : g, lbC ? d[lbC] : null]) },
+          { name: `${g}_bottom`, type: 'scatter' as const, symbolSize: 14, itemStyle: { color: cl, borderColor: c.text, borderWidth: 1 }, data: gd.filter((_, i) => i % 2 === 1).map(d => [new Date(String(d[tiC])).getTime(), sg ? 0.2 : g, lbC ? d[lbC] : null]) },
+        ]
+      }),
+    }
+  }
+
+  return {}
 }
 
-function buildChartOption(data: ResultSet, config: ChartConfig): any {
-  const t = config.chartType
-  if (['bar', 'stacked_bar', 'line', 'area', 'scatter'].includes(t)) return buildAxisOption(data, config)
-  if (['pie', 'donut'].includes(t)) return buildPieOption(data, config)
-  if (t === 'sankey') return buildSankeyOption(data, config)
-  if (t === 'map') return buildMapOption(data, config)
-  if (t === 'hierarchy_tree') return buildTreeOption(data, config)
-  if (t === 'timeline') return buildTimelineOption(data, config)
-  return {}
+function renderChartSVG(data: ResultSet, config: ChartConfig): string {
+  try {
+    const option = buildOption(data, config)
+    if (!option || Object.keys(option).length === 0) return ''
+    const div = document.createElement('div')
+    div.style.cssText = 'width:600px;height:300px;position:absolute;top:-9999px;left:-9999px'
+    document.body.appendChild(div)
+    const chart = echarts.init(div, undefined, { renderer: 'svg' })
+    chart.resize({ width: 600, height: 300 })
+    chart.setOption({ ...option, backgroundColor: 'transparent' }, { notMerge: true })
+    const dataUrl = chart.getDataURL({ type: 'svg', backgroundColor: 'transparent' })
+    chart.dispose()
+    document.body.removeChild(div)
+    return dataUrl || ''
+  } catch { return '' }
 }
 
 function renderTable(rs: ResultSet): string {
@@ -367,14 +351,10 @@ function renderOutputs(cell: Cell): { html: string; height: number } {
       const value = colIdx >= 0 && rs.rows[0] ? rs.rows[0][colIdx] : null
       return { html: `<div class="cell-output big-number"><div class="big-number-body">${chartConfig!.label ? `<div class="big-number-label">${escapeHtml(chartConfig!.label)}</div>` : ''}<div class="big-number-value">${chartConfig!.prefix ? `<span class="big-number-prefix">${escapeHtml(chartConfig!.prefix)}</span>` : ''}${formatNumber(value, chartConfig!.decimalPlaces)}${chartConfig!.suffix ? `<span class="big-number-suffix">${escapeHtml(chartConfig!.suffix)}</span>` : ''}</div></div></div>`, height: 0 }
     }
-    try {
-      const option = buildChartOption(rs, chartConfig!)
-      if (option && Object.keys(option).length > 0) {
-        const optId = `chart-${cell.id}`
-        const optJson = JSON.stringify(option)
-        return { html: `<div class="cell-output chart"><div class="chart-wrap" id="${optId}" style="width:100%;height:300px;min-height:300px"></div><script type="application/json" data-chart-for="${optId}">${optJson}<\/script></div>`, height: 300 }
-      }
-    } catch {}
+    const svgUrl = renderChartSVG(rs, chartConfig!)
+    if (svgUrl) {
+      return { html: `<div class="cell-output chart" style="text-align:center;padding:8px;background:var(--bg-card)"><img src="${svgUrl}" alt="Chart" style="max-width:100%;height:auto;display:inline-block" /></div>`, height: 300 }
+    }
   }
 
   return { html: `<div class="cell-output">${renderTable(rs)}</div>`, height: 0 }
@@ -473,28 +453,11 @@ body { font-family:var(--font-sans);background:var(--bg-primary);color:var(--tex
 .markdown-body th,.markdown-body td{border:1px solid var(--border);padding:4px 8px;text-align:left}
 .markdown-body th{background:var(--bg-primary);font-weight:600}
 .markdown-body img{max-width:100%}
-.chart-wrap{width:100%;height:300px;min-height:300px}
 .big-number-body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:200px;padding:24px;gap:8px}
 .big-number-label{font-size:13px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;text-align:center}
 .big-number-value{font-size:56px;font-weight:700;color:var(--text-primary);line-height:1.1;letter-spacing:-1.5px;text-align:center;word-break:break-word}
 .big-number-prefix{font-size:28px;font-weight:400;color:var(--text-muted);margin-right:4px}
 .big-number-suffix{font-size:28px;font-weight:400;color:var(--text-muted);margin-left:4px}
-`
-
-const CHART_INIT_SCRIPT = `
-(function(){
-if (typeof echarts === 'undefined') return;
-document.querySelectorAll('script[data-chart-for]').forEach(function(script) {
-  try {
-    var id = script.getAttribute('data-chart-for');
-    var el = document.getElementById(id);
-    if (!el) return;
-    var opt = JSON.parse(script.textContent || '');
-    var chart = echarts.init(el);
-    chart.setOption(opt, { notMerge: true });
-  } catch(e) { console.error('Chart:', e); }
-});
-})();
 `
 
 function generateHTML(notebook: NotebookWithCells): string {
@@ -521,9 +484,7 @@ ${notebook.description ? `<p class="description">${escapeHtml(notebook.descripti
 ${cellsHtml}
 </div>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"><\/script>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"><\/script>
-<script>${CHART_INIT_SCRIPT}<\/script>
 <script>
 document.querySelectorAll('.markdown-body script[type="text/plain"]').forEach(function(el) {
   try { el.parentElement.innerHTML = marked.parse(el.textContent || '') } catch(e) { console.error(e) }
