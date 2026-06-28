@@ -90,7 +90,7 @@ func (s *Server) handleAdminListSSOProviders(w http.ResponseWriter, r *http.Requ
 func (s *Server) handleAdminCreateSSOProvider(w http.ResponseWriter, r *http.Request) {
 	var req ssoProviderRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
 
@@ -135,7 +135,7 @@ func (s *Server) handleAdminUpdateSSOProvider(w http.ResponseWriter, r *http.Req
 
 	var req ssoProviderRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
 
