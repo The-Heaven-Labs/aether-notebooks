@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -109,7 +109,9 @@ func (s *Server) handleOrgCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := s.jwt.Issue(claims.UserID, orgID, "admin")
+	var isPlatformAdmin bool
+	s.db.Pool.QueryRow(ctx, `SELECT is_platform_admin FROM users WHERE id = $1`, claims.UserID).Scan(&isPlatformAdmin)
+	token, err := s.jwt.IssueFull(claims.UserID, orgID, "admin", isPlatformAdmin)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to issue token")
 		return
@@ -129,6 +131,7 @@ func (s *Server) handleOrgCreate(w http.ResponseWriter, r *http.Request) {
 	resp.User.ID = claims.UserID
 	resp.User.Email = email
 	resp.User.Name = name
+	resp.User.IsPlatformAdmin = isPlatformAdmin
 	resp.Org.ID = orgID
 	resp.Org.Name = req.OrgName
 	resp.Org.Role = "admin"
@@ -271,7 +274,9 @@ func (s *Server) handleOrgJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := s.jwt.Issue(claims.UserID, orgID, role)
+	var isPlatformAdmin bool
+	s.db.Pool.QueryRow(ctx, `SELECT is_platform_admin FROM users WHERE id = $1`, claims.UserID).Scan(&isPlatformAdmin)
+	token, err := s.jwt.IssueFull(claims.UserID, orgID, role, isPlatformAdmin)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to issue token")
 		return
@@ -293,6 +298,7 @@ func (s *Server) handleOrgJoin(w http.ResponseWriter, r *http.Request) {
 	resp.User.ID = claims.UserID
 	resp.User.Email = email
 	resp.User.Name = userName
+	resp.User.IsPlatformAdmin = isPlatformAdmin
 	resp.Org.ID = orgID
 	resp.Org.Name = orgName
 	resp.Org.Role = role

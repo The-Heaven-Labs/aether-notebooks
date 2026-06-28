@@ -23,7 +23,7 @@ const emptyForm = (): SkillForm => ({
 })
 
 export function SkillsPage() {
-  useEffect(() => { document.title = "Skills — Heaven's Notebooks" }, [])
+  useEffect(() => { document.title = "Skills — Aether Notebooks" }, [])
 
   const qc = useQueryClient()
   const [creating, setCreating] = useState(false)

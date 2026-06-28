@@ -1,5 +1,5 @@
 -- Dev ClickHouse seed data
--- Accessible from the app as connector: host=hnb-clickhouse, port=9000, database=analytics, user=dev, password=dev
+-- Accessible from the app as connector: host=aether-clickhouse, port=9000, database=analytics, user=dev, password=dev
 
 CREATE DATABASE IF NOT EXISTS analytics;
 

@@ -2,6 +2,8 @@ bin/
 tmp/
 *.exe
 .env
+/aether
+/aether-server
 /hnb
 /hnb-server
 node_modules/

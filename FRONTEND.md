@@ -180,7 +180,7 @@ dropdown: { position: 'absolute', right: 0, top: 38, background: 'var(--bg-card)
 **Interactions**:
 - Click nav item → navigate to page
 - Click toggle → expand/collapse sidebar
-- State persisted in localStorage (`hnb_sidebar_expanded`)
+- State persisted in localStorage (`aether_sidebar_expanded`)
 
 **Styling**:
 ```javascript

@@ -7,7 +7,7 @@
 
 ## Problem Statement
 
-hnb's current resource architecture conflates two separate concerns — tools and skills — into a single `skills` entity:
+Aether's current resource architecture conflates two separate concerns — tools and skills — into a single `skills` entity:
 
 1. **Skills** carry both `system_prompt` (behavioral instructions) and `tool_ids TEXT[]` (which tools the agent can use)
 2. **Tools** are not a first-class resource — there's no `tools` table, no API, no UI. Tool names are opaque strings in a TEXT[] column

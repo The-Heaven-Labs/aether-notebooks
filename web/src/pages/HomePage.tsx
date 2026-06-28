@@ -503,7 +503,7 @@ export function HomePage() {
 
   useEffect(() => {
     const name = data?.folder?.name
-    document.title = name ? `${name} — hnb` : "Files — hnb"
+    document.title = name ? `${name} — Aether` : "Files — Aether"
   }, [data?.folder?.name])
 
   // ── Mutations ──
@@ -528,7 +528,7 @@ export function HomePage() {
       qc.invalidateQueries({ queryKey: ['folder-contents'] })
       qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
       qc.invalidateQueries({ queryKey: ['folder-home'] })
-      if (folderID) sessionStorage.setItem('hnb_last_folder', folderID)
+      if (folderID) sessionStorage.setItem('aether_last_folder', folderID)
       navigate(`/notebooks/${nb.id}`)
     },
     onError: (e: Error) => setError(e.message),
@@ -541,7 +541,7 @@ export function HomePage() {
       qc.invalidateQueries({ queryKey: ['folder-contents'] })
       qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
       qc.invalidateQueries({ queryKey: ['folder-home'] })
-      if (folderID) sessionStorage.setItem('hnb_last_folder', folderID)
+      if (folderID) sessionStorage.setItem('aether_last_folder', folderID)
       navigate(`/dashboards/${d.id}`)
     },
     onError: (e: Error) => setError(e.message),
@@ -598,7 +598,7 @@ export function HomePage() {
       qc.invalidateQueries({ queryKey: ['folder-contents'] })
       qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
       qc.invalidateQueries({ queryKey: ['folder-home'] })
-      if (folderID) sessionStorage.setItem('hnb_last_folder', folderID)
+      if (folderID) sessionStorage.setItem('aether_last_folder', folderID)
       navigate(`/notebooks/${result.notebook.id}`)
     },
     onError: (e: Error) => setError(e.message),
@@ -921,7 +921,7 @@ export function HomePage() {
                         key={`${item.type}-${item.id}`}
                         style={s.recentChip}
                         onClick={() => {
-                          if (folderID) sessionStorage.setItem('hnb_last_folder', folderID)
+                          if (folderID) sessionStorage.setItem('aether_last_folder', folderID)
                           navigate(href)
                         }}
                         title={item.name}
@@ -962,7 +962,7 @@ export function HomePage() {
                       form.append('file', file)
                       if (folderID) form.append('folder_id', folderID)
                       try {
-                        const token = localStorage.getItem('hnb_token')
+                        const token = localStorage.getItem('aether_token')
                         const res = await fetch('/api/v1/notebooks/import', {
                           method: 'POST',
                           headers: { Authorization: `Bearer ${token}` },
@@ -970,7 +970,7 @@ export function HomePage() {
                         })
                         if (!res.ok) throw new Error('Import failed')
                         const result = await res.json()
-                        if (folderID) sessionStorage.setItem('hnb_last_folder', folderID)
+                        if (folderID) sessionStorage.setItem('aether_last_folder', folderID)
                         navigate(`/notebooks/${result.id}`)
                       } catch (err) {
                         console.error('Import failed:', err)
@@ -1119,7 +1119,7 @@ export function HomePage() {
                           />
                         </div>
                       ) : (
-                        <Link to={`/notebooks/${nb.id}`} style={s.itemLink} onClick={() => { if (folderID) sessionStorage.setItem('hnb_last_folder', folderID) }}>
+                        <Link to={`/notebooks/${nb.id}`} style={s.itemLink} onClick={() => { if (folderID) sessionStorage.setItem('aether_last_folder', folderID) }}>
                           <BookOpen size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <span style={s.itemName}>{nb.title}</span>
@@ -1235,7 +1235,7 @@ export function HomePage() {
                           onClick={(e) => e.stopPropagation()}
                         />
                       </div>
-                      <Link to={`/dashboards/${d.id}`} style={s.itemLink} onClick={() => { if (folderID) sessionStorage.setItem('hnb_last_folder', folderID) }}>
+                      <Link to={`/dashboards/${d.id}`} style={s.itemLink} onClick={() => { if (folderID) sessionStorage.setItem('aether_last_folder', folderID) }}>
                         <LayoutDashboard size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <span style={s.itemName}>{d.title}</span>

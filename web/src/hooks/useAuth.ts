@@ -11,13 +11,13 @@ function parseJwt(token: string): Record<string, unknown> | null {
 }
 
 function getStoredUser() {
-  const token = localStorage.getItem('hnb_token')
+  const token = localStorage.getItem('aether_token')
   if (!token) return null
   const claims = parseJwt(token)
   if (!claims) return null
   // Check expiry
   if (claims.exp && (claims.exp as number) * 1000 < Date.now()) {
-    localStorage.removeItem('hnb_token')
+    localStorage.removeItem('aether_token')
     return null
   }
   return {
@@ -46,13 +46,13 @@ export function useAuthProvider(): AuthContextValue {
 
   const login = useCallback(async (email: string, password: string) => {
     const resp = await apiLogin(email, password)
-    localStorage.setItem('hnb_user_name', resp.user.name)
-    localStorage.setItem('hnb_user_email', resp.user.email)
-    localStorage.setItem('hnb_org_name', resp.org.name)
+    localStorage.setItem('aether_user_name', resp.user.name)
+    localStorage.setItem('aether_user_email', resp.user.email)
+    localStorage.setItem('aether_org_name', resp.org.name)
     if (resp.user.is_platform_admin) {
-      localStorage.setItem('hnb_is_platform_admin', 'true')
+      localStorage.setItem('aether_is_platform_admin', 'true')
     } else {
-      localStorage.removeItem('hnb_is_platform_admin')
+      localStorage.removeItem('aether_is_platform_admin')
     }
     const claims = parseJwt(resp.token)
     if (claims) {
@@ -63,14 +63,19 @@ export function useAuthProvider(): AuthContextValue {
   const register = useCallback(async (email: string, password: string, name: string): Promise<string | null> => {
     const resp = await apiRegister(email, password, name)
     if (resp.onboarding_token) {
-      localStorage.setItem('hnb_onboarding_token', resp.onboarding_token)
+      localStorage.setItem('aether_onboarding_token', resp.onboarding_token)
       return resp.onboarding_token
     }
     if (resp.token && resp.user && resp.org) {
       const { token, user, org } = resp as Required<typeof resp>
-      localStorage.setItem('hnb_user_name', user.name)
-      localStorage.setItem('hnb_user_email', user.email)
-      localStorage.setItem('hnb_org_name', org.name)
+      localStorage.setItem('aether_user_name', user.name)
+      localStorage.setItem('aether_user_email', user.email)
+      localStorage.setItem('aether_org_name', org.name)
+      if (user.is_platform_admin) {
+        localStorage.setItem('aether_is_platform_admin', 'true')
+      } else {
+        localStorage.removeItem('aether_is_platform_admin')
+      }
       const claims = parseJwt(token)
       if (claims) {
         setUser({ user_id: claims.uid as string, org_id: claims.oid as string, role: claims.role as string })
@@ -80,7 +85,7 @@ export function useAuthProvider(): AuthContextValue {
   }, [])
 
   const loginWithToken = useCallback((token: string) => {
-    localStorage.setItem('hnb_token', token)
+    localStorage.setItem('aether_token', token)
     const claims = parseJwt(token)
     if (claims) {
       setUser({ user_id: claims.uid as string, org_id: claims.oid as string, role: claims.role as string })
@@ -89,10 +94,10 @@ export function useAuthProvider(): AuthContextValue {
 
   const logout = useCallback(() => {
     apiLogout()
-    localStorage.removeItem('hnb_user_name')
-    localStorage.removeItem('hnb_user_email')
-    localStorage.removeItem('hnb_org_name')
-    localStorage.removeItem('hnb_is_platform_admin')
+    localStorage.removeItem('aether_user_name')
+    localStorage.removeItem('aether_user_email')
+    localStorage.removeItem('aether_org_name')
+    localStorage.removeItem('aether_is_platform_admin')
     setUser(null)
   }, [])
 

@@ -131,7 +131,7 @@ function ProviderForm({
         </label>
         <label style={formStyles.label}>
           Group Prefix <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(only sync groups with this prefix)</span>
-          <input style={formStyles.input} value={values.group_prefix} onChange={set('group_prefix')} placeholder="hnb-" />
+          <input style={formStyles.input} value={values.group_prefix} onChange={set('group_prefix')} placeholder="aether-" />
         </label>
         <label style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <input type="checkbox" checked={values.auto_sync_groups} onChange={set('auto_sync_groups')} />

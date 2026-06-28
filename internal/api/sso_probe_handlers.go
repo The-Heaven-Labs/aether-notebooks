@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/sso"
+	"github.com/the-heaven-labs/aether/internal/sso"
 )
 
 // handleSSOProbe handles GET /api/v1/auth/sso-providers?email=user@example.com

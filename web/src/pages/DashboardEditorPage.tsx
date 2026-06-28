@@ -145,9 +145,9 @@ const markSaved = useCallback(() => {
 
   useEffect(() => {
     if (dashboard) {
-      document.title = `${dashboard.title} — Heaven's Notebooks`
+      document.title = `${dashboard.title} — Aether Notebooks`
     }
-    return () => { document.title = "Heaven's Notebooks" }
+    return () => { document.title = "Aether Notebooks" }
   }, [dashboard])
 
   const { data: notebooks = [] } = useQuery({

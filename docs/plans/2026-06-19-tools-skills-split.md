@@ -51,7 +51,7 @@ ALTER TABLE acl_entries ADD CONSTRAINT acl_entries_resource_type_check
 
 **Step 2: Verify migration parses**
 
-Run: `psql $HNB_DATABASE_URL -f internal/database/migrations/064_tools_table.sql`
+Run: `psql $AETHER_DATABASE_URL -f internal/database/migrations/064_tools_table.sql`
 Expected: `CREATE TABLE`, `ALTER TABLE`, `ALTER TABLE`
 
 **Step 3: Commit**
@@ -169,7 +169,7 @@ import (
     "net/http"
     "time"
     "github.com/google/uuid"
-    "github.com/heavenlabs/hnb/internal/models"
+    "github.com/the-heaven-labs/aether/internal/models"
 )
 
 func (s *Server) handleListTools(w http.ResponseWriter, r *http.Request) {
@@ -383,7 +383,7 @@ func (s *Server) handleTestTool(w http.ResponseWriter, r *http.Request) {
         }
         method := cfg.Method
         if method == "" { method = "POST" }
-        body := map[string]string{"test": "hnb-tool-probe"}
+        body := map[string]string{"test": "aether-tool-probe"}
         bodyBytes, _ := json.Marshal(body)
         req, _ := http.NewRequest(method, cfg.URL, bytes.NewReader(bodyBytes))
         req.Header.Set("Content-Type", "application/json")
@@ -564,7 +564,7 @@ import (
     "io"
     "net/http"
     "time"
-    "github.com/heavenlabs/hnb/internal/models"
+    "github.com/the-heaven-labs/aether/internal/models"
 )
 
 func makeWebhookToolDef(t *models.Tool) (*ToolDef, error) {
@@ -636,7 +636,7 @@ import (
     "encoding/json"
     "fmt"
     "strings"
-    "github.com/heavenlabs/hnb/internal/models"
+    "github.com/the-heaven-labs/aether/internal/models"
     "github.com/jackc/pgx/v5/pgxpool"
 )
 

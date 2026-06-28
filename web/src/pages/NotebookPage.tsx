@@ -154,7 +154,7 @@ export function NotebookPage() {
   const [titleDraft, setTitleDraft] = useState('')
   const [descDraft, setDescDraft] = useState('')
   const [editingDesc, setEditingDesc] = useState(false)
-  const paramStorageKey = `hnb_params_${id}`
+  const paramStorageKey = `aether_params_${id}`
   const [paramValues, setParamValues] = useState<Record<string, string>>(() => {
     try { return JSON.parse(localStorage.getItem(paramStorageKey) ?? '{}') } catch { return {} }
   })
@@ -268,14 +268,14 @@ export function NotebookPage() {
     setLocalCells((prev) =>
       prev.map((c) => (c.id === cellId ? { ...c, metadata } : c)),
     )
-    if (!pendingExecRef.current.has(cellId) && (userEmail === 'agent@hnb' || shouldScroll(userEmail))) {
+    if (!pendingExecRef.current.has(cellId) && (userEmail === 'agent@aether' || shouldScroll(userEmail))) {
       flashCell(cellId)
     }
   }, [shouldScroll]), useCallback((cellId: string, updates: Record<string, unknown>, userEmail?: string) => {
     // cell_updated event received — apply broadcast fields to local cache
     // Skip source for regular users (Yjs is source of truth), but apply
     // it for agent updates since Yjs may not be synced in real-time.
-    const isAgent = userEmail === 'agent@hnb'
+    const isAgent = userEmail === 'agent@aether'
     const { source: _source, ...rest } = updates as Record<string, unknown> & { source?: unknown }
     const payload = isAgent ? (updates as Record<string, unknown>) : rest
     if (Object.keys(payload).length > 0) {
@@ -426,7 +426,7 @@ export function NotebookPage() {
       if (!ticking) {
         requestAnimationFrame(() => {
           updateCellScroll(id, el.scrollTop)
-          try { sessionStorage.setItem(`hnb_scroll_${id}`, String(el.scrollTop)) } catch {}
+          try { sessionStorage.setItem(`aether_scroll_${id}`, String(el.scrollTop)) } catch {}
           ticking = false
         })
         ticking = true
@@ -440,7 +440,7 @@ export function NotebookPage() {
   // Restore scroll position on mount (after cells have loaded)
   useEffect(() => {
     if (!id || localCells.length === 0) return
-    const saved = (() => { try { return sessionStorage.getItem(`hnb_scroll_${id}`) } catch { return null } })()
+    const saved = (() => { try { return sessionStorage.getItem(`aether_scroll_${id}`) } catch { return null } })()
     if (saved) {
       const el = cellsContainerRef.current
       if (el) {
@@ -492,7 +492,7 @@ export function NotebookPage() {
       setTitleDraft(notebook.title)
       setDescDraft(notebook.description ?? '')
       if (notebook.connector_id) setNotebookConnectorId(notebook.connector_id)
-      document.title = `${notebook.title} — Heaven's Notebooks`
+      document.title = `${notebook.title} — Aether Notebooks`
     }
     // Always sync localCells with notebook data (for agent updates)
     if (notebook) {
@@ -512,7 +512,7 @@ export function NotebookPage() {
         return changed ? merged : prev
       })
     }
-    return () => { document.title = "Heaven's Notebooks" }
+    return () => { document.title = "Aether Notebooks" }
   }, [notebook])
 
   // Auto-focus first cell when notebook loads
@@ -1041,7 +1041,7 @@ export function NotebookPage() {
 
   const runningCount = runningCells.size
   const schemaConnectorId = notebookConnectorId || null
-  const userEmail = localStorage.getItem('hnb_user_email') ?? ''
+  const userEmail = localStorage.getItem('aether_user_email') ?? ''
   const [collab, setCollab] = useState<NotebookCollab | null>(null)
   useEffect(() => {
     if (!id) { setCollab(null); return }
@@ -1052,8 +1052,8 @@ export function NotebookPage() {
       const detail = (e as CustomEvent).detail
       if (detail.notebookId === id) { setCollab(collabCache.get(id) ?? null); setCollabVersion(v => v + 1) }
     }
-    window.addEventListener('hnb-collab', handler)
-    return () => window.removeEventListener('hnb-collab', handler)
+    window.addEventListener('aether-collab', handler)
+    return () => window.removeEventListener('aether-collab', handler)
   }, [id])
 
   if (isLoading) return (
@@ -1203,10 +1203,10 @@ export function NotebookPage() {
             onUnfollow={() => setFollowing(null)}
             showAgent={true}
             onFollowAgent={() => {
-              if (following?.email === 'agent@hnb') {
+              if (following?.email === 'agent@aether') {
                 setFollowing(null)
               } else {
-                setFollowing({ email: 'agent@hnb', name: 'AI Agent' })
+                setFollowing({ email: 'agent@aether', name: 'AI Agent' })
               }
             }}
           />
@@ -1316,7 +1316,7 @@ export function NotebookPage() {
                     type="button"
                     style={styles.dropdownItem}
                     onClick={() => {
-                      const token = localStorage.getItem('hnb_token')
+                      const token = localStorage.getItem('aether_token')
                       fetch(`/api/v1/notebooks/${id}/export`, { headers: { Authorization: `Bearer ${token}` } })
                         .then(r => r.blob())
                         .then(blob => {

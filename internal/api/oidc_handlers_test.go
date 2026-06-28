@@ -16,10 +16,10 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/heavenlabs/hnb/internal/api"
-	"github.com/heavenlabs/hnb/internal/audit"
-	"github.com/heavenlabs/hnb/internal/auth"
-	"github.com/heavenlabs/hnb/internal/sso"
+	"github.com/the-heaven-labs/aether/internal/api"
+	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/auth"
+	"github.com/the-heaven-labs/aether/internal/sso"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -402,7 +402,7 @@ func TestFindStaleSSOGroups(t *testing.T) {
 func TestOIDCExchangeWithGroups(t *testing.T) {
 	email := fmt.Sprintf("oidc-%d@test.com", time.Now().UnixNano())
 	srv := newTestOIDCServer(t, "user-123", email, "OIDC Test",
-		[]string{"engineering", "analysts", "hnb-admins"}, true)
+		[]string{"engineering", "analysts", "aether-admins"}, true)
 
 	provider, err := auth.NewGenericOIDCProvider(context.Background(),
 		"test", srv.baseURL, "test-client-id", "test-client-secret",
@@ -416,14 +416,14 @@ func TestOIDCExchangeWithGroups(t *testing.T) {
 
 	assert.Equal(t, email, claims.Email)
 	assert.Equal(t, "OIDC Test", claims.Name)
-	assert.Equal(t, []string{"engineering", "analysts", "hnb-admins"}, claims.Groups)
+	assert.Equal(t, []string{"engineering", "analysts", "aether-admins"}, claims.Groups)
 }
 
 func TestOIDCExchangeGroupsOnlyFromUserInfo(t *testing.T) {
 	email := fmt.Sprintf("ui-%d@test.com", time.Now().UnixNano())
 	// ID token has NO groups, UserInfo has them
 	srv := newTestOIDCServer(t, "user-ui", email, "UI Test",
-		[]string{"from-userinfo", "hnb-team"}, false)
+		[]string{"from-userinfo", "aether-team"}, false)
 
 	provider, err := auth.NewGenericOIDCProvider(context.Background(),
 		"test", srv.baseURL, "test-client-id", "test-client-secret",
@@ -436,7 +436,7 @@ func TestOIDCExchangeGroupsOnlyFromUserInfo(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, email, claims.Email)
-	assert.Equal(t, []string{"from-userinfo", "hnb-team"}, claims.Groups,
+	assert.Equal(t, []string{"from-userinfo", "aether-team"}, claims.Groups,
 		"groups from UserInfo should be returned when ID token has none")
 }
 
@@ -491,7 +491,7 @@ func TestFullOIDCCallbackWithGroupSync(t *testing.T) {
 	name := fmt.Sprintf("Full Test %d", ts)
 
 	oidcSrv := newTestOIDCServer(t, "full-test-user", email, name,
-		[]string{"hnb-analysts", "hnb-engineering", "all-employees"}, true)
+		[]string{"aether-analysts", "aether-engineering", "all-employees"}, true)
 
 	dbProvider := sso.Provider{
 		Scope:          "platform",
@@ -505,7 +505,7 @@ func TestFullOIDCCallbackWithGroupSync(t *testing.T) {
 		Enabled:        true,
 		AutoSyncGroups: true,
 		GroupsClaim:    "groups",
-		GroupPrefix:    "hnb-",
+		GroupPrefix:    "aether-",
 		GetUserInfo:    false,
 	}
 
@@ -550,7 +550,7 @@ func TestFullOIDCCallbackWithGroupSync(t *testing.T) {
 		userID,
 	).Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 2, count, "should have 2 SSO-synced groups (hnb- prefix filtered)")
+	assert.Equal(t, 2, count, "should have 2 SSO-synced groups (aether- prefix filtered)")
 
 	rows, err := s.DB().Pool.Query(ctx,
 		`SELECT g.name FROM group_members gm
@@ -567,5 +567,5 @@ func TestFullOIDCCallbackWithGroupSync(t *testing.T) {
 		require.NoError(t, rows.Scan(&name))
 		names = append(names, name)
 	}
-	assert.Equal(t, []string{"hnb-analysts", "hnb-engineering"}, names)
+	assert.Equal(t, []string{"aether-analysts", "aether-engineering"}, names)
 }

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 func makeWebhookToolDef(t *models.Tool, allowedDomains []string) (*ToolDef, error) {

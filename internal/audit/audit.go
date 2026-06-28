@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/database"
+	"github.com/the-heaven-labs/aether/internal/database"
 )
 
 type Entry struct {

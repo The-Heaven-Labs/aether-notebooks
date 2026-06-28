@@ -2,7 +2,7 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  cmd = "go build -buildvcs=false -o ./tmp/main ./cmd/hnb-server"
+  cmd = "go build -buildvcs=false -o ./tmp/main ./cmd/aether-server"
   bin = "./tmp/main"
   delay = 1000
   exclude_dir = ["tmp", "bin", "web", "relay", "docs", "e2e", "migrations"]

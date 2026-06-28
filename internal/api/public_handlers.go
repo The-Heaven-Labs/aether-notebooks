@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 func (s *Server) handlePublicResource(w http.ResponseWriter, r *http.Request) {

@@ -16,17 +16,17 @@ describe('Sidebar', () => {
   })
 
   it('never shows Admin badge (feature removed)', () => {
-    localStorage.setItem('hnb_sidebar_expanded', 'true')
+    localStorage.setItem('aether_sidebar_expanded', 'true')
     renderWithProviders(<Sidebar />)
     expect(screen.queryByText('Admin')).toBeNull()
   })
 
   it('persists expanded state to localStorage on toggle', () => {
-    localStorage.setItem('hnb_sidebar_expanded', 'true')
+    localStorage.setItem('aether_sidebar_expanded', 'true')
     renderWithProviders(<Sidebar />)
     const toggle = screen.getByTitle('Collapse sidebar')
     fireEvent.click(toggle)
-    expect(localStorage.getItem('hnb_sidebar_expanded')).toBe('false')
+    expect(localStorage.getItem('aether_sidebar_expanded')).toBe('false')
   })
 
   it('active nav link announces current page to screen readers', () => {

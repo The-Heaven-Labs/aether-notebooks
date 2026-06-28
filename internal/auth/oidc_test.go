@@ -3,7 +3,7 @@ package auth_test
 import (
 	"testing"
 
-	"github.com/heavenlabs/hnb/internal/auth"
+	"github.com/the-heaven-labs/aether/internal/auth"
 )
 
 func TestOIDCProviderInterface(t *testing.T) {

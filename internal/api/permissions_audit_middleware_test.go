@@ -151,7 +151,7 @@ func TestMiddleware_AdminModeOff(t *testing.T) {
 	t.Run("adminA admin mode off on no-ACL connector — denied", func(t *testing.T) {
 		path := "/api/v1/connectors/" + f.OrgA.Connectors.NoACL
 		req := f.Request(t, "adminA", "GET", path, nil)
-		req.Header.Set("X-HNB-Admin-Mode", "false")
+		req.Header.Set("X-AETHER-Admin-Mode", "false")
 		rec := httptest.NewRecorder()
 		f.srv.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusForbidden, rec.Code)
@@ -160,7 +160,7 @@ func TestMiddleware_AdminModeOff(t *testing.T) {
 	t.Run("adminA admin mode off on everyone-ACL connector — allowed", func(t *testing.T) {
 		path := "/api/v1/connectors/" + f.OrgA.Connectors.EveryoneACL
 		req := f.Request(t, "adminA", "GET", path, nil)
-		req.Header.Set("X-HNB-Admin-Mode", "false")
+		req.Header.Set("X-AETHER-Admin-Mode", "false")
 		rec := httptest.NewRecorder()
 		f.srv.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)

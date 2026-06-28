@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/heavenlabs/hnb/internal/audit"
-	"github.com/heavenlabs/hnb/internal/auth"
-	"github.com/heavenlabs/hnb/internal/models"
+	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/auth"
+	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -147,6 +147,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		resp.User.ID = userID
 		resp.User.Email = req.Email
 		resp.User.Name = req.Name
+		resp.User.IsPlatformAdmin = isPlatformAdmin
 		resp.Org.ID = targetOrgID
 		resp.Org.Name = orgName
 		resp.Org.Role = "non-admin"
@@ -155,7 +156,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// No org to join — issue onboarding token
-	onboardingToken, err := s.jwt.IssueOnboarding(userID)
+	onboardingToken, err := s.jwt.IssueOnboarding(userID, isPlatformAdmin)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to issue onboarding token")
 		return

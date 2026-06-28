@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/heavenlabs/hnb/internal/crypto"
-	"github.com/heavenlabs/hnb/internal/database"
-	"github.com/heavenlabs/hnb/internal/sso"
+	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/database"
+	"github.com/the-heaven-labs/aether/internal/sso"
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,9 +19,9 @@ var testMasterKey = crypto.DeriveKey("test-master-key-for-tests-only!")
 
 func setupTestDB(t *testing.T) *database.DB {
 	t.Helper()
-	dsn := os.Getenv("HNB_DATABASE_URL")
+	dsn := os.Getenv("AETHER_DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres://hnb:hnb_dev@localhost:5432/hnb?sslmode=disable"
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
 	}
 	db, err := database.Connect(context.Background(), dsn)
 	if err != nil {
@@ -213,7 +213,7 @@ func TestCreateProviderWithGroupSettings(t *testing.T) {
 		Enabled:        true,
 		Scopes:         []string{"openid", "profile", "email", "groups"},
 		GroupsClaim:    "custom_groups",
-		GroupPrefix:    "hnb-",
+		GroupPrefix:    "aether-",
 		AutoSyncGroups: true,
 		GetUserInfo:    true,
 	}
