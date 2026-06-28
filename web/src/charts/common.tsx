@@ -1,5 +1,5 @@
 import type React from 'react'
-import { memo, useRef, useEffect, useMemo } from 'react'
+import { memo, useRef, useEffect, useMemo, useState } from 'react'
 import * as echarts from 'echarts/core'
 import { BarChart, LineChart, ScatterChart, PieChart, TreeChart, MapChart, SankeyChart } from 'echarts/charts'
 import {
@@ -196,6 +196,20 @@ export function getChartColors() {
     bgCard: dark ? '#1c1c1c' : '#ffffff',
     shadow: dark ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)',
   }
+}
+
+export function useChartColors() {
+  const [colors, setColors] = useState(getChartColors)
+
+  useEffect(() => {
+    const el = document.documentElement
+    const update = () => setColors(getChartColors())
+    const observer = new MutationObserver(update)
+    observer.observe(el, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => observer.disconnect()
+  }, [])
+
+  return colors
 }
 
 export function getTooltipStyle() {

@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams } from 'react-router-dom'
+import { Sun, Moon } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
@@ -16,6 +17,26 @@ export function PresentationPage() {
   const { id } = useParams<{ id: string }>()
   const [notebook, setNotebook] = useState<NotebookWithCells | null>(null)
   const [index, setIndex] = useState(0)
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try {
+      return (localStorage.getItem('hnb_theme') ?? 'dark') as 'light' | 'dark'
+    } catch { return 'dark' }
+  })
+  const contentRef = useRef<HTMLDivElement>(null)
+  const slideRef = useRef<HTMLDivElement>(null)
+  const [slideScale, setSlideScale] = useState(1)
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+  }, [theme])
+
+  const toggleTheme = useCallback(() => {
+    setTheme(prev => {
+      const next = prev === 'dark' ? 'light' : 'dark'
+      try { localStorage.setItem('hnb_theme', next) } catch {}
+      return next
+    })
+  }, [])
 
   useEffect(() => {
     const token = localStorage.getItem('hnb_token')
@@ -28,8 +49,6 @@ export function PresentationPage() {
 
   const slides = useMemo(() => {
     const cells = notebook?.cells ?? []
-    // Each cell is its own slide by default.
-    // slide_break=true means "join this cell with the previous slide".
     return cells.reduce<Cell[][]>((acc, cell) => {
       if (cell.slide_break && acc.length > 0) acc[acc.length - 1].push(cell)
       else acc.push([cell])
@@ -56,14 +75,40 @@ export function PresentationPage() {
     return () => window.removeEventListener('keydown', handler)
   }, [next, prev])
 
+  // Auto-scale slides to fit viewport without scrollbars
+  useEffect(() => {
+    const slide = slideRef.current
+    const container = contentRef.current
+    if (!slide || !container) return
+
+    const recompute = () => {
+      const pad = 32
+      const availW = container.clientWidth - pad * 2
+      const availH = container.clientHeight - pad * 2
+      const natW = slide.scrollWidth
+      const natH = slide.scrollHeight
+      const scale = Math.min(1, availW / Math.max(natW, 1), availH / Math.max(natH, 1))
+      setSlideScale(scale)
+    }
+
+    recompute()
+    const ro = new ResizeObserver(recompute)
+    ro.observe(slide)
+    window.addEventListener('resize', recompute)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', recompute)
+    }
+  }, [index, notebook])
+
   if (!notebook || slides.length === 0) {
     return <div style={styles.loading}>Loading…</div>
   }
 
   return (
     <div style={styles.page}>
-      <div style={styles.content}>
-        <div style={styles.slideContainer}>
+      <div ref={contentRef} style={styles.content}>
+        <div ref={slideRef} style={{ ...styles.slideWrapper, transform: `scale(${slideScale})` }}>
           {currentSlide.map((cell, i) => (
             cell.type === 'text' ? (
               <div key={cell.id} style={styles.markdownSlide}>
@@ -79,11 +124,9 @@ export function PresentationPage() {
                   ...(i > 0 ? { marginTop: '2rem' } : {}),
                 }}
               >
-                {/* Source: shown unless source_visible is explicitly false */}
                 {cell.source_visible !== false && (
                   <pre style={styles.codePre}>{cell.source}</pre>
                 )}
-                {/* Output: shown unless outputs_hidden is explicitly true */}
                 {cell.outputs_hidden !== true && (cell.outputs ?? []).length > 0 && (
                   <OutputRenderer
                     outputs={cell.outputs as Output[]}
@@ -106,7 +149,17 @@ export function PresentationPage() {
         >
           ← Previous
         </button>
-        <span style={styles.progress}>{index + 1} / {total}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={styles.progress}>{index + 1} / {total}</span>
+          <button
+            style={styles.themeBtn}
+            onClick={toggleTheme}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            aria-label="Toggle theme"
+          >
+            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+          </button>
+        </div>
         <button
           style={{ ...styles.navBtn, ...(index === total - 1 ? styles.navBtnDisabled : {}) }}
           onClick={next}
@@ -126,8 +179,8 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'center',
     height: '100vh',
-    background: '#0d0d0d',
-    color: '#888',
+    background: 'var(--bg-primary)',
+    color: 'var(--text-muted)',
     fontSize: 16,
     fontFamily: 'var(--font-sans, system-ui)',
   },
@@ -135,8 +188,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     height: '100vh',
-    background: '#0d0d0d',
-    color: '#f0f0f0',
+    background: 'var(--bg-primary)',
+    color: 'var(--text-primary)',
     fontFamily: 'var(--font-sans, system-ui)',
     overflow: 'hidden',
   },
@@ -145,21 +198,20 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    overflow: 'auto',
-    padding: '40px',
+    overflow: 'hidden',
+    padding: 32,
   },
-  slideContainer: {
+  slideWrapper: {
     width: '100%',
     maxWidth: 900,
-    minHeight: 200,
   },
   markdownSlide: {
     fontSize: 24,
     lineHeight: 1.6,
-    color: '#f0f0f0',
+    color: 'var(--text-primary)',
   },
   codeSlide: {
-    background: '#1a1a1a',
+    background: 'var(--bg-elevated)',
     borderRadius: 4,
     overflow: 'hidden',
   },
@@ -168,7 +220,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '24px',
     fontSize: 16,
     fontFamily: 'var(--font-mono, monospace)',
-    color: '#cdd6f4',
+    color: 'var(--text-primary)',
     whiteSpace: 'pre-wrap',
     overflowX: 'auto',
   },
@@ -177,15 +229,15 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: '16px 40px',
-    background: '#1a1a1a',
-    borderTop: '1px solid #2a2a2a',
+    background: 'var(--bg-elevated)',
+    borderTop: '1px solid var(--border)',
     flexShrink: 0,
   },
   navBtn: {
     padding: '10px 24px',
-    background: '#2a2a2a',
-    color: '#f0f0f0',
-    border: '1px solid #3a3a3a',
+    background: 'var(--bg-secondary)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border)',
     borderRadius: 4,
     fontSize: 14,
     fontWeight: 500,
@@ -199,7 +251,20 @@ const styles: Record<string, React.CSSProperties> = {
   },
   progress: {
     fontSize: 14,
-    color: '#888',
+    color: 'var(--text-muted)',
     fontVariantNumeric: 'tabular-nums',
+  },
+  themeBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 32,
+    height: 32,
+    background: 'var(--bg-secondary)',
+    color: 'var(--text-muted)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
   },
 }

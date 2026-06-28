@@ -1,11 +1,11 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, getTooltipStyle, getChartColors, CHART_COLORS, useRowsAsObjects, ChartTypeSelect } from './common'
+import { EChartsContainer, getTooltipStyle, getChartColors, useChartColors, CHART_COLORS, useRowsAsObjects, ChartTypeSelect } from './common'
 import { ConfigHint } from './ConfigHint'
 
 function SankeyChartComponent({ data, config }: ChartProps) {
   const chartData = useRowsAsObjects(data)
-  const colors = useMemo(() => getChartColors(), [])
+  const colors = useChartColors()
 
   const sourceCol = config.xAxis ?? data.columns[0]?.name ?? ''
   const targetCol = config.yAxis?.[0] ?? data.columns[1]?.name ?? ''
