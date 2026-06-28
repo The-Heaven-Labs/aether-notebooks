@@ -229,7 +229,7 @@ function SSOProvidersTab() {
 
   const { data: providers = [], isLoading } = useQuery<SSOProvider[]>({
     queryKey: ['admin', 'sso', 'providers'],
-    queryFn: () => api.get('/api/v1/admin/sso/providers'),
+    queryFn: () => api.get<{ providers: SSOProvider[] }>('/api/v1/admin/sso/providers').then(r => r.providers),
   })
 
   const [showAddForm, setShowAddForm] = useState(false)
