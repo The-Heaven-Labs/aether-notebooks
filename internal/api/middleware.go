@@ -2,11 +2,13 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/heavenlabs/hnb/internal/auth"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -126,9 +128,9 @@ func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler,
 func SubdomainMiddleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			host := strings.Split(r.Host, ":")[0]
+			host := strings.ToLower(strings.Split(r.Host, ":")[0])
 			parts := strings.SplitN(host, ".", 2)
-			if len(parts) == 2 && parts[1] != "" && parts[0] != "www" && parts[0] != "localhost" {
+			if len(parts) == 2 && parts[0] != "" && parts[1] != "" && parts[0] != "www" && parts[0] != "localhost" {
 				var orgID string
 				err := pool.QueryRow(r.Context(),
 					`SELECT id FROM orgs WHERE slug = $1`, parts[0],
@@ -138,7 +140,11 @@ func SubdomainMiddleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
-				writeError(w, http.StatusNotFound, "unknown organization")
+				if errors.Is(err, pgx.ErrNoRows) {
+					writeError(w, http.StatusNotFound, "unknown organization")
+					return
+				}
+				writeError(w, http.StatusInternalServerError, "failed to resolve organization")
 				return
 			}
 			next.ServeHTTP(w, r)
