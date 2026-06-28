@@ -12,6 +12,7 @@ type OIDCClaims struct {
 	Subject string
 	Email   string
 	Name    string
+	Groups  []string
 }
 
 type OIDCProvider interface {
@@ -21,12 +22,15 @@ type OIDCProvider interface {
 }
 
 type GenericOIDCProvider struct {
-	name     string
-	verifier *oidc.IDTokenVerifier
-	oauth    oauth2.Config
+	name         string
+	verifier     *oidc.IDTokenVerifier
+	oauth        oauth2.Config
+	groupsClaim  string
+	getUserInfo  bool
+	oidcProvider *oidc.Provider
 }
 
-func NewGenericOIDCProvider(ctx context.Context, name, issuerURL, clientID, clientSecret, redirectURL string, scopes []string) (*GenericOIDCProvider, error) {
+func NewGenericOIDCProvider(ctx context.Context, name, issuerURL, clientID, clientSecret, redirectURL string, scopes []string, groupsClaim string, getUserInfo bool) (*GenericOIDCProvider, error) {
 	provider, err := oidc.NewProvider(ctx, issuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("oidc discovery: %w", err)
@@ -36,16 +40,17 @@ func NewGenericOIDCProvider(ctx context.Context, name, issuerURL, clientID, clie
 		scopes = []string{oidc.ScopeOpenID, "profile", "email"}
 	}
 
+	if groupsClaim == "" {
+		groupsClaim = "groups"
+	}
+
 	return &GenericOIDCProvider{
-		name:     name,
-		verifier: provider.Verifier(&oidc.Config{ClientID: clientID}),
-		oauth: oauth2.Config{
-			ClientID:     clientID,
-			ClientSecret: clientSecret,
-			Endpoint:     provider.Endpoint(),
-			RedirectURL:  redirectURL,
-			Scopes:       scopes,
-		},
+		name:         name,
+		verifier:     provider.Verifier(&oidc.Config{ClientID: clientID}),
+		oauth:        oauth2.Config{ClientID: clientID, ClientSecret: clientSecret, Endpoint: provider.Endpoint(), RedirectURL: redirectURL, Scopes: scopes},
+		groupsClaim:  groupsClaim,
+		getUserInfo:  getUserInfo,
+		oidcProvider: provider,
 	}, nil
 }
 
@@ -73,17 +78,52 @@ func (p *GenericOIDCProvider) Exchange(ctx context.Context, code string) (*OIDCC
 		return nil, fmt.Errorf("verify: %w", err)
 	}
 
-	var claims struct {
-		Email string `json:"email"`
-		Name  string `json:"name"`
-	}
-	if err := idToken.Claims(&claims); err != nil {
+	var rawClaims map[string]any
+	if err := idToken.Claims(&rawClaims); err != nil {
 		return nil, fmt.Errorf("parse claims: %w", err)
 	}
 
-	return &OIDCClaims{
+	claims := &OIDCClaims{
 		Subject: idToken.Subject,
-		Email:   claims.Email,
-		Name:    claims.Name,
-	}, nil
+	}
+
+	if email, ok := rawClaims["email"].(string); ok {
+		claims.Email = email
+	}
+	if name, ok := rawClaims["name"].(string); ok {
+		claims.Name = name
+	}
+	if groupsRaw, ok := rawClaims[p.groupsClaim]; ok {
+		if groupsArr, ok := groupsRaw.([]any); ok {
+			for _, g := range groupsArr {
+				if s, ok := g.(string); ok {
+					claims.Groups = append(claims.Groups, s)
+				}
+			}
+		}
+	}
+
+	if p.getUserInfo && p.oidcProvider != nil {
+		userInfo, err := p.oidcProvider.UserInfo(ctx, oauth2.StaticTokenSource(token))
+		if err == nil {
+			var uiClaims map[string]any
+			if err := userInfo.Claims(&uiClaims); err == nil {
+				if groupsRaw, ok := uiClaims[p.groupsClaim]; ok {
+					if groupsArr, ok := groupsRaw.([]any); ok {
+						var uiGroups []string
+						for _, g := range groupsArr {
+							if s, ok := g.(string); ok {
+								uiGroups = append(uiGroups, s)
+							}
+						}
+						if len(uiGroups) > 0 {
+							claims.Groups = uiGroups
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return claims, nil
 }

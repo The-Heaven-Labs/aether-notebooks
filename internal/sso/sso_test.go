@@ -59,6 +59,7 @@ func makePlatformProvider(name string) sso.Provider {
 		ClientSecret:   "super-secret-" + name,
 		DiscoveryURL:   "https://accounts.example.com/.well-known/openid-configuration",
 		AllowedDomains: []string{"example.com"},
+		Scopes:         []string{},
 		Enabled:        true,
 	}
 }
@@ -193,6 +194,47 @@ func TestEnableDisablePlatformProvider(t *testing.T) {
 	assert.Equal(t, 0, count)
 }
 
+func TestCreateProviderWithGroupSettings(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	input := sso.Provider{
+		Scope:          "platform",
+		Name:           "groups-test",
+		ProviderType:   "oidc",
+		ClientID:       "groups-client",
+		ClientSecret:   "groups-secret",
+		DiscoveryURL:   "https://accounts.example.com/.well-known/openid-configuration",
+		AllowedDomains: []string{},
+		Enabled:        true,
+		Scopes:         []string{"openid", "profile", "email", "groups"},
+		GroupsClaim:    "custom_groups",
+		GroupPrefix:    "hnb-",
+		AutoSyncGroups: true,
+		GetUserInfo:    true,
+	}
+
+	created, err := sso.CreateProvider(ctx, db.Pool, testMasterKey, input)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		db.Pool.Exec(ctx, `DELETE FROM sso_providers WHERE id=$1`, created.ID)
+	})
+
+	assert.Equal(t, input.Scopes, created.Scopes)
+	assert.Equal(t, input.GroupsClaim, created.GroupsClaim)
+	assert.Equal(t, input.GroupPrefix, created.GroupPrefix)
+	assert.Equal(t, input.AutoSyncGroups, created.AutoSyncGroups)
+	assert.Equal(t, input.GetUserInfo, created.GetUserInfo)
+
+	got, err := sso.GetProvider(ctx, db.Pool, testMasterKey, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, input.Scopes, got.Scopes)
+	assert.Equal(t, input.GroupsClaim, got.GroupsClaim)
+	assert.Equal(t, input.GroupPrefix, got.GroupPrefix)
+	assert.Equal(t, input.AutoSyncGroups, got.AutoSyncGroups)
+	assert.Equal(t, input.GetUserInfo, got.GetUserInfo)
+}
+
 func TestListEnabledProvidersForOrg(t *testing.T) {
 	db := setupTestDB(t)
 	ctx := context.Background()
@@ -208,6 +250,7 @@ func TestListEnabledProvidersForOrg(t *testing.T) {
 		ClientSecret:   "org-secret",
 		DiscoveryURL:   "https://org.example.com/.well-known/openid-configuration",
 		AllowedDomains: []string{},
+		Scopes:         []string{},
 		Enabled:        true,
 	})
 	require.NoError(t, err)

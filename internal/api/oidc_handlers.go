@@ -50,7 +50,7 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	provider, err := auth.NewGenericOIDCProvider(ctx, dbProvider.Name, dbProvider.DiscoveryURL, dbProvider.ClientID, dbProvider.ClientSecret, s.callbackURL(r, providerID), nil)
+	provider, err := auth.NewGenericOIDCProvider(ctx, dbProvider.Name, dbProvider.DiscoveryURL, dbProvider.ClientID, dbProvider.ClientSecret, s.callbackURL(r, providerID), dbProvider.Scopes, dbProvider.GroupsClaim, dbProvider.GetUserInfo)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to initialize OIDC provider: "+err.Error())
 		return
@@ -85,7 +85,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	provider, err := auth.NewGenericOIDCProvider(ctx, dbProvider.Name, dbProvider.DiscoveryURL, dbProvider.ClientID, dbProvider.ClientSecret, s.callbackURL(r, providerID), nil)
+	provider, err := auth.NewGenericOIDCProvider(ctx, dbProvider.Name, dbProvider.DiscoveryURL, dbProvider.ClientID, dbProvider.ClientSecret, s.callbackURL(r, providerID), dbProvider.Scopes, dbProvider.GroupsClaim, dbProvider.GetUserInfo)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to initialize OIDC provider: "+err.Error())
 		return
@@ -178,6 +178,11 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "database error")
 		return
+	}
+
+	// Reconcile group membership via SSO
+	if dbProvider.AutoSyncGroups && len(claims.Groups) > 0 {
+		SyncSSOGroups(ctx, s.db.Pool, s.audit, dbProvider, orgID, userID, claims.Groups)
 	}
 
 	token, err := s.jwt.Issue(userID, orgID, role)
