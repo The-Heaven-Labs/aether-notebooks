@@ -175,8 +175,11 @@ jobs:
       - run: go build -o /tmp/aether-server ./cmd/aether-server
         env:
           CGO_ENABLED: '0'
-      - name: Install Playwright browsers
-        run: cd web && npx playwright install --with-deps chromium
+      - name: Install Playwright and browsers
+        run: |
+          cd web
+          npm install -D @playwright/test
+          npx playwright install --with-deps chromium
       - name: Start services
         run: |
           # Start API server
@@ -187,7 +190,7 @@ jobs:
           echo "VITE_PID=$!" >> $GITHUB_ENV
           # Wait for both services
           echo "Waiting for services..."
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             API_OK=$(curl -sf http://localhost:8080/health > /dev/null 2>&1 && echo 1 || echo 0)
             VITE_OK=$(curl -sf -o /dev/null http://localhost:5173 2>&1 && echo 1 || echo 0)
             if [ "$API_OK" = 1 ] && [ "$VITE_OK" = 1 ]; then
@@ -203,6 +206,6 @@ jobs:
           AETHER_JWT_SECRET: test-jwt-secret-for-ci
           API_URL: http://localhost:8080
       - name: Run Playwright tests
-        run: cd e2e && npx playwright test --config=playwright.config.ts
+        run: cd web && npx playwright test --config=../e2e/playwright.config.ts
         env:
           CI: 'true'
