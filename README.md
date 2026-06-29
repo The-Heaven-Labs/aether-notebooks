@@ -36,20 +36,12 @@
 
 <table>
   <tr>
-    <td><img src="readme-screenshots/notebook-sql.png" alt="Notebook with SQL cell" width="100%"></td>
+    <td><img src="readme-screenshots/notebook-sql.png" alt="Notebook with SQL and markdown" width="100%"></td>
     <td><img src="readme-screenshots/home-light.png" alt="File browser" width="100%"></td>
   </tr>
   <tr>
-    <td align="center"><em>SQL notebook with markdown headers</em></td>
-    <td align="center"><em>File browser with folders and notebooks</em></td>
-  </tr>
-  <tr>
-    <td><img src="readme-screenshots/notebook-dark.png" alt="Notebook (dark theme)" width="100%"></td>
-    <td><img src="readme-screenshots/dashboards-light.png" alt="Dashboards" width="100%"></td>
-  </tr>
-  <tr>
-    <td align="center"><em>Dark theme support</em></td>
-    <td align="center"><em>Dashboard builder</em></td>
+    <td align="center"><em>SQL notebook with markdown headers and syntax highlighting</em></td>
+    <td align="center"><em>File browser with folder hierarchy and recent items</em></td>
   </tr>
 </table>
 
