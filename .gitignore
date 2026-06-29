@@ -4,8 +4,6 @@ tmp/
 .env
 /aether
 /aether-server
-/hnb
-/hnb-server
 node_modules/
 web/dist/
 relay/node_modules/

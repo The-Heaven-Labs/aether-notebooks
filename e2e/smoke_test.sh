@@ -5,7 +5,7 @@ API="${AETHER_API_URL:-http://localhost:8080}"
 EMAIL="smoke-$(date +%s)@example.com"
 PASSWORD="smoke-pass-123"
 
-echo "=== HNB Smoke Test ==="
+echo "=== Aether Smoke Test ==="
 echo "API: $API"
 
 # 1. Health check

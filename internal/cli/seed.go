@@ -23,8 +23,8 @@ Example:
   aether seed --email demo@example.com --password secret
 
 This creates:
-- Folders: Shared Projects > Analytics, Shared Projects > Engineering, Angel Home > ML Research
-- Notebooks: Sales Dashboard (Analytics), API Monitoring (Engineering), Model Training (ML Research), Personal Notes (Angel Home)
+- Folders: Shared Projects > Analytics, Shared Projects > Engineering, Home > ML Research
+- Notebooks: Sales Dashboard (Analytics), API Monitoring (Engineering), Model Training (ML Research), Personal Notes (Home)
 - Groups: Data Team (with current user as member)
 - ACLs: Cross-user permissions to demonstrate inheritance and specificity
 `,

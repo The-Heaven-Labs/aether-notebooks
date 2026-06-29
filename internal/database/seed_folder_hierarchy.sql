@@ -1,14 +1,14 @@
--- Seed data for Hell org to demonstrate folder hierarchy and permissions
--- Org: Hell (3bbabfed-3c4a-4615-9bc2-5b43a21e665d)
--- Users: Demon (0c07ecfd-9cd9-4862-934c-494cec1c0c84), Angel (94cc2e7c-7cae-4e25-afe4-575e81c6e996)
+-- Seed data for Demo org to demonstrate folder hierarchy and permissions
+-- Org: Demo (3bbabfed-3c4a-4615-9bc2-5b43a21e665d)
+-- Users: Nova (0c07ecfd-9cd9-4862-934c-494cec1c0c84), Sol (94cc2e7c-7cae-4e25-afe4-575e81c6e996)
 
 BEGIN;
 
--- Create Angel's Home folder (with is_home = true)
+-- Create Sol's Home folder (with is_home = true)
 INSERT INTO folders (id, org_id, parent_id, name, is_home, owner_id, created_by)
-VALUES ('a0000000-0000-0000-0000-000000000005', '3bbabfed-3c4a-4615-9bc2-5b43a21e665d', NULL, 'Angel Home', true, '94cc2e7c-7cae-4e25-afe4-575e81c6e996', '94cc2e7c-7cae-4e25-afe4-575e81c6e996');
+VALUES ('a0000000-0000-0000-0000-000000000005', '3bbabfed-3c4a-4615-9bc2-5b43a21e665d', NULL, 'Sol\'s Home', true, '94cc2e7c-7cae-4e25-afe4-575e81c6e996', '94cc2e7c-7cae-4e25-afe4-575e81c6e996');
 
--- ACL for Angel's home folder (owner gets full permissions via is_home ACL seed in migration 010)
+-- ACL for Sol's home folder (owner gets full permissions via is_home ACL seed in migration 010)
 INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
 VALUES ('3bbabfed-3c4a-4615-9bc2-5b43a21e665d', 'folder', 'a0000000-0000-0000-0000-000000000005', 'user', '94cc2e7c-7cae-4e25-afe4-575e81c6e996', ARRAY['view','create','edit','manage','delete']);
 
@@ -24,7 +24,7 @@ VALUES ('a0000000-0000-0000-0000-000000000002', '3bbabfed-3c4a-4615-9bc2-5b43a21
 INSERT INTO folders (id, org_id, parent_id, name, is_home, owner_id, created_by)
 VALUES ('a0000000-0000-0000-0000-000000000003', '3bbabfed-3c4a-4615-9bc2-5b43a21e665d', 'a0000000-0000-0000-0000-000000000001', 'Engineering', false, '0c07ecfd-9cd9-4862-934c-494cec1c0c84', '0c07ecfd-9cd9-4862-934c-494cec1c0c84');
 
--- Create "ML Research" subfolder under Angel's Home
+-- Create "ML Research" subfolder under Sol's Home
 INSERT INTO folders (id, org_id, parent_id, name, is_home, owner_id, created_by)
 VALUES ('a0000000-0000-0000-0000-000000000004', '3bbabfed-3c4a-4615-9bc2-5b43a21e665d', 'a0000000-0000-0000-0000-000000000005', 'ML Research', false, '94cc2e7c-7cae-4e25-afe4-575e81c6e996', '94cc2e7c-7cae-4e25-afe4-575e81c6e996');
 
@@ -41,7 +41,7 @@ VALUES (
   'a0000000-0000-0000-0000-000000000004'
 );
 
--- Create "Personal Notes" notebook in Angel's Home folder
+-- Create "Personal Notes" notebook in Sol's Home folder
 INSERT INTO notebooks (id, org_id, title, description, connector_id, parameters, created_by, folder_id)
 VALUES (
   'b0000000-0000-0000-0000-000000000004',
@@ -55,7 +55,7 @@ VALUES (
 );
 
 -- Set up ACLs for Shared Projects folder
--- Give Angel view+edit on Shared Projects (she's not owner, so needs explicit ACL)
+-- Give Sol view+edit on Shared Projects (she's not owner, so needs explicit ACL)
 INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
 VALUES (
   '3bbabfed-3c4a-4615-9bc2-5b43a21e665d',
@@ -66,7 +66,7 @@ VALUES (
   ARRAY['view', 'create', 'edit']
 );
 
--- Give Angel view-only on Analytics (deeper inheritance)
+-- Give Sol view-only on Analytics (deeper inheritance)
 INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
 VALUES (
   '3bbabfed-3c4a-4615-9bc2-5b43a21e665d',
@@ -77,7 +77,7 @@ VALUES (
   ARRAY['view']
 );
 
--- Give Angel view on Engineering notebooks
+-- Give Sol view on Engineering notebooks
 INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
 VALUES (
   '3bbabfed-3c4a-4615-9bc2-5b43a21e665d',
@@ -88,7 +88,7 @@ VALUES (
   ARRAY['view', 'run']
 );
 
--- Give Demon view+edit on ML Research (Angel's private folder - for demo purposes)
+-- Give Nova view+edit on ML Research (Sol's private folder - for demo purposes)
 INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
 VALUES (
   '3bbabfed-3c4a-4615-9bc2-5b43a21e665d',
@@ -99,7 +99,7 @@ VALUES (
   ARRAY['view', 'create']
 );
 
--- Give Demon view on Personal Notes
+-- Give Nova view on Personal Notes
 INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
 VALUES (
   '3bbabfed-3c4a-4615-9bc2-5b43a21e665d',
