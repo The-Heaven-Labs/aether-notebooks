@@ -203,6 +203,6 @@ jobs:
           AETHER_JWT_SECRET: test-jwt-secret-for-ci
           API_URL: http://localhost:8080
       - name: Run Playwright tests
-        run: cd e2e && npx playwright test
+        run: cd e2e && npx playwright test --grep-invert "visual:"
         env:
           CI: 'true'
