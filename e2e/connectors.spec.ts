@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test'
-import { loginAsAdmin } from './helpers'
+import { registerAndOnboard } from './helpers'
 
 test.describe('Connectors', () => {
   test.beforeEach(async ({ page }) => {
-    await loginAsAdmin(page)
+    const ts = Date.now().toString()
+    await registerAndOnboard(page, ts)
   })
 
   test('create postgres connector with database field', async ({ page }) => {
