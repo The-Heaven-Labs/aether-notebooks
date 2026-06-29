@@ -176,7 +176,7 @@ jobs:
         env:
           CGO_ENABLED: '0'
       - name: Install Playwright and browsers
-        run: cd web && npm install -D @playwright/test && npx playwright install --with-deps chromium
+        run: cd e2e && npm ci && npx playwright install --with-deps chromium
       - name: Start services
         run: |
           # Start API server
@@ -203,6 +203,6 @@ jobs:
           AETHER_JWT_SECRET: test-jwt-secret-for-ci
           API_URL: http://localhost:8080
       - name: Run Playwright tests
-        run: cd web && npx playwright test --config=../e2e/playwright.config.ts
+        run: cd e2e && npx playwright test
         env:
           CI: 'true'
