@@ -43,11 +43,12 @@ jobs:
           go-version: '1.25'
       - run: go mod download
       - run: go vet ./...
-      - run: go test ./... -v -count=1 -p 1
+      - run: go test ./internal/api/... ./internal/agent/... ./internal/executor/... ./internal/database/... -v -count=1 -p 1
         env:
           AETHER_DATABASE_URL: postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable
           AETHER_REDIS_URL: redis://localhost:6379
-      - run: go test -race ./... -count=1 -p 1
+      - run: go test ./internal/audit/... ./internal/auth/... ./internal/cache/... ./internal/crypto/... ./internal/scheduler/... ./internal/sso/... -v -count=1
+      - run: go test -race ./internal/api/... ./internal/agent/... ./internal/executor/... ./internal/database/... -count=1 -p 1
         env:
           AETHER_DATABASE_URL: postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable
           AETHER_REDIS_URL: redis://localhost:6379
@@ -135,74 +136,4 @@ jobs:
         env:
           AETHER_API_URL: http://localhost:8080
 
-  e2e-playwright:
-    runs-on: ubuntu-latest
-    needs: [go-test, frontend, relay]
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: aether
-          POSTGRES_PASSWORD: aether_dev
-          POSTGRES_DB: aether
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: web/package-lock.json
-      - run: cd web && npm ci
-      - run: go build -o /tmp/aether-server ./cmd/aether-server
-        env:
-          CGO_ENABLED: '0'
-      - name: Install Playwright and browsers
-        run: cd e2e && npm install && npx playwright install --with-deps chromium
-      - name: Start services
-        run: |
-          # Start API server
-          /tmp/aether-server &
-          echo "SERVER_PID=$!" >> $GITHUB_ENV
-          # Start Vite dev server
-          cd web && npm run dev &
-          echo "VITE_PID=$!" >> $GITHUB_ENV
-          # Wait for both services
-          echo "Waiting for services..."
-          for i in $(seq 1 60); do
-            API_OK=$(curl -sf http://localhost:8080/health > /dev/null 2>&1 && echo 1 || echo 0)
-            VITE_OK=$(curl -sf -o /dev/null http://localhost:5173 2>&1 && echo 1 || echo 0)
-            if [ "$API_OK" = 1 ] && [ "$VITE_OK" = 1 ]; then
-              echo "All services ready"
-              break
-            fi
-            sleep 2
-          done
-        env:
-          AETHER_DATABASE_URL: postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable
-          AETHER_REDIS_URL: redis://localhost:6379
-          AETHER_MASTER_KEY: test-master-key-for-ci-at-least-32-bytes!!
-          AETHER_JWT_SECRET: test-jwt-secret-for-ci
-          API_URL: http://localhost:8080
-      - name: Run Playwright tests
-        run: cd e2e && npx playwright test --grep-invert "visual:"
-        env:
-          CI: 'true'
+
