@@ -248,7 +248,7 @@ tasks:
     desc: Drop and recreate the dev database (destroys all data)
     cmds:
       - docker exec aether-claude-postgres-1 psql -U aether -c "DROP DATABASE IF EXISTS aether;"
-      - docker exec aether-claude-postgres-1 psql -U aether -c "CREATE DATABASE hnb;"
+      - docker exec aether-claude-postgres-1 psql -U aether -c "CREATE DATABASE aether;"
 
   # ── Docker ───────────────────────────────────────────────────────────────────
 

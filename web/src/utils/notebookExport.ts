@@ -1,4 +1,5 @@
-import type { Cell, Notebook, ResultSet, ChartConfig } from '../types'
+import type { Cell, Notebook, ResultSet } from '../types'
+import type { ChartConfig } from '../charts/types'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
@@ -133,7 +134,7 @@ function buildOption(data: ResultSet, config: ChartConfig): any {
           const si: any = {
             name: yN,
             type: isAr ? 'line' : isSc ? 'scatter' : isBa ? 'bar' : 'line',
-            data: isSc ? xData.map((xv, vi) => [xv, xMap[xv]?.[g]?.[colIdx(cols, yKeys[yi])] ?? null]) : xData.map(xv => xMap[xv]?.[g]?.[colIdx(cols, yKeys[yi])] ?? null),
+            data: isSc ? xData.map(xv => [xv, xMap[xv]?.[g]?.[colIdx(cols, yKeys[yi])] ?? null]) : xData.map(xv => xMap[xv]?.[g]?.[colIdx(cols, yKeys[yi])] ?? null),
             itemStyle: { color: CHART_COLORS[(gi * yKeys.length + yi) % CHART_COLORS.length] },
           }
           if (!isSc) {
@@ -148,7 +149,7 @@ function buildOption(data: ResultSet, config: ChartConfig): any {
       }
     } else {
       xData = rows.map(r => r[xI])
-      series = yKeys.map((y, i) => {
+      series = yKeys.map((y: string, i: number) => {
         const si: any = {
           name: y,
           type: isAr ? 'line' : isSc ? 'scatter' : isBa ? 'bar' : 'line',
@@ -244,7 +245,7 @@ function buildOption(data: ResultSet, config: ChartConfig): any {
     rows.forEach((r, i) => {
       const id = String(r[colIdx(cols, idC)] ?? `node-${i}`); const lb = lC ? String(r[colIdx(cols, lC)] ?? id) : id
       const n: any = { name: lb, parentId: String(r[colIdx(cols, pC)] ?? ''), itemStyle: { color: config.seriesColors?.[lb] ?? CHART_COLORS[i % CHART_COLORS.length] } }
-      if (mC.length > 0) n.name = `${lb}\n${mC.map(m => `${m}: ${r[colIdx(cols, m)]}`).join(', ')}`
+      if (mC.length > 0) n.name = `${lb}\n${mC.map((m: string) => `${m}: ${r[colIdx(cols, m)]}`).join(', ')}`
       nm.set(id, n)
     })
     nm.forEach((n, id) => { if (n.parentId && n.parentId !== id && nm.has(n.parentId)) { const p = nm.get(n.parentId); if (!p.children) p.children = []; p.children.push(n) } else { rs2.push(n) } })
@@ -273,7 +274,7 @@ function buildOption(data: ResultSet, config: ChartConfig): any {
         yAxis: sg ? { type: 'value' as const, show: false, min: 0, max: 1 } : { type: 'category' as const, data: grps, inverse: true, ...axisSt(config.showGrid, c) },
         series: grps.map((g, gi) => ({
           name: g, type: 'custom' as const,
-          renderItem: (params: any, api: any) => {
+          renderItem: (_params: unknown, api: any) => {
             const st = api.value(0); const et = api.value(1); const s = api.coord([st, gi]); const e = api.coord([et, gi]); const bh = api.size([0, 1])[1] * 0.6
             return { type: 'rect', shape: { x: s[0], y: s[1] - bh / 2, width: e[0] - s[0], height: bh }, style: { fill: config.seriesColors?.[g] ?? CHART_COLORS[gi % CHART_COLORS.length], opacity: 0.85 } }
           },

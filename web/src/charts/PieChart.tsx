@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getChartColors, useChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns, ChartTypeSelect } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, useChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns, ChartTypeSelect } from './common'
 import { ConfigHint } from './ConfigHint'
 
 function PieChartComponent({ data, config }: ChartProps) {
@@ -81,7 +81,7 @@ function PieConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
           aria-label="Rose type"
           style={styles.select}
           value={config.roseType ?? ''}
-          onChange={e => onChange({ ...config, roseType: e.target.value || undefined })}
+          onChange={e => onChange({ ...config, roseType: (e.target.value || undefined) as 'radius' | 'area' | undefined })}
         >
           <option value="">None (plain pie)</option>
           <option value="radius">Radius (rose)</option>

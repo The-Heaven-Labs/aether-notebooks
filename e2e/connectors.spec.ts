@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test'
-import { loginAsAdmin } from './helpers'
+import { registerAndOnboard } from './helpers'
 
 test.describe('Connectors', () => {
   test.beforeEach(async ({ page }) => {
-    await loginAsAdmin(page)
+    const ts = Date.now().toString()
+    await registerAndOnboard(page, ts)
   })
 
   test('create postgres connector with database field', async ({ page }) => {
@@ -13,8 +14,8 @@ test.describe('Connectors', () => {
     await page.fill('input[name="name"]', 'Test PG')
     await page.fill('input[name="host"]', 'localhost')
     await page.fill('input[name="port"]', '5432')
-    await page.fill input database aether')
-    await page.fill input user aether')
+    await page.fill('input[name="database"]', 'aether')
+    await page.fill('input[name="user"]', 'aether')
     await page.fill('input[name="password"]', 'aether_dev')
     await page.click('button:has-text("Save")')
     await expect(page.locator('text=Test PG')).toBeVisible()

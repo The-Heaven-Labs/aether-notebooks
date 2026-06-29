@@ -177,7 +177,7 @@ func TestAttachmentGetDeniedWhenNotebookACLRestrictsViewer(t *testing.T) {
 	viewerEmail := fmt.Sprintf("viewer-acl-%d@example.com", ts)
 	registerAndGetToken(t, actx.srv, viewerEmail, "Viewer Own Org2")
 
-	inviteBody, _ := json.Marshal(map[string]string{"email": viewerEmail, "role": "viewer"})
+	inviteBody, _ := json.Marshal(map[string]string{"email": viewerEmail, "role": "non-admin"})
 	inviteReq := httptest.NewRequest("POST", "/api/v1/members", bytes.NewReader(inviteBody))
 	inviteReq.Header.Set("Content-Type", "application/json")
 	inviteReq.Header.Set("Authorization", "Bearer "+actx.token)
@@ -248,7 +248,7 @@ func TestAttachmentUploadRequiresWritePermission(t *testing.T) {
 	registerAndGetToken(t, actx.srv, viewerEmail, "Viewer Own Org")
 
 	// Invite viewer into the admin's org
-	inviteBody, _ := json.Marshal(map[string]string{"email": viewerEmail, "role": "viewer"})
+	inviteBody, _ := json.Marshal(map[string]string{"email": viewerEmail, "role": "non-admin"})
 	inviteReq := httptest.NewRequest("POST", "/api/v1/members", bytes.NewReader(inviteBody))
 	inviteReq.Header.Set("Content-Type", "application/json")
 	inviteReq.Header.Set("Authorization", "Bearer "+actx.token)

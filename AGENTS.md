@@ -130,10 +130,10 @@ When using the dev stack (`docker-compose.dev.yml`), use these test users:
 
 | Email | Password | Notes |
 |---|---|---|
-| `demon@heaven-labs.com` | `demon123` | Primary test user |
-| `angel@heaven-labs.com` | `angel123` | Secondary test user |
+| `nova@heaven-labs.com` | `nova123` | Primary test user |
+| `sol@heaven-labs.com` | `sol123` | Secondary test user |
 
-**Note**: Home folders are named using the user's email address (e.g., `demon@heaven-labs.com`). This ensures uniqueness and avoids confusion with similar names.
+**Note**: Home folders are named using the user's email address (e.g., `nova@heaven-labs.com`). This ensures uniqueness and avoids confusion with similar names.
 
 ## SSO / OIDC (Dev Stack)
 

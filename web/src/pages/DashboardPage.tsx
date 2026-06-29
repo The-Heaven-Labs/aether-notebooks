@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { useParams, Link, useSearchParams } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import { ArrowLeft, Play, Loader2, Pencil, Settings } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -329,9 +329,7 @@ const toGridItem = (w: Widget): LayoutItem => ({
 function DashboardContent({ id }: { id: string }) {
   const qc = useQueryClient()
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [containerWidth, setContainerWidth] = useState(
-    () => Math.min(window.innerWidth - 160, 1200)
-  )
+  const [containerWidth, setContainerWidth] = useState(0)
   const gridContainerRef = useRef<HTMLDivElement | null>(null)
 
   const gridRef = useCallback((el: HTMLDivElement | null) => {
@@ -358,7 +356,11 @@ function DashboardContent({ id }: { id: string }) {
   })
 
   useEffect(() => {
-    if (dashboard) document.title = `${dashboard.title} — Aether Notebooks`
+    if (dashboard) {
+      document.title = `${dashboard.title} — Aether Notebooks`
+      const el = gridContainerRef.current
+      if (el) setContainerWidth(el.clientWidth)
+    }
     return () => { document.title = "Aether Notebooks" }
   }, [dashboard])
 

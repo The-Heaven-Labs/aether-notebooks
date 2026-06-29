@@ -310,11 +310,11 @@ func TestDashboard_Share(t *testing.T) {
 	t.Parallel()
 	f := SetupAuditTest(t)
 
-	t.Run("adminA shares NoACL dashboard — 200", func(t *testing.T) {
+	t.Run("adminA shares NoACL dashboard — 201", func(t *testing.T) {
 		status, body := f.DoRequest(t, "adminA", "POST",
 			"/api/v1/dashboards/"+f.OrgA.Dashboards.NoACL+"/share", nil)
 		t.Logf("adminA share: %d %s", status, body)
-		require.Equal(t, http.StatusOK, status)
+		require.Equal(t, http.StatusCreated, status)
 	})
 
 	t.Run("aliceA shares UserACL dashboard — 403 (view-only, no share)", func(t *testing.T) {

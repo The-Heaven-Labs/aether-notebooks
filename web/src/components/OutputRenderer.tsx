@@ -307,7 +307,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
   const [detail, setDetail] = useState<DetailPanel | null>(null)
   const activeDetailCell = useActiveDetailCell()
   const isDetailActive = cellId ? activeDetailCell === cellId : false
-  const activeCellRef = useRef<HTMLTableCellElement | null>(null)
+  const activeCellRef = useRef<HTMLElement | null>(null)
   const theadRef = useRef<HTMLTableSectionElement | null>(null)
   const [copied, setCopied] = useState(false)
   const scrollAreaRef = useRef<HTMLDivElement | null>(null)

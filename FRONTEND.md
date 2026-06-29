@@ -114,7 +114,7 @@ main: { flex: 1, overflow: 'auto', padding: '32px' } // or padding: 0 with noPad
 **Visual**:
 - Dark background (`var(--nav-bg)`)
 - Height: 52px, fixed at top
-- Left: SVG logo grid (rectangles), brand divider, "HNB" text
+- Left: SVG logo grid (rectangles), brand divider, "Aether" text
 - Center: Spacer (flex: 1)
 - Right: Org name, avatar circle with initials
 - Hamburger menu button (mobile)

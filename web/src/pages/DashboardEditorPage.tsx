@@ -109,9 +109,7 @@ const markSaved = useCallback(() => {
   const [pickerType, setPickerType] = useState<'table' | 'chart'>('table')
   const [pickerError, setPickerError] = useState<string | null>(null)
 
-  const [containerWidth, setContainerWidth] = useState(
-    () => Math.min(window.innerWidth - 160, 1200)
-  )
+  const [containerWidth, setContainerWidth] = useState(0)
   const [deleteWidgetTarget, setDeleteWidgetTarget] = useState<string | null>(null)
   const isMobileLayout = containerWidth < 600
   const gridContainerRef = useRef<HTMLDivElement | null>(null)
@@ -146,6 +144,8 @@ const markSaved = useCallback(() => {
   useEffect(() => {
     if (dashboard) {
       document.title = `${dashboard.title} — Aether Notebooks`
+      const el = gridContainerRef.current
+      if (el) setContainerWidth(el.clientWidth)
     }
     return () => { document.title = "Aether Notebooks" }
   }, [dashboard])
@@ -209,7 +209,7 @@ const markSaved = useCallback(() => {
     }).then(() => {
       qc.invalidateQueries({ queryKey: ['dashboard', id] })
       markSaved()
-    }).catch((err: Error) => {
+    }).catch(() => {
       setMutationError('Failed to save widget layout')
       markSaved()
     })

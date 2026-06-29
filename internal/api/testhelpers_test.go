@@ -96,10 +96,8 @@ func setupTestServer(t *testing.T) *api.Server {
 
 func registerAndGetToken(t *testing.T, srv *api.Server, email, orgName string) string {
 	t.Helper()
-	// Make slug unique by appending a timestamp
-	uniqueOrg := fmt.Sprintf("%s %d", orgName, time.Now().UnixNano())
 	body, _ := json.Marshal(map[string]string{
-		"email": email, "password": "pass123", "name": "Test", "org_name": uniqueOrg,
+		"email": email, "password": "pass123", "name": "Test",
 	})
 	req := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -108,9 +106,31 @@ func registerAndGetToken(t *testing.T, srv *api.Server, email, orgName string) s
 	if rec.Code != 201 {
 		t.Fatalf("register failed: %d %s", rec.Code, rec.Body.String())
 	}
-	var resp map[string]any
-	json.NewDecoder(rec.Body).Decode(&resp)
-	return resp["token"].(string)
+	var regResp map[string]any
+	json.NewDecoder(rec.Body).Decode(&regResp)
+	onboardingToken, ok := regResp["onboarding_token"].(string)
+	if !ok {
+		t.Fatalf("register: expected onboarding_token in response, got %v", regResp)
+	}
+
+	// Create org using onboarding token
+	uniqueOrg := fmt.Sprintf("%s %d", orgName, time.Now().UnixNano())
+	orgBody, _ := json.Marshal(map[string]string{"org_name": uniqueOrg})
+	orgReq := httptest.NewRequest("POST", "/api/v1/auth/org/create", bytes.NewReader(orgBody))
+	orgReq.Header.Set("Content-Type", "application/json")
+	orgReq.Header.Set("Authorization", "Bearer "+onboardingToken)
+	orgRec := httptest.NewRecorder()
+	srv.ServeHTTP(orgRec, orgReq)
+	if orgRec.Code != 201 {
+		t.Fatalf("org create failed: %d %s", orgRec.Code, orgRec.Body.String())
+	}
+	var orgResp map[string]any
+	json.NewDecoder(orgRec.Body).Decode(&orgResp)
+	token, ok := orgResp["token"].(string)
+	if !ok {
+		t.Fatalf("org create: expected token in response, got %v", orgResp)
+	}
+	return token
 }
 
 func createNotebook(t *testing.T, srv *api.Server, token, title string) string {

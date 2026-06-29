@@ -32,6 +32,7 @@ import { exportNotebookHTML } from '../utils/notebookExport'
 
 interface NotebookWithCells extends Notebook {
   cells: Cell[]
+  can_share?: boolean
 }
 
 function fmtTime(date: Date): string {
@@ -111,7 +112,6 @@ const addBarStyles: Record<string, React.CSSProperties> = {
 
 // Stable noop function to avoid creating new references each render
 const noop = () => {}
-const noopAsync = async () => {}
 
 function SortableCellWrapper({ children, id }: { children: React.ReactNode; id: string }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { Cell, Folder, FolderContents } from '../types'
+import type { Cell, Folder, FolderContents, Notebook } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
@@ -709,7 +709,7 @@ export function HomePage() {
     if (type === 'connector') navigate(`/connectors?edit=${id}`)
   }
 
-  function handleDuplicate(type: ResourceType, id: string, _name: string) {
+  function handleDuplicate(_type: ResourceType, id: string, _name: string) {
     duplicateNotebook.mutate({ id, folderID: folderID ?? undefined })
   }
 

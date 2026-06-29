@@ -59,7 +59,7 @@ export function TopBar({ onShowShortcuts }: TopBarProps) {
       </button>
       <Link to="/" style={styles.brand}>
         <div style={styles.logo}><LogoMark /></div>
-        <span style={styles.appName}>HNB</span>
+        <span style={styles.appName}>Aether</span>
       </Link>
       <div style={styles.spacer} />
       {onShowShortcuts && (

@@ -76,6 +76,10 @@ func (s *Server) handleOrgCreateSSOProvider(w http.ResponseWriter, r *http.Reque
 	if domains == nil {
 		domains = []string{}
 	}
+	scopes := req.Scopes
+	if scopes == nil {
+		scopes = []string{}
+	}
 
 	orgID := claims.OrgID
 	p := sso.Provider{
@@ -88,7 +92,7 @@ func (s *Server) handleOrgCreateSSOProvider(w http.ResponseWriter, r *http.Reque
 		DiscoveryURL:   req.DiscoveryURL,
 		AllowedDomains: domains,
 		Enabled:        req.Enabled,
-		Scopes:         req.Scopes,
+		Scopes:         scopes,
 		GroupsClaim:    req.GroupsClaim,
 		GroupPrefix:    req.GroupPrefix,
 		AutoSyncGroups: req.AutoSyncGroups,

@@ -4,14 +4,15 @@ tmp/
 .env
 /aether
 /aether-server
-/hnb
-/hnb-server
 node_modules/
 web/dist/
 relay/node_modules/
+relay/dist/
 .worktrees/
 attachments/
 .claude/
 .mcp.json
 .repowise/
 screenshots/
+CLAUDE.md
+IMPROVEMENTS.md

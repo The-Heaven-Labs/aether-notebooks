@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test'
-import { loginAsAdmin, createNotebook } from './helpers'
+import { registerAndOnboard, createNotebook } from './helpers'
 
 test.describe('Slug references', () => {
   test.beforeEach(async ({ page }) => {
-    await loginAsAdmin(page)
+    const ts = Date.now().toString()
+    await registerAndOnboard(page, ts)
   })
 
   test('cell with slug can be referenced by another cell', async ({ page }) => {
