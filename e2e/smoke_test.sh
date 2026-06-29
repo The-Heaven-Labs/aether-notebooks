@@ -14,18 +14,28 @@ echo "1. Health check..."
 STATUS=$(curl -sf "$API/health" | grep -c '"status":"ok"')
 [ "$STATUS" -ge 1 ] && echo "   PASS" || (echo "   FAIL: health check failed"; exit 1)
 
-# 2. Register
+# 2. Register account-only (onboarding flow)
 echo ""
 echo "2. Register user..."
 REGISTER=$(curl -sf -X POST "$API/api/v1/auth/register" \
   -H "Content-Type: application/json" \
-  -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\",\"name\":\"Smoke Test\",\"org_name\":\"Smoke Org $(date +%s)\"}")
-TOKEN=$(echo "$REGISTER" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+  -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\",\"name\":\"Smoke Test\"}")
+ONBOARDING_TOKEN=$(echo "$REGISTER" | grep -o '"onboarding_token":"[^"]*"' | cut -d'"' -f4)
+[ -n "$ONBOARDING_TOKEN" ] && echo "   PASS (onboarding token received)" || (echo "   FAIL: no onboarding token"; exit 1)
+
+# 3. Create org via onboarding token
+echo ""
+echo "3. Create organization..."
+ORG=$(curl -sf -X POST "$API/api/v1/auth/org/create" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ONBOARDING_TOKEN" \
+  -d "{\"org_name\":\"Smoke Org $(date +%s)\"}")
+TOKEN=$(echo "$ORG" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
 [ -n "$TOKEN" ] && echo "   PASS (token received)" || (echo "   FAIL: no token"; exit 1)
 
-# 3. Create connector
+# 4. Create connector
 echo ""
-echo "3. Create connector..."
+echo "4. Create connector..."
 CONNECTOR=$(curl -sf -X POST "$API/api/v1/connectors" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
@@ -33,9 +43,9 @@ CONNECTOR=$(curl -sf -X POST "$API/api/v1/connectors" \
 CONNECTOR_ID=$(echo "$CONNECTOR" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 [ -n "$CONNECTOR_ID" ] && echo "   PASS (connector: $CONNECTOR_ID)" || (echo "   FAIL: no connector id"; exit 1)
 
-# 4. Create notebook
+# 5. Create notebook
 echo ""
-echo "4. Create notebook..."
+echo "5. Create notebook..."
 NOTEBOOK=$(curl -sf -X POST "$API/api/v1/notebooks" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
@@ -43,9 +53,9 @@ NOTEBOOK=$(curl -sf -X POST "$API/api/v1/notebooks" \
 NB_ID=$(echo "$NOTEBOOK" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 [ -n "$NB_ID" ] && echo "   PASS (notebook: $NB_ID)" || (echo "   FAIL: no notebook id"; exit 1)
 
-# 5. Create cell
+# 6. Create cell
 echo ""
-echo "5. Create cell..."
+echo "6. Create cell..."
 CELL=$(curl -sf -X POST "$API/api/v1/notebooks/$NB_ID/cells" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
@@ -53,9 +63,9 @@ CELL=$(curl -sf -X POST "$API/api/v1/notebooks/$NB_ID/cells" \
 CELL_ID=$(echo "$CELL" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 [ -n "$CELL_ID" ] && echo "   PASS (cell: $CELL_ID)" || (echo "   FAIL: no cell id"; exit 1)
 
-# 6. Execute cell
+# 7. Execute cell
 echo ""
-echo "6. Execute cell..."
+echo "7. Execute cell..."
 EXEC=$(curl -sf -X POST "$API/api/v1/notebooks/$NB_ID/cells/$CELL_ID/execute" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
@@ -63,9 +73,9 @@ EXEC=$(curl -sf -X POST "$API/api/v1/notebooks/$NB_ID/cells/$CELL_ID/execute" \
 HAS_OUTPUT=$(echo "$EXEC" | grep -c '"outputs"')
 [ "$HAS_OUTPUT" -ge 1 ] && echo "   PASS (outputs received)" || (echo "   FAIL: no outputs in response"; exit 1)
 
-# 7. Create dashboard
+# 8. Create dashboard
 echo ""
-echo "7. Create dashboard..."
+echo "8. Create dashboard..."
 DASH=$(curl -sf -X POST "$API/api/v1/dashboards" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
@@ -73,18 +83,18 @@ DASH=$(curl -sf -X POST "$API/api/v1/dashboards" \
 DASH_ID=$(echo "$DASH" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 [ -n "$DASH_ID" ] && echo "   PASS (dashboard: $DASH_ID)" || (echo "   FAIL: no dashboard id"; exit 1)
 
-# 8. Share dashboard
+# 9. Share dashboard
 echo ""
-echo "8. Share dashboard..."
+echo "9. Share dashboard..."
 SHARE=$(curl -sf -X POST "$API/api/v1/dashboards/$DASH_ID/share" \
   -H "Authorization: Bearer $TOKEN")
-PUBLIC_TOKEN=$(echo "$SHARE" | grep -o '"public_token":"[^"]*"' | cut -d'"' -f4)
-[ -n "$PUBLIC_TOKEN" ] && echo "   PASS (public_token received)" || (echo "   FAIL: no public token"; exit 1)
+PUBLIC_TOKEN=$(echo "$SHARE" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+[ -n "$PUBLIC_TOKEN" ] && echo "   PASS (public token received)" || (echo "   FAIL: no public token"; exit 1)
 
-# 9. Access public dashboard
+# 10. Access public dashboard
 echo ""
-echo "9. Public dashboard access..."
-PUB=$(curl -sf "$API/api/v1/public/dashboards/$PUBLIC_TOKEN")
+echo "10. Public dashboard access..."
+PUB=$(curl -sf "$API/api/v1/public/$PUBLIC_TOKEN")
 [ -n "$PUB" ] && echo "   PASS" || (echo "   FAIL: public dashboard not accessible"; exit 1)
 
 echo ""
