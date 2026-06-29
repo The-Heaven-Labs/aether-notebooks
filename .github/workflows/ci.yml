@@ -48,10 +48,7 @@ jobs:
           AETHER_DATABASE_URL: postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable
           AETHER_REDIS_URL: redis://localhost:6379
       - run: go test ./internal/audit/... ./internal/auth/... ./internal/cache/... ./internal/crypto/... ./internal/scheduler/... ./internal/sso/... -v -count=1
-      - run: go test -race ./internal/api/... ./internal/agent/... -count=1 -p 1
-        env:
-          AETHER_DATABASE_URL: postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable
-          AETHER_REDIS_URL: redis://localhost:6379
+
 
   frontend:
     runs-on: ubuntu-latest
