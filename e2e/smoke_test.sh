@@ -39,7 +39,7 @@ echo "4. Create connector..."
 CONNECTOR=$(curl -sf -X POST "$API/api/v1/connectors" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"name":"Smoke DB","type":"postgres","config":{"host":"postgres","port":5432,"user":"aether","password":"aether_dev","database":"aether"}}')
+  -d '{"name":"Smoke DB","type":"postgres","config":{"host":"localhost","port":5432,"user":"aether","password":"aether_dev","database":"aether"}}')
 CONNECTOR_ID=$(echo "$CONNECTOR" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 [ -n "$CONNECTOR_ID" ] && echo "   PASS (connector: $CONNECTOR_ID)" || (echo "   FAIL: no connector id"; exit 1)
 
