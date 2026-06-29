@@ -69,7 +69,7 @@ test.describe('Navigation', () => {
     }
   })
 
-  test('sidebar renders and collapses', async ({ page }) => {
+  test('visual: sidebar renders and collapses', async ({ page }) => {
     await expect(page.getByTitle('Notebooks')).toBeVisible()
     await expect(page.getByTitle('Dashboards')).toBeVisible()
     await expect(page.getByTitle('Connectors')).toBeVisible()
