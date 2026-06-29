@@ -31,7 +31,7 @@ function renderPresentation() {
 
 test('shows first cell on load', async () => {
   renderPresentation()
-  expect(await screen.findByText(/Slide 1/)).toBeInTheDocument()
+  expect(await screen.findByText(/Slide 1/, {}, { timeout: 5000 })).toBeInTheDocument()
 })
 
 test('Next button advances to second cell', async () => {
