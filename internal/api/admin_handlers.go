@@ -7,6 +7,14 @@ import (
 	"github.com/the-heaven-labs/aether/internal/audit"
 )
 
+// @Summary List all organizations
+// @Description Returns all organizations with member counts
+// @Tags admin
+// @Produce json
+// @Success 200 {object} map[string]any
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /api/v1/admin/orgs [get]
 func (s *Server) handleAdminListOrgs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	rows, err := s.db.Pool.Query(ctx,
@@ -47,6 +55,14 @@ func (s *Server) handleAdminListOrgs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"orgs": orgs})
 }
 
+// @Summary List all users
+// @Description Returns all users across all organizations
+// @Tags admin
+// @Produce json
+// @Success 200 {object} map[string]any
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /api/v1/admin/users [get]
 func (s *Server) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	rows, err := s.db.Pool.Query(ctx,
@@ -93,6 +109,18 @@ func (s *Server) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"users": users})
 }
 
+// @Summary Update user
+// @Description Update a user's platform admin status
+// @Tags admin
+// @Accept json
+// @Produce json
+// @Param id path string true "User ID"
+// @Param request body object true "Update payload"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /api/v1/admin/users/{id} [put]
 func (s *Server) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	targetID := r.PathValue("id")
 	if targetID == "" {
@@ -147,6 +175,16 @@ type adminCreateOrgRequest struct {
 	Slug string `json:"slug"`
 }
 
+// @Summary Create organization
+// @Description Create a new organization as a platform admin
+// @Tags admin
+// @Accept json
+// @Produce json
+// @Param request body adminCreateOrgRequest true "Organization details"
+// @Success 201 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /api/v1/admin/orgs [post]
 func (s *Server) handleAdminCreateOrg(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 

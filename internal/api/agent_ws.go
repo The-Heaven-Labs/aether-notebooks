@@ -44,6 +44,16 @@ type WSErrorResponse struct {
 
 var _ = (*websocket.Conn)(nil)
 
+// @Summary Agent WebSocket
+// @Description WebSocket endpoint for real-time agent chat
+// @Tags agents
+// @Produce json
+// @Param session_id path string true "Session ID"
+// @Success 101
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /ws/agents/{session_id} [get]
 func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("session_id")
 	claims := ClaimsFromContext(r.Context())

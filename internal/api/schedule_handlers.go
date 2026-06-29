@@ -195,6 +195,18 @@ type updateScheduleRequest struct {
 	ParameterOverrides map[string]string `json:"parameter_overrides,omitempty"`
 }
 
+// @Summary Update a schedule
+// @Description Update a schedule's cron expression, enabled status, or parameter overrides
+// @Tags schedules
+// @Accept json
+// @Produce json
+// @Param id path string true "Schedule ID"
+// @Param request body object true "Schedule updates"
+// @Success 200 {object} object
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /schedules/{id} [put]
 func (s *Server) handleUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	schedID := r.PathValue("id")

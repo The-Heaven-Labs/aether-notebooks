@@ -74,6 +74,14 @@ type ssoProviderRequest struct {
 	GetUserInfo    bool     `json:"get_user_info"`
 }
 
+// @Summary List SSO providers
+// @Description List all platform-level SSO providers
+// @Tags sso
+// @Produce json
+// @Success 200 {object} map[string]any
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /admin/sso/providers [get]
 func (s *Server) handleAdminListSSOProviders(w http.ResponseWriter, r *http.Request) {
 	providers, err := sso.ListPlatformProviders(r.Context(), s.db.Pool, s.masterKey)
 	if err != nil {
@@ -88,6 +96,16 @@ func (s *Server) handleAdminListSSOProviders(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, map[string]any{"providers": resp})
 }
 
+// @Summary Create SSO provider
+// @Description Create a new platform-level SSO provider
+// @Tags sso
+// @Accept json
+// @Produce json
+// @Param request body object true "SSO provider details"
+// @Success 201 {object} providerResponse
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /admin/sso/providers [post]
 func (s *Server) handleAdminCreateSSOProvider(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
@@ -141,6 +159,18 @@ func (s *Server) handleAdminCreateSSOProvider(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusCreated, providerToResponse(created))
 }
 
+// @Summary Update SSO provider
+// @Description Update a platform-level SSO provider
+// @Tags sso
+// @Accept json
+// @Produce json
+// @Param id path string true "Provider ID"
+// @Param request body object true "SSO provider details"
+// @Success 200 {object} providerResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /admin/sso/providers/{id} [put]
 func (s *Server) handleAdminUpdateSSOProvider(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
@@ -199,6 +229,15 @@ func (s *Server) handleAdminUpdateSSOProvider(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, providerToResponse(updated))
 }
 
+// @Summary Delete SSO provider
+// @Description Delete a platform-level SSO provider
+// @Tags sso
+// @Produce json
+// @Param id path string true "Provider ID"
+// @Success 204
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /admin/sso/providers/{id} [delete]
 func (s *Server) handleAdminDeleteSSOProvider(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
@@ -223,7 +262,16 @@ func (s *Server) invalidateSSOPlatformCache(r *http.Request) {
 	}
 }
 
-// handleAdminTestSSOProvider tests connectivity to an OIDC provider by fetching its discovery document.
+// @Summary Test SSO provider
+// @Description Test connectivity to an OIDC provider by fetching its discovery document
+// @Tags sso
+// @Produce json
+// @Param id path string true "Provider ID"
+// @Success 200 {object} object
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /admin/sso/providers/{id}/test [post]
 func (s *Server) handleAdminTestSSOProvider(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 

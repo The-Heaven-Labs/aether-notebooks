@@ -16,6 +16,14 @@ type agentHandlers struct {
 	server *Server
 }
 
+// @Summary List agents
+// @Description List all agents for the current organization
+// @Tags agents
+// @Produce json
+// @Success 200 {array} models.Agent
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /agents [get]
 func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
@@ -219,6 +227,16 @@ func (h *agentHandlers) validateToolAccess(ctx context.Context, userID, orgID, r
 	return nil
 }
 
+// @Summary Create an agent
+// @Description Create a new agent configuration
+// @Tags agents
+// @Accept json
+// @Produce json
+// @Param request body object true "Agent details"
+// @Success 201 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /agents [post]
 func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req struct {
@@ -310,6 +328,15 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusCreated, map[string]string{"id": agentID})
 }
 
+// @Summary Get an agent
+// @Description Get a single agent by ID
+// @Tags agents
+// @Produce json
+// @Param id path string true "Agent ID"
+// @Success 200 {object} models.Agent
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /agents/{id} [get]
 func (h *agentHandlers) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
@@ -371,6 +398,18 @@ func (h *agentHandlers) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, a)
 }
 
+// @Summary Update an agent
+// @Description Update an existing agent configuration
+// @Tags agents
+// @Accept json
+// @Produce json
+// @Param id path string true "Agent ID"
+// @Param request body object true "Agent updates"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /agents/{id} [put]
 func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
@@ -475,6 +514,14 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]string{"id": agentID})
 }
 
+// @Summary Delete an agent
+// @Description Delete an agent configuration
+// @Tags agents
+// @Param id path string true "Agent ID"
+// @Success 204
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /agents/{id} [delete]
 func (h *agentHandlers) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
@@ -503,6 +550,17 @@ func (h *agentHandlers) handleDeleteAgent(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusNoContent, nil)
 }
 
+// @Summary Create an agent session
+// @Description Create a new chat session with an agent
+// @Tags agents
+// @Accept json
+// @Produce json
+// @Param id path string true "Agent ID"
+// @Param request body object true "Session details"
+// @Success 201 {object} map[string]any
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /agents/{id}/session [post]
 func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
@@ -580,6 +638,15 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// @Summary List agent sessions
+// @Description List all sessions for a given agent
+// @Tags agents
+// @Produce json
+// @Param id path string true "Agent ID"
+// @Success 200 {array} object
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /agents/{id}/sessions [get]
 func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
@@ -647,6 +714,15 @@ func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, sessions)
 }
 
+// @Summary Get a session
+// @Description Get a single agent session by ID
+// @Tags agents
+// @Produce json
+// @Param session_id path string true "Session ID"
+// @Success 200 {object} models.AgentSession
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /sessions/{session_id} [get]
 func (h *agentHandlers) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("session_id")
 	claims := ClaimsFromContext(r.Context())
@@ -680,6 +756,15 @@ func (h *agentHandlers) handleGetSession(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, s)
 }
 
+// @Summary Get session messages
+// @Description Get all messages for a given session
+// @Tags agents
+// @Produce json
+// @Param session_id path string true "Session ID"
+// @Success 200 {array} object
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /sessions/{session_id}/messages [get]
 func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("session_id")
 	claims := ClaimsFromContext(r.Context())
@@ -752,6 +837,18 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, messages)
 }
 
+// @Summary Update session title
+// @Description Update the title of an agent session
+// @Tags agents
+// @Accept json
+// @Produce json
+// @Param session_id path string true "Session ID"
+// @Param request body object true "Title update"
+// @Success 200 {object} map[string]any
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /sessions/{session_id}/title [patch]
 func (h *agentHandlers) handleUpdateSessionTitle(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("session_id")
 	claims := ClaimsFromContext(r.Context())
@@ -797,6 +894,14 @@ func (h *agentHandlers) handleUpdateSessionTitle(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, map[string]any{"title": req.Title})
 }
 
+// @Summary Get agent stats
+// @Description Get usage statistics for all agents in the organization
+// @Tags agents
+// @Produce json
+// @Success 200 {array} models.AgentStatsDaily
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /agents/stats [get]
 func (h *agentHandlers) handleAgentStats(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
@@ -823,6 +928,15 @@ func (h *agentHandlers) handleAgentStats(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, stats)
 }
 
+// @Summary Get agent stats by agent
+// @Description Get usage statistics for a specific agent
+// @Tags agents
+// @Produce json
+// @Param id path string true "Agent ID"
+// @Success 200 {array} models.AgentStatsDaily
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /agents/{id}/stats [get]
 func (h *agentHandlers) handleAgentStatsByAgent(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())

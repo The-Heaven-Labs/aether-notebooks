@@ -9,9 +9,14 @@ import (
 	"github.com/the-heaven-labs/aether/internal/sso"
 )
 
-// handleSSOProbe handles GET /api/v1/auth/sso-providers?email=user@example.com
-// It is unauthenticated and returns the list of SSO providers matching the email's domain.
-// Rate limited to 20 requests per IP per 60 seconds to prevent enumeration.
+// @Summary Probe SSO providers
+// @Description Returns SSO providers matching the email's domain (unauthenticated, rate-limited)
+// @Tags sso
+// @Produce json
+// @Param email query string true "User email to probe for SSO providers"
+// @Success 200 {array} object
+// @Failure 429 {object} map[string]string
+// @Router /auth/sso-providers [get]
 func (s *Server) handleSSOProbe(w http.ResponseWriter, r *http.Request) {
 	// Fixed sleep floor to prevent timing-based email enumeration inference.
 	defer func() { time.Sleep(5 * time.Millisecond) }()
@@ -64,7 +69,12 @@ func (s *Server) handleSSOProbe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, providers)
 }
 
-// handleRegistrationStatus returns whether self-registration is disabled.
+// @Summary Registration status
+// @Description Returns whether self-registration is disabled (unauthenticated)
+// @Tags sso
+// @Produce json
+// @Success 200 {object} map[string]bool
+// @Router /auth/config [get]
 func (s *Server) handleRegistrationStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"registration_disabled": s.disableRegistration})
 }

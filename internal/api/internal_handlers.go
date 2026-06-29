@@ -8,6 +8,14 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// @Summary Get Yjs document
+// @Description Returns the Yjs document state for a notebook (internal relay endpoint)
+// @Tags internal
+// @Produce octet-stream
+// @Param notebook_id path string true "Notebook ID"
+// @Success 200 {string} binary
+// @Failure 500 {object} map[string]string
+// @Router /internal/yjs/{notebook_id} [get]
 func (s *Server) handleInternalYjsGet(w http.ResponseWriter, r *http.Request) {
 	nbID := r.PathValue("notebook_id")
 	ctx := r.Context()
@@ -31,6 +39,15 @@ func (s *Server) handleInternalYjsGet(w http.ResponseWriter, r *http.Request) {
 	w.Write(state)
 }
 
+// @Summary Update Yjs document
+// @Description Stores the Yjs document state for a notebook (internal relay endpoint)
+// @Tags internal
+// @Accept octet-stream
+// @Param notebook_id path string true "Notebook ID"
+// @Success 204 {string} string
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /internal/yjs/{notebook_id} [put]
 func (s *Server) handleInternalYjsPut(w http.ResponseWriter, r *http.Request) {
 	nbID := r.PathValue("notebook_id")
 	ctx := r.Context()
@@ -55,6 +72,13 @@ func (s *Server) handleInternalYjsPut(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// @Summary Validate authentication
+// @Description Validates a JWT token and returns user info (internal relay endpoint)
+// @Tags internal
+// @Produce json
+// @Success 200 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Router /internal/auth/validate [get]
 func (s *Server) handleInternalAuthValidate(w http.ResponseWriter, r *http.Request) {
 	authHeader := r.Header.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
