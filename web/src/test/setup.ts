@@ -60,6 +60,14 @@ HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
   setLineDash: vi.fn(),
 })) as unknown as typeof HTMLCanvasElement.prototype.getContext
 
+// Mock ResizeObserver for components using useResizeObserver / ECharts
+class MockResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+window.ResizeObserver = MockResizeObserver as any
+
 // Mock window.matchMedia for components using useMediaQuery
 Object.defineProperty(window, 'matchMedia', {
   writable: true,

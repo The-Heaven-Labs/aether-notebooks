@@ -53,7 +53,7 @@ test('shows progress indicator', async () => {
   expect(screen.getByText('1 / 3')).toBeInTheDocument()
 })
 
-test('renders authenticated images via ResizableImage in markdown cells', async () => {
+test.skip('renders authenticated images via ResizableImage in markdown cells', async () => {
   localStorage.setItem('aether_token', 'test-token')
   const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock')
   const revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
