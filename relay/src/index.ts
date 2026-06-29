@@ -1,4 +1,5 @@
 import { Server } from '@hocuspocus/server'
+import * as Y from 'yjs'
 
 const API_URL = process.env.AETHER_API_URL || 'http://localhost:8080'
 const PORT = parseInt(process.env.AETHER_RELAY_PORT || '3001')
@@ -14,11 +15,12 @@ const server = new Server({
     return new Uint8Array(buf)
   },
 
-  async onStoreDocument({ documentName, state }) {
+  async onStoreDocument({ documentName, document }) {
+    const state = Y.encodeStateAsUpdate(document)
     await fetch(`${API_URL}/internal/yjs/${documentName}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/octet-stream' },
-      body: state,
+      body: Buffer.from(state),
     })
   },
 

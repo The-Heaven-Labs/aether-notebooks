@@ -17,21 +17,34 @@ import (
 func registerAndGetOrgToken(t *testing.T, srv http.Handler) (token string, orgID string) {
 	t.Helper()
 	email := fmt.Sprintf("template-%d@example.com", time.Now().UnixNano())
-	orgName := fmt.Sprintf("Template Org %d", time.Now().UnixNano())
 	body, _ := json.Marshal(map[string]string{
-		"email": email, "password": "pass123", "name": "Template Tester", "org_name": orgName,
+		"email": email, "password": "pass123", "name": "Template Tester",
 	})
-	req := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	regReq := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(body))
+	regReq.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
+	srv.ServeHTTP(rec, regReq)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("register failed: %d %s", rec.Code, rec.Body.String())
 	}
-	var resp map[string]interface{}
-	json.NewDecoder(rec.Body).Decode(&resp)
-	token = resp["token"].(string)
-	org := resp["org"].(map[string]interface{})
+	var regResp map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&regResp)
+	onboardingToken := regResp["onboarding_token"].(string)
+
+	orgName := fmt.Sprintf("Template Org %d", time.Now().UnixNano())
+	orgBody, _ := json.Marshal(map[string]string{"org_name": orgName})
+	orgReq := httptest.NewRequest("POST", "/api/v1/auth/org/create", bytes.NewReader(orgBody))
+	orgReq.Header.Set("Content-Type", "application/json")
+	orgReq.Header.Set("Authorization", "Bearer "+onboardingToken)
+	orgRec := httptest.NewRecorder()
+	srv.ServeHTTP(orgRec, orgReq)
+	if orgRec.Code != http.StatusCreated {
+		t.Fatalf("org create failed: %d %s", orgRec.Code, orgRec.Body.String())
+	}
+	var orgResp map[string]interface{}
+	json.NewDecoder(orgRec.Body).Decode(&orgResp)
+	token = orgResp["token"].(string)
+	org := orgResp["org"].(map[string]interface{})
 	orgID = org["id"].(string)
 	return
 }

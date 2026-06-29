@@ -39,7 +39,7 @@ func TestMemberManagement(t *testing.T) {
 	}
 
 	// 4. POST /api/v1/members — invite second user
-	body, _ := json.Marshal(map[string]string{"email": secondEmail, "role": "viewer"})
+	body, _ := json.Marshal(map[string]string{"email": secondEmail, "role": "non-admin"})
 	req = httptest.NewRequest("POST", "/api/v1/members", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+adminToken)
@@ -89,8 +89,8 @@ func TestMemberManagement(t *testing.T) {
 		t.Fatal("could not find admin user in member list")
 	}
 
-	// 6. PUT /api/v1/members/{user_id} — change second user's role to "viewer"
-	body, _ = json.Marshal(map[string]string{"role": "viewer"})
+	// 6. PUT /api/v1/members/{user_id} — change second user's role to "non-admin"
+	body, _ = json.Marshal(map[string]string{"role": "non-admin"})
 	req = httptest.NewRequest("PUT", "/api/v1/members/"+secondUserID, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+adminToken)
@@ -112,7 +112,7 @@ func TestMemberManagement(t *testing.T) {
 	}
 
 	// 8. Cannot change own role — should return 400
-	body, _ = json.Marshal(map[string]string{"role": "viewer"})
+	body, _ = json.Marshal(map[string]string{"role": "non-admin"})
 	req = httptest.NewRequest("PUT", "/api/v1/members/"+adminUserID, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+adminToken)

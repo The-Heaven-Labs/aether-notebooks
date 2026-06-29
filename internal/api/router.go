@@ -324,6 +324,8 @@ func (s *Server) routes() {
 
 	// Member routes
 	s.mux.Handle("GET /api/v1/members", authMW(http.HandlerFunc(s.handleListMembers)))
+	s.mux.Handle("POST /api/v1/members", authMW(RequireRole("admin")(http.HandlerFunc(s.handleInviteMember))))
+	s.mux.Handle("POST /api/v1/members/invite", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateInvite))))
 	s.mux.Handle("PUT /api/v1/members/{user_id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateMemberRole))))
 	s.mux.Handle("DELETE /api/v1/members/{user_id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleRemoveMember))))
 

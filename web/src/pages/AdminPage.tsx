@@ -180,10 +180,11 @@ const formStyles: Record<string, React.CSSProperties> = {
     color: 'var(--text-secondary)',
   },
   input: {
-    padding: '7px 10px',
+    padding: '7px 12px',
     border: '1px solid var(--border)',
     borderRadius: 4,
     fontSize: 13,
+    outline: 'none',
     color: 'var(--text-primary)',
     background: 'var(--bg-input)',
   },
@@ -205,15 +206,6 @@ const formStyles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     fontSize: 13,
     cursor: 'pointer',
-  },
-  input: {
-    padding: '7px 12px',
-    border: '1px solid var(--border)',
-    borderRadius: 4,
-    fontSize: 13,
-    outline: 'none',
-    color: 'var(--text-primary)',
-    background: 'var(--bg-input)',
   },
   error: {
     marginTop: 10,

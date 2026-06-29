@@ -8,7 +8,7 @@ import { api } from '../api/client'
 import { Skeleton } from '../components/Skeleton'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { makeMarkdownComponents } from '../components/MarkdownCell'
-import type { Notebook, Parameter, Output, ResultSet } from '../types'
+import type { Notebook, Parameter, Output } from '../types'
 import type { ChartConfig } from '../charts'
 
 interface PublicCell {

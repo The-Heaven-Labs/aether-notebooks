@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, getTooltipStyle, getChartColors, useChartColors, CHART_COLORS, useRowsAsObjects, ChartTypeSelect } from './common'
+import { EChartsContainer, getTooltipStyle, useChartColors, CHART_COLORS, useRowsAsObjects, ChartTypeSelect } from './common'
 import { ConfigHint } from './ConfigHint'
 
 function SankeyChartComponent({ data, config }: ChartProps) {

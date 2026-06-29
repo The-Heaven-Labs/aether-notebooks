@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { ChartView } from '../charts'
-import { describe, test, expect, vi } from 'vitest'
+import { test, expect } from 'vitest'
 
 // ECharts uses ResizeObserver
 globalThis.ResizeObserver = class {

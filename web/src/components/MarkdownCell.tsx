@@ -294,7 +294,7 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave, onEditS
         }
       }, 0)
     })
-    return () => markdownEditCallbacks.delete(cell.id)
+    return () => { markdownEditCallbacks.delete(cell.id) }
   }, [cell.id, onSave])
 
   const updateSource = useCallback((s: string) => {

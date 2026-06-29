@@ -234,7 +234,7 @@ export function getAxisStyle(showGrid?: boolean) {
 }
 
 interface EChartsContainerProps {
-  option: echarts.EChartsOption
+  option: echarts.EChartsCoreOption
   height?: number
   onChartReady?: (chart: echarts.ECharts) => void
   notMerge?: boolean

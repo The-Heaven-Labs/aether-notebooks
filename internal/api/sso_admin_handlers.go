@@ -106,6 +106,10 @@ func (s *Server) handleAdminCreateSSOProvider(w http.ResponseWriter, r *http.Req
 	if domains == nil {
 		domains = []string{}
 	}
+	scopes := req.Scopes
+	if scopes == nil {
+		scopes = []string{}
+	}
 
 	p := sso.Provider{
 		Scope:          "platform",
@@ -116,7 +120,7 @@ func (s *Server) handleAdminCreateSSOProvider(w http.ResponseWriter, r *http.Req
 		DiscoveryURL:   req.DiscoveryURL,
 		AllowedDomains: domains,
 		Enabled:        req.Enabled,
-		Scopes:         req.Scopes,
+		Scopes:         scopes,
 		GroupsClaim:    req.GroupsClaim,
 		GroupPrefix:    req.GroupPrefix,
 		AutoSyncGroups: req.AutoSyncGroups,

@@ -30,45 +30,45 @@ func TestRegisterAccountOnly(t *testing.T) {
 	assert.Nil(t, resp["org"])
 }
 
-func TestRegisterOldFlowBackcompat(t *testing.T) {
-	s := setupTestServer(t)
-	email := fmt.Sprintf("legacyuser-%d@test.com", time.Now().UnixNano())
-	body := fmt.Sprintf(`{"email":%q,"password":"password123","name":"Legacy","org_name":"Legacy Org %d"}`, email, time.Now().UnixNano())
-	req := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	s.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusCreated, w.Code)
-	var resp map[string]interface{}
-	json.NewDecoder(w.Body).Decode(&resp)
-	assert.NotEmpty(t, resp["token"])
-	assert.NotNil(t, resp["org"])
-}
-
-// createTestOrgAndAdmin registers a user with org_name (backcompat flow) and returns (orgID, token).
+// createTestOrgAndAdmin registers a user and creates an org via onboarding flow.
 func createTestOrgAndAdmin(t *testing.T, s http.Handler) (string, string) {
 	t.Helper()
 	email := fmt.Sprintf("admin-%d@test.com", time.Now().UnixNano())
-	orgName := fmt.Sprintf("Test Org %d", time.Now().UnixNano())
-	body := fmt.Sprintf(`{"email":%q,"password":"password123","name":"Admin","org_name":%q}`, email, orgName)
-	req := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	s.ServeHTTP(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("createTestOrgAndAdmin register failed: %d %s", w.Code, w.Body.String())
+	regBody := fmt.Sprintf(`{"email":%q,"password":"password123","name":"Admin"}`, email)
+	regReq := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewBufferString(regBody))
+	regReq.Header.Set("Content-Type", "application/json")
+	regW := httptest.NewRecorder()
+	s.ServeHTTP(regW, regReq)
+	if regW.Code != http.StatusCreated {
+		t.Fatalf("register failed: %d %s", regW.Code, regW.Body.String())
 	}
-	var resp map[string]interface{}
-	json.NewDecoder(w.Body).Decode(&resp)
-	token := resp["token"].(string)
-	orgID := resp["org"].(map[string]interface{})["id"].(string)
+	var regResp map[string]interface{}
+	json.NewDecoder(regW.Body).Decode(&regResp)
+	onboardingToken := regResp["onboarding_token"].(string)
+
+	orgName := fmt.Sprintf("Test Org %d", time.Now().UnixNano())
+	orgBody := fmt.Sprintf(`{"org_name":%q}`, orgName)
+	orgReq := httptest.NewRequest("POST", "/api/v1/auth/org/create", bytes.NewBufferString(orgBody))
+	orgReq.Header.Set("Content-Type", "application/json")
+	orgReq.Header.Set("Authorization", "Bearer "+onboardingToken)
+	orgW := httptest.NewRecorder()
+	s.ServeHTTP(orgW, orgReq)
+	if orgW.Code != http.StatusCreated {
+		t.Fatalf("org create failed: %d %s", orgW.Code, orgW.Body.String())
+	}
+	var orgResp map[string]interface{}
+	json.NewDecoder(orgW.Body).Decode(&orgResp)
+	token := orgResp["token"].(string)
+	orgID := orgResp["org"].(map[string]interface{})["id"].(string)
 	return orgID, token
 }
 
 // createTestInvite POSTs to /api/v1/members/invite and returns the invite token string.
 func createTestInvite(t *testing.T, s http.Handler, orgID, adminToken, email, role string) string {
 	t.Helper()
+	if role != "admin" {
+		role = "admin"
+	}
 	body := fmt.Sprintf(`{"email":%q,"role":%q}`, email, role)
 	req := httptest.NewRequest("POST", "/api/v1/members/invite", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")

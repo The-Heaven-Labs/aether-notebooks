@@ -17,22 +17,33 @@ import (
 func registerOrgAndGetAdminToken(t *testing.T, srv http.Handler) (string, string) {
 	t.Helper()
 	email := fmt.Sprintf("orgadmin-%d@example.com", time.Now().UnixNano())
-	orgName := fmt.Sprintf("OrgSSO %d", time.Now().UnixNano())
 	body, _ := json.Marshal(map[string]string{
 		"email":    email,
 		"password": "pass123",
 		"name":     "Admin User",
-		"org_name": orgName,
 	})
-	req := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	regReq := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(body))
+	regReq.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
+	srv.ServeHTTP(rec, regReq)
 	require.Equal(t, http.StatusCreated, rec.Code, "register: %s", rec.Body.String())
-	var resp map[string]any
-	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
-	token := resp["token"].(string)
-	org := resp["org"].(map[string]any)
+	var regResp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&regResp))
+	onboardingToken, ok := regResp["onboarding_token"].(string)
+	require.True(t, ok, "register response should contain onboarding_token, got %v", regResp)
+
+	orgName := fmt.Sprintf("OrgSSO %d", time.Now().UnixNano())
+	orgBody, _ := json.Marshal(map[string]string{"org_name": orgName})
+	orgReq := httptest.NewRequest("POST", "/api/v1/auth/org/create", bytes.NewReader(orgBody))
+	orgReq.Header.Set("Content-Type", "application/json")
+	orgReq.Header.Set("Authorization", "Bearer "+onboardingToken)
+	orgRec := httptest.NewRecorder()
+	srv.ServeHTTP(orgRec, orgReq)
+	require.Equal(t, http.StatusCreated, orgRec.Code, "org create: %s", orgRec.Body.String())
+	var orgResp map[string]any
+	require.NoError(t, json.NewDecoder(orgRec.Body).Decode(&orgResp))
+	token := orgResp["token"].(string)
+	org := orgResp["org"].(map[string]any)
 	orgID := org["id"].(string)
 	return orgID, token
 }

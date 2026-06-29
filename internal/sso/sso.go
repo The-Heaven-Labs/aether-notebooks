@@ -87,6 +87,13 @@ func CreateProvider(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, p
 		return Provider{}, err
 	}
 
+	if p.AllowedDomains == nil {
+		p.AllowedDomains = []string{}
+	}
+	if p.Scopes == nil {
+		p.Scopes = []string{}
+	}
+
 	row := pool.QueryRow(ctx,
 		`INSERT INTO sso_providers (scope, org_id, name, provider_type, client_id, client_secret_enc, discovery_url, allowed_domains, enabled, scopes, groups_claim, group_prefix, auto_sync_groups, get_user_info)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
@@ -222,6 +229,13 @@ func collectProviders(rows pgx.Rows, masterKey []byte) ([]Provider, error) {
 // UpdateProvider updates name, client_id, client_secret, discovery_url, allowed_domains, enabled.
 // If p.ClientSecret is empty, the stored secret is preserved.
 func UpdateProvider(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, p Provider) (Provider, error) {
+	if p.AllowedDomains == nil {
+		p.AllowedDomains = []string{}
+	}
+	if p.Scopes == nil {
+		p.Scopes = []string{}
+	}
+
 	var encSecret string
 	var err error
 

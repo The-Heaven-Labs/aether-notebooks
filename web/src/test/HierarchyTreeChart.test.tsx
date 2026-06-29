@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import { HierarchyTreeModule } from '../charts/HierarchyTreeChart'
-import { describe, test, expect, vi } from 'vitest'
+import { test, expect, vi } from 'vitest'
 
 // ECharts uses ResizeObserver
 globalThis.ResizeObserver = class {

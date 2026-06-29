@@ -345,7 +345,7 @@ function ToolFormFields({ form, setForm, connectors, editing }: {
   const addParam = () => setForm(f => ({ ...f, parameters: [...f.parameters, { name: '', type: 'string', description: '', required: false }] }))
   const removeParam = (i: number) => setForm(f => ({ ...f, parameters: f.parameters.filter((_, idx) => idx !== i) }))
 
-  const addHeader = () => setForm(f => ({ ...f, headers: [...f.headers, { key: '', value: '' }] }))
+  const addHeader = () => setForm(f => ({ ...f, headers: [...f.headers, { key: '', value: '', sensitive: false }] }))
   const removeHeader = (i: number) => setForm(f => ({ ...f, headers: f.headers.filter((_, idx) => idx !== i) }))
   const updateHeader = (i: number, field: 'key' | 'value', val: string) => setForm(f => {
     const h = [...f.headers]

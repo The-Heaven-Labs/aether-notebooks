@@ -1,6 +1,6 @@
 import { useMemo, useCallback } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, useChartColors, useRowsAsObjects, isTimeType, ChartTypeSelect } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, isTimeType, ChartTypeSelect } from './common'
 import { ConfigHint } from './ConfigHint'
 
 function detectTimeColumns(columns: { name: string; type?: string }[]): string[] {
@@ -68,7 +68,7 @@ function TimelineChartComponent({ data, config }: ChartProps) {
           series: groups.map((group, gi) => ({
             name: group,
             type: 'custom' as const,
-            renderItem: (params: Record<string, unknown>, api: { value: (idx: number) => number; coord: (v: number[]) => number[]; size: (v: number[]) => number[] }) => {
+            renderItem: (_params: Record<string, unknown>, api: { value: (idx: number) => number; coord: (v: number[]) => number[]; size: (v: number[]) => number[] }) => {
               const groupIndex = gi
               const startTime = api.value(0)
               const endTime = api.value(1)
