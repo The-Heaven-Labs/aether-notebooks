@@ -36,15 +36,15 @@
 
 <table>
   <tr>
-    <td><img src="assets/screenshots/home-light.png" alt="Home page (light theme)" width="100%"></td>
-    <td><img src="assets/screenshots/home-dark.png" alt="Home page (dark theme)" width="100%"></td>
+    <td><img src="readme-screenshots/home-light.png" alt="Home page (light theme)" width="100%"></td>
+    <td><img src="readme-screenshots/home-dark.png" alt="Home page (dark theme)" width="100%"></td>
   </tr>
   <tr>
     <td align="center"><em>File browser — light theme</em></td>
     <td align="center"><em>File browser — dark theme</em></td>
   </tr>
   <tr>
-    <td><img src="assets/screenshots/dashboards-light.png" alt="Dashboards page" width="100%"></td>
+    <td><img src="readme-screenshots/dashboards-light.png" alt="Dashboards page" width="100%"></td>
     <td></td>
   </tr>
   <tr>
