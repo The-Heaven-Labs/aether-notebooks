@@ -176,10 +176,7 @@ jobs:
         env:
           CGO_ENABLED: '0'
       - name: Install Playwright and browsers
-        run: |
-          cd web
-          npm install -D @playwright/test
-          npx playwright install --with-deps chromium
+        run: cd web && npm install -D @playwright/test && npx playwright install --with-deps chromium
       - name: Start services
         run: |
           # Start API server
