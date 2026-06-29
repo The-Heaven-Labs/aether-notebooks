@@ -45,11 +45,11 @@
   </tr>
   <tr>
     <td><img src="readme-screenshots/home-light.png" alt="File browser (light theme)" width="100%"></td>
-    <td><img src="readme-screenshots/home-dark.png" alt="File browser (dark theme)" width="100%"></td>
+    <td><img src="readme-screenshots/agent-chat.png" alt="AI agent with rendered markdown" width="100%"></td>
   </tr>
   <tr>
-    <td align="center"><em>File browser — light theme</em></td>
-    <td align="center"><em>File browser — dark theme</em></td>
+    <td align="center"><em>File browser — folders, connectors, dashboards</em></td>
+    <td align="center"><em>AI agent — chat with markdown, code blocks, and tables</em></td>
   </tr>
 </table>
 
