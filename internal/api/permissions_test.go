@@ -129,15 +129,15 @@ func TestPermission_NoACL_DenyByDefault(t *testing.T) {
 	).Scan(&viewerUserID)
 	require.NoError(t, err)
 
-	// Add viewer to org with 'viewer' role (no admin, no ACL entry)
+	// Add viewer to org with 'non-admin' role (no admin, no ACL entry)
 	_, err = db.Pool.Exec(ctx,
-		`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'viewer')`,
+		`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'non-admin')`,
 		orgID, viewerUserID,
 	)
 	require.NoError(t, err)
 
 	// Issue JWT for viewer user directly (since we can't go through register)
-	viewerToken, err := testJWT.Issue(viewerUserID, orgID, "viewer")
+	viewerToken, err := testJWT.Issue(viewerUserID, orgID, "non-admin")
 	require.NoError(t, err)
 
 	// Viewer tries to access the notebook - should be DENIED (no ACL, org-role fallback removed)

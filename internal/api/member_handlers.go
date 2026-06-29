@@ -176,9 +176,9 @@ func (s *Server) handleInviteMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "email is required")
 		return
 	}
-	validRoles := map[string]bool{"admin": true, "editor": true, "viewer": true}
+	validRoles := map[string]bool{"admin": true, "editor": true, "non-admin": true}
 	if !validRoles[req.Role] {
-		writeError(w, http.StatusBadRequest, "role must be admin, editor, or viewer")
+		writeError(w, http.StatusBadRequest, "role must be admin, editor, or non-admin")
 		return
 	}
 

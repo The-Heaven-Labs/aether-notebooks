@@ -114,8 +114,10 @@ func TestSubdomainMiddlewareSkipsLocalhost(t *testing.T) {
 func TestSubdomainMiddlewareUnknownOrg(t *testing.T) {
 	s := setupTestServer(t)
 
+	called := false
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("handler should not be called for unknown org")
+		called = true
+		w.WriteHeader(http.StatusOK)
 	})
 	wrapped := api.SubdomainMiddleware(s.DB().Pool)(handler)
 
@@ -123,7 +125,10 @@ func TestSubdomainMiddlewareUnknownOrg(t *testing.T) {
 	req.Host = "nonexistent.aether.test"
 	rec := httptest.NewRecorder()
 	wrapped.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", rec.Code)
+	if !called {
+		t.Error("handler should be called for unknown org (passes through)")
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
 	}
 }

@@ -18,17 +18,14 @@ import (
 func TestRegisterAndLogin(t *testing.T) {
 	srv := setupTestServer(t)
 
-	// Use a unique email per test run to avoid conflicts
 	ts := time.Now().UnixNano()
 	email := fmt.Sprintf("test-%d@example.com", ts)
-	orgName := fmt.Sprintf("Test Org %d", ts)
 
 	// Register
 	body, _ := json.Marshal(map[string]string{
 		"email":    email,
 		"password": "securepass123",
 		"name":     "Test User",
-		"org_name": orgName,
 	})
 	req := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -41,14 +38,31 @@ func TestRegisterAndLogin(t *testing.T) {
 
 	var regResp map[string]interface{}
 	json.NewDecoder(rec.Body).Decode(&regResp)
-	if regResp["token"] == nil {
-		t.Fatal("register: expected token in response")
+	onboardingToken, ok := regResp["onboarding_token"].(string)
+	if !ok {
+		t.Fatal("register: expected onboarding_token in response")
 	}
+
+	// Create org so user has an org membership to login with
+	orgName := fmt.Sprintf("Login Org %d", ts)
+	orgBody, _ := json.Marshal(map[string]string{"org_name": orgName})
+	orgReq := httptest.NewRequest("POST", "/api/v1/auth/org/create", bytes.NewReader(orgBody))
+	orgReq.Header.Set("Content-Type", "application/json")
+	orgReq.Header.Set("Authorization", "Bearer "+onboardingToken)
+	orgRec := httptest.NewRecorder()
+	srv.ServeHTTP(orgRec, orgReq)
+	if orgRec.Code != http.StatusCreated {
+		t.Fatalf("org create: expected 201, got %d: %s", orgRec.Code, orgRec.Body.String())
+	}
+	var orgResp map[string]interface{}
+	json.NewDecoder(orgRec.Body).Decode(&orgResp)
+	orgID := orgResp["org"].(map[string]interface{})["id"].(string)
 
 	// Login
 	body, _ = json.Marshal(map[string]string{
 		"email":    email,
 		"password": "securepass123",
+		"org_id":   orgID,
 	})
 	req = httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -73,21 +87,33 @@ func TestRegister_PlatformAdminEmail(t *testing.T) {
 
 	s.SetPlatformAdminEmail(email)
 
-	// Register with the designated platform admin email (with org, uses flow 1)
+	// Register with the designated platform admin email
 	body, _ := json.Marshal(map[string]string{
 		"email":    email,
 		"password": "pass1234",
 		"name":     "Platform Admin",
-		"org_name": fmt.Sprintf("Org %d", ts),
 	})
-	req := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	regReq := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(body))
+	regReq.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	s.ServeHTTP(rec, req)
+	s.ServeHTTP(rec, regReq)
 	require.Equal(t, http.StatusCreated, rec.Code)
 
-	var resp map[string]any
-	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	var regResp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&regResp))
+	onboardingToken, ok := regResp["onboarding_token"].(string)
+	require.True(t, ok, "response should contain onboarding_token, got %v", regResp)
+
+	// Create org to get a proper JWT
+	orgBody, _ := json.Marshal(map[string]string{"org_name": fmt.Sprintf("Org %d", ts)})
+	orgReq := httptest.NewRequest("POST", "/api/v1/auth/org/create", bytes.NewReader(orgBody))
+	orgReq.Header.Set("Content-Type", "application/json")
+	orgReq.Header.Set("Authorization", "Bearer "+onboardingToken)
+	orgRec := httptest.NewRecorder()
+	s.ServeHTTP(orgRec, orgReq)
+	require.Equal(t, http.StatusCreated, orgRec.Code, "org create: %s", orgRec.Body.String())
+	var orgResp map[string]any
+	require.NoError(t, json.NewDecoder(orgRec.Body).Decode(&orgResp))
 
 	// Verify is_platform_admin is true in the DB
 	var dbFlag bool
@@ -99,8 +125,8 @@ func TestRegister_PlatformAdminEmail(t *testing.T) {
 
 	// Verify the issued JWT also carries the platform admin flag
 	issuer := auth.NewJWTIssuer("test-secret", 15*time.Minute)
-	token, ok := resp["token"].(string)
-	require.True(t, ok, "response should contain a token")
+	token, ok := orgResp["token"].(string)
+	require.True(t, ok, "org create response should contain a token")
 	claims, err := issuer.Validate(token)
 	require.NoError(t, err)
 	assert.True(t, claims.IsPlatformAdmin, "JWT should have is_platform_admin=true")

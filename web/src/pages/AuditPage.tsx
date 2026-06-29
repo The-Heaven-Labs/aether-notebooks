@@ -34,7 +34,7 @@ export function AuditPage() {
 
   useEffect(() => { setPage(0) }, [resourceTypeFilter, actionFilter, userFilter, dateFrom, dateTo])
 
-  const { data, isFetching, isLoading, error } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ['audit', page, resourceTypeFilter, actionFilter, userFilter, dateFrom, dateTo],
     queryFn: () => {
       const params = new URLSearchParams({

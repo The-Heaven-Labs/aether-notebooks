@@ -71,7 +71,7 @@ export function useAuthProvider(): AuthContextValue {
       localStorage.setItem('aether_user_name', user.name)
       localStorage.setItem('aether_user_email', user.email)
       localStorage.setItem('aether_org_name', org.name)
-      if (user.is_platform_admin) {
+      if ((user as { is_platform_admin?: boolean }).is_platform_admin) {
         localStorage.setItem('aether_is_platform_admin', 'true')
       } else {
         localStorage.removeItem('aether_is_platform_admin')

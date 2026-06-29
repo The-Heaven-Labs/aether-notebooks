@@ -162,7 +162,9 @@ func SubdomainMiddleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 					return
 				}
 				if errors.Is(err, pgx.ErrNoRows) {
-					writeError(w, http.StatusNotFound, "unknown organization")
+					// Unknown subdomain — pass through without org context.
+					// Routes that require an org will get it from the JWT claims.
+					next.ServeHTTP(w, r)
 					return
 				}
 				writeError(w, http.StatusInternalServerError, "failed to resolve organization")

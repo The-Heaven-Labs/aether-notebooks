@@ -11,6 +11,7 @@ interface AxisConfigPanelProps {
   showStack?: boolean
   showPieOptions?: boolean
   data?: { columns: { name: string; type?: string }[]; rows: unknown[][] }
+  groupValues?: string[]
 }
 
 function useGroupValues(config: ChartConfig, columns: string[], data?: { columns: { name: string; type?: string }[]; rows: unknown[][] }): string[] {
@@ -251,7 +252,7 @@ export function AxisConfigPanel({
           <div style={styles.section}>
             <div style={styles.sectionLabel}>Series colors</div>
             <div style={styles.colorRow}>
-              {groupValues.map((group, i) => {
+              {groupValues.map((group: string, i: number) => {
                 const defaultColor = CHART_COLORS[i % CHART_COLORS.length]
                 const currentColor = config.seriesColors?.[group] ?? defaultColor
                 return (

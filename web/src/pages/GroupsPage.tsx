@@ -309,16 +309,6 @@ export function GroupsPage() {
     enabled: isAdmin,
   })
 
-  const createGroup = useMutation({
-    mutationFn: (name: string) => api.post<Group>('/api/v1/groups', { name }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['groups'] })
-      setNewGroupName('')
-      setCreateError(null)
-    },
-    onError: (err: Error) => setCreateError(err.message),
-  })
-
   const updateGroup = useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) =>
       api.put<Group>(`/api/v1/groups/${id}`, { name }),

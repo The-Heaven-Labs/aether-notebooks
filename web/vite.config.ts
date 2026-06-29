@@ -26,22 +26,38 @@ export default defineConfig({
       '/api': {
         target: apiTarget,
         changeOrigin: false,
-        on: { proxyReq: (proxyReq, req) => proxyReq.setHeader('host', req.headers.host ?? apiTarget) }
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            proxyReq.setHeader('host', req.headers.host ?? apiTarget)
+          })
+        }
       },
       '/internal': {
         target: apiTarget,
         changeOrigin: false,
-        on: { proxyReq: (proxyReq, req) => proxyReq.setHeader('host', req.headers.host ?? apiTarget) }
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            proxyReq.setHeader('host', req.headers.host ?? apiTarget)
+          })
+        }
       },
       '/docs': {
         target: apiTarget,
         changeOrigin: false,
-        on: { proxyReq: (proxyReq, req) => proxyReq.setHeader('host', req.headers.host ?? apiTarget) }
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            proxyReq.setHeader('host', req.headers.host ?? apiTarget)
+          })
+        }
       },
       '/swagger.json': {
         target: apiTarget,
         changeOrigin: false,
-        on: { proxyReq: (proxyReq, req) => proxyReq.setHeader('host', req.headers.host ?? apiTarget) }
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            proxyReq.setHeader('host', req.headers.host ?? apiTarget)
+          })
+        }
       }
     }
   },

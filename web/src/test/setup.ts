@@ -58,7 +58,7 @@ HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
   lineJoin: 'miter' as CanvasLineJoin,
   lineDash: [],
   setLineDash: vi.fn(),
-})) as unknown as CanvasRenderingContext2D
+})) as unknown as typeof HTMLCanvasElement.prototype.getContext
 
 // Mock window.matchMedia for components using useMediaQuery
 Object.defineProperty(window, 'matchMedia', {

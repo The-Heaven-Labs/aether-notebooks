@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import { TimelineModule } from '../charts/TimelineChart'
-import { describe, test, expect } from 'vitest'
+import { test, expect } from 'vitest'
 
 // ECharts uses ResizeObserver
 globalThis.ResizeObserver = class {

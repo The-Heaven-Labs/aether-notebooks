@@ -1,10 +1,9 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, getChartColors, useChartColors, useRowsAsObjects, useAxisColumns, useGroupBySeries, detectAxisColumns } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, useAxisColumns, useGroupBySeries, detectAxisColumns } from './common'
 import { AxisConfigPanel } from './AxisConfigPanel'
 
 function BarChartComponent({ data, config }: ChartProps) {
-  const columns = useMemo(() => data.columns.map(c => c.name), [data.columns])
   const { xAxis, yAxes } = useAxisColumns(data, config)
   const chartData = useRowsAsObjects(data)
   const isStacked = config.chartType === 'stacked_bar'

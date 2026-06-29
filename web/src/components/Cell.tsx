@@ -15,7 +15,7 @@ import { HocuspocusProvider } from '@hocuspocus/provider'
 import { yCollab, ySyncFacet, YSyncConfig } from 'y-codemirror.next'
 import { OutputRenderer } from './OutputRenderer'
 import { MarkdownView } from './MarkdownCell'
-import type { Cell, Connector } from '../types'
+import type { Cell as APICell, Connector } from '../types'
 import type { ChartConfig } from '../charts'
 
 // Normalize chart config from backend (handles legacy key names from earlier create_chart calls)
@@ -23,7 +23,7 @@ function normalizeChartConfig(raw: unknown): ChartConfig | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const obj = raw as Record<string, unknown>
   return {
-    chartType: (obj.chartType ?? obj.type) as ChartConfig['chartType'] | undefined,
+    chartType: (obj.chartType ?? obj.type) as ChartConfig['chartType'],
     xAxis: (obj.xAxis ?? obj.x_column) as string | undefined,
     yAxis: (obj.yAxis ?? obj.y_columns) as string[] | undefined,
     title: obj.title as string | undefined,
@@ -186,7 +186,7 @@ export interface SaveState {
 }
 
 interface Props {
-  cell: Cell
+  cell: APICell
   connectors: Connector[]
   notebookId: string
   onRun: (cellId: string) => void
@@ -203,7 +203,7 @@ interface Props {
   saveState?: SaveState
   runAt?: Date
   metrics?: { connect_time_ms: number; query_time_ms: number; render_time_ms: number; total_time_ms: number }
-  onUpdateCellMeta?: (cellId: string, updates: Partial<Pick<Cell, 'source_visible' | 'outputs_hidden' | 'cell_collapsed' | 'slide_break' | 'title' | 'slug' | 'limit'>>) => void
+  onUpdateCellMeta?: (cellId: string, updates: Partial<Pick<APICell, 'source_visible' | 'outputs_hidden' | 'cell_collapsed' | 'slide_break' | 'title' | 'slug' | 'limit'>>) => void
   onChartConfigChange?: (cellId: string, config: ChartConfig) => void
   onViewModeChange?: (cellId: string, viewMode: 'table' | 'chart') => void
   onShowHistory?: (cellId: string) => void
@@ -243,7 +243,7 @@ export function focusCellEditorEnd(cellId: string) {
 }
 
 interface CodeEditorProps {
-  cell: Cell
+  cell: APICell
   notebookId: string
   onRun: (cellId: string) => void
   onSourceChange: (cellId: string, source: string) => void
@@ -255,7 +255,7 @@ interface CodeEditorProps {
   readOnly?: boolean
 }
 
-function languageExtension(cell: Cell, connector?: Connector) {
+function languageExtension(cell: APICell, connector?: Connector) {
   if (cell.language === 'javascript') return javascript()
   // Choose SQL dialect based on connector type
   const connType = connector?.type
@@ -359,7 +359,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
       // Activate yCollab with our config last (overrides yCollab's internal one)
       // so the observer's origin guard matches our transact origin above.
       view.dispatch({ effects: compartment.reconfigure([
-        ...yCollab(ytext, collab.provider.awareness),
+        yCollab(ytext, collab.provider.awareness),
         ySyncFacet.of(ySyncConfig),
       ]) })
     }
@@ -638,7 +638,7 @@ export const Cell = memo(function Cell({
               </button>
             )
           })()}
-          <button style={styles.actionBtn} onClick={() => onSwitchType(cell.id)} title={isCode ? 'Convert to Markdown cell' : 'Convert to SQL cell'} aria-label={isCode ? 'Convert to Markdown cell' : 'Convert to SQL cell'}>
+          <button style={styles.actionBtn} onClick={() => onSwitchType?.(cell.id)} title={isCode ? 'Convert to Markdown cell' : 'Convert to SQL cell'} aria-label={isCode ? 'Convert to Markdown cell' : 'Convert to SQL cell'}>
             {isCode ? 'MD' : 'SQL'}
           </button>
           {onMoveUp && <button style={styles.actionBtn} onClick={() => onMoveUp(cell.id)} aria-label="Move cell up"><ChevronUp size={11} /></button>}
@@ -706,7 +706,7 @@ export const Cell = memo(function Cell({
           >
             <ChevronRight size={11} />
           </button>
-          <button style={styles.actionBtn} onClick={() => onShowHistory(cell.id)} title="History" aria-label="Cell history">
+          <button style={styles.actionBtn} onClick={() => onShowHistory?.(cell.id)} title="History" aria-label="Cell history">
             <Clock size={11} />
           </button>
           {onAddToDashboard && (
@@ -905,9 +905,6 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap' as const,
-    '& p': { margin: 0, display: 'inline' },
-    '& strong': { fontWeight: 700 },
-    '& em': { fontStyle: 'italic' },
   },
 
   // Hover toolbar
