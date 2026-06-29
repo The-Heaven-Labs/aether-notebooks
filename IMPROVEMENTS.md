@@ -1,0 +1,94 @@
+- [x] When an unauthenticated user clicks a notebook link, it will be forwarded to the auth screen. After auth, it should be automatically forwarded to the page it wanted to go beforehand.
+- [x] The platform admin role is a bit obscure. Why does it exist, how it differs from a regular org admin? Also, how does a Org admin happens? The person that created the org automatically is admin?
+- [x] Add a configurable single number chart type
+- [x] Instead of letting any user open audit page and greet with the insufficient permission message, the menu should not appear when there are no permissions.
+- [x] Instead of letting users see in the list and open any dashboard to then green with insufficient permissions, it should follow the appearance rules of notebooks. Also, dashboards should appear in the general files page, inside folders and follow the permission system of notebooks
+- [x] From inside a notebook, an user nor the AI Agent can know who is the owner of the notebook nor the permissions applied to it.
+- [x] There should be clear indicators (and better yet, do not appear at all) when an user does not have access to a given connector
+- [x] It should be more traceable in audit the path from generating an invite link to someone joining an org (e.g, which invite was used, to be able to link to the invite generation)
+- [x] Change of permissions and its details should be logged to audit
+- [x] There should be a configurable chart for geo-things, e.g., showing a global map, a map of a given country with separations of state/city etc. It should support coordinates and names
+- [x] There should be a configurable sankey chart supported
+- [x] Add an "admin mode" toggle (in sidebar or header) for org admins. When enabled, admins bypass ACLs and see everything. When disabled, admins respect ACLs like regular users. This avoids the need to remove/re-add admin roles for troubleshooting.
+- [x] The list of users and groups will eventually be pretty big, so the select list for permissions will be really big (also the one to add members to a group). That being the case, refactor these to be searchable and performant even at high numbers (thousands of each).
+- [x] When you create a notebook and go back to the files/folders, the notebook doesn't immediately appear, a hard refresh is necessary to do so. It should automatically appear in this scenario.
+- [x] It should not be possible to create notebooks at root folder, only folders there, then notebooks inside the folders.
+- [x] Pressing back from a notebook should go back to the exact page you were before, e.g., if in the files, should go back to the same folder that was open before
+- [x] Buttons like edit, delete and permissions should be grayed-out for users that have no permission to do these actions in a given resource
+- [x] Pressing Ctrl + Enter (Or shift + Enter) in a markdown cell should render the markdown and leave edit mode
+- [x] It should not be possible to create notebooks on the folder `/`, only in folders after `/`. When in `/`, the new notebook button should not appear.
+- [x] Agent chat messages should render markdown
+- [x] I get an error trying chat when there are sql tools available to the agent: Error: llm call: llm error 400: {"error":{"message":"Error from provider (DeepSeek): Invalid schema for function 'siquel': schema must be a JSON Schema of 'type: "object"', got 'type: null'.","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}
+- [x] I can create tools of type built-in, which make no sense
+- [x] Tool list should be ordered by type, then alphabetically. Built-in should be last.
+- [x] The agent feature of tasks, when a task is complete in dark theme, the text disappears (or becomes the same color as the background).
+- [x] In the global agent modal, thinking between tool calls is disappearing.
+- [x] The global agent modal should be resizeable vertically
+- [x] When I refresh the page with an agent global modal happening, the chat continues as normal, but the tasks are gone in this scenario
+- [x] When I cancel the execution of the model while a task is in progress, this task keeps on spinning forever
+- [x] Typing /new on global agent modal creates a new chat, but the old tasks still appear
+- [x] Can't go back to past sessions in the global agent modal, error "Failed to load sessions"
+- [x] There is a scenario where the last 2 thinking blocks are expanded and with the same content in the global agent modal
+- [x] When the global agent modal is streaming a response, I cant scroll up to read something that has already passed
+- [x] The notebook Agent modal must enable making the panel bigger width wise (make the limit higher than currently)
+- [x] Agent modals (notebook and global) should show current token consumption and it should update as chat goes on
+- [x] Chat messages should have a hover effect that shows at what time exactly they happened
+- [x] It should be configurable in the chats (notebook and global) the thinking level/effort for the models. To do this, I think there should be configs for this at the model level
+- [x] The agent selector uses default OS styling, should be a custom app one
+- [x] There should be a permissioning system for potential problematic (not read-only) tool calls, e.g., the first time a tool is called, the user should be asked if want to proceed. Also, there should be a toggle to accept all by default (current behavior). Read-only tool calls should be accepted by default.
+- [x] In dark theme, for chart configs of charts that have lots of series, the background of the color is light, and also the color picker also is light-themed
+- [x] When creating a new session but was already on an empty session, it saves and empty session to the history. Empty sessions should be dropped.
+- [x] I can scroll up and read messages while new are coming in the notebook AI panel, but not in the global AI panel
+- [x] The global agent panel should have a way to "dock" to the right side of the page, which then would get similar to what the notebook panel is (but docking would work in any page)
+- [x] Global agent panel works in any page. Moving pages should not cancel the chat context, it should stay happening in background, and when going to another page it should automatically connect back to the chat and continue as nothing happened.
+- [x] The global agent panel should not block scroll on the page 
+- [x] Sometimes the scroll in the global agent will not be 100% following the last message streaming state, but seconds later it will catch up
+- [x] The metrics of token usage only appear after the whole turn ends. It should appear as soon as the user sends the first message and update dynamically for every new intermediate step of the chat
+- [x] When asking the agent to interact with charts, almost always it will not be able to handle labels. Not sure if it is a problem on the agent side or the tooling side. Sometimes it will not be able to produce a chart (chart will be blank, potentially wrong parameters?). The label part seem to be more prevalent in pie/donut charts. Perhaps add some way for the current tools to access if a chart has actual content or is blank?
+- [x] The chart title is on top/overrides the chart in some scenarios, there should be more space between it and the actual chart
+- [x] When refreshing a page with a docked open agent modal, it should scroll to the end of the chat instead of being at the top
+- [x] When the LLM chat gets long in a notebook page, the whole page slows down a lot
+- [x] If I use /new in global agent undocked, then dock, the docked will be with the previous chat open
+- [x] It seems cancel commands are not working in the global agent after page changing/refreshing, the chat continues in the background regardless of what I try. (It should be possible to have only one active chat at the same time)
+- [x] The default color theme for the application should be dark, not light
+- [x] The run_cell agent tool seem to not be automatically updating the screen, I needed to manually refresh the page to see the result
+- [x] Asked the agent to update a map chart to add labels to it. When it called update_chart, the page didnt scroll to focus the cell.
+- [x] When user refers to a cell by a number, it will always be the position. I asked the agent to update chart 12, and it updated the chart on the cell of position 13 instead.
+- [x] Custom tools should have an option to always ask for confirmation before execution
+- [x] Typing /new in agent chat then refreshing the page sends you back to the old content
+- [x] When in folder `/`, there seem to be no relevant ordering of notebooks. Make it be by edit date. Recently edited on top
+- [x] Agent panel knows how to send links, but doesnt know how to send direct links to the cells. It should, as sometimes it says things regarding specific cell changes, the links it send in these scenarios should be the direct links
+- [x] Metadata in notebooks/connectors/dashboards should also show last edit time, not only dates
+- [x] Since now the notebook ordering is by last edit, we can make the recent section be global, showing the same recents in all folders, instead of per folder
+- [x] It should be possible to export a notebook in the current state (e.g., respect cells collapsed, outputs collapsed, charts showing with current config, cell outputs etc) as HTML files (which would look exactly the same as the viewing page, but as a single file)
+- [x] Add a stacked area chart. Make it an option instead of a different chart type. Move the stacked bar chart to be a config of the bar instead of a new type aswell (if feasible. If not they can stay separate.)
+- [x] Group by in charts do not work everytime, e.g., this query, with x=hour, y=count(), groupby=service. Query: SELECT toStartOfHour (timestamp) as hour, service, count(*) FROM analytics.timeline_events GROUP BY hour, service;
+- [x] When the agent panel is open, there appear an icon for it, but it always has a +1, even where there is no one else with the notebook open
+- [x] There should be a button to delete a notebook while inside of it
+- [x] When in notebook, if I close the agent panel (docked) and refresh the page, the panel will be opened again
+- [x] Markdown table rendering in notebooks do not show row/column separators
+- [x] When refreshing a notebook page, it should take you back to the scrolling position you were before
+- [x] When asking the agent to create a new cell and change it to a chart, it will do so, but it will appear as a data table until refresh the page
+- [x] When resources are deleted, they should be in a Trash state for a configurable time (default 7 days) before ceasing to exist
+- [x] When moving agent panel from undocked to dock, I just got a websocket connection failure and lost the chat. The error toast was still in the chat but I could start a new conversation there though. 
+- [x] Color of markdown rendered tables in present mode, while in light theme is not correct, headers have white color, rest is dark. Make the present mode have a toggle for light/dark mode
+- [x] In present mode, currently content can be larger than the screen, which enables scrolling. During presentation, scrolling should not be an option. What can we do to improve this behavior? Use the brainstorming skill.
+- [x] It should be possible to create new notebooks in a given path from a "template" (perhaps cloning?). This should be doable via API.
+- [x] While editing an SSO provider, I can't leave secret as is, it errors out about the field being blank
+- [x] When SSO users login for the first time, it seems their home folder is not created
+- [x] It seems that SSO providers (both platform and org) are disappearing of the settings menu. SSO domains dont work on login, so likely being removed altogether, not only disappearing
+- [x] After restoring an item from the trash and going to the files, I need to hard refresh for it to appear in the notebooks list
+- [x] If a user has no rights, in the members page, other people's role should appear grayed out, just like it appears for yourself
+- [x] When creating an agent now, there are just too many tools to choose from, and it will have even more things with user-defined ones. What can we do? Perhaps have only one toggle for the built-in ones? What else?
+- [x] The copy link button for public links in notebooks is not working
+- [x] The public link view of notebooks is completely broken, no cell clear separation, content of outputs not showing, no charts
+- [x] When re-clicking the public link menu after having already created a link, it shows no links to revoke, only to create
+- [x] Logged in org B as platform admin, I can see content I created in org A
+- [x] A brand newly created org which no one had yet logged-in, already had another user there (that was created in other orgs), so likely the guardrails between orgs is not being used correctly.
+- [x] It should be possible to disable inviting people to orgs
+- [x] Registration should be subdomain-aware with a per-org toggle
+- [x] Remove legacy org_name registration flow (arbitrary org creation)
+- [x] Remove direct email invite endpoint (no email infrastructure)
+- [x] Rename viewer role to non-admin, remove unused editor/no_access roles
+- [ ] In the org creation modal after user registration, the create button do not capture the enter button
+- [ ]
