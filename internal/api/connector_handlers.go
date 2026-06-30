@@ -361,6 +361,14 @@ func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, c)
 }
 
+// @Summary Set default connector
+// @Description Set a connector as the default for the organization
+// @Tags connectors
+// @Param id path string true "Connector ID"
+// @Success 204
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /connectors/{id}/default [put]
 func (s *Server) handleSetDefaultConnector(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	id := r.PathValue("id")
@@ -467,7 +475,15 @@ func (s *Server) buildExecutor(connType models.ConnectorType, configEnc []byte) 
 	return driver.NewExecutor(plain)
 }
 
-// handleTestConnectorConfig tests a connection using raw config (before saving).
+// @Summary Test a connector configuration
+// @Description Test a database connection using raw config before saving
+// @Tags connectors
+// @Accept json
+// @Produce json
+// @Param request body object true "Connector details to test"
+// @Success 200 {object} map[string]any
+// @Security BearerAuth
+// @Router /connectors/test [post]
 func (s *Server) handleTestConnectorConfig(w http.ResponseWriter, r *http.Request) {
 	var req createConnectorRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -492,6 +508,16 @@ func (s *Server) handleTestConnectorConfig(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// @Summary List connector databases
+// @Description List all databases available through a connector
+// @Tags connectors
+// @Produce json
+// @Param id path string true "Connector ID"
+// @Success 200 {array} string
+// @Failure 403 {object} map[string]string
+// @Failure 502 {object} map[string]string
+// @Security BearerAuth
+// @Router /connectors/{id}/databases [get]
 func (s *Server) handleListConnectorDatabases(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	connID := r.PathValue("id")

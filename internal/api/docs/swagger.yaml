@@ -1,5 +1,21 @@
 basePath: /api/v1
 definitions:
+  api.adminCreateOrgRequest:
+    properties:
+      name:
+        type: string
+      slug:
+        type: string
+    type: object
+  api.auditListResponse:
+    properties:
+      entries:
+        items:
+          $ref: '#/definitions/audit.Entry'
+        type: array
+      total:
+        type: integer
+    type: object
   api.authResponse:
     properties:
       org:
@@ -35,6 +51,73 @@ definitions:
       password:
         type: string
     type: object
+  api.motdRequest:
+    properties:
+      content:
+        type: string
+      expires_at:
+        type: string
+      pages:
+        items:
+          type: string
+        type: array
+      priority:
+        type: integer
+      show_on_login:
+        type: boolean
+      title:
+        type: string
+      visibility:
+        type: string
+    type: object
+  api.providerResponse:
+    properties:
+      allowed_domains:
+        items:
+          type: string
+        type: array
+      auto_sync_groups:
+        type: boolean
+      client_id:
+        type: string
+      created_at:
+        type: string
+      discovery_url:
+        type: string
+      enabled:
+        type: boolean
+      get_user_info:
+        type: boolean
+      group_prefix:
+        type: string
+      groups_claim:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      provider_type:
+        type: string
+      scope:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      updated_at:
+        type: string
+    type: object
+  api.recentItem:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      type:
+        type: string
+      updated_at:
+        type: string
+    type: object
   api.registerRequest:
     properties:
       email:
@@ -42,6 +125,126 @@ definitions:
       name:
         type: string
       password:
+        type: string
+    type: object
+  api.ssoSettingsResponse:
+    properties:
+      sso_password_login:
+        type: boolean
+    type: object
+  audit.Entry:
+    properties:
+      action:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: integer
+      metadata:
+        additionalProperties: {}
+        type: object
+      org_id:
+        type: string
+      resource_id:
+        type: string
+      resource_name:
+        type: string
+      resource_parent_name:
+        type: string
+      resource_type:
+        type: string
+      user_email:
+        type: string
+      user_id:
+        type: string
+    type: object
+  models.Agent:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      folder_id:
+        type: string
+      id:
+        type: string
+      max_turns:
+        type: integer
+      mcp_server_ids:
+        items:
+          type: string
+        type: array
+      mcp_servers:
+        items:
+          $ref: '#/definitions/models.MCPServerOrg'
+        type: array
+      model_config_id:
+        type: string
+      model_config_params:
+        $ref: '#/definitions/models.JSONMap'
+      name:
+        type: string
+      org_id:
+        type: string
+      skill_ids:
+        items:
+          type: string
+        type: array
+      skills:
+        items:
+          $ref: '#/definitions/models.Skill'
+        type: array
+      subagent_model_config_id:
+        type: string
+      system_prompt:
+        type: string
+      tool_ids:
+        items:
+          type: string
+        type: array
+      tools:
+        items:
+          $ref: '#/definitions/models.Tool'
+        type: array
+      updated_at:
+        type: string
+    type: object
+  models.AgentSession:
+    properties:
+      agent_id:
+        type: string
+      created_at:
+        type: string
+      ended_at:
+        type: string
+      id:
+        type: string
+      max_turns:
+        type: integer
+      notebook_id:
+        type: string
+      title:
+        type: string
+      user_id:
+        type: string
+    type: object
+  models.AgentStatsDaily:
+    properties:
+      agent_id:
+        type: string
+      date:
+        type: string
+      messages_count:
+        type: integer
+      sessions_count:
+        type: integer
+      tokens_input:
+        type: integer
+      tokens_output:
+        type: integer
+      user_id:
         type: string
     type: object
   models.Connector:
@@ -136,6 +339,59 @@ definitions:
           type: string
         type: object
     type: object
+  models.JSONMap:
+    additionalProperties: {}
+    type: object
+  models.MCPServerOrg:
+    properties:
+      args:
+        items:
+          type: string
+        type: array
+      command:
+        type: string
+      created_at:
+        type: string
+      created_by:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      org_id:
+        type: string
+      type:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  models.ModelConfig:
+    properties:
+      base_url:
+        type: string
+      context_window:
+        type: integer
+      created_at:
+        type: string
+      created_by:
+        type: string
+      default_params:
+        $ref: '#/definitions/models.JSONMap'
+      folder_id:
+        type: string
+      id:
+        type: string
+      model:
+        type: string
+      name:
+        type: string
+      org_id:
+        type: string
+      provider:
+        type: string
+      updated_at:
+        type: string
+    type: object
   models.Notebook:
     properties:
       connector_id:
@@ -172,6 +428,64 @@ definitions:
       type:
         type: string
     type: object
+  models.Skill:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      folder_id:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      org_id:
+        type: string
+      system_prompt:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  models.Tool:
+    properties:
+      config:
+        $ref: '#/definitions/models.JSONMap'
+      created_at:
+        type: string
+      created_by:
+        type: string
+      description:
+        type: string
+      folder_id:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      org_id:
+        type: string
+      require_confirmation:
+        type: boolean
+      schema:
+        $ref: '#/definitions/models.JSONMap'
+      type:
+        $ref: '#/definitions/models.ToolType'
+      updated_at:
+        type: string
+    type: object
+  models.ToolType:
+    enum:
+    - builtin
+    - webhook
+    - sql_query
+    type: string
+    x-enum-varnames:
+    - ToolTypeBuiltin
+    - ToolTypeWebhook
+    - ToolTypeSQLQuery
   models.User:
     properties:
       created_at:
@@ -332,6 +646,851 @@ paths:
       summary: Update ACL
       tags:
       - permissions
+  /admin/motd:
+    get:
+      description: Get all MOTD messages including expired ones (admin only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List all MOTD (admin)
+      tags:
+      - motd
+    post:
+      consumes:
+      - application/json
+      description: Create a new Message of the Day (admin only)
+      parameters:
+      - description: MOTD message fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.motdRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create MOTD message
+      tags:
+      - motd
+  /admin/motd/{id}:
+    delete:
+      description: Delete an MOTD message (admin only)
+      parameters:
+      - description: MOTD ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete MOTD message
+      tags:
+      - motd
+    put:
+      consumes:
+      - application/json
+      description: Update an existing MOTD message (admin only)
+      parameters:
+      - description: MOTD ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Updated MOTD fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.motdRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update MOTD message
+      tags:
+      - motd
+  /admin/sso/providers:
+    get:
+      description: List all platform-level SSO providers
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List SSO providers
+      tags:
+      - sso
+    post:
+      consumes:
+      - application/json
+      description: Create a new platform-level SSO provider
+      parameters:
+      - description: SSO provider details
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/api.providerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create SSO provider
+      tags:
+      - sso
+  /admin/sso/providers/{id}:
+    delete:
+      description: Delete a platform-level SSO provider
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete SSO provider
+      tags:
+      - sso
+    put:
+      consumes:
+      - application/json
+      description: Update a platform-level SSO provider
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: SSO provider details
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.providerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update SSO provider
+      tags:
+      - sso
+  /admin/sso/providers/{id}/test:
+    post:
+      description: Test connectivity to an OIDC provider by fetching its discovery
+        document
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test SSO provider
+      tags:
+      - sso
+  /agents:
+    get:
+      description: List all agents for the current organization
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.Agent'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List agents
+      tags:
+      - agents
+    post:
+      consumes:
+      - application/json
+      description: Create a new agent configuration
+      parameters:
+      - description: Agent details
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create an agent
+      tags:
+      - agents
+  /agents/{id}:
+    delete:
+      description: Delete an agent configuration
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete an agent
+      tags:
+      - agents
+    get:
+      description: Get a single agent by ID
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Agent'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get an agent
+      tags:
+      - agents
+    put:
+      consumes:
+      - application/json
+      description: Update an existing agent configuration
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Agent updates
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update an agent
+      tags:
+      - agents
+  /agents/{id}/session:
+    post:
+      consumes:
+      - application/json
+      description: Create a new chat session with an agent
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Session details
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create an agent session
+      tags:
+      - agents
+  /agents/{id}/sessions:
+    get:
+      description: List all sessions for a given agent
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List agent sessions
+      tags:
+      - agents
+  /agents/{id}/stats:
+    get:
+      description: Get usage statistics for a specific agent
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.AgentStatsDaily'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get agent stats by agent
+      tags:
+      - agents
+  /agents/stats:
+    get:
+      description: Get usage statistics for all agents in the organization
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.AgentStatsDaily'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get agent stats
+      tags:
+      - agents
+  /api/v1/admin/orgs:
+    get:
+      description: Returns all organizations with member counts
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List all organizations
+      tags:
+      - admin
+    post:
+      consumes:
+      - application/json
+      description: Create a new organization as a platform admin
+      parameters:
+      - description: Organization details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.adminCreateOrgRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create organization
+      tags:
+      - admin
+  /api/v1/admin/users:
+    get:
+      description: Returns all users across all organizations
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List all users
+      tags:
+      - admin
+  /api/v1/admin/users/{id}:
+    put:
+      consumes:
+      - application/json
+      description: Update a user's platform admin status
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Update payload
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update user
+      tags:
+      - admin
+  /api/v1/audit:
+    get:
+      description: Returns audit log entries for the organization
+      parameters:
+      - description: Maximum number of entries (max 500)
+        in: query
+        name: limit
+        type: integer
+      - description: Number of entries to skip
+        in: query
+        name: offset
+        type: integer
+      - description: Filter by action
+        in: query
+        name: action
+        type: string
+      - description: Filter by user ID
+        in: query
+        name: user_id
+        type: string
+      - description: Filter by user email
+        in: query
+        name: user
+        type: string
+      - description: Filter by resource type
+        in: query
+        name: resource_type
+        type: string
+      - description: Filter by resource ID
+        in: query
+        name: resource_id
+        type: string
+      - description: Filter by start date
+        in: query
+        name: from
+        type: string
+      - description: Filter by end date
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.auditListResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List audit logs
+      tags:
+      - audit
+  /api/v1/public/{token}:
+    get:
+      description: Returns a publicly shared notebook or dashboard by token
+      parameters:
+      - description: Public sharing token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get public resource
+      tags:
+      - public
+  /api/v1/recent:
+    get:
+      description: Returns recently accessed notebooks, dashboards, and connectors
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/api.recentItem'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List recent items
+      tags:
+      - recent
+  /api/v1/ws/notebooks/{id}:
+    get:
+      description: WebSocket connection for real-time notebook collaboration
+      parameters:
+      - description: Notebook ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "101":
+          description: Switching Protocols
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Notebook WebSocket
+      tags:
+      - websocket
+  /attachments/{id}:
+    delete:
+      description: Delete a file attachment by ID
+      parameters:
+      - description: Attachment ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete attachment
+      tags:
+      - attachments
+    get:
+      description: Download a file attachment by ID
+      parameters:
+      - description: Attachment ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get attachment
+      tags:
+      - attachments
+  /auth/config:
+    get:
+      description: Returns whether self-registration is disabled (unauthenticated)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+      summary: Registration status
+      tags:
+      - sso
   /auth/login:
     post:
       consumes:
@@ -366,6 +1525,137 @@ paths:
       summary: Login with email and password
       tags:
       - auth
+  /auth/oidc/{provider}/callback:
+    get:
+      description: Handle the OIDC callback after provider authentication
+      parameters:
+      - description: OIDC Provider ID
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Authorization code
+        in: query
+        name: code
+        required: true
+        type: string
+      - description: State parameter
+        in: query
+        name: state
+        required: true
+        type: string
+      responses:
+        "302":
+          description: Found
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: OIDC callback
+      tags:
+      - auth
+  /auth/oidc/{provider}/login:
+    get:
+      description: Initiate an OIDC login flow for the given provider
+      parameters:
+      - description: OIDC Provider ID
+        in: path
+        name: provider
+        required: true
+        type: string
+      responses:
+        "302":
+          description: Found
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: OIDC login
+      tags:
+      - auth
+  /auth/org/create:
+    post:
+      consumes:
+      - application/json
+      description: Create a new organization (requires onboarding token)
+      parameters:
+      - description: Organization details
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create organization
+      tags:
+      - orgs
+  /auth/org/join:
+    post:
+      consumes:
+      - application/json
+      description: Join an organization via invite token or invite link token (requires
+        onboarding token)
+      parameters:
+      - description: Invite details
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Join organization
+      tags:
+      - orgs
   /auth/register:
     post:
       consumes:
@@ -400,6 +1690,34 @@ paths:
       summary: Register a new user
       tags:
       - auth
+  /auth/sso-providers:
+    get:
+      description: Returns SSO providers matching the email's domain (unauthenticated,
+        rate-limited)
+      parameters:
+      - description: User email to probe for SSO providers
+        in: query
+        name: email
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+        "429":
+          description: Too Many Requests
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Probe SSO providers
+      tags:
+      - sso
   /connectors:
     get:
       description: List all connectors for the current organization
@@ -541,6 +1859,64 @@ paths:
       summary: Update a connector
       tags:
       - connectors
+  /connectors/{id}/databases:
+    get:
+      description: List all databases available through a connector
+      parameters:
+      - description: Connector ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: string
+            type: array
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List connector databases
+      tags:
+      - connectors
+  /connectors/{id}/default:
+    put:
+      description: Set a connector as the default for the organization
+      parameters:
+      - description: Connector ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set default connector
+      tags:
+      - connectors
   /connectors/{id}/schema:
     get:
       description: Get the database schema for a connector
@@ -601,6 +1977,31 @@ paths:
       security:
       - BearerAuth: []
       summary: Test a connector
+      tags:
+      - connectors
+  /connectors/test:
+    post:
+      consumes:
+      - application/json
+      description: Test a database connection using raw config before saving
+      parameters:
+      - description: Connector details to test
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test a connector configuration
       tags:
       - connectors
   /dashboards:
@@ -702,6 +2103,153 @@ paths:
       security:
       - BearerAuth: []
       summary: Get a dashboard
+      tags:
+      - dashboards
+    put:
+      consumes:
+      - application/json
+      description: Update a dashboard's title, settings, or folder
+      parameters:
+      - description: Dashboard ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Dashboard updates
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Dashboard'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a dashboard
+      tags:
+      - dashboards
+  /dashboards/{id}/permissions:
+    get:
+      description: Get the current user's permissions for a dashboard
+      parameters:
+      - description: Dashboard ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get dashboard permissions
+      tags:
+      - dashboards
+  /dashboards/{id}/share:
+    delete:
+      description: Revoke the public share link for a dashboard
+      parameters:
+      - description: Dashboard ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Revoke dashboard share link
+      tags:
+      - dashboards
+    get:
+      description: Get the public share link for a dashboard, if one exists
+      parameters:
+      - description: Dashboard ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Get dashboard share link
+      tags:
+      - dashboards
+    post:
+      description: Create or get a public share link for a dashboard
+      parameters:
+      - description: Dashboard ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Share a dashboard
       tags:
       - dashboards
   /dashboards/{id}/widgets:
@@ -810,6 +2358,19 @@ paths:
       summary: Update a widget
       tags:
       - dashboards
+  /docs:
+    get:
+      description: Serves the Swagger UI documentation page
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+      summary: Swagger UI
+      tags:
+      - docs
   /folders:
     get:
       description: List folders and resources at the root level
@@ -947,6 +2508,35 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a folder
+      tags:
+      - folders
+  /folders/{id}/ancestors:
+    get:
+      description: Get the ancestor chain for a folder (root first, leaf last)
+      parameters:
+      - description: Folder ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get folder ancestors
       tags:
       - folders
   /groups:
@@ -1182,6 +2772,82 @@ paths:
       summary: List home folders
       tags:
       - folders
+  /internal/auth/validate:
+    get:
+      description: Validates a JWT token and returns user info (internal relay endpoint)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Validate authentication
+      tags:
+      - internal
+  /internal/yjs/{notebook_id}:
+    get:
+      description: Returns the Yjs document state for a notebook (internal relay endpoint)
+      parameters:
+      - description: Notebook ID
+        in: path
+        name: notebook_id
+        required: true
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get Yjs document
+      tags:
+      - internal
+    put:
+      consumes:
+      - application/octet-stream
+      description: Stores the Yjs document state for a notebook (internal relay endpoint)
+      parameters:
+      - description: Notebook ID
+        in: path
+        name: notebook_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Update Yjs document
+      tags:
+      - internal
   /mcp-servers:
     get:
       description: List all MCP servers for the organization
@@ -1327,6 +2993,34 @@ paths:
       summary: Update an MCP server
       tags:
       - mcp-servers
+  /mcp-servers/{id}/test:
+    post:
+      description: Test connectivity to an MCP server
+      parameters:
+      - description: MCP Server ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test an MCP server
+      tags:
+      - mcp-servers
   /members:
     get:
       description: List all members of the current organization
@@ -1350,7 +3044,6 @@ paths:
       summary: List members
       tags:
       - members
-  /members/invite:
     post:
       consumes:
       - application/json
@@ -1378,6 +3071,135 @@ paths:
       summary: Invite a member
       tags:
       - members
+  /members/{user_id}:
+    delete:
+      description: Remove a member from the organization
+      parameters:
+      - description: User ID
+        in: path
+        name: user_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove a member
+      tags:
+      - members
+    put:
+      consumes:
+      - application/json
+      description: Update a member's role in the organization
+      parameters:
+      - description: User ID
+        in: path
+        name: user_id
+        required: true
+        type: string
+      - description: New role
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update member role
+      tags:
+      - members
+  /members/invite:
+    post:
+      consumes:
+      - application/json
+      description: Create an email invite for a specific user (org admin only)
+      parameters:
+      - description: Invite details
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create email invite
+      tags:
+      - orgs
+  /members/invite-link:
+    post:
+      consumes:
+      - application/json
+      description: Create a shareable invite link (org admin only)
+      parameters:
+      - description: Invite link details
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create invite link
+      tags:
+      - orgs
   /model-configs:
     get:
       description: List all model configurations for the organization
@@ -1433,6 +3255,54 @@ paths:
       tags:
       - model-configs
   /model-configs/{id}:
+    delete:
+      description: Delete a model configuration
+      parameters:
+      - description: Model Config ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a model config
+      tags:
+      - model-configs
+    get:
+      description: Get a model configuration by ID
+      parameters:
+      - description: Model Config ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.ModelConfig'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a model config
+      tags:
+      - model-configs
     put:
       consumes:
       - application/json
@@ -1475,6 +3345,58 @@ paths:
       summary: Update a model config
       tags:
       - model-configs
+  /model-configs/{id}/test:
+    post:
+      description: Test a model configuration by sending a test prompt
+      parameters:
+      - description: Model Config ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test a model config
+      tags:
+      - model-configs
+  /motd:
+    get:
+      description: Get active Message of the Day messages for the current user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List MOTD messages
+      tags:
+      - motd
   /notebooks:
     get:
       description: List all notebooks for the current organization
@@ -1686,6 +3608,306 @@ paths:
       summary: Export a notebook
       tags:
       - notebooks
+  /notebooks/{id}/permissions:
+    get:
+      description: Get the current user's permissions for a notebook
+      parameters:
+      - description: Notebook ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get notebook permissions
+      tags:
+      - notebooks
+  /notebooks/{id}/share:
+    delete:
+      description: Revoke the public share link for a notebook
+      parameters:
+      - description: Notebook ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Revoke notebook share link
+      tags:
+      - notebooks
+    get:
+      description: Get the public share link for a notebook, if one exists
+      parameters:
+      - description: Notebook ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "204":
+          description: No Content
+      security:
+      - BearerAuth: []
+      summary: Get notebook share link
+      tags:
+      - notebooks
+    post:
+      description: Create or get a public share link for a notebook
+      parameters:
+      - description: Notebook ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Share a notebook
+      tags:
+      - notebooks
+  /notebooks/{id}/snapshots:
+    get:
+      description: List all snapshots for a notebook
+      parameters:
+      - description: Notebook ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List snapshots
+      tags:
+      - cells
+    post:
+      consumes:
+      - application/json
+      description: Create a named snapshot of a notebook
+      parameters:
+      - description: Notebook ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create snapshot
+      tags:
+      - cells
+  /notebooks/{id}/snapshots/{snapshot_id}/diff:
+    get:
+      description: Show diff between two snapshots of a notebook
+      parameters:
+      - description: Notebook ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Snapshot ID
+        in: path
+        name: snapshot_id
+        required: true
+        type: string
+      - description: Snapshot ID to compare against
+        in: query
+        name: against
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Snapshot diff
+      tags:
+      - cells
+  /notebooks/{id}/snapshots/{snapshot_id}/restore:
+    post:
+      description: Restore a notebook to a previous snapshot state
+      parameters:
+      - description: Notebook ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Snapshot ID
+        in: path
+        name: snapshot_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Restore snapshot
+      tags:
+      - cells
+  /notebooks/{notebook_id}/attachments:
+    get:
+      description: List all file attachments for a notebook
+      parameters:
+      - description: Notebook ID
+        in: path
+        name: notebook_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List attachments
+      tags:
+      - attachments
+    post:
+      consumes:
+      - multipart/form-data
+      description: Upload a file attachment to a notebook
+      parameters:
+      - description: Notebook ID
+        in: path
+        name: notebook_id
+        required: true
+        type: string
+      - description: File to upload
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upload attachment
+      tags:
+      - attachments
   /notebooks/{notebook_id}/cells:
     post:
       consumes:
@@ -1874,6 +4096,79 @@ paths:
       summary: Execute a cell
       tags:
       - cells
+  /notebooks/{notebook_id}/cells/{cell_id}/versions:
+    get:
+      description: Get version history for a specific cell
+      parameters:
+      - description: Notebook ID
+        in: path
+        name: notebook_id
+        required: true
+        type: string
+      - description: Cell ID
+        in: path
+        name: cell_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List cell versions
+      tags:
+      - cells
+  /notebooks/{notebook_id}/cells/{cell_id}/versions/{version_id}/restore:
+    post:
+      description: Restore a cell to a previous version
+      parameters:
+      - description: Notebook ID
+        in: path
+        name: notebook_id
+        required: true
+        type: string
+      - description: Cell ID
+        in: path
+        name: cell_id
+        required: true
+        type: string
+      - description: Version ID
+        in: path
+        name: version_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Restore cell version
+      tags:
+      - cells
   /notebooks/{notebook_id}/schedules:
     get:
       description: List all schedules for a notebook
@@ -1968,6 +4263,184 @@ paths:
       summary: Import a notebook
       tags:
       - notebooks
+  /org/invitations:
+    get:
+      description: Get the invitation settings for the organization
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get org invitation settings
+      tags:
+      - orgs
+    put:
+      consumes:
+      - application/json
+      description: Update the invitation settings for the organization
+      parameters:
+      - description: Invitation settings
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update org invitation settings
+      tags:
+      - orgs
+  /org/registration:
+    get:
+      description: Get the registration settings for the organization
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get org registration settings
+      tags:
+      - orgs
+    put:
+      consumes:
+      - application/json
+      description: Update the registration settings for the organization
+      parameters:
+      - description: Registration settings
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update org registration settings
+      tags:
+      - orgs
+  /org/sharing:
+    get:
+      description: Get the public sharing settings for the organization
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get org sharing settings
+      tags:
+      - orgs
+    put:
+      consumes:
+      - application/json
+      description: Update the public sharing settings for the organization
+      parameters:
+      - description: Sharing settings
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update org sharing settings
+      tags:
+      - orgs
+  /public/motd:
+    get:
+      description: Get MOTD messages visible on the login page (public)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+      summary: List login MOTD
+      tags:
+      - motd
   /schedules/{id}:
     delete:
       description: Delete a schedule
@@ -2017,6 +4490,450 @@ paths:
       summary: Get a schedule
       tags:
       - schedules
+    put:
+      consumes:
+      - application/json
+      description: Update a schedule's cron expression, enabled status, or parameter
+        overrides
+      parameters:
+      - description: Schedule ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Schedule updates
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a schedule
+      tags:
+      - schedules
+  /sessions/{session_id}:
+    get:
+      description: Get a single agent session by ID
+      parameters:
+      - description: Session ID
+        in: path
+        name: session_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.AgentSession'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a session
+      tags:
+      - agents
+  /sessions/{session_id}/messages:
+    get:
+      description: Get all messages for a given session
+      parameters:
+      - description: Session ID
+        in: path
+        name: session_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get session messages
+      tags:
+      - agents
+  /sessions/{session_id}/title:
+    patch:
+      consumes:
+      - application/json
+      description: Update the title of an agent session
+      parameters:
+      - description: Session ID
+        in: path
+        name: session_id
+        required: true
+        type: string
+      - description: Title update
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update session title
+      tags:
+      - agents
+  /sso/platform-providers:
+    get:
+      description: List all platform-scoped SSO providers with enabled_for_org status
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List platform SSO providers
+      tags:
+      - sso
+  /sso/platform-providers/{id}/enable:
+    delete:
+      description: Disable a platform-level SSO provider for the caller's org
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Disable platform SSO provider
+      tags:
+      - sso
+    post:
+      description: Enable a platform-level SSO provider for the caller's org
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Enable platform SSO provider
+      tags:
+      - sso
+  /sso/providers:
+    get:
+      description: List all org-scoped SSO providers for the caller's org
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List org SSO providers
+      tags:
+      - sso
+    post:
+      consumes:
+      - application/json
+      description: Create an org-scoped SSO provider for the caller's org
+      parameters:
+      - description: SSO provider details
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/api.providerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create org SSO provider
+      tags:
+      - sso
+  /sso/providers/{id}:
+    delete:
+      description: Delete an org-scoped SSO provider
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete org SSO provider
+      tags:
+      - sso
+    put:
+      consumes:
+      - application/json
+      description: Update an org-scoped SSO provider
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: SSO provider details
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.providerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update org SSO provider
+      tags:
+      - sso
+  /sso/providers/test:
+    post:
+      consumes:
+      - application/json
+      description: Test an OIDC provider configuration by fetching its discovery document
+      parameters:
+      - description: Provider test details
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test SSO provider
+      tags:
+      - sso
+  /sso/settings:
+    get:
+      description: Get the SSO settings for the caller's org
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ssoSettingsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get org SSO settings
+      tags:
+      - sso
+    put:
+      consumes:
+      - application/json
+      description: Update the SSO settings for the caller's org
+      parameters:
+      - description: SSO settings
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ssoSettingsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update org SSO settings
+      tags:
+      - sso
+  /swagger.json:
+    get:
+      description: Returns the OpenAPI specification in JSON format
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Swagger JSON
+      tags:
+      - docs
   /templates:
     get:
       description: List all notebook templates
@@ -2167,6 +5084,252 @@ paths:
       summary: Delete a token
       tags:
       - tokens
+  /tools:
+    get:
+      description: List all tools for the organization
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List tools
+      tags:
+      - tools
+    post:
+      consumes:
+      - application/json
+      description: Create a new tool configuration
+      parameters:
+      - description: Tool details
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a tool
+      tags:
+      - tools
+  /tools/{id}:
+    delete:
+      description: Delete a tool configuration
+      parameters:
+      - description: Tool ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a tool
+      tags:
+      - tools
+    get:
+      description: Get a tool by ID
+      parameters:
+      - description: Tool ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Tool'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a tool
+      tags:
+      - tools
+    put:
+      consumes:
+      - application/json
+      description: Update a tool configuration
+      parameters:
+      - description: Tool ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Tool updates
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a tool
+      tags:
+      - tools
+  /tools/{id}/test:
+    post:
+      description: Test a tool configuration (webhook or sql_query)
+      parameters:
+      - description: Tool ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test a tool
+      tags:
+      - tools
+  /trash:
+    get:
+      description: List all trashed items (notebooks, connectors, dashboards)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List trash
+      tags:
+      - notebooks
+  /trash/restore:
+    post:
+      consumes:
+      - application/json
+      description: Restore a trashed notebook, connector, or dashboard
+      parameters:
+      - description: Restore details with type and id
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Restore from trash
+      tags:
+      - notebooks
   /users/me:
     get:
       description: Get the currently authenticated user's information
@@ -2223,6 +5386,66 @@ paths:
       summary: Update current user
       tags:
       - users
+  /users/me/home:
+    post:
+      description: Create the current user's home folder if it doesn't exist
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Ensure home folder
+      tags:
+      - folders
+  /ws/agents/{session_id}:
+    get:
+      description: WebSocket endpoint for real-time agent chat
+      parameters:
+      - description: Session ID
+        in: path
+        name: session_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "101":
+          description: Switching Protocols
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Agent WebSocket
+      tags:
+      - agents
 securityDefinitions:
   BearerAuth:
     description: Enter "Bearer {token}"

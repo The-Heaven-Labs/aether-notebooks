@@ -58,16 +58,15 @@ func (h *modelConfigHandlers) handleList(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, configs)
 }
 
-// @Summary Create a model config
-// @Description Create a new model configuration
+// @Summary Get a model config
+// @Description Get a model configuration by ID
 // @Tags model-configs
-// @Accept json
 // @Produce json
-// @Param request body object true "Model config details"
-// @Success 201 {object} map[string]string
-// @Failure 400 {object} map[string]string
+// @Param id path string true "Model Config ID"
+// @Success 200 {object} models.ModelConfig
+// @Failure 404 {object} map[string]string
 // @Security BearerAuth
-// @Router /model-configs [post]
+// @Router /model-configs/{id} [get]
 func (h *modelConfigHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
@@ -97,6 +96,16 @@ func (h *modelConfigHandlers) handleGet(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, c)
 }
 
+// @Summary Create a model config
+// @Description Create a new model configuration
+// @Tags model-configs
+// @Accept json
+// @Produce json
+// @Param request body object true "Model config details"
+// @Success 201 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /model-configs [post]
 func (h *modelConfigHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req struct {
@@ -227,6 +236,14 @@ func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]string{"id": cfgID})
 }
 
+// @Summary Delete a model config
+// @Description Delete a model configuration
+// @Tags model-configs
+// @Param id path string true "Model Config ID"
+// @Success 204
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /model-configs/{id} [delete]
 func (h *modelConfigHandlers) handleDelete(w http.ResponseWriter, r *http.Request) {
 	cfgID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
@@ -244,6 +261,16 @@ func (h *modelConfigHandlers) handleDelete(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusNoContent, nil)
 }
 
+// @Summary Test a model config
+// @Description Test a model configuration by sending a test prompt
+// @Tags model-configs
+// @Produce json
+// @Param id path string true "Model Config ID"
+// @Success 200 {object} map[string]any
+// @Failure 404 {object} map[string]string
+// @Failure 502 {object} map[string]string
+// @Security BearerAuth
+// @Router /model-configs/{id}/test [post]
 func (h *modelConfigHandlers) handleTest(w http.ResponseWriter, r *http.Request) {
 	cfgID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())

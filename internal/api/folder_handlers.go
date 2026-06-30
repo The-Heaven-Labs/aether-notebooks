@@ -894,6 +894,15 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, contents)
 }
 
+// @Summary Get folder ancestors
+// @Description Get the ancestor chain for a folder (root first, leaf last)
+// @Tags folders
+// @Produce json
+// @Param id path string true "Folder ID"
+// @Success 200 {array} object
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /folders/{id}/ancestors [get]
 func (s *Server) handleGetFolderAncestors(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	folderID := r.PathValue("id")
@@ -1115,8 +1124,15 @@ func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, folder)
 }
 
-// handleEnsureHomeFolder creates the user's home folder if it doesn't already exist.
-// This allows home folder creation to be triggered via API without requiring login.
+// @Summary Ensure home folder
+// @Description Create the current user's home folder if it doesn't exist
+// @Tags folders
+// @Produce json
+// @Success 200 {object} map[string]string
+// @Success 201 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Security BearerAuth
+// @Router /users/me/home [post]
 func (s *Server) handleEnsureHomeFolder(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()

@@ -102,6 +102,16 @@ func levenshteinDistance(a, b string) int {
 }
 
 // handleListCellVersions returns all versions for a cell, newest first.
+// @Summary List cell versions
+// @Description Get version history for a specific cell
+// @Tags cells
+// @Produce json
+// @Param notebook_id path string true "Notebook ID"
+// @Param cell_id path string true "Cell ID"
+// @Success 200 {array} map[string]any
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{notebook_id}/cells/{cell_id}/versions [get]
 func (s *Server) handleListCellVersions(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("notebook_id")
@@ -152,6 +162,17 @@ func (s *Server) handleListCellVersions(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleRestoreCellVersion restores a cell to a previous version source.
+// @Summary Restore cell version
+// @Description Restore a cell to a previous version
+// @Tags cells
+// @Produce json
+// @Param notebook_id path string true "Notebook ID"
+// @Param cell_id path string true "Cell ID"
+// @Param version_id path string true "Version ID"
+// @Success 200 {object} map[string]any
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{notebook_id}/cells/{cell_id}/versions/{version_id}/restore [post]
 func (s *Server) handleRestoreCellVersion(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("notebook_id")
@@ -361,6 +382,16 @@ func computeSnapshotChanges(prev, curr *models.NotebookSnapshot) *models.Snapsho
 	return changes
 }
 
+// @Summary Create snapshot
+// @Description Create a named snapshot of a notebook
+// @Tags cells
+// @Accept json
+// @Produce json
+// @Param id path string true "Notebook ID"
+// @Success 201 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{id}/snapshots [post]
 func (s *Server) handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("id")
@@ -382,6 +413,15 @@ func (s *Server) handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, snap)
 }
 
+// @Summary List snapshots
+// @Description List all snapshots for a notebook
+// @Tags cells
+// @Produce json
+// @Param id path string true "Notebook ID"
+// @Success 200 {array} map[string]any
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{id}/snapshots [get]
 func (s *Server) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("id")
@@ -445,6 +485,16 @@ func (s *Server) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, snaps)
 }
 
+// @Summary Restore snapshot
+// @Description Restore a notebook to a previous snapshot state
+// @Tags cells
+// @Produce json
+// @Param id path string true "Notebook ID"
+// @Param snapshot_id path string true "Snapshot ID"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{id}/snapshots/{snapshot_id}/restore [post]
 func (s *Server) handleRestoreSnapshot(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("id")
@@ -472,6 +522,17 @@ func (s *Server) handleRestoreSnapshot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "restored"})
 }
 
+// @Summary Snapshot diff
+// @Description Show diff between two snapshots of a notebook
+// @Tags cells
+// @Produce json
+// @Param id path string true "Notebook ID"
+// @Param snapshot_id path string true "Snapshot ID"
+// @Param against query string false "Snapshot ID to compare against"
+// @Success 200 {object} map[string]any
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{id}/snapshots/{snapshot_id}/diff [get]
 func (s *Server) handleSnapshotDiff(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("id")

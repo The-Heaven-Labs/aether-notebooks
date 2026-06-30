@@ -12,6 +12,14 @@ type recentItem struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// @Summary List recent items
+// @Description Returns recently accessed notebooks, dashboards, and connectors
+// @Tags recent
+// @Produce json
+// @Success 200 {array} recentItem
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /api/v1/recent [get]
 func (s *Server) handleGetRecent(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()

@@ -68,6 +68,15 @@ func (s *Server) userEmail(ctx context.Context, userID string) string {
 	return email
 }
 
+// @Summary Notebook WebSocket
+// @Description WebSocket connection for real-time notebook collaboration
+// @Tags websocket
+// @Produce json
+// @Param id path string true "Notebook ID"
+// @Success 101 {object} map[string]any
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /api/v1/ws/notebooks/{id} [get]
 func (s *Server) handleNotebookWS(w http.ResponseWriter, r *http.Request) {
 	nbID := r.PathValue("id")
 	conn, err := upgrader.Upgrade(w, r, nil)

@@ -250,9 +250,15 @@ func (h *mcpServerHandlers) handleDelete(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusNoContent, nil)
 }
 
-// handleTestMCPServer tests connectivity to an MCP server.
-// For HTTP servers, it attempts to reach the server's base URL.
-// For stdio servers, testing is not supported.
+// @Summary Test an MCP server
+// @Description Test connectivity to an MCP server
+// @Tags mcp-servers
+// @Produce json
+// @Param id path string true "MCP Server ID"
+// @Success 200 {object} map[string]any
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /mcp-servers/{id}/test [post]
 func (h *mcpServerHandlers) handleTestMCPServer(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())

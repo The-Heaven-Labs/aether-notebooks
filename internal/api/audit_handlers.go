@@ -12,6 +12,23 @@ type auditListResponse struct {
 	Total   int           `json:"total"`
 }
 
+// @Summary List audit logs
+// @Description Returns audit log entries for the organization
+// @Tags audit
+// @Produce json
+// @Param limit query int false "Maximum number of entries (max 500)"
+// @Param offset query int false "Number of entries to skip"
+// @Param action query string false "Filter by action"
+// @Param user_id query string false "Filter by user ID"
+// @Param user query string false "Filter by user email"
+// @Param resource_type query string false "Filter by resource type"
+// @Param resource_id query string false "Filter by resource ID"
+// @Param from query string false "Filter by start date"
+// @Param to query string false "Filter by end date"
+// @Success 200 {object} auditListResponse
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /api/v1/audit [get]
 func (s *Server) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()

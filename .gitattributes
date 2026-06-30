@@ -1,0 +1,12 @@
+# Go
+**/*.go linguist-language=Go
+
+# TypeScript/JavaScript
+**/*.ts linguist-language=TypeScript
+**/*.tsx linguist-language=TypeScript
+**/*.js linguist-language=JavaScript
+
+# Mark generated docs
+internal/api/docs/docs.go linguist-generated=true
+internal/api/docs/swagger.json linguist-generated=true
+internal/api/docs/swagger.yaml linguist-generated=true

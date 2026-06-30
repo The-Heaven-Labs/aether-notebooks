@@ -84,6 +84,13 @@ func (s *Server) callbackURL(r *http.Request, providerID string) string {
 	return fmt.Sprintf("%s/api/v1/auth/oidc/%s/callback", base, providerID)
 }
 
+// @Summary OIDC login
+// @Description Initiate an OIDC login flow for the given provider
+// @Tags auth
+// @Param provider path string true "OIDC Provider ID"
+// @Success 302
+// @Failure 404 {object} map[string]string
+// @Router /auth/oidc/{provider}/login [get]
 func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 	providerID := r.PathValue("provider")
 	ctx := r.Context()
@@ -133,6 +140,16 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, provider.AuthURL(state), http.StatusFound)
 }
 
+// @Summary OIDC callback
+// @Description Handle the OIDC callback after provider authentication
+// @Tags auth
+// @Param provider path string true "OIDC Provider ID"
+// @Param code query string true "Authorization code"
+// @Param state query string true "State parameter"
+// @Success 302
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /auth/oidc/{provider}/callback [get]
 func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	providerID := r.PathValue("provider")
 	ctx := r.Context()

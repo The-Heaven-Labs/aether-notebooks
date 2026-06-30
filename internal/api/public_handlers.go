@@ -7,6 +7,14 @@ import (
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
+// @Summary Get public resource
+// @Description Returns a publicly shared notebook or dashboard by token
+// @Tags public
+// @Produce json
+// @Param token path string true "Public sharing token"
+// @Success 200 {object} map[string]any
+// @Failure 404 {object} map[string]string
+// @Router /api/v1/public/{token} [get]
 func (s *Server) handlePublicResource(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	ctx := r.Context()

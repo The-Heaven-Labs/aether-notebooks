@@ -10,6 +10,17 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// @Summary Upload attachment
+// @Description Upload a file attachment to a notebook
+// @Tags attachments
+// @Accept multipart/form-data
+// @Produce json
+// @Param notebook_id path string true "Notebook ID"
+// @Param file formData file true "File to upload"
+// @Success 201 {object} map[string]any
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{notebook_id}/attachments [post]
 func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("notebook_id")
@@ -99,6 +110,15 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// @Summary Get attachment
+// @Description Download a file attachment by ID
+// @Tags attachments
+// @Produce application/octet-stream
+// @Param id path string true "Attachment ID"
+// @Success 200 {file} binary
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /attachments/{id} [get]
 func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	attID := r.PathValue("id")
@@ -138,6 +158,15 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, rc)
 }
 
+// @Summary List attachments
+// @Description List all file attachments for a notebook
+// @Tags attachments
+// @Produce json
+// @Param notebook_id path string true "Notebook ID"
+// @Success 200 {object} map[string]any
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{notebook_id}/attachments [get]
 func (s *Server) handleListAttachments(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("notebook_id")
@@ -185,6 +214,15 @@ func (s *Server) handleListAttachments(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"attachments": atts})
 }
 
+// @Summary Delete attachment
+// @Description Delete a file attachment by ID
+// @Tags attachments
+// @Produce json
+// @Param id path string true "Attachment ID"
+// @Success 204 "No Content"
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /attachments/{id} [delete]
 func (s *Server) handleDeleteAttachment(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	attID := r.PathValue("id")
