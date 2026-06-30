@@ -32,7 +32,7 @@
 - **Fine-grained Permissions** — ACL-based permission system with folder hierarchy inheritance
 - **Multi-tenancy** — Subdomain-based org isolation for teams and enterprises
 - **SSO / OIDC** — Single sign-on with any OpenID Connect provider, including automatic group provisioning
-- **Audit Logging** — Full query and action audit trail stored in ClickHouse
+- **Audit Logging** — Full query and action audit trail stored in PostgreSQL
 
 ## Screenshots
 
@@ -105,31 +105,49 @@ migrations/              → SQL migration files (applied on startup)
 | Frontend | React 18, TypeScript, Vite, CodeMirror 6 |
 | Charts | ECharts (10+ chart types) |
 | Real-time | Yjs, Hocuspocus WebSocket relay |
-| Databases | Postgres (primary), ClickHouse (analytics/audit) |
+| Databases | Postgres (primary), ClickHouse (optional connector target) |
 | Cache | Redis |
 | Auth | JWT, OIDC / Keycloak |
 | AI | Multi-provider LLM agent (OpenAI, Anthropic, DeepSeek, etc.) |
 
 ## Development
 
+**Recommended**: start the entire stack with a single command using Docker Compose:
+
 ```bash
-# Prerequisites: Docker
-task infra:up            # Start Postgres, Redis, ClickHouse
+docker compose -f docker-compose.dev.yml up -d
+```
+
+This runs all services (API, frontend, relay, Postgres, Redis, ClickHouse, OpenSearch, Keycloak) with hot-reload enabled. Visit **[http://localhost:5173](http://localhost:5173)**.
+
+For finer control — or to run services natively — the [Taskfile](Taskfile.yml) provides individual commands:
+
+```bash
+task infra:up            # Start Postgres and Redis
 task dev                 # Start Go API server (with Air hot reload)
 task dev:web             # Start Vite dev server (port 5173)
 task dev:relay           # Start Hocuspocus relay (port 3001)
+```
 
-# Testing
+### Testing
+
+```bash
 task test                # All Go tests (starts infra automatically)
 task test:v              # Verbose output
 task test:api            # Only API tests
+```
 
-# Building
+### Building
+
+```bash
 task build               # Go binaries
 task build:web           # Frontend bundle
 task build:all           # Everything
+```
 
-# Code quality
+### Code quality
+
+```bash
 task fmt                 # gofmt
 task vet                 # go vet
 task check               # fmt + vet + tidy + test

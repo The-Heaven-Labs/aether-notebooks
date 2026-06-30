@@ -17,7 +17,7 @@ tasks:
   # ── Infrastructure ──────────────────────────────────────────────────────────
 
   infra:up:
-    desc: Start Postgres, Redis, and ClickHouse (skips any service whose port is already bound)
+    desc: Start core infrastructure (Postgres, Redis). Skips any service whose port is already bound.
     cmds:
       # Postgres — skip if port 5432 already answers
       - |
@@ -33,13 +33,6 @@ tasks:
         else
           docker compose up -d redis
         fi
-      # ClickHouse — skip if port 9000 already answers
-      - |
-        if ss -tlnp | grep -q ':9000 '; then
-          echo "clickhouse: port 9000 already in use, skipping"
-        else
-          docker compose up -d clickhouse
-        fi
 
   infra:down:
     desc: Stop all Docker services
@@ -47,10 +40,10 @@ tasks:
       - docker compose down
 
   infra:reset:
-    desc: Tear down and recreate infrastructure (destroys data)
+    desc: Tear down and recreate core infrastructure (destroys data)
     cmds:
       - docker compose down -v
-      - docker compose up -d postgres redis clickhouse
+      - docker compose up -d postgres redis
 
   infra:logs:
     desc: Tail logs from all running services
