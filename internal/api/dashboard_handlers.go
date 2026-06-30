@@ -83,6 +83,18 @@ func (s *Server) handleCreateDashboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, dash)
 }
 
+// @Summary Update a dashboard
+// @Description Update a dashboard's title, settings, or folder
+// @Tags dashboards
+// @Accept json
+// @Produce json
+// @Param id path string true "Dashboard ID"
+// @Param request body object true "Dashboard updates"
+// @Success 200 {object} models.Dashboard
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /dashboards/{id} [put]
 func (s *Server) handleUpdateDashboard(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	dashID := r.PathValue("id")
@@ -310,6 +322,15 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// @Summary Get dashboard permissions
+// @Description Get the current user's permissions for a dashboard
+// @Tags dashboards
+// @Produce json
+// @Param id path string true "Dashboard ID"
+// @Success 200 {object} map[string]bool
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /dashboards/{id}/permissions [get]
 func (s *Server) handleGetDashboardPermissions(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	dashID := r.PathValue("id")
@@ -573,6 +594,16 @@ func (s *Server) handleDeleteWidget(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// @Summary Share a dashboard
+// @Description Create or get a public share link for a dashboard
+// @Tags dashboards
+// @Produce json
+// @Param id path string true "Dashboard ID"
+// @Success 200 {object} map[string]any
+// @Success 201 {object} map[string]any
+// @Failure 403 {object} map[string]string
+// @Security BearerAuth
+// @Router /dashboards/{id}/share [post]
 func (s *Server) handleShareDashboard(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	dashID := r.PathValue("id")
@@ -629,6 +660,15 @@ func (s *Server) handleShareDashboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "created_by": claims.UserID, "created_at": createdAt})
 }
 
+// @Summary Get dashboard share link
+// @Description Get the public share link for a dashboard, if one exists
+// @Tags dashboards
+// @Produce json
+// @Param id path string true "Dashboard ID"
+// @Success 200 {object} map[string]any
+// @Success 204
+// @Security BearerAuth
+// @Router /dashboards/{id}/share [get]
 func (s *Server) handleGetDashboardShare(w http.ResponseWriter, r *http.Request) {
 	// Requires "view" permission — anyone who can see the dashboard can see the link
 	dashID := r.PathValue("id")
@@ -656,6 +696,14 @@ func (s *Server) handleGetDashboardShare(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"token": token, "created_by": createdBy, "created_at": createdAt})
 }
 
+// @Summary Revoke dashboard share link
+// @Description Revoke the public share link for a dashboard
+// @Tags dashboards
+// @Param id path string true "Dashboard ID"
+// @Success 204
+// @Failure 403 {object} map[string]string
+// @Security BearerAuth
+// @Router /dashboards/{id}/share [delete]
 func (s *Server) handleRevokeDashboardShare(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	dashID := r.PathValue("id")

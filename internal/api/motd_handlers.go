@@ -15,6 +15,13 @@ type motdRequest struct {
 	ExpiresAt   string   `json:"expires_at,omitempty"`
 }
 
+// @Summary List MOTD messages
+// @Description Get active Message of the Day messages for the current user
+// @Tags motd
+// @Produce json
+// @Success 200 {array} map[string]any
+// @Security BearerAuth
+// @Router /motd [get]
 func (s *Server) handleListMOTD(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	if claims == nil {
@@ -56,6 +63,13 @@ func (s *Server) handleListMOTD(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, motds)
 }
 
+// @Summary List all MOTD (admin)
+// @Description Get all MOTD messages including expired ones (admin only)
+// @Tags motd
+// @Produce json
+// @Success 200 {array} map[string]any
+// @Security BearerAuth
+// @Router /admin/motd [get]
 func (s *Server) handleListMOTDAdmin(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	if claims == nil {
@@ -97,6 +111,12 @@ func (s *Server) handleListMOTDAdmin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, motds)
 }
 
+// @Summary List login MOTD
+// @Description Get MOTD messages visible on the login page (public)
+// @Tags motd
+// @Produce json
+// @Success 200 {array} map[string]any
+// @Router /public/motd [get]
 func (s *Server) handleListLoginMOTD(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	rows, err := s.db.Pool.Query(ctx,
@@ -131,6 +151,16 @@ func (s *Server) handleListLoginMOTD(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, motds)
 }
 
+// @Summary Create MOTD message
+// @Description Create a new Message of the Day (admin only)
+// @Tags motd
+// @Accept json
+// @Produce json
+// @Param body body motdRequest true "MOTD message fields"
+// @Success 201 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /admin/motd [post]
 func (s *Server) handleCreateMOTD(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	if claims == nil {
@@ -172,6 +202,17 @@ func (s *Server) handleCreateMOTD(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id})
 }
 
+// @Summary Update MOTD message
+// @Description Update an existing MOTD message (admin only)
+// @Tags motd
+// @Accept json
+// @Produce json
+// @Param id path string true "MOTD ID"
+// @Param body body motdRequest true "Updated MOTD fields"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /admin/motd/{id} [put]
 func (s *Server) handleUpdateMOTD(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	if claims == nil {
@@ -209,6 +250,15 @@ func (s *Server) handleUpdateMOTD(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
+// @Summary Delete MOTD message
+// @Description Delete an MOTD message (admin only)
+// @Tags motd
+// @Produce json
+// @Param id path string true "MOTD ID"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /admin/motd/{id} [delete]
 func (s *Server) handleDeleteMOTD(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	if claims == nil {

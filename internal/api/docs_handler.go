@@ -8,13 +8,23 @@ import (
 //go:embed docs/swagger.json
 var swaggerJSON []byte
 
-// handleSwaggerJSON serves the OpenAPI spec.
+// @Summary Swagger JSON
+// @Description Returns the OpenAPI specification in JSON format
+// @Tags docs
+// @Produce json
+// @Success 200 {object} map[string]any
+// @Router /swagger.json [get]
 func (s *Server) handleSwaggerJSON(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(swaggerJSON)
 }
 
-// handleSwaggerUI serves a simple Swagger UI page.
+// @Summary Swagger UI
+// @Description Serves the Swagger UI documentation page
+// @Tags docs
+// @Produce html
+// @Success 200 {string} string
+// @Router /docs [get]
 func (s *Server) handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(`<!DOCTYPE html>

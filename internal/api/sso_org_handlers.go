@@ -38,8 +38,14 @@ type ssoSettingsResponse struct {
 	SSOPasswordLogin bool `json:"sso_password_login"`
 }
 
-// handleOrgListSSOProviders returns all org-scoped providers owned by the caller's org,
-// plus all enabled platform providers for context.
+// @Summary List org SSO providers
+// @Description List all org-scoped SSO providers for the caller's org
+// @Tags sso
+// @Produce json
+// @Success 200 {object} map[string]any
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /sso/providers [get]
 func (s *Server) handleOrgListSSOProviders(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
@@ -56,8 +62,16 @@ func (s *Server) handleOrgListSSOProviders(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"providers": resp})
 }
 
-// handleOrgCreateSSOProvider creates an org-scoped SSO provider for the caller's org.
-// Scope and org_id are always forced to "org" and the caller's org — callers cannot override.
+// @Summary Create org SSO provider
+// @Description Create an org-scoped SSO provider for the caller's org
+// @Tags sso
+// @Accept json
+// @Produce json
+// @Param request body object true "SSO provider details"
+// @Success 201 {object} providerResponse
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /sso/providers [post]
 func (s *Server) handleOrgCreateSSOProvider(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
@@ -113,6 +127,19 @@ func (s *Server) handleOrgCreateSSOProvider(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusCreated, providerToResponse(created))
 }
 
+// @Summary Update org SSO provider
+// @Description Update an org-scoped SSO provider
+// @Tags sso
+// @Accept json
+// @Produce json
+// @Param id path string true "Provider ID"
+// @Param request body object true "SSO provider details"
+// @Success 200 {object} providerResponse
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /sso/providers/{id} [put]
 func (s *Server) handleOrgUpdateSSOProvider(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	id := r.PathValue("id")
@@ -186,8 +213,17 @@ func (s *Server) handleOrgUpdateSSOProvider(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, providerToResponse(updated))
 }
 
-// handleOrgDeleteSSOProvider deletes an org-scoped provider.
-// Returns 403 if the provider doesn't belong to the caller's org.
+// @Summary Delete org SSO provider
+// @Description Delete an org-scoped SSO provider
+// @Tags sso
+// @Produce json
+// @Param id path string true "Provider ID"
+// @Success 204
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /sso/providers/{id} [delete]
 func (s *Server) handleOrgDeleteSSOProvider(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	id := r.PathValue("id")
@@ -220,8 +256,14 @@ func (s *Server) handleOrgDeleteSSOProvider(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleOrgListPlatformProviders returns all platform-scoped providers with an enabled_for_org
-// boolean indicating whether the org has enabled each one.
+// @Summary List platform SSO providers
+// @Description List all platform-scoped SSO providers with enabled_for_org status
+// @Tags sso
+// @Produce json
+// @Success 200 {object} map[string]any
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /sso/platform-providers [get]
 func (s *Server) handleOrgListPlatformProviders(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -292,7 +334,16 @@ func (s *Server) handleOrgListPlatformProviders(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, map[string]any{"providers": resp})
 }
 
-// handleOrgEnablePlatformProvider adds a platform provider to this org's enabled list.
+// @Summary Enable platform SSO provider
+// @Description Enable a platform-level SSO provider for the caller's org
+// @Tags sso
+// @Produce json
+// @Param id path string true "Provider ID"
+// @Success 204
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /sso/platform-providers/{id}/enable [post]
 func (s *Server) handleOrgEnablePlatformProvider(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	id := r.PathValue("id")
@@ -325,7 +376,15 @@ func (s *Server) handleOrgEnablePlatformProvider(w http.ResponseWriter, r *http.
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleOrgDisablePlatformProvider removes a platform provider from this org's enabled list.
+// @Summary Disable platform SSO provider
+// @Description Disable a platform-level SSO provider for the caller's org
+// @Tags sso
+// @Produce json
+// @Param id path string true "Provider ID"
+// @Success 204
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /sso/platform-providers/{id}/enable [delete]
 func (s *Server) handleOrgDisablePlatformProvider(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	id := r.PathValue("id")
@@ -343,7 +402,14 @@ func (s *Server) handleOrgDisablePlatformProvider(w http.ResponseWriter, r *http
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleOrgGetSSOSettings returns the SSO settings for the caller's org.
+// @Summary Get org SSO settings
+// @Description Get the SSO settings for the caller's org
+// @Tags sso
+// @Produce json
+// @Success 200 {object} ssoSettingsResponse
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /sso/settings [get]
 func (s *Server) handleOrgGetSSOSettings(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
@@ -364,7 +430,16 @@ func (s *Server) handleOrgGetSSOSettings(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, ssoSettingsResponse{SSOPasswordLogin: passwordLogin})
 }
 
-// handleOrgUpdateSSOSettings updates the SSO settings for the caller's org.
+// @Summary Update org SSO settings
+// @Description Update the SSO settings for the caller's org
+// @Tags sso
+// @Accept json
+// @Produce json
+// @Param request body object true "SSO settings"
+// @Success 200 {object} ssoSettingsResponse
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /sso/settings [put]
 func (s *Server) handleOrgUpdateSSOSettings(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
@@ -391,7 +466,16 @@ func (s *Server) handleOrgUpdateSSOSettings(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, ssoSettingsResponse{SSOPasswordLogin: req.SSOPasswordLogin})
 }
 
-// handleOrgTestSSOProvider tests an OIDC provider configuration by fetching its discovery document.
+// @Summary Test SSO provider
+// @Description Test an OIDC provider configuration by fetching its discovery document
+// @Tags sso
+// @Accept json
+// @Produce json
+// @Param request body object true "Provider test details"
+// @Success 200 {object} object
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /sso/providers/test [post]
 func (s *Server) handleOrgTestSSOProvider(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DiscoveryURL string `json:"discovery_url"`

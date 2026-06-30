@@ -29,7 +29,17 @@ type createInviteLinkRequest struct {
 	Role string `json:"role"`
 }
 
-// handleOrgCreate creates a new org for a user who has an onboarding token.
+// @Summary Create organization
+// @Description Create a new organization (requires onboarding token)
+// @Tags orgs
+// @Accept json
+// @Produce json
+// @Param request body object true "Organization details"
+// @Success 201 {object} object
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Security BearerAuth
+// @Router /auth/org/create [post]
 func (s *Server) handleOrgCreate(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	if claims == nil || claims.Role != "onboarding" {
@@ -139,7 +149,17 @@ func (s *Server) handleOrgCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-// handleOrgJoin adds a user (with onboarding token) to an org via invite token or invite link token.
+// @Summary Join organization
+// @Description Join an organization via invite token or invite link token (requires onboarding token)
+// @Tags orgs
+// @Accept json
+// @Produce json
+// @Param request body object true "Invite details"
+// @Success 200 {object} object
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Security BearerAuth
+// @Router /auth/org/join [post]
 func (s *Server) handleOrgJoin(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	if claims == nil || claims.Role != "onboarding" {
@@ -306,7 +326,16 @@ func (s *Server) handleOrgJoin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// handleCreateInvite creates an email invite for a specific user (org admin only).
+// @Summary Create email invite
+// @Description Create an email invite for a specific user (org admin only)
+// @Tags orgs
+// @Accept json
+// @Produce json
+// @Param request body object true "Invite details"
+// @Success 201 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /members/invite [post]
 func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	if claims == nil {
@@ -366,7 +395,16 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleCreateInviteLink creates a shareable invite link (org admin only).
+// @Summary Create invite link
+// @Description Create a shareable invite link (org admin only)
+// @Tags orgs
+// @Accept json
+// @Produce json
+// @Param request body object true "Invite link details"
+// @Success 201 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /members/invite-link [post]
 func (s *Server) handleCreateInviteLink(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	if claims == nil {
@@ -430,6 +468,14 @@ func (s *Server) handleCreateInviteLink(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// @Summary Get org sharing settings
+// @Description Get the public sharing settings for the organization
+// @Tags orgs
+// @Produce json
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /org/sharing [get]
 func (s *Server) handleGetOrgSharingSettings(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var enabled bool
@@ -443,6 +489,16 @@ func (s *Server) handleGetOrgSharingSettings(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, map[string]bool{"public_sharing_enabled": enabled})
 }
 
+// @Summary Update org sharing settings
+// @Description Update the public sharing settings for the organization
+// @Tags orgs
+// @Accept json
+// @Produce json
+// @Param request body object true "Sharing settings"
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /org/sharing [put]
 func (s *Server) handleUpdateOrgSharingSettings(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req struct {
@@ -463,6 +519,14 @@ func (s *Server) handleUpdateOrgSharingSettings(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, map[string]bool{"public_sharing_enabled": req.Enabled})
 }
 
+// @Summary Get org registration settings
+// @Description Get the registration settings for the organization
+// @Tags orgs
+// @Produce json
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /org/registration [get]
 func (s *Server) handleGetOrgRegistrationSettings(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var enabled bool
@@ -476,6 +540,16 @@ func (s *Server) handleGetOrgRegistrationSettings(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, map[string]bool{"registration_enabled": enabled})
 }
 
+// @Summary Update org registration settings
+// @Description Update the registration settings for the organization
+// @Tags orgs
+// @Accept json
+// @Produce json
+// @Param request body object true "Registration settings"
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /org/registration [put]
 func (s *Server) handleUpdateOrgRegistrationSettings(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req struct {
@@ -496,6 +570,14 @@ func (s *Server) handleUpdateOrgRegistrationSettings(w http.ResponseWriter, r *h
 	writeJSON(w, http.StatusOK, map[string]bool{"registration_enabled": req.Enabled})
 }
 
+// @Summary Get org invitation settings
+// @Description Get the invitation settings for the organization
+// @Tags orgs
+// @Produce json
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /org/invitations [get]
 func (s *Server) handleGetOrgInvitationSettings(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var enabled bool
@@ -509,6 +591,16 @@ func (s *Server) handleGetOrgInvitationSettings(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, map[string]bool{"invitations_enabled": enabled})
 }
 
+// @Summary Update org invitation settings
+// @Description Update the invitation settings for the organization
+// @Tags orgs
+// @Accept json
+// @Produce json
+// @Param request body object true "Invitation settings"
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /org/invitations [put]
 func (s *Server) handleUpdateOrgInvitationSettings(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req struct {

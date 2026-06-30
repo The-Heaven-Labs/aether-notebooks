@@ -19,6 +19,14 @@ type toolHandlers struct {
 	server *Server
 }
 
+// @Summary List tools
+// @Description List all tools for the organization
+// @Tags tools
+// @Produce json
+// @Success 200 {array} object
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /tools [get]
 func (h *toolHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
@@ -66,6 +74,15 @@ func (h *toolHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tools)
 }
 
+// @Summary Get a tool
+// @Description Get a tool by ID
+// @Tags tools
+// @Produce json
+// @Param id path string true "Tool ID"
+// @Success 200 {object} models.Tool
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /tools/{id} [get]
 func (h *toolHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
@@ -107,6 +124,17 @@ func (h *toolHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
+// @Summary Create a tool
+// @Description Create a new tool configuration
+// @Tags tools
+// @Accept json
+// @Produce json
+// @Param request body object true "Tool details"
+// @Success 201 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Security BearerAuth
+// @Router /tools [post]
 func (h *toolHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req struct {
@@ -174,6 +202,18 @@ func (h *toolHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]string{"id": toolID})
 }
 
+// @Summary Update a tool
+// @Description Update a tool configuration
+// @Tags tools
+// @Accept json
+// @Produce json
+// @Param id path string true "Tool ID"
+// @Param request body object true "Tool updates"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /tools/{id} [put]
 func (h *toolHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	toolID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
@@ -227,6 +267,16 @@ func (h *toolHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"id": toolID})
 }
 
+// @Summary Test a tool
+// @Description Test a tool configuration (webhook or sql_query)
+// @Tags tools
+// @Produce json
+// @Param id path string true "Tool ID"
+// @Success 200 {object} map[string]any
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /tools/{id}/test [post]
 func (h *toolHandlers) handleTest(w http.ResponseWriter, r *http.Request) {
 	toolID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
@@ -305,6 +355,14 @@ func (h *toolHandlers) handleTest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// @Summary Delete a tool
+// @Description Delete a tool configuration
+// @Tags tools
+// @Param id path string true "Tool ID"
+// @Success 204
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /tools/{id} [delete]
 func (h *toolHandlers) handleDelete(w http.ResponseWriter, r *http.Request) {
 	toolID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.1.0-alpha — 2026-06-29
+
 ### Features
 
 - Subdomain-based multi-tenancy org resolution

@@ -331,6 +331,15 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// @Summary Get notebook permissions
+// @Description Get the current user's permissions for a notebook
+// @Tags notebooks
+// @Produce json
+// @Param id path string true "Notebook ID"
+// @Success 200 {object} map[string]bool
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{id}/permissions [get]
 func (s *Server) handleGetNotebookPermissions(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("id")
@@ -386,6 +395,14 @@ func (s *Server) handleDeleteNotebook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// @Summary List trash
+// @Description List all trashed items (notebooks, connectors, dashboards)
+// @Tags notebooks
+// @Produce json
+// @Success 200 {array} object
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /trash [get]
 func (s *Server) handleListTrash(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -448,6 +465,17 @@ func (s *Server) handleListTrash(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, items)
 }
 
+// @Summary Restore from trash
+// @Description Restore a trashed notebook, connector, or dashboard
+// @Tags notebooks
+// @Accept json
+// @Produce json
+// @Param request body object true "Restore details with type and id"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Security BearerAuth
+// @Router /trash/restore [post]
 func (s *Server) handleRestoreFromTrash(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -969,6 +997,16 @@ func (s *Server) handleCloneNotebook(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// @Summary Share a notebook
+// @Description Create or get a public share link for a notebook
+// @Tags notebooks
+// @Produce json
+// @Param id path string true "Notebook ID"
+// @Success 200 {object} map[string]any
+// @Success 201 {object} map[string]any
+// @Failure 403 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{id}/share [post]
 func (s *Server) handleShareNotebook(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("id")
@@ -1025,6 +1063,15 @@ func (s *Server) handleShareNotebook(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "created_by": claims.UserID, "created_at": createdAt})
 }
 
+// @Summary Get notebook share link
+// @Description Get the public share link for a notebook, if one exists
+// @Tags notebooks
+// @Produce json
+// @Param id path string true "Notebook ID"
+// @Success 200 {object} map[string]any
+// @Success 204
+// @Security BearerAuth
+// @Router /notebooks/{id}/share [get]
 func (s *Server) handleGetNotebookShare(w http.ResponseWriter, r *http.Request) {
 	// Requires "view" permission — anyone who can see the notebook can see the link
 	nbID := r.PathValue("id")
@@ -1053,6 +1100,14 @@ func (s *Server) handleGetNotebookShare(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"token": token, "created_by": createdBy, "created_at": createdAt})
 }
 
+// @Summary Revoke notebook share link
+// @Description Revoke the public share link for a notebook
+// @Tags notebooks
+// @Param id path string true "Notebook ID"
+// @Success 204
+// @Failure 403 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{id}/share [delete]
 func (s *Server) handleRevokeNotebookShare(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("id")

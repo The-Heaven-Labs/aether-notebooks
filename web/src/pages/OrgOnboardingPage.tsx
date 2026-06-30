@@ -90,6 +90,7 @@ export function OrgOnboardingPage() {
               type="text"
               value={orgName}
               onChange={e => setOrgName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') createOrg() }}
               placeholder="e.g., Acme Analytics"
               autoFocus
             />
@@ -111,6 +112,7 @@ export function OrgOnboardingPage() {
               type="text"
               value={inviteToken}
               onChange={e => setInviteToken(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') joinOrg() }}
               placeholder="Paste your invite token here"
               autoFocus
             />

@@ -16,6 +16,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://github.com/The-Heaven-Labs/aether-notebooks/actions/workflows/ci.yml"><img src="https://github.com/The-Heaven-Labs/aether-notebooks/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="CODE_OF_CONDUCT.md"><img src="https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg" alt="Code of Conduct"></a>
+  <a href="#"><img src="https://img.shields.io/badge/Go-1.25-00ADD8?logo=go" alt="Go 1.25"></a>
+  <a href="#"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"></a>
 </p>
 
 ---
@@ -54,6 +56,7 @@
 </table>
 
 ## Quick Start
+
 
 ```bash
 git clone https://github.com/The-Heaven-Labs/aether-notebooks.git

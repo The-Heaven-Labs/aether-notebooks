@@ -60,6 +60,17 @@ type updateRoleRequest struct {
 	Role string `json:"role"`
 }
 
+// @Summary Update member role
+// @Description Update a member's role in the organization
+// @Tags members
+// @Accept json
+// @Param user_id path string true "User ID"
+// @Param request body object true "New role"
+// @Success 204
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /members/{user_id} [put]
 func (s *Server) handleUpdateMemberRole(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	targetUserID := r.PathValue("user_id")
@@ -110,6 +121,15 @@ func (s *Server) handleUpdateMemberRole(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// @Summary Remove a member
+// @Description Remove a member from the organization
+// @Tags members
+// @Param user_id path string true "User ID"
+// @Success 204
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /members/{user_id} [delete]
 func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	targetUserID := r.PathValue("user_id")
@@ -164,7 +184,7 @@ type inviteMemberRequest struct {
 // @Success 204
 // @Failure 400 {object} map[string]string
 // @Security BearerAuth
-// @Router /members/invite [post]
+// @Router /members [post]
 func (s *Server) handleInviteMember(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req inviteMemberRequest
