@@ -344,6 +344,63 @@ The confirm flow: backend → `tool_confirm_required` event → frontend shows d
 
 Agent updates (`agent_updated_at`) now also update the local cell cache via WebSocket broadcast when `user_email` is `agent@aether`. This ensures cell content changes made by the agent appear without requiring a page refresh.
 
-## Planned Improvements
+## Git & Engineering Workflow
 
-See `IMPROVEMENTS.md` for the full backlog of UX and feature improvements tracked by the product owner.
+### Branch Strategy
+
+- **`main`** — stable, always deployable. All changes land here.
+- **Feature branches** — branch from `main`, named `feat/<short-description>` or `fix/<short-description>`.
+- Squash-merge PRs into `main` with a descriptive commit message.
+
+### PR Workflow
+
+1. Create feature branch from `main`
+2. Implement with frequent commits
+3. Run `task check` (fmt + vet + tidy + test) before opening PR
+4. Ensure CI passes (Go tests, frontend build, relay build, smoke tests)
+5. Squash-merge when approved
+
+### Release Process
+
+Releases are fully automated via **goreleaser** — no manual steps.
+
+```bash
+# 1. Ensure main has all desired changes merged
+# 2. Tag and push (triggers .github/workflows/release.yml)
+git tag v<major>.<minor>.<patch>
+git push origin v<major>.<minor>.<patch>
+```
+
+The release workflow:
+- Builds the frontend (`npm run build`)
+- Cross-compiles `aether-server` and `aether` CLI for linux/darwin × amd64/arm64
+- Builds & pushes Docker image to `ghcr.io/the-heaven-labs/aether-server` (`:<tag>` and `:latest`)
+- Creates a GitHub Release with all archives and checksums
+
+The `v0.1.1` release is already published — tag `v0.2.0` for the next one.
+
+### Changelog
+
+No automated changelog yet. Either:
+- **Manual**: Write release notes in the PR body or edit the release on GitHub after publish.
+- **Auto**: Could add a `CHANGELOG.md` generated from commit history with `git-cliff` or similar.
+
+### Local Dev Commands
+
+```bash
+task infra:up          # Start Postgres + Redis + ClickHouse (for tests)
+task dev               # Run Go API server
+task dev:web           # Vite frontend
+task dev:relay         # Hocuspocus relay
+task check             # fmt + vet + tidy + test
+```
+
+### History Cleanup
+
+If a file was accidentally committed that should be ignored (e.g., `CLAUDE.md`, `IMPROVEMENTS.md`):
+
+1. Add to `.gitignore`
+2. `git filter-repo --path <filename> --invert-paths --force`
+3. `git remote add origin <url> && git push origin main --force`
+
+This rewrites history — coordinate with the team before doing it.
