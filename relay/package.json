@@ -9,11 +9,11 @@
     "dev": "ts-node src/index.ts"
   },
   "dependencies": {
-    "@hocuspocus/server": "^4.3.0"
+    "@hocuspocus/server": "^3.4.4"
   },
   "devDependencies": {
-    "typescript": "^5.3.3",
-    "@types/node": "^26.0.1",
+    "typescript": "^6.0.3",
+    "@types/node": "^20.11.5",
     "ts-node": "^10.9.2"
   }
 }
