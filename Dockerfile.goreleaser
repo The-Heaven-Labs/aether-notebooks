@@ -1,0 +1,7 @@
+FROM alpine:3.19
+RUN apk add --no-cache ca-certificates
+RUN addgroup -S aether && adduser -S aether -G aether
+COPY aether-server /usr/local/bin/
+USER aether
+EXPOSE 8080
+ENTRYPOINT ["aether-server"]

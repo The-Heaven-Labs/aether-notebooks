@@ -5,6 +5,7 @@ on:
       - "v*"
 permissions:
   contents: write
+  packages: write
 
 jobs:
   goreleaser:
@@ -24,3 +25,5 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOCKER_USERNAME: ${{ github.actor }}
+          DOCKER_PASSWORD: ${{ secrets.GITHUB_TOKEN }}

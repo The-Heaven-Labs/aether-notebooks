@@ -45,6 +45,22 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+dockers:
+  - image_templates:
+      - "ghcr.io/the-heaven-labs/aether-server:{{ .Tag }}"
+      - "ghcr.io/the-heaven-labs/aether-server:latest"
+    dockerfile: Dockerfile.goreleaser
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title=aether-server"
+      - "--label=org.opencontainers.image.source=https://github.com/the-heaven-labs/aether-notebooks"
+      - "--label=org.opencontainers.image.version={{ .Tag }}"
+    goos: linux
+    goarch: amd64
+    ids:
+      - server
+
 release:
   github:
     owner: The-Heaven-Labs
