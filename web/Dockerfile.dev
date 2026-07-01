@@ -5,5 +5,5 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 
-# Source is mounted at runtime; Vite is told to listen on all interfaces
-CMD ["npm", "run", "dev"]
+# Source is mounted at runtime; output goes to web/dist/
+CMD ["npm", "run", "build:watch"]

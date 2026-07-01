@@ -3,7 +3,7 @@ FROM golang:1.25-alpine
 # Suppress toolchain auto-download — use whatever Go is in the image
 ENV GOTOOLCHAIN=local
 
-RUN apk add --no-cache git && \
+RUN apk add --no-cache git nodejs npm && \
     go install github.com/air-verse/air@latest
 
 WORKDIR /app
@@ -13,4 +13,8 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
-CMD ["air", "-c", ".air.toml"]
+# Pre-build web deps
+COPY web/package*.json ./web/
+RUN cd web && npm ci
+
+CMD ["sh", "-c", "cd web && npm run build:watch & air -c .air.toml"]
