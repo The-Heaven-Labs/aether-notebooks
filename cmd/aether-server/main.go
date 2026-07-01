@@ -145,6 +145,7 @@ func main() {
 	srv.SetToolAllowedDomains(cfg.ToolAllowedDomains)
 	srv.SetOIDCHostRewrite(cfg.OIDCHostRewrite)
 	srv.SetDisableRegistration(cfg.DisableRegistration)
+	srv.SetFrontendHandler(frontendHandler())
 	httpSrv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      srv,

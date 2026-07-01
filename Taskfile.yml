@@ -61,6 +61,8 @@ tasks:
     desc: Build both server and CLI binaries into ./bin
     cmds:
       - mkdir -p {{.BIN_DIR}}
+      - mkdir -p cmd/aether-server/frontend-dist
+      - cp -r web/dist/* cmd/aether-server/frontend-dist/ 2>/dev/null || true
       - go build -o {{.SERVER_BIN}} ./cmd/aether-server
       - go build -o {{.CLI_BIN}} ./cmd/aether
     sources:
@@ -75,6 +77,8 @@ tasks:
     desc: Build only the API server
     cmds:
       - mkdir -p {{.BIN_DIR}}
+      - mkdir -p cmd/aether-server/frontend-dist
+      - cp -r web/dist/* cmd/aether-server/frontend-dist/ 2>/dev/null || true
       - go build -o {{.SERVER_BIN}} ./cmd/aether-server
 
   build:cli:
@@ -105,6 +109,8 @@ tasks:
     desc: Run the API server with hot-reload (requires infra:up)
     deps: [infra:up]
     cmds:
+      - mkdir -p cmd/aether-server/frontend-dist
+      - cp -r web/dist/* cmd/aether-server/frontend-dist/ 2>/dev/null || true
       - go run ./cmd/aether-server
 
   dev:web:

@@ -64,7 +64,14 @@ cd aether-notebooks
 docker compose -f docker-compose.dev.yml up -d
 ```
 
-Then visit **[http://localhost:5173](http://localhost:5173)**.
+Then visit **[http://localhost:8080](http://localhost:8080)**.
+
+```bash
+# Or download a pre-built release and run directly (requires Postgres + Redis)
+curl -LO https://github.com/The-Heaven-Labs/aether-notebooks/releases/latest/download/aether_latest_linux_amd64.tar.gz
+tar xzf aether_latest_linux_amd64.tar.gz
+AETHER_DATABASE_URL="postgres://..." AETHER_JWT_SECRET="..." AETHER_MASTER_KEY="..." ./aether-server
+```
 
 ### Default Users
 
@@ -83,7 +90,7 @@ The dev stack includes Keycloak for SSO testing. See [AGENTS.md](AGENTS.md) for 
 ```
 cmd/aether-server        → Go API server (port 8080)
 cmd/aether               → CLI client
-web/                     → React + Vite + TypeScript frontend (port 5173)
+web/                     → React + TypeScript frontend (built with Vite)
 relay/                   → Hocuspocus WebSocket relay (port 3001)
 internal/
   api/                   → HTTP handlers + router (net/http ServeMux)
@@ -118,15 +125,17 @@ migrations/              → SQL migration files (applied on startup)
 docker compose -f docker-compose.dev.yml up -d
 ```
 
-This runs all services (API, frontend, relay, Postgres, Redis, ClickHouse, OpenSearch, Keycloak) with hot-reload enabled. Visit **[http://localhost:5173](http://localhost:5173)**.
+This runs all services (API, frontend, relay, Postgres, Redis, ClickHouse, OpenSearch, Keycloak) with hot-reload enabled. Visit **[http://localhost:8080](http://localhost:8080)**.
 
 For finer control — or to run services natively — the [Taskfile](Taskfile.yml) provides individual commands:
 
 ```bash
 task infra:up            # Start Postgres and Redis
-task dev                 # Start Go API server (with Air hot reload)
-task dev:web             # Start Vite dev server (port 5173)
+task dev                 # Start Go API server (API + frontend on :8080, Air hot-reload)
 task dev:relay           # Start Hocuspocus relay (port 3001)
+
+# For frontend development outside Docker:
+cd web && npm run build:watch  # Auto-rebuild on frontend changes
 ```
 
 ### Testing

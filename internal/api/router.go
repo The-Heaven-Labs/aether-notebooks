@@ -36,8 +36,9 @@ type Server struct {
 	toolAllowedDomains []string
 	sessionCancels     sync.Map    // sessionID -> context.CancelFunc
 	subdomainMW        func(http.Handler) http.Handler // host → org resolution
-	oidcRewriteFrom    string      // host rewrite for OIDC discovery inside Docker (e.g. "localhost:5557")
-	oidcRewriteTo      string      // target host rewrite (e.g. "host.docker.internal:5557")
+	oidcRewriteFrom    string                           // host rewrite for OIDC discovery inside Docker (e.g. "localhost:5557")
+	oidcRewriteTo      string                           // target host rewrite (e.g. "host.docker.internal:5557")
+	frontendHandler    http.Handler                     // embedded web frontend SPA (nil in tests)
 }
 
 // NewServer creates a new Aether API server with the provided dependencies.
@@ -111,6 +112,12 @@ func (s *Server) SetOIDCHostRewrite(rule string) {
 		s.oidcRewriteFrom = parts[0]
 		s.oidcRewriteTo = parts[1]
 	}
+}
+
+// SetFrontendHandler sets the embedded web frontend handler.
+// Used as a catch-all route to serve the SPA at GET /.
+func (s *Server) SetFrontendHandler(h http.Handler) {
+	s.frontendHandler = h
 }
 
 // DB returns the database connection (used in tests).
@@ -382,6 +389,16 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/admin/motd", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateMOTD))))
 	s.mux.Handle("PUT /api/v1/admin/motd/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateMOTD))))
 	s.mux.Handle("DELETE /api/v1/admin/motd/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleDeleteMOTD))))
+
+	// Serve embedded frontend SPA — must be last, API routes take priority.
+	// Uses dynamic dispatch because frontendHandler is set after NewServer returns.
+	s.mux.Handle("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.frontendHandler != nil {
+			s.frontendHandler.ServeHTTP(w, r)
+		} else {
+			http.NotFound(w, r)
+		}
+	}))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
