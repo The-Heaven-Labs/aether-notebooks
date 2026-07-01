@@ -75,14 +75,11 @@ func (c *Client) UpdateWidget(dashboardID, widgetID, title string) (*Widget, err
 	if title != "" {
 		body["config"] = map[string]interface{}{"title": title}
 	}
-	_, status, err := c.Do("PUT", "/api/v1/dashboards/"+dashboardID+"/widgets/"+widgetID, body)
-	if err != nil {
+	var widget Widget
+	if err := c.PutJSON("/api/v1/dashboards/"+dashboardID+"/widgets/"+widgetID, body, &widget); err != nil {
 		return nil, err
 	}
-	if status >= 400 {
-		return nil, fmt.Errorf("API error %d", status)
-	}
-	return nil, nil
+	return &widget, nil
 }
 
 func (c *Client) DeleteWidget(dashboardID, widgetID string) error {
