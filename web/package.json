@@ -71,7 +71,7 @@
     "eslint-plugin-storybook": "^10.3.3",
     "globals": "^17.4.0",
     "jsdom": "^29.0.1",
-    "msw": "^2.12.14",
+    "msw": "^2.14.6",
     "playwright": "^1.59.1",
     "storybook": "^10.3.3",
     "typescript": "~5.9.3",
