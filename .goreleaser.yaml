@@ -3,14 +3,9 @@ project_name: aether
 
 before:
   hooks:
-    - cmd: npm ci
-      dir: web
-    - cmd: npm run build
-      dir: web
-    - cmd: sh
-      args:
-        - -c
-        - mkdir -p cmd/aether-server/frontend-dist && cp -r web/dist/* cmd/aether-server/frontend-dist/
+    - npm --prefix web run build
+    - mkdir -p cmd/aether-server/frontend-dist
+    - cp -r web/dist/* cmd/aether-server/frontend-dist/
 
 builds:
   - id: server
