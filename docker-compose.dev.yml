@@ -4,12 +4,12 @@ name: aether-dev
 # Development stack — a single `docker compose -f docker-compose.dev.yml up`
 # starts every service with live-reload:
 #
-#   • api    — Go server via Air; rebuilds on any *.go change
+#   • api    — Go server via Air; rebuilds on any *.go or web/dist change
+#   • web-builder — Builds web assets with Vite; auto-rebuilds on source changes
 #   • relay  — Hocuspocus TypeScript server via tsx --watch
-#   • web    — Vite dev server with HMR
 #   • postgres, redis — infrastructure (data persists in named volumes)
 #
-# Browser entry point: http://localhost:5173
+# Browser entry point: http://localhost:8080 (api serves API + frontend)
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -146,7 +146,7 @@ services:
       AETHER_JWT_SECRET: dev-jwt-secret-change-in-production
       AETHER_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com
       AETHER_PUBLIC_URL: http://localhost:8080
-      AETHER_FRONTEND_URL: http://localhost:5173
+      AETHER_FRONTEND_URL: http://localhost:8080
       AETHER_OIDC_HOST_REWRITE: localhost:5557=host.docker.internal:5557
     volumes:
       # Mount entire repo so Air can watch and rebuild on Go file changes.
@@ -155,6 +155,7 @@ services:
       - .:/app
       - go-build-cache:/root/.cache/go-build
       - go-mod-cache:/go/pkg/mod
+      - ./web/dist:/app/cmd/aether-server/frontend-dist
     # alpine's busybox includes nc — check that the Go server is actually
     # accepting connections before dependants try to proxy through it.
     # start_period gives Air time to compile on the first run (~20-40s).
@@ -168,6 +169,8 @@ services:
       aether-postgres:
         condition: service_healthy
       aether-redis:
+        condition: service_started
+      web-builder:
         condition: service_started
 
   # ── Hocuspocus relay (TypeScript + tsx --watch) ───────────────────────────
@@ -189,27 +192,16 @@ services:
     depends_on:
       - api
 
-  # ── Web dev server (Vite HMR) ────────────────────────────────────────────
+  # ── Web builder (Vite build --watch) ──────────────────────────────────────
 
-  web:
+  web-builder:
     build:
       context: ./web
       dockerfile: Dockerfile.dev
-    ports:
-      - "5173:5173"
-    environment:
-      # Vite (running inside this container) proxies /api and /internal to the
-      # API service on the internal Docker network.
-      API_URL: http://api:8080
-      VITE_RELAY_URL: ws://localhost:3001
     volumes:
       - ./web:/app
       - web-node-modules:/app/node_modules
-    depends_on:
-      api:
-        condition: service_healthy
-      relay:
-        condition: service_started
+    # No ports — outputs web/dist for the api container to serve
 
 volumes:
   pgdata:
