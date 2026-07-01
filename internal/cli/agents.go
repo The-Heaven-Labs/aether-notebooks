@@ -61,9 +61,10 @@ func (c *Client) ListSessions(agentID string) ([]AgentSession, error) {
 	return sessions, nil
 }
 
-func (c *Client) CreateSession(agentID string) (*AgentSession, error) {
+func (c *Client) CreateSession(agentID, notebookID string) (*AgentSession, error) {
+	body := map[string]interface{}{"notebook_id": notebookID}
 	var s AgentSession
-	if err := c.PostJSON("/api/v1/agents/"+agentID+"/session", nil, &s); err != nil {
+	if err := c.PostJSON("/api/v1/agents/"+agentID+"/session", body, &s); err != nil {
 		return nil, err
 	}
 	return &s, nil
@@ -211,7 +212,9 @@ func AgentsCmd() *cobra.Command {
 						return nil
 					},
 				},
-				&cobra.Command{
+func() *cobra.Command {
+				var notebookID string
+				c := &cobra.Command{
 					Use:   "create <agent-id>",
 					Short: "Create a session for an agent",
 					Args:  cobra.ExactArgs(1),
@@ -220,14 +223,18 @@ func AgentsCmd() *cobra.Command {
 						if err != nil {
 							return err
 						}
-						s, err := cl.CreateSession(args[0])
+						s, err := cl.CreateSession(args[0], notebookID)
 						if err != nil {
 							return err
 						}
 						PrintJSON(s)
 						return nil
 					},
-				},
+				}
+				c.Flags().StringVar(&notebookID, "notebook", "", "Notebook ID (required)")
+				c.MarkFlagRequired("notebook")
+				return c
+			}(),
 				&cobra.Command{
 					Use:   "get <session-id>",
 					Short: "Get a session",

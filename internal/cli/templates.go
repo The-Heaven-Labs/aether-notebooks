@@ -16,8 +16,8 @@ func (c *Client) ListTemplates() ([]Template, error) {
 	return resp.Templates, nil
 }
 
-func (c *Client) CreateTemplate(name string) (*Template, error) {
-	body := map[string]interface{}{"name": name}
+func (c *Client) CreateTemplate(name, templateType string) (*Template, error) {
+	body := map[string]interface{}{"name": name, "type": templateType, "content": map[string]interface{}{}}
 	var t Template
 	if err := c.PostJSON("/api/v1/templates", body, &t); err != nil {
 		return nil, err
@@ -53,7 +53,7 @@ func TemplatesCmd() *cobra.Command {
 			},
 		},
 		func() *cobra.Command {
-			var name string
+			var name, templateType string
 			c := &cobra.Command{
 				Use:   "create",
 				Short: "Create a template",
@@ -62,7 +62,7 @@ func TemplatesCmd() *cobra.Command {
 					if err != nil {
 						return err
 					}
-					t, err := cl.CreateTemplate(name)
+					t, err := cl.CreateTemplate(name, templateType)
 					if err != nil {
 						return err
 					}
@@ -72,6 +72,7 @@ func TemplatesCmd() *cobra.Command {
 			}
 			c.Flags().StringVarP(&name, "name", "n", "", "Template name (required)")
 			c.MarkFlagRequired("name")
+			c.Flags().StringVar(&templateType, "type", "cell", "Template type (notebook or cell)")
 			return c
 		}(),
 		&cobra.Command{

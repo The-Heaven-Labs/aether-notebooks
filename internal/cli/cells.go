@@ -28,11 +28,16 @@ func (c *Client) ListCells(notebookID string) ([]Cell, error) {
 }
 
 func (c *Client) GetCell(notebookID, cellID string) (*Cell, error) {
-	var cell Cell
-	if err := c.GetJSON("/api/v1/notebooks/"+notebookID+"/cells/"+cellID, &cell); err != nil {
+	cells, err := c.ListCells(notebookID)
+	if err != nil {
 		return nil, err
 	}
-	return &cell, nil
+	for _, cell := range cells {
+		if cell.ID == cellID {
+			return &cell, nil
+		}
+	}
+	return nil, fmt.Errorf("cell %s not found in notebook %s", cellID, notebookID)
 }
 
 func (c *Client) UpdateCell(notebookID, cellID, source string) (*Cell, error) {

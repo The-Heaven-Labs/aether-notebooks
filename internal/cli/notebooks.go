@@ -1,9 +1,14 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
@@ -41,9 +46,44 @@ func (c *Client) ExportNotebook(id string) (map[string]interface{}, error) {
 	return result, nil
 }
 
-func (c *Client) ImportNotebook(data map[string]interface{}) (*Notebook, error) {
+func (c *Client) ImportNotebook(filePath string) (*Notebook, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("read file: %w", err)
+	}
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	fw, err := w.CreateFormFile("file", filepath.Base(filePath))
+	if err != nil {
+		return nil, err
+	}
+	if _, err := fw.Write(data); err != nil {
+		return nil, err
+	}
+	w.Close()
+
+	req, err := http.NewRequest("POST", c.BaseURL+"/api/v1/notebooks/import", &buf)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respData, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		var e struct {
+			Error string `json:"error"`
+		}
+		json.Unmarshal(respData, &e)
+		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, e.Error)
+	}
 	var nb Notebook
-	if err := c.PostJSON("/api/v1/notebooks/import", data, &nb); err != nil {
+	if err := json.Unmarshal(respData, &nb); err != nil {
 		return nil, err
 	}
 	return &nb, nil
@@ -286,21 +326,13 @@ func NotebooksCmd() *cobra.Command {
 			var filePath string
 			c := &cobra.Command{
 				Use:   "import",
-				Short: "Import a notebook from a JSON file",
+				Short: "Import a .ipynb (Jupyter) file as a notebook",
 				RunE: func(cmd *cobra.Command, args []string) error {
 					cl, err := LoadClient()
 					if err != nil {
 						return err
 					}
-					data, err := os.ReadFile(filePath)
-					if err != nil {
-						return fmt.Errorf("read file: %w", err)
-					}
-					var body map[string]interface{}
-					if err := json.Unmarshal(data, &body); err != nil {
-						return fmt.Errorf("parse JSON: %w", err)
-					}
-					nb, err := cl.ImportNotebook(body)
+					nb, err := cl.ImportNotebook(filePath)
 					if err != nil {
 						return err
 					}
