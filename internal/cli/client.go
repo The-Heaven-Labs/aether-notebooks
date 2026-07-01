@@ -110,6 +110,24 @@ func (c *Client) PostJSON(path string, body, out interface{}) error {
 	return nil
 }
 
+func (c *Client) PutJSON(path string, body, out interface{}) error {
+	data, status, err := c.Do("PUT", path, body)
+	if err != nil {
+		return err
+	}
+	if status >= 400 {
+		var e struct {
+			Error string `json:"error"`
+		}
+		json.Unmarshal(data, &e)
+		return fmt.Errorf("API error %d: %s", status, e.Error)
+	}
+	if out != nil {
+		return json.Unmarshal(data, out)
+	}
+	return nil
+}
+
 func (c *Client) DeleteJSON(path string) error {
 	data, status, err := c.Do("DELETE", path, nil)
 	if err != nil {
