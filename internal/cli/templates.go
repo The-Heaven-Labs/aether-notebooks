@@ -1,0 +1,97 @@
+package cli
+
+import (
+	"fmt"
+
+	"github.com/spf13/cobra"
+)
+
+func (c *Client) ListTemplates() ([]Template, error) {
+	var resp struct {
+		Templates []Template `json:"templates"`
+	}
+	if err := c.GetJSON("/api/v1/templates", &resp); err != nil {
+		return nil, err
+	}
+	return resp.Templates, nil
+}
+
+func (c *Client) CreateTemplate(name, templateType string) (*Template, error) {
+	body := map[string]interface{}{"name": name, "type": templateType, "content": map[string]interface{}{}}
+	var t Template
+	if err := c.PostJSON("/api/v1/templates", body, &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (c *Client) DeleteTemplate(id string) error {
+	return c.DeleteJSON("/api/v1/templates/" + id)
+}
+
+func TemplatesCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "templates",
+		Short: "Manage notebook templates",
+	}
+
+	cmd.AddCommand(
+		&cobra.Command{
+			Use:   "list",
+			Short: "List templates",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				c, err := LoadClient()
+				if err != nil {
+					return err
+				}
+				result, err := c.ListTemplates()
+				if err != nil {
+					return err
+				}
+				PrintJSON(result)
+				return nil
+			},
+		},
+		func() *cobra.Command {
+			var name, templateType string
+			c := &cobra.Command{
+				Use:   "create",
+				Short: "Create a template",
+				RunE: func(cmd *cobra.Command, args []string) error {
+					cl, err := LoadClient()
+					if err != nil {
+						return err
+					}
+					t, err := cl.CreateTemplate(name, templateType)
+					if err != nil {
+						return err
+					}
+					PrintJSON(t)
+					return nil
+				},
+			}
+			c.Flags().StringVarP(&name, "name", "n", "", "Template name (required)")
+			c.MarkFlagRequired("name")
+			c.Flags().StringVar(&templateType, "type", "cell", "Template type (notebook or cell)")
+			return c
+		}(),
+		&cobra.Command{
+			Use:   "delete <id>",
+			Short: "Delete a template",
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				c, err := LoadClient()
+				if err != nil {
+					return err
+				}
+				if err := c.DeleteTemplate(args[0]); err != nil {
+					return err
+				}
+				fmt.Println("Deleted.")
+				return nil
+			},
+		},
+	)
+
+	return cmd
+}
