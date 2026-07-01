@@ -7,11 +7,13 @@ import (
 )
 
 func (c *Client) ListTemplates() ([]Template, error) {
-	var templates []Template
-	if err := c.GetJSON("/api/v1/templates", &templates); err != nil {
+	var resp struct {
+		Templates []Template `json:"templates"`
+	}
+	if err := c.GetJSON("/api/v1/templates", &resp); err != nil {
 		return nil, err
 	}
-	return templates, nil
+	return resp.Templates, nil
 }
 
 func (c *Client) CreateTemplate(name string) (*Template, error) {

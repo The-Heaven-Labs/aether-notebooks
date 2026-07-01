@@ -9,7 +9,7 @@ import (
 
 func (c *Client) ListMCPServers() ([]MCPServer, error) {
 	var servers []MCPServer
-	if err := c.GetJSON("/api/v1/mcp/servers", &servers); err != nil {
+	if err := c.GetJSON("/api/v1/mcp-servers", &servers); err != nil {
 		return nil, err
 	}
 	return servers, nil
@@ -17,7 +17,7 @@ func (c *Client) ListMCPServers() ([]MCPServer, error) {
 
 func (c *Client) GetMCPServer(id string) (*MCPServer, error) {
 	var s MCPServer
-	if err := c.GetJSON("/api/v1/mcp/servers/"+id, &s); err != nil {
+	if err := c.GetJSON("/api/v1/mcp-servers/"+id, &s); err != nil {
 		return nil, err
 	}
 	return &s, nil
@@ -33,7 +33,7 @@ func (c *Client) CreateMCPServer(name, mcpType, command string, args []string) (
 		body["args"] = args
 	}
 	var s MCPServer
-	if err := c.PostJSON("/api/v1/mcp/servers", body, &s); err != nil {
+	if err := c.PostJSON("/api/v1/mcp-servers", body, &s); err != nil {
 		return nil, err
 	}
 	return &s, nil
@@ -54,19 +54,19 @@ func (c *Client) UpdateMCPServer(id, name, mcpType, command string, args []strin
 		body["args"] = args
 	}
 	var s MCPServer
-	if err := c.PutJSON("/api/v1/mcp/servers/"+id, body, &s); err != nil {
+	if err := c.PutJSON("/api/v1/mcp-servers/"+id, body, &s); err != nil {
 		return nil, err
 	}
 	return &s, nil
 }
 
 func (c *Client) DeleteMCPServer(id string) error {
-	return c.DeleteJSON("/api/v1/mcp/servers/" + id)
+	return c.DeleteJSON("/api/v1/mcp-servers/" + id)
 }
 
 func (c *Client) TestMCPServer(id string) (map[string]interface{}, error) {
 	var result map[string]interface{}
-	if err := c.PostJSON("/api/v1/mcp/servers/"+id+"/test", nil, &result); err != nil {
+	if err := c.PostJSON("/api/v1/mcp-servers/"+id+"/test", nil, &result); err != nil {
 		return nil, err
 	}
 	return result, nil

@@ -24,11 +24,13 @@ func (c *Client) UpdateNotebook(id, title, description string) (*Notebook, error
 }
 
 func (c *Client) CloneNotebook(id string) (*Notebook, error) {
-	var nb Notebook
-	if err := c.PostJSON("/api/v1/notebooks/"+id+"/clone", nil, &nb); err != nil {
+	var resp struct {
+		Notebook Notebook `json:"notebook"`
+	}
+	if err := c.PostJSON("/api/v1/notebooks/"+id+"/clone", map[string]string{}, &resp); err != nil {
 		return nil, err
 	}
-	return &nb, nil
+	return &resp.Notebook, nil
 }
 
 func (c *Client) ExportNotebook(id string) (map[string]interface{}, error) {

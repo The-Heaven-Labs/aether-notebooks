@@ -339,17 +339,20 @@ type (
 	}
 
 	Org struct {
-		ID        string    `json:"id"`
-		Name      string    `json:"name"`
-		Slug      string    `json:"slug"`
-		CreatedAt time.Time `json:"created_at"`
+		ID          string    `json:"id"`
+		Name        string    `json:"name"`
+		Slug        string    `json:"slug"`
+		MemberCount int       `json:"member_count"`
+		CreatedAt   time.Time `json:"created_at"`
 	}
 
 	User struct {
-		ID              string `json:"id"`
-		Email           string `json:"email"`
-		Name            string `json:"name"`
-		IsPlatformAdmin bool   `json:"is_platform_admin"`
+		ID              string    `json:"id"`
+		Email           string    `json:"email"`
+		Name            string    `json:"name"`
+		IsPlatformAdmin bool      `json:"is_platform_admin"`
+		CreatedAt       time.Time `json:"created_at"`
+		Orgs            []string  `json:"orgs"`
 	}
 
 	Attachment struct {

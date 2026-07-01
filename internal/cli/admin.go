@@ -8,11 +8,13 @@ import (
 )
 
 func (c *Client) AdminListOrgs() ([]Org, error) {
-	var orgs []Org
-	if err := c.GetJSON("/api/v1/admin/orgs", &orgs); err != nil {
+	var resp struct {
+		Orgs []Org `json:"orgs"`
+	}
+	if err := c.GetJSON("/api/v1/admin/orgs", &resp); err != nil {
 		return nil, err
 	}
-	return orgs, nil
+	return resp.Orgs, nil
 }
 
 func (c *Client) AdminCreateOrg(name, slug string) (*Org, error) {
@@ -25,11 +27,13 @@ func (c *Client) AdminCreateOrg(name, slug string) (*Org, error) {
 }
 
 func (c *Client) AdminListUsers() ([]User, error) {
-	var users []User
-	if err := c.GetJSON("/api/v1/admin/users", &users); err != nil {
+	var resp struct {
+		Users []User `json:"users"`
+	}
+	if err := c.GetJSON("/api/v1/admin/users", &resp); err != nil {
 		return nil, err
 	}
-	return users, nil
+	return resp.Users, nil
 }
 
 func (c *Client) AdminUpdateUser(id string, isPlatformAdmin bool) error {
@@ -38,11 +42,13 @@ func (c *Client) AdminUpdateUser(id string, isPlatformAdmin bool) error {
 }
 
 func (c *Client) AdminListSSOProviders() ([]SSOProvider, error) {
-	var providers []SSOProvider
-	if err := c.GetJSON("/api/v1/admin/sso/providers", &providers); err != nil {
+	var resp struct {
+		Providers []SSOProvider `json:"providers"`
+	}
+	if err := c.GetJSON("/api/v1/admin/sso/providers", &resp); err != nil {
 		return nil, err
 	}
-	return providers, nil
+	return resp.Providers, nil
 }
 
 func (c *Client) AdminCreateSSOProvider(name, providerType, clientID, clientSecret, discoveryURL string, allowedDomains []string) (*SSOProvider, error) {

@@ -5,11 +5,14 @@ import (
 )
 
 func (c *Client) ListAuditLogs() ([]AuditLog, error) {
-	var logs []AuditLog
-	if err := c.GetJSON("/api/v1/audit", &logs); err != nil {
+	var resp struct {
+		Entries []AuditLog `json:"entries"`
+		Total   int        `json:"total"`
+	}
+	if err := c.GetJSON("/api/v1/audit", &resp); err != nil {
 		return nil, err
 	}
-	return logs, nil
+	return resp.Entries, nil
 }
 
 func AuditCmd() *cobra.Command {

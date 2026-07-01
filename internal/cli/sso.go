@@ -8,11 +8,13 @@ import (
 )
 
 func (c *Client) ListOrgSSOProviders() ([]SSOProvider, error) {
-	var providers []SSOProvider
-	if err := c.GetJSON("/api/v1/sso/providers", &providers); err != nil {
+	var resp struct {
+		Providers []SSOProvider `json:"providers"`
+	}
+	if err := c.GetJSON("/api/v1/sso/providers", &resp); err != nil {
 		return nil, err
 	}
-	return providers, nil
+	return resp.Providers, nil
 }
 
 func (c *Client) CreateOrgSSOProvider(name, providerType, clientID, clientSecret, discoveryURL string, allowedDomains []string) (*SSOProvider, error) {
@@ -65,11 +67,13 @@ func (c *Client) DeleteOrgSSOProvider(id string) error {
 }
 
 func (c *Client) ListPlatformSSOProviders() ([]SSOProvider, error) {
-	var providers []SSOProvider
-	if err := c.GetJSON("/api/v1/sso/platform-providers", &providers); err != nil {
+	var resp struct {
+		Providers []SSOProvider `json:"providers"`
+	}
+	if err := c.GetJSON("/api/v1/sso/platform-providers", &resp); err != nil {
 		return nil, err
 	}
-	return providers, nil
+	return resp.Providers, nil
 }
 
 func (c *Client) EnablePlatformSSOProvider(id string) error {

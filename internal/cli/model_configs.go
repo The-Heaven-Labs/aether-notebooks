@@ -8,7 +8,7 @@ import (
 
 func (c *Client) ListModelConfigs() ([]ModelConfig, error) {
 	var configs []ModelConfig
-	if err := c.GetJSON("/api/v1/model_configs", &configs); err != nil {
+	if err := c.GetJSON("/api/v1/model-configs", &configs); err != nil {
 		return nil, err
 	}
 	return configs, nil
@@ -16,7 +16,7 @@ func (c *Client) ListModelConfigs() ([]ModelConfig, error) {
 
 func (c *Client) GetModelConfig(id string) (*ModelConfig, error) {
 	var mc ModelConfig
-	if err := c.GetJSON("/api/v1/model_configs/"+id, &mc); err != nil {
+	if err := c.GetJSON("/api/v1/model-configs/"+id, &mc); err != nil {
 		return nil, err
 	}
 	return &mc, nil
@@ -30,7 +30,7 @@ func (c *Client) CreateModelConfig(name, provider, baseURL, model string) (*Mode
 		"model":    model,
 	}
 	var mc ModelConfig
-	if err := c.PostJSON("/api/v1/model_configs", body, &mc); err != nil {
+	if err := c.PostJSON("/api/v1/model-configs", body, &mc); err != nil {
 		return nil, err
 	}
 	return &mc, nil
@@ -51,19 +51,19 @@ func (c *Client) UpdateModelConfig(id, name, provider, baseURL, model string) (*
 		body["model"] = model
 	}
 	var mc ModelConfig
-	if err := c.PutJSON("/api/v1/model_configs/"+id, body, &mc); err != nil {
+	if err := c.PutJSON("/api/v1/model-configs/"+id, body, &mc); err != nil {
 		return nil, err
 	}
 	return &mc, nil
 }
 
 func (c *Client) DeleteModelConfig(id string) error {
-	return c.DeleteJSON("/api/v1/model_configs/" + id)
+	return c.DeleteJSON("/api/v1/model-configs/" + id)
 }
 
 func (c *Client) TestModelConfig(id string) (map[string]interface{}, error) {
 	var result map[string]interface{}
-	if err := c.PostJSON("/api/v1/model_configs/"+id+"/test", nil, &result); err != nil {
+	if err := c.PostJSON("/api/v1/model-configs/"+id+"/test", nil, &result); err != nil {
 		return nil, err
 	}
 	return result, nil
