@@ -62,3 +62,6 @@ release:
   github:
     owner: The-Heaven-Labs
     name: aether-notebooks
+
+changelog:
+  use: github-native
