@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { Suspense } from 'react'
 import { ResizableImage } from './MarkdownCell'
 import { Cell } from './Cell'
 import type { Cell as CellType } from '../types'
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -27,16 +30,18 @@ function renderMarkdownCell(source = 'hello') {
   const onSourceChange = vi.fn()
   const onSave = vi.fn()
   const utils = render(
-    <Cell
-      cell={cell}
-      connectors={[]}
-      notebookId="nb-1"
-      onRun={vi.fn()}
-      onDelete={vi.fn()}
-      onSourceChange={onSourceChange}
-      onSave={onSave}
-      onAssignConnector={vi.fn()}
-    />
+    <Suspense fallback={null}>
+      <Cell
+        cell={cell}
+        connectors={[]}
+        notebookId="nb-1"
+        onRun={vi.fn()}
+        onDelete={vi.fn()}
+        onSourceChange={onSourceChange}
+        onSave={onSave}
+        onAssignConnector={vi.fn()}
+      />
+    </Suspense>
   )
   return { ...utils, onSourceChange, onSave }
 }
@@ -111,6 +116,11 @@ describe('MarkdownView image upload', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const { onSourceChange, onSave } = renderMarkdownCell('before ')
+
+    // Preload lazy MarkdownView so interactions work synchronously
+    await act(async () => {
+      await import('./MarkdownCell')
+    })
 
     // Enter edit mode by clicking the rendered paragraph (not the hidden textarea)
     fireEvent.click(screen.getByText('before', { selector: 'p' }))
