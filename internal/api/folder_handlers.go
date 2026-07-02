@@ -482,6 +482,10 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 // @Router /folders [get]
 func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
+	if claims.OrgID == "" {
+		writeError(w, http.StatusForbidden, "organization required — complete onboarding first")
+		return
+	}
 	ctx := r.Context()
 
 	contents := folderContents{
@@ -1256,9 +1260,13 @@ func scanNotebook(rows interface {
 	var nb models.Notebook
 	var connectorID *string
 	var paramsJSON []byte
-	if err := rows.Scan(&nb.ID, &nb.OrgID, &nb.Title, &nb.Description,
+	var description *string
+	if err := rows.Scan(&nb.ID, &nb.OrgID, &nb.Title, &description,
 		&connectorID, &paramsJSON, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt); err != nil {
 		return nb, err
+	}
+	if description != nil {
+		nb.Description = *description
 	}
 	if connectorID != nil {
 		nb.ConnectorID = *connectorID

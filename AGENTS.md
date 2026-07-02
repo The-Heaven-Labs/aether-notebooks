@@ -2,6 +2,10 @@
 
 **Aether** is a collaborative SQL/data notebook platform (think Jupyter for analytics). It has a Go API server, a React frontend, and a Hocuspocus relay for real-time collaborative editing via Yjs.
 
+## Agent API Access
+
+When an agent needs to interact with the Aether API (create notebooks, manage connectors, list orgs, etc.), **always try the `aether` CLI first** before falling back to `curl` or direct HTTP calls. The CLI handles authentication, token management, and API URL resolution automatically. Use `curl`/HTTP directly only when the CLI lacks the needed operation (e.g., Swagger/OpenAPI docs or unsupported flags and subcommands).
+
 ## Architecture
 
 ```

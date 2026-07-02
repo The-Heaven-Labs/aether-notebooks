@@ -22,15 +22,19 @@ func NewClickHouseExecutor(cfg models.ConnectorConfig) (*ClickHouseExecutor, err
 		port = 9000
 	}
 
-	conn, err := clickhouse.Open(&clickhouse.Options{
+	opts := &clickhouse.Options{
 		Addr: []string{fmt.Sprintf("%s:%d", cfg.Host, port)},
 		Auth: clickhouse.Auth{
-			Database: cfg.Database,
 			Username: cfg.User,
 			Password: cfg.Password,
 		},
 		Protocol: clickhouse.Native,
-	})
+	}
+	if cfg.Database != "" {
+		opts.Auth.Database = cfg.Database
+	}
+
+	conn, err := clickhouse.Open(opts)
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}
@@ -277,6 +281,18 @@ func chExtractValue(dest interface{}) interface{} {
 
 func (c *ClickHouseExecutor) Execute(ctx context.Context, query string, params map[string]string, maxRows int) (*ResultSet, error) {
 	resolved := ResolveParams(query, params)
+
+	// Use Exec for commands that don't return rows
+	upper := strings.TrimSpace(strings.ToUpper(resolved))
+	if hasPrefixAny(upper, []string{"USE ", "SET ", "CREATE ", "DROP ", "ALTER ",
+		"ATTACH ", "DETACH ", "RENAME ", "TRUNCATE ", "OPTIMIZE ",
+		"INSERT ", "DELETE ", "KILL ", "CHECK ", "EXISTS "}) {
+		err := c.conn.Exec(ctx, resolved)
+		if err != nil {
+			return nil, fmt.Errorf("exec: %w", err)
+		}
+		return &ResultSet{Columns: []Column{}, Rows: [][]interface{}{}}, nil
+	}
 
 	rows, err := c.conn.Query(ctx, resolved)
 	if err != nil {

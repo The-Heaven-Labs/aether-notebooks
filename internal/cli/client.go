@@ -38,6 +38,14 @@ func RemoveCredentials() {
 	os.Remove(credentialsPath())
 }
 
+func defaultAPIURL() string {
+	cfg, err := LoadConfig()
+	if err == nil && cfg.APIURL != "" {
+		return cfg.APIURL
+	}
+	return "http://localhost:8080"
+}
+
 func LoadClient() (*Client, error) {
 	data, err := os.ReadFile(credentialsPath())
 	if err != nil {
@@ -46,7 +54,7 @@ func LoadClient() (*Client, error) {
 	var creds Credentials
 	json.Unmarshal(data, &creds)
 	if creds.APIURL == "" {
-		creds.APIURL = "http://localhost:8080"
+		creds.APIURL = defaultAPIURL()
 	}
 	return &Client{BaseURL: creds.APIURL, Token: creds.Token}, nil
 }

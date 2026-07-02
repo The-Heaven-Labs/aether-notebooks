@@ -35,7 +35,7 @@ func (d *ClickHouseDriver) ConfigSchema() ConfigSchema {
 			{Name: "port", Type: "int", Required: true, Default: 9000, Description: "Native protocol port"},
 			{Name: "user", Type: "string", Required: true, Description: "ClickHouse user"},
 			{Name: "password", Type: "string", Required: true, Description: "ClickHouse password"},
-			{Name: "database", Type: "string", Required: true, Description: "Database name"},
+			{Name: "database", Type: "string", Required: false, Description: "Database name (leave empty to query across all databases)"},
 		},
 	}
 }
@@ -45,8 +45,8 @@ func (d *ClickHouseDriver) NewExecutor(rawConfig json.RawMessage) (Executor, err
 	if err := json.Unmarshal(rawConfig, &cfg); err != nil {
 		return nil, fmt.Errorf("invalid clickhouse config: %w", err)
 	}
-	if cfg.Host == "" || cfg.Database == "" {
-		return nil, fmt.Errorf("clickhouse config requires host and database")
+	if cfg.Host == "" {
+		return nil, fmt.Errorf("clickhouse config requires host")
 	}
 	connCfg := models.ConnectorConfig{
 		Host:     cfg.Host,

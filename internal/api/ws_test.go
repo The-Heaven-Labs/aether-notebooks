@@ -35,6 +35,9 @@ func TestWebSocketBroadcast(t *testing.T) {
 	}
 	defer conn2.Close()
 
+	// Give the server time to start the read loop for both connections
+	time.Sleep(100 * time.Millisecond)
+
 	testMsg := map[string]interface{}{
 		"type":    "cell_output",
 		"cell_id": "test-cell",

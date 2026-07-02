@@ -9,19 +9,28 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 func LoginCmd() *cobra.Command {
-	var apiURL string
+	var email, password, apiURL string
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Authenticate with a Aether Notebooks server",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var email, password string
-			fmt.Print("Email: ")
-			fmt.Scanln(&email)
-			fmt.Print("Password: ")
-			fmt.Scanln(&password)
+			if email == "" {
+				fmt.Print("Email: ")
+				fmt.Scanln(&email)
+			}
+			if password == "" {
+				fmt.Print("Password: ")
+				pwBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+				if err != nil {
+					return fmt.Errorf("failed to read password: %w", err)
+				}
+				password = string(pwBytes)
+				fmt.Println()
+			}
 
 			body, _ := json.Marshal(map[string]string{"email": email, "password": password})
 			resp, err := http.Post(apiURL+"/api/v1/auth/login", "application/json", bytes.NewReader(body))
@@ -48,7 +57,9 @@ func LoginCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&apiURL, "api-url", "http://localhost:8080", "API server URL")
+	cmd.Flags().StringVar(&email, "email", "", "Email for login")
+	cmd.Flags().StringVar(&password, "password", "", "Password for login")
+	cmd.Flags().StringVar(&apiURL, "api-url", defaultAPIURL(), "API server URL")
 	return cmd
 }
 

@@ -1,0 +1,10 @@
+- [x] In the aether CLI, the password field in login is not obfuscated
+- [x] In the aether CLI, there is no global config to set, for example, the API URL
+- [x] The master key is being pasted in plain text in the logs when the service starts
+- [x] Application logs are not JSON Structured
+- [x] Aether server has absolutely no indication on what is required to run it, nor a --help nor anything, the user depends on the documentation and cant figure it out only with the binary. Add more meaningful errors
+- [x] The @AGENTS.md should instruct that everything regarding the API that the agent wants to do should initially be tried using the CLI, and only if it do not work to use curl/similar tools directly
+- [x] When in sql cells, there should be auto-complete for tables. When table is defined in the code, there should be auto-complete for columns. Since we already have schema traversal and knowledge, should not be too hard?
+- [x] The whole CLI should be usable by AI agents, so things that are eventually only tty-compatible, should have a way to work in a more plain way, without interactivity. This is not true currently for the login, which expects interactivity which made it difficulty to be used by agents. All commands should have this in mind, so scan over ALL the commands and subcommands to make it work well with agents.
+- [x] Current connector implementation of clickhouse requires a database being passed, which limits which databases can be used by it. Is there a way to configure without a database, so it only can work with other databases? (it would be nice to be able to select database at creation time to restrict what can be accessed aswell, so both should be possible)
+- [x] Line separators between cells (where the +Code and +Text buttons appear) are appearing even when not hovering between cells. The buttons are appearing correctly, but the line separator appears regardless

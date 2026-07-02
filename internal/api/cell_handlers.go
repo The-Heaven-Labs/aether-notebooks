@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -318,7 +318,7 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 
 		// Write to Yjs (source of truth) if source changed
 		if err := agent.UpdateCellInYjs(ctx, s.db.Pool, nbID, cellID, *req.Source); err != nil {
-			log.Printf("WARNING: yjs update failed for cell %s: %v", cellID, err)
+			slog.Warn("yjs update failed", "cell_id", cellID, "error", err)
 		}
 
 		updateMsg["source"] = *req.Source

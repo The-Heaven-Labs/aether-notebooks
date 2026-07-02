@@ -42,30 +42,26 @@ func NewS3Storage(cfg S3Config) (Storage, error) {
 	if cfg.Endpoint != "" {
 		clientOpts = append(clientOpts, func(o *s3.Options) {
 			o.BaseEndpoint = aws.String(cfg.Endpoint)
-			o.UsePathStyle = true // required for Garage and most self-hosted S3
+			o.UsePathStyle = true
 		})
 	}
+	// Disable trailing checksums for plain HTTP (dev with Garage)
+	clientOpts = append(clientOpts, func(o *s3.Options) {
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+	})
 
 	client := s3.NewFromConfig(awsCfg, clientOpts...)
 	return &S3Storage{client: client, bucket: cfg.Bucket}, nil
 }
 
 func (s *S3Storage) Put(id string, r io.Reader, size int64, mimeType string) error {
-	var body io.Reader
-	var contentLength int64
-
-	if size > 0 {
-		body = r
-		contentLength = size
-	} else {
-		// Buffer to get accurate size (unreliable from multipart headers)
-		buf := &bytes.Buffer{}
-		if _, err := io.Copy(buf, r); err != nil {
-			return fmt.Errorf("s3: buffer %s: %w", id, err)
-		}
-		body = buf
-		contentLength = int64(buf.Len())
+	// Buffer entire content (S3 SDK requires a seekable stream without TLS)
+	buf := &bytes.Buffer{}
+	if _, err := io.Copy(buf, r); err != nil {
+		return fmt.Errorf("s3: buffer %s: %w", id, err)
 	}
+	body := bytes.NewReader(buf.Bytes())
+	contentLength := int64(buf.Len())
 
 	_, err := s.client.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket:        aws.String(s.bucket),

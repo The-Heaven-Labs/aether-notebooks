@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -232,7 +232,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	).Scan(&folderID); err == pgx.ErrNoRows {
 		if err := createHomeFolder(ctx, s.db.Pool, orgID, userID, name); err != nil {
 			// Non-fatal: log but don't block login
-			log.Printf("warning: failed to create home folder for user %s: %v", userID, err)
+			slog.Warn("failed to create home folder", "user_id", userID, "error", err)
 		}
 	}
 

@@ -619,7 +619,7 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 	}
 	exec, err := s.buildExecutor(connType, configEnc)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to build connector")
+		writeError(w, http.StatusBadGateway, "failed to connect")
 		return
 	}
 	defer exec.Close()

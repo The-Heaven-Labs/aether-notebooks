@@ -1,0 +1,22 @@
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+
+replication_mode = "none"
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "aether-garage:3901"
+rpc_secret = "f1e51ed983b128968df9e63ac1a7c2965109094500a3287988832f80c8ade2de"
+
+[s3_api]
+s3_region = "us-east-1"
+api_bind_addr = "[::]:3900"
+root_domain = ".s3.aether.test"
+
+[s3_web]
+bind_addr = "[::]:3902"
+root_domain = ".web.aether.test"
+
+[admin]
+api_bind_addr = "[::]:3903"
+metrics_token = "dev-metrics-token"
+admin_token = "dev-admin-token"

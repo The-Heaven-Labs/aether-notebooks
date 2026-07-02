@@ -15,6 +15,7 @@ func main() {
 	}
 
 	root.AddCommand(
+		cli.ConfigCmd(),
 		cli.LoginCmd(),
 		cli.LogoutCmd(),
 		cli.NotebooksCmd(),

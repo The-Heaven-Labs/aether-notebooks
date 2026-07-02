@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 
@@ -50,7 +50,7 @@ func (h *Hub) Broadcast(notebookID string, msg interface{}) {
 	}
 	for conn := range h.rooms[notebookID] {
 		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			log.Printf("ws write: %v", err)
+			slog.Warn("ws write", "error", err)
 		}
 	}
 }
@@ -81,7 +81,7 @@ func (s *Server) handleNotebookWS(w http.ResponseWriter, r *http.Request) {
 	nbID := r.PathValue("id")
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("ws upgrade: %v", err)
+		slog.Warn("ws upgrade", "error", err)
 		return
 	}
 

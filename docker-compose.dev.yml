@@ -148,6 +148,12 @@ services:
       AETHER_PUBLIC_URL: http://localhost:8080
       AETHER_FRONTEND_URL: http://localhost:8080
       AETHER_OIDC_HOST_REWRITE: localhost:5557=host.docker.internal:5557
+      AETHER_STORAGE_BACKEND: s3
+      AETHER_S3_ENDPOINT: http://aether-garage:3900
+      AETHER_S3_BUCKET: aether-attachments
+      AETHER_S3_REGION: us-east-1
+      AETHER_S3_ACCESS_KEY: GKacc5e39c17a68ea60adf92db
+      AETHER_S3_SECRET_KEY: 557351ff6f3e11eb8a1810af9647f9af9d3b0ce2e5786d2b186d327f091ab65c
     volumes:
       # Mount entire repo so Air can watch and rebuild on Go file changes.
       # Named volumes for the Go caches survive container restarts, making
@@ -172,6 +178,8 @@ services:
         condition: service_started
       web-builder:
         condition: service_started
+      aether-garage:
+        condition: service_healthy
 
   # ── Hocuspocus relay (TypeScript + tsx --watch) ───────────────────────────
 
@@ -192,7 +200,34 @@ services:
     depends_on:
       - api
 
-  # ── Web builder (Vite build --watch) ──────────────────────────────────────
+  # ── S3-compatible storage (Garage) ────────────────────────────────────────
+
+  aether-garage:
+    image: dxflrs/garage:v1.0.1
+    command: ["/garage", "-c", "/etc/garage/config.toml", "server"]
+    ports:
+      - "3900:3900"   # S3 API
+    volumes:
+      - ./dev/garage/config.toml:/etc/garage/config.toml:ro
+      - garagedata:/var/lib/garage
+    healthcheck:
+      test: ["CMD", "/garage", "-c", "/etc/garage/config.toml", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+  garage-setup:
+    image: alpine:3.20
+    environment:
+      ADMIN: http://aether-garage:3903
+      TOKEN: dev-admin-token
+    volumes:
+      - ./dev/garage/seed.sh:/seed.sh:ro
+    depends_on:
+      aether-garage:
+        condition: service_healthy
+    entrypoint: ["sh", "-c", "apk add --no-cache curl >/dev/null 2>&1 && sh /seed.sh"]
 
   web-builder:
     build:
@@ -207,6 +242,7 @@ volumes:
   pgdata:
   chdata:
   osdata:
+  garagedata:
   go-build-cache:
   go-mod-cache:
   relay-node-modules:

@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/the-heaven-labs/aether/internal/database"
@@ -59,7 +59,7 @@ func (s *Scheduler) tick() {
 		`SELECT id, notebook_id, cron_expression, parameter_overrides
 		 FROM schedules WHERE enabled = TRUE AND next_run_at <= NOW()`)
 	if err != nil {
-		log.Printf("scheduler: query: %v", err)
+		slog.Warn("scheduler: query", "error", err)
 		return
 	}
 	defer rows.Close()
@@ -68,7 +68,7 @@ func (s *Scheduler) tick() {
 		var id, nbID, cronExpr string
 		var paramsJSON []byte
 		if err := rows.Scan(&id, &nbID, &cronExpr, &paramsJSON); err != nil {
-			log.Printf("scheduler: scan: %v", err)
+			slog.Warn("scheduler: scan", "error", err)
 			continue
 		}
 
@@ -76,7 +76,7 @@ func (s *Scheduler) tick() {
 		json.Unmarshal(paramsJSON, &params)
 
 		if err := s.runFunc(ctx, nbID, params); err != nil {
-			log.Printf("scheduler: run notebook %s: %v", nbID, err)
+			slog.Warn("scheduler: run notebook", "notebook_id", nbID, "error", err)
 		}
 
 		next, _ := NextRun(cronExpr)
@@ -120,7 +120,7 @@ func (s *Scheduler) runAgentStatsRollup(ctx context.Context) {
 			tokens_output = EXCLUDED.tokens_output
 	`, yesterday)
 	if err != nil {
-		log.Printf("scheduler: agent stats rollup: %v", err)
+		slog.Warn("scheduler: agent stats rollup", "error", err)
 	}
 }
 
@@ -131,7 +131,7 @@ func (s *Scheduler) purgeTrash(ctx context.Context) {
 			fmt.Sprintf(`DELETE FROM %s WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '7 days'`, table),
 		)
 		if err != nil {
-			log.Printf("scheduler: purge trash %s: %v", table, err)
+			slog.Warn("scheduler: purge trash", "table", table, "error", err)
 		}
 	}
 }

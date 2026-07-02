@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -88,6 +89,7 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 	// Count bytes while storing
 	counter := &countingReader{r: reader}
 	if err := s.store.Put(attID, counter, header.Size, mimeType); err != nil {
+		slog.Error("attachment storage put failed", "id", attID, "error", err)
 		s.db.Pool.Exec(ctx, `DELETE FROM attachments WHERE id = $1`, attID)
 		writeError(w, http.StatusInternalServerError, "storage error")
 		return
