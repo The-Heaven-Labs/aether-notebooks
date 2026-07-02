@@ -14,7 +14,7 @@ import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import { yCollab, ySyncFacet, YSyncConfig } from 'y-codemirror.next'
 import { OutputRenderer } from './OutputRenderer'
-import { MarkdownView } from './MarkdownCell'
+const MarkdownView = lazy(() => import('./MarkdownCell').then(m => ({ default: m.MarkdownView })))
 import type { Cell as APICell, Connector } from '../types'
 import type { ChartConfig } from '../charts'
 
