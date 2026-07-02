@@ -6,13 +6,8 @@ import { Loader2, Link, Heading, Code, Maximize2 } from 'lucide-react'
 import { getToken } from '../api/client'
 import type { Cell } from '../types'
 import { slugify, updateCellFocus } from './Cell'
+import { setMarkdownFocusCallback, clearMarkdownFocusCallback } from '../utils/editorFocus'
 import { ImageViewer } from './ImageViewer'
-
-const markdownEditCallbacks = new Map<string, () => void>()
-
-export function focusMarkdownCell(cellId: string) {
-  markdownEditCallbacks.get(cellId)?.()
-}
 
 export interface ResizableImageProps {
   src: string | null
@@ -256,11 +251,12 @@ export interface MarkdownViewProps {
   onSave?: (cellId: string, source: string) => void
   onEditStart?: () => void
   onEditEnd?: () => void
+  paramValues?: Record<string, string>
 }
 
 
 
-export function MarkdownView({ cell, notebookId, onSourceChange, onSave, onEditStart, onEditEnd }: MarkdownViewProps) {
+export function MarkdownView({ cell, notebookId, onSourceChange, onSave, onEditStart, onEditEnd, paramValues }: MarkdownViewProps) {
   const [source, setSource] = useState(cell.source)
   const [isFocused, setIsFocused] = useState(false)
   const [splitMode, setSplitMode] = useState(false)
@@ -269,6 +265,15 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave, onEditS
   const [dragOver, setDragOver] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const resolvedSource = useMemo(() => {
+    if (!paramValues || Object.keys(paramValues).length === 0) return source
+    let result = source
+    for (const [key, value] of Object.entries(paramValues)) {
+      result = result.replaceAll(`{{${key}}}`, value)
+    }
+    return result
+  }, [source, paramValues])
   const sourceRef = useRef(source)
   const onSaveRef = useRef(onSave)
   useEffect(() => { sourceRef.current = source }, [source])
@@ -282,7 +287,7 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave, onEditS
 
   // Register an edit callback so NotebookPage can programmatically enter edit mode
   useEffect(() => {
-    markdownEditCallbacks.set(cell.id, () => {
+    setMarkdownFocusCallback(cell.id, () => {
       if (!onSave) return
       setIsFocused(true)
       setTimeout(() => {
@@ -294,7 +299,7 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave, onEditS
         }
       }, 0)
     })
-    return () => { markdownEditCallbacks.delete(cell.id) }
+    return () => { clearMarkdownFocusCallback(cell.id) }
   }, [cell.id, onSave])
 
   const updateSource = useCallback((s: string) => {
@@ -535,8 +540,8 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave, onEditS
           }
         }}
       >
-        {source.trim()
-          ? <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>{source}</ReactMarkdown>
+        {resolvedSource.trim()
+          ? <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>{resolvedSource}</ReactMarkdown>
           : <span style={styles.mdPlaceholder}>Write markdown… (Ctrl+V to paste images, drag & drop supported)</span>}
       </div>
       </div>

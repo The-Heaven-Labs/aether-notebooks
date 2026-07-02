@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react'
+import { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard } from 'lucide-react'
@@ -213,6 +213,7 @@ interface Props {
   onAddToDashboard?: (cellId: string) => void
   focused?: boolean
   index?: number
+  paramValues?: Record<string, string>
 }
 
 // ── Helper ────────────────────────────────────────────────────────────────────
@@ -450,6 +451,7 @@ export const Cell = memo(function Cell({
   onAddToDashboard,
   focused = false,
   index,
+  paramValues,
 }: Props) {
   const [hovered, setHovered] = useState(false)
   const [connectorOpen, setConnectorOpen] = useState(false)
@@ -758,7 +760,7 @@ export const Cell = memo(function Cell({
               onEditEnd={onEditEnd}
               readOnly={!onSave}
             />
-          : <MarkdownView cell={cell} notebookId={notebookId} onSourceChange={onSourceChange} onSave={onSave} onEditStart={onEditStart} onEditEnd={onEditEnd} />
+          : <Suspense fallback={null}><MarkdownView cell={cell} notebookId={notebookId} onSourceChange={onSourceChange} onSave={onSave} onEditStart={onEditStart} onEditEnd={onEditEnd} paramValues={paramValues} /></Suspense>
       )}
 
       {/* ── Output ── */}

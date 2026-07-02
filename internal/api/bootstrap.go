@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/the-heaven-labs/aether/internal/sso"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -49,8 +49,8 @@ func SeedDevSSOProviders(ctx context.Context, pool *pgxpool.Pool, masterKey []by
 	}
 
 	if _, err := sso.CreateProvider(ctx, pool, masterKey, keycloakProvider); err != nil {
-		log.Printf("warning: failed to seed dev SSO provider: %v", err)
+		slog.Warn("failed to seed dev SSO provider", "error", err)
 		return
 	}
-	log.Println("seeded dev SSO provider (Keycloak)")
+	slog.Info("seeded dev SSO provider (Keycloak)")
 }

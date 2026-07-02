@@ -2,7 +2,7 @@ package api
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 )
 
@@ -26,7 +26,7 @@ func (s *Server) CleanupOrphanAttachments(ctx context.Context) error {
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			log.Printf("attachment cleanup: scan: %v", err)
+			slog.Warn("attachment cleanup: scan", "error", err)
 			continue
 		}
 		ids = append(ids, id)
@@ -38,16 +38,16 @@ func (s *Server) CleanupOrphanAttachments(ctx context.Context) error {
 	cleaned := 0
 	for _, id := range ids {
 		if err := s.store.Delete(id); err != nil {
-			log.Printf("attachment cleanup: delete storage %s: %v", id, err)
+			slog.Warn("attachment cleanup: delete storage", "id", id, "error", err)
 		}
 		if _, err := s.db.Pool.Exec(ctx, `DELETE FROM attachments WHERE id = $1`, id); err != nil {
-			log.Printf("attachment cleanup: delete db %s: %v", id, err)
+			slog.Warn("attachment cleanup: delete db", "id", id, "error", err)
 			continue
 		}
 		cleaned++
 	}
 
-	log.Printf("attachment cleanup: removed %d orphaned attachment(s)", cleaned)
+	slog.Info("attachment cleanup complete", "removed", cleaned)
 	return nil
 }
 
@@ -61,7 +61,7 @@ func (s *Server) StartBackgroundJobs(ctx context.Context) {
 				return
 			case <-ticker.C:
 				if err := s.CleanupOrphanAttachments(ctx); err != nil {
-					log.Printf("attachment cleanup: %v", err)
+					slog.Warn("attachment cleanup: background cycle", "error", err)
 				}
 			}
 		}

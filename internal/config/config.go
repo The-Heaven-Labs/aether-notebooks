@@ -71,10 +71,10 @@ func Load() (*Config, error) {
 		DisableRegistration:  envOrDefault("AETHER_DISABLE_REGISTRATION", "false") == "true",
 	}
 	if cfg.MasterKey == "" {
-		return nil, fmt.Errorf("AETHER_MASTER_KEY is required")
+		return nil, fmt.Errorf("AETHER_MASTER_KEY is required — set this environment variable to a secret value (32+ characters)")
 	}
 	if cfg.JWTSecret == "" {
-		return nil, fmt.Errorf("AETHER_JWT_SECRET is required")
+		return nil, fmt.Errorf("AETHER_JWT_SECRET is required — set this environment variable to a secret value for signing JWT tokens")
 	}
 	if cfg.StorageBackend == "s3" {
 		if cfg.S3Bucket == "" {
@@ -86,6 +86,9 @@ func Load() (*Config, error) {
 		if cfg.S3SecretKey == "" {
 			return nil, fmt.Errorf("AETHER_S3_SECRET_KEY is required when AETHER_STORAGE_BACKEND=s3")
 		}
+	}
+	if cfg.Port == "" {
+		cfg.Port = "8080"
 	}
 	return cfg, nil
 }

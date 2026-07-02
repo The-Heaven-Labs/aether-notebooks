@@ -13,7 +13,9 @@ package main
 
 import (
 	"context"
-	"log"
+	"flag"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -31,10 +33,72 @@ import (
 	"github.com/the-heaven-labs/aether/internal/storage"
 )
 
+func usage() {
+	fmt.Fprintf(os.Stderr, `Aether Notebooks Server
+
+Usage: aether-server [options]
+
+Options:
+  -h, --help    Show this help message and exit
+
+Configuration is done via environment variables:
+
+  Required:
+    AETHER_MASTER_KEY           AES key for encrypting connector credentials (32+ chars)
+    AETHER_JWT_SECRET           Secret used to sign JWT tokens
+
+  Database:
+    AETHER_DATABASE_URL         Postgres connection URL (default: "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable")
+    AETHER_REDIS_URL            Redis connection URL (default: "redis://localhost:6379")
+
+  Server:
+    AETHER_PORT                 HTTP listen port (default: "8080")
+    AETHER_PUBLIC_URL           Public-facing URL for link generation (default: "http://localhost:8080")
+    AETHER_FRONTEND_URL         Frontend URL for CORS and OIDC redirect (default value of AETHER_PUBLIC_URL)
+    AETHER_DISABLE_REGISTRATION Disable new user registration (default: "false")
+
+  Storage:
+    AETHER_STORAGE_BACKEND      Storage backend: "local" or "s3" (default: "local")
+    AETHER_ATTACHMENT_DIR       Local attachment directory (default: "./attachments")
+    AETHER_MAX_ATTACHMENT_BYTES Max attachment file size in bytes (default: "10485760")
+    AETHER_S3_ENDPOINT          S3-compatible endpoint URL
+    AETHER_S3_BUCKET            S3 bucket name
+    AETHER_S3_REGION            S3 region (default: "us-east-1")
+    AETHER_S3_ACCESS_KEY        S3 access key
+    AETHER_S3_SECRET_KEY        S3 secret key
+
+  Admin:
+    AETHER_PLATFORM_ADMIN_EMAIL Email of user to auto-promote to platform admin
+
+  OIDC / SSO:
+    AETHER_OIDC_HOST_REWRITE    "from=to" pair to rewrite the OIDC discovery host
+
+  Webhooks:
+    AETHER_TOOL_ALLOWED_DOMAINS Comma-separated list of allowed domains for webhook tools
+
+`)
+}
+
+func init() {
+	flag.Usage = usage
+}
+
 func main() {
+	showHelp := flag.Bool("help", false, "Show help and exit")
+	flag.Parse()
+	if *showHelp {
+		flag.Usage()
+		os.Exit(0)
+	}
+
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})))
+
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("config: %v", err)
+		slog.Error("config load failed", "error", err, "hint", "run 'aether-server --help' for configuration options")
+		os.Exit(1)
 	}
 
 	ctx := context.Background()
@@ -42,54 +106,60 @@ func main() {
 	// Connect to Postgres and run migrations
 	db, err := database.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("database: %v", err)
+		slog.Error("database connect failed", "error", err)
+		os.Exit(1)
 	}
 	defer db.Close()
 
 	if err := db.Migrate(ctx); err != nil {
-		log.Fatalf("migrate: %v", err)
+		slog.Error("database migration failed", "error", err)
+		os.Exit(1)
 	}
-	log.Println("migrations applied")
+	slog.Info("migrations applied")
 
 	// Connect to Redis
 	redisCache, err := cache.New(cfg.RedisURL)
 	if err != nil {
-		log.Fatalf("cache: %v", err)
+		slog.Error("cache connect failed", "error", err)
+		os.Exit(1)
 	}
 	defer redisCache.Close()
 	pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer pingCancel()
 	if err := redisCache.Ping(pingCtx); err != nil {
-		log.Fatalf("cache ping: %v", err)
+		slog.Error("cache ping failed", "error", err)
+		os.Exit(1)
 	}
-	log.Println("redis connected")
+	slog.Info("redis connected")
 
 	// Seed platform admin from env if configured
 	if cfg.PlatformAdminEmail != "" {
 		promoted, err := api.SeedPlatformAdmin(ctx, db.Pool, cfg.PlatformAdminEmail)
 		if err != nil {
-			log.Printf("warning: failed to seed platform admin: %v", err)
+			slog.Warn("failed to seed platform admin", "error", err)
 		} else if promoted {
-			log.Printf("platform admin seeded for %s", cfg.PlatformAdminEmail)
+			slog.Info("platform admin seeded", "email", cfg.PlatformAdminEmail)
 		} else {
-			log.Printf("platform admin email configured (%s) but user not found; will take effect after first registration", cfg.PlatformAdminEmail)
+			slog.Info("platform admin email configured but user not found; will take effect after first registration", "email", cfg.PlatformAdminEmail)
 		}
 	}
 
 	// Initialize services
 	jwtIssuer := auth.NewJWTIssuer(cfg.JWTSecret, 24*time.Hour)
 	masterKey := crypto.DeriveKey(cfg.MasterKey)
-	log.Printf("master key: env_value=%q derived_sha256_first8=%x", cfg.MasterKey, masterKey[:8])
+	slog.Info("master key derived", "sha256_first8", fmt.Sprintf("%x", masterKey[:8]))
 
 	// Validate master key works by encrypting/decrypting a known value
 	testPlaintext := []byte("master-key-validation")
 	testCiphertext, err := crypto.Encrypt(testPlaintext, masterKey)
 	if err != nil {
-		log.Fatalf("master key validation: encryption failed: %v", err)
+		slog.Error("master key validation: encryption failed", "error", err)
+		os.Exit(1)
 	}
 	decrypted, err := crypto.Decrypt(testCiphertext, masterKey)
 	if err != nil || string(decrypted) != string(testPlaintext) {
-		log.Fatalf("master key validation: decryption failed — AETHER_MASTER_KEY may have changed since server start")
+		slog.Error("master key validation: decryption failed — AETHER_MASTER_KEY may have changed since server start")
+		os.Exit(1)
 	}
 
 	// Seed dev SSO providers (Keycloak) if none exist yet
@@ -99,8 +169,7 @@ func main() {
 
 	// Start scheduler (runs due notebook schedules every minute)
 	sched := scheduler.New(db, func(ctx context.Context, notebookID string, params map[string]string) error {
-		// Scheduled execution is handled via the executor — log only for now
-		log.Printf("scheduler: running notebook %s", notebookID)
+		slog.Info("scheduler: running notebook", "notebook_id", notebookID)
 		return nil
 	})
 	sched.Start()
@@ -121,20 +190,22 @@ func main() {
 			SecretKey: cfg.S3SecretKey,
 		})
 		if err != nil {
-			log.Fatalf("s3 storage: %v", err)
+			slog.Error("s3 storage init failed", "error", err)
+			os.Exit(1)
 		}
 		store = s3Store
-		log.Printf("storage: s3 (bucket=%s, endpoint=%q)", cfg.S3Bucket, cfg.S3Endpoint)
+		slog.Info("storage backend: s3", "bucket", cfg.S3Bucket, "endpoint", cfg.S3Endpoint)
 	default:
 		if cfg.StorageBackend != "local" && cfg.StorageBackend != "" {
-			log.Printf("warning: unknown storage backend %q, falling back to local", cfg.StorageBackend)
+			slog.Warn("unknown storage backend, falling back to local", "configured", cfg.StorageBackend)
 		}
 		localStore, err := storage.NewLocalStorage(cfg.AttachmentDir)
 		if err != nil {
-			log.Fatalf("local storage: %v", err)
+			slog.Error("local storage init failed", "error", err)
+			os.Exit(1)
 		}
 		store = localStore
-		log.Printf("storage: local (%s)", cfg.AttachmentDir)
+		slog.Info("storage backend: local", "dir", cfg.AttachmentDir)
 	}
 	srv.SetStorage(store)
 	srv.StartBackgroundJobs(ctx)
@@ -159,20 +230,22 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("aether-server listening on :%s", cfg.Port)
+		slog.Info("aether-server listening", "port", cfg.Port)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen: %v", err)
+			slog.Error("listen failed", "error", err)
+			os.Exit(1)
 		}
 	}()
 
 	<-quit
-	log.Println("shutting down...")
+	slog.Info("shutting down...")
 
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("shutdown: %v", err)
+		slog.Error("shutdown failed", "error", err)
+		os.Exit(1)
 	}
-	log.Println("stopped")
+	slog.Info("stopped")
 }

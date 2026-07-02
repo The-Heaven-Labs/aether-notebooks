@@ -14,7 +14,7 @@ import { api } from '../api/client'
 import type { Notebook, Cell, Output, Connector, Parameter, CellVersion, NotebookSnapshot, Dashboard, Widget } from '../types'
 import type { ChartConfig } from '../charts'
 import { Cell as NotebookCell, focusCellEditorEnd, collabCache, updateCellScroll, type NotebookCollab } from '../components/Cell'
-import { focusMarkdownCell } from '../components/MarkdownCell'
+import { focusMarkdownCell } from '../utils/editorFocus'
 import { ParametersBar } from '../components/ParametersBar'
 import { SchemaBrowser } from '../components/SchemaBrowser'
 import { SchedulesPanel } from '../components/SchedulesPanel'
@@ -1385,7 +1385,7 @@ export function NotebookPage() {
         <ErrorBanner message={mutationError} onDismiss={() => setMutationError(null)} />
       )}
 
-      {showParameters && (
+      {(showParameters || (notebook?.parameters?.length ?? 0) > 0) && (
         <ParametersBar
           parameters={notebook.parameters ?? []}
           values={paramValues}
@@ -1467,6 +1467,15 @@ export function NotebookPage() {
                             onAddToDashboard={readOnly ? undefined : stableDashboardHandler}
                             focused={cell.id === focusedCellId}
                             index={i}
+                            paramValues={(() => {
+                              const merged = { ...paramValues }
+                              if (notebook?.parameters) {
+                                for (const p of notebook.parameters) {
+                                  if (!(p.name in merged)) merged[p.name] = p.default
+                                }
+                              }
+                              return merged
+                            })()}
                           />
                           {!readOnly && (
                             <AddCellBar
