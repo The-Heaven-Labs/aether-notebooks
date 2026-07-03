@@ -286,6 +286,7 @@ export function OrgSettingsPage() {
   const [sharingEnabled, setSharingEnabled] = useState(true)
   const [invitationsEnabled, setInvitationsEnabled] = useState(true)
   const [registrationEnabled, setRegistrationEnabled] = useState(true)
+  const [dataExportEnabled, setDataExportEnabled] = useState(true)
 
   useEffect(() => {
     api.get<{ public_sharing_enabled: boolean }>('/api/v1/org/sharing')
@@ -296,6 +297,9 @@ export function OrgSettingsPage() {
       .catch(() => {})
     api.get<{ registration_enabled: boolean }>('/api/v1/org/registration')
       .then(r => setRegistrationEnabled(r.registration_enabled))
+      .catch(() => {})
+    api.get<{ data_export_enabled: boolean }>('/api/v1/org/data-export')
+      .then(r => setDataExportEnabled(r.data_export_enabled))
       .catch(() => {})
   }, [])
 
@@ -312,6 +316,11 @@ export function OrgSettingsPage() {
   async function handleToggleRegistration(enabled: boolean) {
     await api.put('/api/v1/org/registration', { registration_enabled: enabled })
     setRegistrationEnabled(enabled)
+  }
+
+  async function handleToggleDataExport(enabled: boolean) {
+    await api.put('/api/v1/org/data-export', { data_export_enabled: enabled })
+    setDataExportEnabled(enabled)
   }
 
   const createProvider = useMutation({
@@ -823,7 +832,25 @@ const formInput: React.CSSProperties = {
           </label>
         </section>
 
-        {/* ── G. Message of the Day ── */}
+        {/* ── G. Data Export ── */}
+        <section style={styles.section}>
+          <div style={styles.sectionTitle}>Data Export</div>
+          <p style={styles.sectionDesc}>
+            Allow users to download query results as CSV or JSON files.
+          </p>
+          <label style={styles.checkRow}>
+            <input
+              type="checkbox"
+              checked={dataExportEnabled}
+              onChange={e => handleToggleDataExport(e.target.checked)}
+            />
+            <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>
+              Enable CSV/JSON data export
+            </span>
+          </label>
+        </section>
+
+        {/* ── H. Message of the Day ── */}
         <section style={styles.section}>
           <div style={styles.sectionTitle}>Message of the Day</div>
           <p style={styles.sectionDesc}>

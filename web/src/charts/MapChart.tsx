@@ -214,6 +214,16 @@ function MapConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
         Show labels
       </label>
       <ConfigHint>Display text labels next to markers</ConfigHint>
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Marker color</div>
+        <input
+          type="color"
+          value={config.seriesColors?.point ?? CHART_COLORS[0]}
+          onChange={e => onChange({ ...config, seriesColors: { ...config.seriesColors, point: e.target.value } })}
+          style={{ width: 32, height: 32, padding: 0, border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', background: 'none' }}
+        />
+        <ConfigHint>Color for point markers on the map</ConfigHint>
+      </div>
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { ChartTypeSelect } from './common'
+import { ChartTypeSelect, CHART_COLORS } from './common'
 import { ConfigHint } from './ConfigHint'
 
 function formatNumber(value: unknown, decimalPlaces?: number): string {
@@ -18,7 +18,7 @@ function getColor(skipEmpty?: boolean): string {
 }
 
 function BigNumberComponent({ data, config }: ChartProps) {
-  const col = config.valueColumn ?? data.columns[0]?.name ?? ''
+  const col = config.valueColumn || data.columns[0]?.name || ''
   const row = data.rows[0]
   const value = row ? row[data.columns.findIndex(c => c.name === col)] : null
 
@@ -138,6 +138,16 @@ function BigNumberConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
         Show empty state
       </label>
       <ConfigHint>Display a placeholder when no data is available</ConfigHint>
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Color</div>
+        <input
+          type="color"
+          value={config.seriesColors?.value ?? CHART_COLORS[0]}
+          onChange={e => onChange({ ...config, seriesColors: { ...config.seriesColors, value: e.target.value } })}
+          style={styles.colorInput}
+        />
+        <ConfigHint>Text color for the number value</ConfigHint>
+      </div>
     </div>
   )
 }
@@ -150,6 +160,7 @@ const styles: Record<string, React.CSSProperties> = {
   select: { fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4 },
   input: { fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4 },
   checkbox: { fontSize: 12, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 4 },
+  colorInput: { width: 32, height: 32, padding: 0, border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', background: 'none' },
 }
 
 export const BigNumberModule: ChartModule = {

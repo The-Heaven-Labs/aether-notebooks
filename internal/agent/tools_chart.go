@@ -16,8 +16,8 @@ func RegisterChartTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "create_chart",
-			Description: "Turn a cell's table output into a chart. For axis-based charts (bar, line, area, scatter), series are derived from y_columns. When group_by is set, one series is created per unique group value (cross-product with y_columns if multiple). Use series_colors to set colors per series.",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex colors. Keys match y_columns (no group_by) or group values (with group_by). E.g. {\"revenue\":\"#ff0000\"}"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"color_column":{"type":"string"},"size_column":{"type":"string"}},"required":["cell_id","chart_type"]}`,
+			Description: "Turn a cell's table output into a chart. For axis-based charts (bar, line, area, scatter), series are derived from y_columns. When group_by is set, one series is created per unique group value (cross-product with y_columns if multiple). Use series_colors to set colors per series. For map charts, use lat_column and lon_column instead of x_column/y_columns.",
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"lat_column":{"type":"string","description":"Latitude column (map charts only)"},"lon_column":{"type":"string","description":"Longitude column (map charts only)"},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex colors. Keys match y_columns (no group_by) or group values (with group_by). E.g. {\"revenue\":\"#ff0000\"}"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"color_column":{"type":"string"},"size_column":{"type":"string"}},"required":["cell_id","chart_type"]}`,
 		},
 		Handler: makeCreateChartHandler(db),
 	})
@@ -29,8 +29,8 @@ func RegisterChartTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "update_chart",
-			Description: "Modify chart config on an existing cell. For axis-based charts (bar, line, area, scatter), series are derived from y_columns. When group_by is set, one series is created per unique group value (cross-product with y_columns if multiple). Colors in series_colors keys match y_columns (no group_by) or group values (with group_by). For timeline, series_colors keys match group values.",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex colors. Keys match y_columns (no group_by) or group values (with group_by). E.g. {\"revenue\":\"#ff0000\"}"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"color_column":{"type":"string"},"size_column":{"type":"string"}},"required":["cell_id"]}`,
+			Description: "Modify chart config on an existing cell. For axis-based charts (bar, line, area, scatter), series are derived from y_columns. When group_by is set, one series is created per unique group value (cross-product with y_columns if multiple). Colors in series_colors keys match y_columns (no group_by) or group values (with group_by). For timeline, series_colors keys match group values. For map charts, use lat_column and lon_column instead of x_column/y_columns.",
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","stacked_bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"lat_column":{"type":"string","description":"Latitude column (map charts only)"},"lon_column":{"type":"string","description":"Longitude column (map charts only)"},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex colors. Keys match y_columns (no group_by) or group values (with group_by). E.g. {\"revenue\":\"#ff0000\"}"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"color_column":{"type":"string"},"size_column":{"type":"string"}},"required":["cell_id"]}`,
 		},
 		Handler: makeUpdateChartHandler(db),
 	})
@@ -127,6 +127,8 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 			ChartType       string              `json:"chart_type"`
 			XColumn         string              `json:"x_column"`
 			YColumns        []string            `json:"y_columns"`
+			LatColumn       string              `json:"lat_column"`
+			LonColumn       string              `json:"lon_column"`
 			Title           string              `json:"title"`
 			TimeColumn      string              `json:"time_column"`
 			EndTimeColumn   string              `json:"end_time_column"`
@@ -188,9 +190,11 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 			"idColumn":       req.IDColumn,
 			"parentIdColumn": req.ParentIDColumn,
 			"metricColumns":  req.MetricColumns,
-			"valueColumn":    req.ValueColumn,
 			"layout":         req.Layout,
 			"created_at":     time.Now().Format(time.RFC3339),
+		}
+		if req.ValueColumn != "" {
+			chartConfig["valueColumn"] = req.ValueColumn
 		}
 		if req.GroupBy != "" {
 			chartConfig["groupBy"] = req.GroupBy
@@ -270,6 +274,12 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 		if req.SizeColumn != "" {
 			chartConfig["sizeColumn"] = req.SizeColumn
 		}
+		if req.LatColumn != "" {
+			chartConfig["yAxis"] = []string{req.LatColumn}
+		}
+		if req.LonColumn != "" {
+			chartConfig["xAxis"] = req.LonColumn
+		}
 
 		warnings := filterChartConfig(chartConfig, req.ChartType)
 
@@ -317,6 +327,8 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 			ChartType       string              `json:"chart_type"`
 			XColumn         string              `json:"x_column"`
 			YColumns        []string            `json:"y_columns"`
+			LatColumn       string              `json:"lat_column"`
+			LonColumn       string              `json:"lon_column"`
 			Title           string              `json:"title"`
 			TimeColumn      string              `json:"time_column"`
 			EndTimeColumn   string              `json:"end_time_column"`
@@ -490,6 +502,12 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 		}
 		if req.SizeColumn != "" {
 			existingConfig["sizeColumn"] = req.SizeColumn
+		}
+		if req.LatColumn != "" {
+			existingConfig["yAxis"] = []string{req.LatColumn}
+		}
+		if req.LonColumn != "" {
+			existingConfig["xAxis"] = req.LonColumn
 		}
 
 		var warnings []string

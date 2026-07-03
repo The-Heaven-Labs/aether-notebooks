@@ -7,9 +7,9 @@ function SankeyChartComponent({ data, config }: ChartProps) {
   const chartData = useRowsAsObjects(data)
   const colors = useChartColors()
 
-  const sourceCol = config.xAxis ?? data.columns[0]?.name ?? ''
-  const targetCol = config.yAxis?.[0] ?? data.columns[1]?.name ?? ''
-  const valueCol = config.yAxis?.[1] ?? data.columns[2]?.name ?? ''
+  const sourceCol = config.xAxis || data.columns[0]?.name || ''
+  const targetCol = config.yAxis?.[0] || data.columns[1]?.name || ''
+  const valueCol = config.yAxis?.[1] || data.columns[2]?.name || ''
 
   const { nodes, links } = useMemo(() => {
     const nodeSet = new Set<string>()

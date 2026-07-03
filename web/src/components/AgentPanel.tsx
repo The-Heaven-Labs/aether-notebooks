@@ -1254,6 +1254,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: '1px solid var(--border-light)',
     background: 'var(--bg-secondary)',
     justifyContent: 'flex-end',
+    flexWrap: 'wrap',
   },
   changeAgentBtn: {
     fontSize: 11,

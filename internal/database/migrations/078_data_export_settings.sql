@@ -1,0 +1,1 @@
+ALTER TABLE orgs ADD COLUMN IF NOT EXISTS data_export_enabled BOOLEAN NOT NULL DEFAULT true;
