@@ -1151,7 +1151,7 @@ func (e *Engine) buildNotebookContext(ctx context.Context, notebookID string) st
 		if err == nil {
 			result += fmt.Sprintf("\nConnector: %q (type: %s, id: %s)", connName, connType, *connectorID)
 			result += "\nNotebook cells: type 'code' with language 'sql' for database queries, type 'text' with language 'markdown' for documentation."
-			result += "\nCharts: Use create_chart to turn a cell's table output into a chart. Types: bar, stacked_bar, line, area, scatter, pie, donut, timeline, hierarchy_tree, big_number, map, sankey."
+			result += "\nCharts: Use create_chart to turn a cell's table output into a chart. Types: bar, stacked_bar, line, area, scatter, pie, donut, timeline, hierarchy_tree, big_number, map, sankey. For map charts, use lat_column and lon_column parameters instead of x_column/y_columns."
 			result += "\n  Common params (all types): title, show_labels, show_legend, show_grid, skip_empty, series_colors (dict of series name to hex color)"
 			result += "\n  Bar/stacked_bar: x_column (categories), y_columns (values). Also: group_by (split into series by column), bar_width (% string), bar_gap (% string), data_zoom."
 			result += "\n  Line: x_column (categories), y_columns (values). Also: smooth (boolean), connect_nulls, data_zoom."

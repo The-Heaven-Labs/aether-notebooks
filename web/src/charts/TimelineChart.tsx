@@ -245,12 +245,27 @@ function TimelineChartComponent({ data, config }: ChartProps) {
   return <EChartsContainer option={option} height={height} notMerge showReset />
 }
 
-function TimelineConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
+function TimelineConfigPanel({ config, columns, onChange, data, groupValues: propsGroupValues }: ConfigPanelProps) {
   const showLabels = config.showLabels ?? true
   const timeCols = columns.filter(c => {
     const lower = c.toLowerCase()
     return lower.includes('time') || lower.includes('date') || lower.includes('timestamp') || lower === 'ts'
   })
+
+  const groupValues = useMemo(() => {
+    if (propsGroupValues && propsGroupValues.length > 0) return propsGroupValues
+    const gb = config.groupBy
+    if (!data?.columns?.length || !gb) return []
+    const colIndex = data.columns.findIndex(c => c.name === gb)
+    if (colIndex < 0) return []
+    const seen = new Set<string>()
+    const vals: string[] = []
+    for (const row of data.rows) {
+      const v = String(row[colIndex] ?? '')
+      if (v && !seen.has(v)) { seen.add(v); vals.push(v) }
+    }
+    return vals
+  }, [data, config.groupBy, propsGroupValues])
 
   return (
     <div style={styles.panel}>
@@ -312,6 +327,32 @@ function TimelineConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
         </select>
         <ConfigHint>Column to group events into parallel swim lanes</ConfigHint>
       </div>
+      {groupValues.length > 0 && (
+        <div style={styles.section}>
+          <div style={styles.sectionLabel}>Group colors</div>
+          <div style={styles.colorRow}>
+            {groupValues.map((group, i) => {
+              const defaultColor = CHART_COLORS[i % CHART_COLORS.length]
+              const currentColor = config.seriesColors?.[group] ?? defaultColor
+              return (
+                <label key={group} style={styles.colorLabel}>
+                  <input
+                    type="color"
+                    value={currentColor}
+                    onChange={e => {
+                      const newColors = { ...config.seriesColors, [group]: e.target.value }
+                      onChange({ ...config, seriesColors: newColors })
+                    }}
+                    style={styles.colorInput}
+                  />
+                  <span style={styles.colorText}>{group.substring(0, 8)}</span>
+                </label>
+              )
+            })}
+          </div>
+          <ConfigHint>Customize the color for each group swim lane</ConfigHint>
+        </div>
+      )}
       <div style={styles.row}>
         <label style={styles.checkbox}>
           <input
@@ -378,6 +419,10 @@ const styles: Record<string, React.CSSProperties> = {
   sectionLabel: { fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' as const, letterSpacing: 0.5 },
   select: { fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4 },
   checkbox: { fontSize: 12, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 4 },
+  colorRow: { display: 'flex', flexWrap: 'wrap', gap: 4 },
+  colorLabel: { display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: 'var(--text-muted)' },
+  colorInput: { width: 24, height: 24, padding: 0, border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', background: 'none' },
+  colorText: { maxWidth: 64, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
 }
 
 export const TimelineModule: ChartModule = {

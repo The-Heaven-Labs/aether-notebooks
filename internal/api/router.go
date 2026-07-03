@@ -239,6 +239,10 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/org/registration", authMW(http.HandlerFunc(s.handleGetOrgRegistrationSettings)))
 	s.mux.Handle("PUT /api/v1/org/registration", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateOrgRegistrationSettings))))
 
+	// Data export settings
+	s.mux.Handle("GET /api/v1/org/data-export", authMW(http.HandlerFunc(s.handleGetOrgDataExportSettings)))
+	s.mux.Handle("PUT /api/v1/org/data-export", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateOrgDataExportSettings))))
+
 	// WebSocket routes
 	s.mux.Handle("GET /api/v1/ws/notebooks/{id}", authMW(http.HandlerFunc(s.handleNotebookWS)))
 

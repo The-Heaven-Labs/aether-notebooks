@@ -4,6 +4,7 @@ import type { Output, ResultSet, Column } from '../types'
 import { ChartView } from '../charts'
 import type { ChartConfig } from '../charts'
 import { ToggleLeft, Calendar, Clock, Fingerprint, Ban, Binary, Table, BarChart2, Timer, Sigma, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, X, Copy, Check, Download } from 'lucide-react'
+import { api } from '../api/client'
 
 // Global state to ensure only one detail panel is open at a time across all cells
 let activeDetailCellId: string | null = null
@@ -279,9 +280,16 @@ function exportJSON(rs: ResultSet): void {
   URL.revokeObjectURL(url)
 }
 
-const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange, hideExport, viewMode, onViewModeChange }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void }) {
+const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange, hideExport: hideExportProp, viewMode, onViewModeChange }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void }) {
   const storageKey = cellId ? `aether_cell_view_${cellId}` : null
   const hasChartConfig = !!chartConfig?.chartType
+  const [dataExportEnabled, setDataExportEnabled] = useState(true)
+  useEffect(() => {
+    api.get<{ data_export_enabled: boolean }>('/api/v1/org/data-export')
+      .then(r => setDataExportEnabled(r.data_export_enabled))
+      .catch(() => {})
+  }, [])
+  const hideExport = hideExportProp || !dataExportEnabled
   const [view, setView] = useState<'table' | 'chart'>(() => {
     if (fixedView) return fixedView
     if (viewMode) return viewMode

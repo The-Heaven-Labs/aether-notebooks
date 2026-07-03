@@ -169,7 +169,7 @@ export function AgentsPage() {
             <div style={styles.formActions}>
               <span style={{ flex: 1 }} />
               <button type="button" style={styles.cancelBtn} onClick={() => { setCreating(false); setForm(emptyForm()) }}>Cancel</button>
-              <button type="button" style={styles.saveBtn} onClick={() => createMutation.mutate()} disabled={!form.name || createMutation.isPending}>
+              <button type="button" style={styles.saveBtn} onClick={() => createMutation.mutate()} disabled={!form.name || !form.model_config_id || !form.subagent_model_config_id || createMutation.isPending}>
                 {createMutation.isPending ? 'Creating...' : 'Create'}
               </button>
             </div>
@@ -187,7 +187,7 @@ export function AgentsPage() {
             <div style={styles.formActions}>
               <span style={{ flex: 1 }} />
               <button type="button" style={styles.cancelBtn} onClick={() => { setEditingId(null); setForm(emptyForm()) }}>Cancel</button>
-              <button type="button" style={styles.saveBtn} onClick={() => updateMutation.mutate(editingId!)} disabled={!form.name || updateMutation.isPending}>
+              <button type="button" style={styles.saveBtn} onClick={() => updateMutation.mutate(editingId!)} disabled={!form.name || !form.model_config_id || !form.subagent_model_config_id || updateMutation.isPending}>
                 {updateMutation.isPending ? 'Saving...' : 'Save'}
               </button>
             </div>
@@ -323,13 +323,13 @@ function AgentFormFields({ form, setForm, modelConfigs, skills, tools, mcpServer
       </label>
       <label style={styles.label}>Model
         <select style={styles.input} value={form.model_config_id} onChange={e => setForm(f => ({ ...f, model_config_id: e.target.value }))}>
-          <option value="">— Default —</option>
+          {form.model_config_id === '' && <option value="">Select a model...</option>}
           {modelConfigs.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
         </select>
       </label>
       <label style={styles.label}>Subagent Model
         <select style={styles.input} value={form.subagent_model_config_id} onChange={e => setForm(f => ({ ...f, subagent_model_config_id: e.target.value }))}>
-          <option value="">— Default —</option>
+          {form.subagent_model_config_id === '' && <option value="">Select a model...</option>}
           {modelConfigs.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
         </select>
       </label>

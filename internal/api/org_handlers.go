@@ -621,6 +621,57 @@ func (s *Server) handleUpdateOrgInvitationSettings(w http.ResponseWriter, r *htt
 	writeJSON(w, http.StatusOK, map[string]bool{"invitations_enabled": req.Enabled})
 }
 
+// @Summary Get org data export settings
+// @Description Get whether CSV/JSON data export is enabled for the organization
+// @Tags orgs
+// @Produce json
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /org/data-export [get]
+func (s *Server) handleGetOrgDataExportSettings(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	var enabled bool
+	err := s.db.Pool.QueryRow(r.Context(),
+		`SELECT data_export_enabled FROM orgs WHERE id=$1`, claims.OrgID,
+	).Scan(&enabled)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"data_export_enabled": enabled})
+}
+
+// @Summary Update org data export settings
+// @Description Update whether CSV/JSON data export is enabled for the organization
+// @Tags orgs
+// @Accept json
+// @Produce json
+// @Param request body object true "Data export settings"
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /org/data-export [put]
+func (s *Server) handleUpdateOrgDataExportSettings(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	var req struct {
+		Enabled bool `json:"data_export_enabled"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	_, err := s.db.Pool.Exec(r.Context(),
+		`UPDATE orgs SET data_export_enabled=$1 WHERE id=$2`,
+		req.Enabled, claims.OrgID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "update failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"data_export_enabled": req.Enabled})
+}
+
 // generateSecureToken returns a hex-encoded random token of the given byte length.
 func generateSecureToken(byteLen int) (string, error) {
 	b := make([]byte, byteLen)
