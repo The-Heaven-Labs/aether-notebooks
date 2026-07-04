@@ -562,7 +562,7 @@ definitions:
     - WidgetFreetext
     - WidgetNumber
     - WidgetMultiSelect
-host: localhost:8080
+host: localhost:8088
 info:
   contact: {}
   description: Aether Notebooks API — collaborative SQL/data notebook platform
@@ -4263,6 +4263,60 @@ paths:
       summary: Import a notebook
       tags:
       - notebooks
+  /org/data-export:
+    get:
+      description: Get whether CSV/JSON data export is enabled for the organization
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get org data export settings
+      tags:
+      - orgs
+    put:
+      consumes:
+      - application/json
+      description: Update whether CSV/JSON data export is enabled for the organization
+      parameters:
+      - description: Data export settings
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update org data export settings
+      tags:
+      - orgs
   /org/invitations:
     get:
       description: Get the invitation settings for the organization

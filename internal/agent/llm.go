@@ -14,19 +14,48 @@ import (
 )
 
 type LLMClient struct {
-	baseURL      string
-	model        string
-	apiKey       []byte
+	baseURL       string
+	model         string
+	apiKey        []byte
 	defaultParams map[string]any
-	httpClient   *http.Client
+	httpClient    *http.Client
+}
+
+type ContentPart struct {
+	Type     string    `json:"type"`
+	Text     string    `json:"text,omitempty"`
+	ImageURL *ImageURL `json:"image_url,omitempty"`
+}
+
+type ImageURL struct {
+	URL string `json:"url"`
 }
 
 type ChatMessage struct {
-	Role             string     `json:"role"`
-	Content          string     `json:"content,omitempty"`
-	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID       string     `json:"tool_call_id,omitempty"`
-	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	Role             string         `json:"role"`
+	Content          string         `json:"content,omitempty"`
+	ToolCalls        []ToolCall     `json:"tool_calls,omitempty"`
+	ToolCallID       string         `json:"tool_call_id,omitempty"`
+	ReasoningContent string         `json:"reasoning_content,omitempty"`
+	MultiContent     []ContentPart  `json:"-"`
+}
+
+func (m ChatMessage) MarshalJSON() ([]byte, error) {
+	if len(m.MultiContent) > 0 {
+		msg := map[string]any{
+			"role": m.Role,
+			"content": m.MultiContent,
+		}
+		if len(m.ToolCalls) > 0 {
+			msg["tool_calls"] = m.ToolCalls
+		}
+		if m.ReasoningContent != "" {
+			msg["reasoning_content"] = m.ReasoningContent
+		}
+		return json.Marshal(msg)
+	}
+	type alias ChatMessage
+	return json.Marshal(alias(m))
 }
 
 type ChatRequest struct {
@@ -133,9 +162,10 @@ func NewLLMClient(baseURL, model string, apiKey []byte, defaultParams map[string
 func (c *LLMClient) Chat(ctx context.Context, messages []ChatMessage, tools []OpenAITool, masterKey []byte) (*ChatResponse, error) {
 	extra := make(map[string]any)
 	for k, v := range c.defaultParams {
-		if k != "compaction_threshold" {
-			extra[k] = v
+		if k == "compaction_threshold" || k == "reasoning_effort_options" {
+			continue
 		}
+		extra[k] = v
 	}
 	reqBody := ChatRequest{
 		Model:    c.model,
@@ -219,9 +249,10 @@ type StreamResponse struct {
 func (c *LLMClient) ChatStream(ctx context.Context, messages []ChatMessage, tools []OpenAITool, masterKey []byte, onToken func(string)) error {
 	extra := make(map[string]any)
 	for k, v := range c.defaultParams {
-		if k != "compaction_threshold" {
-			extra[k] = v
+		if k == "compaction_threshold" || k == "reasoning_effort_options" {
+			continue
 		}
+		extra[k] = v
 	}
 	reqBody := ChatRequest{
 		Model:    c.model,

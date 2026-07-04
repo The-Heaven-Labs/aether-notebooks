@@ -5,22 +5,22 @@ import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useAuth } from '../hooks/useAuth'
 
 const ALL_NAV_ITEMS = [
-  { to: '/',           title: 'Files',       icon: <Home size={16} /> },
-  { to: '/dashboards', title: 'Dashboards',  icon: <LayoutDashboard size={16} /> },
-  { to: '/connectors', title: 'Connectors',  icon: <Database size={16} /> },
-  { to: '/members',    title: 'Members',     icon: <UserCircle size={16} /> },
-  { to: '/groups',     title: 'Groups',      icon: <Users size={16} /> },
-  { to: '/audit',      title: 'Audit',       icon: <ClipboardList size={16} /> },
-  { to: '/trash',      title: 'Trash',       icon: <Trash2 size={16} /> },
-  { to: '/admin',      title: 'Admin',       icon: <Settings size={16} /> },
+  { to: '/',           title: 'Files',       icon: <Home size={16} />,              desc: 'Browse notebooks, dashboards, and connectors organized in folders' },
+  { to: '/dashboards', title: 'Dashboards',  icon: <LayoutDashboard size={16} />,   desc: 'Visual dashboards built from notebook query results' },
+  { to: '/connectors', title: 'Connectors',  icon: <Database size={16} />,           desc: 'Database connections (PostgreSQL, ClickHouse, OpenSearch)' },
+  { to: '/members',    title: 'Members',     icon: <UserCircle size={16} />,         desc: 'Organization members and role management' },
+  { to: '/groups',     title: 'Groups',      icon: <Users size={16} />,              desc: 'Permission groups for access control' },
+  { to: '/audit',      title: 'Audit',       icon: <ClipboardList size={16} />,      desc: 'Audit log of actions across the organization' },
+  { to: '/trash',      title: 'Trash',       icon: <Trash2 size={16} />,             desc: 'Recently deleted items — restore or permanently delete' },
+  { to: '/admin',      title: 'Admin',       icon: <Settings size={16} />,           desc: 'Instance-wide settings, users, and SSO configuration' },
 ]
 
 const AGENT_NAV_ITEMS = [
-  { to: '/agents',  title: 'Agents',  icon: <Bot size={16} /> },
-  { to: '/models',  title: 'Models',  icon: <Brain size={16} /> },
-  { to: '/tools',   title: 'Tools',   icon: <Wrench size={16} /> },
-  { to: '/skills',  title: 'Skills',  icon: <Zap size={16} /> },
-  { to: '/mcps',    title: 'MCPs',    icon: <Puzzle size={16} /> },
+  { to: '/agents',  title: 'Agents',  icon: <Bot size={16} />,    desc: 'Configure AI agents with instructions, tools, and models' },
+  { to: '/models',  title: 'Models',  icon: <Brain size={16} />,   desc: 'LLM provider connections and model configurations' },
+  { to: '/tools',   title: 'Tools',   icon: <Wrench size={16} />,  desc: 'Custom tools (webhooks, SQL queries) for agents' },
+  { to: '/skills',  title: 'Skills',  icon: <Zap size={16} />,     desc: 'Reusable prompt snippets assignable to agents' },
+  { to: '/mcps',    title: 'MCPs',    icon: <Puzzle size={16} />,  desc: 'Model Context Protocol servers for agent tool integration' },
 ]
 
 // Custom event to open the mobile drawer from outside (e.g. TopBar hamburger)
@@ -85,12 +85,12 @@ export function Sidebar() {
   const navContent = (
     <>
       <div style={styles.items}>
-        {NAV_ITEMS.map(({ to, title, icon }) => (
+        {NAV_ITEMS.map(({ to, title, icon, desc }) => (
           <NavLink
             key={to}
             to={to}
             end={to === '/'}
-            title={title}
+            title={desc}
             style={({ isActive }) => itemStyle(isActive)}
           >
             {({ isActive }) => (
@@ -114,12 +114,12 @@ export function Sidebar() {
             <Bot size={14} style={{ color: 'var(--text-muted)' }} />
           </div>
         )}
-        {AGENT_NAV_ITEMS.map(({ to, title, icon }) => (
+        {AGENT_NAV_ITEMS.map(({ to, title, icon, desc }) => (
           <NavLink
             key={to}
             to={to}
             end={to === '/'}
-            title={title}
+            title={desc}
             style={({ isActive }) => itemStyle(isActive)}
           >
             {({ isActive }) => (

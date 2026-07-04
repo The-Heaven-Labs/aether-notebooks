@@ -1,7 +1,7 @@
 import type React from 'react'
 import { memo, useRef, useEffect, useMemo, useState } from 'react'
 import * as echarts from 'echarts/core'
-import { BarChart, LineChart, ScatterChart, PieChart, TreeChart, MapChart, SankeyChart } from 'echarts/charts'
+import { BarChart, LineChart, ScatterChart, PieChart, TreeChart, MapChart, SankeyChart, FunnelChart, HeatmapChart } from 'echarts/charts'
 import {
   GridComponent, TooltipComponent, LegendComponent, TitleComponent,
   DataZoomComponent, ToolboxComponent, GeoComponent,
@@ -12,7 +12,7 @@ import type { ResultSet } from '../types'
 
 // Register only what we use
 echarts.use([
-  BarChart, LineChart, ScatterChart, PieChart, TreeChart, MapChart, SankeyChart,
+  BarChart, LineChart, ScatterChart, PieChart, TreeChart, MapChart, SankeyChart, FunnelChart, HeatmapChart,
   GridComponent, TooltipComponent, LegendComponent, TitleComponent,
   DataZoomComponent, ToolboxComponent, GeoComponent,
   VisualMapComponent,
@@ -25,34 +25,261 @@ export const CHART_COLORS = [
 ]
 
 export const ALL_CHART_TYPES = [
-  { value: 'bar', label: 'Bar', symbol: '▊▊' },
-  { value: 'stacked_bar', label: 'Stack', symbol: '▊≡' },
-  { value: 'line', label: 'Line', symbol: '╱╲' },
-  { value: 'area', label: 'Area', symbol: '▓' },
-  { value: 'stacked_area', label: 'Stack Area', symbol: '▓≡' },
-  { value: 'scatter', label: 'Scatter', symbol: '·:' },
-  { value: 'pie', label: 'Pie', symbol: '◕' },
-  { value: 'donut', label: 'Donut', symbol: '◎' },
-  { value: 'timeline', label: 'Timeline', symbol: '⏱' },
-  { value: 'hierarchy_tree', label: 'Tree', symbol: '🌲' },
-  { value: 'big_number', label: 'Big Number', symbol: '123' },
-  { value: 'map', label: 'Map', symbol: '🌍' },
-  { value: 'sankey', label: 'Sankey', symbol: '⇄' },
+  { value: 'bar', label: 'Bar' },
+  { value: 'line', label: 'Line' },
+  { value: 'area', label: 'Area' },
+  { value: 'scatter', label: 'Scatter' },
+  { value: 'pie', label: 'Pie' },
+  { value: 'donut', label: 'Donut' },
+  { value: 'timeline', label: 'Timeline' },
+  { value: 'hierarchy_tree', label: 'Tree' },
+  { value: 'big_number', label: 'Big Number' },
+  { value: 'map', label: 'Map' },
+  { value: 'sankey', label: 'Sankey' },
+  { value: 'funnel', label: 'Funnel' },
+  { value: 'heatmap', label: 'Heatmap' },
+  { value: 'histogram', label: 'Histogram' },
 ] as const
 
-export function ChartTypeSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+const iconStyle: React.CSSProperties = {
+  width: 18, height: 18,
+  verticalAlign: 'middle',
+  marginRight: 6,
+  flexShrink: 0,
+}
+
+function IconBar() {
   return (
-    <select
-      aria-label="Chart type"
-      style={{ fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4, width: '100%' }}
-      value={value}
-      onChange={e => onChange(e.target.value)}
-    >
-      {ALL_CHART_TYPES.map(t => (
-        <option key={t.value} value={t.value}>{t.symbol} {t.label}</option>
-      ))}
-    </select>
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" style={iconStyle}>
+      <rect x="2" y="13" width="4" height="5" rx="1" />
+      <rect x="8" y="8" width="4" height="10" rx="1" />
+      <rect x="14" y="5" width="4" height="13" rx="1" />
+    </svg>
   )
+}
+function IconLine() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={iconStyle}>
+      <polyline points="2,16 6,11 10,14 14,6 18,8" />
+    </svg>
+  )
+}
+function IconArea() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={iconStyle}>
+      <polyline points="2,16 6,11 10,14 14,6 18,8" />
+      <polyline points="2,16 2,18 18,18 18,8" fill="currentColor" fillOpacity="0.2" stroke="none" />
+    </svg>
+  )
+}
+function IconScatter() {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" stroke="none" style={iconStyle}>
+      <circle cx="4" cy="13" r="1.5" />
+      <circle cx="9" cy="6" r="1.5" />
+      <circle cx="14" cy="12" r="1.5" />
+      <circle cx="16" cy="4" r="1.5" />
+      <circle cx="7" cy="16" r="1.5" />
+    </svg>
+  )
+}
+function IconPie() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.2" style={iconStyle}>
+      <circle cx="10" cy="10" r="7" />
+      <path d="M10 10 L10 3 A7 7 0 0 1 16.6 12.8" fill="currentColor" fillOpacity="0.2" />
+      <path d="M10 10 L10 3" />
+    </svg>
+  )
+}
+function IconDonut() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.2" style={iconStyle}>
+      <circle cx="10" cy="10" r="7" />
+      <circle cx="10" cy="10" r="3" />
+      <path d="M10 3 A7 7 0 0 1 16.6 12.8" fill="currentColor" fillOpacity="0.15" stroke="none" />
+    </svg>
+  )
+}
+function IconTimeline() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" style={iconStyle}>
+      <line x1="2" y1="6" x2="18" y2="6" />
+      <circle cx="0" cy="0" r="0" />
+      <circle cx="8" cy="6" r="2" fill="currentColor" />
+      <line x1="8" y1="8" x2="8" y2="15" strokeDasharray="2 1" />
+      <rect x="5" y="12" width="6" height="4" rx="1" fill="currentColor" fillOpacity="0.2" />
+      <line x1="14" y1="6" x2="14" y2="3" strokeDasharray="2 1" />
+      <circle cx="14" cy="3" r="2" fill="currentColor" />
+    </svg>
+  )
+}
+function IconTree() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" style={iconStyle}>
+      <circle cx="10" cy="3" r="2" fill="currentColor" />
+      <line x1="10" y1="5" x2="10" y2="8" />
+      <line x1="10" y1="8" x2="5" y2="12" />
+      <line x1="10" y1="8" x2="15" y2="12" />
+      <circle cx="5" cy="14" r="2" fill="currentColor" fillOpacity="0.2" stroke="currentColor" />
+      <circle cx="15" cy="14" r="2" fill="currentColor" fillOpacity="0.2" stroke="currentColor" />
+    </svg>
+  )
+}
+function IconBigNumber() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" style={iconStyle}>
+      <text x="10" y="15" textAnchor="middle" fontSize="12" fontWeight="700" fill="currentColor" stroke="none">123</text>
+    </svg>
+  )
+}
+function IconMap() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" style={iconStyle}>
+      <circle cx="10" cy="10" r="7" />
+      <ellipse cx="10" cy="10" rx="3" ry="7" />
+      <line x1="3" y1="8" x2="17" y2="8" />
+      <line x1="3" y1="12" x2="17" y2="12" />
+    </svg>
+  )
+}
+function IconSankey() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" style={iconStyle}>
+      <rect x="2" y="3" width="4" height="4" rx="1" fill="currentColor" fillOpacity="0.15" />
+      <rect x="2" y="12" width="4" height="4" rx="1" fill="currentColor" fillOpacity="0.15" />
+      <path d="M6 5 Q10 5 10 7 Q10 9 14 10 Q18 11 18 14" fill="none" />
+      <path d="M6 14 Q10 14 10 12 Q10 10 14 10" fill="none" />
+      <rect x="14" y="8" width="4" height="4" rx="1" fill="currentColor" fillOpacity="0.15" />
+      <rect x="14" y="13" width="4" height="3" rx="1" fill="currentColor" fillOpacity="0.15" />
+    </svg>
+  )
+}
+function IconFunnel() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" style={iconStyle}>
+      <path d="M2 3 L18 3 L14 10 L6 10 Z" fill="currentColor" fillOpacity="0.15" />
+      <path d="M10 10 L10 17" strokeWidth="1.2" />
+      <path d="M6 17 L14 17" strokeWidth="1.2" />
+    </svg>
+  )
+}
+function IconHeatmap() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1" style={iconStyle}>
+      <rect x="2" y="2" width="5" height="5" rx="1" fill="currentColor" fillOpacity="0.4" />
+      <rect x="8" y="2" width="5" height="5" rx="1" fill="currentColor" fillOpacity="0.7" />
+      <rect x="14" y="2" width="5" height="5" rx="1" fill="currentColor" fillOpacity="0.2" />
+      <rect x="2" y="8" width="5" height="5" rx="1" fill="currentColor" fillOpacity="0.6" />
+      <rect x="8" y="8" width="5" height="5" rx="1" fill="currentColor" fillOpacity="0.3" />
+      <rect x="14" y="8" width="5" height="5" rx="1" fill="currentColor" fillOpacity="0.8" />
+      <rect x="2" y="14" width="5" height="5" rx="1" fill="currentColor" fillOpacity="0.1" />
+      <rect x="8" y="14" width="5" height="5" rx="1" fill="currentColor" fillOpacity="0.5" />
+      <rect x="14" y="14" width="5" height="5" rx="1" fill="currentColor" fillOpacity="0.9" />
+    </svg>
+  )
+}
+function IconHistogram() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" style={iconStyle}>
+      <rect x="2" y="12" width="4" height="6" rx="0" />
+      <rect x="6" y="8" width="4" height="10" rx="0" />
+      <rect x="10" y="5" width="4" height="13" rx="0" />
+      <rect x="14" y="10" width="4" height="8" rx="0" />
+    </svg>
+  )
+}
+
+export const CHART_ICONS: Record<string, React.FC> = {
+  bar: IconBar,
+  line: IconLine,
+  area: IconArea,
+  scatter: IconScatter,
+  pie: IconPie,
+  donut: IconDonut,
+  timeline: IconTimeline,
+  hierarchy_tree: IconTree,
+  big_number: IconBigNumber,
+  map: IconMap,
+  sankey: IconSankey,
+  funnel: IconFunnel,
+  heatmap: IconHeatmap,
+  histogram: IconHistogram,
+}
+
+export function ChartTypeSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  const selected = ALL_CHART_TYPES.find(t => t.value === value)
+  const Icon = selected ? CHART_ICONS[value] : null
+
+  return (
+    <div ref={ref} style={{ position: 'relative', width: '100%' }}>
+      <button
+        type="button"
+        style={triggerStyle}
+        onClick={() => setOpen(!open)}
+        aria-label="Chart type"
+      >
+        {Icon && <Icon />}
+        <span style={{ flex: 1, textAlign: 'left', fontSize: 12, color: 'var(--text-primary)' }}>{selected?.label ?? value}</span>
+        <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.2" style={{ transform: open ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s' }}>
+          <polyline points="2,5 6,9 10,5" />
+        </svg>
+      </button>
+      {open && (
+        <div style={dropdownStyle}>
+          {ALL_CHART_TYPES.map(t => {
+            const Icn = CHART_ICONS[t.value]
+            return (
+              <button
+                key={t.value}
+                type="button"
+                style={{
+                  ...itemStyle,
+                  background: t.value === value ? 'var(--accent-bg)' : 'transparent',
+                  fontWeight: t.value === value ? 600 : 400,
+                }}
+                onClick={() => { onChange(t.value); setOpen(false) }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-secondary)')}
+                onMouseLeave={e => (e.currentTarget.style.background = t.value === value ? 'var(--accent-bg)' : 'transparent')}
+              >
+                {Icn && <Icn />}
+                <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>{t.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const triggerStyle: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 4, width: '100%',
+  fontSize: 12, padding: '4px 8px', cursor: 'pointer',
+  background: 'var(--bg-input)', color: 'var(--text-primary)',
+  border: '1px solid var(--border)', borderRadius: 4,
+}
+const dropdownStyle: React.CSSProperties = {
+  position: 'absolute', zIndex: 100, top: '100%', left: 0, right: 0, marginTop: 2,
+  background: 'var(--bg-card)', border: '1px solid var(--border)',
+  borderRadius: 4, boxShadow: 'var(--shadow-lg)',
+  maxHeight: 240, overflow: 'auto', color: 'var(--text-primary)',
+}
+const itemStyle: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 4, width: '100%',
+  padding: '5px 8px', border: 'none', cursor: 'pointer',
+  background: 'transparent', textAlign: 'left', color: 'var(--text-primary)',
 }
 
 // Detect numeric column types
@@ -185,6 +412,16 @@ export function useGroupBySeries(
 // Detect dark mode and provide explicit colors for ECharts (canvas doesn't support CSS vars)
 function isDarkMode(): boolean {
   return document.documentElement.getAttribute('data-theme') === 'dark'
+}
+
+export function getContrastTextColor(bg: string): string {
+  const h = bg.replace('#', '')
+  if (h.length < 6) return '#111'
+  const r = parseInt(h.slice(0, 2), 16)
+  const g = parseInt(h.slice(2, 4), 16)
+  const b = parseInt(h.slice(4, 6), 16)
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  return luminance > 0.5 ? '#111' : '#fff'
 }
 
 export function getChartColors() {

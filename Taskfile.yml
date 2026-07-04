@@ -114,7 +114,7 @@ tasks:
       - go run ./cmd/aether-server
 
   dev:web:
-    desc: Start the Vite dev server (proxies /api to localhost:8080)
+    desc: Start the Vite dev server (proxies /api to localhost:8088)
     dir: web
     cmds:
       - npm run dev

@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type React from 'react'
 import type { ChartConfig, ChartType } from './types'
-import { ALL_CHART_TYPES, CHART_COLORS } from './index'
+import { CHART_COLORS, ChartTypeSelect } from './common'
 import { ConfigHint } from './ConfigHint'
 
 interface AxisConfigPanelProps {
@@ -76,18 +76,25 @@ export function AxisConfigPanel({
       <div style={styles.row}>
         <div style={styles.section}>
           <div style={styles.sectionLabel}>Chart type</div>
-          <select
-            aria-label="Chart type"
-            style={styles.select}
-            value={config.chartType ?? 'bar'}
-            onChange={e => onChange({ ...config, chartType: e.target.value as ChartType })}
-          >
-            {ALL_CHART_TYPES.map(t => (
-              <option key={t.value} value={t.value}>{t.symbol} {t.label}</option>
-            ))}
-          </select>
+          <ChartTypeSelect value={config.chartType ?? 'bar'} onChange={v => onChange({ ...config, chartType: v as ChartType })} />
           <ConfigHint>Visualization style for your data</ConfigHint>
         </div>
+        {config.chartType === 'bar' && (
+          <div style={styles.section}>
+            <div style={styles.sectionLabel}>Bar mode</div>
+            <select
+              aria-label="Bar mode"
+              style={styles.select}
+              value={config.barMode ?? 'grouped'}
+              onChange={e => onChange({ ...config, barMode: e.target.value as 'grouped' | 'stacked' | 'horizontal' })}
+            >
+              <option value="grouped">Grouped</option>
+              <option value="stacked">Stacked</option>
+              <option value="horizontal">Horizontal</option>
+            </select>
+            <ConfigHint>Grouped: side-by-side bars. Stacked: stacked totals. Horizontal: left-to-right bars.</ConfigHint>
+          </div>
+        )}
       </div>
 
       {/* Axis-based options */}
@@ -125,19 +132,15 @@ export function AxisConfigPanel({
           <ConfigHint>{showPieOptions ? 'Column for slice sizes' : 'Column(s) for vertical values (Ctrl+click for multiple series)'}</ConfigHint>
         </div>
       </div>
-      {showStack && (
+      {showStack && config.chartType === 'area' && (
         <div style={styles.row}>
           <div style={styles.section}>
             <div style={styles.sectionLabel}>Stack</div>
             <select
               aria-label="Stack"
               style={styles.select}
-              value={config.chartType === 'stacked_bar' || config.chartType === 'stacked_area' ? 'yes' : 'no'}
-              onChange={e => {
-                const baseType = config.chartType === 'stacked_bar' ? 'bar' : config.chartType === 'stacked_area' ? 'area' : config.chartType
-                const stackedType = baseType === 'bar' ? 'stacked_bar' : baseType === 'area' ? 'stacked_area' : baseType
-                onChange({ ...config, chartType: e.target.value === 'yes' ? stackedType : baseType })
-              }}
+              value={config.areaMode === 'stacked' ? 'yes' : 'no'}
+              onChange={e => onChange({ ...config, areaMode: e.target.value === 'yes' ? 'stacked' : 'area' })}
             >
               <option value="no">No</option>
               <option value="yes">Yes</option>
@@ -146,7 +149,7 @@ export function AxisConfigPanel({
           </div>
         </div>
       )}
-      {(config.chartType === 'bar' || config.chartType === 'stacked_bar') ? (
+      {config.chartType === 'bar' && (
         <div style={styles.row}>
           <div style={styles.section}>
             <div style={styles.sectionLabel}>Bar width</div>
@@ -179,7 +182,7 @@ export function AxisConfigPanel({
             </select>
           </div>
         </div>
-      ) : undefined}
+      )}
 
       {/* Group By */}
       {!showPieOptions && (

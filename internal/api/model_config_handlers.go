@@ -28,7 +28,8 @@ func (h *modelConfigHandlers) handleList(w http.ResponseWriter, r *http.Request)
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
 		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted,
-			   default_params, context_window, folder_id, created_by, created_at, updated_at
+			   default_params, context_window, price_per_input_token, price_per_output_token,
+			   price_per_cache_read_token, folder_id, created_by, created_at, updated_at
 		FROM model_configs WHERE org_id = $1 ORDER BY name
 	`, claims.OrgID)
 	if err != nil {
@@ -42,7 +43,8 @@ func (h *modelConfigHandlers) handleList(w http.ResponseWriter, r *http.Request)
 		var c models.ModelConfig
 		var defaultParams []byte
 		rows.Scan(&c.ID, &c.OrgID, &c.Name, &c.Provider, &c.BaseURL, &c.Model, &c.APIKeyEncrypted,
-			&defaultParams, &c.ContextWindow, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
+			&defaultParams, &c.ContextWindow, &c.PricePerInputToken, &c.PricePerOutputToken,
+			&c.PricePerCacheReadToken, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
 		json.Unmarshal(defaultParams, &c.DefaultParams)
 		allowed, _ := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "model_config", c.ID, "view")
 		if !allowed {
@@ -82,10 +84,12 @@ func (h *modelConfigHandlers) handleGet(w http.ResponseWriter, r *http.Request) 
 	var defaultParams []byte
 	err = h.server.db.Pool.QueryRow(r.Context(), `
 		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted,
-			   default_params, context_window, folder_id, created_by, created_at, updated_at
+			   default_params, context_window, price_per_input_token, price_per_output_token,
+			   price_per_cache_read_token, folder_id, created_by, created_at, updated_at
 		FROM model_configs WHERE id = $1 AND org_id = $2
 	`, id, claims.OrgID).Scan(&c.ID, &c.OrgID, &c.Name, &c.Provider, &c.BaseURL, &c.Model, &apiKeyEncrypted,
-		&defaultParams, &c.ContextWindow, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
+		&defaultParams, &c.ContextWindow, &c.PricePerInputToken, &c.PricePerOutputToken,
+		&c.PricePerCacheReadToken, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "model config not found")
 		return
@@ -116,6 +120,9 @@ func (h *modelConfigHandlers) handleCreate(w http.ResponseWriter, r *http.Reques
 		APIKey        string         `json:"api_key"`
 		DefaultParams models.JSONMap `json:"default_params"`
 		ContextWindow int            `json:"context_window"`
+		PricePerInputToken    float64 `json:"price_per_input_token"`
+		PricePerOutputToken   float64 `json:"price_per_output_token"`
+		PricePerCacheReadToken float64 `json:"price_per_cache_read_token"`
 		FolderID      *string        `json:"folder_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
@@ -138,10 +145,12 @@ func (h *modelConfigHandlers) handleCreate(w http.ResponseWriter, r *http.Reques
 
 	_, err = h.server.db.Pool.Exec(r.Context(), `
 		INSERT INTO model_configs (id, org_id, name, provider, base_url, model, api_key_encrypted,
-			default_params, context_window, folder_id, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+			default_params, context_window, price_per_input_token, price_per_output_token,
+			price_per_cache_read_token, folder_id, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
 	`, cfgID, claims.OrgID, req.Name, req.Provider, req.BaseURL, req.Model, encryptedKey,
-		defaultParamsJSON, req.ContextWindow, req.FolderID, claims.UserID)
+		defaultParamsJSON, req.ContextWindow, req.PricePerInputToken, req.PricePerOutputToken,
+		req.PricePerCacheReadToken, req.FolderID, claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -179,13 +188,16 @@ func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Reques
 	claims := ClaimsFromContext(r.Context())
 
 	var req struct {
-		Name          *string         `json:"name"`
-		Provider      *string         `json:"provider"`
-		BaseURL       *string         `json:"base_url"`
-		Model         *string         `json:"model"`
-		APIKey        *string         `json:"api_key"`
-		DefaultParams *models.JSONMap `json:"default_params"`
-		ContextWindow *int            `json:"context_window"`
+		Name                  *string         `json:"name"`
+		Provider              *string         `json:"provider"`
+		BaseURL               *string         `json:"base_url"`
+		Model                 *string         `json:"model"`
+		APIKey                *string         `json:"api_key"`
+		DefaultParams         *models.JSONMap `json:"default_params"`
+		ContextWindow         *int            `json:"context_window"`
+		PricePerInputToken    *float64        `json:"price_per_input_token"`
+		PricePerOutputToken   *float64        `json:"price_per_output_token"`
+		PricePerCacheReadToken *float64       `json:"price_per_cache_read_token"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -221,9 +233,13 @@ func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Reques
 			model = COALESCE($5, model),
 			default_params = COALESCE($6, default_params),
 			context_window = COALESCE($7, context_window),
+			price_per_input_token = COALESCE($8, price_per_input_token),
+			price_per_output_token = COALESCE($9, price_per_output_token),
+			price_per_cache_read_token = COALESCE($10, price_per_cache_read_token),
 			updated_at = NOW()
-		WHERE id = $1 AND org_id = $8
-	`, cfgID, req.Name, req.Provider, req.BaseURL, req.Model, defaultParamsJSON, req.ContextWindow, claims.OrgID)
+		WHERE id = $1 AND org_id = $11
+	`, cfgID, req.Name, req.Provider, req.BaseURL, req.Model, defaultParamsJSON, req.ContextWindow,
+		req.PricePerInputToken, req.PricePerOutputToken, req.PricePerCacheReadToken, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -284,9 +300,9 @@ func (h *modelConfigHandlers) handleTest(w http.ResponseWriter, r *http.Request)
 	var apiKeyEncrypted []byte
 	var defaultParams []byte
 	err := h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at
+		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, price_per_input_token, price_per_output_token, price_per_cache_read_token, folder_id, created_by, created_at, updated_at
 		FROM model_configs WHERE id = $1 AND org_id = $2
-	`, cfgID, claims.OrgID).Scan(&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &apiKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt)
+	`, cfgID, claims.OrgID).Scan(&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &apiKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.PricePerInputToken, &mc.PricePerOutputToken, &mc.PricePerCacheReadToken, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "model config not found")
 		return

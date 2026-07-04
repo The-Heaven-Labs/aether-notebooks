@@ -64,7 +64,7 @@ cd aether-notebooks
 docker compose -f docker-compose.dev.yml up -d
 ```
 
-Then visit **[http://localhost:8080](http://localhost:8080)**.
+Then visit **[http://localhost:8088](http://localhost:8088)**.
 
 ```bash
 # Or download a pre-built release and run directly (requires Postgres + Redis)
@@ -88,7 +88,7 @@ The dev stack includes Keycloak for SSO testing. See [AGENTS.md](AGENTS.md) for 
 ## Architecture
 
 ```
-cmd/aether-server        → Go API server (port 8080)
+cmd/aether-server        → Go API server (port 8088)
 cmd/aether               → CLI client
 web/                     → React + TypeScript frontend (built with Vite)
 relay/                   → Hocuspocus WebSocket relay (port 3001)
@@ -125,13 +125,13 @@ migrations/              → SQL migration files (applied on startup)
 docker compose -f docker-compose.dev.yml up -d
 ```
 
-This runs all services (API, frontend, relay, Postgres, Redis, ClickHouse, OpenSearch, Keycloak) with hot-reload enabled. Visit **[http://localhost:8080](http://localhost:8080)**.
+This runs all services (API, frontend, relay, Postgres, Redis, ClickHouse, OpenSearch, Keycloak) with hot-reload enabled. Visit **[http://localhost:8088](http://localhost:8088)**.
 
 For finer control — or to run services natively — the [Taskfile](Taskfile.yml) provides individual commands:
 
 ```bash
 task infra:up            # Start Postgres and Redis
-task dev                 # Start Go API server (API + frontend on :8080, Air hot-reload)
+task dev                 # Start Go API server (API + frontend on :8088, Air hot-reload)
 task dev:relay           # Start Hocuspocus relay (port 3001)
 
 # For frontend development outside Docker:
@@ -174,7 +174,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full development setup and coding con
 | `AETHER_REDIS_URL` | No | `redis://localhost:6379` | Redis connection string |
 | `AETHER_PORT` | No | `8080` | API server listen port |
 | `AETHER_FRONTEND_URL` | No | `http://localhost:5173` | Frontend URL for CORS and OIDC redirect |
-| `AETHER_PUBLIC_URL` | No | `http://localhost:8080` | Public-facing URL |
+| `AETHER_PUBLIC_URL` | No | `http://localhost:8088` | Public-facing URL |
 | `AETHER_PLATFORM_ADMIN_EMAIL` | No | — | Email to auto-promote to platform admin |
 | `AETHER_DISABLE_REGISTRATION` | No | `false` | Disable new user registration |
 | `AETHER_STORAGE_BACKEND` | No | `local` | Attachment storage (`local` or `s3`) |

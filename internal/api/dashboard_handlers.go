@@ -265,11 +265,12 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type widgetCellData struct {
-		CellID   string          `json:"cell_id"`
-		Source   string          `json:"source"`
-		Type     string          `json:"type"`
-		Language string          `json:"language"`
-		Outputs  json.RawMessage `json:"outputs"`
+		CellID    string          `json:"cell_id"`
+		Source    string          `json:"source"`
+		Type      string          `json:"type"`
+		Language  string          `json:"language"`
+		Outputs   json.RawMessage `json:"outputs"`
+		UpdatedAt time.Time       `json:"updated_at"`
 	}
 
 	type dashboardWithWidgets struct {
@@ -296,7 +297,7 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 
 		if len(cellIDs) > 0 {
 			rows, err := s.db.Pool.Query(ctx,
-				`SELECT c.id, c.source, c.type, c.language, c.outputs
+				`SELECT c.id, c.source, c.type, c.language, c.outputs, c.updated_at
 				 FROM cells c
 				 JOIN notebooks n ON n.id = c.notebook_id AND n.org_id = $1
 				 WHERE c.id = ANY($2)`,
@@ -308,7 +309,7 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 				for rows.Next() {
 					var cd widgetCellData
 					var outputs []byte
-					if err := rows.Scan(&cd.CellID, &cd.Source, &cd.Type, &cd.Language, &outputs); err != nil {
+					if err := rows.Scan(&cd.CellID, &cd.Source, &cd.Type, &cd.Language, &outputs, &cd.UpdatedAt); err != nil {
 						continue
 					}
 					cd.Outputs = outputs

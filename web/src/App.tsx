@@ -13,6 +13,7 @@ import { MembersPage } from './pages/MembersPage'
 import { AdminPage } from './pages/AdminPage'
 import { PublicDashboardPage } from './pages/PublicDashboardPage'
 import { PublicNotebookPage } from './pages/PublicNotebookPage'
+import { EmbedPage } from './pages/EmbedPage'
 import { PresentationPage } from './pages/PresentationPage'
 import { OrgOnboardingPage } from './pages/OrgOnboardingPage'
 import { ProfilePage } from './pages/ProfilePage'
@@ -125,6 +126,7 @@ function AppRoutes() {
       <Route path="/onboarding" element={<OrgOnboardingPage />} />
       <Route path="/public/dashboards/:token" element={<PublicDashboardPage />} />
       <Route path="/public/:token" element={<PublicNotebookPage />} />
+      <Route path="/embed/:token/:cellId" element={<EmbedPage />} />
       <Route path="/notebooks/:id/present" element={<PresentationPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

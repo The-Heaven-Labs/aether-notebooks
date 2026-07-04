@@ -2,13 +2,16 @@ import type React from 'react'
 import type { ResultSet } from '../types'
 
 export type ChartType =
-  | 'bar' | 'stacked_bar' | 'line' | 'area' | 'stacked_area' | 'scatter'
+  | 'bar' | 'line' | 'area' | 'scatter'
   | 'pie' | 'donut'
   | 'timeline'
   | 'hierarchy_tree'
   | 'big_number'
   | 'map'
   | 'sankey'
+  | 'funnel'
+  | 'heatmap'
+  | 'histogram'
 
 export interface ChartConfig {
   chartType: ChartType
@@ -41,15 +44,24 @@ export interface ChartConfig {
   seriesColors?: Record<string, string>
   dataZoom?: boolean
   smooth?: boolean
-// Bar
-barWidth?: string
-barCategoryGap?: string
+  // Bar
+  barWidth?: string
+  barCategoryGap?: string
+  barMode?: 'grouped' | 'stacked' | 'horizontal'
   // Line/Area
   connectNulls?: boolean
+  areaMode?: 'area' | 'stacked'
   // Sankey
   nodeAlign?: 'justify' | 'left' | 'right'
   nodeWidth?: number
   nodeGap?: number
+  // Funnel
+  categoryColumn?: string
+  funnelSort?: 'ascending' | 'descending' | 'none'
+  // Heatmap
+  yAxisColumn?: string
+  // Histogram
+  binCount?: number
   // Scatter
   colorColumn?: string
   sizeColumn?: string

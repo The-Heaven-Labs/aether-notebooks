@@ -48,8 +48,8 @@ export function ImageViewer({ src, alt, onClose }: ImageViewerProps) {
           <X size={16} />
         </button>
       </div>
-      <div style={styles.imageContainer} onClick={e => e.stopPropagation()} onWheel={handleWheel}>
-        <img src={src} alt={alt} style={{ ...styles.image, transform: `scale(${zoom})` }} />
+      <div style={styles.imageContainer} onWheel={handleWheel}>
+        <div onClick={e => e.stopPropagation()}><img src={src} alt={alt} style={{ ...styles.image, transform: `scale(${zoom})` }} /></div>
       </div>
     </div>
   )

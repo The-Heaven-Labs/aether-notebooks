@@ -191,9 +191,14 @@ export function ConnectorsPage() {
     <AppShell>
       <div style={styles.body}>
         {!creating && (
+          <>
           <SectionHeader title="Connectors" subtitle={connectors.length > 0 ? `${connectors.length} connector${connectors.length !== 1 ? 's' : ''}` : ''}>
             <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Connector</button>
           </SectionHeader>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: -16, marginBottom: 24 }}>
+            Connect to your databases (PostgreSQL, ClickHouse, OpenSearch) to query data from notebooks.
+          </p>
+          </>
         )}
         {creating && (
           <FormCard title="New Connector">

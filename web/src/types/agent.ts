@@ -41,6 +41,9 @@ export interface ModelConfig {
   model: string
   default_params?: Record<string, unknown>
   context_window: number
+  price_per_input_token: number
+  price_per_output_token: number
+  price_per_cache_read_token: number
   folder_id?: string
   created_by: string
   created_at: string
@@ -96,6 +99,7 @@ export interface AgentMessage {
   tool_calls?: ToolCall[]
   tokens_input?: number
   tokens_output?: number
+  image_ids?: string[]
   created_at: string
 }
 

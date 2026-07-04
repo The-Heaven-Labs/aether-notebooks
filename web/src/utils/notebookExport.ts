@@ -103,11 +103,11 @@ function buildOption(data: ResultSet, config: ChartConfig): any {
   const cols = data.columns
   const rows = data.rows
 
-  // Axis-based: bar, stacked_bar, line, area, scatter
-  if (['bar', 'stacked_bar', 'line', 'area', 'stacked_area', 'scatter'].includes(t)) {
+  // Axis-based: bar, line, area, scatter
+  if (['bar', 'line', 'area', 'scatter'].includes(t)) {
     const isSc = t === 'scatter'
-    const isAr = t === 'area' || t === 'stacked_area'
-    const isSt = t === 'stacked_bar' || t === 'stacked_area'
+    const isAr = t === 'area'
+    const isSt = (t === 'bar' && config.barMode === 'stacked') || (t === 'area' && config.areaMode === 'stacked')
     const isBa = t === 'bar' || isSt
     const xKey = config.xAxis ?? cols[0]?.name ?? ''
     const yKeys = config.yAxis?.length ? config.yAxis : cols.filter(c => isNumericType(c.type)).map(c => c.name)

@@ -89,6 +89,10 @@ export function MembersPage() {
   return (
     <AppShell>
       <div style={styles.body}>
+        <h1 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 4px', color: 'var(--text-primary)' }}>Members</h1>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 0, marginBottom: 24 }}>
+          Manage organization members, roles, and invite links.
+        </p>
         {/* Invite link generator — admin only when enabled */}
         {isAdmin && invitationsEnabled && (
           <div style={{ marginTop: 16 }}>

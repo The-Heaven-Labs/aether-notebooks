@@ -59,7 +59,7 @@ func (s *Server) servePublicNotebook(w http.ResponseWriter, r *http.Request, nbI
 	json.Unmarshal(params, &nb.Parameters)
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT position, type, language, source, outputs, parameters, metadata, outputs_hidden
+		`SELECT id, position, type, language, source, outputs, parameters, metadata, outputs_hidden
 		 FROM cells WHERE notebook_id=$1 ORDER BY position ASC`,
 		nbID,
 	)
@@ -70,6 +70,7 @@ func (s *Server) servePublicNotebook(w http.ResponseWriter, r *http.Request, nbI
 	defer rows.Close()
 
 	type publicCell struct {
+		ID            string                 `json:"id"`
 		Position      int                    `json:"position"`
 		Type          string                 `json:"type"`
 		Language      string                 `json:"language,omitempty"`
@@ -84,7 +85,7 @@ func (s *Server) servePublicNotebook(w http.ResponseWriter, r *http.Request, nbI
 		var c publicCell
 		var lang *string
 		var outputs, cellParams, meta []byte
-		if err := rows.Scan(&c.Position, &c.Type, &lang, &c.Source, &outputs, &cellParams, &meta, &c.OutputsHidden); err != nil {
+		if err := rows.Scan(&c.ID, &c.Position, &c.Type, &lang, &c.Source, &outputs, &cellParams, &meta, &c.OutputsHidden); err != nil {
 			continue
 		}
 		if lang != nil {

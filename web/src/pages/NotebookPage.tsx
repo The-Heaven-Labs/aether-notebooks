@@ -165,6 +165,7 @@ export function NotebookPage() {
   const [mutationError, setMutationError] = useState<string | null>(null)
   const [showPermissions, setShowPermissions] = useState(false)
   const [showShare, setShowShare] = useState(false)
+  const [embedCellId, setEmbedCellId] = useState<string | undefined>(undefined)
   const [showHistory, setShowHistory] = useState(false)
   const [historySnapshots, setHistorySnapshots] = useState<NotebookSnapshot[]>([])
   const [cellSaveState, setCellSaveState] = useState<Record<string, { saving: boolean; savedAt: Date | null; error: string | null }>>({})
@@ -440,14 +441,35 @@ export function NotebookPage() {
   // Restore scroll position on mount (after cells have loaded)
   useEffect(() => {
     if (!id || localCells.length === 0) return
+    const el = cellsContainerRef.current
+    if (!el) return
     const saved = (() => { try { return sessionStorage.getItem(`aether_scroll_${id}`) } catch { return null } })()
-    if (saved) {
-      const el = cellsContainerRef.current
-      if (el) {
-        const scrollTop = parseInt(saved, 10)
-        if (!isNaN(scrollTop)) el.scrollTop = scrollTop
+    if (!saved) return
+    const scrollTop = parseInt(saved, 10)
+    if (isNaN(scrollTop)) return
+    // Smooth animated scroll to saved position, then re-apply to handle lazy loading
+    const start = el.scrollTop
+    const duration = 700
+    setTimeout(() => {
+      const startTime = performance.now()
+      const animate = (now: number) => {
+        const t = Math.min((now - startTime) / duration, 1)
+        const ease = 1 - Math.pow(1 - t, 3)
+        el.scrollTop = start + (scrollTop - start) * ease
+        if (t < 1) requestAnimationFrame(animate)
+        else {
+          // Re-apply for ~250ms after animation completes to handle lazy content
+          let attempts = 8
+          const correct = () => {
+            if (!el || attempts-- <= 0) return
+            if (Math.abs(el.scrollTop - scrollTop) > 5) el.scrollTop = scrollTop
+            requestAnimationFrame(correct)
+          }
+          requestAnimationFrame(correct)
+        }
       }
-    }
+      requestAnimationFrame(animate)
+    }, 150)
   }, [id, localCells.length])
 
   const cellsEndRef = useRef<HTMLDivElement>(null)
@@ -686,6 +708,7 @@ export function NotebookPage() {
   }, [])
   const stableDashboardHandler = useCallback((cid: string) => setAddToDashboardCellId(cid), [])
   const stableHistoryHandler = useCallback((cid: string) => fetchHistory(cid), [fetchHistory])
+  const stableEmbedHandler = useCallback((cid: string) => { setEmbedCellId(cid); setShowShare(true) }, [])
   const stableOnEditStart = useCallback(() => setIsEditingCell(true), [])
   const stableOnEditEnd = useCallback(() => setIsEditingCell(false), [])
   const stableDuplicate = useCallback((cid: string) => duplicateCell.mutate(cid), [duplicateCell])
@@ -817,7 +840,7 @@ export function NotebookPage() {
     const dash = await api.get<Dashboard & { widgets: Widget[] }>(`/api/v1/dashboards/${dashboardId}`)
     const existingWidgets = dash.widgets ?? []
     const maxBottom = existingWidgets.reduce((max: number, w: Widget) => Math.max(max, w.layout.row + w.layout.height), 0)
-    const layout = { row: maxBottom, col: 0, width: 6, height: 2 }
+    const layout = { row: maxBottom, col: 0, width: 6, height: 8 }
     const chartMeta = (cell as any).metadata?.chart
     const hasChart = !!chartMeta?.chartType
     const widgetType = cell.type === 'text' ? 'text' : hasChart ? 'chart' : 'table'
@@ -1363,16 +1386,18 @@ export function NotebookPage() {
                       </button>
                     </>
                   )}
-                  <>
-                    <div style={styles.dropdownSeparator} />
-                    <button
-                      type="button"
-                      style={styles.dropdownItem}
-                      onClick={() => { setShowShare(true); setShareOpen(false) }}
-                    >
-                      <Globe size={13} style={{ marginRight: 6 }} /> Public link
-                    </button>
-                  </>
+                  {notebook?.can_share !== false && (
+                    <>
+                      <div style={styles.dropdownSeparator} />
+                      <button
+                        type="button"
+                        style={styles.dropdownItem}
+                        onClick={() => { setShowShare(true); setShareOpen(false) }}
+                      >
+                        <Globe size={13} style={{ marginRight: 6 }} /> Public link
+                      </button>
+                    </>
+                  )}
 
                 </div>
               </>
@@ -1422,7 +1447,7 @@ export function NotebookPage() {
                   <SortableContext items={localCells.map(c => c.id)} strategy={verticalListSortingStrategy}>
                     {localCells.map((cell, i) => (
                       <SortableCellWrapper key={cell.id} id={cell.id}>
-                        <div>
+                        <div data-cell-id={cell.id}>
                           {cell.type === 'code' && cell.parameters && cell.parameters.length > 0 && (
                             <div style={styles.cellParams}>
                               <span style={styles.cellParamsLabel}>Cell params:</span>
@@ -1464,8 +1489,10 @@ export function NotebookPage() {
                             onFocus={stableFocusHandler}
                             onEditStart={stableOnEditStart}
                             onEditEnd={stableOnEditEnd}
-                            onAddToDashboard={readOnly ? undefined : stableDashboardHandler}
-                            focused={cell.id === focusedCellId}
+                             onAddToDashboard={readOnly ? undefined : stableDashboardHandler}
+                             onEmbed={readOnly ? undefined : stableEmbedHandler}
+                             canShare={notebook?.can_share !== false}
+                             focused={cell.id === focusedCellId}
                             index={i}
                             paramValues={(() => {
                               const merged = { ...paramValues }
@@ -1616,7 +1643,9 @@ export function NotebookPage() {
         resourceType="notebook"
         resourceId={notebook.id}
         canShare={notebook.can_share ?? false}
-        onClose={() => setShowShare(false)}
+        onClose={() => { setShowShare(false); setEmbedCellId(undefined) }}
+        initialTab={embedCellId ? 'embed' : undefined}
+        initialCellId={embedCellId}
       />
     )}
     </AppShell>

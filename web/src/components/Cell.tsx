@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard } from 'lucide-react'
+import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard, Code2 } from 'lucide-react'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap } from '@codemirror/commands'
@@ -22,8 +22,19 @@ import type { ChartConfig } from '../charts'
 function normalizeChartConfig(raw: unknown): ChartConfig | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const obj = raw as Record<string, unknown>
+  const rawType = (obj.chartType ?? obj.type) as string | undefined
+  // Migrate legacy stacked_bar/horizontal_bar → bar + barMode
+  let barMode: ChartConfig['barMode']
+  if (rawType === 'stacked_bar') { barMode = 'stacked' }
+  else if (rawType === 'horizontal_bar') { barMode = 'horizontal' }
+  // Migrate legacy stacked_area → area + areaMode
+  let areaMode: ChartConfig['areaMode']
+  if (rawType === 'stacked_area') { areaMode = 'stacked' }
+  const migratedChartType = rawType === 'stacked_bar' || rawType === 'horizontal_bar' ? 'bar'
+    : rawType === 'stacked_area' ? 'area'
+    : rawType
   return {
-    chartType: (obj.chartType ?? obj.type) as ChartConfig['chartType'],
+    chartType: migratedChartType as ChartConfig['chartType'],
     xAxis: (obj.xAxis ?? obj.x_column) as string | undefined,
     yAxis: (obj.yAxis ?? obj.y_columns) as string[] | undefined,
     title: obj.title as string | undefined,
@@ -55,9 +66,11 @@ function normalizeChartConfig(raw: unknown): ChartConfig | undefined {
     // Bar fields
     barWidth: obj.barWidth as string | undefined,
     barCategoryGap: obj.barCategoryGap as string | undefined,
+    barMode: (barMode ?? obj.barMode) as 'grouped' | 'stacked' | 'horizontal' | undefined,
     // Line/Area fields
     smooth: obj.smooth as boolean | undefined,
     connectNulls: obj.connectNulls as boolean | undefined,
+    areaMode: (areaMode ?? obj.areaMode) as 'area' | 'stacked' | undefined,
     // Pie/Donut fields
     roseType: obj.roseType as 'radius' | 'area' | undefined,
     startAngle: obj.startAngle as number | undefined,
@@ -66,6 +79,13 @@ function normalizeChartConfig(raw: unknown): ChartConfig | undefined {
     nodeAlign: obj.nodeAlign as 'justify' | 'left' | 'right' | undefined,
     nodeWidth: obj.nodeWidth as number | undefined,
     nodeGap: obj.nodeGap as number | undefined,
+    // Funnel fields
+    categoryColumn: obj.categoryColumn as string | undefined,
+    funnelSort: obj.funnelSort as 'ascending' | 'descending' | 'none' | undefined,
+    // Heatmap fields
+    yAxisColumn: obj.yAxisColumn as string | undefined,
+    // Histogram fields
+    binCount: obj.binCount as number | undefined,
     // Scatter fields
     colorColumn: obj.colorColumn as string | undefined,
     sizeColumn: obj.sizeColumn as string | undefined,
@@ -211,6 +231,8 @@ interface Props {
   onEditStart?: () => void
   onEditEnd?: () => void
   onAddToDashboard?: (cellId: string) => void
+  onEmbed?: (cellId: string) => void
+  canShare?: boolean
   focused?: boolean
   index?: number
   paramValues?: Record<string, string>
@@ -449,6 +471,8 @@ export const Cell = memo(function Cell({
   onEditStart,
   onEditEnd,
   onAddToDashboard,
+  onEmbed,
+  canShare = true,
   focused = false,
   index,
   paramValues,
@@ -711,6 +735,16 @@ export const Cell = memo(function Cell({
           <button style={styles.actionBtn} onClick={() => onShowHistory?.(cell.id)} title="History" aria-label="Cell history">
             <Clock size={11} />
           </button>
+            {onEmbed && canShare !== false && (
+              <button
+                style={styles.actionBtn}
+                onClick={(e) => { e.stopPropagation(); onEmbed(cell.id) }}
+                title="Embed this cell"
+                aria-label="Embed this cell"
+              >
+                <Code2 size={11} />
+              </button>
+            )}
           {onAddToDashboard && (
             <button
               style={styles.actionBtn}

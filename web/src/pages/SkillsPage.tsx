@@ -90,6 +90,9 @@ export function SkillsPage() {
         <SectionHeader title="Skills" subtitle={skills.length > 0 ? `${skills.length} skill${skills.length !== 1 ? 's' : ''}` : ''}>
           <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Skill</button>
         </SectionHeader>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: -16, marginBottom: 24 }}>
+          Reusable system prompt snippets that can be assigned to agents to specialize their behavior.
+        </p>
 
         {creating && (
           <FormCard title="New Skill">

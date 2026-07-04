@@ -12,6 +12,7 @@ import type { Notebook, Parameter, Output } from '../types'
 import type { ChartConfig } from '../charts'
 
 interface PublicCell {
+  id: string
   position: number
   type: string
   language?: string

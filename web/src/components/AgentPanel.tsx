@@ -1,10 +1,11 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, memo } from 'react'
-import { Send, Loader2, History, Copy, Check, Square } from 'lucide-react'
+import { Send, Loader2, History, Copy, Check, Square, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, getToken } from '../api/client'
-import type { Agent, AgentTaskItem, TokenBreakdown, WSMessage } from '../types/agent'
+import type { Agent, AgentTaskItem, ModelConfig, TokenBreakdown, WSMessage } from '../types/agent'
+import { AgentMessageImages } from './AgentMessageImages'
 import { PanelHeader } from './PanelHeader'
 import { SessionHistory } from './SessionHistory'
 import { SlashCommandPicker } from './SlashCommandPicker'
@@ -63,7 +64,7 @@ interface AgentPanelProps {
   docked?: boolean
 }
 
-const WS_URL = (import.meta.env.VITE_WS_URL || 'ws://localhost:8080') + '/api/v1/ws/agents/'
+const WS_URL = (import.meta.env.VITE_WS_URL || 'ws://localhost:8088') + '/api/v1/ws/agents/'
 const LAST_AGENT_KEY = 'aether:lastAgentId'
 const CHAT_STATE_KEY = 'aether:agentChat:'
 
@@ -74,7 +75,15 @@ interface ChatMessage {
   reasoning?: string
   params?: string
   result?: string
+  images?: string[]
   created_at?: string
+}
+
+interface PendingImage {
+  id: string
+  blobUrl: string
+  filename: string
+  uploading: boolean
 }
 
 interface AgentChatState {
@@ -90,7 +99,11 @@ interface AgentChatState {
 export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, onMinimize, onDock, docked }: AgentPanelProps) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
-  const [_sessionId, setSessionId] = useState<string | null>(null)
+  const [_sessionId, _setSessionId] = useState<string | null>(null)
+  const setSessionId = useCallback((sid: string | null) => {
+    sessionIdRef.current = sid
+    _setSessionId(sid)
+  }, [])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const chatStateKey = CHAT_STATE_KEY + '__global__'
   const [tasks, setTasks] = useState<AgentTaskItem[]>([])
@@ -109,9 +122,18 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     const d = new Date(iso)
     return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
   }
+  const costFmt = (compute: (mc: ModelConfig) => number): string => {
+    const mc = modelConfigs.find(m => m.id === modelConfigId)
+    if (!mc || (!mc.price_per_input_token && !mc.price_per_output_token)) return ''
+    const c = compute(mc)
+    if (c <= 0) return ''
+    return `$${c.toFixed(c < 0.01 ? 6 : 4)}`
+  }
   const [contextWindow, setContextWindow] = useState<number>(0)
   const [showTokenDetails, setShowTokenDetails] = useState(false)
   const [reasoningEffort, setReasoningEffort] = useState('')
+  const [modelConfigs, setModelConfigs] = useState<ModelConfig[]>([])
+  const [modelConfigId, setModelConfigId] = useState('')
   const [reasoningEffortOpts, setReasoningEffortOpts] = useState<string[]>([])
   const reasoningEffortRef = useRef('')
   reasoningEffortRef.current = reasoningEffort
@@ -136,12 +158,93 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     streamingReasoningRef.current = val
     setCurrentStreamingReasoning(val)
   }
+  const sessionIdRef = useRef<string | null>(null)
   const [isLoadingAgents, setIsLoadingAgents] = useState(true)
   const [showHistory, setShowHistory] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showSlashPicker, setShowSlashPicker] = useState(false)
   const [copied, setCopied] = useState(false)
   const [pendingMessages, setPendingMessages] = useState<string[]>([])
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
+  const pendingImagesRef = useRef<PendingImage[]>([])
+  pendingImagesRef.current = pendingImages
+
+  const uploadAgentImage = useCallback(async (file: File, sessionId: string): Promise<string> => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`/api/v1/agent-sessions/${sessionId}/attachments`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${getToken()}` },
+      body: form,
+    })
+    if (!res.ok) throw new Error(`upload failed: ${res.status}`)
+    const data = await res.json()
+    return data.id as string
+  }, [])
+
+  const addPendingImage = useCallback((file: File) => {
+    const blobUrl = URL.createObjectURL(file)
+    const pid: PendingImage = { id: '', blobUrl, filename: file.name, uploading: true }
+    setPendingImages(prev => [...prev, pid])
+    // Upload immediately
+    const sid = sessionIdRef.current
+    if (!sid) {
+      setPendingImages(prev => prev.map(p => p.blobUrl === blobUrl ? { ...p, uploading: false } : p))
+      return
+    }
+    uploadAgentImage(file, sid).then(attId => {
+      setPendingImages(prev => prev.map(p => p.blobUrl === blobUrl ? { ...p, id: attId, uploading: false } : p))
+    }).catch(() => {
+      setPendingImages(prev => prev.map(p => p.blobUrl === blobUrl ? { ...p, uploading: false } : p))
+    })
+  }, [uploadAgentImage])
+
+  const removePendingImage = useCallback((blobUrl: string) => {
+    setPendingImages(prev => prev.filter(p => p.blobUrl !== blobUrl))
+    URL.revokeObjectURL(blobUrl)
+  }, [])
+
+  // Register native paste listener when session is active
+  useEffect(() => {
+    if (!inputRef.current) return
+    const el = inputRef.current
+    const handler = (e: Event) => {
+      const ce = e as ClipboardEvent
+      if (!ce.clipboardData) return
+      for (let i = 0; i < ce.clipboardData.items.length; i++) {
+        if (ce.clipboardData.items[i].kind === 'file' && ce.clipboardData.items[i].type.startsWith('image/')) {
+          ce.preventDefault()
+          const file = ce.clipboardData.items[i].getAsFile()
+          if (file) { addPendingImage(file); return }
+        }
+      }
+      for (let i = 0; i < ce.clipboardData.files.length; i++) {
+        if (ce.clipboardData.files[i].type.startsWith('image/')) {
+          ce.preventDefault()
+          addPendingImage(ce.clipboardData.files[i])
+          return
+        }
+      }
+    }
+    el.addEventListener('paste', handler)
+    return () => el.removeEventListener('paste', handler)
+  }, [_sessionId])
+
+  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'))
+    if (files.length === 0) return
+    e.preventDefault()
+    for (const file of files) {
+      addPendingImage(file)
+    }
+  }, [addPendingImage])
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (Array.from(e.dataTransfer.types).includes('Files')) {
+      e.preventDefault()
+    }
+  }, [])
+
   const wsRef = useRef<WebSocket | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const messageListRef = useRef<HTMLDivElement>(null)
@@ -193,6 +296,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       .then(setAgents)
       .catch(() => setError('Failed to load agents'))
       .finally(() => setIsLoadingAgents(false))
+    api.get<ModelConfig[]>('/api/v1/model-configs')
+      .then(setModelConfigs)
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -203,6 +309,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       const def = params['reasoning_effort']
       const defaultEffort = typeof def === 'string' ? def : ''
       setReasoningEffort(defaultEffort)
+      setModelConfigId(selectedAgent.model_config_id ?? '')
     }
   }, [selectedAgent])
 
@@ -334,14 +441,12 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           case 'cell_updated': scrollToCell(msg.cell_id); break
           case 'reconnect_sync': {
             const serverMsgs: ChatMessage[] = (msg.messages || []).map((m: any) => {
-              const base: ChatMessage = { id: m.id, role: m.role, content: m.content || '', created_at: m.created_at }
+              const base: ChatMessage = { id: m.id, role: m.role, content: m.content || '', images: m.image_ids?.length ? m.image_ids : undefined, created_at: m.created_at }
               if (m.tool_calls?.length) { base.content = m.tool_calls[0].name; base.params = JSON.stringify(m.tool_calls[0].arguments); base.result = m.tool_calls[0].result !== undefined ? JSON.stringify(m.tool_calls[0].result) : undefined; base.role = 'tool' }
               return base
             })
             if (serverMsgs.length > 0) setMessages(serverMsgs)
             streamingTextRef.current = ''; setCurrentStreamingText('')
-            const lastNew = serverMsgs[serverMsgs.length - 1]; const saved = loadChatState(); const lastLocal = saved?.messages?.[saved.messages.length - 1]
-            setIsStreaming((lastNew?.role || lastLocal?.role) === 'user')
             break
           }
           case 'done': {
@@ -371,7 +476,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           case 'reconnect_sync': {
             const sm = msg.messages as Array<any>; if (!sm?.length) break
             const conv = sm.map((m: any) => {
-              const b: any = { created_at: m.created_at || ts() }
+              const b: any = { created_at: m.created_at || ts(), images: m.image_ids?.length ? m.image_ids : undefined }
               if (m.role === 'tool') return { ...b, role: 'tool', content: m.tool_call_id || 'tool', params: JSON.stringify(m.tool_calls?.[0]?.arguments || {}), result: m.content }
               if (m.tool_calls?.length) return { ...b, role: 'tool', content: m.tool_calls.map((tc: any) => tc.name).join(', '), params: JSON.stringify(m.tool_calls.map((tc: any) => tc.arguments)), result: undefined }
               return { ...b, role: m.role, content: m.content || '' }
@@ -486,8 +591,20 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       return
     }
 
-    setMessages((prev) => [...prev, { role: 'user', content: text, created_at: ts() }])
-    wsRef.current.send(JSON.stringify({ type: 'message', content: text }))
+    // Collect pending image IDs
+    const images = pendingImagesRef.current.filter(p => p.id && !p.uploading).map(p => p.id)
+    if (images.length > 0) {
+      // Clean up blob URLs
+      pendingImagesRef.current.forEach(p => URL.revokeObjectURL(p.blobUrl))
+      setPendingImages([])
+    }
+
+    const msg: Record<string, any> = { type: 'message', content: text }
+    if (images.length > 0) {
+      msg.images = images
+    }
+    setMessages((prev) => [...prev, { role: 'user', content: text, images, created_at: ts() }])
+    wsRef.current.send(JSON.stringify(msg))
     setIsStreaming(true)
     streamingStartedAt.current = ts()
     streamingTextRef.current = ''
@@ -506,11 +623,17 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     for (const msg of messages) {
       if (msg.role === 'user') {
         lines.push(`**User:** ${msg.content}`)
+        if (msg.images?.length) {
+          lines.push(...msg.images.map(() => '  _[Image]_'))
+        }
       } else if (msg.role === 'assistant') {
         if (msg.reasoning) {
           lines.push(`> **Thinking:** ${msg.reasoning}`)
         }
         lines.push(`**Assistant:** ${msg.content}`)
+        if (msg.images?.length) {
+          lines.push(...msg.images.map(() => '  _[Image]_'))
+        }
       } else if (msg.role === 'tool') {
         if (msg.reasoning) {
           lines.push(`> **Thinking:** ${msg.reasoning}`)
@@ -700,6 +823,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               {fmtTime(msg.created_at)}
             </div>
           )}
+          {msg.images && msg.images.length > 0 && (
+            <AgentMessageImages images={msg.images} />
+          )}
           {msg.role === 'tool' ? (
             <details>
               <summary style={{ cursor: 'pointer', outline: 'none' }}>
@@ -753,11 +879,12 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             setSessionId(session.id)
             setShowHistory(false)
             try {
-              const msgs = await api.get<Array<{ role: string; content: string; reasoning_content?: string; created_at?: string }>>(`/api/v1/sessions/${session.id}/messages`)
+              const msgs = await api.get<Array<{ role: string; content: string; reasoning_content?: string; image_ids?: string[]; created_at?: string }>>(`/api/v1/sessions/${session.id}/messages`)
               const formatted = msgs.map((m) => ({
                 role: m.role,
                 content: m.content || '',
                 reasoning: m.reasoning_content,
+                images: m.image_ids?.length ? m.image_ids : undefined,
                 created_at: m.created_at,
               }))
               setMessages(formatted)
@@ -767,6 +894,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             } catch {
               setMessages([])
             }
+            setIsStreaming(false)
             connectWebSocket(session.id)
           }}
         />
@@ -822,6 +950,34 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 ))}
               </select>
             )}
+            {modelConfigs.length > 0 && (
+              <select
+                style={{ fontSize: 11, padding: '2px 20px 2px 6px', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-muted)', cursor: 'pointer', maxWidth: 120 }}
+                value={modelConfigId}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setModelConfigId(val)
+                  const mc = modelConfigs.find(m => m.id === val)
+                  const params = mc?.default_params || {}
+                  const opts = params['reasoning_effort_options']
+                  const effortOpts: string[] = Array.isArray(opts) ? opts as string[] : []
+                  setReasoningEffortOpts(effortOpts)
+                  const def = params['reasoning_effort']
+                  const defaultEffort = typeof def === 'string' ? def : ''
+                  const newEffort = effortOpts.length > 0 && !effortOpts.includes(reasoningEffort) ? defaultEffort : reasoningEffort
+                  if (newEffort !== reasoningEffort) {
+                    setReasoningEffort(newEffort)
+                    wsRef.current?.send(JSON.stringify({ type: 'set_reasoning_effort', reasoning_effort: newEffort }))
+                  }
+                  wsRef.current?.send(JSON.stringify({ type: 'set_model_config', model_config_id: val }))
+                }}
+                title="Model"
+              >
+                {modelConfigs.map(mc => (
+                  <option key={mc.id} value={mc.id}>{mc.name}</option>
+                ))}
+              </select>
+            )}
             <label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer', whiteSpace: 'nowrap' }} title="Auto-accept all tool calls">
               <input type="checkbox" checked={autoConfirmTool} onChange={e => setAutoConfirmTool(e.target.checked)} style={{ margin: 0 }} />
               Auto-Approve
@@ -860,6 +1016,12 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                   style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8, whiteSpace: 'nowrap', cursor: 'pointer', borderBottom: '1px dashed var(--text-muted)' }}
                 >
                   {totalTokens.input.toLocaleString()}↑ / {totalTokens.output.toLocaleString()}↓
+                  {(() => {
+                    const mc = modelConfigs.find(m => m.id === modelConfigId)
+                    if (!mc || (!mc.price_per_input_token && !mc.price_per_output_token)) return null
+                    const cost = (totalTokens.input * mc.price_per_input_token + totalTokens.output * mc.price_per_output_token + (totalTokens.cache_read ?? 0) * mc.price_per_cache_read_token) / 1000000
+                    return <span style={{ marginLeft: 6, opacity: 0.7, fontSize: 10 }}>${cost < 0.01 ? cost.toFixed(6) : cost.toFixed(4)}</span>
+                  })()}
                   {contextWindow > 0 && (
                     <span style={{ marginLeft: 6, opacity: 0.6 }}>
                       ({Math.round((totalTokens.input + totalTokens.output) / contextWindow * 100)}%)
@@ -882,18 +1044,18 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 4 }}>
                         <span style={{ color: 'var(--text-secondary)' }}>Input</span>
-                        <span>{totalTokens.input.toLocaleString()}</span>
+                        <span>{totalTokens.input.toLocaleString()} <span style={{ fontSize: 10, opacity: 0.6 }}>{costFmt(mc => mc.price_per_input_token * totalTokens.input / 1000000)}</span></span>
                       </div>
                       {totalTokens.cache_read > 0 && (
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2, paddingLeft: 16 }}>
                           <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Cache read</span>
-                          <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.cache_read.toLocaleString()}</span>
+                          <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.cache_read.toLocaleString()} <span style={{ fontSize: 10, opacity: 0.6 }}>{costFmt(mc => mc.price_per_cache_read_token * totalTokens.cache_read / 1000000)}</span></span>
                         </div>
                       )}
 
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 4 }}>
                         <span style={{ color: 'var(--text-secondary)' }}>Output</span>
-                        <span>{totalTokens.output.toLocaleString()}</span>
+                        <span>{totalTokens.output.toLocaleString()} <span style={{ fontSize: 10, opacity: 0.6 }}>{costFmt(mc => mc.price_per_output_token * totalTokens.output / 1000000)}</span></span>
                       </div>
                       {totalTokens.reasoning > 0 && (
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 4, paddingLeft: 16 }}>
@@ -1010,7 +1172,29 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             {error && <div style={styles.error}>{error}</div>}
           </div>
 
-          <div style={{ ...styles.inputArea, position: 'relative' }}>
+          <div>
+            {pendingImages.length > 0 && (
+              <div style={styles.imagePreviewRow}>
+                {pendingImages.map((img, idx) => (
+                  <div key={idx} style={styles.imagePreviewItem}>
+                    <img src={img.blobUrl} alt={img.filename} style={styles.imagePreviewThumb} />
+                    {img.uploading && <div style={styles.imageUploadingOverlay}><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /></div>}
+                    <button
+                      style={styles.imagePreviewRemove}
+                      onClick={() => removePendingImage(img.blobUrl)}
+                      title="Remove image"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div
+              style={{ ...styles.inputArea, position: 'relative' }}
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+            >
             {showSlashPicker && (
               <SlashCommandPicker
                 filter={input}
@@ -1034,7 +1218,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 setShowSlashPicker(val.startsWith('/') && (isSkillCommand || val.length <= 15))
               }}
               onKeyDown={handleKeyDown}
-              placeholder="Message agent... (/ for commands)"
+              placeholder="Message agent... (/ for commands, paste images)"
             />
             {pendingMessages.length > 0 && (
               <span style={styles.pendingBadge}>{pendingMessages.length}</span>
@@ -1056,6 +1240,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 <Send size={16} />
               </button>
             )}
+          </div>
           </div>
         </>
       )}
@@ -1410,5 +1595,48 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'center',
     padding: '0 4px',
+  },
+  imagePreviewRow: {
+    display: 'flex',
+    gap: 8,
+    padding: '8px 12px 0 12px',
+    flexWrap: 'wrap' as const,
+  },
+  imagePreviewItem: {
+    position: 'relative' as const,
+    width: 64,
+    height: 64,
+    borderRadius: 6,
+    overflow: 'hidden',
+    border: '1px solid var(--border)',
+  },
+  imagePreviewThumb: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover' as const,
+  },
+  imageUploadingOverlay: {
+    position: 'absolute' as const,
+    inset: 0,
+    background: 'rgba(0,0,0,0.4)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  imagePreviewRemove: {
+    position: 'absolute' as const,
+    top: 2,
+    right: 2,
+    width: 18,
+    height: 18,
+    borderRadius: '50%',
+    background: 'rgba(0,0,0,0.6)',
+    border: 'none',
+    color: 'white',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 0,
   },
 }

@@ -4,7 +4,7 @@ package main
 // @title Aether API
 // @version 1.0.0
 // @description Aether Notebooks API — collaborative SQL/data notebook platform
-// @host localhost:8080
+// @host localhost:8088
 // @BasePath /api/v1
 // @securityDefinitions.apikey BearerAuth
 // @in header
@@ -52,8 +52,8 @@ Configuration is done via environment variables:
     AETHER_REDIS_URL            Redis connection URL (default: "redis://localhost:6379")
 
   Server:
-    AETHER_PORT                 HTTP listen port (default: "8080")
-    AETHER_PUBLIC_URL           Public-facing URL for link generation (default: "http://localhost:8080")
+	AETHER_PORT                 HTTP listen port (default: "8088")
+	AETHER_PUBLIC_URL           Public-facing URL for link generation (default: "http://localhost:8088")
     AETHER_FRONTEND_URL         Frontend URL for CORS and OIDC redirect (default value of AETHER_PUBLIC_URL)
     AETHER_DISABLE_REGISTRATION Disable new user registration (default: "false")
 
@@ -208,6 +208,7 @@ func main() {
 		slog.Info("storage backend: local", "dir", cfg.AttachmentDir)
 	}
 	srv.SetStorage(store)
+	srv.SetAgentStore(store)
 	srv.StartBackgroundJobs(ctx)
 	srv.SetPlatformAdminEmail(cfg.PlatformAdminEmail)
 	srv.SetPublicURL(cfg.PublicURL)

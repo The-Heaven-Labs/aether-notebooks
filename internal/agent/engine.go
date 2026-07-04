@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/the-heaven-labs/aether/internal/models"
+	"github.com/the-heaven-labs/aether/internal/storage"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -23,10 +26,12 @@ type Engine struct {
 	BroadcastFunc      func(notebookID string, msg any)
 	toolAllowedDomains []string
 	tokenCounter       *TokenCounter
-	reasoningEffort    sync.Map // sessionID -> string
-	toolConfirmPending sync.Map // sessionID -> chan ToolConfirmResult
-	pageContextMap     sync.Map // sessionID -> map[string]string
-	frontendURL        string
+	store              storage.Storage
+	reasoningEffort        sync.Map // sessionID -> string
+	toolConfirmPending     sync.Map // sessionID -> chan ToolConfirmResult
+	pageContextMap         sync.Map // sessionID -> map[string]string
+	sessionModelConfig     sync.Map // sessionID -> modelConfigID string
+	frontendURL            string
 	streams            *StreamManager
 }
 
@@ -41,6 +46,19 @@ func (e *Engine) SetReasoningEffort(sessionID, effort string) {
 
 func (e *Engine) GetReasoningEffort(sessionID string) string {
 	if v, ok := e.reasoningEffort.Load(sessionID); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+func (e *Engine) SetSessionModelConfig(sessionID, modelConfigID string) {
+	e.sessionModelConfig.Store(sessionID, modelConfigID)
+}
+
+func (e *Engine) GetSessionModelConfig(sessionID string) string {
+	if v, ok := e.sessionModelConfig.Load(sessionID); ok {
 		if s, ok := v.(string); ok {
 			return s
 		}
@@ -165,9 +183,15 @@ func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsg
 	return compacted
 }
 
-func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, tools []*ToolDef, masterKey []byte, capturedPageContext *PageContextInfo, onToken func(string), onReasoning func(string), onToolCall func(string, string, string), onToolResult func(string, string, string, string), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, *TokenBreakdown, error) {
+func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, imageIDs []string, tools []*ToolDef, masterKey []byte, capturedPageContext *PageContextInfo, onToken func(string), onReasoning func(string), onToolCall func(string, string, string), onToolResult func(string, string, string, string), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, *TokenBreakdown, error) {
 	var events []EngineEvent
-	slog.Debug("engine: ProcessMessage start", "session_id", sessionID, "msg_len", len(userMessage))
+	slog.Debug("engine: ProcessMessage start", "session_id", sessionID, "msg_len", len(userMessage), "image_count", len(imageIDs))
+
+	// Resolve image data URIs for the current user message
+	imageDataURIs, _ := e.FetchImageDataURIs(ctx, imageIDs)
+	if len(imageDataURIs) > 0 {
+		slog.Debug("engine: resolved images for user message", "session_id", sessionID, "count", len(imageDataURIs))
+	}
 	session, err := e.session.GetSession(ctx, sessionID)
 	if err != nil {
 		slog.Error("engine: get session failed", "session_id", sessionID, "error", err)
@@ -289,11 +313,17 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	contextWindow := 128000 // default
 	compactionThreshold := 70 // default 70%
 	modelName := ""
-	if agent.ModelConfigID != nil && *agent.ModelConfigID != "" {
-		slog.Debug("engine: using agent model config", "session_id", sessionID, "model_config_id", *agent.ModelConfigID)
+	modelConfigID := e.GetSessionModelConfig(sessionID)
+	if modelConfigID == "" {
+		if agent.ModelConfigID != nil && *agent.ModelConfigID != "" {
+			modelConfigID = *agent.ModelConfigID
+		}
+	}
+	if modelConfigID != "" {
+		slog.Debug("engine: using agent model config", "session_id", sessionID, "model_config_id", modelConfigID)
 		var mc models.ModelConfig
 		var defaultParams []byte
-		err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at FROM model_configs WHERE id = $1`, *agent.ModelConfigID).Scan(
+		err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at FROM model_configs WHERE id = $1`, modelConfigID).Scan(
 			&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt)
 		if err != nil {
 			return "", "", nil, events, nil, fmt.Errorf("get model config: %w", err)
@@ -386,7 +416,20 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	} else {
 		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: notebookCtx + skillCatalogStr + pageContextStr})
 	}
-	for _, m := range messages {
+	// Pre-fetch image data URIs for historical messages that have image IDs
+	type histImages struct {
+		ids  []string
+		uris []string
+	}
+	histImageMap := make(map[int]*histImages)
+	for i, m := range messages {
+		if m.Role == "user" && len(m.ImageIDs) > 0 {
+			uris, _ := e.FetchImageDataURIs(ctx, m.ImageIDs)
+			histImageMap[i] = &histImages{ids: m.ImageIDs, uris: uris}
+		}
+	}
+
+	for i, m := range messages {
 		if m.Role == "assistant" {
 			if len(m.ToolCalls) > 0 && m.Content == "" {
 				// Tool-calling assistant message without content — keep as-is
@@ -421,6 +464,19 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				toolID = *m.ToolCallID
 			}
 			chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: toolID, Content: m.Content})
+		} else if m.Role == "user" {
+			if hi, ok := histImageMap[i]; ok && len(hi.uris) > 0 {
+				parts := make([]ContentPart, 0, 1+len(hi.uris))
+				if m.Content != "" {
+					parts = append(parts, ContentPart{Type: "text", Text: m.Content})
+				}
+				for _, uri := range hi.uris {
+					parts = append(parts, ContentPart{Type: "image_url", ImageURL: &ImageURL{URL: uri}})
+				}
+				chatMsgs = append(chatMsgs, ChatMessage{Role: "user", MultiContent: parts})
+			} else {
+				chatMsgs = append(chatMsgs, ChatMessage{Role: "user", Content: m.Content})
+			}
 		} else {
 			chatMsgs = append(chatMsgs, ChatMessage{Role: m.Role, Content: m.Content})
 		}
@@ -428,7 +484,18 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	if skillOverridePrompt != "" {
 		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: "# Active Skill\n\n" + skillOverridePrompt})
 	}
-	chatMsgs = append(chatMsgs, ChatMessage{Role: "user", Content: effectiveMessage})
+	if len(imageDataURIs) > 0 {
+		parts := make([]ContentPart, 0, 1+len(imageDataURIs))
+		if effectiveMessage != "" {
+			parts = append(parts, ContentPart{Type: "text", Text: effectiveMessage})
+		}
+		for _, uri := range imageDataURIs {
+			parts = append(parts, ContentPart{Type: "image_url", ImageURL: &ImageURL{URL: uri}})
+		}
+		chatMsgs = append(chatMsgs, ChatMessage{Role: "user", MultiContent: parts})
+	} else {
+		chatMsgs = append(chatMsgs, ChatMessage{Role: "user", Content: effectiveMessage})
+	}
 
 	userMsgID := uuid.New().String()
 	e.session.AppendMessage(ctx, &models.AgentMessage{
@@ -436,6 +503,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		SessionID: sessionID,
 		Role:      "user",
 		Content:   effectiveMessage,
+		ImageIDs:  imageIDs,
 		CreatedAt: time.Now(),
 	})
 
@@ -876,6 +944,45 @@ func (e *Engine) SetFrontendURL(u string) {
 	e.frontendURL = u
 }
 
+func (e *Engine) SetStore(store storage.Storage) {
+	e.store = store
+}
+
+func (e *Engine) FetchImageDataURIs(ctx context.Context, imageIDs []string) ([]string, error) {
+	if len(imageIDs) == 0 || e.store == nil {
+		return nil, nil
+	}
+
+	dataURIs := make([]string, 0, len(imageIDs))
+	for _, id := range imageIDs {
+		var mimeType string
+		err := e.pool.QueryRow(ctx, `SELECT mime_type FROM session_attachments WHERE id = $1`, id).Scan(&mimeType)
+		if err != nil {
+			slog.Warn("failed to get attachment mime type", "id", id, "error", err)
+			continue
+		}
+
+		rc, err := e.store.Get(id)
+		if err != nil {
+			slog.Warn("failed to get attachment from storage", "id", id, "error", err)
+			continue
+		}
+
+		data, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			slog.Warn("failed to read attachment", "id", id, "error", err)
+			continue
+		}
+
+		encoded := base64.StdEncoding.EncodeToString(data)
+		dataURIs = append(dataURIs, fmt.Sprintf("data:%s;base64,%s", mimeType, encoded))
+	}
+	return dataURIs, nil
+}
+
+
+
 func (e *Engine) HandleSlashCommand(ctx context.Context, sessionID string, command string, orgID string, masterKey []byte) (any, error) {
 	cmd := strings.TrimSpace(command)
 	switch cmd {
@@ -1151,11 +1258,11 @@ func (e *Engine) buildNotebookContext(ctx context.Context, notebookID string) st
 		if err == nil {
 			result += fmt.Sprintf("\nConnector: %q (type: %s, id: %s)", connName, connType, *connectorID)
 			result += "\nNotebook cells: type 'code' with language 'sql' for database queries, type 'text' with language 'markdown' for documentation."
-			result += "\nCharts: Use create_chart to turn a cell's table output into a chart. Types: bar, stacked_bar, line, area, scatter, pie, donut, timeline, hierarchy_tree, big_number, map, sankey. For map charts, use lat_column and lon_column parameters instead of x_column/y_columns."
+			result += "\nCharts: Use create_chart to turn a cell's table output into a chart. Types: bar, line, area, scatter, pie, donut, timeline, hierarchy_tree, big_number, map, sankey, funnel, heatmap, histogram. For map charts, use lat_column and lon_column parameters instead of x_column/y_columns."
 			result += "\n  Common params (all types): title, show_labels, show_legend, show_grid, skip_empty, series_colors (dict of series name to hex color)"
-			result += "\n  Bar/stacked_bar: x_column (categories), y_columns (values). Also: group_by (split into series by column), bar_width (% string), bar_gap (% string), data_zoom."
+			result += "\n  Bar: x_column (categories), y_columns (values). Use bar_mode to set layout: grouped (default), stacked (stacked totals), or horizontal (left-to-right bars). Also: group_by, bar_width (% string), bar_gap (% string), data_zoom."
 			result += "\n  Line: x_column (categories), y_columns (values). Also: smooth (boolean), connect_nulls, data_zoom."
-			result += "\n  Area: same as line with area fill. Also: group_by (split into series by column), smooth, connect_nulls, data_zoom."
+			result += "\n  Area: x_column (categories), y_columns (values). Use area_mode to set layout: area (overlapping) or stacked (stacked areas). Also: group_by, smooth, connect_nulls, data_zoom."
 			result += "\n  Scatter: x_column (numeric), y_columns (values). Also: group_by (split into series by column), color_column (maps 3rd dim to color gradient), size_column (bubble size), data_zoom (always enabled)."
 			result += "\n  Pie/donut: x_column (slice name) or label_column (slice name), y_columns (metric value). Also: rose_type (radius|area), start_angle (0-360), pad_angle (gap between slices)."
 			result += "\n  Timeline: time_column, end_time_column (optional for ranges), label_column, group_by (swim lanes). Also: show_connectors, show_time_deltas, max_label_length."
@@ -1163,6 +1270,9 @@ func (e *Engine) buildNotebookContext(ctx context.Context, notebookID string) st
 			result += "\n  Big number: value_column, label (display text), prefix, suffix, decimal_places."
 			result += "\n  Map: x_column=longitude, y_columns[0]=latitude, y_columns[1]=value (optional), label_column."
 			result += "\n  Sankey: x_column=source, y_columns[0]=target, y_columns[1]=value. Also: node_align (justify|left|right), node_width, node_gap."
+			result += "\n  Funnel: category_column (stage labels) or x_column, value_column (stage values) or y_columns[0]. Also: funnel_sort (descending|ascending|none), suffix (unit)."
+			result += "\n  Heatmap: x_column (columns), y_axis_column (rows), value_column (intensity) or y_columns[0]. Best for cross-tabulation/matrix data (e.g. event types × hour of day)."
+			result += "\n  Histogram: value_column (numeric column to bin). Also: bin_count (number of bins, default auto). Creates frequency distribution of a numeric column."
 			result += "\nUse update_chart to modify an existing chart's config. The frontend renders automatically from saved config."
 		}
 	}

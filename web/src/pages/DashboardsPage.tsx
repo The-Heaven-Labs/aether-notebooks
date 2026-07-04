@@ -68,6 +68,9 @@ export function DashboardsPage() {
           </button>
           <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Dashboard</button>
         </SectionHeader>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: -16, marginBottom: 24 }}>
+          Build real-time visual dashboards from your notebook query results.
+        </p>
 
         {creating && (
           <form

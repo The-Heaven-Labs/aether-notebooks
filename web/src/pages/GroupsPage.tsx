@@ -454,6 +454,9 @@ export function GroupsPage() {
         {/* Header */}
         <div style={styles.header}>
           <h1 style={styles.title}>Groups</h1>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: -8, marginBottom: 24 }}>
+            Create permission groups to manage access control across your organization.
+          </p>
           {isAdmin && (
             <>
             <div style={styles.createRow}>

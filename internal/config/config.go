@@ -50,7 +50,7 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid AETHER_MAX_ATTACHMENT_BYTES: %w", err)
 	}
 	cfg := &Config{
-		Port:               envOrDefault("AETHER_PORT", "8080"),
+		Port:               envOrDefault("AETHER_PORT", "8088"),
 		DatabaseURL:        envOrDefault("AETHER_DATABASE_URL", "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"),
 		RedisURL:           envOrDefault("AETHER_REDIS_URL", "redis://localhost:6379"),
 		MasterKey:          os.Getenv("AETHER_MASTER_KEY"),
@@ -88,7 +88,7 @@ func Load() (*Config, error) {
 		}
 	}
 	if cfg.Port == "" {
-		cfg.Port = "8080"
+		cfg.Port = "8088"
 	}
 	return cfg, nil
 }
