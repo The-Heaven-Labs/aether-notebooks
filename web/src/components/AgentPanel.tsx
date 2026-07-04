@@ -94,6 +94,7 @@ interface AgentChatState {
   totalTokens?: TokenBreakdown
   contextWindow?: number
   lastMessageId?: string
+  modelConfigId?: string
 }
 
 export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, onMinimize, onDock, docked }: AgentPanelProps) {
@@ -134,6 +135,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const [reasoningEffort, setReasoningEffort] = useState('')
   const [modelConfigs, setModelConfigs] = useState<ModelConfig[]>([])
   const [modelConfigId, setModelConfigId] = useState('')
+  const modelConfigIdRef = useRef('')
+  modelConfigIdRef.current = modelConfigId
   const [reasoningEffortOpts, setReasoningEffortOpts] = useState<string[]>([])
   const reasoningEffortRef = useRef('')
   reasoningEffortRef.current = reasoningEffort
@@ -301,6 +304,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       .catch(() => {})
   }, [])
 
+  const MODEL_CONFIG_KEY = 'aether:lastModelConfigId'
+  const REASONING_EFFORT_KEY = 'aether:lastReasoningEffort'
+
   useEffect(() => {
     if (selectedAgent) {
       const params = selectedAgent.model_config_params || {}
@@ -308,8 +314,14 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       setReasoningEffortOpts(Array.isArray(opts) ? opts as string[] : [])
       const def = params['reasoning_effort']
       const defaultEffort = typeof def === 'string' ? def : ''
-      setReasoningEffort(defaultEffort)
       setModelConfigId(selectedAgent.model_config_id ?? '')
+      setReasoningEffort(defaultEffort)
+      try {
+        const savedModelConfig = localStorage.getItem(MODEL_CONFIG_KEY)
+        if (savedModelConfig) setModelConfigId(savedModelConfig)
+        const savedEffort = localStorage.getItem(REASONING_EFFORT_KEY)
+        if (savedEffort) setReasoningEffort(savedEffort)
+      } catch { /* ignore */ }
     }
   }, [selectedAgent])
 
@@ -383,7 +395,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const saveChatState = (agentId: string, sessionId: string, msgs: ChatMessage[], tks?: AgentTaskItem[], tok?: TokenBreakdown, cw?: number) => {
     try {
       const lastId = msgs.length > 0 ? msgs[msgs.length - 1].id : undefined
-      localStorage.setItem(chatStateKey, JSON.stringify({ agentId, sessionId, messages: msgs, tasks: tks, totalTokens: tok, contextWindow: cw, lastMessageId: lastId }))
+      localStorage.setItem(chatStateKey, JSON.stringify({ agentId, sessionId, messages: msgs, tasks: tks, totalTokens: tok, contextWindow: cw, lastMessageId: lastId, modelConfigId: modelConfigIdRef.current || undefined }))
     } catch { /* ignore */ }
   }
 
@@ -682,7 +694,13 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           return
         }
         lastScrollTimeRef.current = Date.now()
-        wasAtBottomRef.current = false
+        const el = messageListRef.current
+        if (el) {
+          const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30
+          wasAtBottomRef.current = nearBottom
+        } else {
+          wasAtBottomRef.current = false
+        }
       }
       scrollHandlerRef.current = handler
       el.addEventListener('scroll', handler, { passive: true })
@@ -939,6 +957,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 onChange={(e) => {
                   const val = e.target.value
                   setReasoningEffort(val)
+                  try { localStorage.setItem(REASONING_EFFORT_KEY, val) } catch {}
                   wsRef.current?.send(JSON.stringify({ type: 'set_reasoning_effort', reasoning_effort: val }))
                 }}
                 style={{ fontSize: 11, padding: '2px 20px 2px 6px', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-muted)', cursor: 'pointer' }}
@@ -957,6 +976,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 onChange={(e) => {
                   const val = e.target.value
                   setModelConfigId(val)
+                  try { localStorage.setItem(MODEL_CONFIG_KEY, val) } catch {}
                   const mc = modelConfigs.find(m => m.id === val)
                   const params = mc?.default_params || {}
                   const opts = params['reasoning_effort_options']
@@ -967,6 +987,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                   const newEffort = effortOpts.length > 0 && !effortOpts.includes(reasoningEffort) ? defaultEffort : reasoningEffort
                   if (newEffort !== reasoningEffort) {
                     setReasoningEffort(newEffort)
+                    try { localStorage.setItem(REASONING_EFFORT_KEY, newEffort) } catch {}
                     wsRef.current?.send(JSON.stringify({ type: 'set_reasoning_effort', reasoning_effort: newEffort }))
                   }
                   wsRef.current?.send(JSON.stringify({ type: 'set_model_config', model_config_id: val }))

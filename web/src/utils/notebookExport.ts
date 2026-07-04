@@ -53,6 +53,7 @@ function normalizeChartConfig(raw: unknown): ChartConfig | undefined {
     nodeAlign: obj.nodeAlign as string | undefined,
     nodeWidth: obj.nodeWidth as number | undefined,
     nodeGap: obj.nodeGap as number | undefined,
+    markLines: obj.markLines as ChartConfig['markLines'],
   } as ChartConfig
 }
 
@@ -166,6 +167,28 @@ function buildOption(data: ResultSet, config: ChartConfig): any {
         } else { si.itemStyle.opacity = 0.8 }
         return si
       })
+    }
+
+    // Reference lines as ghost series
+    if (config.markLines?.length) {
+      const allY = series.flatMap((s: any) => (s.data ?? []).filter((v: any) => v != null && isFinite(Number(v)))).map(Number)
+      const yMin = Math.min(0, ...allY)
+      const yMax = Math.max(0, ...allY)
+      const xFirst = xData[0]
+      const xLast = xData[xData.length - 1]
+      for (const ml of config.markLines) {
+        series.push({
+          tooltip: { show: false },
+          type: 'line',
+          data: ml.position === 'horizontal'
+            ? [[xFirst, parseFloat(ml.value) || 0], [xLast, parseFloat(ml.value) || 0]]
+            : [[ml.value, yMin], [ml.value, yMax]],
+          symbol: 'none',
+          lineStyle: { type: 'dashed', color: ml.color || '#f43f5e', width: 1.5 },
+          silent: true,
+          z: 10,
+        })
+      }
     }
 
     const showLegend = config.showLegend !== false && !(isSc && !config.groupBy && yKeys.length <= 1)

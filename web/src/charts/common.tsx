@@ -8,7 +8,7 @@ import {
   VisualMapComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import type { ResultSet } from '../types'
+import type { ResultSet, MarkLineConfig } from '../types'
 
 // Register only what we use
 echarts.use([
@@ -19,10 +19,32 @@ echarts.use([
   CanvasRenderer,
 ])
 
-export const CHART_COLORS = [
+const LIGHT_CHART_COLORS = [
   '#6366f1', '#06b6d4', '#10b981', '#f59e0b',
   '#f43f5e', '#8b5cf6', '#0ea5e9', '#84cc16',
 ]
+
+const DARK_CHART_COLORS = [
+  '#818cf8', '#22d3ee', '#34d399', '#fbbf24',
+  '#fb7185', '#a78bfa', '#38bdf8', '#a3e635',
+]
+
+function getCurrentPalette(): string[] {
+  return isDarkMode() ? DARK_CHART_COLORS : LIGHT_CHART_COLORS
+}
+
+export const CHART_COLORS = new Proxy(LIGHT_CHART_COLORS, {
+  get(target, prop) {
+    const palette = getCurrentPalette()
+    if (prop === 'length') return palette.length
+    const idx = Number(prop)
+    if (!isNaN(idx)) return palette[idx]
+    return (Reflect as any).get(palette, prop, palette)
+  },
+  has(target, prop) {
+    return prop in getCurrentPalette()
+  },
+}) as string[]
 
 export const ALL_CHART_TYPES = [
   { value: 'bar', label: 'Bar' },
@@ -364,7 +386,9 @@ export function useAxisColumns(
 export function useGroupBySeries(
   chartData: Record<string, unknown>[],
   config: { xAxis?: string; yAxis?: string[]; groupBy?: string; seriesColors?: Record<string, string> },
+  palette?: string[],
 ): { series: any[]; xValues: string[] } {
+  const colors = palette ?? (getCurrentPalette())
   return useMemo(() => {
     const groupByCol = config.groupBy
     if (!groupByCol || !config.xAxis || !config.yAxis?.length || chartData.length === 0) {
@@ -400,13 +424,13 @@ export function useGroupBySeries(
         symbolSize: 4,
         lineStyle: { width: 2 },
         itemStyle: {
-          color: config.seriesColors?.[group] ?? CHART_COLORS[gi % CHART_COLORS.length],
+          color: config.seriesColors?.[group] ?? colors[gi % colors.length],
         },
       }))
     )
 
     return { series, xValues }
-  }, [chartData, config.xAxis, config.yAxis, config.groupBy, config.seriesColors])
+  }, [chartData, config.xAxis, config.yAxis, config.groupBy, config.seriesColors, colors])
 }
 
 // Detect dark mode and provide explicit colors for ECharts (canvas doesn't support CSS vars)
@@ -432,6 +456,7 @@ export function getChartColors() {
     border: dark ? '#2e2e2e' : '#e8e8e8',
     bgCard: dark ? '#1c1c1c' : '#ffffff',
     shadow: dark ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)',
+    palette: dark ? DARK_CHART_COLORS : LIGHT_CHART_COLORS,
   }
 }
 
@@ -467,6 +492,113 @@ export function getAxisStyle(showGrid?: boolean) {
     axisTick: { show: false },
     axisLabel: { fontSize: 11, color: c.textMuted },
     splitLine: { show: showGrid !== false, lineStyle: { color: c.border, type: 'dashed' as const } },
+  }
+}
+
+function computeTimeIndex(xData: any[], targetStr: string): number | null {
+  const times = xData.map(v => {
+    if (typeof v === 'number' && isFinite(v)) return v
+    const d = Date.parse(String(v))
+    return isNaN(d) ? null : d
+  })
+  if (times.some(t => t === null)) return null
+  const target = Date.parse(targetStr)
+  if (isNaN(target)) return null
+  const t = times as number[]
+  if (target <= t[0]) return 0
+  if (target >= t[t.length - 1]) return t.length - 1
+  for (let i = 0; i < t.length - 1; i++) {
+    if (target >= t[i] && target < t[i + 1]) {
+      return i + (target - t[i]) / (t[i + 1] - t[i])
+    }
+  }
+  return null
+}
+
+export function buildMarkLineSeries(
+  markLines: MarkLineConfig[] | undefined,
+  xData: any[],
+  yMin: number,
+  yMax: number,
+): { series: any[]; xAxis?: any } {
+  if (!markLines || markLines.length === 0) return { series: [] }
+
+  const mlSeries: any[] = []
+  let needsNumAxis = false
+
+  for (const ml of markLines) {
+    const val = String(ml.value ?? '')
+    const lineColor = ml.color || '#f43f5e'
+    const labelColor = getContrastTextColor(lineColor)
+    const bgColor = lineColor + 'cc'
+    if (ml.position === 'horizontal') {
+      const isPureNum = /^-?\d+(\.\d+)?$/.test(val.trim())
+      if (!isPureNum) continue
+      const y = parseFloat(val)
+      const n = xData.length
+      needsNumAxis = true
+      mlSeries.push({
+        type: 'line' as const,
+        xAxisIndex: 1,
+        symbol: 'circle',
+        symbolSize: 0,
+        data: [
+          [-0.5, y],
+          { value: [n - 0.5, y], label: ml.label ? { show: true, formatter: ml.label, fontSize: 11, color: labelColor, backgroundColor: bgColor, padding: [2, 6], borderRadius: 3, position: 'left' as const } : undefined },
+        ],
+        lineStyle: { type: 'dashed' as const, color: lineColor, width: 1.5 },
+        silent: true, z: 10, smooth: false, connectNulls: true,
+        tooltip: { show: false },
+      })
+      continue
+    }
+    // Vertical
+    const isPureNum = /^-?\d+(\.\d+)?$/.test(val.trim())
+    const numericVal = isPureNum ? parseFloat(val) : NaN
+    const catIdx = xData.indexOf(val)
+    const timeIdx = catIdx < 0 ? computeTimeIndex(xData, val) : null
+
+    let xPos: any
+    let axisIdx = 0
+
+    if (isPureNum) {
+      xPos = numericVal
+    } else if (catIdx >= 0) {
+      xPos = catIdx
+    } else if (timeIdx !== null) {
+      xPos = timeIdx
+      axisIdx = 1
+      needsNumAxis = true
+    } else {
+      xPos = val
+    }
+
+    mlSeries.push({
+      type: 'line' as const,
+      xAxisIndex: axisIdx,
+      symbol: 'circle',
+      symbolSize: 0,
+      data: [
+        [xPos, yMin],
+        { value: [xPos, yMax], label: ml.label ? { show: true, formatter: ml.label, fontSize: 11, color: labelColor, backgroundColor: bgColor, padding: [2, 6], borderRadius: 3, position: 'bottom' as const } : undefined },
+      ],
+      lineStyle: { type: 'dashed' as const, color: lineColor, width: 1.5 },
+      silent: true, z: 10, smooth: false, connectNulls: true,
+      tooltip: { show: false },
+    })
+  }
+
+  return {
+    series: mlSeries,
+    ...(needsNumAxis ? {
+      xAxis: {
+        type: 'value' as const,
+        min: -0.5,
+        max: xData.length - 0.5,
+        show: false,
+        gridIndex: 0,
+      }
+    } : {}),
   }
 }
 

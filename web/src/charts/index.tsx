@@ -163,7 +163,7 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
 }
 
 // Re-export types and defaults
-export type { ChartConfig, ChartModule, ChartType } from './types'
+export type { ChartConfig, ChartModule, ChartType, MarkLineConfig } from './types'
 export { CHART_COLORS, EChartsContainer } from './common'
 
 const styles: Record<string, React.CSSProperties> = {

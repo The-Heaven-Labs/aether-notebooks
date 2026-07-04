@@ -13,6 +13,13 @@ export type ChartType =
   | 'heatmap'
   | 'histogram'
 
+export interface MarkLineConfig {
+  value: string
+  label: string
+  position: 'horizontal' | 'vertical'
+  color?: string
+}
+
 export interface ChartConfig {
   chartType: ChartType
   // Axis-based charts (bar, line, area, scatter)
@@ -65,6 +72,8 @@ export interface ChartConfig {
   // Scatter
   colorColumn?: string
   sizeColumn?: string
+  // Marklines (reference lines for axis-based charts)
+  markLines?: MarkLineConfig[]
   // Pie/Donut
   roseType?: 'radius' | 'area'
   startAngle?: number

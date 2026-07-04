@@ -1,13 +1,13 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, useAxisColumns, useGroupBySeries, detectAxisColumns } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, useAxisColumns, useGroupBySeries, detectAxisColumns, buildMarkLineSeries } from './common'
 import { AxisConfigPanel } from './AxisConfigPanel'
 
 function AreaChartComponent({ data, config }: ChartProps) {
   const { xAxis, yAxes } = useAxisColumns(data, config)
   const chartData = useRowsAsObjects(data)
   const colors = useChartColors()
-  const { series: groupSeries, xValues } = useGroupBySeries(chartData, { ...config, xAxis, yAxis: yAxes })
+  const { series: groupSeries, xValues } = useGroupBySeries(chartData, { ...config, xAxis, yAxis: yAxes }, colors.palette)
   const hasGroupBy = !!(config.groupBy && chartData.some(row => config.groupBy! in row))
   const isStacked = config.areaMode === 'stacked'
 
@@ -15,7 +15,7 @@ function AreaChartComponent({ data, config }: ChartProps) {
     const effectiveXData = hasGroupBy ? xValues : chartData.map(d => d[xAxis])
 
     const series = hasGroupBy
-      ? groupSeries.map(s => ({
+      ? groupSeries.map((s, si) => ({
           ...s,
           type: 'line' as const,
           stack: isStacked ? 'a' : undefined,
@@ -42,6 +42,13 @@ function AreaChartComponent({ data, config }: ChartProps) {
           label: config.showLabels ? { show: true, position: 'top' as const, fontSize: 10, color: colors.textMuted } : undefined,
         }))
 
+    const allY = series.flatMap((s: any) => (s.data ?? []).filter((v: any) => v != null && isFinite(Number(v)))).map(Number)
+    const yMin = Math.min(0, ...allY)
+    const yMax = Math.max(0, ...allY)
+    const { series: mlSeries, xAxis: mlXAxis } = buildMarkLineSeries(config.markLines, effectiveXData, yMin, yMax)
+
+    const baseXAxis = { type: 'category' as const, data: effectiveXData, boundaryGap: false, ...getAxisStyle(config.showGrid) }
+
     return {
       tooltip: { trigger: 'axis' as const, ...getTooltipStyle() },
       title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
@@ -51,11 +58,11 @@ function AreaChartComponent({ data, config }: ChartProps) {
         { type: 'inside' as const, start: 0, end: 100 },
         { type: 'slider' as const, start: 0, end: 100, bottom: 8, height: 20, borderColor: colors.border, textStyle: { fontSize: 10, color: colors.textMuted } },
       ] : undefined,
-      xAxis: { type: 'category' as const, data: effectiveXData, boundaryGap: false, ...getAxisStyle(config.showGrid) },
+      xAxis: mlXAxis ? [baseXAxis, mlXAxis] : baseXAxis,
       yAxis: { type: 'value' as const, ...getAxisStyle(config.showGrid) },
-      series,
+      series: [...series, ...mlSeries],
     }
-  }, [chartData, xAxis, yAxes, hasGroupBy, groupSeries, xValues, config.title, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, config.connectNulls, config.dataZoom, config.smooth, colors])
+  }, [chartData, xAxis, yAxes, hasGroupBy, groupSeries, xValues, config.title, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, config.connectNulls, config.dataZoom, config.smooth, config.markLines, colors])
   // title is used in grid.top calculation above
 
   return <EChartsContainer option={option} showReset />

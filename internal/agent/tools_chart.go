@@ -16,8 +16,8 @@ func RegisterChartTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "create_chart",
-			Description: "Turn a cell's table output into a chart. For bar/line/area/scatter: set x_column (categories) and y_columns (values); optional group_by splits into series. Bar supports bar_mode (grouped|stacked|horizontal) for layout. Area supports area_mode (area|stacked) for layout. For pie/donut: x_column or label_column for slices, y_columns for metric. For timeline: time_column, label_column, group_by. For hierarchy_tree: id_column, parent_id_column, metric_columns. For big_number: value_column, optional label/prefix/suffix. For map: x_column=longitude, y_columns[0]=latitude. For sankey: x_column=source, y_columns=[target,value]. For funnel: category_column (stage labels) and value_column (stage values); optional funnel_sort. For heatmap: x_column (x categories), y_axis_column (y categories), value_column (intensity). For histogram: value_column (numeric column to bin); optional bin_count. All charts accept: title, show_labels, show_legend, show_grid, skip_empty, series_colors.",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey","funnel","heatmap","histogram"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"lat_column":{"type":"string","description":"Latitude column (map charts only)"},"lon_column":{"type":"string","description":"Longitude column (map charts only)"},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"category_column":{"type":"string","description":"Category/label column for funnel charts"},"y_axis_column":{"type":"string","description":"Second category column for heatmap (y-axis categories)"},"funnel_sort":{"type":"string","enum":["ascending","descending","none"],"description":"Sort order for funnel stages"},"bin_count":{"type":"number","description":"Number of bins for histogram"},"bar_mode":{"type":"string","enum":["grouped","stacked","horizontal"],"description":"Bar chart layout: grouped (side-by-side), stacked (totals), horizontal (left-to-right)"},"area_mode":{"type":"string","enum":["area","stacked"],"description":"Area chart layout: area (overlapping), stacked (stacked areas)"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex colors. Keys match y_columns (no group_by) or group values (with group_by). E.g. {\"revenue\":\"#ff0000\"}"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"color_column":{"type":"string"},"size_column":{"type":"string"}},"required":["cell_id","chart_type"]}`,
+			Description: "Turn a cell's table output into a chart. For bar/line/area/scatter: set x_column (categories) and y_columns (values); optional group_by splits into series. Bar supports bar_mode (grouped|stacked|horizontal) for layout. Area supports area_mode (area|stacked) for layout. For pie/donut: x_column or label_column for slices, y_columns for metric. For timeline: time_column, label_column, group_by. For hierarchy_tree: id_column, parent_id_column, metric_columns. For big_number: value_column, optional label/prefix/suffix. For map: x_column=longitude, y_columns[0]=latitude. For sankey: x_column=source, y_columns=[target,value]. For funnel: category_column (stage labels) and value_column (stage values); optional funnel_sort. For heatmap: x_column (x categories), y_axis_column (y categories), value_column (intensity). For histogram: value_column (numeric column to bin); optional bin_count. All charts accept: title, show_labels, show_legend, show_grid, skip_empty, series_colors. Bar/line/area/scatter also accept: mark_lines (array of {value, label, position: 'horizontal'|'vertical', color}) for dashed reference lines.",
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey","funnel","heatmap","histogram"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"lat_column":{"type":"string","description":"Latitude column (map charts only)"},"lon_column":{"type":"string","description":"Longitude column (map charts only)"},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"category_column":{"type":"string","description":"Category/label column for funnel charts"},"y_axis_column":{"type":"string","description":"Second category column for heatmap (y-axis categories)"},"funnel_sort":{"type":"string","enum":["ascending","descending","none"],"description":"Sort order for funnel stages"},"bin_count":{"type":"number","description":"Number of bins for histogram"},"bar_mode":{"type":"string","enum":["grouped","stacked","horizontal"],"description":"Bar chart layout: grouped (side-by-side), stacked (totals), horizontal (left-to-right)"},"area_mode":{"type":"string","enum":["area","stacked"],"description":"Area chart layout: area (overlapping), stacked (stacked areas)"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex colors. Keys match y_columns (no group_by) or group values (with group_by). E.g. {\"revenue\":\"#ff0000\"}"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"mark_lines":{"type":"array","items":{"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"},"position":{"type":"string","enum":["horizontal","vertical"]},"color":{"type":"string"}}},"description":"Reference lines for bar/line/area/scatter charts"},"color_column":{"type":"string"},"size_column":{"type":"string"}},"required":["cell_id","chart_type"]}`,
 		},
 		Handler: makeCreateChartHandler(db),
 	})
@@ -29,8 +29,8 @@ func RegisterChartTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "update_chart",
-			Description: "Modify chart config on an existing cell. Supports the same chart types and parameters as create_chart. For bar/line/area/scatter: x_column, y_columns, group_by. Bar supports bar_mode (grouped|stacked|horizontal) for layout. Area supports area_mode (area|stacked) for layout. For pie/donut: x_column or label_column, y_columns. For timeline: time_column, label_column, group_by. For hierarchy_tree: id_column, parent_id_column, metric_columns. For big_number: value_column, label/prefix/suffix. For map: x_column=longitude, y_columns[0]=latitude. For sankey: x_column=source, y_columns=[target,value]. For funnel: category_column, value_column, funnel_sort. For heatmap: x_column, y_axis_column, value_column. For histogram: value_column, bin_count. All charts accept: title, show_labels, show_legend, show_grid, skip_empty, series_colors.",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey","funnel","heatmap","histogram"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"lat_column":{"type":"string","description":"Latitude column (map charts only)"},"lon_column":{"type":"string","description":"Longitude column (map charts only)"},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"category_column":{"type":"string","description":"Category/label column for funnel charts"},"y_axis_column":{"type":"string","description":"Second category column for heatmap (y-axis categories)"},"funnel_sort":{"type":"string","enum":["ascending","descending","none"],"description":"Sort order for funnel stages"},"bin_count":{"type":"number","description":"Number of bins for histogram"},"bar_mode":{"type":"string","enum":["grouped","stacked","horizontal"],"description":"Bar chart layout: grouped (side-by-side), stacked (totals), horizontal (left-to-right)"},"area_mode":{"type":"string","enum":["area","stacked"],"description":"Area chart layout: area (overlapping), stacked (stacked areas)"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex colors. Keys match y_columns (no group_by) or group values (with group_by). E.g. {\"revenue\":\"#ff0000\"}"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"color_column":{"type":"string"},"size_column":{"type":"string"}},"required":["cell_id"]}`,
+			Description: "Modify chart config on an existing cell. Supports the same chart types and parameters as create_chart. For bar/line/area/scatter: x_column, y_columns, group_by. Bar supports bar_mode (grouped|stacked|horizontal) for layout. Area supports area_mode (area|stacked) for layout. For pie/donut: x_column or label_column, y_columns. For timeline: time_column, label_column, group_by. For hierarchy_tree: id_column, parent_id_column, metric_columns. For big_number: value_column, label/prefix/suffix. For map: x_column=longitude, y_columns[0]=latitude. For sankey: x_column=source, y_columns=[target,value]. For funnel: category_column, value_column, funnel_sort. For heatmap: x_column, y_axis_column, value_column. For histogram: value_column, bin_count. All charts accept: title, show_labels, show_legend, show_grid, skip_empty, series_colors. Bar/line/area/scatter also accept: mark_lines (array of {value, label, position: 'horizontal'|'vertical', color}) for dashed reference lines.",
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string"},"chart_type":{"type":"string","enum":["bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey","funnel","heatmap","histogram"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"lat_column":{"type":"string","description":"Latitude column (map charts only)"},"lon_column":{"type":"string","description":"Longitude column (map charts only)"},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"category_column":{"type":"string","description":"Category/label column for funnel charts"},"y_axis_column":{"type":"string","description":"Second category column for heatmap (y-axis categories)"},"funnel_sort":{"type":"string","enum":["ascending","descending","none"],"description":"Sort order for funnel stages"},"bin_count":{"type":"number","description":"Number of bins for histogram"},"bar_mode":{"type":"string","enum":["grouped","stacked","horizontal"],"description":"Bar chart layout: grouped (side-by-side), stacked (totals), horizontal (left-to-right)"},"area_mode":{"type":"string","enum":["area","stacked"],"description":"Area chart layout: area (overlapping), stacked (stacked areas)"},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex colors. Keys match y_columns (no group_by) or group values (with group_by). E.g. {\"revenue\":\"#ff0000\"}"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"mark_lines":{"type":"array","items":{"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"},"position":{"type":"string","enum":["horizontal","vertical"]},"color":{"type":"string"}}},"description":"Reference lines for bar/line/area/scatter charts"},"color_column":{"type":"string"},"size_column":{"type":"string"}},"required":["cell_id"]}`,
 		},
 		Handler: makeUpdateChartHandler(db),
 	})
@@ -38,28 +38,28 @@ func RegisterChartTools(reg *ToolRegistry, db *pgxpool.Pool) {
 
 var chartAllowedFields = map[string]map[string]bool{
 	"line": {
-		"title": true, "showLegend": true, "showGrid": true,
-		"dataZoom": true, "showLabels": true, "smooth": true,
-		"connectNulls": true, "seriesColors": true, "xAxis": true, "yAxis": true,
-		"groupBy": true,
-	},
-	"area": {
-		"title": true, "showLegend": true, "showGrid": true,
-		"dataZoom": true, "showLabels": true, "smooth": true,
-		"connectNulls": true, "seriesColors": true, "xAxis": true, "yAxis": true,
-		"groupBy": true, "areaMode": true,
-	},
-	"bar": {
-		"title": true, "showLegend": true, "showGrid": true,
-		"dataZoom": true, "showLabels": true, "seriesColors": true,
-		"xAxis": true, "yAxis": true, "barWidth": true, "barCategoryGap": true,
-		"groupBy": true, "barMode": true,
-	},
-	"scatter": {
-		"title": true, "showLegend": true, "showGrid": true,
-		"seriesColors": true, "colorColumn": true, "sizeColumn": true,
-		"xAxis": true, "yAxis": true, "groupBy": true,
-	},
+			"title": true, "showLegend": true, "showGrid": true,
+			"dataZoom": true, "showLabels": true, "smooth": true,
+			"connectNulls": true, "seriesColors": true, "xAxis": true, "yAxis": true,
+			"groupBy": true, "markLines": true,
+		},
+		"area": {
+			"title": true, "showLegend": true, "showGrid": true,
+			"dataZoom": true, "showLabels": true, "smooth": true,
+			"connectNulls": true, "seriesColors": true, "xAxis": true, "yAxis": true,
+			"groupBy": true, "areaMode": true, "markLines": true,
+		},
+		"bar": {
+			"title": true, "showLegend": true, "showGrid": true,
+			"dataZoom": true, "showLabels": true, "seriesColors": true,
+			"xAxis": true, "yAxis": true, "barWidth": true, "barCategoryGap": true,
+			"groupBy": true, "barMode": true, "markLines": true,
+		},
+		"scatter": {
+			"title": true, "showLegend": true, "showGrid": true,
+			"seriesColors": true, "colorColumn": true, "sizeColumn": true,
+			"xAxis": true, "yAxis": true, "groupBy": true, "markLines": true,
+		},
 	"pie": {
 		"title": true, "showLegend": true, "showLabels": true,
 		"labelColumn": true, "seriesColors": true, "xAxis": true, "yAxis": true,
@@ -178,6 +178,7 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 			NodeGap         *int                `json:"node_gap"`
 			ColorColumn     string              `json:"color_column"`
 			SizeColumn      string              `json:"size_column"`
+			MarkLines       []map[string]any    `json:"mark_lines"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -306,6 +307,9 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 		if req.SizeColumn != "" {
 			chartConfig["sizeColumn"] = req.SizeColumn
 		}
+		if len(req.MarkLines) > 0 {
+			chartConfig["markLines"] = req.MarkLines
+		}
 		if req.LatColumn != "" {
 			chartConfig["yAxis"] = []string{req.LatColumn}
 		}
@@ -402,6 +406,7 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 			NodeGap         *int                `json:"node_gap"`
 			ColorColumn     string              `json:"color_column"`
 			SizeColumn      string              `json:"size_column"`
+			MarkLines       []map[string]any    `json:"mark_lines"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -558,6 +563,9 @@ func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 		}
 		if req.SizeColumn != "" {
 			existingConfig["sizeColumn"] = req.SizeColumn
+		}
+		if len(req.MarkLines) > 0 {
+			existingConfig["markLines"] = req.MarkLines
 		}
 		if req.LatColumn != "" {
 			existingConfig["yAxis"] = []string{req.LatColumn}
