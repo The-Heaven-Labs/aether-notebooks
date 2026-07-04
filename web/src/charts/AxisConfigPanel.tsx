@@ -4,6 +4,18 @@ import type { ChartConfig, ChartType } from './types'
 import { CHART_COLORS, ChartTypeSelect } from './common'
 import { ConfigHint } from './ConfigHint'
 
+function uniqueXValues(data?: { columns: { name: string; type?: string }[]; rows: unknown[][] }, xAxis?: string): string[] {
+  if (!data || !xAxis) return []
+  const colIdx = data.columns.findIndex(c => c.name === xAxis)
+  if (colIdx < 0) return []
+  const seen = new Set<string>()
+  for (const row of data.rows) {
+    const v = String(row[colIdx] ?? '')
+    if (v) seen.add(v)
+  }
+  return [...seen]
+}
+
 interface AxisConfigPanelProps {
   config: ChartConfig
   columns: string[]
@@ -354,6 +366,108 @@ export function AxisConfigPanel({
         </label>
       </div>
       <ConfigHint>Legend identifies each series, Grid shows background lines, Labels show values on data points</ConfigHint>
+
+      {/* Marklines */}
+      <div style={styles.row}>
+        <div style={{ ...styles.section, flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <div style={styles.sectionLabel}>Reference lines</div>
+          <button
+            style={styles.addBtn}
+            onClick={() => {
+              const lines = [...(config.markLines || [])]
+              lines.push({ value: '', label: '', position: 'horizontal' })
+              onChange({ ...config, markLines: lines })
+            }}
+            title="Add reference line"
+          >
+            + Add
+          </button>
+        </div>
+      </div>
+      {(config.markLines ?? []).map((ml, i) => (
+        <div key={i} style={styles.markLineRow}>
+          <div style={styles.markLineRow1}>
+            <div style={styles.section}>
+              <div style={styles.sectionLabel}>Type</div>
+              <select
+                aria-label="Markline position"
+                style={styles.select}
+                value={ml.position}
+                onChange={e => {
+                  const lines = [...(config.markLines || [])]
+                  lines[i] = { ...lines[i], position: e.target.value as 'horizontal' | 'vertical' }
+                  onChange({ ...config, markLines: lines })
+                }}
+              >
+                <option value="horizontal">H</option>
+                <option value="vertical">V</option>
+              </select>
+            </div>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={styles.sectionLabel}>Value</div>
+              <input
+                aria-label="Markline value"
+                type="text"
+                style={styles.input}
+                value={ml.value}
+                placeholder={ml.position === 'horizontal' ? '100' : 'value'}
+                list={ml.position === 'vertical' ? `ml-xvals-${i}` : undefined}
+                onChange={e => {
+                  const lines = [...(config.markLines || [])]
+                  lines[i] = { ...lines[i], value: e.target.value }
+                  onChange({ ...config, markLines: lines })
+                }}
+              />
+              {ml.position === 'vertical' && (
+                <datalist id={`ml-xvals-${i}`}>
+                  {uniqueXValues(data, config.xAxis).map(v => (
+                    <option key={v} value={v} />
+                  ))}
+                </datalist>
+              )}
+            </div>
+            <div style={{ ...styles.section, maxWidth: 40 }}>
+              <div style={styles.sectionLabel}>Clr</div>
+              <input
+                type="color"
+                aria-label="Markline color"
+                value={ml.color || '#f43f5e'}
+                style={{ ...styles.colorInput, width: 28, height: 24 }}
+                onChange={e => {
+                  const lines = [...(config.markLines || [])]
+                  lines[i] = { ...lines[i], color: e.target.value }
+                  onChange({ ...config, markLines: lines })
+                }}
+              />
+            </div>
+            <button
+              style={styles.removeBtn}
+              onClick={() => {
+                const lines = [...(config.markLines || [])]
+                lines.splice(i, 1)
+                onChange({ ...config, markLines: lines.length > 0 ? lines : undefined })
+              }}
+              title="Remove reference line"
+            >
+              ×
+            </button>
+          </div>
+          <div style={{ ...styles.section, marginTop: 4 }}>
+            <div style={styles.sectionLabel}>Label</div>
+            <input
+              aria-label="Markline label"
+              style={styles.input}
+              value={ml.label}
+              placeholder="Optional"
+              onChange={e => {
+                const lines = [...(config.markLines || [])]
+                lines[i] = { ...lines[i], label: e.target.value }
+                onChange({ ...config, markLines: lines })
+              }}
+            />
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
@@ -370,4 +484,19 @@ const styles: Record<string, React.CSSProperties> = {
   colorLabel: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, fontSize: 10, color: 'var(--text-muted)' },
   colorInput: { width: 24, height: 24, padding: 0, border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', background: 'transparent' },
   colorText: { fontSize: 9, maxWidth: 40, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  addBtn: {
+    fontSize: 11, padding: '2px 8px', background: 'var(--accent)', color: '#fff',
+    border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap',
+  },
+  removeBtn: {
+    fontSize: 16, padding: '0 4px', background: 'transparent', color: 'var(--text-muted)',
+    border: 'none', cursor: 'pointer', alignSelf: 'flex-end', lineHeight: 1, marginBottom: 2,
+  },
+  markLineRow: {
+    display: 'flex', flexDirection: 'column', gap: 2,
+    padding: '6px 8px', borderRadius: 4, background: 'var(--bg-elevated)',
+  },
+  markLineRow1: {
+    display: 'flex', gap: 6, alignItems: 'flex-end',
+  },
 }

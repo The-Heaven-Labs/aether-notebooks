@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns, buildMarkLineSeries } from './common'
 import { AxisConfigPanel } from './AxisConfigPanel'
 
 function ScatterChartComponent({ data, config }: ChartProps) {
@@ -49,6 +49,26 @@ function ScatterChartComponent({ data, config }: ChartProps) {
           itemStyle: { color: config.seriesColors?.[y] ?? CHART_COLORS[i % CHART_COLORS.length], opacity: 0.8 },
         }))
 
+    const allPts = series.flatMap((s: any) => (s.data ?? []).filter((p: any) => Array.isArray(p) && p.length >= 2))
+    const xVals = allPts.map((p: any[]) => Number(p[0])).filter((v: any) => isFinite(v))
+    const yVals = allPts.map((p: any[]) => Number(p[1])).filter((v: any) => isFinite(v))
+    const xMin = Math.min(...xVals)
+    const xMax = Math.max(...xVals)
+    const yMin = Math.min(0, ...yVals)
+    const yMax = Math.max(0, ...yVals)
+    const { series: mlSeries, xAxis: mlXAxis } = buildMarkLineSeries(config.markLines, xVals, yMin, yMax)
+    // For scatter's value x-axis, override horizontal line data to use actual x range
+    for (const s of mlSeries) {
+      if (s.xAxisIndex !== 1 && s.data?.length === 2) {
+        const d0 = Array.isArray(s.data[0]) ? s.data[0] : s.data[0]?.value
+        const d1 = Array.isArray(s.data[1]) ? s.data[1] : s.data[1]?.value
+        if (d0) d0[0] = xMin
+        if (d1) d1[0] = xMax
+      }
+    }
+
+    const baseXAxis = { type: 'value' as const, name: xAxis, ...getAxisStyle(config.showGrid) }
+
     return {
       tooltip: { ...getTooltipStyle() },
       title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
@@ -66,11 +86,11 @@ function ScatterChartComponent({ data, config }: ChartProps) {
         { type: 'inside' as const, start: 0, end: 100 },
         { type: 'slider' as const, start: 0, end: 100, bottom: 8, height: 20, borderColor: colors.border, textStyle: { fontSize: 10, color: colors.textMuted } },
       ],
-      xAxis: { type: 'value' as const, name: xAxis, ...getAxisStyle(config.showGrid) },
+      xAxis: mlXAxis ? [baseXAxis, mlXAxis] : baseXAxis,
       yAxis: { type: 'value' as const, ...getAxisStyle(config.showGrid) },
-      series,
+      series: [...series, ...mlSeries],
     }
-  }, [chartData, xAxis, yAxes, hasGroupBy, config.title, config.seriesColors, config.showLegend, config.showGrid, config.colorColumn, config.sizeColumn, config.groupBy, colors])
+  }, [chartData, xAxis, yAxes, hasGroupBy, config.title, config.seriesColors, config.showLegend, config.showGrid, config.colorColumn, config.sizeColumn, config.groupBy, config.markLines, colors])
 
   return <EChartsContainer option={option} showReset />
 }

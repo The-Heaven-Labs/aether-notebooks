@@ -131,7 +131,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '0 16px 0 8px',
     gap: 12,
     flexShrink: 0,
-    zIndex: 10,
+    zIndex: 1550,
   },
   brand: { display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' },
   logo: {
@@ -159,7 +159,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     boxShadow: 'var(--shadow-md)',
     minWidth: 200,
-    zIndex: 100,
+    zIndex: 1600,
     overflow: 'hidden',
   },
   dropdownHeader: { padding: '12px 14px', borderBottom: '1px solid var(--border-light)' },

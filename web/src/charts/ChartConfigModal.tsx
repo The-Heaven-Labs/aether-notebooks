@@ -123,12 +123,12 @@ function deepCloneConfig(cfg: ChartConfig): ChartConfig {
 const styles: Record<string, React.CSSProperties> = {
   overlay: {
     position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
-    zIndex: 1500, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    zIndex: 1600, display: 'flex', alignItems: 'center', justifyContent: 'center',
     padding: 24,
   },
   modal: {
     display: 'flex', flexDirection: 'column',
-    width: '90vw', maxWidth: 1100, height: '85vh',
+    width: '90vw', maxWidth: 1400, height: '85vh',
     background: 'var(--bg-primary)',
     border: '1px solid var(--border)',
     borderRadius: 8,
@@ -165,6 +165,6 @@ const styles: Record<string, React.CSSProperties> = {
     borderRight: '1px solid var(--border)',
   },
   configPanel: {
-    width: 300, overflowY: 'auto', flexShrink: 0,
+    width: 420, overflowY: 'auto', flexShrink: 0,
   },
 }

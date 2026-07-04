@@ -91,6 +91,8 @@ function normalizeChartConfig(raw: unknown): ChartConfig | undefined {
     sizeColumn: obj.sizeColumn as string | undefined,
     // Shared
     dataZoom: obj.dataZoom as boolean | undefined,
+    // Marklines
+    markLines: obj.markLines as ChartConfig['markLines'],
   }
 }
 

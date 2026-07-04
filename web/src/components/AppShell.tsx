@@ -43,6 +43,15 @@ export function AppShell({ children, noPadding }: Props) {
     } catch { /* ignore */ }
     return 640
   })
+  const [viewportHeight, setViewportHeight] = useState(() =>
+    typeof window !== 'undefined' ? window.innerHeight : 800
+  )
+
+  useEffect(() => {
+    const handle = () => setViewportHeight(window.innerHeight)
+    window.addEventListener('resize', handle)
+    return () => window.removeEventListener('resize', handle)
+  }, [])
   const [motds, setMotds] = useState<Array<{id: string; title: string; content: string; visibility: string; pages: string[]}>>([])
   const [dismissedMotds, setDismissedMotds] = useState<Set<string>>(() => {
     try {
@@ -135,7 +144,10 @@ export function AppShell({ children, noPadding }: Props) {
     <div style={styles.root}>
       <a href="#main-content" className="skip-link">Skip to content</a>
       <TopBar onShowShortcuts={() => setShowShortcuts(true)} />
-      <div style={styles.body}>
+      <div style={{
+        ...styles.body,
+        ...(showGlobalAgent && !globalAgentMinimized && globalAgentDocked ? { paddingRight: globalAgentWidth } : {}),
+      }}>
         <Sidebar />
         <main id="main-content" style={{ ...styles.main, background: 'var(--bg-primary)', ...(noPadding ? { padding: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' } : {}) }}>
           {visibleMotds.map(motd => (
@@ -149,88 +161,82 @@ export function AppShell({ children, noPadding }: Props) {
           ))}
           {children}
         </main>
-        {showGlobalAgent && !globalAgentMinimized && globalAgentDocked && (
-          <AgentPanel
-            notebookId={currentNotebookId}
-            pageContext={currentPageContext}
-            width={globalAgentWidth}
-            onResize={(w) => { setGlobalAgentWidth(w); try { localStorage.setItem('aether:agentPanelWidth:__global__', String(w)) } catch {} }}
-            onClose={() => { setShowGlobalAgent(false); try { localStorage.setItem('aether:agentDocked:__global__', 'false') } catch {} }}
-            onMinimize={() => setGlobalAgentMinimized(true)}
-            onDock={() => { setGlobalAgentDocked(false); try { localStorage.setItem('aether:agentDocked:__global__', 'false') } catch {} }}
-            docked
-          />
-        )}
       </div>
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
 
-      <>
-        {/* Global Agent FAB (floating action button) */}
-          {!showGlobalAgent && (
-            <button
-              style={fabStyles.fab}
-              onClick={() => { setShowGlobalAgent(true); setGlobalAgentMinimized(false) }}
-              title="Open AI Agent (Ctrl+K)"
-            >
-              <Bot size={20} />
-            </button>
-          )}
+      {/* Global Agent FAB (floating action button) */}
+      {!showGlobalAgent && (
+        <button
+          style={fabStyles.fab}
+          onClick={() => { setShowGlobalAgent(true); setGlobalAgentMinimized(false) }}
+          title="Open AI Agent (Ctrl+K)"
+        >
+          <Bot size={20} />
+        </button>
+      )}
 
-          {/* Global Agent floating modal */}
-          {showGlobalAgent && !globalAgentMinimized && !globalAgentDocked && (
-            <div style={globalAgentStyles.floatingWrapper}>
-              <div style={{ ...globalAgentStyles.modal, width: globalAgentWidth, height: globalAgentHeight }}>
-                <div
-                  style={globalAgentStyles.vResizeHandle}
-                  onMouseDown={(e) => {
-                    e.preventDefault()
-                    const startY = e.clientY
-                    const startH = globalAgentHeight
-                    let lastClamped = startH
-                    const onMove = (ev: MouseEvent) => {
-                      const newH = startH + (startY - ev.clientY)
-                      const clamped = Math.max(200, Math.min(800, newH))
-                      lastClamped = clamped
-                      setGlobalAgentHeight(clamped)
-                    }
-                    const onUp = () => {
-                      try { localStorage.setItem('aether:agentPanelHeight:__global__', String(lastClamped)) } catch {}
-                      document.removeEventListener('mousemove', onMove)
-                      document.removeEventListener('mouseup', onUp)
-                    }
-                    document.addEventListener('mousemove', onMove)
-                    document.addEventListener('mouseup', onUp)
-                  }}
-                />
-                <AgentPanel
-                  notebookId={currentNotebookId}
-                  pageContext={currentPageContext}
-                  width={globalAgentWidth}
-                  onResize={(w) => { setGlobalAgentWidth(w); try { localStorage.setItem('aether:agentPanelWidth:__global__', String(w)) } catch {} }}
-            onClose={() => { setShowGlobalAgent(false); try { localStorage.setItem('aether:agentDocked:__global__', 'false') } catch {} }}
-                  onMinimize={() => setGlobalAgentMinimized(true)}
-                  onDock={() => { setGlobalAgentDocked(true); try { localStorage.setItem('aether:agentDocked:__global__', 'true') } catch {} }}
-                  docked={false}
-                />
-              </div>
-            </div>
-          )}
+      {/* Single AgentPanel instance — never unmounts across dock/undock */}
+      {showGlobalAgent && !globalAgentMinimized && (
+        <div style={globalAgentStyles.floatingWrapper}>
+          <div style={{
+            ...(globalAgentDocked ? globalAgentStyles.docked : globalAgentStyles.modal),
+            top: globalAgentDocked ? 52 : Math.max(52, viewportHeight - globalAgentHeight - 8),
+            height: globalAgentDocked ? viewportHeight - 52 : globalAgentHeight,
+            width: globalAgentWidth,
+            right: globalAgentDocked ? 0 : 24,
+          }}>
+            {!globalAgentDocked && (
+              <div
+                style={globalAgentStyles.vResizeHandle}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  const startY = e.clientY
+                  const startH = globalAgentHeight
+                  let lastClamped = startH
+                  const onMove = (ev: MouseEvent) => {
+                    const newH = startH + (startY - ev.clientY)
+                    const clamped = Math.max(200, Math.min(800, newH))
+                    lastClamped = clamped
+                    setGlobalAgentHeight(clamped)
+                  }
+                  const onUp = () => {
+                    try { localStorage.setItem('aether:agentPanelHeight:__global__', String(lastClamped)) } catch {}
+                    document.removeEventListener('mousemove', onMove)
+                    document.removeEventListener('mouseup', onUp)
+                  }
+                  document.addEventListener('mousemove', onMove)
+                  document.addEventListener('mouseup', onUp)
+                }}
+              />
+            )}
+            <AgentPanel
+              notebookId={currentNotebookId}
+              pageContext={currentPageContext}
+              width={globalAgentWidth}
+              onResize={(w) => { setGlobalAgentWidth(w); try { localStorage.setItem('aether:agentPanelWidth:__global__', String(w)) } catch {} }}
+              onClose={() => { setShowGlobalAgent(false); try { localStorage.setItem('aether:agentDocked:__global__', 'false') } catch {} }}
+              onMinimize={() => setGlobalAgentMinimized(true)}
+              onDock={() => { setGlobalAgentDocked(d => { const next = !d; try { localStorage.setItem('aether:agentDocked:__global__', String(next)) } catch {}; return next; }) }}
+              docked={globalAgentDocked}
+            />
+          </div>
+        </div>
+      )}
 
-          {/* Minimized agent bar */}
-          {showGlobalAgent && globalAgentMinimized && (
-            <div style={globalAgentStyles.minimizedBar} onClick={() => setGlobalAgentMinimized(false)}>
-              <Bot size={16} />
-              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>AI Agent (minimized)</span>
-              <button
-                style={globalAgentStyles.minimizedClose}
-                onClick={e => { e.stopPropagation(); setShowGlobalAgent(false) }}
-                title="Close agent"
-              >
-                ×
-              </button>
-            </div>
-          )}
-      </>
+      {/* Minimized agent bar */}
+      {showGlobalAgent && globalAgentMinimized && (
+        <div style={globalAgentStyles.minimizedBar} onClick={() => setGlobalAgentMinimized(false)}>
+          <Bot size={16} />
+          <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>AI Agent (minimized)</span>
+          <button
+            style={globalAgentStyles.minimizedClose}
+            onClick={e => { e.stopPropagation(); setShowGlobalAgent(false) }}
+            title="Close agent"
+          >
+            ×
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -242,15 +248,27 @@ const globalAgentStyles: Record<string, React.CSSProperties> = {
   },
   modal: {
     position: 'fixed', zIndex: 1501,
-    bottom: 8, right: 24,
-    maxWidth: 'calc(100vw - 48px)',
-    maxHeight: 'calc(100vh - 16px)',
     borderRadius: 8, overflow: 'hidden',
     border: '1px solid var(--border)',
     boxShadow: '0 16px 48px rgba(0,0,0,0.3)',
     background: 'var(--bg-primary)',
     display: 'flex', flexDirection: 'column',
     pointerEvents: 'auto',
+    transformOrigin: 'bottom right',
+    transition: 'top 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), right 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), height 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), border-radius 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), box-shadow 0.7s cubic-bezier(0.05, 0.7, 0.1, 1)',
+  },
+  docked: {
+    position: 'fixed', zIndex: 1501,
+    border: 'none',
+    borderLeft: '1px solid var(--border)',
+    borderRadius: 0,
+    boxShadow: 'none',
+    overflow: 'hidden',
+    background: 'var(--bg-primary)',
+    display: 'flex', flexDirection: 'column',
+    pointerEvents: 'auto',
+    transformOrigin: 'bottom right',
+    transition: 'top 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), right 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), height 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), border-radius 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), box-shadow 0.7s cubic-bezier(0.05, 0.7, 0.1, 1)',
   },
   vResizeHandle: {
     position: 'absolute', top: 0, left: 0, right: 0,
