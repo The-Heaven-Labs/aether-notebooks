@@ -360,7 +360,12 @@ Agent updates (`agent_updated_at`) now also update the local cell cache via WebS
 
 1. Create feature branch from `main`
 2. Implement with frequent commits
-3. Run `task check` (fmt + vet + tidy + test) before opening PR
+3. **Before opening a PR, run all CI checks locally** to catch errors early:
+   - `task check` (Go: fmt + vet + tidy + test)
+   - `cd web && npx tsc --noEmit` (frontend TypeScript)
+   - `cd web && npm run build` (frontend build — uses `tsc -b` which is stricter than `--noEmit`)
+   - `cd relay && npm run build` (relay build)
+   - `task test:e2e` (smoke tests against live server)
 4. Ensure CI passes (Go tests, frontend build, relay build, smoke tests)
 5. Squash-merge when approved
 

@@ -14,7 +14,7 @@ function LineChartComponent({ data, config }: ChartProps) {
     const effectiveXData = hasGroupBy ? xValues : chartData.map(d => d[xAxis])
 
     const series = hasGroupBy
-      ? groupSeries.map((s, si) => ({
+      ? groupSeries.map(s => ({
           ...s,
           type: 'line' as const,
           smooth: config.smooth ?? false,

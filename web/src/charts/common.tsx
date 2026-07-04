@@ -8,7 +8,8 @@ import {
   VisualMapComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import type { ResultSet, MarkLineConfig } from '../types'
+import type { ResultSet } from '../types'
+import type { MarkLineConfig } from './types'
 
 // Register only what we use
 echarts.use([
@@ -34,14 +35,14 @@ function getCurrentPalette(): string[] {
 }
 
 export const CHART_COLORS = new Proxy(LIGHT_CHART_COLORS, {
-  get(target, prop) {
+  get(_target, prop) {
     const palette = getCurrentPalette()
     if (prop === 'length') return palette.length
     const idx = Number(prop)
     if (!isNaN(idx)) return palette[idx]
     return (Reflect as any).get(palette, prop, palette)
   },
-  has(target, prop) {
+  has(_target, prop) {
     return prop in getCurrentPalette()
   },
 }) as string[]

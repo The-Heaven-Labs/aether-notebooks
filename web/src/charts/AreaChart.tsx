@@ -15,7 +15,7 @@ function AreaChartComponent({ data, config }: ChartProps) {
     const effectiveXData = hasGroupBy ? xValues : chartData.map(d => d[xAxis])
 
     const series = hasGroupBy
-      ? groupSeries.map((s, si) => ({
+      ? groupSeries.map(s => ({
           ...s,
           type: 'line' as const,
           stack: isStacked ? 'a' : undefined,
