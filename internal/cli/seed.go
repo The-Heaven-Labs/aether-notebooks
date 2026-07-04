@@ -35,7 +35,7 @@ This creates:
 
 			baseURL := apiURL
 			if baseURL == "" {
-				baseURL = "http://localhost:8080"
+				baseURL = "http://localhost:8088"
 			}
 
 			// Login and get token
@@ -403,7 +403,7 @@ This creates:
 
 	cmd.Flags().StringVar(&email, "email", "", "Email for login (required)")
 	cmd.Flags().StringVar(&password, "password", "", "Password for login (required)")
-	cmd.Flags().StringVar(&apiURL, "api-url", "http://localhost:8080", "API server URL")
+	cmd.Flags().StringVar(&apiURL, "api-url", "http://localhost:8088", "API server URL")
 	cmd.MarkFlagRequired("email")
 	cmd.MarkFlagRequired("password")
 

@@ -9,7 +9,7 @@ When an agent needs to interact with the Aether API (create notebooks, manage co
 ## Architecture
 
 ```
-cmd/aether-server      → Go API server (port 8080)
+cmd/aether-server      → Go API server (port 8088)
 cmd/aether             → CLI client
 internal/
   api/              → HTTP handlers + router (net/http ServeMux, no framework)
@@ -51,7 +51,7 @@ For local multi-tenancy testing with subdomains (`org1.aether.test` → Org 1):
 2. Create orgs with slugs matching subdomains:
    ```bash
    # Via API
-   curl -s -X POST http://localhost:8080/api/v1/auth/org/create \
+   curl -s -X POST http://localhost:8088/api/v1/auth/org/create \
      -H "Authorization: Bearer $TOKEN" \
      -H 'Content-Type: application/json' \
      -d '{"name": "Org 1", "slug": "org1"}' | jq .
@@ -75,7 +75,7 @@ docker compose -f docker-compose.dev.yml restart web  # Restart web container (c
 
 # Development (run concurrently in separate terminals)
 task dev               # Go API server with infra:up dep
-task dev:web           # Vite dev server (proxies /api → :8080)
+task dev:web           # Vite dev server (proxies /api → :8088)
 task dev:relay         # Hocuspocus relay
 
 # Build
@@ -110,10 +110,10 @@ task db:reset          # Drop + recreate dev DB (data loss!)
 | `AETHER_JWT_SECRET` | **yes** | — | JWT signing secret |
 | `AETHER_DATABASE_URL` | no | `postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable` | |
 | `AETHER_REDIS_URL` | no | `redis://localhost:6379` | |
-| `AETHER_PORT` | no | `8080` | |
+| `AETHER_PORT` | no | `8088` | |
 | `AETHER_OIDC_HOST_REWRITE` | no | — | `from=to` pair for rewriting the OIDC discovery host (e.g. `localhost:5557=host.docker.internal:5557`). Used in Docker dev where the API container must reach Keycloak via a different hostname than what's in the discovery URL. |
 | `AETHER_PLATFORM_ADMIN_EMAIL` | no | — | Email of the user to auto-promote to platform admin on startup |
-| `AETHER_PUBLIC_URL` | no | `http://localhost:8080` | Public-facing URL for link generation |
+| `AETHER_PUBLIC_URL` | no | `http://localhost:8088` | Public-facing URL for link generation |
 | `AETHER_FRONTEND_URL` | no | `http://localhost:5173` | Frontend URL for CORS and OIDC redirect |
 | `AETHER_ATTACHMENT_DIR` | no | `./attachments` | Directory for local file attachments |
 | `AETHER_STORAGE_BACKEND` | no | `local` | Storage backend type (`local` or `s3`) |
@@ -181,7 +181,7 @@ swag init -g cmd/aether-server/main.go -o internal/api/docs
 ```
 
 This generates `docs/swagger.json` and `docs/swagger.yaml`. The docs are served at:
-- `http://localhost:8080/docs` (direct API access)
+- `http://localhost:8088/docs` (direct API access)
 - `http://localhost:5173/docs` (via Vite proxy)
 
 ### Adding annotations to new endpoints:
@@ -262,7 +262,7 @@ In dev, `Taskfile.yml` sets `AETHER_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com`
 
 **Migrations run automatically** on server startup (not a separate migration tool).
 
-**Vite proxy**: In dev, Vite forwards `/api`, `/internal`, `/docs`, and `/swagger.json` to `localhost:8080`. The `API_URL` env var overrides the target (used inside Docker).
+**Vite proxy**: In dev, Vite forwards `/api`, `/internal`, `/docs`, and `/swagger.json` to `localhost:8088`. The `API_URL` env var overrides the target (used inside Docker).
 
 **Connector credentials** are AES-encrypted using `crypto.DeriveKey(masterKey)` before storing in Postgres.
 

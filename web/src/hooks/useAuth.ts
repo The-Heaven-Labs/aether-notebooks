@@ -1,4 +1,4 @@
-import { useState, useCallback, useContext, createContext } from 'react'
+import { useState, useCallback, useContext, createContext, useLayoutEffect } from 'react'
 import { login as apiLogin, logout as apiLogout, register as apiRegister } from '../api/auth'
 
 function parseJwt(token: string): Record<string, unknown> | null {
@@ -100,6 +100,18 @@ export function useAuthProvider(): AuthContextValue {
     localStorage.removeItem('aether_is_platform_admin')
     setUser(null)
   }, [])
+
+  // Check token expiry on every render (before paint) so ProtectedRoute catches expired tokens immediately
+  useLayoutEffect(() => {
+    if (!user) return
+    const token = localStorage.getItem('aether_token')
+    if (!token) { setUser(null); return }
+    const claims = parseJwt(token)
+    if (!claims || (claims.exp && (claims.exp as number) * 1000 < Date.now())) {
+      localStorage.removeItem('aether_token')
+      setUser(null)
+    }
+  })
 
   return { user, login, register, loginWithToken, logout, isAuthenticated: !!user }
 }

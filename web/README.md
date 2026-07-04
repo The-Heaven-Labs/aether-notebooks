@@ -8,7 +8,7 @@ This is the web frontend for Aether, a collaborative SQL/data notebook platform.
 # Install dependencies
 cd web && npm install
 
-# Start dev server (port 5173, proxies /api to :8080)
+# Start dev server (port 5173, proxies /api to :8088)
 task dev:web
 
 # Or directly:

@@ -37,9 +37,9 @@ const toGridItem = (w: Widget): LayoutItem => ({
 })
 
 function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width: number; height: number } {
-  if (!widgets.length) return { row: 0, col: 0, width: 6, height: 2 }
+  if (!widgets.length) return { row: 0, col: 0, width: 6, height: 8 }
   const maxBottom = widgets.reduce((max, w) => Math.max(max, w.layout.row + w.layout.height), 0)
-  return { row: maxBottom, col: 0, width: 6, height: 2 }
+  return { row: maxBottom, col: 0, width: 6, height: 8 }
 }
 
 function WidgetContent({ widget }: { widget: Widget }) {
@@ -478,7 +478,7 @@ const markSaved = useCallback(() => {
             <GridLayout
               layout={dashboard.widgets?.map(toGridItem) ?? []}
               width={containerWidth}
-              gridConfig={{ cols: gridCols, rowHeight: 120, margin: [4, 4] }}
+              gridConfig={{ cols: gridCols, rowHeight: 30, margin: [4, 4] }}
               dragConfig={{ enabled: true, handle: '.widget-drag-handle' }}
               resizeConfig={{ enabled: true }}
               onResizeStop={onResizeStop}
@@ -568,7 +568,7 @@ const styles: Record<string, React.CSSProperties> = {
   subHeader: {
     background: 'var(--bg-primary)',
     borderBottom: '1px solid var(--border)',
-    height: 44,
+    height: 84,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',

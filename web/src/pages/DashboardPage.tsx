@@ -252,13 +252,24 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId }: { widget: AnyWidg
   }
   const fixedView = widget.type === 'chart' ? 'chart' : 'table'
   const chartConfig = ((cell as any).metadata?.chart ?? widget.config) as ChartConfig | undefined
-  return <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} />
+  const updatedAt = (cell as any).updated_at
+  return (
+    <>
+      <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} />
+      {updatedAt && (
+        <div style={queryWidgetStyles.footer}>
+          Last updated {new Date(updatedAt).toLocaleTimeString()}
+        </div>
+      )}
+    </>
+  )
 }
 
 const queryWidgetStyles: Record<string, React.CSSProperties> = {
   loading: { padding: '16px', fontSize: 13, color: 'var(--text-muted)' },
   empty: { padding: '16px', fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' },
   markdown: { padding: '16px', fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.6, overflow: 'auto', height: '100%' },
+  footer: { fontSize: 10, color: 'var(--text-muted)', padding: '4px 12px', borderTop: '1px solid var(--border-light)', opacity: 0.6 },
 }
 
 function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string; onEdit?: () => void }) {
@@ -330,6 +341,8 @@ function DashboardContent({ id }: { id: string }) {
   const qc = useQueryClient()
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [containerWidth, setContainerWidth] = useState(0)
+  const [refreshSeconds, setRefreshSeconds] = useState<number>(0)
+  const [refreshCustom, setRefreshCustom] = useState(false)
   const gridContainerRef = useRef<HTMLDivElement | null>(null)
 
   const gridRef = useCallback((el: HTMLDivElement | null) => {
@@ -396,7 +409,15 @@ function DashboardContent({ id }: { id: string }) {
   }
 
   const widgets = (dashboard?.widgets ?? []) as AnyWidget[]
-  const refreshSeconds = dashboard?.settings?.auto_refresh_seconds ?? 0
+  const autoRefreshSecs = dashboard?.settings?.auto_refresh_seconds ?? 0
+  const PRESET_REFRESH = [0, 30, 60, 300, 600]
+  const customRefreshText = refreshCustom && refreshSeconds > 0 ? ` — ${refreshSeconds}s` : ''
+
+  // Sync local state from dashboard data
+  useEffect(() => {
+    setRefreshSeconds(autoRefreshSecs)
+    setRefreshCustom(!PRESET_REFRESH.includes(autoRefreshSecs))
+  }, [autoRefreshSecs])
 
   useEffect(() => {
     if (!refreshSeconds || refreshSeconds <= 0 || !widgets.length) return
@@ -491,29 +512,69 @@ function DashboardContent({ id }: { id: string }) {
             ))}
           </div>
 
-          <select
-            style={{
-              fontSize: 12, padding: '4px 8px', border: '1px solid var(--border)',
-              borderRadius: 4, background: 'var(--bg-input)', color: 'var(--text-secondary)',
-              cursor: 'pointer',
-            }}
-            value={String(dashboard?.settings?.auto_refresh_seconds ?? 0)}
-            onChange={async e => {
-              const secs = parseInt(e.target.value)
-              await api.put(`/api/v1/dashboards/${id}`, {
-                settings: { ...dashboard?.settings, auto_refresh_seconds: secs },
-              })
-              qc.invalidateQueries({ queryKey: ['dashboard', id] })
-            }}
-            title="Auto-refresh interval"
-            aria-label="Auto-refresh interval"
-          >
-            <option value="0">No auto-refresh</option>
-            <option value="30">Every 30s</option>
-            <option value="60">Every 1m</option>
-            <option value="300">Every 5m</option>
-            <option value="600">Every 10m</option>
-          </select>
+          <div style={{ position: 'relative' }}>
+            <select
+              style={{
+                fontSize: 12, padding: '4px 24px 4px 8px', border: '1px solid var(--border)',
+                borderRadius: 4, background: 'var(--bg-input)', color: 'var(--text-secondary)',
+                cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none',
+              }}
+              value={refreshCustom ? 'custom' : String(refreshSeconds)}
+              onChange={async e => {
+                const val = e.target.value
+                if (val === 'custom') { setRefreshCustom(true); return }
+                setRefreshCustom(false)
+                const secs = parseInt(val)
+                setRefreshSeconds(secs)
+                if (secs === autoRefreshSecs) return
+                await api.put(`/api/v1/dashboards/${id}`, {
+                  settings: { ...dashboard?.settings, auto_refresh_seconds: secs },
+                })
+                qc.invalidateQueries({ queryKey: ['dashboard', id] })
+              }}
+              title="Auto-refresh interval"
+              aria-label="Auto-refresh interval"
+            >
+              <option value="0">No auto-refresh</option>
+              <option value="30">Every 30s</option>
+              <option value="60">Every 1m</option>
+              <option value="300">Every 5m</option>
+              <option value="600">Every 10m</option>
+              <option value="custom">Custom{customRefreshText}</option>
+            </select>
+            <svg viewBox="0 0 10 6" width="10" height="6" style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5 }}>
+              <polyline points="1,1 5,5 9,1" />
+            </svg>
+          </div>
+          {refreshCustom && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 4 }}>
+              <input
+                type="number"
+                min={0}
+                max={86400}
+                style={{
+                  width: 72, fontSize: 12, padding: '4px 6px', border: '1px solid var(--border)',
+                  borderRadius: 4, background: 'var(--bg-input)', color: 'var(--text-secondary)',
+                }}
+                value={refreshSeconds}
+                onChange={e => {
+                  const val = parseInt(e.target.value)
+                  if (!isNaN(val) && val >= 0) setRefreshSeconds(val)
+                }}
+                onBlur={async () => {
+                  if (refreshSeconds === autoRefreshSecs) return
+                  await api.put(`/api/v1/dashboards/${id}`, {
+                    settings: { ...dashboard?.settings, auto_refresh_seconds: refreshSeconds },
+                  })
+                  qc.invalidateQueries({ queryKey: ['dashboard', id] })
+                }}
+                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                title="Custom refresh interval in seconds (0 = off)"
+                aria-label="Custom refresh interval in seconds"
+              />
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>s</span>
+            </div>
+          )}
         </div>
       </header>
 
@@ -540,7 +601,7 @@ function DashboardContent({ id }: { id: string }) {
             <GridLayout
               layout={dataWidgets.map(toGridItem)}
               width={containerWidth}
-              gridConfig={{ cols: dashboard.settings?.grid_cols ?? 12, rowHeight: 120, margin: [4, 4] }}
+              gridConfig={{ cols: dashboard.settings?.grid_cols ?? 12, rowHeight: 30, margin: [4, 4] }}
               dragConfig={{ enabled: false }}
               resizeConfig={{ enabled: false }}
               style={{ minHeight: 240 }}

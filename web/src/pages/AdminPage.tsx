@@ -593,6 +593,9 @@ export function AdminPage() {
     <AppShell>
       <div>
         <h1 style={styles.title}>Platform Admin</h1>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: -8, marginBottom: 24, marginLeft: 24 }}>
+          Manage organizations, users, platform-wide SSO, and global settings.
+        </p>
       <div style={styles.tabs} role="tablist">
         {isPlatformAdmin && (
           <button

@@ -5,19 +5,22 @@ import (
 )
 
 type ModelConfig struct {
-	ID              string    `json:"id"`
-	OrgID           string    `json:"org_id"`
-	Name            string    `json:"name"`
-	Provider        string    `json:"provider"`
-	BaseURL         string    `json:"base_url"`
-	Model           string    `json:"model"`
-	APIKeyEncrypted []byte    `json:"-"`
-	DefaultParams   JSONMap   `json:"default_params"`
-	ContextWindow   int       `json:"context_window"`
-	FolderID        *string   `json:"folder_id,omitempty"`
-	CreatedBy       string    `json:"created_by"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID                    string    `json:"id"`
+	OrgID                 string    `json:"org_id"`
+	Name                  string    `json:"name"`
+	Provider              string    `json:"provider"`
+	BaseURL               string    `json:"base_url"`
+	Model                 string    `json:"model"`
+	APIKeyEncrypted       []byte    `json:"-"`
+	DefaultParams         JSONMap   `json:"default_params"`
+	ContextWindow         int       `json:"context_window"`
+	PricePerInputToken    float64   `json:"price_per_input_token"`
+	PricePerOutputToken   float64   `json:"price_per_output_token"`
+	PricePerCacheReadToken float64  `json:"price_per_cache_read_token"`
+	FolderID              *string   `json:"folder_id,omitempty"`
+	CreatedBy             string    `json:"created_by"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 type Skill struct {
@@ -122,6 +125,7 @@ type AgentMessage struct {
 	TokensReasoning  int        `json:"tokens_reasoning,omitempty"`
 	ModelCalls       int        `json:"model_calls,omitempty"`
 	DurationMs       int        `json:"duration_ms,omitempty"`
+	ImageIDs         []string   `json:"image_ids,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 }
 

@@ -3,6 +3,7 @@ import type React from 'react'
 import { Settings2 } from 'lucide-react'
 import type { ResultSet } from '../types'
 import type { ChartConfig, ChartModule } from './types'
+import { ChartConfigModal } from './ChartConfigModal'
 import { BarChartModule } from './BarChart'
 import { LineChartModule } from './LineChart'
 import { AreaChartModule } from './AreaChart'
@@ -13,13 +14,14 @@ import { HierarchyTreeModule } from './HierarchyTreeChart'
 import { BigNumberModule } from './BigNumber'
 import { MapChartModule } from './MapChart'
 import { SankeyChartModule } from './SankeyChart'
+import { FunnelChartModule } from './FunnelChart'
+import { HeatmapChartModule } from './HeatmapChart'
+import { HistogramChartModule } from './HistogramChart'
 // Registry
 export const CHART_MODULES: Record<string, ChartModule> = {
   bar: BarChartModule,
-  stacked_bar: BarChartModule,
   line: LineChartModule,
   area: AreaChartModule,
-  stacked_area: AreaChartModule,
   scatter: ScatterChartModule,
   pie: PieChartModule,
   donut: PieChartModule,
@@ -28,6 +30,9 @@ export const CHART_MODULES: Record<string, ChartModule> = {
   big_number: BigNumberModule,
   map: MapChartModule,
   sankey: SankeyChartModule,
+  funnel: FunnelChartModule,
+  heatmap: HeatmapChartModule,
+  histogram: HistogramChartModule,
 }
 
 export { ALL_CHART_TYPES } from './common'
@@ -43,6 +48,17 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
   const columns = data?.columns?.map(c => c.name) ?? []
 
   const cfg = (output?.config ?? {}) as ChartConfig
+  // Migrate legacy stacked_bar/horizontal_bar → bar + barMode
+  const rawType = (cfg as any).chartType as string | undefined
+  if (rawType === 'stacked_bar' || rawType === 'horizontal_bar') {
+    cfg.barMode = rawType === 'stacked_bar' ? 'stacked' : 'horizontal'
+    cfg.chartType = 'bar'
+  }
+  // Migrate legacy stacked_area → area + areaMode
+  if (rawType === 'stacked_area') {
+    cfg.areaMode = 'stacked'
+    cfg.chartType = 'area'
+  }
   const chartType = cfg.chartType ?? 'bar'
 
   // Compute group values from data for the config panel (data may not propagate as a prop)
@@ -68,6 +84,11 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
     }
   }
 
+  const handleSaveConfig = (cfg: ChartConfig) => {
+    handleConfigChange(cfg)
+    setShowConfig(false)
+  }
+
   const mod = CHART_MODULES[chartType]
   if (!mod) {
     return <div style={{ padding: 16, color: 'var(--text-muted)' }}>Unknown chart type: {chartType}</div>
@@ -90,14 +111,21 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
           <div>
             <button
               style={styles.configBtn}
-              onClick={() => setShowConfig(v => !v)}
-              aria-label={showConfig ? 'Close chart config' : 'Configure chart'}
+              onClick={() => setShowConfig(true)}
+              aria-label="Configure chart"
             >
-              <Settings2 size={13} />
-              {showConfig ? ' Close' : ' Configure'}
+              <Settings2 size={13} /> Configure
             </button>
             {showConfig && (
-              <mod.ConfigPanel config={effectiveConfig} columns={columns} data={data} groupValues={groupValues} onChange={handleConfigChange} />
+              <ChartConfigModal
+                config={effectiveConfig}
+                columns={columns}
+                data={data}
+                groupValues={groupValues}
+                onSave={handleSaveConfig}
+                onClose={() => setShowConfig(false)}
+                mod={mod}
+              />
             )}
           </div>
         )}
@@ -112,14 +140,21 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
         <div>
           <button
             style={styles.configBtn}
-            onClick={() => setShowConfig(v => !v)}
-            aria-label={showConfig ? 'Close chart config' : 'Configure chart'}
+            onClick={() => setShowConfig(true)}
+            aria-label="Configure chart"
           >
-            <Settings2 size={13} />
-            {showConfig ? ' Close' : ' Configure'}
+            <Settings2 size={13} /> Configure
           </button>
           {showConfig && (
-            <mod.ConfigPanel config={effectiveConfig} columns={columns} data={data} groupValues={groupValues} onChange={handleConfigChange} />
+            <ChartConfigModal
+              config={effectiveConfig}
+              columns={columns}
+              data={data}
+              groupValues={groupValues}
+              onSave={handleSaveConfig}
+              onClose={() => setShowConfig(false)}
+              mod={mod}
+            />
           )}
         </div>
       )}

@@ -10,7 +10,7 @@
       "publicClient": false,
       "secret": "aether-dev-keycloak-secret",
       "redirectUris": [
-        "http://localhost:8080/api/v1/auth/oidc/*"
+        "http://localhost:8088/api/v1/auth/oidc/*"
       ],
       "directAccessGrantsEnabled": true,
       "protocol": "openid-connect",

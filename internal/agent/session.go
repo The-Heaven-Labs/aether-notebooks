@@ -77,16 +77,20 @@ func (s *SessionStore) EndSession(ctx context.Context, sessionID string) error {
 
 func (s *SessionStore) AppendMessage(ctx context.Context, msg *models.AgentMessage) error {
 	toolCallsJSON, _ := json.Marshal(msg.ToolCalls)
+	imageIDs := msg.ImageIDs
+	if imageIDs == nil {
+		imageIDs = []string{}
+	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO agent_messages (id, session_id, role, content, tool_call_id, tool_calls, reasoning_content, tokens_input, tokens_output, model_calls, duration_ms, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-	`, msg.ID, msg.SessionID, msg.Role, msg.Content, msg.ToolCallID, toolCallsJSON, msg.ReasoningContent, msg.TokensInput, msg.TokensOutput, msg.ModelCalls, msg.DurationMs, msg.CreatedAt)
+		INSERT INTO agent_messages (id, session_id, role, content, tool_call_id, tool_calls, reasoning_content, tokens_input, tokens_output, model_calls, duration_ms, image_ids, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	`, msg.ID, msg.SessionID, msg.Role, msg.Content, msg.ToolCallID, toolCallsJSON, msg.ReasoningContent, msg.TokensInput, msg.TokensOutput, msg.ModelCalls, msg.DurationMs, imageIDs, msg.CreatedAt)
 	return err
 }
 
 func (s *SessionStore) GetMessages(ctx context.Context, sessionID string) ([]models.AgentMessage, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, session_id, role, content, tool_call_id, tool_calls, reasoning_content, tokens_input, tokens_output, model_calls, duration_ms, created_at
+		SELECT id, session_id, role, content, tool_call_id, tool_calls, reasoning_content, tokens_input, tokens_output, model_calls, duration_ms, image_ids, created_at
 		FROM agent_messages WHERE session_id = $1 ORDER BY created_at ASC
 	`, sessionID)
 	if err != nil {
@@ -101,7 +105,8 @@ func (s *SessionStore) GetMessages(ctx context.Context, sessionID string) ([]mod
 		var toolCallID *string
 		var toolCallsJSON []byte
 		var reasoningContent *string
-		err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &content, &toolCallID, &toolCallsJSON, &reasoningContent, &msg.TokensInput, &msg.TokensOutput, &msg.ModelCalls, &msg.DurationMs, &msg.CreatedAt)
+		var imageIDs []string
+		err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &content, &toolCallID, &toolCallsJSON, &reasoningContent, &msg.TokensInput, &msg.TokensOutput, &msg.ModelCalls, &msg.DurationMs, &imageIDs, &msg.CreatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -112,6 +117,7 @@ func (s *SessionStore) GetMessages(ctx context.Context, sessionID string) ([]mod
 			msg.ReasoningContent = *reasoningContent
 		}
 		msg.ToolCallID = toolCallID
+		msg.ImageIDs = imageIDs
 		if toolCallsJSON != nil {
 			json.Unmarshal(toolCallsJSON, &msg.ToolCalls)
 		}
@@ -129,7 +135,7 @@ func (s *SessionStore) GetMessageCount(ctx context.Context, sessionID string) (i
 
 func (s *SessionStore) GetMessagesWithLimit(ctx context.Context, sessionID string, limit int) ([]models.AgentMessage, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, session_id, role, content, tool_call_id, tool_calls, reasoning_content, tokens_input, tokens_output, model_calls, duration_ms, created_at
+		SELECT id, session_id, role, content, tool_call_id, tool_calls, reasoning_content, tokens_input, tokens_output, model_calls, duration_ms, image_ids, created_at
 		FROM agent_messages WHERE session_id = $1 ORDER BY created_at ASC LIMIT $2
 	`, sessionID, limit)
 	if err != nil {
@@ -144,7 +150,8 @@ func (s *SessionStore) GetMessagesWithLimit(ctx context.Context, sessionID strin
 		var toolCallID *string
 		var toolCallsJSON []byte
 		var reasoningContent *string
-		err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &content, &toolCallID, &toolCallsJSON, &reasoningContent, &msg.TokensInput, &msg.TokensOutput, &msg.ModelCalls, &msg.DurationMs, &msg.CreatedAt)
+		var imageIDs []string
+		err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &content, &toolCallID, &toolCallsJSON, &reasoningContent, &msg.TokensInput, &msg.TokensOutput, &msg.ModelCalls, &msg.DurationMs, &imageIDs, &msg.CreatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -155,6 +162,7 @@ func (s *SessionStore) GetMessagesWithLimit(ctx context.Context, sessionID strin
 			msg.ReasoningContent = *reasoningContent
 		}
 		msg.ToolCallID = toolCallID
+		msg.ImageIDs = imageIDs
 		if toolCallsJSON != nil {
 			json.Unmarshal(toolCallsJSON, &msg.ToolCalls)
 		}

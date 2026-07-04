@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../api/client'
 import { chatMarkdownComponents } from './AgentPanel'
+import { AgentMessageImages } from './AgentMessageImages'
 
 interface SessionSummary {
   id: string
@@ -21,6 +22,7 @@ interface SessionMessage {
   tool_calls?: any
   reasoning_content?: string
   created_at: string
+  image_ids?: string[]
 }
 
 interface SessionHistoryProps {
@@ -97,6 +99,7 @@ export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHist
                 ...styles.historyMessage,
                 ...(msg.role === 'user' ? styles.userBubble : msg.role === 'assistant' ? styles.assistantBubble : styles.toolBubble),
               }}>
+                {msg.image_ids && msg.image_ids.length > 0 && <AgentMessageImages images={msg.image_ids} />}
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content || (msg.tool_calls ? 'Tool calls' : '(empty)')}</ReactMarkdown>
               </div>
             ))

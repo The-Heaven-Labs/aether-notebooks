@@ -784,7 +784,7 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 	}
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT id, role, content, tool_calls, tool_call_id, reasoning_content, tokens_input, tokens_output, created_at
+		SELECT id, role, content, tool_calls, tool_call_id, reasoning_content, image_ids, tokens_input, tokens_output, created_at
 		FROM agent_messages WHERE session_id = $1 ORDER BY created_at ASC
 	`, sessionID)
 	if err != nil {
@@ -800,9 +800,10 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 		var toolCalls []byte
 		var toolCallID *string
 		var reasoning *string
+		var imageIDs []string
 		var tokensInput, tokensOutput *int
 		var createdAt time.Time
-		rows.Scan(&id, &role, &content, &toolCalls, &toolCallID, &reasoning, &tokensInput, &tokensOutput, &createdAt)
+		rows.Scan(&id, &role, &content, &toolCalls, &toolCallID, &reasoning, &imageIDs, &tokensInput, &tokensOutput, &createdAt)
 		msg := map[string]any{
 			"id":         id,
 			"role":       role,
@@ -825,6 +826,9 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 		}
 		if len(toolCalls) > 0 {
 			msg["tool_calls"] = json.RawMessage(toolCalls)
+		}
+		if len(imageIDs) > 0 {
+			msg["image_ids"] = imageIDs
 		}
 		messages = append(messages, msg)
 	}

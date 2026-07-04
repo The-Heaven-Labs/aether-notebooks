@@ -19,7 +19,7 @@ var configKeys = map[string]struct {
 	Field *string
 	Desc  string
 }{
-	"api-url": {Desc: "Default API server URL (e.g. http://localhost:8080)"},
+	"api-url": {Desc: "Default API server URL (e.g. http://localhost:8088)"},
 }
 
 func configDir() string {

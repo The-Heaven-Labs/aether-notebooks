@@ -15,7 +15,7 @@ The relay sits between the browser clients and the Go API server:
 | Variable | Default | Description |
 |---|---|---|
 | `AETHER_RELAY_PORT` | `3001` | WebSocket listen port |
-| `AETHER_API_URL` | `http://localhost:8080` | Internal Go API URL for auth and document storage |
+| `AETHER_API_URL` | `http://localhost:8088` | Internal Go API URL for auth and document storage |
 
 ## Development
 

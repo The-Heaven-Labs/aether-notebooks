@@ -1,7 +1,7 @@
 import { Server } from '@hocuspocus/server'
 import * as Y from 'yjs'
 
-const API_URL = process.env.AETHER_API_URL || 'http://localhost:8080'
+const API_URL = process.env.AETHER_API_URL || 'http://localhost:8088'
 const PORT = parseInt(process.env.AETHER_RELAY_PORT || '3001')
 
 const server = new Server({

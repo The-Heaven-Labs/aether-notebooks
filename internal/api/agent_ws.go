@@ -19,12 +19,14 @@ type agentWSHandler struct {
 }
 
 type WSMessage struct {
-	Type            string `json:"type"`
-	Content         string `json:"content,omitempty"`
-	Command         string `json:"command,omitempty"`
-	LastMessageID   string `json:"last_message_id,omitempty"`
-	ReasoningEffort string `json:"reasoning_effort,omitempty"`
-	Approved        bool   `json:"approved,omitempty"`
+	Type            string   `json:"type"`
+	Content         string   `json:"content,omitempty"`
+	Command         string   `json:"command,omitempty"`
+	LastMessageID   string   `json:"last_message_id,omitempty"`
+	ReasoningEffort string   `json:"reasoning_effort,omitempty"`
+	ModelConfigID   string   `json:"model_config_id,omitempty"`
+	Approved        bool     `json:"approved,omitempty"`
+	Images          []string `json:"images,omitempty"`
 	PageContext     *struct {
 		Type  string `json:"type"`
 		ID    string `json:"id,omitempty"`
@@ -171,7 +173,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 
 			if msg.Type == "reconnect" {
 				rows, err := s.db.Pool.Query(ctx, `
-					SELECT id, role, content, tool_calls, created_at FROM agent_messages
+					SELECT id, role, content, tool_calls, image_ids, created_at FROM agent_messages
 					WHERE session_id = $1 AND id > $2 ORDER BY created_at
 				`, currentSessionID, msg.LastMessageID)
 				if err == nil {
@@ -180,13 +182,15 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 						var m models.AgentMessage
 						var content *string
 						var toolCallsJSON []byte
-						rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &m.CreatedAt)
+						var imageIDs []string
+						rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &imageIDs, &m.CreatedAt)
 						if content != nil {
 							m.Content = *content
 						}
 						if toolCallsJSON != nil {
 							json.Unmarshal(toolCallsJSON, &m.ToolCalls)
 						}
+						m.ImageIDs = imageIDs
 						messages = append(messages, m)
 					}
 					rows.Close()
@@ -219,6 +223,12 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
+			if msg.Type == "set_model_config" {
+				s.agentEngine.SetSessionModelConfig(currentSessionID, msg.ModelConfigID)
+				slog.Debug("ws: set model config", "session_id", currentSessionID, "model_config_id", msg.ModelConfigID)
+				continue
+			}
+
 			if msg.Type == "tool_confirm" {
 				s.agentEngine.ResolveToolConfirm(currentSessionID, msg.Approved, msg.Content)
 				continue
@@ -234,7 +244,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 				sid := currentSessionID
 				mu.Unlock()
 
-				slog.Info("ws: processing message", "session_id", sid, "content_len", len(msg.Content))
+				slog.Info("ws: processing message", "session_id", sid, "content_len", len(msg.Content), "image_count", len(msg.Images))
 
 				// Capture the page context at message-send time, not the (potentially
 				// changed) value when ProcessMessage builds its system prompt (the
@@ -243,7 +253,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 
 				// Run processing in separate goroutine so reader stays free for cancel
 				processWg.Add(1)
-				go func(content string, sid string) {
+				go func(content string, images []string, sid string) {
 					defer processWg.Done()
 					msgCtx, msgCancel := context.WithCancel(ctx)
 					mu.Lock()
@@ -255,7 +265,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					// Stream events are published to the SHARED session stream so that
 					// any WebSocket connection (including a new one that reconnects after
 					// page navigation) receives the real-time output.
-					_, reasoning, _, events, tokBrk, err := s.agentEngine.ProcessMessage(msgCtx, sid, content, s.agentEngine.GetRegistry().List(), s.masterKey, capturedPageCtx,
+					_, reasoning, _, events, tokBrk, err := s.agentEngine.ProcessMessage(msgCtx, sid, content, images, s.agentEngine.GetRegistry().List(), s.masterKey, capturedPageCtx,
 						func(token string) {
 							s.agentEngine.PublishSessionEvent(sid, WSResponse{Type: "token", Data: token})
 						},
@@ -336,7 +346,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					_ = events
 					s.agentEngine.PublishSessionEvent(sid, WSResponse{Type: "done", Data: map[string]any{"content": "", "reasoning": reasoning, "tokens": tokBrk}})
 					slog.Debug("ws: message done", "session_id", sid, "reasoning_len", len(reasoning))
-				}(msg.Content, currentSessionID)
+				}(msg.Content, msg.Images, currentSessionID)
 			} else if msg.Type == "slash_command" {
 				result, err := s.agentEngine.HandleSlashCommand(ctx, sessionID, msg.Command, claims.OrgID, s.masterKey)
 				if err != nil {

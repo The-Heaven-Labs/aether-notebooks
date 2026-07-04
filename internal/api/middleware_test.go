@@ -107,7 +107,7 @@ func TestSubdomainMiddlewareSkipsLocalhost(t *testing.T) {
 	wrapped := api.SubdomainMiddleware(nil)(handler)
 
 	req := httptest.NewRequest("GET", "/", nil)
-	req.Host = "localhost:8080"
+	req.Host = "localhost:8088"
 	wrapped.ServeHTTP(httptest.NewRecorder(), req)
 }
 

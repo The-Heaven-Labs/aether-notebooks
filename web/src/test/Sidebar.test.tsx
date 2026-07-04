@@ -10,8 +10,8 @@ beforeEach(() => {
 describe('Sidebar', () => {
   it('renders nav items without Profile', () => {
     renderWithProviders(<Sidebar />)
-    expect(screen.getByTitle('Files')).toBeDefined()
-    expect(screen.getByTitle('Groups')).toBeDefined()
+    expect(screen.getByTitle('Browse notebooks, dashboards, and connectors organized in folders')).toBeDefined()
+    expect(screen.getByTitle('Permission groups for access control')).toBeDefined()
     expect(screen.queryByTitle('Profile')).toBeNull()
   })
 
@@ -32,14 +32,14 @@ describe('Sidebar', () => {
   it('active nav link announces current page to screen readers', () => {
     renderWithProviders(<Sidebar />, { initialPath: '/' })
     // The Files link is active at "/" — it should contain a sr-only "(current page)" span
-    const filesLink = screen.getByTitle('Files')
+    const filesLink = screen.getByTitle('Browse notebooks, dashboards, and connectors organized in folders')
     const anchor = filesLink.closest('a') || filesLink
     expect(anchor.textContent).toContain('(current page)')
   })
 
   it('inactive nav links do not announce current page', () => {
     renderWithProviders(<Sidebar />, { initialPath: '/' })
-    const dashboardsLink = screen.getByTitle('Dashboards')
+    const dashboardsLink = screen.getByTitle('Visual dashboards built from notebook query results')
     const anchor = dashboardsLink.closest('a') || dashboardsLink
     expect(anchor.textContent).not.toContain('(current page)')
   })

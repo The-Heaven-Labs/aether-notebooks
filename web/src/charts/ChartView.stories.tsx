@@ -77,7 +77,7 @@ const treeData = {
 }
 
 export const Bar: Story = { args: { rs: monthlyData } }
-export const StackedBar: Story = { args: { output: { type: 'table', data: monthlyData, config: { chartType: 'stacked_bar', xAxis: 'month', yAxis: ['revenue', 'expenses'] } } } }
+export const StackedBar: Story = { args: { output: { type: 'table', data: monthlyData, config: { chartType: 'bar', barMode: 'stacked', xAxis: 'month', yAxis: ['revenue', 'expenses'] } } } }
 export const Line: Story = { args: { output: { type: 'table', data: monthlyData, config: { chartType: 'line', xAxis: 'month', yAxis: ['revenue', 'expenses'] } } } }
 export const Area: Story = { args: { output: { type: 'table', data: monthlyData, config: { chartType: 'area', xAxis: 'month', yAxis: ['revenue', 'expenses'] } } } }
 export const Scatter: Story = { args: { output: { type: 'table', data: monthlyData, config: { chartType: 'scatter', xAxis: 'month', yAxis: ['revenue'] } } } }

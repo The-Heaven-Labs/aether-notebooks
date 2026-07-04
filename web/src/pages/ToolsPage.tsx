@@ -212,6 +212,9 @@ export function ToolsPage() {
         <SectionHeader title="Tools" subtitle={tools.length > 0 ? `${tools.length} tool${tools.length !== 1 ? 's' : ''}` : ''}>
           <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Tool</button>
         </SectionHeader>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: -16, marginBottom: 24 }}>
+          Define webhook and SQL query tools that agents can call during conversations.
+        </p>
 
         {creating && (
           <FormCard title="New Tool">

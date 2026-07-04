@@ -34,7 +34,7 @@ export function useNotebookWs(
     const base = import.meta.env.VITE_API_URL || ''
     const wsBase = base
       ? base.replace(/^http/, 'ws')
-      : 'ws://localhost:8080'
+      : 'ws://localhost:8088'
     const url = `${wsBase}/api/v1/ws/notebooks/${notebookId}?token=${token}`
 
     const ws = new WebSocket(url)

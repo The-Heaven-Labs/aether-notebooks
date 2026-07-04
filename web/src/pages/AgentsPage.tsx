@@ -158,6 +158,9 @@ export function AgentsPage() {
         >
           <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Agent</button>
         </SectionHeader>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: -16, marginBottom: 24 }}>
+          Configure AI agents that can query databases, run notebooks, and use tools.
+        </p>
 
         {creating && (
           <FormCard title="New Agent">

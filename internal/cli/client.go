@@ -43,7 +43,7 @@ func defaultAPIURL() string {
 	if err == nil && cfg.APIURL != "" {
 		return cfg.APIURL
 	}
-	return "http://localhost:8080"
+	return "http://localhost:8088"
 }
 
 func LoadClient() (*Client, error) {

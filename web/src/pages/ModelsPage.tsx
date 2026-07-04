@@ -20,6 +20,9 @@ interface ModelConfigForm {
   compaction_threshold: number
   reasoning_effort_options: string
   reasoning_effort: string
+  price_per_input_token: number
+  price_per_output_token: number
+  price_per_cache_read_token: number
 }
 
 const emptyForm = (): ModelConfigForm => ({
@@ -32,6 +35,9 @@ const emptyForm = (): ModelConfigForm => ({
   compaction_threshold: 70,
   reasoning_effort_options: 'low, medium, high',
   reasoning_effort: '',
+  price_per_input_token: 0,
+  price_per_output_token: 0,
+  price_per_cache_read_token: 0,
 })
 
 const PROVIDERS = [
@@ -101,6 +107,9 @@ export function ModelsPage() {
       api_key: form.api_key,
       context_window: form.context_window,
       default_params: defaultParams(),
+      price_per_input_token: form.price_per_input_token,
+      price_per_output_token: form.price_per_output_token,
+      price_per_cache_read_token: form.price_per_cache_read_token,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['model-configs'] })
@@ -120,6 +129,9 @@ export function ModelsPage() {
       ...(form.api_key ? { api_key: form.api_key } : {}),
       context_window: form.context_window,
       default_params: defaultParams(),
+      price_per_input_token: form.price_per_input_token,
+      price_per_output_token: form.price_per_output_token,
+      price_per_cache_read_token: form.price_per_cache_read_token,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['model-configs'] })
@@ -166,6 +178,9 @@ export function ModelsPage() {
       compaction_threshold: typeof threshold === 'number' ? threshold : 70,
       reasoning_effort_options: Array.isArray(effortOpts) ? effortOpts.join(', ') : 'low, medium, high',
       reasoning_effort: typeof effort === 'string' ? effort : '',
+      price_per_input_token: config.price_per_input_token ?? 0,
+      price_per_output_token: config.price_per_output_token ?? 0,
+      price_per_cache_read_token: config.price_per_cache_read_token ?? 0,
     })
     setEditingId(config.id)
   }
@@ -176,6 +191,9 @@ export function ModelsPage() {
         <SectionHeader title="Models" subtitle={configs.length > 0 ? `${configs.length} model config${configs.length !== 1 ? 's' : ''}` : ''}>
           <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Model</button>
         </SectionHeader>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: -16, marginBottom: 24 }}>
+          Configure LLM provider connections (API keys, models, pricing) for agents to use.
+        </p>
 
         {creating && (
           <FormCard title="New Model">
@@ -333,6 +351,18 @@ function ModelFormFields({ form, setForm }: { form: ModelConfigForm; setForm: Re
           ))}
         </select>
         <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>Default effort level pre-selected in the chat.</span>
+      </label>
+      <label style={styles.label}>Input Token Price ($ per 1M tokens)
+        <input style={styles.input} type="number" min={0} step="0.01" value={form.price_per_input_token} onChange={e => setForm(f => ({ ...f, price_per_input_token: parseFloat(e.target.value) || 0 }))} placeholder="0.15" />
+        <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>Cost per 1M input tokens (e.g. 0.15 for GPT-4o-mini, 2.50 for GPT-4o).</span>
+      </label>
+      <label style={styles.label}>Output Token Price ($ per 1M tokens)
+        <input style={styles.input} type="number" min={0} step="0.01" value={form.price_per_output_token} onChange={e => setForm(f => ({ ...f, price_per_output_token: parseFloat(e.target.value) || 0 }))} placeholder="0.60" />
+        <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>Cost per 1M output tokens (e.g. 0.60 for GPT-4o-mini, 10.00 for GPT-4o).</span>
+      </label>
+      <label style={styles.label}>Cache Read Token Price ($ per 1M tokens)
+        <input style={styles.input} type="number" min={0} step="0.01" value={form.price_per_cache_read_token} onChange={e => setForm(f => ({ ...f, price_per_cache_read_token: parseFloat(e.target.value) || 0 }))} placeholder="0.075" />
+        <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>Cost per 1M cached input tokens (e.g. 0.075 for GPT-4o-mini).</span>
       </label>
     </div>
   )

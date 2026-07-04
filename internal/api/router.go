@@ -92,6 +92,11 @@ func (s *Server) SetFrontendURL(u string) {
 	s.agentEngine.SetFrontendURL(u)
 }
 
+// SetAgentStore configures the storage backend for agent session attachments.
+func (s *Server) SetAgentStore(st storage.Storage) {
+	s.agentEngine.SetStore(st)
+}
+
 // SetMaxAttachmentBytes sets the maximum allowed attachment upload size in bytes.
 func (s *Server) SetMaxAttachmentBytes(n int64) {
 	s.maxAttachmentBytes = n
@@ -379,6 +384,13 @@ func (s *Server) routes() {
 	s.mux.Handle("PUT /api/v1/mcp-servers/{id}", authMW(RequireRole("admin")(http.HandlerFunc(mh.handleUpdate))))
 	s.mux.Handle("DELETE /api/v1/mcp-servers/{id}", authMW(RequireRole("admin")(http.HandlerFunc(mh.handleDelete))))
 	s.mux.Handle("POST /api/v1/mcp-servers/{id}/test", authMW(RequireRole("admin")(http.HandlerFunc(mh.handleTestMCPServer))))
+
+	// MCP protocol endpoint (exposes built-in tools via Model Context Protocol)
+	s.mux.Handle("POST /api/v1/mcp", authMW(http.HandlerFunc(s.handleMCP)))
+
+	// Agent session attachment routes (vision support)
+	s.mux.Handle("POST /api/v1/agent-sessions/{session_id}/attachments", authMW(http.HandlerFunc(s.handleUploadAgentAttachment)))
+	s.mux.Handle("GET /api/v1/agent-attachments/{id}", authMW(http.HandlerFunc(s.handleGetAgentAttachment)))
 
 	// Agent WebSocket route
 	s.mux.Handle("GET /api/v1/ws/agents/{session_id}", authMW(http.HandlerFunc(s.handleAgentWS)))
