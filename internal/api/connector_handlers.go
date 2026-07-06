@@ -18,6 +18,7 @@ type createConnectorRequest struct {
 	Type           models.ConnectorType   `json:"type"`
 	Config         models.ConnectorConfig `json:"config"`
 	IsDefault      bool                   `json:"is_default"`
+	TimeoutSeconds int                    `json:"timeout_seconds"`
 	FolderID       *string                `json:"folder_id,omitempty"`
 	TableAllowlist []string               `json:"table_allowlist,omitempty"`
 	TableDenylist  []string               `json:"table_denylist,omitempty"`
@@ -84,10 +85,10 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		err = tx.QueryRow(ctx,
-			`INSERT INTO connectors (org_id, name, type, config_encrypted, is_default, folder_id, created_by, table_allowlist, table_denylist)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			`INSERT INTO connectors (org_id, name, type, config_encrypted, is_default, timeout_seconds, folder_id, created_by, table_allowlist, table_denylist)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 			 RETURNING id, org_id, name, type, max_rows, timeout_seconds, is_default, folder_id`,
-			claims.OrgID, req.Name, req.Type, encrypted, true, req.FolderID, claims.UserID, req.TableAllowlist, req.TableDenylist,
+			claims.OrgID, req.Name, req.Type, encrypted, true, req.TimeoutSeconds, req.FolderID, claims.UserID, req.TableAllowlist, req.TableDenylist,
 		).Scan(&id, &orgID, &name, &connType, &maxRows, &timeout, &isDefault, &folderID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create connector")
@@ -99,10 +100,10 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		err = s.db.Pool.QueryRow(ctx,
-			`INSERT INTO connectors (org_id, name, type, config_encrypted, folder_id, created_by, table_allowlist, table_denylist)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			`INSERT INTO connectors (org_id, name, type, config_encrypted, timeout_seconds, folder_id, created_by, table_allowlist, table_denylist)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 			 RETURNING id, org_id, name, type, max_rows, timeout_seconds, is_default, folder_id`,
-			claims.OrgID, req.Name, req.Type, encrypted, req.FolderID, claims.UserID, req.TableAllowlist, req.TableDenylist,
+			claims.OrgID, req.Name, req.Type, encrypted, req.TimeoutSeconds, req.FolderID, claims.UserID, req.TableAllowlist, req.TableDenylist,
 		).Scan(&id, &orgID, &name, &connType, &maxRows, &timeout, &isDefault, &folderID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create connector")
@@ -227,6 +228,7 @@ type updateConnectorRequest struct {
 	Name           *string                 `json:"name,omitempty"`
 	Config         *models.ConnectorConfig `json:"config,omitempty"`
 	IsDefault      *bool                   `json:"is_default,omitempty"`
+	TimeoutSeconds *int                    `json:"timeout_seconds,omitempty"`
 	TableAllowlist []string                `json:"table_allowlist,omitempty"`
 	TableDenylist  []string                `json:"table_denylist,omitempty"`
 }
@@ -265,6 +267,16 @@ func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
 		if _, err := s.db.Pool.Exec(ctx,
 			`UPDATE connectors SET name=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3`,
 			*req.Name, id, claims.OrgID,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+	}
+
+	if req.TimeoutSeconds != nil {
+		if _, err := s.db.Pool.Exec(ctx,
+			`UPDATE connectors SET timeout_seconds=$1, updated_at=NOW() WHERE id=$2 AND org_id=$3`,
+			*req.TimeoutSeconds, id, claims.OrgID,
 		); err != nil {
 			writeError(w, http.StatusInternalServerError, "db error")
 			return
