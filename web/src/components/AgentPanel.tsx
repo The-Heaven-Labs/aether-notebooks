@@ -66,6 +66,7 @@ interface AgentPanelProps {
 
 const WS_URL = (import.meta.env.VITE_WS_URL || 'ws://localhost:8088') + '/api/v1/ws/agents/'
 const LAST_AGENT_KEY = 'aether:lastAgentId'
+const LAST_SESSION_KEY = 'aether:lastSessionId'
 const CHAT_STATE_KEY = 'aether:agentChat:'
 
 interface ChatMessage {
@@ -103,6 +104,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const [_sessionId, _setSessionId] = useState<string | null>(null)
   const setSessionId = useCallback((sid: string | null) => {
     sessionIdRef.current = sid
+    if (sid) localStorage.setItem(LAST_SESSION_KEY, sid)
     _setSessionId(sid)
   }, [])
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -379,6 +381,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   useEffect(() => {
     if (!selectedAgent && agents.length > 0 && !isLoadingAgents) {
       const savedState = loadChatState()
+      const lastSessionId = localStorage.getItem(LAST_SESSION_KEY)
+
+      // 1) Full restore: saved state with matching agent + messages
       if (savedState && savedState.messages && savedState.messages.length > 0) {
         const agent = agents.find((a) => a.id === savedState.agentId)
         if (agent) {
@@ -393,6 +398,21 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           return
         }
       }
+
+      // 2) Reconnect to last session even without saved messages
+      if (lastSessionId && savedState?.agentId) {
+        const agent = agents.find((a) => a.id === savedState.agentId)
+        if (agent) {
+          setSelectedAgent(agent)
+          setSessionId(lastSessionId)
+          setMessages([])
+          forceScrollRef.current = true
+          connectWebSocket(lastSessionId)
+          return
+        }
+      }
+
+      // 3) Fallback: start a brand new session
       const lastId = localStorage.getItem(LAST_AGENT_KEY)
       if (lastId) {
         const agent = agents.find((a) => a.id === lastId)
