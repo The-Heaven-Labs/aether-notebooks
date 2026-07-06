@@ -33,8 +33,6 @@ func NewClickHouseExecutor(cfg models.ConnectorConfig) (*ClickHouseExecutor, err
 	}
 	if cfg.Database != "" {
 		opts.Auth.Database = cfg.Database
-	} else {
-		opts.Auth.Database = "default"
 	}
 	if cfg.SSLMode == "require" || cfg.SSLMode == "verify-full" {
 		tlsConfig := &tls.Config{
