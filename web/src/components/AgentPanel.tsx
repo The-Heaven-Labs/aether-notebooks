@@ -118,12 +118,12 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const streamingStartedAt = useRef<string | null>(null)
   const [totalTokens, setTotalTokens] = useState<TokenBreakdown | null>(null)
   const [now, setNow] = useState(Date.now())
+  const hasPendingTools = messages.some(m => m.role === 'tool' && !m.result)
   useEffect(() => {
-    if (!isStreaming) return
+    if (!isStreaming || !hasPendingTools) return
     const id = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(id)
-  }, [isStreaming])
-  const hasPendingTools = messages.some(m => m.role === 'tool' && !m.result)
+  }, [isStreaming, hasPendingTools])
   const ts = () => new Date().toISOString()
   const fmtTime = (iso?: string) => {
     if (!iso) return ''
@@ -832,14 +832,23 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
   const MemoizedChatMessage = memo(({ msg, isStreaming: _isStreaming, now }: {
     msg: ChatMessage; isStreaming: boolean; now: number
-  }) => (
+  }) => {
+    const [thoughtOpen, setThoughtOpen] = useState(true)
+    const [toolOpen, setToolOpen] = useState(false)
+    return (
     <div>
       {msg.reasoning && (
-        <details style={{ ...styles.message, ...styles.reasoningMessage, marginBottom: 4 }}>
-          <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>Thinking</summary>
-          {msg.created_at && <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginBottom: 4 }}>{fmtTime(msg.created_at)}</div>}
-          <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{msg.reasoning}</div>
-        </details>
+        <div style={{ ...styles.message, ...styles.reasoningMessage, marginBottom: 4 }}>
+          <div onClick={() => setThoughtOpen((o) => !o)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11, userSelect: 'none' }}>
+            {thoughtOpen ? '▼' : '▶'} Thinking
+          </div>
+          {thoughtOpen && (
+            <>
+              {msg.created_at && <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginBottom: 4 }}>{fmtTime(msg.created_at)}</div>}
+              <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{msg.reasoning}</div>
+            </>
+          )}
+        </div>
       )}
       {msg.role !== 'reasoning' && (
         <div style={{ ...styles.message, ...(msg.role === 'user' ? styles.userMessage : msg.role === 'tool' ? styles.toolMessage : styles.assistantMessage) }}>
@@ -852,40 +861,42 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             <AgentMessageImages images={msg.images} />
           )}
           {msg.role === 'tool' ? (
-            <details>
-              <summary style={{ cursor: 'pointer', outline: 'none' }}>
-                <span style={{ opacity: 0.6, fontSize: 11 }}>TOOL </span>
-                {msg.content}
+            <>
+              <div onClick={() => setToolOpen((o) => !o)} style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ opacity: 0.6, fontSize: 11 }}>{toolOpen ? '▼' : '▶'} TOOL </span>
+                <span>{msg.content}</span>
                 {!msg.result && (
-                  <span style={{ opacity: 0.6, fontSize: 11, marginLeft: 6 }}>
+                  <span style={{ opacity: 0.6, fontSize: 11, marginLeft: 'auto' }}>
                     <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginRight: 4 }}>●</span>
                     Working…
                     {msg.created_at && ` (${Math.floor((now - new Date(msg.created_at).getTime()) / 1000)}s)`}
                   </span>
                 )}
-              </summary>
-              <div style={{ marginTop: 6, fontSize: 11 }}>
-                {msg.params && (
-                  <div style={{ marginBottom: 4 }}>
-                    <span style={{ opacity: 0.5 }}>Params: </span>
-                    <code style={{ fontSize: 10 }}>{msg.params}</code>
-                  </div>
-                )}
-                {msg.result && (
-                  <div>
-                    <span style={{ opacity: 0.5 }}>Result: </span>
-                    <code style={{ fontSize: 10, whiteSpace: 'pre-wrap' }}>{msg.result.length > 300 ? msg.result.slice(0, 300) + '...' : msg.result}</code>
-                  </div>
-                )}
               </div>
-            </details>
+              {toolOpen && (
+                <div style={{ marginTop: 6, fontSize: 11 }}>
+                  {msg.params && (
+                    <div style={{ marginBottom: 4 }}>
+                      <span style={{ opacity: 0.5 }}>Params: </span>
+                      <code style={{ fontSize: 10 }}>{msg.params}</code>
+                    </div>
+                  )}
+                  {msg.result && (
+                    <div>
+                      <span style={{ opacity: 0.5 }}>Result: </span>
+                      <code style={{ fontSize: 10, whiteSpace: 'pre-wrap' }}>{msg.result.length > 300 ? msg.result.slice(0, 300) + '...' : msg.result}</code>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           ) : (
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
           )}
         </div>
       )}
     </div>
-  ))
+  )})
   return (
     <div ref={panelRef} style={{ ...styles.panel, width }}>
       <div
