@@ -352,7 +352,8 @@ Agent updates (`agent_updated_at`) now also update the local cell cache via WebS
 
 ### Branch Strategy
 
-- **`main`** — stable, always deployable. All changes land here.
+- **`main`** — stable, always deployable. All changes land here via PRs only.
+- **NEVER commit directly to `main`** — always use a feature branch and PR, even for small fixes.
 - **Feature branches** — branch from `main`, named `feat/<short-description>` or `fix/<short-description>`.
 - Squash-merge PRs into `main` with a descriptive commit message.
 
