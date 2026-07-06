@@ -318,10 +318,11 @@ export function NotebookPage() {
   }, [id, qc]), useCallback((cellId: string) => {
     setRunningCells((prev) => new Set(prev).add(cellId))
   }, []), useCallback((data: { running_cells?: string[] }) => {
-    if (data.running_cells?.length) {
+    const cells = data.running_cells
+    if (cells?.length) {
       setRunningCells((prev) => {
         const next = new Set(prev)
-        for (const id of data.running_cells) next.add(id)
+        for (const id of cells) next.add(id)
         return next
       })
     }
