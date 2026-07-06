@@ -143,17 +143,18 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       if (!res.ok) return
       const data = await res.json()
       setter(data.flatMap((m: any) => {
+        const fn = (tc: any) => tc.function || tc // tool call may have {function:{name,arguments}} or {name,arguments}
         const results: ChatMessage[] = []
-        // Assistant messages with tool_calls generate one entry per tool call
         if (m.role === 'assistant' && m.tool_calls?.length) {
           if (m.reasoning_content) {
             results.push({ role: 'assistant', content: m.content || '', reasoning: m.reasoning_content, created_at: m.created_at })
           }
           for (const tc of m.tool_calls) {
+            const f = fn(tc)
             results.push({
               role: 'tool',
-              content: tc.name,
-              params: tc.arguments ? JSON.stringify(tc.arguments) : undefined,
+              content: f.name || 'tool',
+              params: f.arguments ? (typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)) : undefined,
               result: undefined,
               created_at: m.created_at,
             })
@@ -172,7 +173,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             if (parsed.name) { base.content = parsed.name; base.result = parsed.result }
             else { base.result = m.content }
           } catch { base.result = m.content }
-          base.params = m.tool_calls?.[0]?.arguments ? JSON.stringify(m.tool_calls[0].arguments) : undefined
+          const f = fn(m.tool_calls?.[0])
+          base.params = f?.arguments ? (typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)) : undefined
         }
         results.push(base)
         return results
@@ -559,21 +561,23 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           }
           case 'subagent_message':
             if (subagentViewRef.current === msg.task_id) {
+              const fn = (tc: any) => tc?.function || tc
               setSubagentMessages((prev) => {
                 const next = [...prev]
-                // Tool-calling assistant → one entry per tool call
                 if (msg.role === 'assistant' && msg.tool_calls?.length) {
                   if (msg.reasoning_content) {
                     next.push({ role: 'assistant', content: msg.content || '', reasoning: msg.reasoning_content, created_at: new Date().toISOString() })
                   }
                   for (const tc of msg.tool_calls) {
-                    next.push({ role: 'tool', content: tc.name, params: tc.arguments ? JSON.stringify(tc.arguments) : undefined, result: undefined, created_at: new Date().toISOString() })
+                    const f = fn(tc)
+                    next.push({ role: 'tool', content: f.name || 'tool', params: f.arguments ? (typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)) : undefined, result: undefined, created_at: new Date().toISOString() })
                   }
                 } else if (msg.tool_call_id) {
                   let content = msg.content || '', result: string | undefined
                   try { const p = JSON.parse(msg.content); if (p.name) { content = p.name; result = p.result } else { result = msg.content } }
                   catch { result = msg.content }
-                  next.push({ role: 'tool', content, params: msg.tool_calls?.[0]?.arguments ? JSON.stringify(msg.tool_calls[0].arguments) : undefined, result, created_at: new Date().toISOString() })
+                  const f = fn(msg.tool_calls?.[0])
+                  next.push({ role: 'tool', content, params: f?.arguments ? (typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)) : undefined, result, created_at: new Date().toISOString() })
                 } else {
                   next.push({ role: msg.role, content: msg.content || '', reasoning: msg.reasoning_content || undefined, created_at: new Date().toISOString() })
                 }
