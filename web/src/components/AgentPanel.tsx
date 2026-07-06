@@ -967,6 +967,28 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   )})
   return (
     <div ref={panelRef} style={{ ...styles.panel, width }}>
+      {subagentView && (
+        <div style={{ position: 'absolute', inset: 0, background: 'var(--bg)', zIndex: 10, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
+            <button onClick={() => { setSubagentView(null); setSubagentMessages([]) }}
+              style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 11, padding: '3px 8px' }}>
+              ← Back
+            </button>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Subagent {subagentView.slice(0, 8)}</span>
+          </div>
+          <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+            {subagentLoading && <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 20 }}>Loading…</div>}
+            {subagentMessages.map((m, i) => (
+              <MemoizedChatMessage key={i} msg={m} isStreaming={false} now={now} />
+            ))}
+            {!subagentLoading && subagentMessages.length === 0 && (
+              <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 20 }}>
+                This subagent hasn't produced any messages yet.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       <div
         ref={resizeRef}
         style={styles.resizeHandle}
@@ -1286,29 +1308,6 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             {error && <div style={styles.error}>{error}</div>}
           </div>
 
-          {subagentView && (
-            <div style={{ position: 'absolute', inset: 0, background: 'var(--bg)', zIndex: 10, display: 'flex', flexDirection: 'column' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
-                <button onClick={() => { setSubagentView(null); setSubagentMessages([]) }}
-                  style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 11, padding: '3px 8px' }}>
-                  ← Back
-                </button>
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Subagent {subagentView.slice(0, 8)}</span>
-              </div>
-              <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
-                {subagentLoading && <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 20 }}>Loading…</div>}
-                {subagentMessages.map((m, i) => (
-                  <MemoizedChatMessage key={i} msg={m} isStreaming={false} now={now} />
-                ))}
-                {!subagentLoading && subagentMessages.length === 0 && (
-                  <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 20 }}>
-                    This subagent hasn't produced any messages yet.
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
           <div>
             {pendingImages.length > 0 && (
               <div style={styles.imagePreviewRow}>
@@ -1528,8 +1527,8 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     height: '100%',
     minHeight: 0,
-    overflow: 'hidden',
     position: 'relative',
+    overflow: 'hidden',
   },
   resizeHandle: {
     position: 'absolute',
