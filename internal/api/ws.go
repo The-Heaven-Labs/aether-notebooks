@@ -14,29 +14,51 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
+// wsConn wraps a WebSocket connection with a write mutex to prevent
+// concurrent writes from multiple goroutines (e.g. subagent broadcasts).
+type wsConn struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
+
+func (w *wsConn) WriteJSON(v any) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.conn.WriteJSON(v)
+}
+
+func (w *wsConn) WriteMessage(messageType int, data []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.conn.WriteMessage(messageType, data)
+}
+
+func (w *wsConn) ReadMessage() (int, []byte, error) { return w.conn.ReadMessage() }
+func (w *wsConn) Close() error                      { return w.conn.Close() }
+
 type Hub struct {
 	mu           sync.RWMutex
-	rooms        map[string]map[*websocket.Conn]bool
+	rooms        map[string]map[*wsConn]bool
 	runningCells sync.Map // cellID → notebookID
 }
 
 func NewHub() *Hub {
-	return &Hub{rooms: make(map[string]map[*websocket.Conn]bool)}
+	return &Hub{rooms: make(map[string]map[*wsConn]bool)}
 }
 
-func (h *Hub) Join(notebookID string, conn *websocket.Conn) {
+func (h *Hub) Join(notebookID string, wc *wsConn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.rooms[notebookID] == nil {
-		h.rooms[notebookID] = make(map[*websocket.Conn]bool)
+		h.rooms[notebookID] = make(map[*wsConn]bool)
 	}
-	h.rooms[notebookID][conn] = true
+	h.rooms[notebookID][wc] = true
 }
 
-func (h *Hub) Leave(notebookID string, conn *websocket.Conn) {
+func (h *Hub) Leave(notebookID string, wc *wsConn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	delete(h.rooms[notebookID], conn)
+	delete(h.rooms[notebookID], wc)
 	if len(h.rooms[notebookID]) == 0 {
 		delete(h.rooms, notebookID)
 	}
@@ -68,8 +90,8 @@ func (h *Hub) Broadcast(notebookID string, msg interface{}) {
 	if err != nil {
 		return
 	}
-	for conn := range h.rooms[notebookID] {
-		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	for wc := range h.rooms[notebookID] {
+		if err := wc.WriteMessage(websocket.TextMessage, data); err != nil {
 			slog.Warn("ws write", "error", err)
 		}
 	}
@@ -99,27 +121,28 @@ func (s *Server) userEmail(ctx context.Context, userID string) string {
 // @Router /api/v1/ws/notebooks/{id} [get]
 func (s *Server) handleNotebookWS(w http.ResponseWriter, r *http.Request) {
 	nbID := r.PathValue("id")
-	conn, err := upgrader.Upgrade(w, r, nil)
+	raw, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Warn("ws upgrade", "error", err)
 		return
 	}
 
-	s.hub.Join(nbID, conn)
+	wc := &wsConn{conn: raw}
+	s.hub.Join(nbID, wc)
 
 	runningCells := s.hub.RunningCellsForNotebook(nbID)
 	if len(runningCells) > 0 {
-		conn.WriteJSON(map[string]any{"type": "sync", "running_cells": runningCells})
+		wc.WriteJSON(map[string]any{"type": "sync", "running_cells": runningCells})
 	}
 
 	defer func() {
-		s.hub.Leave(nbID, conn)
-		conn.Close()
+		s.hub.Leave(nbID, wc)
+		raw.Close()
 	}()
 
 	// Read loop — keep connection alive and detect disconnect
 	for {
-		if _, _, err := conn.ReadMessage(); err != nil {
+		if _, _, err := raw.ReadMessage(); err != nil {
 			break
 		}
 	}
