@@ -243,10 +243,21 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 
 // runSubagentLoop runs the LLM loop for a subagent task that already exists in the DB.
 // Unlike runSubagent, it does NOT insert the task record.
-func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, taskID string, goal string, parentUserID, parentOrgID string, masterKey []byte, subagentLLM *LLMClient) SubagentResult {
+func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, taskID string, goal string, parentUserID, parentOrgID string, masterKey []byte, subagentLLM *LLMClient) (result SubagentResult) {
 	messages := []ChatMessage{
 		{Role: "user", Content: goal},
 	}
+
+	// Save subagent conversation to DB when the function returns.
+	defer func() {
+		for _, m := range messages {
+			toolCallsJSON, _ := json.Marshal(m.ToolCalls)
+			e.pool.Exec(ctx, `
+				INSERT INTO subagent_messages (task_id, role, content, tool_call_id, tool_calls, reasoning_content, created_at)
+				VALUES ($1, $2, $3, $4, $5, $6, NOW())
+			`, taskID, m.Role, m.Content, m.ToolCallID, toolCallsJSON, m.ReasoningContent)
+		}
+	}()
 
 	for turn := 0; turn < MaxSubagentTurns; turn++ {
 		if subagentLLM == nil {

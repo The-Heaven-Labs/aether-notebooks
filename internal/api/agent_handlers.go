@@ -980,3 +980,58 @@ func (h *agentHandlers) handleAgentStatsByAgent(w http.ResponseWriter, r *http.R
 
 	writeJSON(w, http.StatusOK, stats)
 }
+
+func (h *agentHandlers) handleGetSubagentMessages(w http.ResponseWriter, r *http.Request) {
+	taskID := r.PathValue("task_id")
+	claims := ClaimsFromContext(r.Context())
+
+	var orgID string
+	err := h.server.db.Pool.QueryRow(r.Context(), `
+		SELECT a.org_id FROM subagent_tasks st
+		JOIN agent_sessions s ON s.id = st.parent_session_id
+		JOIN agents a ON a.id = s.agent_id
+		WHERE st.id = $1
+	`, taskID).Scan(&orgID)
+	if err != nil || orgID != claims.OrgID {
+		writeError(w, http.StatusNotFound, "subagent task not found")
+		return
+	}
+
+	rows, err := h.server.db.Pool.Query(r.Context(), `
+		SELECT role, content, tool_call_id, tool_calls, reasoning_content, created_at
+		FROM subagent_messages WHERE task_id = $1 ORDER BY created_at ASC
+	`, taskID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type msg struct {
+		Role             string `json:"role"`
+		Content          string `json:"content"`
+		ToolCallID       string `json:"tool_call_id,omitempty"`
+		ToolCalls        any    `json:"tool_calls,omitempty"`
+		ReasoningContent string `json:"reasoning_content,omitempty"`
+		CreatedAt        string `json:"created_at"`
+	}
+	var msgs []msg
+	for rows.Next() {
+		var m msg
+		var toolCallsJSON []byte
+		var createdAt time.Time
+		var toolCallID *string
+		if err := rows.Scan(&m.Role, &m.Content, &toolCallID, &toolCallsJSON, &m.ReasoningContent, &createdAt); err != nil {
+			continue
+		}
+		if toolCallID != nil {
+			m.ToolCallID = *toolCallID
+		}
+		if len(toolCallsJSON) > 0 {
+			json.Unmarshal(toolCallsJSON, &m.ToolCalls)
+		}
+		m.CreatedAt = createdAt.Format(time.RFC3339)
+		msgs = append(msgs, m)
+	}
+	writeJSON(w, http.StatusOK, msgs)
+}

@@ -118,7 +118,27 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const streamingStartedAt = useRef<string | null>(null)
   const [totalTokens, setTotalTokens] = useState<TokenBreakdown | null>(null)
   const [now, setNow] = useState(Date.now())
+  const [subagentView, setSubagentView] = useState<string | null>(null)
+  const [subagentMessages, setSubagentMessages] = useState<ChatMessage[]>([])
+  const [subagentLoading, setSubagentLoading] = useState(false)
   const hasPendingTools = messages.some(m => m.role === 'tool' && !m.result)
+  const fetchSubagentMessages = async (taskId: string, setter: (msgs: ChatMessage[]) => void, setLoading: (v: boolean) => void) => {
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/v1/agents/subagent/${taskId}/messages`, {
+        headers: { Authorization: 'Bearer ' + getToken() }
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      setter(data.map((m: any) => ({
+        role: m.role,
+        content: m.content || '',
+        params: m.tool_call_id ? JSON.stringify(m.tool_calls?.[0]?.arguments) : undefined,
+        result: m.tool_call_id ? m.content : undefined,
+        created_at: m.created_at,
+      })))
+    } catch {} finally { setLoading(false) }
+  }
   useEffect(() => {
     if (!isStreaming || !hasPendingTools) return
     const id = setInterval(() => setNow(Date.now()), 1000)
@@ -911,7 +931,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               let parsedParams: { goal?: string; status?: string } = {}
               try { if (msg.params) parsedParams = JSON.parse(msg.params) } catch {}
               return (
-              <div style={{ fontSize: 11, opacity: 0.8 }}>
+              <div onClick={() => { if (msg.content) { setSubagentView(msg.content); fetchSubagentMessages(msg.content, setSubagentMessages, setSubagentLoading) } }}
+                style={{ fontSize: 11, opacity: 0.8, cursor: 'pointer', borderRadius: 4, padding: '2px 4px', border: subagentView === msg.content ? '1px solid var(--accent)' : '1px solid transparent' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ opacity: 0.5, fontSize: 10 }}>SUBAGENT</span>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, opacity: 0.5 }}>{msg.content?.slice(0, 8)}</span>
@@ -1264,6 +1285,29 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             )}
             {error && <div style={styles.error}>{error}</div>}
           </div>
+
+          {subagentView && (
+            <div style={{ position: 'absolute', inset: 0, background: 'var(--bg)', zIndex: 10, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
+                <button onClick={() => { setSubagentView(null); setSubagentMessages([]) }}
+                  style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 11, padding: '3px 8px' }}>
+                  ← Back
+                </button>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Subagent {subagentView.slice(0, 8)}</span>
+              </div>
+              <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+                {subagentLoading && <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 20 }}>Loading…</div>}
+                {subagentMessages.map((m, i) => (
+                  <MemoizedChatMessage key={i} msg={m} isStreaming={false} now={now} />
+                ))}
+                {!subagentLoading && subagentMessages.length === 0 && (
+                  <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 20 }}>
+                    This subagent hasn't produced any messages yet.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           <div>
             {pendingImages.length > 0 && (
