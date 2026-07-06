@@ -366,7 +366,7 @@ func makeGetSubagentResultsHandler(pool *pgxpool.Pool) ToolHandler {
 			ID     string         `json:"id"`
 			Status string         `json:"status"`
 			Goal   string         `json:"goal"`
-			Result map[string]any `json:"result,omitempty"`
+			Result any `json:"result,omitempty"`
 			Error  string         `json:"error,omitempty"`
 		}
 		results := make([]subagentResult, 0, len(req.TaskIDs))
@@ -383,12 +383,14 @@ func makeGetSubagentResultsHandler(pool *pgxpool.Pool) ToolHandler {
 			}
 			r := subagentResult{ID: tid, Status: status, Goal: goal}
 			if resultJSON != nil {
-				var res map[string]any
-				if json.Unmarshal(resultJSON, &res) == nil {
-					r.Result = res
-					if errStr, ok := res["error"].(string); ok && errStr != "" {
+				var resMap map[string]any
+				if json.Unmarshal(resultJSON, &resMap) == nil {
+					r.Result = resMap
+					if errStr, ok := resMap["error"].(string); ok && errStr != "" {
 						r.Error = errStr
 					}
+				} else {
+					r.Result = string(resultJSON)
 				}
 			}
 			results = append(results, r)

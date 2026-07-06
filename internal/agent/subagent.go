@@ -204,10 +204,17 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 			if result.Error != "" {
 				status = "failed"
 			}
+			storedResult := result.Result
+			if storedResult == nil {
+				storedResult = map[string]any{}
+			}
+			if rMap, ok := storedResult.(map[string]any); ok && result.Error != "" {
+				rMap["error"] = result.Error
+			}
 			_, _ = e.pool.Exec(ctx, `
 				UPDATE subagent_tasks SET status = $1, result = $2, tokens_input = $3, tokens_output = $4, completed_at = NOW()
 				WHERE id = $5
-			`, status, result.Result, result.TokensIn, result.TokensOut, tid)
+			`, status, storedResult, result.TokensIn, result.TokensOut, tid)
 
 			completionEvent := map[string]any{
 				"type":    "subagent_status",
