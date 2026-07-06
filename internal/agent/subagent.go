@@ -145,7 +145,8 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 // RunQueuedTasks runs subagent tasks that were already inserted into the DB
 // (status 'queued'). It updates each task's status as it progresses and
 // broadcasts events via broadcastFn so the frontend can track progress.
-func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, taskIDs []string, masterKey []byte, broadcastFn func(notebookID string, msg any), notebookID string, llmClient *LLMClient) {
+// Returns the results of all subagent tasks.
+func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, taskIDs []string, masterKey []byte, broadcastFn func(notebookID string, msg any), notebookID string, llmClient *LLMClient) []SubagentResult {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Warn("RunQueuedTasks: panic", "recover", r)
@@ -155,16 +156,18 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 	var parentUserID, parentAgentID string
 	if err := e.pool.QueryRow(ctx, `SELECT user_id, agent_id FROM agent_sessions WHERE id = $1`, parentSessionID).Scan(&parentUserID, &parentAgentID); err != nil {
 		slog.Error("RunQueuedTasks: get parent session", "error", err)
-		return
+		return nil
 	}
 	var orgID string
 	if err := e.pool.QueryRow(ctx, `SELECT org_id FROM agents WHERE id = $1`, parentAgentID).Scan(&orgID); err != nil {
 		slog.Error("RunQueuedTasks: get agent org", "error", err)
-		return
+		return nil
 	}
 
 	sem := make(chan struct{}, MaxSubagentParallelism)
 	var wg sync.WaitGroup
+	var resultsMu sync.Mutex
+	allResults := make([]SubagentResult, 0, len(taskIDs))
 
 	for _, taskID := range taskIDs {
 		// Fetch task details from DB
@@ -227,10 +230,15 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 				broadcastFn(notebookID, completionEvent)
 			}
 			e.PublishSessionEvent(parentSessionID, completionEvent)
+
+			resultsMu.Lock()
+			allResults = append(allResults, result)
+			resultsMu.Unlock()
 		}(taskID, goal, taskCtx)
 	}
 
 	wg.Wait()
+	return allResults
 }
 
 // runSubagentLoop runs the LLM loop for a subagent task that already exists in the DB.
