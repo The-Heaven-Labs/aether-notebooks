@@ -121,6 +121,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const [totalTokens, setTotalTokens] = useState<TokenBreakdown | null>(null)
   const [now, setNow] = useState(Date.now())
   const [subagentView, setSubagentView] = useState<string | null>(null)
+  const subagentViewRef = useRef<string | null>(null)
   const [subagentMessages, setSubagentMessages] = useState<ChatMessage[]>([])
   const [subagentLoading, setSubagentLoading] = useState(false)
   const mainScrollRef = useRef<number>(0)
@@ -144,9 +145,12 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           base.params = m.tool_calls?.[0]?.arguments ? JSON.stringify(m.tool_calls[0].arguments) : undefined
           base.result = m.content
         }
-        if (m.role === 'assistant' && m.tool_calls?.length) {
-          base.content = m.content || ''
-          base.params = JSON.stringify(m.tool_calls[0].arguments)
+        if (m.role === 'assistant' && m.tool_calls?.length && !m.content) {
+          // Tool-calling assistant message — show as tool-like entry
+          base.role = 'tool'
+          base.content = m.tool_calls[0].name
+          base.params = m.tool_calls[0].arguments ? JSON.stringify(m.tool_calls[0].arguments) : undefined
+          base.result = undefined
         }
         return base
       }))
@@ -531,15 +535,18 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50); break
           }
           case 'subagent_message':
-            if (subagentView === msg.task_id) {
-              setSubagentMessages((prev) => [...prev, {
-                role: msg.role,
-                content: msg.content || '',
-                reasoning: msg.reasoning_content || undefined,
-                params: msg.tool_call_id ? (msg.tool_calls?.[0]?.arguments ? JSON.stringify(msg.tool_calls[0].arguments) : undefined) : undefined,
-                result: msg.tool_call_id ? msg.content : undefined,
-                created_at: new Date().toISOString(),
-              }])
+            if (subagentViewRef.current === msg.task_id) {
+              let role = msg.role, content = msg.content || ''
+              let params: string | undefined, result: string | undefined
+              // Tool-calling assistant → show as tool entry
+              if (msg.role === 'assistant' && msg.tool_calls?.length && !msg.content) {
+                role = 'tool'; content = msg.tool_calls[0].name
+                params = msg.tool_calls[0]?.arguments ? JSON.stringify(msg.tool_calls[0].arguments) : undefined
+              } else if (msg.tool_call_id) {
+                params = msg.tool_calls?.[0]?.arguments ? JSON.stringify(msg.tool_calls[0].arguments) : undefined
+                result = content
+              }
+              setSubagentMessages((prev) => [...prev, { role, content, params, result, reasoning: msg.reasoning_content || undefined, created_at: new Date().toISOString() }])
             }
             break
           case 'subagent_status':
@@ -976,7 +983,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               let parsedParams: { goal?: string; status?: string } = {}
               try { if (msg.params) parsedParams = JSON.parse(msg.params) } catch {}
               return (
-              <div onClick={() => { if (msg.content) { const el = document.querySelector('[data-main-scroll]'); mainScrollRef.current = el?.scrollTop || 0; setSubagentView(msg.content); fetchSubagentMessages(msg.content, setSubagentMessages, setSubagentLoading) } }}
+              <div onClick={() => { if (msg.content) { const el = document.querySelector('[data-main-scroll]'); mainScrollRef.current = el?.scrollTop || 0; subagentViewRef.current = msg.content; setSubagentView(msg.content); fetchSubagentMessages(msg.content, setSubagentMessages, setSubagentLoading) } }}
                 style={{ fontSize: 11, opacity: 0.8, cursor: 'pointer', borderRadius: 4, padding: '2px 4px', border: subagentView === msg.content ? '1px solid var(--accent)' : '1px solid transparent' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ opacity: 0.5, fontSize: 10 }}>SUBAGENT</span>
@@ -1015,7 +1022,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       {subagentView ? (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-            <button onClick={() => { setSubagentView(null); setSubagentMessages([]); setTimeout(() => { const el = document.querySelector('[data-main-scroll]'); if (el) el.scrollTop = mainScrollRef.current }, 50) }}
+            <button onClick={() => { subagentViewRef.current = null; setSubagentView(null); setSubagentMessages([]); setTimeout(() => { const el = document.querySelector('[data-main-scroll]'); if (el) el.scrollTop = mainScrollRef.current }, 50) }}
               style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text-primary)', fontSize: 12, padding: '4px 10px', fontWeight: 500 }}>
               ← Back
             </button>
