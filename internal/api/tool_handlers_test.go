@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/the-heaven-labs/aether/internal/agent"
 )
 
 func TestToolCRUD(t *testing.T) {
@@ -15,7 +17,7 @@ func TestToolCRUD(t *testing.T) {
 	email := fmt.Sprintf("tool-crud-%d@example.com", time.Now().UnixNano())
 	token := registerAndGetToken(t, srv, email, "Tool CRUD Org")
 
-	t.Run("list empty", func(t *testing.T) {
+	t.Run("list builtins", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/tools", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
@@ -25,8 +27,8 @@ func TestToolCRUD(t *testing.T) {
 		}
 		var tools []map[string]any
 		json.NewDecoder(rec.Body).Decode(&tools)
-		if len(tools) != 0 {
-			t.Fatalf("expected 0 tools, got %d", len(tools))
+		if len(tools) != len(agent.BuiltinTools) {
+			t.Fatalf("expected %d built-in tools, got %d", len(agent.BuiltinTools), len(tools))
 		}
 	})
 
@@ -67,14 +69,22 @@ func TestToolCRUD(t *testing.T) {
 		}
 		var tools []map[string]any
 		json.NewDecoder(rec.Body).Decode(&tools)
-		if len(tools) != 1 {
-			t.Fatalf("expected 1 tool, got %d", len(tools))
+		if len(tools) != len(agent.BuiltinTools)+1 {
+			t.Fatalf("expected %d tools (builtins + webhook), got %d", len(agent.BuiltinTools)+1, len(tools))
 		}
-		if tools[0]["name"] != "Test Tool" {
-			t.Fatalf("expected name 'Test Tool', got %v", tools[0]["name"])
+		// Find the webhook tool among builtins
+		var found bool
+		for _, tool := range tools {
+			if tool["name"] == "Test Tool" {
+				found = true
+				if tool["type"] != "webhook" {
+					t.Fatalf("expected type 'webhook', got %v", tool["type"])
+				}
+				break
+			}
 		}
-		if tools[0]["type"] != "webhook" {
-			t.Fatalf("expected type 'webhook', got %v", tools[0]["type"])
+		if !found {
+			t.Fatal("expected to find 'Test Tool' in the list")
 		}
 	})
 
