@@ -127,6 +127,19 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 		},
 		Handler: makeGetTasksHandler(),
 	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "get_subagent_results",
+			Description: "Get the results of spawned subagents. Use this to check if spawned subagent tasks have completed and retrieve their results. Provide the task_ids from spawn_subagents response.",
+			Parameters:  `{"type":"object","properties":{"task_ids":{"type":"array","items":{"type":"string"},"description":"List of subagent task IDs to check"}},"required":["task_ids"]}`,
+		},
+		Handler: makeGetSubagentResultsHandler(pool),
+	})
 }
 
 func makeListSkillsHandler(pool *pgxpool.Pool) ToolHandler {
@@ -335,6 +348,52 @@ func makeSpawnSubagentsHandler(pool *pgxpool.Pool, engine *Engine) ToolHandler {
 		}()
 
 		return map[string]any{"task_ids": taskIDs, "status": "spawned"}, nil
+	}
+}
+
+func makeGetSubagentResultsHandler(pool *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			TaskIDs []string `json:"task_ids"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if len(req.TaskIDs) == 0 {
+			return nil, fmt.Errorf("task_ids is required")
+		}
+		type subagentResult struct {
+			ID     string         `json:"id"`
+			Status string         `json:"status"`
+			Goal   string         `json:"goal"`
+			Result map[string]any `json:"result,omitempty"`
+			Error  string         `json:"error,omitempty"`
+		}
+		results := make([]subagentResult, 0, len(req.TaskIDs))
+		for _, tid := range req.TaskIDs {
+			var goal, status string
+			var resultJSON []byte
+			err := pool.QueryRow(ctx.Context,
+				`SELECT goal, status, result FROM subagent_tasks WHERE id = $1`,
+				tid,
+			).Scan(&goal, &status, &resultJSON)
+			if err != nil {
+				results = append(results, subagentResult{ID: tid, Status: "not_found"})
+				continue
+			}
+			r := subagentResult{ID: tid, Status: status, Goal: goal}
+			if resultJSON != nil {
+				var res map[string]any
+				if json.Unmarshal(resultJSON, &res) == nil {
+					r.Result = res
+					if errStr, ok := res["error"].(string); ok && errStr != "" {
+						r.Error = errStr
+					}
+				}
+			}
+			results = append(results, r)
+		}
+		return map[string]any{"results": results}, nil
 	}
 }
 
