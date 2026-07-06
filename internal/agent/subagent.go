@@ -266,21 +266,24 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 
 		resp, err := subagentLLM.Chat(ctx, messages, nil, masterKey)
 		if err != nil {
+			messages = append(messages, ChatMessage{Role: "assistant", Content: fmt.Sprintf("Error: %s", err.Error())})
 			return SubagentResult{TaskID: taskID, Status: "failed", Error: err.Error()}
 		}
 
 		if len(resp.Choices) == 0 {
+			messages = append(messages, ChatMessage{Role: "assistant", Content: "Error: LLM returned an empty response"})
 			return SubagentResult{TaskID: taskID, Status: "failed", Error: "no choices in response"}
 		}
 
 		choice := resp.Choices[0]
 
-		// Persist the assistant message (reasoning + tool_calls)
-		assistantTcJSON, _ := json.Marshal(choice.ToolCalls)
-		e.pool.Exec(ctx, `
-			INSERT INTO subagent_messages (subagent_task_id, role, content, tool_calls, reasoning_content, created_at)
-			VALUES ($1, 'assistant', $2, $3, $4, NOW())
-		`, taskID, choice.Message.Content, assistantTcJSON, choice.Message.ReasoningContent)
+		// Append assistant message to the conversation (persisted by defer)
+		messages = append(messages, ChatMessage{
+			Role:             "assistant",
+			Content:          choice.Message.Content,
+			ToolCalls:        choice.ToolCalls,
+			ReasoningContent: choice.Message.ReasoningContent,
+		})
 
 		if choice.Message.Content != "" {
 			return SubagentResult{

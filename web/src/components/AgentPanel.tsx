@@ -121,6 +121,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const [subagentView, setSubagentView] = useState<string | null>(null)
   const [subagentMessages, setSubagentMessages] = useState<ChatMessage[]>([])
   const [subagentLoading, setSubagentLoading] = useState(false)
+  const mainScrollRef = useRef<number>(0)
   const hasPendingTools = messages.some(m => m.role === 'tool' && !m.result)
   const fetchSubagentMessages = async (taskId: string, setter: (msgs: ChatMessage[]) => void, setLoading: (v: boolean) => void) => {
     setLoading(true)
@@ -931,7 +932,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               let parsedParams: { goal?: string; status?: string } = {}
               try { if (msg.params) parsedParams = JSON.parse(msg.params) } catch {}
               return (
-              <div onClick={() => { if (msg.content) { setSubagentView(msg.content); fetchSubagentMessages(msg.content, setSubagentMessages, setSubagentLoading) } }}
+              <div onClick={() => { if (msg.content) { const el = document.querySelector('[data-main-scroll]'); mainScrollRef.current = el?.scrollTop || 0; setSubagentView(msg.content); fetchSubagentMessages(msg.content, setSubagentMessages, setSubagentLoading) } }}
                 style={{ fontSize: 11, opacity: 0.8, cursor: 'pointer', borderRadius: 4, padding: '2px 4px', border: subagentView === msg.content ? '1px solid var(--accent)' : '1px solid transparent' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ opacity: 0.5, fontSize: 10 }}>SUBAGENT</span>
@@ -970,7 +971,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       {subagentView ? (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-            <button onClick={() => { setSubagentView(null); setSubagentMessages([]) }}
+            <button onClick={() => { setSubagentView(null); setSubagentMessages([]); setTimeout(() => { const el = document.querySelector('[data-main-scroll]'); if (el) el.scrollTop = mainScrollRef.current }, 50) }}
               style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text-primary)', fontSize: 12, padding: '4px 10px', fontWeight: 500 }}>
               ← Back
             </button>
@@ -1273,7 +1274,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
           <TaskList tasks={tasks} />
 
-          <div ref={scrollRefCb} style={styles.messageList}>
+          <div ref={scrollRefCb} data-main-scroll style={styles.messageList}>
             {messages.length === 0 && (
               <div style={styles.emptyState}>
                 {notebookId
