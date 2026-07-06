@@ -125,6 +125,14 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const [subagentMessages, setSubagentMessages] = useState<ChatMessage[]>([])
   const [subagentLoading, setSubagentLoading] = useState(false)
   const mainScrollRef = useRef<number>(0)
+  // Poll for subagent messages every 2s while the detail view is open
+  useEffect(() => {
+    if (!subagentView) return
+    const id = setInterval(() => {
+      fetchSubagentMessages(subagentView, setSubagentMessages, () => {})
+    }, 2000)
+    return () => clearInterval(id)
+  }, [subagentView])
   const hasPendingTools = messages.some(m => m.role === 'tool' && !m.result)
   const fetchSubagentMessages = async (taskId: string, setter: (msgs: ChatMessage[]) => void, setLoading: (v: boolean) => void) => {
     setLoading(true)
@@ -143,7 +151,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
         }
         if (m.tool_call_id) {
           base.params = m.tool_calls?.[0]?.arguments ? JSON.stringify(m.tool_calls[0].arguments) : undefined
-          base.result = m.content
+          base.result = m.result || m.content
         }
         if (m.role === 'assistant' && m.tool_calls?.length && !m.content) {
           // Tool-calling assistant message — show as tool-like entry
@@ -544,7 +552,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 params = msg.tool_calls[0]?.arguments ? JSON.stringify(msg.tool_calls[0].arguments) : undefined
               } else if (msg.tool_call_id) {
                 params = msg.tool_calls?.[0]?.arguments ? JSON.stringify(msg.tool_calls[0].arguments) : undefined
-                result = content
+                result = msg.result || content
               }
               setSubagentMessages((prev) => [...prev, { role, content, params, result, reasoning: msg.reasoning_content || undefined, created_at: new Date().toISOString() }])
             }

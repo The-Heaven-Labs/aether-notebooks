@@ -998,7 +998,7 @@ func (h *agentHandlers) handleGetSubagentMessages(w http.ResponseWriter, r *http
 	}
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT role, content, tool_call_id, tool_calls, reasoning_content, created_at
+		SELECT role, content, tool_call_id, tool_calls, reasoning_content, result, created_at
 		FROM subagent_messages WHERE subagent_task_id = $1 ORDER BY created_at ASC
 	`, taskID)
 	if err != nil {
@@ -1013,6 +1013,7 @@ func (h *agentHandlers) handleGetSubagentMessages(w http.ResponseWriter, r *http
 		ToolCallID       string `json:"tool_call_id,omitempty"`
 		ToolCalls        any    `json:"tool_calls,omitempty"`
 		ReasoningContent string `json:"reasoning_content,omitempty"`
+		Result           string `json:"result,omitempty"`
 		CreatedAt        string `json:"created_at"`
 	}
 	var msgs []msg
@@ -1020,12 +1021,15 @@ func (h *agentHandlers) handleGetSubagentMessages(w http.ResponseWriter, r *http
 		var m msg
 		var toolCallsJSON []byte
 		var createdAt time.Time
-		var toolCallID *string
-		if err := rows.Scan(&m.Role, &m.Content, &toolCallID, &toolCallsJSON, &m.ReasoningContent, &createdAt); err != nil {
+		var toolCallID, result *string
+		if err := rows.Scan(&m.Role, &m.Content, &toolCallID, &toolCallsJSON, &m.ReasoningContent, &result, &createdAt); err != nil {
 			continue
 		}
 		if toolCallID != nil {
 			m.ToolCallID = *toolCallID
+		}
+		if result != nil {
+			m.Result = *result
 		}
 		if len(toolCallsJSON) > 0 {
 			json.Unmarshal(toolCallsJSON, &m.ToolCalls)

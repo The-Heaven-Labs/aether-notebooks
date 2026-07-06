@@ -246,19 +246,25 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, taskID string, goal string, parentUserID, parentOrgID string, masterKey []byte, subagentLLM *LLMClient) (result SubagentResult) {
 	// saveMsg saves a message to the subagent conversation immediately and
 	// publishes it to the session stream so the frontend can show real-time updates.
-	saveMsg := func(role, content, toolCallID string, toolCalls []ToolCall, reasoning string) {
+	// For tool messages, content is the tool name and toolResult is the result text.
+	saveMsg := func(role, content, toolCallID string, toolCalls []ToolCall, reasoning string, toolResult ...string) {
+		resultText := ""
+		if len(toolResult) > 0 {
+			resultText = toolResult[0]
+		}
 		tcJSON, _ := json.Marshal(toolCalls)
 		var tcID *string
 		if toolCallID != "" {
 			tcID = &toolCallID
 		}
-		e.pool.Exec(ctx, `INSERT INTO subagent_messages (subagent_task_id, role, content, tool_call_id, tool_calls, reasoning_content, created_at) VALUES ($1,$2,$3,$4,$5,$6,NOW())`,
-			taskID, role, content, tcID, tcJSON, reasoning)
+		e.pool.Exec(ctx, `INSERT INTO subagent_messages (subagent_task_id, role, content, tool_call_id, tool_calls, reasoning_content, result, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())`,
+			taskID, role, content, tcID, tcJSON, reasoning, resultText)
 		event := map[string]any{
 			"type":              "subagent_message",
 			"task_id":           taskID,
 			"role":              role,
 			"content":           content,
+			"result":            resultText,
 			"tool_call_id":      toolCallID,
 			"reasoning_content": reasoning,
 		}
@@ -321,7 +327,7 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 			toolDef, ok := e.registry.Get(tc.Function.Name)
 			if !ok {
 				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name)})
-				saveMsg("tool", fmt.Sprintf("unknown tool: %s", tc.Function.Name), tc.ID, nil, "")
+				saveMsg("tool", tc.Function.Name, tc.ID, nil, "", fmt.Sprintf("unknown tool: %s", tc.Function.Name))
 				continue
 			}
 
@@ -338,12 +344,12 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 
 			if err != nil {
 				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: err.Error()})
-				saveMsg("tool", err.Error(), tc.ID, nil, "")
+				saveMsg("tool", tc.Function.Name, tc.ID, nil, "", err.Error())
 			} else {
 				resultJSON, _ := json.Marshal(result)
 				resultStr := string(resultJSON)
 				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
-				saveMsg("tool", resultStr, tc.ID, nil, "")
+				saveMsg("tool", tc.Function.Name, tc.ID, nil, "", resultStr)
 			}
 		}
 	}
