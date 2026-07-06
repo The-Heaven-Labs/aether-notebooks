@@ -967,11 +967,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   )})
   return (
     <div ref={panelRef} style={{ ...styles.panel, width }}>
-      {subagentView && (
-        <div style={{ position: 'absolute', inset: 0, background: 'var(--bg)', zIndex: 10, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
+      {subagentView ? (
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
             <button onClick={() => { setSubagentView(null); setSubagentMessages([]) }}
-              style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 11, padding: '3px 8px' }}>
+              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text-primary)', fontSize: 12, padding: '4px 10px', fontWeight: 500 }}>
               ← Back
             </button>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Subagent {subagentView.slice(0, 8)}</span>
@@ -988,7 +988,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             )}
           </div>
         </div>
-      )}
+      ) : (<>
       <div
         ref={resizeRef}
         style={styles.resizeHandle}
@@ -1443,6 +1443,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
         }
         .agent-select { -webkit-appearance: none; -moz-appearance: none; appearance: none; }
       `}</style>
+      </>)}
     </div>
   )
 }
