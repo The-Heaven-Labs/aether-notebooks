@@ -315,7 +315,18 @@ export function NotebookPage() {
     )
   }, [id, qc]), useCallback(() => {
     qc.invalidateQueries({ queryKey: ['notebook', id] })
-  }, [id, qc]))
+  }, [id, qc]), useCallback((cellId: string) => {
+    setRunningCells((prev) => new Set(prev).add(cellId))
+  }, []), useCallback((data: { running_cells?: string[] }) => {
+    const cells = data.running_cells
+    if (cells?.length) {
+      setRunningCells((prev) => {
+        const next = new Set(prev)
+        for (const id of cells) next.add(id)
+        return next
+      })
+    }
+  }, []))
 
   // Scroll to cell from URL hash (#cell-{id})
   useEffect(() => {

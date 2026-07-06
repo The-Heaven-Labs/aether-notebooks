@@ -300,10 +300,7 @@ func makeSpawnSubagentsHandler(pool *pgxpool.Pool, engine *Engine) ToolHandler {
 
 		taskIDs := make([]string, len(req.Tasks))
 		for i, t := range req.Tasks {
-			taskID := t.ID
-			if taskID == "" {
-				taskID = uuid.New().String()
-			}
+			taskID := uuid.New().String()
 			taskIDs[i] = taskID
 
 			contextJSON, _ := json.Marshal(t.Context)

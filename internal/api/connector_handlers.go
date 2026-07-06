@@ -272,6 +272,20 @@ func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Config != nil {
+		if req.Config.Password == "" {
+			var existingEnc []byte
+			if err := s.db.Pool.QueryRow(ctx,
+				`SELECT config_encrypted FROM connectors WHERE id=$1 AND org_id=$2`,
+				id, claims.OrgID,
+			).Scan(&existingEnc); err == nil {
+				if plain, err := crypto.Decrypt(existingEnc, s.masterKey); err == nil {
+					var existing models.ConnectorConfig
+					if json.Unmarshal(plain, &existing) == nil {
+						req.Config.Password = existing.Password
+					}
+				}
+			}
+		}
 		configJSON, err := json.Marshal(req.Config)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid config")

@@ -45,7 +45,9 @@ func NewClickHouseExecutor(cfg models.ConnectorConfig) (*ClickHouseExecutor, err
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}
-	if err := conn.Ping(context.Background()); err != nil {
+	pingCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := conn.Ping(pingCtx); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
