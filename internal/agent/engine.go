@@ -183,7 +183,71 @@ func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsg
 	return compacted
 }
 
-func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, imageIDs []string, tools []*ToolDef, masterKey []byte, capturedPageContext *PageContextInfo, onToken func(string), onReasoning func(string), onToolCall func(string, string, string), onToolResult func(string, string, string, string), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, *TokenBreakdown, error) {
+// sanitizeChatMessages ensures every assistant message with tool_calls has
+// matching tool messages, and removes orphaned tool messages. This prevents
+// LLM API 400 errors about broken tool message pairing.
+func sanitizeChatMessages(msgs []ChatMessage) []ChatMessage {
+	for ci := 0; ci < len(msgs); ci++ {
+		if msgs[ci].Role != "assistant" || len(msgs[ci].ToolCalls) == 0 {
+			continue
+		}
+		expected := make(map[string]bool)
+		for _, tc := range msgs[ci].ToolCalls {
+			expected[tc.ID] = true
+		}
+		for j := ci + 1; j < len(msgs); j++ {
+			if msgs[j].Role == "tool" && msgs[j].ToolCallID != "" {
+				delete(expected, msgs[j].ToolCallID)
+			} else if msgs[j].Role == "assistant" || msgs[j].Role == "user" {
+				break
+			}
+		}
+		for id := range expected {
+			placeholder := ChatMessage{
+				Role:       "tool",
+				ToolCallID: id,
+				Content:    "Tool call was interrupted and did not complete.",
+			}
+			insertAt := ci + 1
+			for insertAt < len(msgs) && msgs[insertAt].Role == "tool" {
+				insertAt++
+			}
+			msgs = append(msgs, ChatMessage{})
+			copy(msgs[insertAt+1:], msgs[insertAt:])
+			msgs[insertAt] = placeholder
+		}
+	}
+	// Remove orphaned tool messages (tool messages without a preceding
+	// assistant message with matching tool_calls).
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != "tool" || msgs[i].ToolCallID == "" {
+			continue
+		}
+		hasMatch := false
+		for j := i - 1; j >= 0; j-- {
+			if msgs[j].Role == "assistant" && len(msgs[j].ToolCalls) > 0 {
+				for _, tc := range msgs[j].ToolCalls {
+					if tc.ID == msgs[i].ToolCallID {
+						hasMatch = true
+						break
+					}
+				}
+			}
+			if hasMatch {
+				break
+			}
+			if msgs[j].Role == "user" {
+				break
+			}
+		}
+		if !hasMatch {
+			msgs = append(msgs[:i], msgs[i+1:]...)
+		}
+	}
+	return msgs
+}
+
+func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, imageIDs []string, tools []*ToolDef, masterKey []byte, capturedPageContext *PageContextInfo, onToken func(string), onReasoning func(string), onToolCall func(string, string, string, string), onToolResult func(string, string, string, string), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, *TokenBreakdown, error) {
 	var events []EngineEvent
 	slog.Debug("engine: ProcessMessage start", "session_id", sessionID, "msg_len", len(userMessage), "image_count", len(imageIDs))
 
@@ -481,36 +545,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			chatMsgs = append(chatMsgs, ChatMessage{Role: m.Role, Content: m.Content})
 		}
 	}
-	// Ensure every assistant tool_calls message has matching tool results.
-	// If any are missing (e.g. from a cancelled request), inject placeholders
-	// to avoid LLM API 400 "insufficient tool messages following tool_calls".
-	for ci := 0; ci < len(chatMsgs); ci++ {
-		if chatMsgs[ci].Role != "assistant" || len(chatMsgs[ci].ToolCalls) == 0 {
-			continue
-		}
-		expected := make(map[string]bool)
-		for _, tc := range chatMsgs[ci].ToolCalls {
-			expected[tc.ID] = true
-		}
-		// Scan forward for matching tool messages
-		for j := ci + 1; j < len(chatMsgs) && len(expected) > 0; j++ {
-			if chatMsgs[j].Role == "tool" && chatMsgs[j].ToolCallID != "" {
-				delete(expected, chatMsgs[j].ToolCallID)
-			}
-		}
-		// Inject placeholders for any missing tool_call_ids
-		for id := range expected {
-			placeholder := ChatMessage{Role: "tool", ToolCallID: id, Content: "Tool call was interrupted and did not complete."}
-			// Insert right after the assistant message's tool results (or after the assistant itself)
-			insertAt := ci + 1
-			for insertAt < len(chatMsgs) && chatMsgs[insertAt].Role == "tool" {
-				insertAt++
-			}
-			chatMsgs = append(chatMsgs, ChatMessage{}) // make room
-			copy(chatMsgs[insertAt+1:], chatMsgs[insertAt:])
-			chatMsgs[insertAt] = placeholder
-		}
-	}
+	chatMsgs = sanitizeChatMessages(chatMsgs)
 
 	if skillOverridePrompt != "" {
 		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: "# Active Skill\n\n" + skillOverridePrompt})
@@ -687,6 +722,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	for turn := 0; turn < maxTurns; turn++ {
 		turnStart := time.Now()
 		slog.Debug("engine: calling LLM", "session_id", sessionID, "turn", turn, "msgs", len(chatMsgs), "tools", len(toolsList))
+		chatMsgs = sanitizeChatMessages(chatMsgs)
 		resp, err := llmClient.Chat(ctx, chatMsgs, toolsList, masterKey)
 		if err != nil {
 			slog.Error("engine: LLM call failed", "session_id", sessionID, "turn", turn, "error", err, "elapsed_ms", time.Since(turnStart).Milliseconds())
@@ -694,7 +730,6 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			if llmErrorCount >= 3 {
 				return "", "", nil, events, tokBrk, fmt.Errorf("llm call failed after 3 retries: %w", err)
 			}
-			chatMsgs = append(chatMsgs, ChatMessage{Role: "user", Content: fmt.Sprintf("The LLM API returned an error. Please review the conversation and try again.\n\nError: %s", err.Error())})
 			continue
 		}
 		llmElapsed := time.Since(turnStart).Milliseconds()
@@ -702,7 +737,6 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 
 		if len(resp.Choices) == 0 {
 			slog.Error("engine: no choices in LLM response", "session_id", sessionID)
-			chatMsgs = append(chatMsgs, ChatMessage{Role: "user", Content: "The LLM returned an empty response. Please review the conversation and try again."})
 			continue
 		}
 
@@ -839,7 +873,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					r = reasoningContent
 					firstTool = false
 				}
-				onToolCall(tc.Function.Name, tc.ID, r)
+				onToolCall(tc.Function.Name, tc.ID, tc.Function.Arguments, r)
 			}
 			var args map[string]any
 			json.Unmarshal([]byte(tc.Function.Arguments), &args)

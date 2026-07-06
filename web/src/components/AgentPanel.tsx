@@ -441,7 +441,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           case 'reasoning':
             setIsStreaming(true); appendStreamingReasoning(msg.data); break
           case 'tool_call':
-            setMessages((prev) => [...prev, { role: 'tool', content: msg.tool, reasoning: msg.reasoning || streamingReasoningRef.current || undefined, created_at: ts() }])
+            setMessages((prev) => [...prev, { role: 'tool', content: msg.tool, params: msg.params, reasoning: msg.reasoning || streamingReasoningRef.current || undefined, created_at: ts() }])
             if (streamingReasoningRef.current) { needsCollapseRef.current = true; updateStreamingReasoning('') }
             break
           case 'tool_confirm_required':
@@ -830,12 +830,12 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     return () => handle.removeEventListener('mousedown', onMouseDown)
   }, [width, onResize])
 
-  const MemoizedChatMessage = memo(({ msg, isStreaming: _isStreaming, isLastReasoning, now }: {
-    msg: ChatMessage; isStreaming: boolean; isLastReasoning: boolean; now: number
+  const MemoizedChatMessage = memo(({ msg, isStreaming: _isStreaming, now }: {
+    msg: ChatMessage; isStreaming: boolean; now: number
   }) => (
     <div>
       {msg.reasoning && (
-        <details open={!_isStreaming && isLastReasoning} style={{ ...styles.message, ...styles.reasoningMessage, marginBottom: 4 }}>
+        <details style={{ ...styles.message, ...styles.reasoningMessage, marginBottom: 4 }}>
           <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>Thinking</summary>
           {msg.created_at && <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginBottom: 4 }}>{fmtTime(msg.created_at)}</div>}
           <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{msg.reasoning}</div>
@@ -1185,7 +1185,6 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                   key={i}
                   msg={msg}
                   isStreaming={isStreaming}
-                  isLastReasoning={i === messages.findLastIndex(m => !!m.reasoning)}
                   now={now}
                 />
               ))}
