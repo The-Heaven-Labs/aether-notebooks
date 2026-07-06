@@ -145,7 +145,7 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 // RunQueuedTasks runs subagent tasks that were already inserted into the DB
 // (status 'queued'). It updates each task's status as it progresses and
 // broadcasts events via broadcastFn so the frontend can track progress.
-func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, taskIDs []string, masterKey []byte, broadcastFn func(notebookID string, msg any), notebookID string) {
+func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, taskIDs []string, masterKey []byte, broadcastFn func(notebookID string, msg any), notebookID string, llmClient *LLMClient) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Warn("RunQueuedTasks: panic", "recover", r)
@@ -197,7 +197,7 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 			e.PublishSessionEvent(parentSessionID, statusEvent)
 
 			// Run the subagent LLM loop
-			result := e.runSubagentLoop(ctx, parentSessionID, tid, g, parentUserID, orgID, masterKey)
+			result := e.runSubagentLoop(ctx, parentSessionID, tid, g, parentUserID, orgID, masterKey, llmClient)
 
 			// Update final status
 			status := "completed"
@@ -235,17 +235,17 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 
 // runSubagentLoop runs the LLM loop for a subagent task that already exists in the DB.
 // Unlike runSubagent, it does NOT insert the task record.
-func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, taskID string, goal string, parentUserID, parentOrgID string, masterKey []byte) SubagentResult {
+func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, taskID string, goal string, parentUserID, parentOrgID string, masterKey []byte, subagentLLM *LLMClient) SubagentResult {
 	messages := []ChatMessage{
 		{Role: "user", Content: goal},
 	}
 
 	for turn := 0; turn < MaxSubagentTurns; turn++ {
-		if e.llm == nil {
-			return SubagentResult{TaskID: taskID, Status: "failed", Error: "no LLM client configured"}
+		if subagentLLM == nil {
+			return SubagentResult{TaskID: taskID, Status: "failed", Error: "no LLM client configured for subagent"}
 		}
 
-		resp, err := e.llm.Chat(ctx, messages, nil, masterKey)
+		resp, err := subagentLLM.Chat(ctx, messages, nil, masterKey)
 		if err != nil {
 			return SubagentResult{TaskID: taskID, Status: "failed", Error: err.Error()}
 		}

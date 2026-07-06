@@ -326,8 +326,12 @@ func makeSpawnSubagentsHandler(pool *pgxpool.Pool, engine *Engine) ToolHandler {
 			}
 		}
 
+		// Create LLM client for subagents from the parent agent's model config
+		var agentID string
+		pool.QueryRow(ctx.Context, `SELECT agent_id FROM agent_sessions WHERE id = $1`, ctx.SessionID).Scan(&agentID)
+		subagentLLM := engine.defaultSubagentLLM(ctx.Context, pool, agentID, ctx.MasterKey)
+
 		// Launch subagent execution in background goroutine
-		// Copy masterKey so the goroutine has its own slice
 		mk := make([]byte, len(ctx.MasterKey))
 		copy(mk, ctx.MasterKey)
 
@@ -344,7 +348,7 @@ func makeSpawnSubagentsHandler(pool *pgxpool.Pool, engine *Engine) ToolHandler {
 				}
 			}()
 			bgCtx := context.Background()
-			engine.RunQueuedTasks(bgCtx, sessionID, idsCopy, mk, broadcastFn, notebookID)
+			engine.RunQueuedTasks(bgCtx, sessionID, idsCopy, mk, broadcastFn, notebookID, subagentLLM)
 		}()
 
 		return map[string]any{"task_ids": taskIDs, "status": "spawned"}, nil

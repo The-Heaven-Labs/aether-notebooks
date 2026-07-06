@@ -1079,6 +1079,28 @@ func (e *Engine) SetLLMClient(llm *LLMClient) {
 	e.llm = llm
 }
 
+// defaultSubagentLLM resolves the model config for subagent LLM calls.
+// It looks up the parent agent's model config and creates an LLM client,
+// falling back to the engine's default LLM if no config is found.
+func (e *Engine) defaultSubagentLLM(ctx context.Context, pool *pgxpool.Pool, agentID string, masterKey []byte) *LLMClient {
+	var mc models.ModelConfig
+	var defaultParams []byte
+	err := pool.QueryRow(ctx, `
+		SELECT mc.id, mc.org_id, mc.name, mc.provider, mc.base_url, mc.model, mc.api_key_encrypted, mc.default_params, mc.context_window
+		FROM model_configs mc
+		JOIN agents a ON a.model_config_id = mc.id OR a.subagent_model_config_id = mc.id
+		WHERE a.id = $1
+		LIMIT 1
+	`, agentID).Scan(&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow)
+	if err != nil {
+		return e.llm
+	}
+	if defaultParams != nil {
+		json.Unmarshal(defaultParams, &mc.DefaultParams)
+	}
+	return NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams)
+}
+
 func (e *Engine) SetToolAllowedDomains(domains []string) {
 	e.toolAllowedDomains = domains
 }
