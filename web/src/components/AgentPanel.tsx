@@ -142,7 +142,24 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       })
       if (!res.ok) return
       const data = await res.json()
-      setter(data.map((m: any) => {
+      setter(data.flatMap((m: any) => {
+        const results: ChatMessage[] = []
+        // Assistant messages with tool_calls generate one entry per tool call
+        if (m.role === 'assistant' && m.tool_calls?.length) {
+          if (m.reasoning_content) {
+            results.push({ role: 'assistant', content: m.content || '', reasoning: m.reasoning_content, created_at: m.created_at })
+          }
+          for (const tc of m.tool_calls) {
+            results.push({
+              role: 'tool',
+              content: tc.name,
+              params: tc.arguments ? JSON.stringify(tc.arguments) : undefined,
+              result: undefined,
+              created_at: m.created_at,
+            })
+          }
+          return results
+        }
         const base: ChatMessage = {
           role: m.role,
           content: m.content || '',
@@ -150,7 +167,6 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           created_at: m.created_at,
         }
         if (m.tool_call_id) {
-          // Try to parse JSON envelope {name, result} from content
           try {
             const parsed = JSON.parse(m.content)
             if (parsed.name) { base.content = parsed.name; base.result = parsed.result }
@@ -158,14 +174,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           } catch { base.result = m.content }
           base.params = m.tool_calls?.[0]?.arguments ? JSON.stringify(m.tool_calls[0].arguments) : undefined
         }
-        if (m.role === 'assistant' && m.tool_calls?.length && !m.content) {
-          // Tool-calling assistant message — show as tool-like entry
-          base.role = 'tool'
-          base.content = m.tool_calls[0].name
-          base.params = m.tool_calls[0].arguments ? JSON.stringify(m.tool_calls[0].arguments) : undefined
-          base.result = undefined
-        }
-        return base
+        results.push(base)
+        return results
       }))
     } catch {} finally { setLoading(false) }
   }
@@ -549,18 +559,26 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           }
           case 'subagent_message':
             if (subagentViewRef.current === msg.task_id) {
-              let role = msg.role, content = msg.content || ''
-              let params: string | undefined, result: string | undefined
-              // Tool-calling assistant → show as tool entry
-              if (msg.role === 'assistant' && msg.tool_calls?.length && !msg.content) {
-                role = 'tool'; content = msg.tool_calls[0].name
-                params = msg.tool_calls[0]?.arguments ? JSON.stringify(msg.tool_calls[0].arguments) : undefined
-              } else if (msg.tool_call_id) {
-                params = msg.tool_calls?.[0]?.arguments ? JSON.stringify(msg.tool_calls[0].arguments) : undefined
-                try { const p = JSON.parse(msg.content); if (p.name) { content = p.name; result = p.result } else { result = msg.content } }
-                catch { result = msg.content }
-              }
-              setSubagentMessages((prev) => [...prev, { role, content, params, result, reasoning: msg.reasoning_content || undefined, created_at: new Date().toISOString() }])
+              setSubagentMessages((prev) => {
+                const next = [...prev]
+                // Tool-calling assistant → one entry per tool call
+                if (msg.role === 'assistant' && msg.tool_calls?.length) {
+                  if (msg.reasoning_content) {
+                    next.push({ role: 'assistant', content: msg.content || '', reasoning: msg.reasoning_content, created_at: new Date().toISOString() })
+                  }
+                  for (const tc of msg.tool_calls) {
+                    next.push({ role: 'tool', content: tc.name, params: tc.arguments ? JSON.stringify(tc.arguments) : undefined, result: undefined, created_at: new Date().toISOString() })
+                  }
+                } else if (msg.tool_call_id) {
+                  let content = msg.content || '', result: string | undefined
+                  try { const p = JSON.parse(msg.content); if (p.name) { content = p.name; result = p.result } else { result = msg.content } }
+                  catch { result = msg.content }
+                  next.push({ role: 'tool', content, params: msg.tool_calls?.[0]?.arguments ? JSON.stringify(msg.tool_calls[0].arguments) : undefined, result, created_at: new Date().toISOString() })
+                } else {
+                  next.push({ role: msg.role, content: msg.content || '', reasoning: msg.reasoning_content || undefined, created_at: new Date().toISOString() })
+                }
+                return next
+              })
             }
             break
           case 'subagent_status':
