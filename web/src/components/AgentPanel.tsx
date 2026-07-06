@@ -507,6 +507,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             })
             if (serverMsgs.length > 0) setMessages(serverMsgs)
             streamingTextRef.current = ''; setCurrentStreamingText('')
+            // If there are pending tool calls without results, agent is still working
+            if (serverMsgs.some(m => m.role === 'tool' && !m.result)) setIsStreaming(true)
             break
           }
           case 'done': {
