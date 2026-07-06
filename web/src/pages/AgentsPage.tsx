@@ -20,6 +20,7 @@ interface AgentForm {
   tool_ids: string[]
   mcp_server_ids: string[]
   max_turns: number
+  max_subagents: number
 }
 
 const emptyForm = (): AgentForm => ({
@@ -32,6 +33,7 @@ const emptyForm = (): AgentForm => ({
   tool_ids: [],
   mcp_server_ids: [],
   max_turns: 90,
+  max_subagents: 5,
 })
 
 export function AgentsPage() {
@@ -82,6 +84,7 @@ export function AgentsPage() {
       tool_ids: form.tool_ids,
       mcp_server_ids: form.mcp_server_ids,
       max_turns: form.max_turns || undefined,
+      max_subagents: form.max_subagents || undefined,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agents'] })
@@ -103,6 +106,7 @@ export function AgentsPage() {
       tool_ids: form.tool_ids,
       mcp_server_ids: form.mcp_server_ids,
       max_turns: form.max_turns || undefined,
+      max_subagents: form.max_subagents || undefined,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agents'] })
@@ -131,6 +135,7 @@ export function AgentsPage() {
       tool_ids: agent.tool_ids ?? [],
       mcp_server_ids: agent.mcp_server_ids ?? [],
       max_turns: agent.max_turns ?? 90,
+      max_subagents: agent.max_subagents ?? 5,
     })
   }
 
@@ -346,6 +351,17 @@ function AgentFormFields({ form, setForm, modelConfigs, skills, tools, mcpServer
           onChange={e => setForm(f => ({ ...f, max_turns: parseInt(e.target.value) || 90 }))}
         />
         <span style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Default: 90, Max: 200</span>
+      </label>
+      <label style={styles.label}>Max Sub-Agents
+        <input
+          type="number"
+          style={styles.input}
+          value={form.max_subagents}
+          min={1}
+          max={20}
+          onChange={e => setForm(f => ({ ...f, max_subagents: parseInt(e.target.value) || 5 }))}
+        />
+        <span style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Default: 5, Max: 20</span>
       </label>
 
       {/* Skills — searchable checkbox grid */}

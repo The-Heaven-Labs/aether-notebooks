@@ -250,6 +250,7 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 		MCPServerIDs          []string `json:"mcp_server_ids"`
 		FolderID              *string  `json:"folder_id"`
 		MaxTurns              *int     `json:"max_turns"`
+		MaxSubAgents          *int     `json:"max_subagents"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -264,6 +265,10 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 	if req.MCPServerIDs == nil {
 		req.MCPServerIDs = []string{}
 	}
+	maxSubAgents := 5
+	if req.MaxSubAgents != nil && *req.MaxSubAgents > 0 {
+		maxSubAgents = *req.MaxSubAgents
+	}
 
 	agentID := uuid.New().String()
 
@@ -274,10 +279,10 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 
 	_, err := h.server.db.Pool.Exec(r.Context(), `
 		INSERT INTO agents (id, org_id, name, description, model_config_id, subagent_model_config_id,
-			system_prompt, skill_ids, tool_ids, folder_id, max_turns, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+			system_prompt, skill_ids, tool_ids, folder_id, max_turns, max_subagents, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
 	`, agentID, claims.OrgID, req.Name, req.Description, req.ModelConfigID, req.SubagentModelConfigID,
-		req.SystemPrompt, skillIDs, req.ToolIDs, req.FolderID, req.MaxTurns, claims.UserID)
+		req.SystemPrompt, skillIDs, req.ToolIDs, req.FolderID, req.MaxTurns, maxSubAgents, claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -430,10 +435,17 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 		SubagentModelConfigID *string  `json:"subagent_model_config_id"`
 		MCPServerIDs          []string `json:"mcp_server_ids"`
 		MaxTurns              *int     `json:"max_turns"`
+		MaxSubAgents          *int     `json:"max_subagents"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
+	}
+
+	// Custom COALESCE for max_subagents (nullable int with default)
+	var updateMaxSubAgents any
+	if req.MaxSubAgents != nil {
+		updateMaxSubAgents = *req.MaxSubAgents
 	}
 
 	result, err := h.server.db.Pool.Exec(r.Context(), `
@@ -446,9 +458,10 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 			model_config_id = COALESCE($7, model_config_id),
 			subagent_model_config_id = COALESCE($8, subagent_model_config_id),
 			max_turns = COALESCE($9, max_turns),
+			max_subagents = COALESCE($10, max_subagents),
 			updated_at = NOW()
-		WHERE id = $1 AND org_id = $10
-	`, agentID, req.Name, req.Description, req.SystemPrompt, req.SkillIDs, req.ToolIDs, req.ModelConfigID, req.SubagentModelConfigID, req.MaxTurns, claims.OrgID)
+		WHERE id = $1 AND org_id = $11
+	`, agentID, req.Name, req.Description, req.SystemPrompt, req.SkillIDs, req.ToolIDs, req.ModelConfigID, req.SubagentModelConfigID, req.MaxTurns, updateMaxSubAgents, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

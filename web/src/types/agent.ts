@@ -14,6 +14,7 @@ export interface Agent {
   mcp_servers: MCPServerOrg[]
   folder_id?: string
   max_turns?: number
+  max_subagents?: number
   model_config_params?: Record<string, unknown>
   created_by: string
   created_at: string

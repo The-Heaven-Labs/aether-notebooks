@@ -87,6 +87,7 @@ type Agent struct {
 	ModelConfigParams     JSONMap        `json:"model_config_params,omitempty"`
 	FolderID              *string        `json:"folder_id,omitempty"`
 	MaxTurns              *int           `json:"max_turns,omitempty"`
+	MaxSubAgents          int            `json:"max_subagents,omitempty"`
 	CreatedBy             string         `json:"created_by"`
 	CreatedAt             time.Time      `json:"created_at"`
 	UpdatedAt             time.Time      `json:"updated_at"`

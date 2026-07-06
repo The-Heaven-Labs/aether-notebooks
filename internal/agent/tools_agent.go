@@ -306,8 +306,17 @@ func makeSpawnSubagentsHandler(pool *pgxpool.Pool, engine *Engine) ToolHandler {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
 
-		if len(req.Tasks) > 5 {
-			return nil, fmt.Errorf("max 5 subagents per call")
+		// Look up the agent's max_subagents setting
+		var maxSubAgents int
+		var agentID string
+		pool.QueryRow(ctx.Context, `SELECT agent_id FROM agent_sessions WHERE id = $1`, ctx.SessionID).Scan(&agentID)
+		pool.QueryRow(ctx.Context, `SELECT COALESCE(max_subagents, 5) FROM agents WHERE id = $1`, agentID).Scan(&maxSubAgents)
+		if maxSubAgents <= 0 {
+			maxSubAgents = 5
+		}
+
+		if len(req.Tasks) > maxSubAgents {
+			return nil, fmt.Errorf("max %d subagents per call", maxSubAgents)
 		}
 
 		taskIDs := make([]string, len(req.Tasks))
@@ -326,8 +335,6 @@ func makeSpawnSubagentsHandler(pool *pgxpool.Pool, engine *Engine) ToolHandler {
 		}
 
 		// Create LLM client for subagents from the parent agent's model config
-		var agentID string
-		pool.QueryRow(ctx.Context, `SELECT agent_id FROM agent_sessions WHERE id = $1`, ctx.SessionID).Scan(&agentID)
 		subagentLLM := engine.defaultSubagentLLM(ctx.Context, pool, agentID, ctx.MasterKey)
 
 		// Run subagents synchronously and collect results
