@@ -15,6 +15,7 @@ type clickhouseConfig struct {
 	User     string `json:"user"`
 	Password string `json:"password"`
 	Database string `json:"database"`
+	SSLMode  string `json:"ssl_mode,omitempty"`
 }
 
 // ClickHouseDriver implements ConnectorDriver for ClickHouse.
@@ -36,6 +37,7 @@ func (d *ClickHouseDriver) ConfigSchema() ConfigSchema {
 			{Name: "user", Type: "string", Required: true, Description: "ClickHouse user"},
 			{Name: "password", Type: "string", Required: true, Description: "ClickHouse password"},
 			{Name: "database", Type: "string", Required: false, Description: "Database name (leave empty to query across all databases)"},
+			{Name: "ssl_mode", Type: "string", Required: false, Default: "disable", Description: "SSL mode (disable, require, verify-full)"},
 		},
 	}
 }
@@ -54,6 +56,7 @@ func (d *ClickHouseDriver) NewExecutor(rawConfig json.RawMessage) (Executor, err
 		User:     cfg.User,
 		Password: cfg.Password,
 		Database: cfg.Database,
+		SSLMode:  cfg.SSLMode,
 	}
 	return NewClickHouseExecutor(connCfg)
 }
