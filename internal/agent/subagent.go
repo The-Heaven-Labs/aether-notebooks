@@ -190,13 +190,11 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 
 			// Update status to running
 			_, _ = e.pool.Exec(ctx, `UPDATE subagent_tasks SET status = 'running' WHERE id = $1`, tid)
+			statusEvent := map[string]any{"type": "subagent_status", "task_id": tid, "status": "running", "goal": g}
 			if broadcastFn != nil {
-				broadcastFn(notebookID, map[string]any{
-					"type":    "subagent_status",
-					"task_id": tid,
-					"status":  "running",
-				})
+				broadcastFn(notebookID, statusEvent)
 			}
+			e.PublishSessionEvent(parentSessionID, statusEvent)
 
 			// Run the subagent LLM loop
 			result := e.runSubagentLoop(ctx, parentSessionID, tid, g, parentUserID, orgID, masterKey)
@@ -211,14 +209,17 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 				WHERE id = $5
 			`, status, result.Result, result.TokensIn, result.TokensOut, tid)
 
-			if broadcastFn != nil {
-				broadcastFn(notebookID, map[string]any{
-					"type":    "subagent_status",
-					"task_id": tid,
-					"status":  status,
-					"result":  result.Result,
-				})
+			completionEvent := map[string]any{
+				"type":    "subagent_status",
+				"task_id": tid,
+				"status":  status,
+				"goal":    g,
+				"result":  result.Result,
 			}
+			if broadcastFn != nil {
+				broadcastFn(notebookID, completionEvent)
+			}
+			e.PublishSessionEvent(parentSessionID, completionEvent)
 		}(taskID, goal, taskCtx)
 	}
 

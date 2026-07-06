@@ -149,6 +149,7 @@ export type WSMessage =
   | { type: 'cell_output'; cell_id: string; outputs: Array<{ type: string; data: unknown }> }
   | { type: 'cell_updated'; cell_id: string }
   | { type: 'subagent_progress'; tasks: SubagentTask[] }
+  | { type: 'subagent_status'; task_id: string; status: string; goal?: string; result?: unknown }
   | { type: 'done'; tokens?: TokenBreakdown; data?: { content?: string; reasoning?: string; tokens?: TokenBreakdown } }
   | { type: 'error'; message: string }
   | { type: 'slash_result'; command: string; data: unknown }
