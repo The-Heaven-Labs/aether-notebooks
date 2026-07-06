@@ -253,7 +253,7 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 		for _, m := range messages {
 			toolCallsJSON, _ := json.Marshal(m.ToolCalls)
 			e.pool.Exec(ctx, `
-				INSERT INTO subagent_messages (task_id, role, content, tool_call_id, tool_calls, reasoning_content, created_at)
+				INSERT INTO subagent_messages (subagent_task_id, role, content, tool_call_id, tool_calls, reasoning_content, created_at)
 				VALUES ($1, $2, $3, $4, $5, $6, NOW())
 			`, taskID, m.Role, m.Content, m.ToolCallID, toolCallsJSON, m.ReasoningContent)
 		}
@@ -274,6 +274,13 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 		}
 
 		choice := resp.Choices[0]
+
+		// Persist the assistant message (reasoning + tool_calls)
+		assistantTcJSON, _ := json.Marshal(choice.ToolCalls)
+		e.pool.Exec(ctx, `
+			INSERT INTO subagent_messages (subagent_task_id, role, content, tool_calls, reasoning_content, created_at)
+			VALUES ($1, 'assistant', $2, $3, $4, NOW())
+		`, taskID, choice.Message.Content, assistantTcJSON, choice.Message.ReasoningContent)
 
 		if choice.Message.Content != "" {
 			return SubagentResult{

@@ -999,7 +999,7 @@ func (h *agentHandlers) handleGetSubagentMessages(w http.ResponseWriter, r *http
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
 		SELECT role, content, tool_call_id, tool_calls, reasoning_content, created_at
-		FROM subagent_messages WHERE task_id = $1 ORDER BY created_at ASC
+		FROM subagent_messages WHERE subagent_task_id = $1 ORDER BY created_at ASC
 	`, taskID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
