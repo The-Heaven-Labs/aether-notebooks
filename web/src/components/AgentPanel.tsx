@@ -907,16 +907,36 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               )}
             </>
           ) : msg.role === 'subagent' ? (
-            <div style={{ fontSize: 11, opacity: 0.8 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ opacity: 0.5, fontSize: 10 }}>SUBAGENT</span>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, opacity: 0.5 }}>{msg.content?.slice(0, 8)}</span>
-                <span>{msg.result ? (msg.result.includes('failed') ? '❌' : '✅') : '●'}</span>
+            (() => {
+              let parsedParams: { goal?: string; status?: string } = {}
+              try { if (msg.params) parsedParams = JSON.parse(msg.params) } catch {}
+              return (
+              <div style={{ fontSize: 11, opacity: 0.8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ opacity: 0.5, fontSize: 10 }}>SUBAGENT</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, opacity: 0.5 }}>{msg.content?.slice(0, 8)}</span>
+                  {!msg.result ? (
+                    <span style={{ opacity: 0.6, fontSize: 10, marginLeft: 'auto' }}>
+                      <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginRight: 4 }}>●</span>
+                      Working…
+                      {msg.created_at && ` (${Math.floor((now - new Date(msg.created_at).getTime()) / 1000)}s)`}
+                    </span>
+                  ) : (
+                    <span style={{ marginLeft: 'auto', fontSize: 10 }}>
+                      {msg.result?.includes('failed') ? '❌ Failed' : '✅ Done'}
+                    </span>
+                  )}
+                </div>
+                {parsedParams.goal && (
+                  <div style={{ marginTop: 4, opacity: 0.6, fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>{parsedParams.goal}</div>
+                )}
+                {msg.result && msg.result !== '"completed"' && msg.result !== '"failed"' && (
+                  <div style={{ marginTop: 4, fontSize: 10, maxHeight: 60, overflow: 'auto', opacity: 0.7, whiteSpace: 'pre-wrap' }}>
+                    {msg.result.length > 200 ? msg.result.slice(0, 200) + '…' : msg.result}
+                  </div>
+                )}
               </div>
-              {msg.params && (
-                <div style={{ marginTop: 4, opacity: 0.6, fontSize: 10 }}>{msg.params}</div>
-              )}
-            </div>
+            )})()
           ) : (
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
           )}
