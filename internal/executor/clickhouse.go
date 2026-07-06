@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"math/big"
 	"strings"
@@ -32,6 +33,12 @@ func NewClickHouseExecutor(cfg models.ConnectorConfig) (*ClickHouseExecutor, err
 	}
 	if cfg.Database != "" {
 		opts.Auth.Database = cfg.Database
+	}
+	if cfg.SSLMode == "require" || cfg.SSLMode == "verify-full" {
+		tlsConfig := &tls.Config{
+			InsecureSkipVerify: cfg.SSLMode == "require",
+		}
+		opts.TLS = tlsConfig
 	}
 
 	conn, err := clickhouse.Open(opts)
