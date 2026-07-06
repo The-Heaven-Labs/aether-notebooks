@@ -244,20 +244,18 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 // runSubagentLoop runs the LLM loop for a subagent task that already exists in the DB.
 // Unlike runSubagent, it does NOT insert the task record.
 func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, taskID string, goal string, parentUserID, parentOrgID string, masterKey []byte, subagentLLM *LLMClient) (result SubagentResult) {
+	// saveMsg saves a message to the subagent conversation immediately (in-order,
+	// unlike the defer approach which only persists on completion).
+	saveMsg := func(role, content, toolCallID string, toolCalls []ToolCall, reasoning string) {
+		tcJSON, _ := json.Marshal(toolCalls)
+		e.pool.Exec(ctx, `INSERT INTO subagent_messages (subagent_task_id, role, content, tool_call_id, tool_calls, reasoning_content, created_at) VALUES ($1,$2,$3,$4,$5,$6,NOW())`,
+			taskID, role, content, toolCallID, tcJSON, reasoning)
+	}
+
 	messages := []ChatMessage{
 		{Role: "user", Content: goal},
 	}
-
-	// Save subagent conversation to DB when the function returns.
-	defer func() {
-		for _, m := range messages {
-			toolCallsJSON, _ := json.Marshal(m.ToolCalls)
-			e.pool.Exec(ctx, `
-				INSERT INTO subagent_messages (subagent_task_id, role, content, tool_call_id, tool_calls, reasoning_content, created_at)
-				VALUES ($1, $2, $3, $4, $5, $6, NOW())
-			`, taskID, m.Role, m.Content, m.ToolCallID, toolCallsJSON, m.ReasoningContent)
-		}
-	}()
+	saveMsg("user", goal, "", nil, "")
 
 	for turn := 0; turn < MaxSubagentTurns; turn++ {
 		if subagentLLM == nil {
@@ -266,24 +264,29 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 
 		resp, err := subagentLLM.Chat(ctx, messages, nil, masterKey)
 		if err != nil {
-			messages = append(messages, ChatMessage{Role: "assistant", Content: fmt.Sprintf("Error: %s", err.Error())})
+			errMsg := fmt.Sprintf("Error: %s", err.Error())
+			messages = append(messages, ChatMessage{Role: "assistant", Content: errMsg})
+			saveMsg("assistant", errMsg, "", nil, "")
 			return SubagentResult{TaskID: taskID, Status: "failed", Error: err.Error()}
 		}
 
 		if len(resp.Choices) == 0 {
 			messages = append(messages, ChatMessage{Role: "assistant", Content: "Error: LLM returned an empty response"})
+			saveMsg("assistant", "Error: LLM returned an empty response", "", nil, "")
 			return SubagentResult{TaskID: taskID, Status: "failed", Error: "no choices in response"}
 		}
 
 		choice := resp.Choices[0]
 
-		// Append assistant message to the conversation (persisted by defer)
-		messages = append(messages, ChatMessage{
+		// Append assistant message to the conversation
+		assistantMsg := ChatMessage{
 			Role:             "assistant",
 			Content:          choice.Message.Content,
 			ToolCalls:        choice.ToolCalls,
 			ReasoningContent: choice.Message.ReasoningContent,
-		})
+		}
+		messages = append(messages, assistantMsg)
+		saveMsg("assistant", assistantMsg.Content, "", assistantMsg.ToolCalls, assistantMsg.ReasoningContent)
 
 		if choice.Message.Content != "" {
 			return SubagentResult{
@@ -299,6 +302,7 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 			toolDef, ok := e.registry.Get(tc.Function.Name)
 			if !ok {
 				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name)})
+				saveMsg("tool", fmt.Sprintf("unknown tool: %s", tc.Function.Name), tc.ID, nil, "")
 				continue
 			}
 
@@ -315,9 +319,12 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 
 			if err != nil {
 				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: err.Error()})
+				saveMsg("tool", err.Error(), tc.ID, nil, "")
 			} else {
 				resultJSON, _ := json.Marshal(result)
-				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: string(resultJSON)})
+				resultStr := string(resultJSON)
+				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
+				saveMsg("tool", resultStr, tc.ID, nil, "")
 			}
 		}
 	}
