@@ -758,6 +758,31 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			ReasoningContent: reasoningContent,
 		})
 
+		assistantMsgID := uuid.New().String()
+		msgToolCalls := make([]models.ToolCall, 0, len(toolCalls))
+		for _, tc := range toolCalls {
+			var args map[string]any
+			json.Unmarshal([]byte(tc.Function.Arguments), &args)
+			msgToolCalls = append(msgToolCalls, models.ToolCall{
+				ID:        tc.ID,
+				Name:      tc.Function.Name,
+				Arguments: args,
+			})
+		}
+		e.session.AppendMessage(ctx, &models.AgentMessage{
+			ID:               assistantMsgID,
+			SessionID:        sessionID,
+			Role:             "assistant",
+			Content:          text,
+			ToolCalls:        msgToolCalls,
+			ReasoningContent: reasoningContent,
+			TokensInput:      apiInputTotal,
+			TokensOutput:     tokBrk.Output,
+			TokensReasoning:  tokBrk.Reasoning,
+			ModelCalls:       modelCalls,
+			CreatedAt:        time.Now(),
+		})
+
 		if onReasoning != nil && reasoningContent != "" {
 			chunk(reasoningContent, 8, func(s string) {
 				onReasoning(s)
@@ -786,6 +811,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				resultStr := fmt.Sprintf("unknown tool: %s", tc.Function.Name)
 				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
 				estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
+				e.session.AppendMessage(ctx, &models.AgentMessage{
+					ID:         uuid.New().String(),
+					SessionID:  sessionID,
+					Role:       "tool",
+					ToolCallID: &tc.ID,
+					Content:    resultStr,
+					CreatedAt:  time.Now(),
+				})
 				continue
 			}
 
@@ -824,6 +857,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 						resultStr := fmt.Sprintf("Tool call '%s' was denied by user", tc.Function.Name)
 						chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
 						estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
+						e.session.AppendMessage(ctx, &models.AgentMessage{
+							ID:         uuid.New().String(),
+							SessionID:  sessionID,
+							Role:       "tool",
+							ToolCallID: &tc.ID,
+							Content:    resultStr,
+							CreatedAt:  time.Now(),
+						})
 						if onToolResult != nil {
 							onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "")
 						}
@@ -833,6 +874,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					resultStr := fmt.Sprintf("Tool call '%s' timed out waiting for approval", tc.Function.Name)
 					chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
 					estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
+					e.session.AppendMessage(ctx, &models.AgentMessage{
+						ID:         uuid.New().String(),
+						SessionID:  sessionID,
+						Role:       "tool",
+						ToolCallID: &tc.ID,
+						Content:    resultStr,
+						CreatedAt:  time.Now(),
+					})
 					if onToolResult != nil {
 						onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "timeout")
 					}
@@ -845,6 +894,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				resultStr := fmt.Sprintf("error: %s", err.Error())
 				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
 				estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
+				e.session.AppendMessage(ctx, &models.AgentMessage{
+					ID:         uuid.New().String(),
+					SessionID:  sessionID,
+					Role:       "tool",
+					ToolCallID: &tc.ID,
+					Content:    resultStr,
+					CreatedAt:  time.Now(),
+				})
 				if onToolResult != nil {
 					onToolResult(tc.Function.Name, tc.Function.Arguments, "", err.Error())
 				}
@@ -853,6 +910,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				resultStr := string(resultJSON)
 				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
 				estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
+				e.session.AppendMessage(ctx, &models.AgentMessage{
+					ID:         uuid.New().String(),
+					SessionID:  sessionID,
+					Role:       "tool",
+					ToolCallID: &tc.ID,
+					Content:    resultStr,
+					CreatedAt:  time.Now(),
+				})
 				if onToolResult != nil {
 					onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "")
 				}

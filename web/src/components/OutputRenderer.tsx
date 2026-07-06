@@ -901,6 +901,7 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     overflow: 'auto',
     padding: '12px',
+    maxHeight: 400,
   },
   detailValue: {
     margin: 0,
