@@ -143,7 +143,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       if (!res.ok) return
       const data = await res.json()
       setter(data.flatMap((m: any) => {
-        const fn = (tc: any) => tc.function || tc // tool call may have {function:{name,arguments}} or {name,arguments}
+        const fn = (tc: any) => tc.function || tc
         const results: ChatMessage[] = []
         if (m.role === 'assistant' && m.tool_calls?.length) {
           if (m.reasoning_content) {

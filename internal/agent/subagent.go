@@ -112,7 +112,7 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 			return result
 		}
 
-		for _, tc := range choice.ToolCalls {
+		for _, tc := range choice.Message.ToolCalls {
 			toolDef, ok := e.registry.Get(tc.Function.Name)
 			if !ok {
 				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name)})
@@ -305,10 +305,11 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 		choice := resp.Choices[0]
 
 		// Append assistant message to the conversation
+		// Note: tool_calls come from Message.ToolCalls (OpenAI API) not Choice.ToolCalls
 		assistantMsg := ChatMessage{
 			Role:             "assistant",
 			Content:          choice.Message.Content,
-			ToolCalls:        choice.ToolCalls,
+			ToolCalls:        choice.Message.ToolCalls,
 			ReasoningContent: choice.Message.ReasoningContent,
 		}
 		messages = append(messages, assistantMsg)
@@ -324,7 +325,7 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 			}
 		}
 
-		for _, tc := range choice.ToolCalls {
+		for _, tc := range choice.Message.ToolCalls {
 			toolDef, ok := e.registry.Get(tc.Function.Name)
 			if !ok {
 				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name)})
