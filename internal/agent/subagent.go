@@ -244,7 +244,8 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 // runSubagentLoop runs the LLM loop for a subagent task that already exists in the DB.
 // Unlike runSubagent, it does NOT insert the task record.
 func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, taskID string, goal string, parentUserID, parentOrgID string, masterKey []byte, subagentLLM *LLMClient) (result SubagentResult) {
-	// saveMsg saves a message to the subagent conversation immediately.
+	// saveMsg saves a message to the subagent conversation immediately and
+	// publishes it to the session stream so the frontend can show real-time updates.
 	saveMsg := func(role, content, toolCallID string, toolCalls []ToolCall, reasoning string) {
 		tcJSON, _ := json.Marshal(toolCalls)
 		var tcID *string
@@ -253,6 +254,21 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 		}
 		e.pool.Exec(ctx, `INSERT INTO subagent_messages (subagent_task_id, role, content, tool_call_id, tool_calls, reasoning_content, created_at) VALUES ($1,$2,$3,$4,$5,$6,NOW())`,
 			taskID, role, content, tcID, tcJSON, reasoning)
+		event := map[string]any{
+			"type":              "subagent_message",
+			"task_id":           taskID,
+			"role":              role,
+			"content":           content,
+			"tool_call_id":      toolCallID,
+			"reasoning_content": reasoning,
+		}
+		var tcList []map[string]any
+		if len(toolCalls) > 0 {
+			b, _ := json.Marshal(toolCalls)
+			json.Unmarshal(b, &tcList)
+		}
+		event["tool_calls"] = tcList
+		e.PublishSessionEvent(parentSessionID, event)
 	}
 
 	messages := []ChatMessage{
