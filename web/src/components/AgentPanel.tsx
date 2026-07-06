@@ -117,6 +117,13 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const needsCollapseRef = useRef(false)
   const streamingStartedAt = useRef<string | null>(null)
   const [totalTokens, setTotalTokens] = useState<TokenBreakdown | null>(null)
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    if (!isStreaming) return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [isStreaming])
+  const hasPendingTools = messages.some(m => m.role === 'tool' && !m.result)
   const ts = () => new Date().toISOString()
   const fmtTime = (iso?: string) => {
     if (!iso) return ''
@@ -823,8 +830,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     return () => handle.removeEventListener('mousedown', onMouseDown)
   }, [width, onResize])
 
-  const MemoizedChatMessage = memo(({ msg, isStreaming: _isStreaming, isLastReasoning }: {
-    msg: ChatMessage; isStreaming: boolean; isLastReasoning: boolean
+  const MemoizedChatMessage = memo(({ msg, isStreaming: _isStreaming, isLastReasoning, now }: {
+    msg: ChatMessage; isStreaming: boolean; isLastReasoning: boolean; now: number
   }) => (
     <div>
       {msg.reasoning && (
@@ -849,6 +856,13 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               <summary style={{ cursor: 'pointer', outline: 'none' }}>
                 <span style={{ opacity: 0.6, fontSize: 11 }}>TOOL </span>
                 {msg.content}
+                {!msg.result && (
+                  <span style={{ opacity: 0.6, fontSize: 11, marginLeft: 6 }}>
+                    <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginRight: 4 }}>●</span>
+                    Working…
+                    {msg.created_at && ` (${Math.floor((now - new Date(msg.created_at).getTime()) / 1000)}s)`}
+                  </span>
+                )}
               </summary>
               <div style={{ marginTop: 6, fontSize: 11 }}>
                 {msg.params && (
@@ -857,16 +871,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                     <code style={{ fontSize: 10 }}>{msg.params}</code>
                   </div>
                 )}
-                {msg.result ? (
+                {msg.result && (
                   <div>
                     <span style={{ opacity: 0.5 }}>Result: </span>
                     <code style={{ fontSize: 10, whiteSpace: 'pre-wrap' }}>{msg.result.length > 300 ? msg.result.slice(0, 300) + '...' : msg.result}</code>
                   </div>
-                ) : (
-                  <span style={{ opacity: 0.5, fontSize: 11 }}>
-                    <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginRight: 6 }}>●</span>
-                    Working…
-                  </span>
                 )}
               </div>
             </details>
@@ -1177,14 +1186,15 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                   msg={msg}
                   isStreaming={isStreaming}
                   isLastReasoning={i === messages.findLastIndex(m => !!m.reasoning)}
+                  now={now}
                 />
               ))}
               {isStreaming && !currentStreamingText && (
                   <details open style={{ ...styles.message, ...styles.reasoningMessage }}>
-                    <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>Thinking</summary>
+                    <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>{hasPendingTools ? 'Working' : 'Thinking'}</summary>
                     {streamingStartedAt.current && <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginBottom: 4 }}>{fmtTime(streamingStartedAt.current)}</div>}
                     <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>
-                      {currentStreamingReasoning || <span style={{ color: 'var(--text-muted)' }}>...</span>}
+                      {hasPendingTools ? <span style={{ color: 'var(--text-muted)' }}>Waiting for tool result…</span> : (currentStreamingReasoning || <span style={{ color: 'var(--text-muted)' }}>...</span>)}
                     </div>
                   </details>
                 )}

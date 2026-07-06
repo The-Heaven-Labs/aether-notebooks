@@ -481,6 +481,37 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			chatMsgs = append(chatMsgs, ChatMessage{Role: m.Role, Content: m.Content})
 		}
 	}
+	// Ensure every assistant tool_calls message has matching tool results.
+	// If any are missing (e.g. from a cancelled request), inject placeholders
+	// to avoid LLM API 400 "insufficient tool messages following tool_calls".
+	for ci := 0; ci < len(chatMsgs); ci++ {
+		if chatMsgs[ci].Role != "assistant" || len(chatMsgs[ci].ToolCalls) == 0 {
+			continue
+		}
+		expected := make(map[string]bool)
+		for _, tc := range chatMsgs[ci].ToolCalls {
+			expected[tc.ID] = true
+		}
+		// Scan forward for matching tool messages
+		for j := ci + 1; j < len(chatMsgs) && len(expected) > 0; j++ {
+			if chatMsgs[j].Role == "tool" && chatMsgs[j].ToolCallID != "" {
+				delete(expected, chatMsgs[j].ToolCallID)
+			}
+		}
+		// Inject placeholders for any missing tool_call_ids
+		for id := range expected {
+			placeholder := ChatMessage{Role: "tool", ToolCallID: id, Content: "Tool call was interrupted and did not complete."}
+			// Insert right after the assistant message's tool results (or after the assistant itself)
+			insertAt := ci + 1
+			for insertAt < len(chatMsgs) && chatMsgs[insertAt].Role == "tool" {
+				insertAt++
+			}
+			chatMsgs = append(chatMsgs, ChatMessage{}) // make room
+			copy(chatMsgs[insertAt+1:], chatMsgs[insertAt:])
+			chatMsgs[insertAt] = placeholder
+		}
+	}
+
 	if skillOverridePrompt != "" {
 		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: "# Active Skill\n\n" + skillOverridePrompt})
 	}
@@ -652,19 +683,27 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	apiInputTotal := 0
 	var estimatedToolCalls, estimatedToolResults int
 
+	var llmErrorCount int
 	for turn := 0; turn < maxTurns; turn++ {
 		turnStart := time.Now()
 		slog.Debug("engine: calling LLM", "session_id", sessionID, "turn", turn, "msgs", len(chatMsgs), "tools", len(toolsList))
 		resp, err := llmClient.Chat(ctx, chatMsgs, toolsList, masterKey)
 		if err != nil {
 			slog.Error("engine: LLM call failed", "session_id", sessionID, "turn", turn, "error", err, "elapsed_ms", time.Since(turnStart).Milliseconds())
-			return "", "", nil, events, tokBrk, fmt.Errorf("llm call: %w", err)
+			llmErrorCount++
+			if llmErrorCount >= 3 {
+				return "", "", nil, events, tokBrk, fmt.Errorf("llm call failed after 3 retries: %w", err)
+			}
+			chatMsgs = append(chatMsgs, ChatMessage{Role: "user", Content: fmt.Sprintf("The LLM API returned an error. Please review the conversation and try again.\n\nError: %s", err.Error())})
+			continue
 		}
 		llmElapsed := time.Since(turnStart).Milliseconds()
+		llmErrorCount = 0
 
 		if len(resp.Choices) == 0 {
 			slog.Error("engine: no choices in LLM response", "session_id", sessionID)
-			return "", "", nil, events, tokBrk, fmt.Errorf("no choices in response")
+			chatMsgs = append(chatMsgs, ChatMessage{Role: "user", Content: "The LLM returned an empty response. Please review the conversation and try again."})
+			continue
 		}
 
 		modelCalls++
