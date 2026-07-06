@@ -15,8 +15,9 @@ var upgrader = websocket.Upgrader{
 }
 
 type Hub struct {
-	mu    sync.RWMutex
-	rooms map[string]map[*websocket.Conn]bool
+	mu           sync.RWMutex
+	rooms        map[string]map[*websocket.Conn]bool
+	runningCells sync.Map // cellID → notebookID
 }
 
 func NewHub() *Hub {
@@ -39,6 +40,25 @@ func (h *Hub) Leave(notebookID string, conn *websocket.Conn) {
 	if len(h.rooms[notebookID]) == 0 {
 		delete(h.rooms, notebookID)
 	}
+}
+
+func (h *Hub) SetRunning(cellID, notebookID string) {
+	h.runningCells.Store(cellID, notebookID)
+}
+
+func (h *Hub) UnsetRunning(cellID string) {
+	h.runningCells.Delete(cellID)
+}
+
+func (h *Hub) RunningCellsForNotebook(notebookID string) []string {
+	var cells []string
+	h.runningCells.Range(func(key, value any) bool {
+		if value.(string) == notebookID {
+			cells = append(cells, key.(string))
+		}
+		return true
+	})
+	return cells
 }
 
 func (h *Hub) Broadcast(notebookID string, msg interface{}) {
@@ -86,6 +106,12 @@ func (s *Server) handleNotebookWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.hub.Join(nbID, conn)
+
+	runningCells := s.hub.RunningCellsForNotebook(nbID)
+	if len(runningCells) > 0 {
+		conn.WriteJSON(map[string]any{"type": "sync", "running_cells": runningCells})
+	}
+
 	defer func() {
 		s.hub.Leave(nbID, conn)
 		conn.Close()

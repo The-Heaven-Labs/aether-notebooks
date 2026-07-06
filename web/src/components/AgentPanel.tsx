@@ -857,11 +857,16 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                     <code style={{ fontSize: 10 }}>{msg.params}</code>
                   </div>
                 )}
-                {msg.result && (
+                {msg.result ? (
                   <div>
                     <span style={{ opacity: 0.5 }}>Result: </span>
                     <code style={{ fontSize: 10, whiteSpace: 'pre-wrap' }}>{msg.result.length > 300 ? msg.result.slice(0, 300) + '...' : msg.result}</code>
                   </div>
+                ) : (
+                  <span style={{ opacity: 0.5, fontSize: 11 }}>
+                    <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginRight: 6 }}>●</span>
+                    Working…
+                  </span>
                 )}
               </div>
             </details>
