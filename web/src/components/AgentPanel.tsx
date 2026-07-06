@@ -442,7 +442,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             setIsStreaming(true); appendStreamingReasoning(msg.data); break
           case 'tool_call':
             setMessages((prev) => [...prev, { role: 'tool', content: msg.tool, reasoning: msg.reasoning || streamingReasoningRef.current || undefined, created_at: ts() }])
-            if (streamingReasoningRef.current) { needsCollapseRef.current = true; streamingReasoningRef.current = '' }
+            if (streamingReasoningRef.current) { needsCollapseRef.current = true; updateStreamingReasoning('') }
             break
           case 'tool_confirm_required':
             if (autoConfirmRef.current || sessionApprovedRef.current.has(msg.tool_name)) {

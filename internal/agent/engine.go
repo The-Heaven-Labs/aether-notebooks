@@ -831,9 +831,15 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			})
 		}
 
+		firstTool := true
 		for _, tc := range toolCalls {
 			if onToolCall != nil {
-				onToolCall(tc.Function.Name, tc.ID, reasoningContent)
+				r := ""
+				if firstTool {
+					r = reasoningContent
+					firstTool = false
+				}
+				onToolCall(tc.Function.Name, tc.ID, r)
 			}
 			var args map[string]any
 			json.Unmarshal([]byte(tc.Function.Arguments), &args)
