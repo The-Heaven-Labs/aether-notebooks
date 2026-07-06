@@ -167,13 +167,16 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           reasoning: m.reasoning_content || undefined,
           created_at: m.created_at,
         }
-        if (m.tool_call_id) {
-          try {
-            const parsed = JSON.parse(m.content)
-            if (parsed.name) { base.content = parsed.name; base.result = parsed.result }
-            else { base.result = m.content }
-          } catch { base.result = m.content }
+        if (m.tool_call_id || m.tool_calls?.length) {
+          // Try JSON envelope {name, result} from content
+          let parsedName: string | undefined
+          try { const p = JSON.parse(m.content); if (p.name) { parsedName = p.name; base.result = p.result } }
+          catch { /* not a JSON envelope */ }
+          if (!base.result) base.result = m.content
+          // Extract tool name and params from tool_calls
           const f = fn(m.tool_calls?.[0])
+          if (f?.name) base.content = f.name
+          else if (parsedName) base.content = parsedName
           base.params = f?.arguments ? (typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)) : undefined
         }
         results.push(base)
@@ -572,11 +575,15 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                     const f = fn(tc)
                     next.push({ role: 'tool', content: f.name || 'tool', params: f.arguments ? (typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)) : undefined, result: undefined, created_at: new Date().toISOString() })
                   }
-                } else if (msg.tool_call_id) {
+                } else if (msg.tool_call_id || msg.tool_calls?.length) {
                   let content = msg.content || '', result: string | undefined
-                  try { const p = JSON.parse(msg.content); if (p.name) { content = p.name; result = p.result } else { result = msg.content } }
+                  let parsedName: string | undefined
+                  try { const p = JSON.parse(msg.content); if (p.name) { parsedName = p.name; result = p.result } }
                   catch { result = msg.content }
+                  if (!result) result = msg.content
                   const f = fn(msg.tool_calls?.[0])
+                  if (f?.name) content = f.name
+                  else if (parsedName) content = parsedName
                   next.push({ role: 'tool', content, params: f?.arguments ? (typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)) : undefined, result, created_at: new Date().toISOString() })
                 } else {
                   next.push({ role: msg.role, content: msg.content || '', reasoning: msg.reasoning_content || undefined, created_at: new Date().toISOString() })

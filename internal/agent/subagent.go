@@ -344,14 +344,17 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 				MasterKey:  masterKey,
 			})
 
+			// Build tool call metadata for the tool_calls JSONB column
+			toolCallMeta := []ToolCall{tc}
+
 			if err != nil {
 				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: err.Error()})
-				saveMsg("tool", tc.Function.Name, tc.ID, nil, "", err.Error())
+				saveMsg("tool", tc.Function.Name, "", toolCallMeta, "", err.Error())
 			} else {
 				resultJSON, _ := json.Marshal(result)
 				resultStr := string(resultJSON)
 				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
-				saveMsg("tool", tc.Function.Name, tc.ID, nil, "", resultStr)
+				saveMsg("tool", tc.Function.Name, "", toolCallMeta, "", resultStr)
 			}
 		}
 	}
