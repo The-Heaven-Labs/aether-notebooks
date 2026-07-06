@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/jackc/pgx/v5"
 )
@@ -118,6 +119,8 @@ func (s *Server) handleOrgCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to commit")
 		return
 	}
+
+	agent.SeedBuiltinTools(ctx, s.db.Pool, orgID)
 
 	var isPlatformAdmin bool
 	s.db.Pool.QueryRow(ctx, `SELECT is_platform_admin FROM users WHERE id = $1`, claims.UserID).Scan(&isPlatformAdmin)
