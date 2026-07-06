@@ -244,27 +244,28 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 // runSubagentLoop runs the LLM loop for a subagent task that already exists in the DB.
 // Unlike runSubagent, it does NOT insert the task record.
 func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, taskID string, goal string, parentUserID, parentOrgID string, masterKey []byte, subagentLLM *LLMClient) (result SubagentResult) {
-	// saveMsg saves a message to the subagent conversation immediately and
-	// publishes it to the session stream so the frontend can show real-time updates.
-	// For tool messages, content is the tool name and toolResult is the result text.
+	// saveMsg saves a message to the subagent conversation immediately.
+	// For tool messages, content is saved as a JSON object with the tool
+	// name and result, which the frontend parses for display.
 	saveMsg := func(role, content, toolCallID string, toolCalls []ToolCall, reasoning string, toolResult ...string) {
-		resultText := ""
-		if len(toolResult) > 0 {
-			resultText = toolResult[0]
+		storeContent := content
+		if role == "tool" && len(toolResult) > 0 {
+			// Store tool name in content and result in a JSON envelope
+			b, _ := json.Marshal(map[string]string{"name": content, "result": toolResult[0]})
+			storeContent = string(b)
 		}
 		tcJSON, _ := json.Marshal(toolCalls)
 		var tcID *string
 		if toolCallID != "" {
 			tcID = &toolCallID
 		}
-		e.pool.Exec(ctx, `INSERT INTO subagent_messages (subagent_task_id, role, content, tool_call_id, tool_calls, reasoning_content, result, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())`,
-			taskID, role, content, tcID, tcJSON, reasoning, resultText)
+		e.pool.Exec(ctx, `INSERT INTO subagent_messages (subagent_task_id, role, content, tool_call_id, tool_calls, reasoning_content, created_at) VALUES ($1,$2,$3,$4,$5,$6,NOW())`,
+			taskID, role, storeContent, tcID, tcJSON, reasoning)
 		event := map[string]any{
 			"type":              "subagent_message",
 			"task_id":           taskID,
 			"role":              role,
-			"content":           content,
-			"result":            resultText,
+			"content":           storeContent,
 			"tool_call_id":      toolCallID,
 			"reasoning_content": reasoning,
 		}

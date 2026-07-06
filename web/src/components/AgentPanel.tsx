@@ -150,8 +150,13 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           created_at: m.created_at,
         }
         if (m.tool_call_id) {
+          // Try to parse JSON envelope {name, result} from content
+          try {
+            const parsed = JSON.parse(m.content)
+            if (parsed.name) { base.content = parsed.name; base.result = parsed.result }
+            else { base.result = m.content }
+          } catch { base.result = m.content }
           base.params = m.tool_calls?.[0]?.arguments ? JSON.stringify(m.tool_calls[0].arguments) : undefined
-          base.result = m.result || m.content
         }
         if (m.role === 'assistant' && m.tool_calls?.length && !m.content) {
           // Tool-calling assistant message — show as tool-like entry
@@ -552,7 +557,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 params = msg.tool_calls[0]?.arguments ? JSON.stringify(msg.tool_calls[0].arguments) : undefined
               } else if (msg.tool_call_id) {
                 params = msg.tool_calls?.[0]?.arguments ? JSON.stringify(msg.tool_calls[0].arguments) : undefined
-                result = msg.result || content
+                try { const p = JSON.parse(msg.content); if (p.name) { content = p.name; result = p.result } else { result = msg.content } }
+                catch { result = msg.content }
               }
               setSubagentMessages((prev) => [...prev, { role, content, params, result, reasoning: msg.reasoning_content || undefined, created_at: new Date().toISOString() }])
             }
@@ -1034,7 +1040,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text-primary)', fontSize: 12, padding: '4px 10px', fontWeight: 500 }}>
               ← Back
             </button>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Subagent {subagentView.slice(0, 8)}</span>
+            <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Subagent {subagentView.slice(0, 8)}</span>
+            <button onClick={() => { const text = subagentMessages.map(m => `${m.role}: ${m.content}${m.result ? '\n' + m.result : ''}`).join('\n\n'); navigator.clipboard.writeText(text) }}
+              style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 11, padding: '3px 8px' }}>
+              Copy chat
+            </button>
           </div>
           <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
             {subagentLoading && <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 20 }}>Loading…</div>}
