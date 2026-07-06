@@ -653,12 +653,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	var estimatedToolCalls, estimatedToolResults int
 
 	for turn := 0; turn < maxTurns; turn++ {
+		turnStart := time.Now()
 		slog.Debug("engine: calling LLM", "session_id", sessionID, "turn", turn, "msgs", len(chatMsgs), "tools", len(toolsList))
 		resp, err := llmClient.Chat(ctx, chatMsgs, toolsList, masterKey)
 		if err != nil {
-			slog.Error("engine: LLM call failed", "session_id", sessionID, "turn", turn, "error", err)
+			slog.Error("engine: LLM call failed", "session_id", sessionID, "turn", turn, "error", err, "elapsed_ms", time.Since(turnStart).Milliseconds())
 			return "", "", nil, events, tokBrk, fmt.Errorf("llm call: %w", err)
 		}
+		llmElapsed := time.Since(turnStart).Milliseconds()
 
 		if len(resp.Choices) == 0 {
 			slog.Error("engine: no choices in LLM response", "session_id", sessionID)
@@ -769,7 +771,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				Arguments: args,
 			})
 		}
-		e.session.AppendMessage(ctx, &models.AgentMessage{
+		e.session.AppendMessage(context.Background(), &models.AgentMessage{
 			ID:               assistantMsgID,
 			SessionID:        sessionID,
 			Role:             "assistant",
@@ -810,19 +812,22 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			if !ok {
 				resultStr := fmt.Sprintf("unknown tool: %s", tc.Function.Name)
 				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
-				estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
-				e.session.AppendMessage(ctx, &models.AgentMessage{
-					ID:         uuid.New().String(),
-					SessionID:  sessionID,
-					Role:       "tool",
-					ToolCallID: &tc.ID,
-					Content:    resultStr,
-					CreatedAt:  time.Now(),
-				})
-				continue
+			estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
+			e.session.AppendMessage(context.Background(), &models.AgentMessage{
+				ID:         uuid.New().String(),
+				SessionID:  sessionID,
+				Role:       "tool",
+				ToolCallID: &tc.ID,
+				Content:    resultStr,
+				CreatedAt:  time.Now(),
+			})
+			if onToolResult != nil {
+				onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "")
 			}
+			continue
+		}
 
-			toolCtx := &ToolContext{
+		toolCtx := &ToolContext{
 				Context:       ctx,
 				UserID:        session.UserID,
 				OrgID:         agent.OrgID,
@@ -857,7 +862,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 						resultStr := fmt.Sprintf("Tool call '%s' was denied by user", tc.Function.Name)
 						chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
 						estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
-						e.session.AppendMessage(ctx, &models.AgentMessage{
+						e.session.AppendMessage(context.Background(), &models.AgentMessage{
 							ID:         uuid.New().String(),
 							SessionID:  sessionID,
 							Role:       "tool",
@@ -874,7 +879,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					resultStr := fmt.Sprintf("Tool call '%s' timed out waiting for approval", tc.Function.Name)
 					chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
 					estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
-					e.session.AppendMessage(ctx, &models.AgentMessage{
+					e.session.AppendMessage(context.Background(), &models.AgentMessage{
 						ID:         uuid.New().String(),
 						SessionID:  sessionID,
 						Role:       "tool",
@@ -894,7 +899,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				resultStr := fmt.Sprintf("error: %s", err.Error())
 				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
 				estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
-				e.session.AppendMessage(ctx, &models.AgentMessage{
+				e.session.AppendMessage(context.Background(), &models.AgentMessage{
 					ID:         uuid.New().String(),
 					SessionID:  sessionID,
 					Role:       "tool",
@@ -910,7 +915,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				resultStr := string(resultJSON)
 				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
 				estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
-				e.session.AppendMessage(ctx, &models.AgentMessage{
+				e.session.AppendMessage(context.Background(), &models.AgentMessage{
 					ID:         uuid.New().String(),
 					SessionID:  sessionID,
 					Role:       "tool",
@@ -923,6 +928,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				}
 			}
 		}
+
+		slog.Debug("engine: turn complete", "session_id", sessionID, "turn", turn, "llm_ms", llmElapsed, "total_ms", time.Since(turnStart).Milliseconds())
 	}
 
 	tokBrk.Input = apiInputTotal

@@ -211,13 +211,21 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 
 	bgCtx := context.Background()
 
+	// Set query timeout from connector config (0 = unlimited)
+	execCtx := bgCtx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		execCtx, cancel = context.WithTimeout(bgCtx, time.Duration(timeout)*time.Second)
+		defer cancel()
+	}
+
 	// Broadcast executing state and track in Hub (survives page refresh)
 	s.hub.Broadcast(nbID, map[string]any{"type": "cell_executing", "cell_id": cellID})
 	s.hub.SetRunning(cellID, nbID)
 
-	// Execute with background context so query continues if HTTP connection drops
+	// Execute — survives HTTP disconnect, respects connector timeout
 	queryStart := time.Now()
-	result, err := exec.Execute(bgCtx, resolvedSource, req.Parameters, maxRows)
+	result, err := exec.Execute(execCtx, resolvedSource, req.Parameters, maxRows)
 	s.hub.UnsetRunning(cellID)
 	if err != nil {
 		// Store error output

@@ -26,7 +26,7 @@ var BuiltinTools = []BuiltinToolDef{
 	{Name: "notebook_delete_cell", Description: "Delete a cell", HandlerName: "delete_cell"},
 	{Name: "notebook_run_cell", Description: "Run a code cell", HandlerName: "run_cell"},
 	{Name: "notebook_list_cells", Description: "List all cells in a notebook", HandlerName: "list_cells"},
-	{Name: "execute_sql", Description: "Run ad-hoc SQL queries", HandlerName: "execute_sql"},
+	{Name: "execute_sql", Description: "Run ad-hoc SQL queries (30s timeout — use create_cell + run_cell for long queries)", HandlerName: "execute_sql"},
 	{Name: "create_dashboard", Description: "Create a dashboard", HandlerName: "create_dashboard"},
 	{Name: "list_dashboards", Description: "List dashboards", HandlerName: "list_dashboards"},
 	{Name: "delete_dashboard", Description: "Delete a dashboard", HandlerName: "delete_dashboard"},

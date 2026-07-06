@@ -26,6 +26,7 @@ interface ConnectorForm {
   ssl_mode: string
   use_tls: boolean
   is_default: boolean
+  timeout_seconds: string
   table_allowlist: string
   table_denylist: string
 }
@@ -33,7 +34,7 @@ interface ConnectorForm {
 const defaultForm = (): ConnectorForm => ({
   name: '', type: 'postgres', host: 'localhost', port: '5432',
   database: '', user: '', password: '', ssl_mode: 'disable',
-  use_tls: false, is_default: false,
+  use_tls: false, is_default: false, timeout_seconds: '0',
   table_allowlist: '', table_denylist: '',
 })
 
@@ -77,6 +78,7 @@ export function ConnectorsPage() {
           ssl_mode: c.config?.ssl_mode ?? 'disable',
           use_tls: c.config?.use_tls ?? false,
           is_default: c.is_default ?? false,
+          timeout_seconds: String(c.timeout_seconds ?? 0),
           table_allowlist: (c.table_allowlist ?? []).join('\n'),
           table_denylist: (c.table_denylist ?? []).join('\n'),
         })
@@ -88,6 +90,7 @@ export function ConnectorsPage() {
   const updateConnector = useMutation({
     mutationFn: (id: string) => api.put<Connector>(`/api/v1/connectors/${id}`, {
       name: editForm.name,
+      timeout_seconds: parseInt(editForm.timeout_seconds) || 0,
       config: {
         host: editForm.host,
         port: parseInt(editForm.port),
@@ -115,6 +118,7 @@ export function ConnectorsPage() {
       name: form.name,
       type: form.type,
       is_default: form.is_default,
+      timeout_seconds: parseInt(form.timeout_seconds) || 0,
       config: {
         host: form.host,
         port: parseInt(form.port),
@@ -249,6 +253,10 @@ export function ConnectorsPage() {
                   </select>
                 </label>
               )}
+              <label style={styles.label}>Query Timeout (s)
+                <input style={styles.input} type="number" min={0} max={86400} value={form.timeout_seconds}
+                  onChange={(e) => setForm(f => ({ ...f, timeout_seconds: e.target.value }))} placeholder="0 = unlimited" />
+              </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)', gridColumn: '1 / -1' }}>
                 <input type="checkbox" checked={form.is_default ?? false}
                   onChange={e => setForm(f => ({ ...f, is_default: e.target.checked }))} />
@@ -335,6 +343,10 @@ export function ConnectorsPage() {
                   </select>
                 </label>
               )}
+              <label style={styles.label}>Query Timeout (s)
+                <input style={styles.input} type="number" min={0} max={86400} value={editForm.timeout_seconds}
+                  onChange={(e) => setEditForm(f => ({ ...f, timeout_seconds: e.target.value }))} placeholder="0 = unlimited" />
+              </label>
               <label style={{ ...styles.label, gridColumn: '1 / -1' }}>
                 Table Allowlist (regex patterns, one per line, empty = all tables)
                 <textarea
@@ -459,6 +471,7 @@ export function ConnectorsPage() {
                         ssl_mode: c.config?.ssl_mode ?? 'disable',
                         use_tls: c.config?.use_tls ?? false,
                         is_default: c.is_default ?? false,
+                        timeout_seconds: String(c.timeout_seconds ?? 0),
                         table_allowlist: (c.table_allowlist ?? []).join('\n'),
                         table_denylist: (c.table_denylist ?? []).join('\n'),
                       })
