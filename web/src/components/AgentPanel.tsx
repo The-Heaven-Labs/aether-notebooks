@@ -551,7 +551,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           case 'reconnect_sync': {
             const _fn = (tc: any) => tc?.function || tc
             const serverMsgs: ChatMessage[] = (msg.messages || []).map((m: any) => {
-              const base: ChatMessage = { id: m.id, role: m.role, content: m.content || '', images: m.image_ids?.length ? m.image_ids : undefined, created_at: m.created_at }
+              const base: ChatMessage = { id: m.id, role: m.role, content: m.content || '', reasoning: m.reasoning_content || undefined, images: m.image_ids?.length ? m.image_ids : undefined, created_at: m.created_at }
               if (m.role === 'subagent') {
                 const tc = m.tool_calls?.[0]
                 base.content = m.content || ''
