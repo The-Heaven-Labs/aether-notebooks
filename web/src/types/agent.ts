@@ -15,6 +15,7 @@ export interface Agent {
   folder_id?: string
   max_turns?: number
   max_subagents?: number
+  max_subagent_turns?: number
   model_config_params?: Record<string, unknown>
   created_by: string
   created_at: string

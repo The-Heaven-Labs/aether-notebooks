@@ -139,7 +139,7 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 		}
 	}
 
-	return SubagentResult{TaskID: taskID, Status: "completed", Result: "max turns reached"}
+	return SubagentResult{TaskID: taskID, Status: "failed", Error: "max turns reached"}
 }
 
 // RunQueuedTasks runs subagent tasks that were already inserted into the DB
@@ -159,6 +159,7 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 		return nil
 	}
 	var orgID string
+	var maxSubagentTurns int
 	if err := e.pool.QueryRow(ctx, `SELECT org_id FROM agents WHERE id = $1`, parentAgentID).Scan(&orgID); err != nil {
 		slog.Error("RunQueuedTasks: get agent org", "error", err)
 		return nil
@@ -167,6 +168,11 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 	var orgRole string
 	if err := e.pool.QueryRow(ctx, `SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2`, orgID, parentUserID).Scan(&orgRole); err != nil {
 		orgRole = "editor"
+	}
+	// Read agent's max_subagent_turns setting
+	e.pool.QueryRow(ctx, `SELECT COALESCE(max_subagent_turns, 20) FROM agents WHERE id = $1`, parentAgentID).Scan(&maxSubagentTurns)
+	if maxSubagentTurns <= 0 {
+		maxSubagentTurns = 20
 	}
 
 	sem := make(chan struct{}, MaxSubagentParallelism)
@@ -205,7 +211,7 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 			e.PublishSessionEvent(parentSessionID, statusEvent)
 
 			// Run the subagent LLM loop with the agent's tools
-			result := e.runSubagentLoop(ctx, parentSessionID, tid, g, parentUserID, orgID, orgRole, masterKey, llmClient, e.registry.List())
+			result := e.runSubagentLoop(ctx, parentSessionID, tid, g, parentUserID, orgID, orgRole, masterKey, llmClient, e.registry.List(), maxSubagentTurns)
 
 			// Update final status
 			status := "completed"
@@ -248,7 +254,7 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 
 // runSubagentLoop runs the LLM loop for a subagent task that already exists in the DB.
 // Unlike runSubagent, it does NOT insert the task record.
-func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, taskID string, goal string, parentUserID, parentOrgID, parentOrgRole string, masterKey []byte, subagentLLM *LLMClient, agentTools []*ToolDef) (result SubagentResult) {
+func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, taskID string, goal string, parentUserID, parentOrgID, parentOrgRole string, masterKey []byte, subagentLLM *LLMClient, agentTools []*ToolDef, maxTurns int) (result SubagentResult) {
 	// saveMsg saves a message to the subagent conversation immediately.
 	// For tool messages, content is saved as a JSON object with the tool
 	// name and result, which the frontend parses for display.
@@ -288,7 +294,7 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 	}
 	saveMsg("user", goal, "", nil, "")
 
-	for turn := 0; turn < MaxSubagentTurns; turn++ {
+	for turn := 0; turn < maxTurns; turn++ {
 		if subagentLLM == nil {
 			return SubagentResult{TaskID: taskID, Status: "failed", Error: "no LLM client configured for subagent"}
 		}
@@ -371,7 +377,7 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 		}
 	}
 
-	return SubagentResult{TaskID: taskID, Status: "completed", Result: "max turns reached"}
+	return SubagentResult{TaskID: taskID, Status: "failed", Error: "max turns reached"}
 }
 
 func (e *Engine) GetSubagentTasks(ctx context.Context, parentSessionID string) ([]models.SubagentTask, error) {
