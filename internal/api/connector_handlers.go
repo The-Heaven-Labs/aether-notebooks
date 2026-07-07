@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"regexp"
 
@@ -109,6 +110,18 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to create connector")
 			return
 		}
+	}
+
+	// Seed ACL entries for the creator and org admins
+	_, aclErr := s.db.Pool.Exec(ctx,
+		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		 VALUES ($1, 'connector', $2::uuid, 'user', $3, ARRAY['view','use']),
+		        ($1, 'connector', $2::uuid, 'org_role', 'admin', ARRAY['view','use'])
+		 ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
+		claims.OrgID, id, claims.UserID,
+	)
+	if aclErr != nil {
+		slog.Warn("connector ACL seeding failed", "id", id, "error", aclErr)
 	}
 
 	// Mask password in response
