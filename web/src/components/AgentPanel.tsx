@@ -120,11 +120,18 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const streamingStartedAt = useRef<string | null>(null)
   const [totalTokens, setTotalTokens] = useState<TokenBreakdown | null>(null)
   const [now, setNow] = useState(Date.now())
-  const [subagentView, setSubagentView] = useState<string | null>(null)
+  const [subagentView, setSubagentView] = useState<string | null>(() => {
+    try { return localStorage.getItem('aether:subagentView') } catch { return null }
+  })
   const subagentViewRef = useRef<string | null>(null)
   const [subagentMessages, setSubagentMessages] = useState<ChatMessage[]>([])
   const [subagentLoading, setSubagentLoading] = useState(false)
   const mainScrollRef = useRef<number>(0)
+  // Persist subagentView across page refreshes
+  useEffect(() => {
+    if (subagentView) localStorage.setItem('aether:subagentView', subagentView)
+    else localStorage.removeItem('aether:subagentView')
+  }, [subagentView])
   const subagentScrollRef = useRef<HTMLDivElement | null>(null)
   const hasPendingTools = messages.some(m => m.role === 'tool' && !m.result)
   // Auto-scroll subagent chat when new messages arrive
@@ -537,12 +544,21 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           case 'reconnect_sync': {
             const serverMsgs: ChatMessage[] = (msg.messages || []).map((m: any) => {
               const base: ChatMessage = { id: m.id, role: m.role, content: m.content || '', images: m.image_ids?.length ? m.image_ids : undefined, created_at: m.created_at }
-              if (m.tool_calls?.length) { base.content = m.tool_calls[0].name; base.params = JSON.stringify(m.tool_calls[0].arguments); base.result = m.tool_calls[0].result !== undefined ? JSON.stringify(m.tool_calls[0].result) : undefined; base.role = 'tool' }
+              if (m.role === 'subagent') {
+                const tc = m.tool_calls?.[0]
+                base.content = m.content || ''
+                base.params = JSON.stringify({ goal: tc?.name || '', status: tc?.arguments?.status || 'completed', error: tc?.arguments?.error || '' })
+                base.result = tc?.arguments?.status === 'completed' || tc?.arguments?.status === 'failed' ? JSON.stringify(tc?.arguments?.result || tc?.arguments?.status) : undefined
+              } else if (m.tool_calls?.length) {
+                base.content = m.tool_calls[0].name
+                base.params = JSON.stringify(m.tool_calls[0].arguments)
+                base.result = m.tool_calls[0].result !== undefined ? JSON.stringify(m.tool_calls[0].result) : undefined
+                base.role = 'tool'
+              }
               return base
             })
             if (serverMsgs.length > 0) setMessages(serverMsgs)
             streamingTextRef.current = ''; setCurrentStreamingText('')
-            // If there are pending tool calls without results, agent is still working
             if (serverMsgs.some(m => m.role === 'tool' && !m.result)) setIsStreaming(true)
             break
           }

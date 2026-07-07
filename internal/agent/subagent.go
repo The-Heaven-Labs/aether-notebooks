@@ -252,6 +252,12 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 			}
 			e.PublishSessionEvent(parentSessionID, completionEvent)
 
+			// Persist subagent status as an agent_message so it survives page refresh
+			// and appears in reconnect_sync / history.
+			tcJSON, _ := json.Marshal([]map[string]any{{"name": g, "arguments": map[string]any{"task_id": tid, "status": status, "result": result.Result, "error": result.Error}}})
+			e.pool.Exec(ctx, `INSERT INTO agent_messages (session_id, role, content, tool_calls, created_at) VALUES ($1, 'subagent', $2, $3, NOW())`,
+				parentSessionID, tid, tcJSON)
+
 			resultsMu.Lock()
 			allResults = append(allResults, result)
 			resultsMu.Unlock()
