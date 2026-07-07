@@ -1132,12 +1132,13 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             setSessionId(session.id)
             setShowHistory(false)
             try {
-              const msgs = await api.get<Array<{ role: string; content: string; reasoning_content?: string; image_ids?: string[]; created_at?: string }>>(`/api/v1/sessions/${session.id}/messages`)
+              const msgs = await api.get<Array<{ role: string; content: string; reasoning_content?: string; image_ids?: string[]; duration_ms?: number; created_at?: string }>>(`/api/v1/sessions/${session.id}/messages`)
               const formatted = msgs.map((m) => ({
                 role: m.role,
                 content: m.content || '',
                 reasoning: m.reasoning_content,
                 images: m.image_ids?.length ? m.image_ids : undefined,
+                duration_ms: m.duration_ms,
                 created_at: m.created_at,
               }))
               setMessages(formatted)
