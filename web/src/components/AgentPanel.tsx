@@ -1052,7 +1052,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                     {msg.created_at && ` (${Math.floor((toolNow - new Date(msg.created_at).getTime()) / 1000)}s)`}
                   </span>
                 ) : msg.duration_ms ? (
-                  <span style={{ opacity: 0.5, fontSize: 10, marginLeft: 'auto' }}>({msg.duration_ms}ms)
+                  <span style={{ opacity: 0.5, fontSize: 10, marginLeft: 'auto' }}>({msg.duration_ms}ms)</span>
                 ) : null}
               </div>
               {toolOpen && (
