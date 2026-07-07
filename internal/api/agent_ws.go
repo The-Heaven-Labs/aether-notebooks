@@ -65,9 +65,15 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := s.agentEngine.SessionStore().GetSession(r.Context(), sessionID)
+	sess, err := s.agentEngine.SessionStore().GetSession(r.Context(), sessionID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+
+	allowed, _ := s.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", sess.AgentID, "view")
+	if !allowed {
+		writeError(w, http.StatusForbidden, "access denied")
 		return
 	}
 

@@ -175,7 +175,9 @@ func (s *Server) handleDeleteSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = s.db.Pool.Exec(ctx, `DELETE FROM schedules WHERE id = $1`, schedID)
+	_, err = s.db.Pool.Exec(ctx,
+		`DELETE FROM schedules WHERE id = $1 AND notebook_id IN (SELECT id FROM notebooks WHERE org_id = $2)`,
+		schedID, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "delete failed")
 		return

@@ -116,10 +116,17 @@ func CreateProvider(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, p
 
 // GetProvider fetches and decrypts a single provider by ID.
 // Returns pgx.ErrNoRows if not found.
-func GetProvider(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, id string) (Provider, error) {
-	row := pool.QueryRow(ctx,
-		`SELECT `+selectProviderCols+` FROM sso_providers WHERE id=$1`, id,
-	)
+func GetProvider(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, id, orgID string) (Provider, error) {
+	var row pgx.Row
+	if orgID != "" {
+		row = pool.QueryRow(ctx,
+			`SELECT `+selectProviderCols+` FROM sso_providers WHERE id=$1 AND (org_id IS NULL OR org_id=$2)`, id, orgID,
+		)
+	} else {
+		row = pool.QueryRow(ctx,
+			`SELECT `+selectProviderCols+` FROM sso_providers WHERE id=$1`, id,
+		)
+	}
 
 	p, encSecret, err := scanProvider(row)
 	if err != nil {
@@ -136,7 +143,7 @@ func GetProvider(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, id s
 // GetCachedProvider loads a provider from Redis cache (60s TTL) or falls back to DB.
 // Cache key: sso:provider:{id}
 // If redisClient is nil (e.g. test environments without Redis), falls through to DB directly.
-func GetCachedProvider(ctx context.Context, pool *pgxpool.Pool, redisClient *redis.Client, masterKey []byte, id string) (Provider, error) {
+func GetCachedProvider(ctx context.Context, pool *pgxpool.Pool, redisClient *redis.Client, masterKey []byte, id, orgID string) (Provider, error) {
 	key := "sso:provider:" + id
 
 	if redisClient != nil {
@@ -150,7 +157,7 @@ func GetCachedProvider(ctx context.Context, pool *pgxpool.Pool, redisClient *red
 		// On redis.Nil or any other error, fall through to DB.
 	}
 
-	p, err := GetProvider(ctx, pool, masterKey, id)
+	p, err := GetProvider(ctx, pool, masterKey, id, orgID)
 	if err != nil {
 		return Provider{}, err
 	}

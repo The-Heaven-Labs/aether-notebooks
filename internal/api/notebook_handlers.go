@@ -75,6 +75,22 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(paramsOut, &nb.Parameters)
 	nb.FolderID = folderID
 
+	// Seed ACL entries for the creator and org admins
+	_, aclErr := s.db.Pool.Exec(ctx,
+		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		 VALUES ($1, 'notebook', $2::uuid, 'user', $3, ARRAY['view','run','edit','share','delete','create']),
+		        ($1, 'notebook', $2::uuid, 'org_role', 'admin', ARRAY['view','run','edit','share','delete','create'])
+		 ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
+		claims.OrgID, nb.ID, claims.UserID,
+	)
+	if aclErr != nil {
+		// Log but don't fail the request — the notebook was created successfully
+		s.audit.Log(ctx, audit.Entry{
+			OrgID: claims.OrgID, UserID: claims.UserID,
+			Action: "acl.seed_error", ResourceType: "notebook", ResourceID: nb.ID,
+		})
+	}
+
 	if nb.ConnectorID == "" {
 		var defaultID string
 		err := s.db.Pool.QueryRow(ctx,
@@ -351,7 +367,11 @@ func (s *Server) handleGetNotebookPermissions(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	_, _ = s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "view")
+	viewOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "view")
+	if !viewOK {
+		writeError(w, http.StatusNotFound, "notebook not found")
+		return
+	}
 	editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "edit")
 	runOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "run")
 
@@ -1022,13 +1042,6 @@ func (s *Server) handleShareNotebook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var sharingEnabled bool
-	s.db.Pool.QueryRow(ctx, `SELECT public_sharing_enabled FROM orgs WHERE id=$1`, claims.OrgID).Scan(&sharingEnabled)
-	if !sharingEnabled {
-		writeError(w, http.StatusForbidden, "public sharing is disabled for this organization")
-		return
-	}
-
 	var token, createdBy string
 	var createdAt time.Time
 	err = s.db.Pool.QueryRow(ctx,
@@ -1045,13 +1058,18 @@ func (s *Server) handleShareNotebook(w http.ResponseWriter, r *http.Request) {
 	token = hex.EncodeToString(tokenBytes)
 	createdAt = time.Now()
 
-	_, err = s.db.Pool.Exec(ctx,
+	result, err := s.db.Pool.Exec(ctx,
 		`INSERT INTO public_tokens (org_id, resource_type, resource_id, token, created_by)
-		 VALUES ($1, 'notebook', $2, $3, $4)`,
+		 SELECT $1, 'notebook', $2, $3, $4
+		 WHERE (SELECT public_sharing_enabled FROM orgs WHERE id = $1) = true`,
 		claims.OrgID, nbID, token, claims.UserID,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create share link")
+		return
+	}
+	if result.RowsAffected() == 0 {
+		writeError(w, http.StatusForbidden, "public sharing is disabled for this organization")
 		return
 	}
 

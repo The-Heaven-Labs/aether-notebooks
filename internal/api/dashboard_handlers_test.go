@@ -24,6 +24,7 @@ func TestDashboardCRUD(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/v1/dashboards", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 
@@ -38,6 +39,7 @@ func TestDashboardCRUD(t *testing.T) {
 	// List
 	req = httptest.NewRequest("GET", "/api/v1/dashboards", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -47,6 +49,7 @@ func TestDashboardCRUD(t *testing.T) {
 	// Get
 	req = httptest.NewRequest("GET", "/api/v1/dashboards/"+dashID, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -56,6 +59,7 @@ func TestDashboardCRUD(t *testing.T) {
 	// Share — generate public token
 	req = httptest.NewRequest("POST", "/api/v1/dashboards/"+dashID+"/share", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
@@ -79,6 +83,7 @@ func TestDashboardCRUD(t *testing.T) {
 	// Delete
 	req = httptest.NewRequest("DELETE", "/api/v1/dashboards/"+dashID, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {

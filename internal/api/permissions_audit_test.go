@@ -57,6 +57,7 @@ func (f *AuditFixtures) Request(t *testing.T, userKey, method, path string, body
 	}
 	req := httptest.NewRequest(method, path, r)
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

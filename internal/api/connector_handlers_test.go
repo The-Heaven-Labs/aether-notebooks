@@ -19,6 +19,7 @@ func TestHandleListConnectorDatabases(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/api/v1/connectors/"+connID+"/databases", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
 	w := httptest.NewRecorder()
 	srv.ServeHTTP(w, req)
 

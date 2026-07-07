@@ -1037,7 +1037,7 @@ func makeDeleteCellHandler(db *pgxpool.Pool) ToolHandler {
 	cellID := resolved.ID
 
 	// Auto-snapshot before destructive action
-	go EnsureAutoSnapshot(context.Background(), db, notebookID, ctx.UserID)
+	go EnsureAutoSnapshot(context.Background(), db, notebookID, ctx.UserID, ctx.OrgID)
 
 	result, err := db.Exec(ctx.Context,
 			`DELETE FROM cells WHERE id = $1 AND notebook_id = $2
@@ -1175,7 +1175,7 @@ func makeCreateSnapshotHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, err
 		}
 
-		snap, err := CreateNotebookSnapshot(ctx.Context, db, req.NotebookID, req.Name, ctx.UserID, false)
+		snap, err := CreateNotebookSnapshot(ctx.Context, db, req.NotebookID, ctx.OrgID, req.Name, ctx.UserID, false)
 		if err != nil {
 			return nil, fmt.Errorf("create snapshot: %w", err)
 		}
@@ -1318,7 +1318,7 @@ func makeDeleteNotebookHandler(db *pgxpool.Pool) ToolHandler {
 		}
 
 		// Auto-snapshot before destructive action
-		go EnsureAutoSnapshot(context.Background(), db, req.NotebookID, ctx.UserID)
+		go EnsureAutoSnapshot(context.Background(), db, req.NotebookID, ctx.UserID, ctx.OrgID)
 
 		result, err := db.Exec(ctx.Context,
 			`DELETE FROM notebooks WHERE id = $1 AND org_id = $2`,

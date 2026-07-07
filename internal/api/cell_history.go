@@ -128,6 +128,12 @@ func (s *Server) handleListCellVersions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "view")
+	if !allowed {
+		writeError(w, http.StatusNotFound, "cell not found")
+		return
+	}
+
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT cv.id, cv.cell_id, cv.source, cv.created_at, cv.created_by,
 		        u.id, u.name, u.email
@@ -194,6 +200,12 @@ func (s *Server) handleRestoreCellVersion(w http.ResponseWriter, r *http.Request
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "edit")
+	if !allowed {
+		writeError(w, http.StatusNotFound, "version not found")
 		return
 	}
 
@@ -404,7 +416,20 @@ func (s *Server) handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	snap, err := agent.CreateNotebookSnapshot(ctx, s.db.Pool, nbID, req.Name, claims.UserID, false)
+	var exists bool
+	s.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM notebooks WHERE id=$1 AND org_id=$2)`, nbID, claims.OrgID).Scan(&exists)
+	if !exists {
+		writeError(w, http.StatusNotFound, "notebook not found")
+		return
+	}
+
+	allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "view")
+	if !allowed {
+		writeError(w, http.StatusNotFound, "notebook not found")
+		return
+	}
+
+	snap, err := agent.CreateNotebookSnapshot(ctx, s.db.Pool, nbID, claims.OrgID, req.Name, claims.UserID, false)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "create snapshot failed")
 		return
@@ -430,6 +455,12 @@ func (s *Server) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
 	var exists bool
 	s.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM notebooks WHERE id=$1 AND org_id=$2)`, nbID, claims.OrgID).Scan(&exists)
 	if !exists {
+		writeError(w, http.StatusNotFound, "notebook not found")
+		return
+	}
+
+	allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "view")
+	if !allowed {
 		writeError(w, http.StatusNotFound, "notebook not found")
 		return
 	}

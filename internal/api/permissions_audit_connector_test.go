@@ -219,9 +219,9 @@ func TestConnector_TestConfig(t *testing.T) {
 		require.Equal(t, http.StatusOK, status)
 	})
 
-	t.Run("aliceA tests config — 200 (just authMW)", func(t *testing.T) {
+	t.Run("aliceA tests config — 403 (RequireRole admin)", func(t *testing.T) {
 		status, _ := f.DoRequest(t, "aliceA", "POST", "/api/v1/connectors/test", body)
-		require.Equal(t, http.StatusOK, status)
+		require.Equal(t, http.StatusForbidden, status)
 	})
 }
 

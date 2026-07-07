@@ -37,6 +37,7 @@ func TestFolderCRUD(t *testing.T) {
 	req2 := httptest.NewRequest("POST", "/api/v1/folders", bytes.NewReader(body2))
 	req2.Header.Set("Content-Type", "application/json")
 	req2.Header.Set("Authorization", "Bearer "+token)
+	req2.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec2 := httptest.NewRecorder()
 	srv.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusCreated {
@@ -49,6 +50,7 @@ func TestFolderCRUD(t *testing.T) {
 	// Get root contents
 	req3 := httptest.NewRequest("GET", "/api/v1/folders", nil)
 	req3.Header.Set("Authorization", "Bearer "+token)
+	req3.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec3 := httptest.NewRecorder()
 	srv.ServeHTTP(rec3, req3)
 	if rec3.Code != http.StatusOK {
@@ -58,6 +60,7 @@ func TestFolderCRUD(t *testing.T) {
 	// Get folder contents (has sub-folder)
 	req4 := httptest.NewRequest("GET", "/api/v1/folders/"+folderID, nil)
 	req4.Header.Set("Authorization", "Bearer "+token)
+	req4.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec4 := httptest.NewRecorder()
 	srv.ServeHTTP(rec4, req4)
 	if rec4.Code != http.StatusOK {
@@ -73,6 +76,7 @@ func TestFolderCRUD(t *testing.T) {
 	// Get ancestors breadcrumb
 	req5 := httptest.NewRequest("GET", "/api/v1/folders/"+subFolderID+"/ancestors", nil)
 	req5.Header.Set("Authorization", "Bearer "+token)
+	req5.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec5 := httptest.NewRecorder()
 	srv.ServeHTTP(rec5, req5)
 	if rec5.Code != http.StatusOK {
@@ -89,6 +93,7 @@ func TestFolderCRUD(t *testing.T) {
 	req6 := httptest.NewRequest("PUT", "/api/v1/folders/"+folderID, bytes.NewReader(renameBody))
 	req6.Header.Set("Content-Type", "application/json")
 	req6.Header.Set("Authorization", "Bearer "+token)
+	req6.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec6 := httptest.NewRecorder()
 	srv.ServeHTTP(rec6, req6)
 	if rec6.Code != http.StatusOK {
@@ -98,6 +103,7 @@ func TestFolderCRUD(t *testing.T) {
 	// Delete sub-folder (empty)
 	req7 := httptest.NewRequest("DELETE", "/api/v1/folders/"+subFolderID, nil)
 	req7.Header.Set("Authorization", "Bearer "+token)
+	req7.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec7 := httptest.NewRecorder()
 	srv.ServeHTTP(rec7, req7)
 	if rec7.Code != http.StatusNoContent {
@@ -109,6 +115,7 @@ func TestFolderCRUD(t *testing.T) {
 	req8 := httptest.NewRequest("POST", "/api/v1/folders", bytes.NewReader(body8))
 	req8.Header.Set("Content-Type", "application/json")
 	req8.Header.Set("Authorization", "Bearer "+token)
+	req8.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec8 := httptest.NewRecorder()
 	srv.ServeHTTP(rec8, req8)
 	if rec8.Code != http.StatusCreated {
@@ -118,6 +125,7 @@ func TestFolderCRUD(t *testing.T) {
 	// Delete non-empty folder without force → 409
 	req9 := httptest.NewRequest("DELETE", "/api/v1/folders/"+folderID, nil)
 	req9.Header.Set("Authorization", "Bearer "+token)
+	req9.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec9 := httptest.NewRecorder()
 	srv.ServeHTTP(rec9, req9)
 	if rec9.Code != http.StatusConflict {
@@ -127,6 +135,7 @@ func TestFolderCRUD(t *testing.T) {
 	// Force delete
 	req10 := httptest.NewRequest("DELETE", "/api/v1/folders/"+folderID+"?force=true", nil)
 	req10.Header.Set("Authorization", "Bearer "+token)
+	req10.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec10 := httptest.NewRecorder()
 	srv.ServeHTTP(rec10, req10)
 	if rec10.Code != http.StatusNoContent {

@@ -12,9 +12,9 @@ import (
 )
 
 // CreateNotebookSnapshot captures the full notebook state and returns the created snapshot.
-func CreateNotebookSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, name string, userID string, auto bool) (*models.NotebookSnapshot, error) {
+func CreateNotebookSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, orgID, name string, userID string, auto bool) (*models.NotebookSnapshot, error) {
 	var title string
-	pool.QueryRow(ctx, `SELECT title FROM notebooks WHERE id=$1`, nbID).Scan(&title)
+	pool.QueryRow(ctx, `SELECT title FROM notebooks WHERE id=$1 AND org_id=$2`, nbID, orgID).Scan(&title)
 
 	rows, err := pool.Query(ctx,
 		`SELECT id, type, language, source, position, connector_id, outputs,
@@ -86,20 +86,21 @@ func CreateNotebookSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, name 
 }
 
 // EnsureAutoSnapshot creates an auto-snapshot if none has been created in the last 5 minutes.
-func EnsureAutoSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, userID string) {
+func EnsureAutoSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, userID, orgID string) {
 	var recentAuto bool
 	pool.QueryRow(ctx,
 		`SELECT EXISTS(
-			SELECT 1 FROM notebook_snapshots
-			WHERE notebook_id=$1 AND auto=true AND created_at > NOW() - INTERVAL '5 minutes'
-		)`, nbID,
+			SELECT 1 FROM notebook_snapshots ns
+			JOIN notebooks n ON n.id = ns.notebook_id
+			WHERE ns.notebook_id=$1 AND ns.auto=true AND n.org_id=$2 AND ns.created_at > NOW() - INTERVAL '5 minutes'
+		)`, nbID, orgID,
 	).Scan(&recentAuto)
 	if recentAuto {
 		return
 	}
 
 	name := "Auto-save " + time.Now().Format("2006-01-02 15:04")
-	CreateNotebookSnapshot(ctx, pool, nbID, name, userID, true)
+	CreateNotebookSnapshot(ctx, pool, nbID, orgID, name, userID, true)
 }
 
 // RestoreNotebookSnapshot restores a notebook to the state captured in a snapshot.

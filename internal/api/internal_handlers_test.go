@@ -17,6 +17,7 @@ func TestInternalYjsEndpoints(t *testing.T) {
 
 	// GET before any state — should return 200 with empty body (no state yet)
 	req := httptest.NewRequest("GET", "/internal/yjs/"+nbID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -27,6 +28,7 @@ func TestInternalYjsEndpoints(t *testing.T) {
 	state := []byte{0x01, 0x02, 0x03, 0xAB, 0xCD}
 	req = httptest.NewRequest("PUT", "/internal/yjs/"+nbID, bytes.NewReader(state))
 	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Authorization", "Bearer "+token)
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
@@ -35,6 +37,7 @@ func TestInternalYjsEndpoints(t *testing.T) {
 
 	// GET again — should return the stored state
 	req = httptest.NewRequest("GET", "/internal/yjs/"+nbID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

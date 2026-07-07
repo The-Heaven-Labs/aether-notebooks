@@ -17,11 +17,23 @@ import (
 // @Failure 500 {object} map[string]string
 // @Router /internal/yjs/{notebook_id} [get]
 func (s *Server) handleInternalYjsGet(w http.ResponseWriter, r *http.Request) {
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		writeError(w, http.StatusUnauthorized, "missing or invalid authorization")
+		return
+	}
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	_, err := s.jwt.Validate(token)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid token")
+		return
+	}
+
 	nbID := r.PathValue("notebook_id")
 	ctx := r.Context()
 
 	var state []byte
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT state FROM yjs_documents WHERE notebook_id = $1`,
 		nbID,
 	).Scan(&state)
@@ -49,6 +61,18 @@ func (s *Server) handleInternalYjsGet(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} map[string]string
 // @Router /internal/yjs/{notebook_id} [put]
 func (s *Server) handleInternalYjsPut(w http.ResponseWriter, r *http.Request) {
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		writeError(w, http.StatusUnauthorized, "missing or invalid authorization")
+		return
+	}
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	_, err := s.jwt.Validate(token)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid token")
+		return
+	}
+
 	nbID := r.PathValue("notebook_id")
 	ctx := r.Context()
 

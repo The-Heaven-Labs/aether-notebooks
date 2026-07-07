@@ -145,7 +145,7 @@ func (s *Server) handleOrgUpdateSSOProvider(w http.ResponseWriter, r *http.Reque
 	id := r.PathValue("id")
 
 	// Verify ownership
-	existing, err := sso.GetProvider(r.Context(), s.db.Pool, s.masterKey, id)
+	existing, err := sso.GetProvider(r.Context(), s.db.Pool, s.masterKey, id, claims.OrgID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "provider not found")
@@ -229,7 +229,7 @@ func (s *Server) handleOrgDeleteSSOProvider(w http.ResponseWriter, r *http.Reque
 	id := r.PathValue("id")
 
 	// Verify ownership
-	existing, err := sso.GetProvider(r.Context(), s.db.Pool, s.masterKey, id)
+	existing, err := sso.GetProvider(r.Context(), s.db.Pool, s.masterKey, id, claims.OrgID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "provider not found")
@@ -349,7 +349,7 @@ func (s *Server) handleOrgEnablePlatformProvider(w http.ResponseWriter, r *http.
 	id := r.PathValue("id")
 
 	// Verify the provider exists and is platform-scoped
-	existing, err := sso.GetProvider(r.Context(), s.db.Pool, s.masterKey, id)
+	existing, err := sso.GetProvider(r.Context(), s.db.Pool, s.masterKey, id, claims.OrgID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "provider not found")

@@ -121,6 +121,18 @@ func (s *Server) userEmail(ctx context.Context, userID string) string {
 // @Router /api/v1/ws/notebooks/{id} [get]
 func (s *Server) handleNotebookWS(w http.ResponseWriter, r *http.Request) {
 	nbID := r.PathValue("id")
+	claims := ClaimsFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	allowed, _ := s.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "view")
+	if !allowed {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
 	raw, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Warn("ws upgrade", "error", err)

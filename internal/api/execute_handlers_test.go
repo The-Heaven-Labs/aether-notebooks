@@ -24,6 +24,7 @@ func TestExecuteCell(t *testing.T) {
 	// Execute cell
 	req := httptest.NewRequest("POST", "/api/v1/notebooks/"+nbID+"/cells/"+cellID+"/execute", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 
@@ -60,6 +61,7 @@ func TestExecuteCellLimitWithTrailingSemicolon(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/v1/notebooks/"+nbID+"/cells", bytes.NewReader(cellBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 
@@ -74,6 +76,7 @@ func TestExecuteCellLimitWithTrailingSemicolon(t *testing.T) {
 	// Execute the cell — this should succeed, not produce a "syntax error at or near LIMIT"
 	execReq := httptest.NewRequest("POST", "/api/v1/notebooks/"+nbID+"/cells/"+cellID+"/execute", nil)
 	execReq.Header.Set("Authorization", "Bearer "+token)
+	execReq.Header.Set("X-AETHER-Admin-Mode", "true")
 	execRec := httptest.NewRecorder()
 	srv.ServeHTTP(execRec, execReq)
 

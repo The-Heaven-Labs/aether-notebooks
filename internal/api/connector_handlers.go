@@ -284,21 +284,43 @@ func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Config != nil {
-		if req.Config.Password == "" {
-			var existingEnc []byte
-			if err := s.db.Pool.QueryRow(ctx,
-				`SELECT config_encrypted FROM connectors WHERE id=$1 AND org_id=$2`,
-				id, claims.OrgID,
-			).Scan(&existingEnc); err == nil {
-				if plain, err := crypto.Decrypt(existingEnc, s.masterKey); err == nil {
-					var existing models.ConnectorConfig
-					if json.Unmarshal(plain, &existing) == nil {
-						req.Config.Password = existing.Password
-					}
-				}
-			}
+		var existingEnc []byte
+		if err := s.db.Pool.QueryRow(ctx,
+			`SELECT config_encrypted FROM connectors WHERE id=$1 AND org_id=$2`,
+			id, claims.OrgID,
+		).Scan(&existingEnc); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load existing config")
+			return
 		}
-		configJSON, err := json.Marshal(req.Config)
+		plain, err := crypto.Decrypt(existingEnc, s.masterKey)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to decrypt config")
+			return
+		}
+		var existing models.ConnectorConfig
+		if err := json.Unmarshal(plain, &existing); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to parse config")
+			return
+		}
+		if req.Config.Host != "" {
+			existing.Host = req.Config.Host
+		}
+		if req.Config.Port != 0 {
+			existing.Port = req.Config.Port
+		}
+		if req.Config.User != "" {
+			existing.User = req.Config.User
+		}
+		if req.Config.Database != "" {
+			existing.Database = req.Config.Database
+		}
+		if req.Config.SSLMode != "" {
+			existing.SSLMode = req.Config.SSLMode
+		}
+		if req.Config.Password != "" {
+			existing.Password = req.Config.Password
+		}
+		configJSON, err := json.Marshal(existing)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid config")
 			return
