@@ -39,6 +39,7 @@
     "react-grid-layout": "^2.2.3",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.13.2",
+    "rehype-highlight": "^7.0.2",
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1",
     "sql-formatter": "^15.7.2",

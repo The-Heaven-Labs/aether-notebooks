@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback, memo } from 
 import { Send, Loader2, History, Copy, Check, Square, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeHighlight from 'rehype-highlight'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, getToken } from '../api/client'
 import type { Agent, AgentTaskItem, ModelConfig, TokenBreakdown, WSMessage } from '../types/agent'
@@ -119,8 +120,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const streamingReasoningRef = useRef('')
   const needsCollapseRef = useRef(false)
   const streamingStartedAt = useRef<string | null>(null)
+  const [elapsed, setElapsed] = useState(0)
+  const [thinkingOpen, setThinkingOpen] = useState(true)
   const [totalTokens, setTotalTokens] = useState<TokenBreakdown | null>(null)
-  const [now, setNow] = useState(Date.now())
   const [subagentView, setSubagentView] = useState<string | null>(() => {
     try { return localStorage.getItem('aether:subagentView') } catch { return null }
   })
@@ -182,11 +184,14 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     } catch {} finally { setLoading(false) }
   }
   useEffect(() => {
-    if (!isStreaming || !hasPendingTools) return
-    const id = setInterval(() => setNow(Date.now()), 1000)
+    if (!isStreaming || !streamingStartedAt.current) { setElapsed(0); return }
+    const id = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - new Date(streamingStartedAt.current!).getTime()) / 1000))
+    }, 1000)
     return () => clearInterval(id)
-  }, [isStreaming, hasPendingTools])
+  }, [isStreaming])
   const ts = () => new Date().toISOString()
+  const formatElapsed = (s: number) => s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
   const fmtTime = (iso?: string) => {
     if (!iso) return ''
     const d = new Date(iso)
@@ -991,11 +996,18 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     return () => handle.removeEventListener('mousedown', onMouseDown)
   }, [width, onResize])
 
-  const MemoizedChatMessage = memo(({ msg, isStreaming: _isStreaming, now }: {
-    msg: ChatMessage; isStreaming: boolean; now: number
+  const MemoizedChatMessage = memo(({ msg }: {
+    msg: ChatMessage
   }) => {
     const [thoughtOpen, setThoughtOpen] = useState(true)
     const [toolOpen, setToolOpen] = useState(false)
+    const [toolNow, setToolNow] = useState(Date.now())
+    useEffect(() => {
+      const needsTimer = (msg.role === 'tool' && !msg.result) || (msg.role === 'subagent' && !msg.result)
+      if (!needsTimer) return
+      const id = setInterval(() => setToolNow(Date.now()), 1000)
+      return () => clearInterval(id)
+    }, [msg.role, msg.result])
     return (
     <div>
       {msg.reasoning && (
@@ -1031,7 +1043,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                   <span style={{ opacity: 0.6, fontSize: 11, marginLeft: 'auto' }}>
                     <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginRight: 4 }}>●</span>
                     Working…
-                    {msg.created_at && ` (${Math.floor((now - new Date(msg.created_at).getTime()) / 1000)}s)`}
+                    {msg.created_at && ` (${Math.floor((toolNow - new Date(msg.created_at).getTime()) / 1000)}s)`}
                   </span>
                 ) : msg.duration_ms ? (
                   <span style={{ opacity: 0.5, fontSize: 10, marginLeft: 'auto' }}>({msg.duration_ms}ms)</span>
@@ -1068,7 +1080,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                     <span style={{ opacity: 0.6, fontSize: 10, marginLeft: 'auto' }}>
                       <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginRight: 4 }}>●</span>
                       Working…
-                      {msg.created_at && ` (${Math.floor((now - new Date(msg.created_at).getTime()) / 1000)}s)`}
+                      {msg.created_at && ` (${Math.floor((toolNow - new Date(msg.created_at).getTime()) / 1000)}s)`}
                     </span>
                   ) : (
                     <span style={{ marginLeft: 'auto', fontSize: 10 }}>
@@ -1092,7 +1104,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             )})()
           ) : (
             <div>
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
               {msg.role === 'assistant' && msg.duration_ms ? (
                 <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginTop: 4 }}>{msg.duration_ms}ms</div>
               ) : null}
@@ -1144,7 +1156,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           <div ref={subagentScrollRef} style={{ flex: 1, overflow: 'auto', padding: 12 }}>
             {subagentLoading && <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 20 }}>Loading…</div>}
             {subagentMessages.map((m, i) => (
-              <MemoizedChatMessage key={i} msg={m} isStreaming={false} now={now} />
+              <MemoizedChatMessage key={i} msg={m} />
             ))}
             {!subagentLoading && subagentMessages.length === 0 && (
               <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 20 }}>
@@ -1481,13 +1493,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 <MemoizedChatMessage
                   key={i}
                   msg={msg}
-                  isStreaming={isStreaming}
-                  now={now}
                 />
               ))}
               {isStreaming && !currentStreamingText && (
-                  <details open style={{ ...styles.message, ...styles.reasoningMessage }}>
-                    <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>{hasPendingTools ? 'Working' : 'Thinking'}</summary>
+                  <details open={thinkingOpen} style={{ ...styles.message, ...styles.reasoningMessage }}>
+                    <summary onClick={(e) => { e.preventDefault(); setThinkingOpen((o) => !o) }} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11, userSelect: 'none' }}>{thinkingOpen ? '▼' : '▶'} {hasPendingTools ? 'Working' : 'Thinking'} <span style={{ opacity: 0.5 }}>• {formatElapsed(elapsed)}</span></summary>
                     {streamingStartedAt.current && <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginBottom: 4 }}>{fmtTime(streamingStartedAt.current)}</div>}
                     <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>
                       {hasPendingTools ? <span style={{ color: 'var(--text-muted)' }}>Waiting for tool result…</span> : (currentStreamingReasoning || <span style={{ color: 'var(--text-muted)' }}>...</span>)}
@@ -1496,8 +1506,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 )}
               {currentStreamingText && (
               <div style={{ ...styles.message, ...styles.assistantMessage }}>
-                {streamingStartedAt.current && <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginBottom: 4 }}>{fmtTime(streamingStartedAt.current)}</div>}
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{currentStreamingText}</ReactMarkdown>
+                {streamingStartedAt.current && <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginBottom: 4 }}>{fmtTime(streamingStartedAt.current)} <span style={{ opacity: 0.5 }}>• {formatElapsed(elapsed)}</span></div>}
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={chatMarkdownComponents}>{currentStreamingText}</ReactMarkdown>
                 <span style={styles.streamingDot} />
               </div>
             )}

@@ -567,6 +567,8 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 
 func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		startTime := time.Now()
+
 		var req struct {
 			CellID string `json:"cell_id"`
 			Force  bool   `json:"force"`
@@ -666,12 +668,17 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 				})
 			}
 
-			return map[string]any{
-				"cell_id": cellID,
-				"status":  "error",
-				"error":   err.Error(),
+			totalTimeMs := time.Since(startTime).Milliseconds()
+
+		return map[string]any{
+				"cell_id":       cellID,
+				"status":        "error",
+				"error":         err.Error(),
+				"total_time_ms": totalTimeMs,
 			}, nil
 		}
+
+		totalTimeMs := time.Since(startTime).Milliseconds()
 
 		tableOutput := models.Output{Type: "table", Data: result}
 		outputs := []models.Output{tableOutput}
@@ -680,20 +687,22 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 		ctx.EmitCellOutput(cellID, outputs)
 		if ctx.BroadcastFunc != nil {
 			ctx.BroadcastFunc(notebookID, map[string]any{
-				"type":       "cell_output",
-				"cell_id":    cellID,
-				"outputs":    outputs,
-				"user_email": "agent@aether",
+				"type":          "cell_output",
+				"cell_id":       cellID,
+				"outputs":       outputs,
+				"user_email":    "agent@aether",
+				"total_time_ms": totalTimeMs,
 			})
 		}
 
 		_ = ctx.AuditLog("cell.run", "cell", cellID)
 
 		return map[string]any{
-			"cell_id": cellID,
-			"status":  "completed",
-			"rows":    len(result.Rows),
-			"columns": len(result.Columns),
+			"cell_id":       cellID,
+			"status":        "completed",
+			"rows":          len(result.Rows),
+			"columns":       len(result.Columns),
+			"total_time_ms": totalTimeMs,
 		}, nil
 	}
 }
