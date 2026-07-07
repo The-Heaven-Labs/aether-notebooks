@@ -554,12 +554,13 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 base.params = JSON.stringify(m.tool_calls[0].arguments)
                 base.result = m.tool_calls[0].result !== undefined ? JSON.stringify(m.tool_calls[0].result) : undefined
                 base.role = 'tool'
+              } else if (m.role === 'tool') {
+                base.result = m.content || ''
               }
               return base
             })
             if (serverMsgs.length > 0) setMessages(serverMsgs)
             streamingTextRef.current = ''; setCurrentStreamingText('')
-            if (serverMsgs.some(m => m.role === 'tool' && !m.result)) setIsStreaming(true)
             break
           }
           case 'done': {
