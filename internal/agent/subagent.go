@@ -199,8 +199,8 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 			}
 			e.PublishSessionEvent(parentSessionID, statusEvent)
 
-			// Run the subagent LLM loop
-			result := e.runSubagentLoop(ctx, parentSessionID, tid, g, parentUserID, orgID, masterKey, llmClient)
+			// Run the subagent LLM loop with the agent's tools
+			result := e.runSubagentLoop(ctx, parentSessionID, tid, g, parentUserID, orgID, masterKey, llmClient, e.registry.List())
 
 			// Update final status
 			status := "completed"
@@ -243,7 +243,7 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 
 // runSubagentLoop runs the LLM loop for a subagent task that already exists in the DB.
 // Unlike runSubagent, it does NOT insert the task record.
-func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, taskID string, goal string, parentUserID, parentOrgID string, masterKey []byte, subagentLLM *LLMClient) (result SubagentResult) {
+func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, taskID string, goal string, parentUserID, parentOrgID string, masterKey []byte, subagentLLM *LLMClient, agentTools []*ToolDef) (result SubagentResult) {
 	// saveMsg saves a message to the subagent conversation immediately.
 	// For tool messages, content is saved as a JSON object with the tool
 	// name and result, which the frontend parses for display.
@@ -288,7 +288,14 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 			return SubagentResult{TaskID: taskID, Status: "failed", Error: "no LLM client configured for subagent"}
 		}
 
-		resp, err := subagentLLM.Chat(ctx, messages, nil, masterKey)
+		// Build tool definitions for the subagent LLM
+		subagentTools := make([]OpenAITool, 0, len(agentTools))
+		for _, t := range agentTools {
+			if oat, err := t.ToOpenAITool(); err == nil {
+				subagentTools = append(subagentTools, oat)
+			}
+		}
+		resp, err := subagentLLM.Chat(ctx, messages, subagentTools, masterKey)
 		if err != nil {
 			errMsg := fmt.Sprintf("Error: %s", err.Error())
 			messages = append(messages, ChatMessage{Role: "assistant", Content: errMsg})
