@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -812,6 +813,7 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 		FROM agent_messages WHERE session_id = $1 ORDER BY created_at ASC
 	`, sessionID)
 	if err != nil {
+		slog.Error("get session messages query failed", "session_id", sessionID, "error", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -828,7 +830,11 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 		var tokensInput, tokensOutput *int
 		var durationMs int
 		var createdAt time.Time
-		rows.Scan(&id, &role, &content, &toolCalls, &toolCallID, &reasoning, &imageIDs, &tokensInput, &tokensOutput, &durationMs, &createdAt)
+		if err := rows.Scan(&id, &role, &content, &toolCalls, &toolCallID, &reasoning, &imageIDs, &tokensInput, &tokensOutput, &durationMs, &createdAt); err != nil {
+			slog.Error("get session messages scan failed", "session_id", sessionID, "error", err)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		msg := map[string]any{
 			"id":         id,
 			"role":       role,
@@ -862,6 +868,7 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 	}
 
 	if err := rows.Err(); err != nil {
+		slog.Error("get session messages rows iteration error", "session_id", sessionID, "error", err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
