@@ -125,15 +125,14 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const [subagentMessages, setSubagentMessages] = useState<ChatMessage[]>([])
   const [subagentLoading, setSubagentLoading] = useState(false)
   const mainScrollRef = useRef<number>(0)
-  // Poll for subagent messages every 2s while the detail view is open
-  useEffect(() => {
-    if (!subagentView) return
-    const id = setInterval(() => {
-      fetchSubagentMessages(subagentView, setSubagentMessages, () => {})
-    }, 2000)
-    return () => clearInterval(id)
-  }, [subagentView])
+  const subagentScrollRef = useRef<HTMLDivElement | null>(null)
   const hasPendingTools = messages.some(m => m.role === 'tool' && !m.result)
+  // Auto-scroll subagent chat when new messages arrive
+  useEffect(() => {
+    if (subagentScrollRef.current) {
+      subagentScrollRef.current.scrollTop = subagentScrollRef.current.scrollHeight
+    }
+  }, [subagentMessages])
   const fetchSubagentMessages = async (taskId: string, setter: (msgs: ChatMessage[]) => void, setLoading: (v: boolean) => void) => {
     setLoading(true)
     try {
@@ -1058,7 +1057,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               Copy chat
             </button>
           </div>
-          <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+          <div ref={subagentScrollRef} style={{ flex: 1, overflow: 'auto', padding: 12 }}>
             {subagentLoading && <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 20 }}>Loading…</div>}
             {subagentMessages.map((m, i) => (
               <MemoizedChatMessage key={i} msg={m} isStreaming={false} now={now} />
