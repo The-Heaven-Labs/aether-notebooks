@@ -148,7 +148,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
         if (m.role === 'assistant' && m.tool_calls?.length) {
           const entries: ChatMessage[] = []
           if (m.reasoning_content || m.content) {
-            entries.push({ role: 'assistant', content: m.content || '', reasoning: m.reasoning_content || undefined, created_at: m.created_at })
+            const c = m.content || m.reasoning_content || ''
+            entries.push({ role: 'assistant', content: c, reasoning: c === m.reasoning_content ? undefined : (m.reasoning_content || undefined), created_at: m.created_at })
           }
           return entries
         }
@@ -164,10 +165,13 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           return [{ role: 'tool', content: name, params, result, created_at: m.created_at }]
         }
         // Everything else (user messages, regular assistant)
+        // If the assistant's content is empty but reasoning has the final text,
+        // show reasoning as main content (DeepSeek puts final text in reasoning)
+        const finalContent = m.content || (!m.tool_calls?.length ? (m.reasoning_content || '') : '')
         return [{
           role: m.role,
-          content: m.content || '',
-          reasoning: m.reasoning_content || undefined,
+          content: finalContent,
+          reasoning: (finalContent === m.reasoning_content) ? undefined : (m.reasoning_content || undefined),
           created_at: m.created_at,
         }]
       }))
@@ -559,7 +563,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 // Assistant with tool_calls → keep reasoning + content
                 if (msg.role === 'assistant' && msg.tool_calls?.length) {
                   if (msg.reasoning_content || msg.content) {
-                    next.push({ role: 'assistant', content: msg.content || '', reasoning: msg.reasoning_content || undefined, created_at: new Date().toISOString() })
+                    const c = msg.content || msg.reasoning_content || ''
+                    next.push({ role: 'assistant', content: c, reasoning: c === msg.reasoning_content ? undefined : (msg.reasoning_content || undefined), created_at: new Date().toISOString() })
                   }
                 } else if (msg.role === 'tool') {
                   let name = 'tool'
@@ -570,7 +575,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                   const params = f?.arguments ? (typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)) : undefined
                   next.push({ role: 'tool', content: name, params, result, created_at: new Date().toISOString() })
                 } else {
-                  next.push({ role: msg.role, content: msg.content || '', reasoning: msg.reasoning_content || undefined, created_at: new Date().toISOString() })
+                  const c = msg.content || (!msg.tool_calls?.length ? (msg.reasoning_content || '') : '')
+                  next.push({ role: msg.role, content: c, reasoning: c === msg.reasoning_content ? undefined : (msg.reasoning_content || undefined), created_at: new Date().toISOString() })
                 }
                 return next
               })
