@@ -20,6 +20,8 @@ interface AgentForm {
   tool_ids: string[]
   mcp_server_ids: string[]
   max_turns: number
+  max_subagents: number
+  max_subagent_turns: number
 }
 
 const emptyForm = (): AgentForm => ({
@@ -32,6 +34,8 @@ const emptyForm = (): AgentForm => ({
   tool_ids: [],
   mcp_server_ids: [],
   max_turns: 90,
+  max_subagents: 5,
+  max_subagent_turns: 20,
 })
 
 export function AgentsPage() {
@@ -82,6 +86,8 @@ export function AgentsPage() {
       tool_ids: form.tool_ids,
       mcp_server_ids: form.mcp_server_ids,
       max_turns: form.max_turns || undefined,
+      max_subagents: form.max_subagents || undefined,
+      max_subagent_turns: form.max_subagent_turns || undefined,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agents'] })
@@ -103,6 +109,8 @@ export function AgentsPage() {
       tool_ids: form.tool_ids,
       mcp_server_ids: form.mcp_server_ids,
       max_turns: form.max_turns || undefined,
+      max_subagents: form.max_subagents || undefined,
+      max_subagent_turns: form.max_subagent_turns || undefined,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agents'] })
@@ -131,6 +139,8 @@ export function AgentsPage() {
       tool_ids: agent.tool_ids ?? [],
       mcp_server_ids: agent.mcp_server_ids ?? [],
       max_turns: agent.max_turns ?? 90,
+      max_subagents: agent.max_subagents ?? 5,
+      max_subagent_turns: agent.max_subagent_turns ?? 20,
     })
   }
 
@@ -338,14 +348,36 @@ function AgentFormFields({ form, setForm, modelConfigs, skills, tools, mcpServer
       </label>
       <label style={styles.label}>Max Tool Turns
         <input
-          type="number"
+          type="text"
           style={styles.input}
           value={form.max_turns}
-          min={1}
-          max={200}
+         
+         
           onChange={e => setForm(f => ({ ...f, max_turns: parseInt(e.target.value) || 90 }))}
         />
         <span style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Default: 90, Max: 200</span>
+      </label>
+      <label style={styles.label}>Max Sub-Agents
+        <input
+          type="text"
+          style={styles.input}
+          value={form.max_subagents}
+         
+         
+          onChange={e => setForm(f => ({ ...f, max_subagents: parseInt(e.target.value) || 5 }))}
+        />
+        <span style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Default: 5, Max: 20</span>
+      </label>
+      <label style={styles.label}>Max Sub-Agent Turns
+        <input
+          type="text"
+          style={styles.input}
+          value={form.max_subagent_turns}
+         
+         
+          onChange={e => setForm(f => ({ ...f, max_subagent_turns: parseInt(e.target.value) || 20 }))}
+        />
+        <span style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Default: 20, Max: 200</span>
       </label>
 
       {/* Skills — searchable checkbox grid */}

@@ -95,7 +95,7 @@ function InputWidget({ widget }: { widget: AnyWidget }) {
       <div style={inputStyles.wrapper}>
         <label style={inputStyles.label}>{label}</label>
         <input
-          type="number"
+          type="text"
           style={inputStyles.input}
           placeholder={config.placeholder ?? ''}
           onChange={(e) => setParam(paramName, e.target.value)}
@@ -549,9 +549,9 @@ function DashboardContent({ id }: { id: string }) {
           {refreshCustom && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 4 }}>
               <input
-                type="number"
-                min={0}
-                max={86400}
+                type="text"
+               
+               
                 style={{
                   width: 72, fontSize: 12, padding: '4px 6px', border: '1px solid var(--border)',
                   borderRadius: 4, background: 'var(--bg-input)', color: 'var(--text-secondary)',

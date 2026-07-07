@@ -224,7 +224,7 @@ export function ConnectorsPage() {
                 <input style={styles.input} value={form.host} onChange={setField('host')} />
               </label>
               <label style={styles.label}>Port
-                <input style={styles.input} type="number" min={1} max={65535} value={form.port} onChange={setField('port')} />
+                <input style={styles.input} type="text" value={form.port} onChange={setField('port')} />
               </label>
               {(form.type === 'postgres' || form.type === 'clickhouse') && (
                 <label style={styles.label}>Database
@@ -254,7 +254,7 @@ export function ConnectorsPage() {
                 </label>
               )}
               <label style={styles.label}>Query Timeout (s)
-                <input style={styles.input} type="number" min={0} max={86400} value={form.timeout_seconds}
+                <input style={styles.input} type="text" value={form.timeout_seconds}
                   onChange={(e) => setForm(f => ({ ...f, timeout_seconds: e.target.value }))} placeholder="0 = unlimited" />
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)', gridColumn: '1 / -1' }}>
@@ -314,7 +314,7 @@ export function ConnectorsPage() {
                 <input style={styles.input} value={editForm.host} onChange={(e) => setEditForm(f => ({ ...f, host: e.target.value }))} />
               </label>
               <label style={styles.label}>Port
-                <input style={styles.input} type="number" min={1} max={65535} value={editForm.port} onChange={(e) => setEditForm(f => ({ ...f, port: e.target.value }))} />
+                <input style={styles.input} type="text" value={editForm.port} onChange={(e) => setEditForm(f => ({ ...f, port: e.target.value }))} />
               </label>
               {(editForm.type === 'postgres' || editForm.type === 'clickhouse') && (
                 <label style={styles.label}>Database
@@ -344,7 +344,7 @@ export function ConnectorsPage() {
                 </label>
               )}
               <label style={styles.label}>Query Timeout (s)
-                <input style={styles.input} type="number" min={0} max={86400} value={editForm.timeout_seconds}
+                <input style={styles.input} type="text" value={editForm.timeout_seconds}
                   onChange={(e) => setEditForm(f => ({ ...f, timeout_seconds: e.target.value }))} placeholder="0 = unlimited" />
               </label>
               <label style={{ ...styles.label, gridColumn: '1 / -1' }}>

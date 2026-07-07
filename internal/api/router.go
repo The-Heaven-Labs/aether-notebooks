@@ -356,6 +356,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/agents/{id}/sessions", authMW(http.HandlerFunc(ah.handleListSessions)))
 	s.mux.Handle("GET /api/v1/sessions/{session_id}", authMW(http.HandlerFunc(ah.handleGetSession)))
 	s.mux.Handle("GET /api/v1/sessions/{session_id}/messages", authMW(http.HandlerFunc(ah.handleGetSessionMessages)))
+	s.mux.Handle("GET /api/v1/agents/subagent/{task_id}/messages", authMW(http.HandlerFunc(ah.handleGetSubagentMessages)))
 	s.mux.Handle("PATCH /api/v1/sessions/{session_id}/title", authMW(http.HandlerFunc(ah.handleUpdateSessionTitle)))
 	mch := modelConfigHandlers{server: s}
 	s.mux.Handle("GET /api/v1/model-configs", authMW(http.HandlerFunc(mch.handleList)))

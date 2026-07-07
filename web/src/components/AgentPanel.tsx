@@ -66,6 +66,7 @@ interface AgentPanelProps {
 
 const WS_URL = (import.meta.env.VITE_WS_URL || 'ws://localhost:8088') + '/api/v1/ws/agents/'
 const LAST_AGENT_KEY = 'aether:lastAgentId'
+const LAST_SESSION_KEY = 'aether:lastSessionId'
 const CHAT_STATE_KEY = 'aether:agentChat:'
 
 interface ChatMessage {
@@ -76,6 +77,7 @@ interface ChatMessage {
   params?: string
   result?: string
   images?: string[]
+  duration_ms?: number
   created_at?: string
 }
 
@@ -103,6 +105,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const [_sessionId, _setSessionId] = useState<string | null>(null)
   const setSessionId = useCallback((sid: string | null) => {
     sessionIdRef.current = sid
+    if (sid) localStorage.setItem(LAST_SESSION_KEY, sid)
     _setSessionId(sid)
   }, [])
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -118,7 +121,66 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const streamingStartedAt = useRef<string | null>(null)
   const [totalTokens, setTotalTokens] = useState<TokenBreakdown | null>(null)
   const [now, setNow] = useState(Date.now())
+  const [subagentView, setSubagentView] = useState<string | null>(() => {
+    try { return localStorage.getItem('aether:subagentView') } catch { return null }
+  })
+  const subagentViewRef = useRef<string | null>(null)
+  const [subagentMessages, setSubagentMessages] = useState<ChatMessage[]>([])
+  const [subagentTokens, setSubagentTokens] = useState<Record<string, {input: number, output: number}>>({})
+  const [subagentLoading, setSubagentLoading] = useState(false)
+  const mainScrollRef = useRef<number>(0)
+  // Persist subagentView across page refreshes
+  useEffect(() => {
+    if (subagentView) localStorage.setItem('aether:subagentView', subagentView)
+    else localStorage.removeItem('aether:subagentView')
+  }, [subagentView])
+  const subagentScrollRef = useRef<HTMLDivElement | null>(null)
   const hasPendingTools = messages.some(m => m.role === 'tool' && !m.result)
+  // Auto-scroll subagent chat when new messages arrive
+  useEffect(() => {
+    if (subagentScrollRef.current) {
+      subagentScrollRef.current.scrollTop = subagentScrollRef.current.scrollHeight
+    }
+  }, [subagentMessages])
+  const fetchSubagentMessages = async (taskId: string, setter: (msgs: ChatMessage[]) => void, setLoading: (v: boolean) => void) => {
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/v1/agents/subagent/${taskId}/messages`, {
+        headers: { Authorization: 'Bearer ' + getToken() }
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      setter(data.flatMap((m: any) => {
+        const fn = (tc: any) => tc.function || tc
+        if (m.role === 'assistant' && m.tool_calls?.length) {
+          const entries: ChatMessage[] = []
+          if (m.reasoning_content || m.content) {
+            const c = m.content || m.reasoning_content || ''
+            entries.push({ role: 'assistant', content: c, reasoning: c === m.reasoning_content ? undefined : (m.reasoning_content || undefined), duration_ms: m.duration_ms, created_at: m.created_at })
+          }
+          return entries
+        }
+        if (m.role === 'tool') {
+          let name = 'tool'
+          let params: string | undefined
+          let result = m.content || ''
+          try { const p = JSON.parse(m.content); if (p.name) { name = p.name; result = p.result || result } } catch {}
+          const f = fn(m.tool_calls?.[0])
+          if (f?.name) name = f.name
+          if (f?.arguments) params = typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)
+          return [{ role: 'tool', content: name, params, result, duration_ms: m.duration_ms, created_at: m.created_at }]
+        }
+        const finalContent = m.content || (!m.tool_calls?.length ? (m.reasoning_content || '') : '')
+        return [{
+          role: m.role,
+          content: finalContent,
+          reasoning: (finalContent === m.reasoning_content) ? undefined : (m.reasoning_content || undefined),
+          duration_ms: m.duration_ms,
+          created_at: m.created_at,
+        }]
+      }))
+    } catch {} finally { setLoading(false) }
+  }
   useEffect(() => {
     if (!isStreaming || !hasPendingTools) return
     const id = setInterval(() => setNow(Date.now()), 1000)
@@ -358,6 +420,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   useEffect(() => {
     if (!selectedAgent && agents.length > 0 && !isLoadingAgents) {
       const savedState = loadChatState()
+      const lastSessionId = localStorage.getItem(LAST_SESSION_KEY)
+
+      // 1) Full restore: saved state with matching agent + messages
       if (savedState && savedState.messages && savedState.messages.length > 0) {
         const agent = agents.find((a) => a.id === savedState.agentId)
         if (agent) {
@@ -372,6 +437,21 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           return
         }
       }
+
+      // 2) Reconnect to last session even without saved messages
+      if (lastSessionId && savedState?.agentId) {
+        const agent = agents.find((a) => a.id === savedState.agentId)
+        if (agent) {
+          setSelectedAgent(agent)
+          setSessionId(lastSessionId)
+          setMessages([])
+          forceScrollRef.current = true
+          connectWebSocket(lastSessionId)
+          return
+        }
+      }
+
+      // 3) Fallback: start a brand new session
       const lastId = localStorage.getItem(LAST_AGENT_KEY)
       if (lastId) {
         const agent = agents.find((a) => a.id === lastId)
@@ -408,6 +488,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
   const clearChatState = () => {
     try { localStorage.removeItem(chatStateKey) } catch { /* ignore */ }
+    setSubagentTokens({})
   }
 
   const connectWebSocket = useCallback((sid: string) => {
@@ -441,7 +522,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           case 'reasoning':
             setIsStreaming(true); appendStreamingReasoning(msg.data); break
           case 'tool_call':
-            setMessages((prev) => [...prev, { role: 'tool', content: msg.tool, params: msg.params, reasoning: msg.reasoning || streamingReasoningRef.current || undefined, created_at: ts() }])
+            setMessages((prev) => [...prev, { role: 'tool', content: msg.tool, params: msg.params, reasoning: msg.reasoning || streamingReasoningRef.current || undefined, duration_ms: msg.duration_ms, created_at: ts() }])
             if (streamingReasoningRef.current) { needsCollapseRef.current = true; updateStreamingReasoning('') }
             break
           case 'tool_confirm_required':
@@ -452,16 +533,33 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             }
             break
           case 'tool_result':
-            setMessages((prev) => { const updated = [...prev]; for (let i = updated.length - 1; i >= 0; i--) { if (updated[i].role === 'tool' && updated[i].content === msg.tool) { updated[i] = { ...updated[i], params: msg.params, result: msg.error || msg.result }; break } }; return updated }); break
+            setMessages((prev) => { const updated = [...prev]; for (let i = updated.length - 1; i >= 0; i--) { if (updated[i].role === 'tool' && updated[i].content === msg.tool) { updated[i] = { ...updated[i], params: msg.params, result: msg.error || msg.result, duration_ms: msg.duration_ms }; break } }; return updated }); break
           case 'cell_created':
             if (notebookId) queryClient.invalidateQueries({ queryKey: ['notebook', notebookId] }); scrollToCell(msg.cell_id); break
           case 'cell_output':
             if (notebookId) queryClient.setQueryData(['notebook', notebookId], (old: any) => old ? { ...old, cells: old.cells.map((c: any) => c.id === msg.cell_id ? { ...c, outputs: msg.outputs as any[] } : c) } : old); scrollToCell(msg.cell_id); break
           case 'cell_updated': scrollToCell(msg.cell_id); break
           case 'reconnect_sync': {
+            const _fn = (tc: any) => tc?.function || tc
             const serverMsgs: ChatMessage[] = (msg.messages || []).map((m: any) => {
               const base: ChatMessage = { id: m.id, role: m.role, content: m.content || '', images: m.image_ids?.length ? m.image_ids : undefined, created_at: m.created_at }
-              if (m.tool_calls?.length) { base.content = m.tool_calls[0].name; base.params = JSON.stringify(m.tool_calls[0].arguments); base.result = m.tool_calls[0].result !== undefined ? JSON.stringify(m.tool_calls[0].result) : undefined; base.role = 'tool' }
+              if (m.role === 'subagent') {
+                const tc = m.tool_calls?.[0]
+                base.content = m.content || ''
+                base.params = JSON.stringify({ goal: tc?.name || '', status: tc?.arguments?.status || 'completed', error: tc?.arguments?.error || '' })
+                base.result = tc?.arguments?.status === 'completed' || tc?.arguments?.status === 'failed' ? JSON.stringify(tc?.arguments?.result || tc?.arguments?.status) : undefined
+              } else if (m.tool_calls?.length) {
+                const tc = _fn(m.tool_calls[0])
+                base.content = tc.name || 'tool'
+                base.params = tc.arguments ? (typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments)) : undefined
+                base.result = m.tool_calls[0].result !== undefined ? JSON.stringify(m.tool_calls[0].result) : undefined
+                base.role = 'tool'
+                base.duration_ms = m.duration_ms
+              } else if (m.role === 'tool') {
+                base.result = m.content || ''
+                base.duration_ms = m.duration_ms
+              }
+              if (m.duration_ms) base.duration_ms = m.duration_ms
               return base
             })
             if (serverMsgs.length > 0) setMessages(serverMsgs)
@@ -470,13 +568,76 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           }
           case 'done': {
             setIsStreaming(false); updateStreamingReasoning(''); needsCollapseRef.current = false
-            const finalText = streamingTextRef.current
-            if (finalText) { setMessages((prev) => [...prev, { role: 'assistant', content: finalText, reasoning: ((msg as any).data?.reasoning as string) || undefined, created_at: ts() }]); streamingTextRef.current = ''; setCurrentStreamingText('') }
-            else if (msg.data && 'content' in msg.data && msg.data.content) { setMessages((prev) => [...prev, { role: 'assistant', content: (msg.data as any).content, reasoning: ((msg.data as any)?.reasoning as string) || undefined, created_at: ts() }]) }
             const tk = (msg as any).data?.tokens as TokenBreakdown | undefined
-            if (tk && typeof tk.input === 'number') setTotalTokens(prev => ({ input: (prev?.input || 0) + tk.input, output: (prev?.output || 0) + tk.output, reasoning: (prev?.reasoning || 0) + (tk.reasoning || 0), cache_read: (prev?.cache_read || 0) + (tk.cache_read || 0), model_calls: (prev?.model_calls || 0) + (tk.model_calls || 0), system_prompt: (prev?.system_prompt || 0) + (tk.system_prompt || 0), skill_override: (prev?.skill_override || 0) + (tk.skill_override || 0), history: (prev?.history || 0) + (tk.history || 0), user_message: (prev?.user_message || 0) + (tk.user_message || 0), tool_definitions: (prev?.tool_definitions || 0) + (tk.tool_definitions || 0), tool_calls: (prev?.tool_calls || 0) + (tk.tool_calls || 0), tool_results: (prev?.tool_results || 0) + (tk.tool_results || 0) }))
+            const dm = tk?.duration_ms
+            const finalText = streamingTextRef.current
+            if (finalText) { setMessages((prev) => [...prev, { role: 'assistant', content: finalText, reasoning: ((msg as any).data?.reasoning as string) || undefined, duration_ms: dm, created_at: ts() }]); streamingTextRef.current = ''; setCurrentStreamingText('') }
+            else if (msg.data && 'content' in msg.data && msg.data.content) { setMessages((prev) => [...prev, { role: 'assistant', content: (msg.data as any).content, reasoning: ((msg.data as any)?.reasoning as string) || undefined, duration_ms: dm, created_at: ts() }]) }
+            if (tk && typeof tk.input === 'number') setTotalTokens(prev => ({ input: (prev?.input || 0) + tk.input, output: (prev?.output || 0) + tk.output, reasoning: (prev?.reasoning || 0) + (tk.reasoning || 0), cache_read: (prev?.cache_read || 0) + (tk.cache_read || 0), model_calls: (prev?.model_calls || 0) + (tk.model_calls || 0), system_prompt: (prev?.system_prompt || 0) + (tk.system_prompt || 0), skill_override: (prev?.skill_override || 0) + (tk.skill_override || 0), history: (prev?.history || 0) + (tk.history || 0), user_message: (prev?.user_message || 0) + (tk.user_message || 0), tool_definitions: (prev?.tool_definitions || 0) + (tk.tool_definitions || 0), tool_calls: (prev?.tool_calls || 0) + (tk.tool_calls || 0), tool_results: (prev?.tool_results || 0) + (tk.tool_results || 0), subagent_input: prev?.subagent_input, subagent_output: prev?.subagent_output }))
             setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50); break
           }
+          case 'subagent_message':
+            if (subagentViewRef.current === msg.task_id) {
+              const fn = (tc: any) => tc?.function || tc
+              setSubagentMessages((prev) => {
+                const next = [...prev]
+                if (msg.role === 'assistant' && msg.tool_calls?.length) {
+                  if (msg.reasoning_content || msg.content) {
+                    const c = msg.content || msg.reasoning_content || ''
+                    next.push({ role: 'assistant', content: c, reasoning: c === msg.reasoning_content ? undefined : (msg.reasoning_content || undefined), duration_ms: msg.duration_ms, created_at: new Date().toISOString() })
+                  }
+                } else if (msg.role === 'tool') {
+                  let name = 'tool'
+                  let result = msg.content || ''
+                  try { const p = JSON.parse(msg.content); if (p.name) { name = p.name; result = p.result || result } } catch {}
+                  const f = fn(msg.tool_calls?.[0])
+                  if (f?.name) name = f.name
+                  const params = f?.arguments ? (typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)) : undefined
+                  next.push({ role: 'tool', content: name, params, result, duration_ms: msg.duration_ms, created_at: new Date().toISOString() })
+                } else {
+                  const c = msg.content || (!msg.tool_calls?.length ? (msg.reasoning_content || '') : '')
+                  next.push({ role: msg.role, content: c, reasoning: c === msg.reasoning_content ? undefined : (msg.reasoning_content || undefined), duration_ms: msg.duration_ms, created_at: new Date().toISOString() })
+                }
+                return next
+              })
+            }
+            break
+          case 'subagent_status':
+            if (msg.tokens_input || msg.tokens_output) {
+              setSubagentTokens(prev => ({ ...prev, [msg.task_id]: { input: msg.tokens_input || 0, output: msg.tokens_output || 0 } }))
+              setTotalTokens(prev => ({
+                input: prev?.input || 0,
+                output: prev?.output || 0,
+                reasoning: prev?.reasoning || 0,
+                cache_read: prev?.cache_read || 0,
+                model_calls: (prev?.model_calls || 0) + 1,
+                system_prompt: prev?.system_prompt || 0,
+                skill_override: prev?.skill_override || 0,
+                history: prev?.history || 0,
+                user_message: prev?.user_message || 0,
+                tool_definitions: prev?.tool_definitions || 0,
+                tool_calls: prev?.tool_calls || 0,
+                tool_results: prev?.tool_results || 0,
+                subagent_input: (prev?.subagent_input || 0) + (msg.tokens_input || 0),
+                subagent_output: (prev?.subagent_output || 0) + (msg.tokens_output || 0),
+              }))
+            }
+            setMessages((prev) => {
+              const existing = prev.findIndex(m => m.role === 'subagent' && m.content === msg.task_id)
+              const subagentMsg: ChatMessage = {
+                role: 'subagent', content: msg.task_id,
+                params: JSON.stringify({ goal: msg.goal, status: msg.status, error: msg.error }),
+                result: msg.status === 'completed' || msg.status === 'failed' ? JSON.stringify(msg.result || msg.status) : undefined,
+                duration_ms: msg.duration_ms,
+                created_at: ts(),
+              }
+              if (existing >= 0) {
+                const updated = [...prev]
+                updated[existing] = subagentMsg
+                return updated
+              }
+              return [...prev, subagentMsg]
+            }); break
           case 'error':
             setMessages((prev) => [...prev, { role: 'assistant', content: 'Error: ' + msg.message, created_at: ts() }]); setIsStreaming(false); updateStreamingReasoning(''); needsCollapseRef.current = false; setTasks((prev) => prev.map((t) => t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t)); setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50); break
           case 'cancelled':
@@ -502,11 +663,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             })
             setMessages(conv); setTasks([])
             const ti = sm.reduce((s: number, m: any) => s + (m.tokens_input || 0), 0); const to = sm.reduce((s: number, m: any) => s + (m.tokens_output || 0), 0); const tr = sm.reduce((s: number, m: any) => s + (m.tokens_reasoning || 0), 0)
-            if (ti > 0 || to > 0) setTotalTokens({ input: ti, output: to, reasoning: tr, cache_read: 0, model_calls: 0, system_prompt: 0, skill_override: 0, history: 0, user_message: 0, tool_definitions: 0, tool_calls: 0, tool_results: 0 })
+            if (ti > 0 || to > 0) setTotalTokens(prev => ({ input: ti, output: to, reasoning: tr, cache_read: 0, model_calls: 0, system_prompt: 0, skill_override: 0, history: 0, user_message: 0, tool_definitions: 0, tool_calls: 0, tool_results: 0, subagent_input: prev?.subagent_input || 0, subagent_output: prev?.subagent_output || 0 }))
             break
           }
           case 'token_update':
-            setTotalTokens(prev => { const t = msg.tokens; return { input: t?.input ?? (prev?.input || 0), output: t?.output ?? (prev?.output || 0), reasoning: t?.reasoning ?? (prev?.reasoning || 0), cache_read: t?.cache_read ?? (prev?.cache_read || 0), model_calls: t?.model_calls ?? (prev?.model_calls || 0), system_prompt: t?.system_prompt ?? (prev?.system_prompt || 0), skill_override: t?.skill_override ?? (prev?.skill_override || 0), history: t?.history ?? (prev?.history || 0), user_message: t?.user_message ?? (prev?.user_message || 0), tool_definitions: t?.tool_definitions ?? (prev?.tool_definitions || 0), tool_calls: t?.tool_calls ?? (prev?.tool_calls || 0), tool_results: t?.tool_results ?? (prev?.tool_results || 0) } }); break
+            setTotalTokens(prev => { const t = msg.tokens; return { input: t?.input ?? (prev?.input || 0), output: t?.output ?? (prev?.output || 0), reasoning: t?.reasoning ?? (prev?.reasoning || 0), cache_read: t?.cache_read ?? (prev?.cache_read || 0), model_calls: t?.model_calls ?? (prev?.model_calls || 0), system_prompt: t?.system_prompt ?? (prev?.system_prompt || 0), skill_override: t?.skill_override ?? (prev?.skill_override || 0), history: t?.history ?? (prev?.history || 0), user_message: t?.user_message ?? (prev?.user_message || 0), tool_definitions: t?.tool_definitions ?? (prev?.tool_definitions || 0), tool_calls: t?.tool_calls ?? (prev?.tool_calls || 0), tool_results: t?.tool_results ?? (prev?.tool_results || 0), subagent_input: prev?.subagent_input, subagent_output: prev?.subagent_output } }); break
           case 'tasks_updated':
             setTasks((prev) => { const inc = msg.data as AgentTaskItem[]; const m = [...prev]; for (const t of inc) { const idx = m.findIndex((x) => x.id === t.id); if (idx >= 0) m[idx] = { ...m[idx], ...t, ...(t.description ? {} : { description: m[idx].description }) }; else m.push(t) }; return m }); break
         }
@@ -647,17 +808,17 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
         }
       } else if (msg.role === 'assistant') {
         if (msg.reasoning) {
-          lines.push(`> **Thinking:** ${msg.reasoning}`)
+          const dur = msg.duration_ms ? ` (${msg.duration_ms}ms)` : ''
+          lines.push(`> **Thinking:${dur}** ${msg.reasoning}`)
         }
-        lines.push(`**Assistant:** ${msg.content}`)
+        const dur = msg.duration_ms ? ` (${msg.duration_ms}ms)` : ''
+        lines.push(`**Assistant:${dur}** ${msg.content}`)
         if (msg.images?.length) {
           lines.push(...msg.images.map(() => '  _[Image]_'))
         }
       } else if (msg.role === 'tool') {
-        if (msg.reasoning) {
-          lines.push(`> **Thinking:** ${msg.reasoning}`)
-        }
-        lines.push(`**Tool: ${msg.content}**`)
+        const dur = msg.duration_ms ? ` (${msg.duration_ms}ms)` : ''
+        lines.push(`**Tool: ${msg.content}${dur}**`)
         if (msg.params) lines.push(`  Params: \`${msg.params}\``)
         if (msg.result) lines.push(`  Result: \`${msg.result.length > 500 ? msg.result.slice(0, 500) + '...' : msg.result}\``)
       }
@@ -839,8 +1000,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     <div>
       {msg.reasoning && (
         <div style={{ ...styles.message, ...styles.reasoningMessage, marginBottom: 4 }}>
-          <div onClick={() => setThoughtOpen((o) => !o)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11, userSelect: 'none' }}>
-            {thoughtOpen ? '▼' : '▶'} Thinking
+          <div onClick={() => setThoughtOpen((o) => !o)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11, userSelect: 'none', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span>{thoughtOpen ? '▼' : '▶'} Thinking</span>
+            {msg.duration_ms ? <span style={{ opacity: 0.5, fontSize: 10 }}>({msg.duration_ms}ms)</span> : null}
           </div>
           {thoughtOpen && (
             <>
@@ -865,13 +1027,15 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               <div onClick={() => setToolOpen((o) => !o)} style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
                 <span style={{ opacity: 0.6, fontSize: 11 }}>{toolOpen ? '▼' : '▶'} TOOL </span>
                 <span>{msg.content}</span>
-                {!msg.result && (
+                {!msg.result ? (
                   <span style={{ opacity: 0.6, fontSize: 11, marginLeft: 'auto' }}>
                     <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginRight: 4 }}>●</span>
                     Working…
                     {msg.created_at && ` (${Math.floor((now - new Date(msg.created_at).getTime()) / 1000)}s)`}
                   </span>
-                )}
+                ) : msg.duration_ms ? (
+                  <span style={{ opacity: 0.5, fontSize: 10, marginLeft: 'auto' }}>({msg.duration_ms}ms)</span>
+                ) : null}
               </div>
               {toolOpen && (
                 <div style={{ marginTop: 6, fontSize: 11 }}>
@@ -890,8 +1054,49 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 </div>
               )}
             </>
+          ) : msg.role === 'subagent' ? (
+            (() => {
+              let parsedParams: { goal?: string; status?: string; error?: string } = {}
+              try { if (msg.params) parsedParams = JSON.parse(msg.params) } catch {}
+              return (
+              <div onClick={() => { if (msg.content) { const el = document.querySelector('[data-main-scroll]'); mainScrollRef.current = el?.scrollTop || 0; subagentViewRef.current = msg.content; setSubagentView(msg.content); fetchSubagentMessages(msg.content, setSubagentMessages, setSubagentLoading) } }}
+                style={{ fontSize: 11, opacity: 0.8, cursor: 'pointer', borderRadius: 4, padding: '2px 4px', border: subagentView === msg.content ? '1px solid var(--accent)' : '1px solid transparent' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ opacity: 0.5, fontSize: 10 }}>SUBAGENT</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, opacity: 0.5 }}>{msg.content?.slice(0, 8)}</span>
+                  {!msg.result ? (
+                    <span style={{ opacity: 0.6, fontSize: 10, marginLeft: 'auto' }}>
+                      <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginRight: 4 }}>●</span>
+                      Working…
+                      {msg.created_at && ` (${Math.floor((now - new Date(msg.created_at).getTime()) / 1000)}s)`}
+                    </span>
+                  ) : (
+                    <span style={{ marginLeft: 'auto', fontSize: 10 }}>
+                      {msg.result?.includes('failed') ? '❌ Failed' : '✅ Done'}
+                      {msg.duration_ms ? ` (${msg.duration_ms}ms)` : ''}
+                    </span>
+                  )}
+                </div>
+                {parsedParams.goal && (
+                  <div style={{ marginTop: 4, opacity: 0.6, fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>{parsedParams.goal}</div>
+                )}
+                {msg.result && msg.result !== '"completed"' && msg.result !== '"failed"' && (
+                  <div style={{ marginTop: 4, fontSize: 10, maxHeight: 60, overflow: 'auto', opacity: 0.7, whiteSpace: 'pre-wrap' }}>
+                    {msg.result.length > 200 ? msg.result.slice(0, 200) + '…' : msg.result}
+                  </div>
+                )}
+                {parsedParams.error && (
+                  <div style={{ marginTop: 4, fontSize: 10, color: 'var(--error, #ef4444)', opacity: 0.8 }}>{parsedParams.error}</div>
+                )}
+              </div>
+            )})()
           ) : (
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
+            <div>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
+              {msg.role === 'assistant' && msg.duration_ms ? (
+                <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginTop: 4 }}>{msg.duration_ms}ms</div>
+              ) : null}
+            </div>
           )}
         </div>
       )}
@@ -899,6 +1104,56 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   )})
   return (
     <div ref={panelRef} style={{ ...styles.panel, width }}>
+      {subagentView ? (
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+            <button onClick={() => { subagentViewRef.current = null; setSubagentView(null); setSubagentMessages([]); setTimeout(() => { const el = document.querySelector('[data-main-scroll]'); if (el) el.scrollTop = mainScrollRef.current }, 50) }}
+              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text-primary)', fontSize: 12, padding: '4px 10px', fontWeight: 500 }}>
+              ← Back
+            </button>
+            <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Subagent {subagentView.slice(0, 8)}</span>
+            {subagentTokens[subagentView] && (
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                {subagentTokens[subagentView].input.toLocaleString()}↑ / {subagentTokens[subagentView].output.toLocaleString()}↓
+              </span>
+            )}
+            <button onClick={() => {
+              const lines: string[] = []
+              for (const m of subagentMessages) {
+                const dur = m.duration_ms ? ` (${m.duration_ms}ms)` : ''
+                if (m.role === 'user') {
+                  lines.push(`**User:** ${m.content}`)
+                } else if (m.role === 'assistant') {
+                  if (m.reasoning) lines.push(`> **Thinking:${dur}** ${m.reasoning}`)
+                  lines.push(`**Assistant:${dur}** ${m.content}`)
+                } else if (m.role === 'tool') {
+                  lines.push(`**Tool: ${m.content}${dur}**`)
+                  if (m.result) lines.push(`  Result: \`${m.result.length > 500 ? m.result.slice(0, 500) + '...' : m.result}\``)
+                }
+                lines.push('')
+              }
+              navigator.clipboard.writeText(lines.join('\n').trim()).then(() => {
+                setCopied(true)
+                setTimeout(() => setCopied(false), 1500)
+              })
+            }}
+              style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 11, padding: '3px 8px' }}>
+              {copied ? <Check size={12} style={{ color: 'var(--success, #10b981)' }} /> : 'Copy chat'}
+            </button>
+          </div>
+          <div ref={subagentScrollRef} style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+            {subagentLoading && <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 20 }}>Loading…</div>}
+            {subagentMessages.map((m, i) => (
+              <MemoizedChatMessage key={i} msg={m} isStreaming={false} now={now} />
+            ))}
+            {!subagentLoading && subagentMessages.length === 0 && (
+              <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 20 }}>
+                This subagent hasn't produced any messages yet.
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (<>
       <div
         ref={resizeRef}
         style={styles.resizeHandle}
@@ -922,12 +1177,13 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             setSessionId(session.id)
             setShowHistory(false)
             try {
-              const msgs = await api.get<Array<{ role: string; content: string; reasoning_content?: string; image_ids?: string[]; created_at?: string }>>(`/api/v1/sessions/${session.id}/messages`)
+              const msgs = await api.get<Array<{ role: string; content: string; reasoning_content?: string; image_ids?: string[]; duration_ms?: number; created_at?: string }>>(`/api/v1/sessions/${session.id}/messages`)
               const formatted = msgs.map((m) => ({
                 role: m.role,
                 content: m.content || '',
                 reasoning: m.reasoning_content,
                 images: m.image_ids?.length ? m.image_ids : undefined,
+                duration_ms: m.duration_ms,
                 created_at: m.created_at,
               }))
               setMessages(formatted)
@@ -1061,11 +1317,19 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                   onClick={() => setShowTokenDetails(v => !v)}
                   style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8, whiteSpace: 'nowrap', cursor: 'pointer', borderBottom: '1px dashed var(--text-muted)' }}
                 >
-                  {totalTokens.input.toLocaleString()}↑ / {totalTokens.output.toLocaleString()}↓
+                  {(() => {
+                    const si = totalTokens.subagent_input || 0
+                    const so = totalTokens.subagent_output || 0
+                    const allIn = totalTokens.input + si
+                    const allOut = totalTokens.output + so
+                    return <>{allIn.toLocaleString()}↑ / {allOut.toLocaleString()}↓</>
+                  })()}
                   {(() => {
                     const mc = modelConfigs.find(m => m.id === modelConfigId)
                     if (!mc || (!mc.price_per_input_token && !mc.price_per_output_token)) return null
-                    const cost = (totalTokens.input * mc.price_per_input_token + totalTokens.output * mc.price_per_output_token + (totalTokens.cache_read ?? 0) * mc.price_per_cache_read_token) / 1000000
+                    const si = totalTokens.subagent_input || 0
+                    const so = totalTokens.subagent_output || 0
+                    const cost = ((totalTokens.input + si) * mc.price_per_input_token + (totalTokens.output + so) * mc.price_per_output_token + (totalTokens.cache_read ?? 0) * mc.price_per_cache_read_token) / 1000000
                     return <span style={{ marginLeft: 6, opacity: 0.7, fontSize: 10 }}>${cost < 0.01 ? cost.toFixed(6) : cost.toFixed(4)}</span>
                   })()}
                   {contextWindow > 0 && (
@@ -1110,9 +1374,31 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                         </div>
                       )}
 
+                      {totalTokens.subagent_input ? (
+                        <div style={{ borderTop: '1px solid var(--border)', margin: '6px 0', paddingTop: 6 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
+                            <span style={{ color: 'var(--text-secondary)', fontSize: 11 }}>Subagent Input</span>
+                            <span style={{ fontSize: 11 }}>{totalTokens.subagent_input.toLocaleString()}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24 }}>
+                            <span style={{ color: 'var(--text-secondary)', fontSize: 11 }}>Subagent Output</span>
+                            <span style={{ fontSize: 11 }}>{totalTokens.subagent_output?.toLocaleString()}</span>
+                          </div>
+                        </div>
+                      ) : null}
+
                       <div style={{ borderTop: '1px solid var(--border)', margin: '6px 0', paddingTop: 6, display: 'flex', justifyContent: 'space-between', gap: 24 }}>
                         <span style={{ color: 'var(--text-secondary)' }}>Total</span>
-                        <span style={{ fontWeight: 600 }}>{(totalTokens.input + totalTokens.output).toLocaleString()}</span>
+                        <span style={{ fontWeight: 600 }}>{(() => {
+                          const si = totalTokens.subagent_input || 0
+                          const so = totalTokens.subagent_output || 0
+                          const total = totalTokens.input + totalTokens.output + si + so
+                          const mc = modelConfigs.find(m => m.id === modelConfigId)
+                          const cost = mc && (mc.price_per_input_token || mc.price_per_output_token)
+                            ? ((totalTokens.input + si) * mc.price_per_input_token + (totalTokens.output + so) * mc.price_per_output_token + (totalTokens.cache_read || 0) * mc.price_per_cache_read_token) / 1000000
+                            : null
+                          return total.toLocaleString() + (cost !== null ? `  $${cost < 0.01 ? cost.toFixed(6) : cost.toFixed(4)}` : '')
+                        })()}</span>
                       </div>
                       {totalTokens.model_calls > 0 && (
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, color: 'var(--text-muted)', fontSize: 11, marginTop: 4 }}>
@@ -1183,7 +1469,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
           <TaskList tasks={tasks} />
 
-          <div ref={scrollRefCb} style={styles.messageList}>
+          <div ref={scrollRefCb} data-main-scroll style={styles.messageList}>
             {messages.length === 0 && (
               <div style={styles.emptyState}>
                 {notebookId
@@ -1353,6 +1639,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
         }
         .agent-select { -webkit-appearance: none; -moz-appearance: none; appearance: none; }
       `}</style>
+      </>)}
     </div>
   )
 }
@@ -1437,8 +1724,8 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     height: '100%',
     minHeight: 0,
-    overflow: 'hidden',
     position: 'relative',
+    overflow: 'hidden',
   },
   resizeHandle: {
     position: 'absolute',

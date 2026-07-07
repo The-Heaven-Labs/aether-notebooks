@@ -14,6 +14,8 @@ export interface Agent {
   mcp_servers: MCPServerOrg[]
   folder_id?: string
   max_turns?: number
+  max_subagents?: number
+  max_subagent_turns?: number
   model_config_params?: Record<string, unknown>
   created_by: string
   created_at: string
@@ -138,17 +140,22 @@ export interface TokenBreakdown {
   tool_definitions: number
   tool_calls: number
   tool_results: number
+  subagent_input?: number
+  subagent_output?: number
+  duration_ms?: number
 }
 
 export type WSMessage =
   | { type: 'token'; data: string }
   | { type: 'reasoning'; data: string }
-  | { type: 'tool_call'; tool: string; params: string; args: unknown; result: unknown; reasoning?: string }
-  | { type: 'tool_result'; tool: string; params: string; result: string; error?: string }
+  | { type: 'tool_call'; tool: string; params: string; args: unknown; result: unknown; reasoning?: string; duration_ms?: number }
+  | { type: 'tool_result'; tool: string; params: string; result: string; error?: string; duration_ms?: number }
   | { type: 'cell_created'; cell_id: string; position: number }
   | { type: 'cell_output'; cell_id: string; outputs: Array<{ type: string; data: unknown }> }
   | { type: 'cell_updated'; cell_id: string }
   | { type: 'subagent_progress'; tasks: SubagentTask[] }
+  | { type: 'subagent_status'; task_id: string; status: string; goal?: string; result?: unknown; error?: string; duration_ms?: number; tokens_input?: number; tokens_output?: number }
+  | { type: 'subagent_message'; task_id: string; role: string; content: string; result?: string; tool_call_id?: string; tool_calls?: any; reasoning_content?: string; duration_ms?: number }
   | { type: 'done'; tokens?: TokenBreakdown; data?: { content?: string; reasoning?: string; tokens?: TokenBreakdown } }
   | { type: 'error'; message: string }
   | { type: 'slash_result'; command: string; data: unknown }

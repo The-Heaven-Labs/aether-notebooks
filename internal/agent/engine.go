@@ -247,7 +247,7 @@ func sanitizeChatMessages(msgs []ChatMessage) []ChatMessage {
 	return msgs
 }
 
-func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, imageIDs []string, tools []*ToolDef, masterKey []byte, capturedPageContext *PageContextInfo, onToken func(string), onReasoning func(string), onToolCall func(string, string, string, string), onToolResult func(string, string, string, string), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, *TokenBreakdown, error) {
+func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, imageIDs []string, tools []*ToolDef, masterKey []byte, capturedPageContext *PageContextInfo, onToken func(string), onReasoning func(string), onToolCall func(string, string, string, string, int), onToolResult func(string, string, string, string, int), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, *TokenBreakdown, error) {
 	var events []EngineEvent
 	slog.Debug("engine: ProcessMessage start", "session_id", sessionID, "msg_len", len(userMessage), "image_count", len(imageIDs))
 
@@ -723,6 +723,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		turnStart := time.Now()
 		slog.Debug("engine: calling LLM", "session_id", sessionID, "turn", turn, "msgs", len(chatMsgs), "tools", len(toolsList))
 		chatMsgs = sanitizeChatMessages(chatMsgs)
+		llmStart := time.Now()
 		resp, err := llmClient.Chat(ctx, chatMsgs, toolsList, masterKey)
 		if err != nil {
 			slog.Error("engine: LLM call failed", "session_id", sessionID, "turn", turn, "error", err, "elapsed_ms", time.Since(turnStart).Milliseconds())
@@ -732,6 +733,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			}
 			continue
 		}
+		llmDuration := int(time.Since(llmStart).Milliseconds())
+		tokBrk.DurationMs = llmDuration
 		llmElapsed := time.Since(turnStart).Milliseconds()
 		llmErrorCount = 0
 
@@ -818,6 +821,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				TokensOutput:     tokBrk.Output,
 				TokensReasoning:  tokBrk.Reasoning,
 				ModelCalls:       modelCalls,
+				DurationMs:       llmDuration,
 				CreatedAt:        time.Now(),
 			}
 			e.session.AppendMessage(ctx, agentMsg)
@@ -855,6 +859,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			TokensOutput:     tokBrk.Output,
 			TokensReasoning:  tokBrk.Reasoning,
 			ModelCalls:       modelCalls,
+			DurationMs:       llmDuration,
 			CreatedAt:        time.Now(),
 		})
 
@@ -873,7 +878,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					r = reasoningContent
 					firstTool = false
 				}
-				onToolCall(tc.Function.Name, tc.ID, tc.Function.Arguments, r)
+				onToolCall(tc.Function.Name, tc.ID, tc.Function.Arguments, r, llmDuration)
 			}
 			var args map[string]any
 			json.Unmarshal([]byte(tc.Function.Arguments), &args)
@@ -901,7 +906,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				CreatedAt:  time.Now(),
 			})
 			if onToolResult != nil {
-				onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "")
+				onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "", 0)
 			}
 			continue
 		}
@@ -950,7 +955,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 							CreatedAt:  time.Now(),
 						})
 						if onToolResult != nil {
-							onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "")
+							onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "", 0)
 						}
 						continue
 					}
@@ -967,13 +972,15 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 						CreatedAt:  time.Now(),
 					})
 					if onToolResult != nil {
-						onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "timeout")
+						onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "timeout", 0)
 					}
 					continue
 				}
 			}
 
+			toolStart := time.Now()
 			result, err := toolDef.Handler([]byte(tc.Function.Arguments), toolCtx)
+			toolDurationMs := int(time.Since(toolStart).Milliseconds())
 			if err != nil {
 				resultStr := fmt.Sprintf("error: %s", err.Error())
 				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
@@ -984,10 +991,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					Role:       "tool",
 					ToolCallID: &tc.ID,
 					Content:    resultStr,
+					DurationMs: toolDurationMs,
 					CreatedAt:  time.Now(),
 				})
 				if onToolResult != nil {
-					onToolResult(tc.Function.Name, tc.Function.Arguments, "", err.Error())
+					onToolResult(tc.Function.Name, tc.Function.Arguments, "", err.Error(), toolDurationMs)
 				}
 			} else {
 				resultJSON, _ := json.Marshal(result)
@@ -1000,10 +1008,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					Role:       "tool",
 					ToolCallID: &tc.ID,
 					Content:    resultStr,
+					DurationMs: toolDurationMs,
 					CreatedAt:  time.Now(),
 				})
 				if onToolResult != nil {
-					onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "")
+					onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "", toolDurationMs)
 				}
 			}
 		}
@@ -1077,6 +1086,38 @@ func (e *Engine) SessionStore() *SessionStore {
 
 func (e *Engine) SetLLMClient(llm *LLMClient) {
 	e.llm = llm
+}
+
+// defaultSubagentLLM resolves the model config for subagent LLM calls.
+// It prefers subagent_model_config_id over model_config_id on the agent,
+// falling back to the engine's default LLM if no config is found.
+func (e *Engine) defaultSubagentLLM(ctx context.Context, pool *pgxpool.Pool, agentID string, masterKey []byte) *LLMClient {
+	var subagentMCID, mainMCID *string
+	err := pool.QueryRow(ctx, `SELECT subagent_model_config_id, model_config_id FROM agents WHERE id = $1`, agentID).Scan(&subagentMCID, &mainMCID)
+	if err != nil {
+		return e.llm
+	}
+	configID := subagentMCID
+	if configID == nil {
+		configID = mainMCID
+	}
+	if configID == nil {
+		return e.llm
+	}
+
+	var mc models.ModelConfig
+	var defaultParams []byte
+	err = pool.QueryRow(ctx, `
+		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window
+		FROM model_configs WHERE id = $1
+	`, *configID).Scan(&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow)
+	if err != nil {
+		return e.llm
+	}
+	if defaultParams != nil {
+		json.Unmarshal(defaultParams, &mc.DefaultParams)
+	}
+	return NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams)
 }
 
 func (e *Engine) SetToolAllowedDomains(domains []string) {

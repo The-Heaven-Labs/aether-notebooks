@@ -173,7 +173,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 
 			if msg.Type == "reconnect" {
 				rows, err := s.db.Pool.Query(ctx, `
-					SELECT id, role, content, tool_calls, image_ids, created_at FROM agent_messages
+					SELECT id, role, content, tool_calls, image_ids, duration_ms, created_at FROM agent_messages
 					WHERE session_id = $1 AND id > $2 ORDER BY created_at
 				`, currentSessionID, msg.LastMessageID)
 				if err == nil {
@@ -183,7 +183,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 						var content *string
 						var toolCallsJSON []byte
 						var imageIDs []string
-						rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &imageIDs, &m.CreatedAt)
+						rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &imageIDs, &m.DurationMs, &m.CreatedAt)
 						if content != nil {
 							m.Content = *content
 						}
@@ -272,22 +272,24 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 						func(r string) {
 							s.agentEngine.PublishSessionEvent(sid, WSResponse{Type: "reasoning", Data: r})
 						},
-						func(toolName, toolID, args, reasoning string) {
+						func(toolName, toolID, args, reasoning string, durationMs int) {
 							s.agentEngine.PublishSessionEvent(sid, struct {
-								Type      string `json:"type"`
-								Tool      string `json:"tool"`
-								Params    string `json:"params"`
-								Reasoning string `json:"reasoning,omitempty"`
-							}{Type: "tool_call", Tool: toolName, Params: args, Reasoning: reasoning})
+								Type       string `json:"type"`
+								Tool       string `json:"tool"`
+								Params     string `json:"params"`
+								Reasoning  string `json:"reasoning,omitempty"`
+								DurationMs int    `json:"duration_ms"`
+							}{Type: "tool_call", Tool: toolName, Params: args, Reasoning: reasoning, DurationMs: durationMs})
 						},
-						func(toolName, params, result, errMsg string) {
+						func(toolName, params, result, errMsg string, durationMs int) {
 							s.agentEngine.PublishSessionEvent(sid, struct {
-								Type   string `json:"type"`
-								Tool   string `json:"tool"`
-								Params string `json:"params"`
-								Result string `json:"result"`
-								Error  string `json:"error,omitempty"`
-							}{Type: "tool_result", Tool: toolName, Params: params, Result: result, Error: errMsg})
+								Type       string `json:"type"`
+								Tool       string `json:"tool"`
+								Params     string `json:"params"`
+								Result     string `json:"result"`
+								Error      string `json:"error,omitempty"`
+								DurationMs int    `json:"duration_ms"`
+							}{Type: "tool_result", Tool: toolName, Params: params, Result: result, Error: errMsg, DurationMs: durationMs})
 						},
 						func(evt agent.EngineEvent) {
 							switch evt.Type {

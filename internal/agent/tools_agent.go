@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -69,9 +68,22 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Description string `json:"description"`
 			Parameters  any    `json:"parameters"`
 		}{
+			Name:        "list_agents",
+			Description: "List all agents available in the current organization. Returns agent IDs, names, and descriptions. Use this to find the agent_id to pass to spawn_subagents.",
+			Parameters:  `{"type":"object","properties":{},"required":[]}`,
+		},
+		Handler: makeListAgentsHandler(pool),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
 			Name:        "spawn_subagents",
-			Description: "Execute multiple independent tasks in parallel by launching separate AI sub-agents. Use this when a request has multiple distinct, independent subtasks that can be worked on simultaneously (e.g., exploring different database schemas, writing separate code modules, researching multiple topics). Each sub-agent gets its own goal and runs independently. Returns a task_id for each sub-agent so you can check on their progress. Unlike create_tasks (which only tracks to-do items), spawn_subagents actually runs work in parallel. Maximum 5 sub-agents per call.",
-			Parameters:  `{"type":"object","properties":{"tasks":{"type":"array","description":"List of independent sub-tasks to execute in parallel","minItems":1,"maxItems":5,"items":{"type":"object","properties":{"id":{"type":"string","description":"Short unique identifier for this sub-task (e.g. 'explore_schema', 'build_query', 'research_api')"},"goal":{"type":"string","description":"Clear, specific instruction for the sub-agent. Include what data to query, what to build, or what question to answer."},"agent_id":{"type":"string","description":"Optional agent ID to use for this sub-task. Omit to use the current agent."}},"required":["id","goal"]}}},"required":["tasks"]}`,
+			Description: "Execute multiple independent tasks in parallel by launching separate AI sub-agents. Use this when a request has multiple distinct, independent subtasks that can be worked on simultaneously (e.g., exploring different database schemas, writing separate code modules, researching multiple topics). Each sub-agent gets its own goal and runs in parallel. Blocks until all sub-agents complete and returns their results in the tool response — no need to call get_subagent_results afterwards. Respects the agent's max_subagent_turns setting.",
+			Parameters:  `{"type":"object","properties":{"tasks":{"type":"array","description":"List of independent sub-tasks to execute in parallel","minItems":1,"maxItems":5,"items":{"type":"object","properties":{"id":{"type":"string","description":"Short unique identifier for this sub-task (e.g. 'explore_schema', 'build_query', 'research_api')"},"goal":{"type":"string","description":"Clear, specific instruction for the sub-agent. Include what data to query, what to build, or what question to answer."},"agent_id":{"type":"string","description":"Optional agent ID (UUID) or agent name to use for this sub-task. Omit to use the current agent. Use list_agents to discover available agents."}},"required":["id","goal"]}}},"required":["tasks"]}`,
 		},
 		Handler: makeSpawnSubagentsHandler(pool, engine),
 	})
@@ -127,6 +139,19 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 		},
 		Handler: makeGetTasksHandler(),
 	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "get_subagent_results",
+			Description: "Get the results of spawned subagents. Only needed if you lost the results from spawn_subagents response (which returns them directly). Provide the task_ids from spawn_subagents.",
+			Parameters:  `{"type":"object","properties":{"task_ids":{"type":"array","items":{"type":"string"},"description":"List of subagent task IDs to check"}},"required":["task_ids"]}`,
+		},
+		Handler: makeGetSubagentResultsHandler(pool),
+	})
 }
 
 func makeListSkillsHandler(pool *pgxpool.Pool) ToolHandler {
@@ -156,6 +181,44 @@ func makeListSkillsHandler(pool *pgxpool.Pool) ToolHandler {
 			skills = []map[string]string{}
 		}
 		return map[string]any{"skills": skills}, nil
+	}
+}
+
+func makeListAgentsHandler(pool *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		rows, err := pool.Query(ctx.Context, `SELECT id, name, description FROM agents WHERE org_id = $1 ORDER BY name`, ctx.OrgID)
+		if err != nil {
+			return nil, fmt.Errorf("list agents: %w", err)
+		}
+		defer rows.Close()
+		var agents []map[string]string
+		for rows.Next() {
+			var id, name string
+			var desc *string
+			if err := rows.Scan(&id, &name, &desc); err != nil {
+				return nil, fmt.Errorf("scan agent: %w", err)
+			}
+			// Respect folder-level ACLs: only return agents the user can view
+			if err := ctx.CheckPermission("agent", id, "view"); err != nil {
+				continue
+			}
+			d := ""
+			if desc != nil {
+				d = *desc
+			}
+			agents = append(agents, map[string]string{
+				"id":          id,
+				"name":        name,
+				"description": d,
+			})
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("list agents iter: %w", err)
+		}
+		if agents == nil {
+			agents = []map[string]string{}
+		}
+		return map[string]any{"agents": agents}, nil
 	}
 }
 
@@ -294,47 +357,135 @@ func makeSpawnSubagentsHandler(pool *pgxpool.Pool, engine *Engine) ToolHandler {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
 
-		if len(req.Tasks) > 5 {
-			return nil, fmt.Errorf("max 5 subagents per call")
+		// Look up the agent's max_subagents setting
+		var maxSubAgents int
+		var agentID string
+		pool.QueryRow(ctx.Context, `SELECT agent_id FROM agent_sessions WHERE id = $1`, ctx.SessionID).Scan(&agentID)
+		pool.QueryRow(ctx.Context, `SELECT COALESCE(max_subagents, 5) FROM agents WHERE id = $1`, agentID).Scan(&maxSubAgents)
+		if maxSubAgents <= 0 {
+			maxSubAgents = 5
+		}
+
+		if len(req.Tasks) > maxSubAgents {
+			return nil, fmt.Errorf("max %d subagents per call", maxSubAgents)
 		}
 
 		taskIDs := make([]string, len(req.Tasks))
+		taskLLMs := make(map[string]*LLMClient)
 		for i, t := range req.Tasks {
 			taskID := uuid.New().String()
 			taskIDs[i] = taskID
 
+			// Resolve agent_id for this task (defaults to parent agent)
+			taskAgentID := agentID
+			if t.AgentID != nil && *t.AgentID != "" && *t.AgentID != agentID {
+				resolvedID := *t.AgentID
+				if _, err := uuid.Parse(*t.AgentID); err != nil {
+					pool.QueryRow(ctx.Context, `SELECT id FROM agents WHERE name = $1 AND org_id = $2`, *t.AgentID, ctx.OrgID).Scan(&resolvedID)
+				}
+				if resolvedID != "" && resolvedID != agentID {
+					taskAgentID = resolvedID
+					customLLM := engine.defaultSubagentLLM(ctx.Context, pool, resolvedID, ctx.MasterKey)
+					if customLLM != nil {
+						taskLLMs[taskID] = customLLM
+					}
+				}
+			}
+
 			contextJSON, _ := json.Marshal(t.Context)
 			_, err := pool.Exec(ctx.Context, `
-				INSERT INTO subagent_tasks (id, parent_session_id, goal, context, status, created_at)
-				VALUES ($1, $2, $3, $4, 'queued', NOW())
-			`, taskID, ctx.SessionID, t.Goal, contextJSON)
+				INSERT INTO subagent_tasks (id, parent_session_id, agent_id, goal, context, status, created_at)
+				VALUES ($1, $2, $3, $4, $5, 'queued', NOW())
+			`, taskID, ctx.SessionID, taskAgentID, t.Goal, contextJSON)
 			if err != nil {
 				return nil, fmt.Errorf("create subagent task: %w", err)
 			}
 		}
 
-		// Launch subagent execution in background goroutine
-		// Copy masterKey so the goroutine has its own slice
+		// Create default LLM client for subagents from the parent agent's model config
+		defaultLLM := engine.defaultSubagentLLM(ctx.Context, pool, agentID, ctx.MasterKey)
+
+		// Run subagents synchronously and collect results
 		mk := make([]byte, len(ctx.MasterKey))
 		copy(mk, ctx.MasterKey)
-
-		sessionID := ctx.SessionID
-		notebookID := ctx.NotebookID
-		broadcastFn := ctx.BroadcastFunc
 		idsCopy := make([]string, len(taskIDs))
 		copy(idsCopy, taskIDs)
 
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Warn("spawn_subagents: panic in background goroutine", "recover", r)
-				}
-			}()
-			bgCtx := context.Background()
-			engine.RunQueuedTasks(bgCtx, sessionID, idsCopy, mk, broadcastFn, notebookID)
-		}()
+		results := engine.RunQueuedTasks(ctx.Context, ctx.SessionID, idsCopy, mk, ctx.BroadcastFunc, ctx.NotebookID, defaultLLM, taskLLMs)
 
-		return map[string]any{"task_ids": taskIDs, "status": "spawned"}, nil
+		type subagentResult struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Goal   string `json:"goal"`
+			Result any    `json:"result,omitempty"`
+			Error  string `json:"error,omitempty"`
+		}
+		out := make([]subagentResult, 0, len(results))
+		for _, r := range results {
+			s := subagentResult{ID: r.TaskID, Status: r.Status}
+			if r.Error != "" {
+				s.Error = r.Error
+				s.Status = "failed"
+			}
+			if r.Result != nil {
+				s.Result = r.Result
+			}
+			// Look up the goal from DB
+			pool.QueryRow(ctx.Context, `SELECT goal FROM subagent_tasks WHERE id = $1`, r.TaskID).Scan(&s.Goal)
+			out = append(out, s)
+		}
+
+		return map[string]any{"results": out, "status": "completed"}, nil
+	}
+}
+
+func makeGetSubagentResultsHandler(pool *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			TaskIDs []string `json:"task_ids"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if len(req.TaskIDs) == 0 {
+			return nil, fmt.Errorf("task_ids is required")
+		}
+		type subagentResult struct {
+			ID     string         `json:"id"`
+			Status string         `json:"status"`
+			Goal   string         `json:"goal"`
+			Result any `json:"result,omitempty"`
+			Error  string         `json:"error,omitempty"`
+		}
+		results := make([]subagentResult, 0, len(req.TaskIDs))
+		for _, tid := range req.TaskIDs {
+			var goal, status string
+			var resultJSON []byte
+			err := pool.QueryRow(ctx.Context,
+				`SELECT goal, status, result FROM subagent_tasks WHERE id = $1`,
+				tid,
+			).Scan(&goal, &status, &resultJSON)
+			if err != nil {
+				results = append(results, subagentResult{ID: tid, Status: "not_found"})
+				continue
+			}
+			r := subagentResult{ID: tid, Status: status, Goal: goal}
+			if resultJSON != nil {
+				var res any
+				if json.Unmarshal(resultJSON, &res) == nil {
+					r.Result = res
+					if resMap, ok := res.(map[string]any); ok {
+						if errStr, ok := resMap["error"].(string); ok && errStr != "" {
+							r.Error = errStr
+						}
+					}
+				} else {
+					r.Result = string(resultJSON)
+				}
+			}
+			results = append(results, r)
+		}
+		return map[string]any{"results": results}, nil
 	}
 }
 

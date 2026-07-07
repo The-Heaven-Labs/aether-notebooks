@@ -250,6 +250,8 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 		MCPServerIDs          []string `json:"mcp_server_ids"`
 		FolderID              *string  `json:"folder_id"`
 		MaxTurns              *int     `json:"max_turns"`
+		MaxSubAgents          *int     `json:"max_subagents"`
+		MaxSubagentTurns      *int     `json:"max_subagent_turns"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -264,6 +266,14 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 	if req.MCPServerIDs == nil {
 		req.MCPServerIDs = []string{}
 	}
+	maxSubAgents := 5
+	if req.MaxSubAgents != nil && *req.MaxSubAgents > 0 {
+		maxSubAgents = *req.MaxSubAgents
+	}
+	maxSubagentTurns := 20
+	if req.MaxSubagentTurns != nil && *req.MaxSubagentTurns > 0 {
+		maxSubagentTurns = *req.MaxSubagentTurns
+	}
 
 	agentID := uuid.New().String()
 
@@ -274,10 +284,10 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 
 	_, err := h.server.db.Pool.Exec(r.Context(), `
 		INSERT INTO agents (id, org_id, name, description, model_config_id, subagent_model_config_id,
-			system_prompt, skill_ids, tool_ids, folder_id, max_turns, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+			system_prompt, skill_ids, tool_ids, folder_id, max_turns, max_subagents, max_subagent_turns, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
 	`, agentID, claims.OrgID, req.Name, req.Description, req.ModelConfigID, req.SubagentModelConfigID,
-		req.SystemPrompt, skillIDs, req.ToolIDs, req.FolderID, req.MaxTurns, claims.UserID)
+		req.SystemPrompt, skillIDs, req.ToolIDs, req.FolderID, req.MaxTurns, maxSubAgents, maxSubagentTurns, claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -430,10 +440,22 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 		SubagentModelConfigID *string  `json:"subagent_model_config_id"`
 		MCPServerIDs          []string `json:"mcp_server_ids"`
 		MaxTurns              *int     `json:"max_turns"`
+		MaxSubAgents          *int     `json:"max_subagents"`
+		MaxSubagentTurns      *int     `json:"max_subagent_turns"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
+	}
+
+	// Custom COALESCE for max_subagents (nullable int with default)
+	var updateMaxSubAgents any
+	if req.MaxSubAgents != nil {
+		updateMaxSubAgents = *req.MaxSubAgents
+	}
+	var updateMaxSubagentTurns any
+	if req.MaxSubagentTurns != nil {
+		updateMaxSubagentTurns = *req.MaxSubagentTurns
 	}
 
 	result, err := h.server.db.Pool.Exec(r.Context(), `
@@ -446,9 +468,11 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 			model_config_id = COALESCE($7, model_config_id),
 			subagent_model_config_id = COALESCE($8, subagent_model_config_id),
 			max_turns = COALESCE($9, max_turns),
+			max_subagents = COALESCE($10, max_subagents),
+			max_subagent_turns = COALESCE($11, max_subagent_turns),
 			updated_at = NOW()
-		WHERE id = $1 AND org_id = $10
-	`, agentID, req.Name, req.Description, req.SystemPrompt, req.SkillIDs, req.ToolIDs, req.ModelConfigID, req.SubagentModelConfigID, req.MaxTurns, claims.OrgID)
+		WHERE id = $1 AND org_id = $12
+	`, agentID, req.Name, req.Description, req.SystemPrompt, req.SkillIDs, req.ToolIDs, req.ModelConfigID, req.SubagentModelConfigID, req.MaxTurns, updateMaxSubAgents, updateMaxSubagentTurns, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -783,8 +807,8 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 		return
 	}
 
-	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT id, role, content, tool_calls, tool_call_id, reasoning_content, image_ids, tokens_input, tokens_output, created_at
+rows, err := h.server.db.Pool.Query(r.Context(), `
+		SELECT id, role, content, tool_calls, tool_call_id, reasoning_content, image_ids, tokens_input, tokens_output, duration_ms, created_at
 		FROM agent_messages WHERE session_id = $1 ORDER BY created_at ASC
 	`, sessionID)
 	if err != nil {
@@ -802,8 +826,9 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 		var reasoning *string
 		var imageIDs []string
 		var tokensInput, tokensOutput *int
+		var durationMs int
 		var createdAt time.Time
-		rows.Scan(&id, &role, &content, &toolCalls, &toolCallID, &reasoning, &imageIDs, &tokensInput, &tokensOutput, &createdAt)
+		rows.Scan(&id, &role, &content, &toolCalls, &toolCallID, &reasoning, &imageIDs, &tokensInput, &tokensOutput, &durationMs, &createdAt)
 		msg := map[string]any{
 			"id":         id,
 			"role":       role,
@@ -829,6 +854,9 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 		}
 		if len(imageIDs) > 0 {
 			msg["image_ids"] = imageIDs
+		}
+		if durationMs > 0 {
+			msg["duration_ms"] = durationMs
 		}
 		messages = append(messages, msg)
 	}
@@ -966,4 +994,60 @@ func (h *agentHandlers) handleAgentStatsByAgent(w http.ResponseWriter, r *http.R
 	}
 
 	writeJSON(w, http.StatusOK, stats)
+}
+
+func (h *agentHandlers) handleGetSubagentMessages(w http.ResponseWriter, r *http.Request) {
+	taskID := r.PathValue("task_id")
+	claims := ClaimsFromContext(r.Context())
+
+	var orgID string
+	err := h.server.db.Pool.QueryRow(r.Context(), `
+		SELECT a.org_id FROM subagent_tasks st
+		JOIN agent_sessions s ON s.id = st.parent_session_id
+		JOIN agents a ON a.id = s.agent_id
+		WHERE st.id = $1
+	`, taskID).Scan(&orgID)
+	if err != nil || orgID != claims.OrgID {
+		writeError(w, http.StatusNotFound, "subagent task not found")
+		return
+	}
+
+	rows, err := h.server.db.Pool.Query(r.Context(), `
+		SELECT role, content, tool_call_id, tool_calls, reasoning_content, COALESCE(duration_ms, 0), created_at
+		FROM subagent_messages WHERE subagent_task_id = $1 ORDER BY created_at ASC
+	`, taskID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type msg struct {
+		Role             string `json:"role"`
+		Content          string `json:"content"`
+		ToolCallID       string `json:"tool_call_id,omitempty"`
+		ToolCalls        any    `json:"tool_calls,omitempty"`
+		ReasoningContent string `json:"reasoning_content,omitempty"`
+		DurationMs       int    `json:"duration_ms,omitempty"`
+		CreatedAt        string `json:"created_at"`
+	}
+	var msgs []msg
+	for rows.Next() {
+		var m msg
+		var toolCallsJSON []byte
+		var createdAt time.Time
+		var toolCallID *string
+		if err := rows.Scan(&m.Role, &m.Content, &toolCallID, &toolCallsJSON, &m.ReasoningContent, &m.DurationMs, &createdAt); err != nil {
+			continue
+		}
+		if toolCallID != nil {
+			m.ToolCallID = *toolCallID
+		}
+		if len(toolCallsJSON) > 0 {
+			json.Unmarshal(toolCallsJSON, &m.ToolCalls)
+		}
+		m.CreatedAt = createdAt.Format(time.RFC3339)
+		msgs = append(msgs, m)
+	}
+	writeJSON(w, http.StatusOK, msgs)
 }
