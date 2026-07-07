@@ -32,6 +32,7 @@ type Engine struct {
 	pageContextMap     sync.Map // sessionID -> map[string]string
 	sessionModelConfig sync.Map // sessionID -> modelConfigID string
 	frontendURL        string
+	publicURL          string
 	streams            *StreamManager
 }
 
@@ -1136,6 +1137,10 @@ func (e *Engine) SetFrontendURL(u string) {
 	e.frontendURL = u
 }
 
+func (e *Engine) SetPublicURL(u string) {
+	e.publicURL = u
+}
+
 func (e *Engine) SetStore(store storage.Storage) {
 	e.store = store
 }
@@ -1434,7 +1439,10 @@ func (e *Engine) buildNotebookContext(ctx context.Context, notebookID string) st
 		return fmt.Sprintf("Current notebook: %s", notebookID)
 	}
 
-	base := e.frontendURL
+	base := e.publicURL
+	if base == "" {
+		base = e.frontendURL
+	}
 	result := fmt.Sprintf("Current notebook: %s (title: %q)", notebookID, title)
 	if base != "" {
 		result = fmt.Sprintf("Current notebook: %s (title: %q, link: %s/notebooks/%s)", notebookID, title, base, notebookID)
