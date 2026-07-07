@@ -220,6 +220,7 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 				}
 			}
 			result := e.runSubagentLoop(ctx, parentSessionID, tid, g, parentUserID, orgID, orgRole, masterKey, llmClient, agentTools, maxSubagentTurns)
+			slog.Debug("subagent completed", "task_id", tid, "status", result.Status, "error", result.Error, "result_type", fmt.Sprintf("%T", result.Result))
 
 			// Update final status
 			status := "completed"
