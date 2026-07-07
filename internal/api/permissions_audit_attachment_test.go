@@ -34,6 +34,7 @@ func uploadAsUser(t *testing.T, f *AuditFixtures, userKey, nbID string) (int, st
 	req := httptest.NewRequest("POST", "/api/v1/notebooks/"+nbID+"/attachments", &buf)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec := httptest.NewRecorder()
 	f.srv.ServeHTTP(rec, req)
 	return rec.Code, rec.Body.String()
