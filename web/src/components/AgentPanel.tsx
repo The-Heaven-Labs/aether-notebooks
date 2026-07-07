@@ -144,43 +144,31 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       const data = await res.json()
       setter(data.flatMap((m: any) => {
         const fn = (tc: any) => tc.function || tc
-        const results: ChatMessage[] = []
+        // Assistant with tool_calls → only keep reasoning, let tool messages render the tool
         if (m.role === 'assistant' && m.tool_calls?.length) {
           if (m.reasoning_content) {
-            results.push({ role: 'assistant', content: m.content || '', reasoning: m.reasoning_content, created_at: m.created_at })
+            return [{ role: 'assistant', content: m.content || '', reasoning: m.reasoning_content, created_at: m.created_at }]
           }
-          for (const tc of m.tool_calls) {
-            const f = fn(tc)
-            results.push({
-              role: 'tool',
-              content: f.name || 'tool',
-              params: f.arguments ? (typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)) : undefined,
-              result: undefined,
-              created_at: m.created_at,
-            })
-          }
-          return results
+          return [] // skip empty tool-calling assistant
         }
-        const base: ChatMessage = {
+        // Tool result → one entry with name + params + result
+        if (m.role === 'tool') {
+          let name = 'tool'
+          let params: string | undefined
+          let result = m.content || ''
+          try { const p = JSON.parse(m.content); if (p.name) { name = p.name; result = p.result || result } } catch {}
+          const f = fn(m.tool_calls?.[0])
+          if (f?.name) name = f.name
+          if (f?.arguments) params = typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)
+          return [{ role: 'tool', content: name, params, result, created_at: m.created_at }]
+        }
+        // Everything else (user messages, regular assistant)
+        return [{
           role: m.role,
           content: m.content || '',
           reasoning: m.reasoning_content || undefined,
           created_at: m.created_at,
-        }
-        if (m.tool_call_id || m.tool_calls?.length) {
-          // Try JSON envelope {name, result} from content
-          let parsedName: string | undefined
-          try { const p = JSON.parse(m.content); if (p.name) { parsedName = p.name; base.result = p.result } }
-          catch { /* not a JSON envelope */ }
-          if (!base.result) base.result = m.content
-          // Extract tool name and params from tool_calls
-          const f = fn(m.tool_calls?.[0])
-          if (f?.name) base.content = f.name
-          else if (parsedName) base.content = parsedName
-          base.params = f?.arguments ? (typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)) : undefined
-        }
-        results.push(base)
-        return results
+        }]
       }))
     } catch {} finally { setLoading(false) }
   }
@@ -567,24 +555,19 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               const fn = (tc: any) => tc?.function || tc
               setSubagentMessages((prev) => {
                 const next = [...prev]
+                // Assistant with tool_calls → only reasoning, don't create tool entries
                 if (msg.role === 'assistant' && msg.tool_calls?.length) {
                   if (msg.reasoning_content) {
                     next.push({ role: 'assistant', content: msg.content || '', reasoning: msg.reasoning_content, created_at: new Date().toISOString() })
                   }
-                  for (const tc of msg.tool_calls) {
-                    const f = fn(tc)
-                    next.push({ role: 'tool', content: f.name || 'tool', params: f.arguments ? (typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)) : undefined, result: undefined, created_at: new Date().toISOString() })
-                  }
-                } else if (msg.tool_call_id || msg.tool_calls?.length) {
-                  let content = msg.content || '', result: string | undefined
-                  let parsedName: string | undefined
-                  try { const p = JSON.parse(msg.content); if (p.name) { parsedName = p.name; result = p.result } }
-                  catch { result = msg.content }
-                  if (!result) result = msg.content
+                } else if (msg.role === 'tool') {
+                  let name = 'tool'
+                  let result = msg.content || ''
+                  try { const p = JSON.parse(msg.content); if (p.name) { name = p.name; result = p.result || result } } catch {}
                   const f = fn(msg.tool_calls?.[0])
-                  if (f?.name) content = f.name
-                  else if (parsedName) content = parsedName
-                  next.push({ role: 'tool', content, params: f?.arguments ? (typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)) : undefined, result, created_at: new Date().toISOString() })
+                  if (f?.name) name = f.name
+                  const params = f?.arguments ? (typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)) : undefined
+                  next.push({ role: 'tool', content: name, params, result, created_at: new Date().toISOString() })
                 } else {
                   next.push({ role: msg.role, content: msg.content || '', reasoning: msg.reasoning_content || undefined, created_at: new Date().toISOString() })
                 }
