@@ -605,6 +605,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 role: 'subagent', content: msg.task_id,
                 params: JSON.stringify({ goal: msg.goal, status: msg.status, error: msg.error }),
                 result: msg.status === 'completed' || msg.status === 'failed' ? JSON.stringify(msg.result || msg.status) : undefined,
+                duration_ms: msg.duration_ms,
                 created_at: ts(),
               }
               if (existing >= 0) {
@@ -1048,6 +1049,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                   ) : (
                     <span style={{ marginLeft: 'auto', fontSize: 10 }}>
                       {msg.result?.includes('failed') ? '❌ Failed' : '✅ Done'}
+                      {msg.duration_ms ? ` (${msg.duration_ms}ms)` : ''}
                     </span>
                   )}
                 </div>

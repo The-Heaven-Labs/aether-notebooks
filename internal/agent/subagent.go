@@ -202,10 +202,11 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 		go func(tid string, g string, tc map[string]any) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			subagentStart := time.Now()
 
 			// Update status to running
 			_, _ = e.pool.Exec(ctx, `UPDATE subagent_tasks SET status = 'running' WHERE id = $1`, tid)
-			statusEvent := map[string]any{"type": "subagent_status", "task_id": tid, "status": "running", "goal": g}
+			statusEvent := map[string]any{"type": "subagent_status", "task_id": tid, "status": "running", "goal": g, "duration_ms": 0}
 			if broadcastFn != nil {
 				broadcastFn(notebookID, statusEvent)
 			}
@@ -240,13 +241,15 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 				WHERE id = $5
 			`, status, storedResult, result.TokensIn, result.TokensOut, tid)
 
+			subagentDuration := int(time.Since(subagentStart).Milliseconds())
 			completionEvent := map[string]any{
-				"type":    "subagent_status",
-				"task_id": tid,
-				"status":  status,
-				"goal":    g,
-				"result":  result.Result,
-				"error":   result.Error,
+				"type":        "subagent_status",
+				"task_id":     tid,
+				"status":      status,
+				"goal":        g,
+				"result":      result.Result,
+				"error":       result.Error,
+				"duration_ms": subagentDuration,
 			}
 			if broadcastFn != nil {
 				broadcastFn(notebookID, completionEvent)
