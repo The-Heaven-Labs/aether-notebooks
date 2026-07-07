@@ -526,10 +526,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
         switch (msg.type) {
           case 'token':
             setIsStreaming(true)
+            if (!streamingStartedAt.current) streamingStartedAt.current = ts()
             setCurrentStreamingText((prev) => { const next = prev + msg.data; streamingTextRef.current = next; return next })
             break
           case 'reasoning':
-            setIsStreaming(true); appendStreamingReasoning(msg.data); break
+            setIsStreaming(true); if (!streamingStartedAt.current) streamingStartedAt.current = ts(); appendStreamingReasoning(msg.data); break
           case 'tool_call':
             setMessages((prev) => [...prev, { role: 'tool', content: msg.tool, params: msg.params, reasoning: msg.reasoning || streamingReasoningRef.current || undefined, duration_ms: msg.duration_ms, created_at: ts() }])
             if (streamingReasoningRef.current) { needsCollapseRef.current = true; updateStreamingReasoning('') }
