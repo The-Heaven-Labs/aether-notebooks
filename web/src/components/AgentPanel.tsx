@@ -1317,16 +1317,28 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                   onClick={() => setShowTokenDetails(v => !v)}
                   style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8, whiteSpace: 'nowrap', cursor: 'pointer', borderBottom: '1px dashed var(--text-muted)' }}
                 >
-                  {totalTokens.input.toLocaleString()}↑ / {totalTokens.output.toLocaleString()}↓
+                  {(() => {
+                    const si = totalTokens.subagent_input || 0
+                    const so = totalTokens.subagent_output || 0
+                    const allIn = totalTokens.input + si
+                    const allOut = totalTokens.output + so
+                    return <>{allIn.toLocaleString()}↑ / {allOut.toLocaleString()}↓</>
+                  })()}
                   {(() => {
                     const mc = modelConfigs.find(m => m.id === modelConfigId)
                     if (!mc || (!mc.price_per_input_token && !mc.price_per_output_token)) return null
-                    const cost = (totalTokens.input * mc.price_per_input_token + totalTokens.output * mc.price_per_output_token + (totalTokens.cache_read ?? 0) * mc.price_per_cache_read_token) / 1000000
+                    const si = totalTokens.subagent_input || 0
+                    const so = totalTokens.subagent_output || 0
+                    const cost = ((totalTokens.input + si) * mc.price_per_input_token + (totalTokens.output + so) * mc.price_per_output_token + (totalTokens.cache_read ?? 0) * mc.price_per_cache_read_token) / 1000000
                     return <span style={{ marginLeft: 6, opacity: 0.7, fontSize: 10 }}>${cost < 0.01 ? cost.toFixed(6) : cost.toFixed(4)}</span>
                   })()}
                   {contextWindow > 0 && (
                     <span style={{ marginLeft: 6, opacity: 0.6 }}>
-                      ({Math.round((totalTokens.input + totalTokens.output) / contextWindow * 100)}%)
+                      {(() => {
+                        const si = totalTokens.subagent_input || 0
+                        const so = totalTokens.subagent_output || 0
+                        return `(${Math.round((totalTokens.input + totalTokens.output + si + so) / contextWindow * 100)}%)`
+                      })()}
                     </span>
                   )}
                 </span>
@@ -1381,7 +1393,16 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
                       <div style={{ borderTop: '1px solid var(--border)', margin: '6px 0', paddingTop: 6, display: 'flex', justifyContent: 'space-between', gap: 24 }}>
                         <span style={{ color: 'var(--text-secondary)' }}>Total</span>
-                        <span style={{ fontWeight: 600 }}>{(totalTokens.input + totalTokens.output).toLocaleString()}</span>
+                        <span style={{ fontWeight: 600 }}>{(() => {
+                          const si = totalTokens.subagent_input || 0
+                          const so = totalTokens.subagent_output || 0
+                          const total = totalTokens.input + totalTokens.output + si + so
+                          const mc = modelConfigs.find(m => m.id === modelConfigId)
+                          const cost = mc && (mc.price_per_input_token || mc.price_per_output_token)
+                            ? ((totalTokens.input + si) * mc.price_per_input_token + (totalTokens.output + so) * mc.price_per_output_token + (totalTokens.cache_read || 0) * mc.price_per_cache_read_token) / 1000000
+                            : null
+                          return total.toLocaleString() + (cost !== null ? `  $${cost < 0.01 ? cost.toFixed(6) : cost.toFixed(4)}` : '')
+                        })()}</span>
                       </div>
                       {totalTokens.model_calls > 0 && (
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, color: 'var(--text-muted)', fontSize: 11, marginTop: 4 }}>
@@ -1392,7 +1413,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                       {contextWindow > 0 && (
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, color: 'var(--text-muted)', fontSize: 11 }}>
                           <span>Context window</span>
-                          <span>{contextWindow.toLocaleString()} ({Math.round((totalTokens.input + totalTokens.output) / contextWindow * 100)}%)</span>
+                          <span>{contextWindow.toLocaleString()} ({Math.round(((totalTokens.input + totalTokens.output + (totalTokens.subagent_input || 0) + (totalTokens.subagent_output || 0)) / contextWindow) * 100)}%)</span>
                         </div>
                       )}
 
