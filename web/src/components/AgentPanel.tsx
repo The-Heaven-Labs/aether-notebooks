@@ -69,6 +69,7 @@ const WS_URL = (import.meta.env.VITE_WS_URL || 'ws://localhost:8088') + '/api/v1
 const LAST_AGENT_KEY = 'aether:lastAgentId'
 const LAST_SESSION_KEY = 'aether:lastSessionId'
 const CHAT_STATE_KEY = 'aether:agentChat:'
+const DRAFT_KEY = 'aether:agentChatDraft:__global__'
 
 interface ChatMessage {
   id?: string
@@ -113,7 +114,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const chatStateKey = CHAT_STATE_KEY + '__global__'
   const [tasks, setTasks] = useState<AgentTaskItem[]>([])
   const [sessionTitle, setSessionTitle] = useState<string | null>(null)
-  const [input, setInput] = useState('')
+  const [input, setInput] = useState(() => { try { return localStorage.getItem(DRAFT_KEY) || '' } catch { return '' } })
   const [isStreaming, setIsStreaming] = useState(false)
   const [currentStreamingText, setCurrentStreamingText] = useState('')
   const [currentStreamingReasoning, setCurrentStreamingReasoning] = useState('')
@@ -495,6 +496,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
   const clearChatState = () => {
     try { localStorage.removeItem(chatStateKey) } catch { /* ignore */ }
+    try { localStorage.removeItem(DRAFT_KEY) } catch {}
     setSubagentTokens({})
   }
 
@@ -804,6 +806,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const sendMessage = () => {
     const text = input
     setInput('')
+    try { localStorage.removeItem(DRAFT_KEY) } catch {}
     sendText(text)
   }
 
@@ -1559,8 +1562,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               style={styles.input}
               value={input}
               onChange={(e) => {
-                setInput(e.target.value)
                 const val = e.target.value
+                setInput(val)
+                try { localStorage.setItem(DRAFT_KEY, val) } catch {}
                 // Show picker for any / command, allow longer inputs for /skill: autocomplete
                 const isSkillCommand = val.toLowerCase().startsWith('/skill:')
                 setShowSlashPicker(val.startsWith('/') && (isSkillCommand || val.length <= 15))
