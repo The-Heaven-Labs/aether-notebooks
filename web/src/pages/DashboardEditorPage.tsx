@@ -244,14 +244,13 @@ const markSaved = useCallback(() => {
 
     if (preSwapWidget && oldItem) {
       // The dragged widget overlaps with another widget's original position.
-      // Swap the two widgets: dragged widget takes the target's position,
-      // and the target widget takes the dragged widget's original position.
+      // Swap the two widgets' positions only — keep their original sizes.
       const savePromises: Promise<void>[] = []
       const draggedWidget = dashboard.widgets?.find((w: Widget) => w.id === newItem.i)
       if (draggedWidget) {
         savePromises.push(
           api.put(`/api/v1/dashboards/${dashboard.id}/widgets/${newItem.i}`, {
-            layout: { row: preSwapWidget.y, col: preSwapWidget.x, width: preSwapWidget.w, height: preSwapWidget.h },
+            layout: { row: preSwapWidget.y, col: preSwapWidget.x, width: draggedWidget.layout.width, height: draggedWidget.layout.height },
           }).then(() => {})
         )
       }
@@ -259,7 +258,7 @@ const markSaved = useCallback(() => {
       if (targetWidget) {
         savePromises.push(
           api.put(`/api/v1/dashboards/${dashboard.id}/widgets/${preSwapWidget.i}`, {
-            layout: { row: oldItem.y, col: oldItem.x, width: oldItem.w, height: oldItem.h },
+            layout: { row: oldItem.y, col: oldItem.x, width: targetWidget.layout.width, height: targetWidget.layout.height },
           }).then(() => {})
         )
       }
