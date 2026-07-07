@@ -215,12 +215,21 @@ const markSaved = useCallback(() => {
     })
   }, [dashboard, qc, id])
 
-  const onResizeStop = useCallback((_layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
-    if (newItem) saveLayout(newItem)
+  const onResizeStop = useCallback((layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
+    if (newItem) {
+      const settled = layout?.find(l => l.i === newItem.i) || newItem
+      saveLayout(settled)
+    }
   }, [saveLayout])
 
-  const onDragStop = useCallback((_layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
-    if (newItem) saveLayout(newItem)
+  const onDragStop = useCallback((layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
+    if (newItem) {
+      // Use the post-compaction position from the final layout, not the
+      // pre-compaction coordinates from newItem (which reflect the drag
+      // target, not where the grid actually settled the item).
+      const settled = layout?.find(l => l.i === newItem.i) || newItem
+      saveLayout(settled)
+    }
   }, [saveLayout])
 
   if (isLoading) {
