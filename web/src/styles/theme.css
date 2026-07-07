@@ -352,3 +352,43 @@ input[type="color"] {
   animation: cellFlashPulse 1.5s ease-out;
   border-left: 3px solid var(--accent);
 }
+
+/* ── Syntax highlighting for markdown code blocks ── */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-type,
+.hljs-literal { color: var(--code-keyword); font-weight: bold; }
+
+.hljs-string,
+.hljs-title,
+.hljs-section,
+.hljs-attribute,
+.hljs-selector-id,
+.hljs-selector-class { color: var(--code-string); }
+
+.hljs-comment,
+.hljs-quote,
+.hljs-doctag { color: var(--code-comment); font-style: italic; }
+
+.hljs-number,
+.hljs-built_in { color: var(--code-number); }
+
+.hljs-function,
+.hljs-title.function_ { color: var(--code-function); }
+
+.hljs-variable,
+.hljs-params { color: var(--text-primary); }
+
+.hljs-operator,
+.hljs-punctuation { color: var(--text-secondary); }
+
+.hljs-tag { color: var(--code-keyword); }
+
+.hljs-name { color: var(--code-function); }
+
+.hljs-attr { color: var(--code-string); }
+
+.hljs-meta { color: var(--text-muted); }
+
+.hljs-deletion { background: rgba(255, 0, 0, 0.15); }
+.hljs-addition { background: rgba(0, 255, 0, 0.15); }

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
+import rehypeHighlight from 'rehype-highlight'
 import { Loader2, Link, Heading, Code, Maximize2 } from 'lucide-react'
 import { getToken } from '../api/client'
 import type { Cell } from '../types'
@@ -541,7 +542,7 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave, onEditS
         }}
       >
         {resolvedSource.trim()
-          ? <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={markdownComponents}>{resolvedSource}</ReactMarkdown>
+          ? <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeHighlight]} components={markdownComponents}>{resolvedSource}</ReactMarkdown>
           : <span style={styles.mdPlaceholder}>Write markdown… (Ctrl+V to paste images, drag & drop supported)</span>}
       </div>
       </div>

@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback, memo } from 
 import { Send, Loader2, History, Copy, Check, Square, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeHighlight from 'rehype-highlight'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, getToken } from '../api/client'
 import type { Agent, AgentTaskItem, ModelConfig, TokenBreakdown, WSMessage } from '../types/agent'
@@ -119,6 +120,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const streamingReasoningRef = useRef('')
   const needsCollapseRef = useRef(false)
   const streamingStartedAt = useRef<string | null>(null)
+  const [elapsed, setElapsed] = useState(0)
   const [totalTokens, setTotalTokens] = useState<TokenBreakdown | null>(null)
   const [now, setNow] = useState(Date.now())
   const [subagentView, setSubagentView] = useState<string | null>(() => {
@@ -186,7 +188,15 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     const id = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(id)
   }, [isStreaming, hasPendingTools])
+  useEffect(() => {
+    if (!isStreaming || !streamingStartedAt.current) { setElapsed(0); return }
+    const id = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - new Date(streamingStartedAt.current!).getTime()) / 1000))
+    }, 1000)
+    return () => clearInterval(id)
+  }, [isStreaming])
   const ts = () => new Date().toISOString()
+  const formatElapsed = (s: number) => s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
   const fmtTime = (iso?: string) => {
     if (!iso) return ''
     const d = new Date(iso)
@@ -1092,7 +1102,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             )})()
           ) : (
             <div>
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
               {msg.role === 'assistant' && msg.duration_ms ? (
                 <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginTop: 4 }}>{msg.duration_ms}ms</div>
               ) : null}
@@ -1487,7 +1497,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               ))}
               {isStreaming && !currentStreamingText && (
                   <details open style={{ ...styles.message, ...styles.reasoningMessage }}>
-                    <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>{hasPendingTools ? 'Working' : 'Thinking'}</summary>
+                    <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>{hasPendingTools ? 'Working' : 'Thinking'} <span style={{ opacity: 0.5 }}>• {formatElapsed(elapsed)}</span></summary>
                     {streamingStartedAt.current && <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginBottom: 4 }}>{fmtTime(streamingStartedAt.current)}</div>}
                     <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>
                       {hasPendingTools ? <span style={{ color: 'var(--text-muted)' }}>Waiting for tool result…</span> : (currentStreamingReasoning || <span style={{ color: 'var(--text-muted)' }}>...</span>)}
@@ -1496,8 +1506,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 )}
               {currentStreamingText && (
               <div style={{ ...styles.message, ...styles.assistantMessage }}>
-                {streamingStartedAt.current && <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginBottom: 4 }}>{fmtTime(streamingStartedAt.current)}</div>}
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{currentStreamingText}</ReactMarkdown>
+                {streamingStartedAt.current && <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginBottom: 4 }}>{fmtTime(streamingStartedAt.current)} <span style={{ opacity: 0.5 }}>• {formatElapsed(elapsed)}</span></div>}
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={chatMarkdownComponents}>{currentStreamingText}</ReactMarkdown>
                 <span style={styles.streamingDot} />
               </div>
             )}

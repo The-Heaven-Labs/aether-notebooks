@@ -452,7 +452,7 @@ body { font-family:var(--font-sans);background:var(--bg-primary);color:var(--tex
 .cell-source pre { font-family:var(--font-mono);font-size:13px;line-height:1.5;white-space:pre; }
 .cell-source code { font-family:var(--font-mono); }
 .output-bar { font-size:11px;color:var(--text-muted);padding:6px 12px;background:var(--bg-primary);border-bottom:1px solid var(--border-light); }
-.table-wrap { overflow-x:auto; }
+.table-wrap { overflow-x:auto;max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:4px; }
 .output-table { width:100%;border-collapse:collapse;font-size:13px; }
 .output-table th { background:var(--bg-primary);font-weight:600;text-align:left;padding:6px 10px;border-bottom:2px solid var(--border);color:var(--text-secondary);font-size:11px;white-space:nowrap; }
 .output-table td { padding:5px 10px;border-bottom:1px solid var(--border-light);white-space:nowrap; }
