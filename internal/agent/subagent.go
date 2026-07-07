@@ -321,9 +321,19 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 		e.PublishSessionEvent(parentSessionID, event)
 	}
 
-	messages := []ChatMessage{
-		{Role: "user", Content: goal},
+	// Load the subagent's system prompt from the agent assigned to this task
+	var systemPrompt string
+	e.pool.QueryRow(ctx, `
+		SELECT COALESCE(a.system_prompt, '') FROM subagent_tasks st
+		JOIN agents a ON a.id = st.agent_id
+		WHERE st.id = $1
+	`, taskID).Scan(&systemPrompt)
+
+	messages := []ChatMessage{}
+	if systemPrompt != "" {
+		messages = append(messages, ChatMessage{Role: "system", Content: systemPrompt})
 	}
+	messages = append(messages, ChatMessage{Role: "user", Content: goal})
 	saveMsg("user", goal, "", nil, "", 0)
 
 	for turn := 0; turn < maxTurns; turn++ {

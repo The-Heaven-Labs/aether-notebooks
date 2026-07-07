@@ -367,15 +367,32 @@ func makeSpawnSubagentsHandler(pool *pgxpool.Pool, engine *Engine) ToolHandler {
 		}
 
 		taskIDs := make([]string, len(req.Tasks))
+		taskLLMs := make(map[string]*LLMClient)
 		for i, t := range req.Tasks {
 			taskID := uuid.New().String()
 			taskIDs[i] = taskID
 
+			// Resolve agent_id for this task (defaults to parent agent)
+			taskAgentID := agentID
+			if t.AgentID != nil && *t.AgentID != "" && *t.AgentID != agentID {
+				resolvedID := *t.AgentID
+				if _, err := uuid.Parse(*t.AgentID); err != nil {
+					pool.QueryRow(ctx.Context, `SELECT id FROM agents WHERE name = $1 AND org_id = $2`, *t.AgentID, ctx.OrgID).Scan(&resolvedID)
+				}
+				if resolvedID != "" && resolvedID != agentID {
+					taskAgentID = resolvedID
+					customLLM := engine.defaultSubagentLLM(ctx.Context, pool, resolvedID, ctx.MasterKey)
+					if customLLM != nil {
+						taskLLMs[taskID] = customLLM
+					}
+				}
+			}
+
 			contextJSON, _ := json.Marshal(t.Context)
 			_, err := pool.Exec(ctx.Context, `
-				INSERT INTO subagent_tasks (id, parent_session_id, goal, context, status, created_at)
-				VALUES ($1, $2, $3, $4, 'queued', NOW())
-			`, taskID, ctx.SessionID, t.Goal, contextJSON)
+				INSERT INTO subagent_tasks (id, parent_session_id, agent_id, goal, context, status, created_at)
+				VALUES ($1, $2, $3, $4, $5, 'queued', NOW())
+			`, taskID, ctx.SessionID, taskAgentID, t.Goal, contextJSON)
 			if err != nil {
 				return nil, fmt.Errorf("create subagent task: %w", err)
 			}
@@ -383,24 +400,6 @@ func makeSpawnSubagentsHandler(pool *pgxpool.Pool, engine *Engine) ToolHandler {
 
 		// Create default LLM client for subagents from the parent agent's model config
 		defaultLLM := engine.defaultSubagentLLM(ctx.Context, pool, agentID, ctx.MasterKey)
-
-		// Build per-task LLM client map for tasks that specify a different agent
-		taskLLMs := make(map[string]*LLMClient)
-		for i, t := range req.Tasks {
-			if t.AgentID == nil || *t.AgentID == "" || *t.AgentID == agentID {
-				continue
-			}
-			resolvedID := *t.AgentID
-			if _, err := uuid.Parse(*t.AgentID); err != nil {
-				pool.QueryRow(ctx.Context, `SELECT id FROM agents WHERE name = $1 AND org_id = $2`, *t.AgentID, ctx.OrgID).Scan(&resolvedID)
-			}
-			if resolvedID != "" && resolvedID != agentID {
-				customLLM := engine.defaultSubagentLLM(ctx.Context, pool, resolvedID, ctx.MasterKey)
-				if customLLM != nil {
-					taskLLMs[taskIDs[i]] = customLLM
-				}
-			}
-		}
 
 		// Run subagents synchronously and collect results
 		mk := make([]byte, len(ctx.MasterKey))
