@@ -145,6 +145,7 @@ type TokenBreakdown struct {
 	ToolDefinitions     int `json:"tool_definitions"`
 	ToolCalls           int `json:"tool_calls"`
 	ToolResults         int `json:"tool_results"`
+	DurationMs          int `json:"duration_ms"`
 }
 
 func NewLLMClient(baseURL, model string, apiKey []byte, defaultParams map[string]any) *LLMClient {

@@ -247,7 +247,7 @@ func sanitizeChatMessages(msgs []ChatMessage) []ChatMessage {
 	return msgs
 }
 
-func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, imageIDs []string, tools []*ToolDef, masterKey []byte, capturedPageContext *PageContextInfo, onToken func(string), onReasoning func(string), onToolCall func(string, string, string, string), onToolResult func(string, string, string, string, int), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, *TokenBreakdown, error) {
+func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, imageIDs []string, tools []*ToolDef, masterKey []byte, capturedPageContext *PageContextInfo, onToken func(string), onReasoning func(string), onToolCall func(string, string, string, string, int), onToolResult func(string, string, string, string, int), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, *TokenBreakdown, error) {
 	var events []EngineEvent
 	slog.Debug("engine: ProcessMessage start", "session_id", sessionID, "msg_len", len(userMessage), "image_count", len(imageIDs))
 
@@ -734,6 +734,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			continue
 		}
 		llmDuration := int(time.Since(llmStart).Milliseconds())
+		tokBrk.DurationMs = llmDuration
 		llmElapsed := time.Since(turnStart).Milliseconds()
 		llmErrorCount = 0
 
@@ -877,7 +878,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					r = reasoningContent
 					firstTool = false
 				}
-				onToolCall(tc.Function.Name, tc.ID, tc.Function.Arguments, r)
+				onToolCall(tc.Function.Name, tc.ID, tc.Function.Arguments, r, llmDuration)
 			}
 			var args map[string]any
 			json.Unmarshal([]byte(tc.Function.Arguments), &args)

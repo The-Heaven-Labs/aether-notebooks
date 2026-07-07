@@ -520,7 +520,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           case 'reasoning':
             setIsStreaming(true); appendStreamingReasoning(msg.data); break
           case 'tool_call':
-            setMessages((prev) => [...prev, { role: 'tool', content: msg.tool, params: msg.params, reasoning: msg.reasoning || streamingReasoningRef.current || undefined, created_at: ts() }])
+            setMessages((prev) => [...prev, { role: 'tool', content: msg.tool, params: msg.params, reasoning: msg.reasoning || streamingReasoningRef.current || undefined, duration_ms: msg.duration_ms, created_at: ts() }])
             if (streamingReasoningRef.current) { needsCollapseRef.current = true; updateStreamingReasoning('') }
             break
           case 'tool_confirm_required':
@@ -564,10 +564,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           }
           case 'done': {
             setIsStreaming(false); updateStreamingReasoning(''); needsCollapseRef.current = false
-            const finalText = streamingTextRef.current
-            if (finalText) { setMessages((prev) => [...prev, { role: 'assistant', content: finalText, reasoning: ((msg as any).data?.reasoning as string) || undefined, created_at: ts() }]); streamingTextRef.current = ''; setCurrentStreamingText('') }
-            else if (msg.data && 'content' in msg.data && msg.data.content) { setMessages((prev) => [...prev, { role: 'assistant', content: (msg.data as any).content, reasoning: ((msg.data as any)?.reasoning as string) || undefined, created_at: ts() }]) }
             const tk = (msg as any).data?.tokens as TokenBreakdown | undefined
+            const dm = tk?.duration_ms
+            const finalText = streamingTextRef.current
+            if (finalText) { setMessages((prev) => [...prev, { role: 'assistant', content: finalText, reasoning: ((msg as any).data?.reasoning as string) || undefined, duration_ms: dm, created_at: ts() }]); streamingTextRef.current = ''; setCurrentStreamingText('') }
+            else if (msg.data && 'content' in msg.data && msg.data.content) { setMessages((prev) => [...prev, { role: 'assistant', content: (msg.data as any).content, reasoning: ((msg.data as any)?.reasoning as string) || undefined, duration_ms: dm, created_at: ts() }]) }
             if (tk && typeof tk.input === 'number') setTotalTokens(prev => ({ input: (prev?.input || 0) + tk.input, output: (prev?.output || 0) + tk.output, reasoning: (prev?.reasoning || 0) + (tk.reasoning || 0), cache_read: (prev?.cache_read || 0) + (tk.cache_read || 0), model_calls: (prev?.model_calls || 0) + (tk.model_calls || 0), system_prompt: (prev?.system_prompt || 0) + (tk.system_prompt || 0), skill_override: (prev?.skill_override || 0) + (tk.skill_override || 0), history: (prev?.history || 0) + (tk.history || 0), user_message: (prev?.user_message || 0) + (tk.user_message || 0), tool_definitions: (prev?.tool_definitions || 0) + (tk.tool_definitions || 0), tool_calls: (prev?.tool_calls || 0) + (tk.tool_calls || 0), tool_results: (prev?.tool_results || 0) + (tk.tool_results || 0) }))
             setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50); break
           }
