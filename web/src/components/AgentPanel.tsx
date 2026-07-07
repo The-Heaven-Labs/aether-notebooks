@@ -1191,6 +1191,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             try {
               const msgs = await api.get<Array<{ role: string; content: string; reasoning_content?: string; image_ids?: string[]; duration_ms?: number; created_at?: string }>>(`/api/v1/sessions/${session.id}/messages`)
               const formatted = msgs.map((m) => ({
+                id: m.id,
                 role: m.role,
                 content: m.content || '',
                 reasoning: m.reasoning_content,

@@ -178,28 +178,25 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if msg.Type == "reconnect" {
-				rows, err := s.db.Pool.Query(ctx, `
-					SELECT id, role, content, tool_calls, image_ids, duration_ms, created_at FROM agent_messages
-					WHERE session_id = $1 AND id > $2 ORDER BY created_at
-				`, currentSessionID, msg.LastMessageID)
-				if err == nil {
-					var messages []models.AgentMessage
-					for rows.Next() {
-						var m models.AgentMessage
-						var content *string
-						var toolCallsJSON []byte
-						var imageIDs []string
-						rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &imageIDs, &m.DurationMs, &m.CreatedAt)
-						if content != nil {
-							m.Content = *content
-						}
-						if toolCallsJSON != nil {
-							json.Unmarshal(toolCallsJSON, &m.ToolCalls)
-						}
-						m.ImageIDs = imageIDs
-						messages = append(messages, m)
+				var messages []models.AgentMessage
+				if msg.LastMessageID == "" {
+					rows, err := s.db.Pool.Query(ctx, `
+						SELECT id, role, content, tool_calls, image_ids, duration_ms, created_at FROM agent_messages
+						WHERE session_id = $1 ORDER BY created_at
+					`, currentSessionID)
+					if err == nil {
+						messages = scanAgentMessages(rows)
 					}
-					rows.Close()
+				} else {
+					rows, err := s.db.Pool.Query(ctx, `
+						SELECT id, role, content, tool_calls, image_ids, duration_ms, created_at FROM agent_messages
+						WHERE session_id = $1 AND id > $2 ORDER BY created_at
+					`, currentSessionID, msg.LastMessageID)
+					if err == nil {
+						messages = scanAgentMessages(rows)
+					}
+				}
+				if messages != nil {
 					safeSend(struct {
 						Type     string                `json:"type"`
 						Messages []models.AgentMessage `json:"messages"`
@@ -385,4 +382,29 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 
 	// No more sends to writeChan from control messages.
 	close(writeChan)
+}
+
+func scanAgentMessages(rows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Close()
+}) []models.AgentMessage {
+	messages := make([]models.AgentMessage, 0)
+	for rows.Next() {
+		var m models.AgentMessage
+		var content *string
+		var toolCallsJSON []byte
+		var imageIDs []string
+		rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &imageIDs, &m.DurationMs, &m.CreatedAt)
+		if content != nil {
+			m.Content = *content
+		}
+		if toolCallsJSON != nil {
+			json.Unmarshal(toolCallsJSON, &m.ToolCalls)
+		}
+		m.ImageIDs = imageIDs
+		messages = append(messages, m)
+	}
+	rows.Close()
+	return messages
 }
