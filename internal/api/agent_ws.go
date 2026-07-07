@@ -173,7 +173,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 
 			if msg.Type == "reconnect" {
 				rows, err := s.db.Pool.Query(ctx, `
-					SELECT id, role, content, tool_calls, image_ids, created_at FROM agent_messages
+					SELECT id, role, content, tool_calls, image_ids, duration_ms, created_at FROM agent_messages
 					WHERE session_id = $1 AND id > $2 ORDER BY created_at
 				`, currentSessionID, msg.LastMessageID)
 				if err == nil {
@@ -183,7 +183,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 						var content *string
 						var toolCallsJSON []byte
 						var imageIDs []string
-						rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &imageIDs, &m.CreatedAt)
+						rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &imageIDs, &m.DurationMs, &m.CreatedAt)
 						if content != nil {
 							m.Content = *content
 						}
