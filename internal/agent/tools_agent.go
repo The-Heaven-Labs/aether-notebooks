@@ -69,7 +69,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "spawn_subagents",
-			Description: "Execute multiple independent tasks in parallel by launching separate AI sub-agents. Use this when a request has multiple distinct, independent subtasks that can be worked on simultaneously (e.g., exploring different database schemas, writing separate code modules, researching multiple topics). Each sub-agent gets its own goal and runs in parallel. Blocks until all sub-agents complete and returns their results. Maximum 5 sub-agents per call.",
+			Description: "Execute multiple independent tasks in parallel by launching separate AI sub-agents. Use this when a request has multiple distinct, independent subtasks that can be worked on simultaneously (e.g., exploring different database schemas, writing separate code modules, researching multiple topics). Each sub-agent gets its own goal and runs in parallel. Blocks until all sub-agents complete and returns their results in the tool response — no need to call get_subagent_results afterwards. Respects the agent's max_subagent_turns setting.",
 			Parameters:  `{"type":"object","properties":{"tasks":{"type":"array","description":"List of independent sub-tasks to execute in parallel","minItems":1,"maxItems":5,"items":{"type":"object","properties":{"id":{"type":"string","description":"Short unique identifier for this sub-task (e.g. 'explore_schema', 'build_query', 'research_api')"},"goal":{"type":"string","description":"Clear, specific instruction for the sub-agent. Include what data to query, what to build, or what question to answer."},"agent_id":{"type":"string","description":"Optional agent ID to use for this sub-task. Omit to use the current agent."}},"required":["id","goal"]}}},"required":["tasks"]}`,
 		},
 		Handler: makeSpawnSubagentsHandler(pool, engine),
@@ -134,7 +134,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "get_subagent_results",
-			Description: "Get the results of spawned subagents. Use this to check if spawned subagent tasks have completed and retrieve their results. Provide the task_ids from spawn_subagents response.",
+			Description: "Get the results of spawned subagents. Only needed if you lost the results from spawn_subagents response (which returns them directly). Provide the task_ids from spawn_subagents.",
 			Parameters:  `{"type":"object","properties":{"task_ids":{"type":"array","items":{"type":"string"},"description":"List of subagent task IDs to check"}},"required":["task_ids"]}`,
 		},
 		Handler: makeGetSubagentResultsHandler(pool),
