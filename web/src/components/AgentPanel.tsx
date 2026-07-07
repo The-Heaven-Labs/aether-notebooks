@@ -587,7 +587,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               const existing = prev.findIndex(m => m.role === 'subagent' && m.content === msg.task_id)
               const subagentMsg: ChatMessage = {
                 role: 'subagent', content: msg.task_id,
-                params: JSON.stringify({ goal: msg.goal, status: msg.status }),
+                params: JSON.stringify({ goal: msg.goal, status: msg.status, error: msg.error }),
                 result: msg.status === 'completed' || msg.status === 'failed' ? JSON.stringify(msg.result || msg.status) : undefined,
                 created_at: ts(),
               }
@@ -1013,7 +1013,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             </>
           ) : msg.role === 'subagent' ? (
             (() => {
-              let parsedParams: { goal?: string; status?: string } = {}
+              let parsedParams: { goal?: string; status?: string; error?: string } = {}
               try { if (msg.params) parsedParams = JSON.parse(msg.params) } catch {}
               return (
               <div onClick={() => { if (msg.content) { const el = document.querySelector('[data-main-scroll]'); mainScrollRef.current = el?.scrollTop || 0; subagentViewRef.current = msg.content; setSubagentView(msg.content); fetchSubagentMessages(msg.content, setSubagentMessages, setSubagentLoading) } }}
@@ -1040,6 +1040,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                   <div style={{ marginTop: 4, fontSize: 10, maxHeight: 60, overflow: 'auto', opacity: 0.7, whiteSpace: 'pre-wrap' }}>
                     {msg.result.length > 200 ? msg.result.slice(0, 200) + '…' : msg.result}
                   </div>
+                )}
+                {parsedParams.error && (
+                  <div style={{ marginTop: 4, fontSize: 10, color: 'var(--error, #ef4444)', opacity: 0.8 }}>{parsedParams.error}</div>
                 )}
               </div>
             )})()

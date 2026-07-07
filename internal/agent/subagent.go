@@ -236,6 +236,7 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 				"status":  status,
 				"goal":    g,
 				"result":  result.Result,
+				"error":   result.Error,
 			}
 			if broadcastFn != nil {
 				broadcastFn(notebookID, completionEvent)

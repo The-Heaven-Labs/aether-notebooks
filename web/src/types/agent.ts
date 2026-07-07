@@ -151,7 +151,7 @@ export type WSMessage =
   | { type: 'cell_output'; cell_id: string; outputs: Array<{ type: string; data: unknown }> }
   | { type: 'cell_updated'; cell_id: string }
   | { type: 'subagent_progress'; tasks: SubagentTask[] }
-  | { type: 'subagent_status'; task_id: string; status: string; goal?: string; result?: unknown }
+  | { type: 'subagent_status'; task_id: string; status: string; goal?: string; result?: unknown; error?: string }
   | { type: 'subagent_message'; task_id: string; role: string; content: string; result?: string; tool_call_id?: string; tool_calls?: any; reasoning_content?: string }
   | { type: 'done'; tokens?: TokenBreakdown; data?: { content?: string; reasoning?: string; tokens?: TokenBreakdown } }
   | { type: 'error'; message: string }
