@@ -374,6 +374,15 @@ func seedResourceACLs(t *testing.T, srv *api.Server, orgID, resourceType string,
 	ctx := context.Background()
 	db := srv.DB().Pool
 
+	// Clear seeded ACL entries from NoACL resources (handler may seed creator ACL on creation)
+	if rs.NoACL != "" {
+		_, err := db.Exec(ctx,
+			`DELETE FROM acl_entries WHERE resource_type=$1 AND resource_id=$2::uuid AND org_id=$3`,
+			resourceType, rs.NoACL, orgID,
+		)
+		require.NoError(t, err)
+	}
+
 	if rs.UserACL != "" {
 		_, err := db.Exec(ctx,
 			`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
