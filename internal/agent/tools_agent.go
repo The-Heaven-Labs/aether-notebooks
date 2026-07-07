@@ -198,6 +198,10 @@ func makeListAgentsHandler(pool *pgxpool.Pool) ToolHandler {
 			if err := rows.Scan(&id, &name, &desc); err != nil {
 				return nil, fmt.Errorf("scan agent: %w", err)
 			}
+			// Respect folder-level ACLs: only return agents the user can view
+			if err := ctx.CheckPermission("agent", id, "view"); err != nil {
+				continue
+			}
 			d := ""
 			if desc != nil {
 				d = *desc
