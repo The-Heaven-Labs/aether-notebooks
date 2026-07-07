@@ -516,7 +516,7 @@ function MOTDSection() {
             <div style={{ display: 'flex', gap: 12 }}>
               <label style={{ ...formLabel, flex: 1 }}>
                 Priority
-                <input style={formInput} type="number" value={formData.priority} onChange={e => setFormData(f => ({ ...f, priority: parseInt(e.target.value) || 0 }))} />
+                <input style={formInput} type="text" value={formData.priority} onChange={e => setFormData(f => ({ ...f, priority: parseInt(e.target.value) || 0 }))} />
               </label>
               <label style={{ ...formLabel, flex: 1 }}>
                 Visibility

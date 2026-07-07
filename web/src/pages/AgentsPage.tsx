@@ -348,33 +348,33 @@ function AgentFormFields({ form, setForm, modelConfigs, skills, tools, mcpServer
       </label>
       <label style={styles.label}>Max Tool Turns
         <input
-          type="number"
+          type="text"
           style={styles.input}
           value={form.max_turns}
-          min={1}
-          max={200}
+         
+         
           onChange={e => setForm(f => ({ ...f, max_turns: parseInt(e.target.value) || 90 }))}
         />
         <span style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Default: 90, Max: 200</span>
       </label>
       <label style={styles.label}>Max Sub-Agents
         <input
-          type="number"
+          type="text"
           style={styles.input}
           value={form.max_subagents}
-          min={1}
-          max={20}
+         
+         
           onChange={e => setForm(f => ({ ...f, max_subagents: parseInt(e.target.value) || 5 }))}
         />
         <span style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Default: 5, Max: 20</span>
       </label>
       <label style={styles.label}>Max Sub-Agent Turns
         <input
-          type="number"
+          type="text"
           style={styles.input}
           value={form.max_subagent_turns}
-          min={1}
-          max={200}
+         
+         
           onChange={e => setForm(f => ({ ...f, max_subagent_turns: parseInt(e.target.value) || 20 }))}
         />
         <span style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Default: 20, Max: 200</span>

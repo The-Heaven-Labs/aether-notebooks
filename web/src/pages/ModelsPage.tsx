@@ -333,10 +333,10 @@ function ModelFormFields({ form, setForm }: { form: ModelConfigForm; setForm: Re
         <input style={styles.input} type="password" value={form.api_key} onChange={setField('api_key')} placeholder="sk-..." />
       </label>
       <label style={styles.label}>Context Window (tokens)
-        <input style={styles.input} type="number" min={1000} max={2000000} value={form.context_window} onChange={e => setForm(f => ({ ...f, context_window: parseInt(e.target.value) || 128000 }))} />
+        <input style={styles.input} type="text" value={form.context_window} onChange={e => setForm(f => ({ ...f, context_window: parseInt(e.target.value) || 128000 }))} />
       </label>
       <label style={styles.label}>Compaction Threshold %
-        <input style={styles.input} type="number" min={0} max={100} value={form.compaction_threshold} onChange={e => setForm(f => ({ ...f, compaction_threshold: parseInt(e.target.value) || 70 }))} />
+        <input style={styles.input} type="text" value={form.compaction_threshold} onChange={e => setForm(f => ({ ...f, compaction_threshold: parseInt(e.target.value) || 70 }))} />
         <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>Auto-summarize when context reaches this % of the window. 0 = disabled.</span>
       </label>
       <label style={styles.label}>Reasoning Effort Options
@@ -353,15 +353,15 @@ function ModelFormFields({ form, setForm }: { form: ModelConfigForm; setForm: Re
         <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>Default effort level pre-selected in the chat.</span>
       </label>
       <label style={styles.label}>Input Token Price ($ per 1M tokens)
-        <input style={styles.input} type="number" min={0} step="0.01" value={form.price_per_input_token} onChange={e => setForm(f => ({ ...f, price_per_input_token: parseFloat(e.target.value) || 0 }))} placeholder="0.15" />
+        <input style={styles.input} type="text" value={form.price_per_input_token} onChange={e => setForm(f => ({ ...f, price_per_input_token: parseFloat(e.target.value) || 0 }))} placeholder="0.15" />
         <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>Cost per 1M input tokens (e.g. 0.15 for GPT-4o-mini, 2.50 for GPT-4o).</span>
       </label>
       <label style={styles.label}>Output Token Price ($ per 1M tokens)
-        <input style={styles.input} type="number" min={0} step="0.01" value={form.price_per_output_token} onChange={e => setForm(f => ({ ...f, price_per_output_token: parseFloat(e.target.value) || 0 }))} placeholder="0.60" />
+        <input style={styles.input} type="text" value={form.price_per_output_token} onChange={e => setForm(f => ({ ...f, price_per_output_token: parseFloat(e.target.value) || 0 }))} placeholder="0.60" />
         <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>Cost per 1M output tokens (e.g. 0.60 for GPT-4o-mini, 10.00 for GPT-4o).</span>
       </label>
       <label style={styles.label}>Cache Read Token Price ($ per 1M tokens)
-        <input style={styles.input} type="number" min={0} step="0.01" value={form.price_per_cache_read_token} onChange={e => setForm(f => ({ ...f, price_per_cache_read_token: parseFloat(e.target.value) || 0 }))} placeholder="0.075" />
+        <input style={styles.input} type="text" value={form.price_per_cache_read_token} onChange={e => setForm(f => ({ ...f, price_per_cache_read_token: parseFloat(e.target.value) || 0 }))} placeholder="0.075" />
         <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>Cost per 1M cached input tokens (e.g. 0.075 for GPT-4o-mini).</span>
       </label>
     </div>
