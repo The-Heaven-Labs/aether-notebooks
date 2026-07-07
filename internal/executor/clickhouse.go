@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
-	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/shopspring/decimal"
+	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 type ClickHouseExecutor struct {

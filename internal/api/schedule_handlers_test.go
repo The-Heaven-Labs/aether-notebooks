@@ -18,6 +18,7 @@ func createSchedule(t *testing.T, srv interface {
 	req := httptest.NewRequest("POST", fmt.Sprintf("/api/v1/notebooks/%s/schedules", nbID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {

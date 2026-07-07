@@ -18,27 +18,27 @@ import (
 
 // Server is the HTTP server for the Aether API, holding all dependencies.
 type Server struct {
-	db                 *database.DB
-	jwt                *auth.JWTIssuer
-	audit              *audit.Logger
-	masterKey          []byte
-	hub                *Hub
-	mux                *http.ServeMux
-	store              storage.Storage
-	platformAdminEmail string
+	db                  *database.DB
+	jwt                 *auth.JWTIssuer
+	audit               *audit.Logger
+	masterKey           []byte
+	hub                 *Hub
+	mux                 *http.ServeMux
+	store               storage.Storage
+	platformAdminEmail  string
 	disableRegistration bool
-	publicURL          string
-	frontendURL        string
-	Cache              *cache.Cache
-	maxAttachmentBytes int64
-	agentEngine        *agent.Engine
-	upgrader           websocket.Upgrader
-	toolAllowedDomains []string
-	sessionCancels     sync.Map    // sessionID -> context.CancelFunc
-	subdomainMW        func(http.Handler) http.Handler // host → org resolution
-	oidcRewriteFrom    string                           // host rewrite for OIDC discovery inside Docker (e.g. "localhost:5557")
-	oidcRewriteTo      string                           // target host rewrite (e.g. "host.docker.internal:5557")
-	frontendHandler    http.Handler                     // embedded web frontend SPA (nil in tests)
+	publicURL           string
+	frontendURL         string
+	Cache               *cache.Cache
+	maxAttachmentBytes  int64
+	agentEngine         *agent.Engine
+	upgrader            websocket.Upgrader
+	toolAllowedDomains  []string
+	sessionCancels      sync.Map                        // sessionID -> context.CancelFunc
+	subdomainMW         func(http.Handler) http.Handler // host → org resolution
+	oidcRewriteFrom     string                          // host rewrite for OIDC discovery inside Docker (e.g. "localhost:5557")
+	oidcRewriteTo       string                          // target host rewrite (e.g. "host.docker.internal:5557")
+	frontendHandler     http.Handler                    // embedded web frontend SPA (nil in tests)
 }
 
 // NewServer creates a new Aether API server with the provided dependencies.
@@ -142,7 +142,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("GET /swagger.json", s.handleSwaggerJSON)
 	s.mux.HandleFunc("GET /docs", s.handleSwaggerUI)
-	s.mux.HandleFunc("GET /api/v1/_diagnose/master-key", func(w http.ResponseWriter, r *http.Request) {
+	s.mux.Handle("GET /api/v1/_diagnose/master-key", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		test := []byte("diagnostic-ping")
 		enc, err := crypto.Encrypt(test, s.masterKey)
 		if err != nil {
@@ -155,7 +155,7 @@ func (s *Server) routes() {
 			return
 		}
 		writeJSON(w, 200, map[string]string{"status": "ok", "key_hint": "master key is working correctly"})
-	})
+	})))
 	s.mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	s.mux.HandleFunc("POST /api/v1/auth/register", s.handleRegister)
 	s.mux.HandleFunc("GET /api/v1/auth/oidc/{provider}", s.handleOIDCLogin)
@@ -264,7 +264,7 @@ func (s *Server) routes() {
 
 	// Connector routes
 	s.mux.Handle("POST /api/v1/connectors", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateConnector))))
-	s.mux.Handle("POST /api/v1/connectors/test", authMW(http.HandlerFunc(s.handleTestConnectorConfig)))
+	s.mux.Handle("POST /api/v1/connectors/test", authMW(RequireRole("admin")(http.HandlerFunc(s.handleTestConnectorConfig))))
 	s.mux.Handle("GET /api/v1/connectors", authMW(http.HandlerFunc(s.handleListConnectors)))
 	s.mux.Handle("GET /api/v1/connectors/{id}", authMW(s.requirePermission("connector", "id", "view")(http.HandlerFunc(s.handleGetConnector))))
 	s.mux.Handle("PUT /api/v1/connectors/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateConnector))))
@@ -373,7 +373,7 @@ func (s *Server) routes() {
 	s.mux.Handle("DELETE /api/v1/skills/{id}", authMW(s.requirePermission("skill", "id", "delete")(http.HandlerFunc(sh.handleDelete))))
 	th := toolHandlers{server: s}
 	s.mux.Handle("GET /api/v1/tools", authMW(http.HandlerFunc(th.handleList)))
-	s.mux.Handle("POST /api/v1/tools", authMW(http.HandlerFunc(th.handleCreate)))
+	s.mux.Handle("POST /api/v1/tools", authMW(RequireRole("admin")(http.HandlerFunc(th.handleCreate))))
 	s.mux.Handle("GET /api/v1/tools/{id}", authMW(s.requirePermission("tool", "id", "view")(http.HandlerFunc(th.handleGet))))
 	s.mux.Handle("PUT /api/v1/tools/{id}", authMW(s.requirePermission("tool", "id", "edit")(http.HandlerFunc(th.handleUpdate))))
 	s.mux.Handle("DELETE /api/v1/tools/{id}", authMW(s.requirePermission("tool", "id", "delete")(http.HandlerFunc(th.handleDelete))))

@@ -65,9 +65,15 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := s.agentEngine.SessionStore().GetSession(r.Context(), sessionID)
+	sess, err := s.agentEngine.SessionStore().GetSession(r.Context(), sessionID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+
+	allowed, _ := s.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", sess.AgentID, "view")
+	if !allowed {
+		writeError(w, http.StatusForbidden, "access denied")
 		return
 	}
 
@@ -325,7 +331,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 								}{Type: "tool_confirm_required", ToolName: evt.ToolName, ToolArgs: evt.ToolArgs, CurrentSource: evt.Source})
 							case "token_update":
 								s.agentEngine.PublishSessionEvent(sid, struct {
-									Type   string              `json:"type"`
+									Type   string                `json:"type"`
 									Tokens *agent.TokenBreakdown `json:"tokens"`
 								}{Type: "token_update", Tokens: evt.Tokens})
 							}

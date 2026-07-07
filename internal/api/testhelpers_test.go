@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/api"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/auth"
@@ -20,7 +21,6 @@ import (
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/database"
 	"github.com/the-heaven-labs/aether/internal/storage"
-	"github.com/stretchr/testify/require"
 )
 
 const testOrgID = "00000000-0000-0000-0000-000000000001"
@@ -35,6 +35,7 @@ func withAdminClaims(r *http.Request, orgID string) *http.Request {
 		panic("withAdminClaims: " + err.Error())
 	}
 	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("X-AETHER-Admin-Mode", "true")
 	return r
 }
 
@@ -139,6 +140,7 @@ func createNotebook(t *testing.T, srv *api.Server, token, title string) string {
 	req := httptest.NewRequest("POST", "/api/v1/notebooks", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != 201 {
@@ -162,6 +164,7 @@ func createConnector(t *testing.T, srv *api.Server, token string) string {
 	req := httptest.NewRequest("POST", "/api/v1/connectors", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != 201 {
@@ -214,6 +217,7 @@ func createTestNotebook(t *testing.T, s http.Handler, token string) string {
 	req := httptest.NewRequest("POST", "/api/v1/notebooks", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
@@ -236,6 +240,7 @@ func uploadTestAttachment(t *testing.T, s http.Handler, token, nbID string) stri
 	req := httptest.NewRequest("POST", "/api/v1/notebooks/"+nbID+"/attachments", &buf)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
@@ -257,6 +262,7 @@ func createCell(t *testing.T, srv *api.Server, token, nbID, lang, source, connID
 	req := httptest.NewRequest("POST", fmt.Sprintf("/api/v1/notebooks/%s/cells", nbID), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != 201 {

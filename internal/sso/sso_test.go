@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/the-heaven-labs/aether/internal/crypto"
-	"github.com/the-heaven-labs/aether/internal/database"
-	"github.com/the-heaven-labs/aether/internal/sso"
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/database"
+	"github.com/the-heaven-labs/aether/internal/sso"
 )
 
 var testMasterKey = crypto.DeriveKey("test-master-key-for-tests-only!")
@@ -86,7 +86,7 @@ func TestCreateAndGetProvider(t *testing.T) {
 	assert.True(t, created.Enabled)
 	assert.Nil(t, created.OrgID)
 
-	got, err := sso.GetProvider(ctx, db.Pool, testMasterKey, created.ID)
+	got, err := sso.GetProvider(ctx, db.Pool, testMasterKey, created.ID, "")
 	require.NoError(t, err)
 	assert.Equal(t, created.ID, got.ID)
 	assert.Equal(t, input.ClientSecret, got.ClientSecret)
@@ -141,7 +141,7 @@ func TestUpdateProvider(t *testing.T) {
 	assert.Equal(t, "Updated Name", updated.Name)
 	assert.Equal(t, "new-secret-value", updated.ClientSecret)
 
-	got, err := sso.GetProvider(ctx, db.Pool, testMasterKey, created.ID)
+	got, err := sso.GetProvider(ctx, db.Pool, testMasterKey, created.ID, "")
 	require.NoError(t, err)
 	assert.Equal(t, "Updated Name", got.Name)
 	assert.Equal(t, "new-secret-value", got.ClientSecret)
@@ -157,7 +157,7 @@ func TestDeleteProvider(t *testing.T) {
 	err = sso.DeleteProvider(ctx, db.Pool, created.ID)
 	require.NoError(t, err)
 
-	_, err = sso.GetProvider(ctx, db.Pool, testMasterKey, created.ID)
+	_, err = sso.GetProvider(ctx, db.Pool, testMasterKey, created.ID, "")
 	assert.ErrorIs(t, err, pgx.ErrNoRows, "GetProvider after delete should return ErrNoRows")
 }
 
@@ -230,7 +230,7 @@ func TestCreateProviderWithGroupSettings(t *testing.T) {
 	assert.Equal(t, input.AutoSyncGroups, created.AutoSyncGroups)
 	assert.Equal(t, input.GetUserInfo, created.GetUserInfo)
 
-	got, err := sso.GetProvider(ctx, db.Pool, testMasterKey, created.ID)
+	got, err := sso.GetProvider(ctx, db.Pool, testMasterKey, created.ID, "")
 	require.NoError(t, err)
 	assert.Equal(t, input.Scopes, got.Scopes)
 	assert.Equal(t, input.GroupsClaim, got.GroupsClaim)

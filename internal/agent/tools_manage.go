@@ -311,13 +311,13 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
-			WidgetID     string `json:"widget_id"`
-			DashboardID  string `json:"dashboard_id"`
-			Row          *int   `json:"row"`
-			Col          *int   `json:"col"`
-			Width        *int   `json:"width"`
-			Height       *int   `json:"height"`
-			WidgetType   string `json:"type"`
+			WidgetID    string `json:"widget_id"`
+			DashboardID string `json:"dashboard_id"`
+			Row         *int   `json:"row"`
+			Col         *int   `json:"col"`
+			Width       *int   `json:"width"`
+			Height      *int   `json:"height"`
+			WidgetType  string `json:"type"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -346,10 +346,18 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 				"width":  cur.Width,
 				"height": cur.Height,
 			}
-			if req.Row != nil { l["row"] = *req.Row }
-			if req.Col != nil { l["col"] = *req.Col }
-			if req.Width != nil { l["width"] = *req.Width }
-			if req.Height != nil { l["height"] = *req.Height }
+			if req.Row != nil {
+				l["row"] = *req.Row
+			}
+			if req.Col != nil {
+				l["col"] = *req.Col
+			}
+			if req.Width != nil {
+				l["width"] = *req.Width
+			}
+			if req.Height != nil {
+				l["height"] = *req.Height
+			}
 			b, _ := json.Marshal(l)
 			s := string(b)
 			layout = &s
@@ -375,7 +383,9 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 
 func makeGetDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
-		var req struct{ DashboardID string `json:"dashboard_id"` }
+		var req struct {
+			DashboardID string `json:"dashboard_id"`
+		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
@@ -489,7 +499,9 @@ func makeUpdateDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 
 func makeShareDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
-		var req struct{ DashboardID string `json:"dashboard_id"` }
+		var req struct {
+			DashboardID string `json:"dashboard_id"`
+		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
@@ -554,7 +566,9 @@ func makeListDashboardsHandler(pool *pgxpool.Pool) ToolHandler {
 
 func makeDeleteDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
-		var req struct{ DashboardID string `json:"dashboard_id"` }
+		var req struct {
+			DashboardID string `json:"dashboard_id"`
+		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
@@ -608,7 +622,9 @@ func makeCreateScheduleHandler(pool *pgxpool.Pool) ToolHandler {
 
 func makeDeleteScheduleHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
-		var req struct{ ScheduleID string `json:"schedule_id"` }
+		var req struct {
+			ScheduleID string `json:"schedule_id"`
+		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
@@ -743,7 +759,9 @@ func makeUpdatePermissionsHandler(pool *pgxpool.Pool) ToolHandler {
 
 func makeExportNotebookHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
-		var req struct{ NotebookID string `json:"notebook_id"` }
+		var req struct {
+			NotebookID string `json:"notebook_id"`
+		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}

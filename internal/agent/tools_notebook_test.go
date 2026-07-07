@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/database"
 	"github.com/the-heaven-labs/aether/internal/models"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func setupTestDB(t *testing.T) *database.DB {

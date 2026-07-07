@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 type ToolContext struct {
@@ -36,15 +36,15 @@ type AgentTask struct {
 }
 
 type EngineEvent struct {
-	Type              string          `json:"type"`
-	CellID            string          `json:"cell_id,omitempty"`
-	Position          int             `json:"position,omitempty"`
-	Source            string          `json:"source,omitempty"`
-	Tasks             []AgentTask     `json:"tasks,omitempty"`
-	Outputs           any             `json:"outputs,omitempty"`
-	ToolName          string          `json:"tool_name,omitempty"`
-	ToolArgs          string          `json:"tool_args,omitempty"`
-	Tokens            *TokenBreakdown `json:"tokens,omitempty"`
+	Type     string          `json:"type"`
+	CellID   string          `json:"cell_id,omitempty"`
+	Position int             `json:"position,omitempty"`
+	Source   string          `json:"source,omitempty"`
+	Tasks    []AgentTask     `json:"tasks,omitempty"`
+	Outputs  any             `json:"outputs,omitempty"`
+	ToolName string          `json:"tool_name,omitempty"`
+	ToolArgs string          `json:"tool_args,omitempty"`
+	Tokens   *TokenBreakdown `json:"tokens,omitempty"`
 }
 
 func (tc *ToolContext) EmitCellDeleted(cellID string) {
@@ -196,9 +196,9 @@ type ToolDef struct {
 		Description string `json:"description"`
 		Parameters  any    `json:"parameters"`
 	} `json:"function"`
-	Timeout          time.Duration
-	Handler          ToolHandler `json:"-"`
-	ConfirmRequired  bool        `json:"-"`
+	Timeout         time.Duration
+	Handler         ToolHandler `json:"-"`
+	ConfirmRequired bool        `json:"-"`
 }
 
 func normalizeToolParams(params map[string]any) map[string]any {

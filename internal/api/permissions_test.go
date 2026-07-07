@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/the-heaven-labs/aether/internal/api"
 	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/api"
 )
 
 // TestPermission_NoACL_DenyByDefault: non-admin user with NO ACL entry is denied access.
@@ -41,7 +41,8 @@ func TestPermission_ACLGrantByOrgRole(t *testing.T) {
 	// Seed an ACL entry: org_role 'admin' can view+edit this notebook
 	_, err := db.Pool.Exec(ctx,
 		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-		 VALUES ($1, 'notebook', $2::uuid, 'org_role', 'admin', ARRAY['view','edit','delete'])`,
+		 VALUES ($1, 'notebook', $2::uuid, 'org_role', 'admin', ARRAY['view','edit','delete'])
+		 ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO UPDATE SET actions = EXCLUDED.actions`,
 		orgID, nbID,
 	)
 	if err != nil {
@@ -223,6 +224,7 @@ func TestPermission_OrgAdminBypass(t *testing.T) {
 	// Admin2 should be ALLOWED (org admin bypass, no ACL needed)
 	req2 := httptest.NewRequest("GET", "/api/v1/notebooks/"+nbID, nil)
 	req2.Header.Set("Authorization", "Bearer "+admin2Token)
+	req2.Header.Set("X-AETHER-Admin-Mode", "true")
 	rec2 := httptest.NewRecorder()
 	srv.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusOK {

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 type SessionStore struct {

@@ -89,7 +89,7 @@ type SnapshotCell struct {
 }
 
 type CellDiffLine struct {
-	Type   string `json:"type"`   // "add", "del", "ctx"
+	Type   string `json:"type"` // "add", "del", "ctx"
 	Line   string `json:"line"`
 	OldNum int    `json:"old_num,omitempty"`
 	NewNum int    `json:"new_num,omitempty"`
@@ -113,14 +113,14 @@ type CellChange struct {
 }
 
 type SnapshotChanges struct {
-	TitleChanged    bool         `json:"title_changed"`
-	OldTitle        string       `json:"old_title"`
-	NewTitle        string       `json:"new_title"`
-	CellsAdded      []CellChange `json:"cells_added"`
-	CellsDeleted    []CellChange `json:"cells_deleted"`
-	CellsModified   []CellChange `json:"cells_modified"`
+	TitleChanged     bool         `json:"title_changed"`
+	OldTitle         string       `json:"old_title"`
+	NewTitle         string       `json:"new_title"`
+	CellsAdded       []CellChange `json:"cells_added"`
+	CellsDeleted     []CellChange `json:"cells_deleted"`
+	CellsModified    []CellChange `json:"cells_modified"`
 	PositionsChanged []CellChange `json:"positions_changed"`
-	CellDiffs       []CellDiff   `json:"cell_diffs,omitempty"`
+	CellDiffs        []CellDiff   `json:"cell_diffs,omitempty"`
 }
 
 type NotebookSnapshot struct {

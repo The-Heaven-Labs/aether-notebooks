@@ -28,13 +28,19 @@ func (s *Server) handleUploadAgentAttachment(w http.ResponseWriter, r *http.Requ
 	sessionID := r.PathValue("session_id")
 	ctx := r.Context()
 
-	var exists bool
-	if err := s.db.Pool.QueryRow(ctx, "SELECT true FROM agent_sessions WHERE id = $1", sessionID).Scan(&exists); err != nil && err != pgx.ErrNoRows {
+	var agentID string
+	if err := s.db.Pool.QueryRow(ctx, "SELECT agent_id FROM agent_sessions WHERE id = $1", sessionID).Scan(&agentID); err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "session not found")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
-	if !exists {
-		writeError(w, http.StatusNotFound, "session not found")
+
+	allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "edit")
+	if !allowed {
+		writeError(w, http.StatusForbidden, "access denied")
 		return
 	}
 
@@ -132,5 +138,3 @@ func (s *Server) handleGetAgentAttachment(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, filename))
 	_, _ = io.Copy(w, rc)
 }
-
-

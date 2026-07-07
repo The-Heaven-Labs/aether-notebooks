@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 type toolHandlers struct {
@@ -219,13 +219,13 @@ func (h *toolHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
 	var req struct {
-		Name                *string          `json:"name"`
-		Description         *string          `json:"description"`
-		Type                *string          `json:"type"`
-		Schema              *models.JSONMap  `json:"schema"`
-		Config              *models.JSONMap  `json:"config"`
-		RequireConfirmation *bool            `json:"require_confirmation"`
-		FolderID            *string          `json:"folder_id"`
+		Name                *string         `json:"name"`
+		Description         *string         `json:"description"`
+		Type                *string         `json:"type"`
+		Schema              *models.JSONMap `json:"schema"`
+		Config              *models.JSONMap `json:"config"`
+		RequireConfirmation *bool           `json:"require_confirmation"`
+		FolderID            *string         `json:"folder_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")

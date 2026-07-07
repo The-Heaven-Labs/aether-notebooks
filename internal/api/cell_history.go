@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/pmezard/go-difflib/difflib"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/models"
-	"github.com/jackc/pgx/v5"
-	"github.com/pmezard/go-difflib/difflib"
 )
 
 const (
@@ -128,6 +128,12 @@ func (s *Server) handleListCellVersions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "view")
+	if !allowed {
+		writeError(w, http.StatusNotFound, "cell not found")
+		return
+	}
+
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT cv.id, cv.cell_id, cv.source, cv.created_at, cv.created_by,
 		        u.id, u.name, u.email
@@ -197,6 +203,12 @@ func (s *Server) handleRestoreCellVersion(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "edit")
+	if !allowed {
+		writeError(w, http.StatusNotFound, "version not found")
+		return
+	}
+
 	// Update the cell source
 	var cell models.Cell
 	var lang, connID *string
@@ -235,8 +247,6 @@ func (s *Server) handleRestoreCellVersion(w http.ResponseWriter, r *http.Request
 type createSnapshotRequest struct {
 	Name string `json:"name"`
 }
-
-
 
 // computeCellDiff computes a line-level diff between old and new cell source.
 func computeCellDiff(cellID string, position int, title, oldSource, newSource string) models.CellDiff {
@@ -404,7 +414,20 @@ func (s *Server) handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	snap, err := agent.CreateNotebookSnapshot(ctx, s.db.Pool, nbID, req.Name, claims.UserID, false)
+	var exists bool
+	s.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM notebooks WHERE id=$1 AND org_id=$2)`, nbID, claims.OrgID).Scan(&exists)
+	if !exists {
+		writeError(w, http.StatusNotFound, "notebook not found")
+		return
+	}
+
+	allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "view")
+	if !allowed {
+		writeError(w, http.StatusNotFound, "notebook not found")
+		return
+	}
+
+	snap, err := agent.CreateNotebookSnapshot(ctx, s.db.Pool, nbID, claims.OrgID, req.Name, claims.UserID, false)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "create snapshot failed")
 		return
@@ -430,6 +453,12 @@ func (s *Server) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
 	var exists bool
 	s.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM notebooks WHERE id=$1 AND org_id=$2)`, nbID, claims.OrgID).Scan(&exists)
 	if !exists {
+		writeError(w, http.StatusNotFound, "notebook not found")
+		return
+	}
+
+	allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "view")
+	if !allowed {
 		writeError(w, http.StatusNotFound, "notebook not found")
 		return
 	}

@@ -192,20 +192,20 @@ func TestOrgAdminCannotModifyOtherOrgProvider(t *testing.T) {
 	}
 	body, _ = json.Marshal(updateBody)
 
-	// Org B tries to update → 403
+	// Org B tries to update → 404 (cross-org, not found to avoid leaking existence)
 	req = httptest.NewRequest("PUT", "/api/v1/sso/providers/"+providerID, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+tokenB)
 	rec = httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusForbidden, rec.Code, "org B update should be 403")
+	assert.Equal(t, http.StatusNotFound, rec.Code, "org B update should be 404")
 
-	// Org B tries to delete → 403
+	// Org B tries to delete → 404 (cross-org, not found to avoid leaking existence)
 	req = httptest.NewRequest("DELETE", "/api/v1/sso/providers/"+providerID, nil)
 	req.Header.Set("Authorization", "Bearer "+tokenB)
 	rec = httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusForbidden, rec.Code, "org B delete should be 403")
+	assert.Equal(t, http.StatusNotFound, rec.Code, "org B delete should be 404")
 }
 
 // TestOrgAdminPlatformProviderEnableDisable tests enabling/disabling platform providers.

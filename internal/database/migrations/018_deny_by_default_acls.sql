@@ -2,7 +2,7 @@
 -- Notebooks: creator gets full access, org admin gets full access
 INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
 SELECT n.org_id, 'notebook', n.id, 'user', n.created_by::text,
-       ARRAY['view','run','edit','share','delete']
+       ARRAY['view','run','edit','share','delete','create']
 FROM notebooks n
 WHERE NOT EXISTS (
     SELECT 1 FROM acl_entries ae
@@ -13,7 +13,7 @@ ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING;
 
 INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
 SELECT n.org_id, 'notebook', n.id, 'org_role', 'admin',
-       ARRAY['view','run','edit','share','delete']
+       ARRAY['view','run','edit','share','delete','create']
 FROM notebooks n
 WHERE NOT EXISTS (
     SELECT 1 FROM acl_entries ae

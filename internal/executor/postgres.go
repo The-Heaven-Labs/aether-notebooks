@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 // normalizeValue converts pgx native types that JSON-marshal poorly into

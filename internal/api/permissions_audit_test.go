@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/the-heaven-labs/aether/internal/api"
 	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/api"
 )
 
 type ResourceSet struct {
@@ -57,6 +57,7 @@ func (f *AuditFixtures) Request(t *testing.T, userKey, method, path string, body
 	}
 	req := httptest.NewRequest(method, path, r)
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -372,6 +373,15 @@ func seedResourceACLs(t *testing.T, srv *api.Server, orgID, resourceType string,
 	t.Helper()
 	ctx := context.Background()
 	db := srv.DB().Pool
+
+	// Clear seeded ACL entries from NoACL resources (handler may seed creator ACL on creation)
+	if rs.NoACL != "" {
+		_, err := db.Exec(ctx,
+			`DELETE FROM acl_entries WHERE resource_type=$1 AND resource_id=$2::uuid AND org_id=$3`,
+			resourceType, rs.NoACL, orgID,
+		)
+		require.NoError(t, err)
+	}
 
 	if rs.UserACL != "" {
 		_, err := db.Exec(ctx,

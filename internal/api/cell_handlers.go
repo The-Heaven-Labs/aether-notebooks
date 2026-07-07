@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/models"
-	"github.com/jackc/pgx/v5"
 )
 
 type createCellRequest struct {
@@ -404,7 +404,7 @@ func (s *Server) handleDeleteCell(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Auto-snapshot before destructive action
-	go agent.EnsureAutoSnapshot(context.Background(), s.db.Pool, nbID, claims.UserID)
+	go agent.EnsureAutoSnapshot(context.Background(), s.db.Pool, nbID, claims.UserID, claims.OrgID)
 
 	result, err := s.db.Pool.Exec(ctx,
 		`DELETE FROM cells WHERE id = $1 AND notebook_id = $2

@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/jackc/pgx/v5"
+	"github.com/redis/go-redis/v9"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/auth"
 	"github.com/the-heaven-labs/aether/internal/sso"
-	"github.com/jackc/pgx/v5"
-	"github.com/redis/go-redis/v9"
 )
 
 func generateState() (string, error) {
@@ -95,7 +95,7 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 	providerID := r.PathValue("provider")
 	ctx := r.Context()
 
-	dbProvider, err := sso.GetCachedProvider(ctx, s.db.Pool, s.Cache.Client(), s.masterKey, providerID)
+	dbProvider, err := sso.GetCachedProvider(ctx, s.db.Pool, s.Cache.Client(), s.masterKey, providerID, OrgIDFromContext(ctx))
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "provider not found")
 		return
@@ -154,7 +154,12 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	providerID := r.PathValue("provider")
 	ctx := r.Context()
 
-	dbProvider, err := sso.GetCachedProvider(ctx, s.db.Pool, s.Cache.Client(), s.masterKey, providerID)
+	// Resolve subdomain org: first check the Host header (if the callback
+	// arrives on the subdomain), then fall back to the state stored in Redis
+	// during the login handler.
+	subdomainOrgID := OrgIDFromContext(ctx)
+
+	dbProvider, err := sso.GetCachedProvider(ctx, s.db.Pool, s.Cache.Client(), s.masterKey, providerID, subdomainOrgID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "provider not found")
 		return
@@ -162,11 +167,6 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load provider")
 		return
 	}
-
-	// Resolve subdomain org: first check the Host header (if the callback
-	// arrives on the subdomain), then fall back to the state stored in Redis
-	// during the login handler.
-	subdomainOrgID := OrgIDFromContext(ctx)
 	oidcIssuer := issuerURL(dbProvider.DiscoveryURL)
 	oidcCtx := oidc.ClientContext(ctx, s.oidcHTTPClient(oidcIssuer))
 	provider, err := auth.NewGenericOIDCProvider(oidcCtx, dbProvider.Name, oidcIssuer, dbProvider.ClientID, dbProvider.ClientSecret, s.callbackURL(r, providerID), dbProvider.Scopes, dbProvider.GroupsClaim, dbProvider.GetUserInfo)
@@ -249,15 +249,15 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		if subdomainOrgID != "" {
 			// Provision into the subdomain-resolved org
 			orgID = subdomainOrgID
-		_, txErr = tx.Exec(ctx,
-			`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'non-admin')`,
-			orgID, userID,
-		)
-		if txErr != nil {
-			writeError(w, http.StatusInternalServerError, "failed to add member")
-			return
-		}
-		role = "non-admin"
+			_, txErr = tx.Exec(ctx,
+				`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'non-admin')`,
+				orgID, userID,
+			)
+			if txErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to add member")
+				return
+			}
+			role = "non-admin"
 		} else {
 			// No subdomain — create a new org (existing behavior)
 			orgName := displayName + "'s Org"
@@ -372,7 +372,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	// Redirect to the frontend with the token as a query param so LoginPage can pick it up.
 	// Use the subdomain-aware frontend URL if available (preserved in state from login handler).
 	redirectURL := s.frontendURL + "/login?token=" + url.QueryEscape(token)
-	if subdomainFrontendURL != "" {
+	if subdomainFrontendURL != "" && (strings.HasPrefix(subdomainFrontendURL, s.frontendURL) || strings.HasPrefix(subdomainFrontendURL, "http://localhost:5173")) {
 		redirectURL = subdomainFrontendURL + "/login?token=" + url.QueryEscape(token)
 	}
 	http.Redirect(w, r, redirectURL, http.StatusFound)

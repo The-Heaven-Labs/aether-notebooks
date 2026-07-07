@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type motdRequest struct {
@@ -119,11 +121,25 @@ func (s *Server) handleListMOTDAdmin(w http.ResponseWriter, r *http.Request) {
 // @Router /public/motd [get]
 func (s *Server) handleListLoginMOTD(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, title, content, priority, created_at, expires_at
-		 FROM motd_messages
-		 WHERE show_on_login = true AND (expires_at IS NULL OR expires_at > NOW())
-		 ORDER BY priority DESC, created_at DESC`)
+	orgID := OrgIDFromContext(ctx)
+
+	var rows pgx.Rows
+	var err error
+	if orgID != "" {
+		rows, err = s.db.Pool.Query(ctx,
+			`SELECT id, title, content, priority, created_at, expires_at
+			 FROM motd_messages
+			 WHERE show_on_login = true AND (org_id IS NULL OR org_id = $1)
+			 AND (expires_at IS NULL OR expires_at > NOW())
+			 ORDER BY priority DESC, created_at DESC`, orgID)
+	} else {
+		rows, err = s.db.Pool.Query(ctx,
+			`SELECT id, title, content, priority, created_at, expires_at
+			 FROM motd_messages
+			 WHERE show_on_login = true AND org_id IS NULL
+			 AND (expires_at IS NULL OR expires_at > NOW())
+			 ORDER BY priority DESC, created_at DESC`)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list MOTDs")
 		return

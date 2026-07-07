@@ -8,10 +8,10 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func makeSQLQueryToolDef(t *models.Tool, pool *pgxpool.Pool) (*ToolDef, error) {

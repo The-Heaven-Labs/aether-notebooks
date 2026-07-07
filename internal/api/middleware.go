@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/the-heaven-labs/aether/internal/auth"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-heaven-labs/aether/internal/auth"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -79,7 +79,7 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool) func(http.Handle
 				}
 			}
 
-			adminMode := r.Header.Get("X-AETHER-Admin-Mode") != "false"
+			adminMode := r.Header.Get("X-AETHER-Admin-Mode") == "true"
 			ctx = context.WithValue(ctx, adminModeKey, adminMode)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -88,8 +88,16 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool) func(http.Handle
 
 // validateAPIToken checks a personal access token against the api_tokens table.
 func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler, pool *pgxpool.Pool, token string) {
-	rows, err := pool.Query(r.Context(),
-		`SELECT id, user_id, org_id, token_hash, expires_at FROM api_tokens`)
+	subdomainOrg := OrgIDFromContext(r.Context())
+	var rows pgx.Rows
+	var err error
+	if subdomainOrg != "" {
+		rows, err = pool.Query(r.Context(),
+			`SELECT id, user_id, org_id, token_hash, expires_at FROM api_tokens WHERE org_id = $1`, subdomainOrg)
+	} else {
+		rows, err = pool.Query(r.Context(),
+			`SELECT id, user_id, org_id, token_hash, expires_at FROM api_tokens`)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "auth error")
 		return
@@ -121,14 +129,21 @@ func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler,
 				Role:   role,
 			}
 
-			// Validate subdomain org matches API token org when both are present
+			// Validate subdomain org matches API token org when both are present.
+			// Platform admins operate at the instance level — override their org
+			// to the subdomain org so they see the correct org's data.
 			if subdomainOrg := OrgIDFromContext(r.Context()); subdomainOrg != "" && subdomainOrg != orgID {
-				writeError(w, http.StatusForbidden, "organization mismatch between subdomain and token")
-				return
+				if claims.IsPlatformAdmin {
+					orgID = subdomainOrg
+					claims.OrgID = subdomainOrg
+				} else {
+					writeError(w, http.StatusForbidden, "organization mismatch between subdomain and token")
+					return
+				}
 			}
 
 			ctx := context.WithValue(r.Context(), claimsKey, claims)
-			adminMode := r.Header.Get("X-AETHER-Admin-Mode") != "false"
+			adminMode := r.Header.Get("X-AETHER-Admin-Mode") == "true"
 			ctx = context.WithValue(ctx, adminModeKey, adminMode)
 
 			// Update last_used_at in background

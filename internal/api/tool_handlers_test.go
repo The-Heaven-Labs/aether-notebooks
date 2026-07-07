@@ -20,6 +20,7 @@ func TestToolCRUD(t *testing.T) {
 	t.Run("list builtins", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/tools", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-AETHER-Admin-Mode", "true")
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
@@ -46,6 +47,7 @@ func TestToolCRUD(t *testing.T) {
 		req := httptest.NewRequest("POST", "/api/v1/tools", strings.NewReader(string(body)))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-AETHER-Admin-Mode", "true")
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)
 		if rec.Code != http.StatusCreated {
@@ -62,6 +64,7 @@ func TestToolCRUD(t *testing.T) {
 	t.Run("list after create", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/tools", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-AETHER-Admin-Mode", "true")
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
@@ -91,6 +94,7 @@ func TestToolCRUD(t *testing.T) {
 	t.Run("get single", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/tools/"+toolID, nil)
 		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-AETHER-Admin-Mode", "true")
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
@@ -114,6 +118,7 @@ func TestToolCRUD(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/api/v1/tools/"+toolID, strings.NewReader(string(body)))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-AETHER-Admin-Mode", "true")
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
@@ -122,6 +127,7 @@ func TestToolCRUD(t *testing.T) {
 
 		req2 := httptest.NewRequest("GET", "/api/v1/tools/"+toolID, nil)
 		req2.Header.Set("Authorization", "Bearer "+token)
+		req2.Header.Set("X-AETHER-Admin-Mode", "true")
 		rec2 := httptest.NewRecorder()
 		srv.ServeHTTP(rec2, req2)
 		var tool map[string]any
@@ -134,6 +140,7 @@ func TestToolCRUD(t *testing.T) {
 	t.Run("delete", func(t *testing.T) {
 		req := httptest.NewRequest("DELETE", "/api/v1/tools/"+toolID, nil)
 		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-AETHER-Admin-Mode", "true")
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)
 		if rec.Code != http.StatusNoContent {
@@ -142,6 +149,7 @@ func TestToolCRUD(t *testing.T) {
 
 		req2 := httptest.NewRequest("GET", "/api/v1/tools/"+toolID, nil)
 		req2.Header.Set("Authorization", "Bearer "+token)
+		req2.Header.Set("X-AETHER-Admin-Mode", "true")
 		rec2 := httptest.NewRecorder()
 		srv.ServeHTTP(rec2, req2)
 		if rec2.Code != http.StatusNotFound {

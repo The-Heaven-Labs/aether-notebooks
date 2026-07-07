@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/jackc/pgx/v5"
+	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 // permissionCheckSQL returns a SQL fragment that checks if the user has access to a resource.

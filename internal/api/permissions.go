@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
 	"sort"
 
 	"github.com/jackc/pgx/v5"
 )
+
+var uuidRegexp = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 type aclCandidate struct {
 	subjectType string
@@ -250,4 +253,8 @@ func (s *Server) requirePermission(resourceType, idParam, action string) func(ht
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func isValidUUID(s string) bool {
+	return uuidRegexp.MatchString(s)
 }

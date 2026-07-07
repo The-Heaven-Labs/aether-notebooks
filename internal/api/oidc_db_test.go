@@ -31,7 +31,7 @@ func TestOIDCProviderLoadedFromDB(t *testing.T) {
 	}
 
 	// Load via GetCachedProvider — should hit DB on first call
-	loaded, err := sso.GetCachedProvider(ctx, s.DB().Pool, s.Cache.Client(), key, created.ID)
+	loaded, err := sso.GetCachedProvider(ctx, s.DB().Pool, s.Cache.Client(), key, created.ID, "")
 	if err != nil {
 		t.Fatalf("GetCachedProvider: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestOIDCProviderLoadedFromDB(t *testing.T) {
 	}
 
 	// Second call should hit Redis cache
-	loaded2, err := sso.GetCachedProvider(ctx, s.DB().Pool, s.Cache.Client(), key, created.ID)
+	loaded2, err := sso.GetCachedProvider(ctx, s.DB().Pool, s.Cache.Client(), key, created.ID, "")
 	if err != nil {
 		t.Fatalf("GetCachedProvider (cached): %v", err)
 	}

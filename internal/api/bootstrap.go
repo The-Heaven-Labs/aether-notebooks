@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/the-heaven-labs/aether/internal/sso"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-heaven-labs/aether/internal/sso"
 )
 
 // SeedPlatformAdmin promotes the given email to platform admin if the user exists.
@@ -34,18 +34,18 @@ func SeedDevSSOProviders(ctx context.Context, pool *pgxpool.Pool, masterKey []by
 	}
 
 	keycloakProvider := sso.Provider{
-		Name:         "Keycloak (Dev)",
-		ProviderType: "oidc",
-		ClientID:     "aether-dev",
-		ClientSecret: "aether-dev-keycloak-secret",
-		DiscoveryURL: "http://localhost:5557/realms/aether-dev",
+		Name:           "Keycloak (Dev)",
+		ProviderType:   "oidc",
+		ClientID:       "aether-dev",
+		ClientSecret:   "aether-dev-keycloak-secret",
+		DiscoveryURL:   "http://localhost:5557/realms/aether-dev",
 		AllowedDomains: []string{"aether-dev.test"},
-		Enabled:      true,
-		Scopes:       []string{"openid", "profile", "email"},
-		GroupsClaim:  "groups",
+		Enabled:        true,
+		Scopes:         []string{"openid", "profile", "email"},
+		GroupsClaim:    "groups",
 		AutoSyncGroups: true,
-		GetUserInfo:  true,
-		Scope:        "platform",
+		GetUserInfo:    true,
+		Scope:          "platform",
 	}
 
 	if _, err := sso.CreateProvider(ctx, pool, masterKey, keycloakProvider); err != nil {

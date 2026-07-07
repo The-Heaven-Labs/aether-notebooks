@@ -57,11 +57,11 @@ func TestPublicEndpoints(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code)
 	})
 
-	t.Run("GET /api/v1/_diagnose/master-key — 200", func(t *testing.T) {
+	t.Run("GET /api/v1/_diagnose/master-key (no auth) — 401", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/_diagnose/master-key", nil)
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)
-		require.Equal(t, http.StatusOK, rec.Code)
+		require.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
 }
 

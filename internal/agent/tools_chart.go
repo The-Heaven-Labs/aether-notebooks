@@ -38,28 +38,28 @@ func RegisterChartTools(reg *ToolRegistry, db *pgxpool.Pool) {
 
 var chartAllowedFields = map[string]map[string]bool{
 	"line": {
-			"title": true, "showLegend": true, "showGrid": true,
-			"dataZoom": true, "showLabels": true, "smooth": true,
-			"connectNulls": true, "seriesColors": true, "xAxis": true, "yAxis": true,
-			"groupBy": true, "markLines": true,
-		},
-		"area": {
-			"title": true, "showLegend": true, "showGrid": true,
-			"dataZoom": true, "showLabels": true, "smooth": true,
-			"connectNulls": true, "seriesColors": true, "xAxis": true, "yAxis": true,
-			"groupBy": true, "areaMode": true, "markLines": true,
-		},
-		"bar": {
-			"title": true, "showLegend": true, "showGrid": true,
-			"dataZoom": true, "showLabels": true, "seriesColors": true,
-			"xAxis": true, "yAxis": true, "barWidth": true, "barCategoryGap": true,
-			"groupBy": true, "barMode": true, "markLines": true,
-		},
-		"scatter": {
-			"title": true, "showLegend": true, "showGrid": true,
-			"seriesColors": true, "colorColumn": true, "sizeColumn": true,
-			"xAxis": true, "yAxis": true, "groupBy": true, "markLines": true,
-		},
+		"title": true, "showLegend": true, "showGrid": true,
+		"dataZoom": true, "showLabels": true, "smooth": true,
+		"connectNulls": true, "seriesColors": true, "xAxis": true, "yAxis": true,
+		"groupBy": true, "markLines": true,
+	},
+	"area": {
+		"title": true, "showLegend": true, "showGrid": true,
+		"dataZoom": true, "showLabels": true, "smooth": true,
+		"connectNulls": true, "seriesColors": true, "xAxis": true, "yAxis": true,
+		"groupBy": true, "areaMode": true, "markLines": true,
+	},
+	"bar": {
+		"title": true, "showLegend": true, "showGrid": true,
+		"dataZoom": true, "showLabels": true, "seriesColors": true,
+		"xAxis": true, "yAxis": true, "barWidth": true, "barCategoryGap": true,
+		"groupBy": true, "barMode": true, "markLines": true,
+	},
+	"scatter": {
+		"title": true, "showLegend": true, "showGrid": true,
+		"seriesColors": true, "colorColumn": true, "sizeColumn": true,
+		"xAxis": true, "yAxis": true, "groupBy": true, "markLines": true,
+	},
 	"pie": {
 		"title": true, "showLegend": true, "showLabels": true,
 		"labelColumn": true, "seriesColors": true, "xAxis": true, "yAxis": true,
@@ -131,54 +131,54 @@ func filterChartConfig(config map[string]any, chartType string) []string {
 func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
-			CellID          string              `json:"cell_id"`
-			ChartType       string              `json:"chart_type"`
-			XColumn         string              `json:"x_column"`
-			YColumns        []string            `json:"y_columns"`
-			LatColumn       string              `json:"lat_column"`
-			LonColumn       string              `json:"lon_column"`
-			Title           string              `json:"title"`
-			TimeColumn      string              `json:"time_column"`
-			EndTimeColumn   string              `json:"end_time_column"`
-			LabelColumn     string              `json:"label_column"`
-			GroupBy         string              `json:"group_by"`
-			IDColumn        string              `json:"id_column"`
-			ParentIDColumn  string              `json:"parent_id_column"`
-			MetricColumns   []string            `json:"metric_columns"`
-			ValueColumn     string              `json:"value_column"`
-			CategoryColumn  string              `json:"category_column"`
-			YAxisColumn     string              `json:"y_axis_column"`
-			FunnelSort      string              `json:"funnel_sort"`
-			BinCount        *int                `json:"bin_count"`
-			BarMode         string              `json:"bar_mode"`
-			AreaMode        string              `json:"area_mode"`
-			Layout          string              `json:"layout"`
-			ShowLabels      *bool               `json:"show_labels"`
-			ShowLegend      *bool               `json:"show_legend"`
-			ShowGrid        *bool               `json:"show_grid"`
-			SkipEmpty       *bool               `json:"skip_empty"`
-			MaxLabelLength  *int                `json:"max_label_length"`
-			ShowConnectors  *bool               `json:"show_connectors"`
-			ShowTimeDeltas  *bool               `json:"show_time_deltas"`
-			DecimalPlaces   *int                `json:"decimal_places"`
-			ChartLabel      string              `json:"label"`
-			Prefix          string              `json:"prefix"`
-			Suffix          string              `json:"suffix"`
-			SeriesColors    map[string]string   `json:"series_colors"`
-			DataZoom        *bool               `json:"data_zoom"`
-			Smooth          *bool               `json:"smooth"`
-			ConnectNulls    *bool               `json:"connect_nulls"`
-			BarWidth        string              `json:"bar_width"`
-			BarCategoryGap  string              `json:"bar_category_gap"`
-			RoseType        string              `json:"rose_type"`
-			StartAngle      *int                `json:"start_angle"`
-			PadAngle        *int                `json:"pad_angle"`
-			NodeAlign       string              `json:"node_align"`
-			NodeWidth       *int                `json:"node_width"`
-			NodeGap         *int                `json:"node_gap"`
-			ColorColumn     string              `json:"color_column"`
-			SizeColumn      string              `json:"size_column"`
-			MarkLines       []map[string]any    `json:"mark_lines"`
+			CellID         string            `json:"cell_id"`
+			ChartType      string            `json:"chart_type"`
+			XColumn        string            `json:"x_column"`
+			YColumns       []string          `json:"y_columns"`
+			LatColumn      string            `json:"lat_column"`
+			LonColumn      string            `json:"lon_column"`
+			Title          string            `json:"title"`
+			TimeColumn     string            `json:"time_column"`
+			EndTimeColumn  string            `json:"end_time_column"`
+			LabelColumn    string            `json:"label_column"`
+			GroupBy        string            `json:"group_by"`
+			IDColumn       string            `json:"id_column"`
+			ParentIDColumn string            `json:"parent_id_column"`
+			MetricColumns  []string          `json:"metric_columns"`
+			ValueColumn    string            `json:"value_column"`
+			CategoryColumn string            `json:"category_column"`
+			YAxisColumn    string            `json:"y_axis_column"`
+			FunnelSort     string            `json:"funnel_sort"`
+			BinCount       *int              `json:"bin_count"`
+			BarMode        string            `json:"bar_mode"`
+			AreaMode       string            `json:"area_mode"`
+			Layout         string            `json:"layout"`
+			ShowLabels     *bool             `json:"show_labels"`
+			ShowLegend     *bool             `json:"show_legend"`
+			ShowGrid       *bool             `json:"show_grid"`
+			SkipEmpty      *bool             `json:"skip_empty"`
+			MaxLabelLength *int              `json:"max_label_length"`
+			ShowConnectors *bool             `json:"show_connectors"`
+			ShowTimeDeltas *bool             `json:"show_time_deltas"`
+			DecimalPlaces  *int              `json:"decimal_places"`
+			ChartLabel     string            `json:"label"`
+			Prefix         string            `json:"prefix"`
+			Suffix         string            `json:"suffix"`
+			SeriesColors   map[string]string `json:"series_colors"`
+			DataZoom       *bool             `json:"data_zoom"`
+			Smooth         *bool             `json:"smooth"`
+			ConnectNulls   *bool             `json:"connect_nulls"`
+			BarWidth       string            `json:"bar_width"`
+			BarCategoryGap string            `json:"bar_category_gap"`
+			RoseType       string            `json:"rose_type"`
+			StartAngle     *int              `json:"start_angle"`
+			PadAngle       *int              `json:"pad_angle"`
+			NodeAlign      string            `json:"node_align"`
+			NodeWidth      *int              `json:"node_width"`
+			NodeGap        *int              `json:"node_gap"`
+			ColorColumn    string            `json:"color_column"`
+			SizeColumn     string            `json:"size_column"`
+			MarkLines      []map[string]any  `json:"mark_lines"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -359,54 +359,54 @@ func makeCreateChartHandler(db *pgxpool.Pool) ToolHandler {
 func makeUpdateChartHandler(db *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
-			CellID          string              `json:"cell_id"`
-			ChartType       string              `json:"chart_type"`
-			XColumn         string              `json:"x_column"`
-			YColumns        []string            `json:"y_columns"`
-			LatColumn       string              `json:"lat_column"`
-			LonColumn       string              `json:"lon_column"`
-			Title           string              `json:"title"`
-			TimeColumn      string              `json:"time_column"`
-			EndTimeColumn   string              `json:"end_time_column"`
-			LabelColumn     string              `json:"label_column"`
-			GroupBy         string              `json:"group_by"`
-			IDColumn        string              `json:"id_column"`
-			ParentIDColumn  string              `json:"parent_id_column"`
-			MetricColumns   []string            `json:"metric_columns"`
-			ValueColumn     string              `json:"value_column"`
-			CategoryColumn  string              `json:"category_column"`
-			YAxisColumn     string              `json:"y_axis_column"`
-			FunnelSort      string              `json:"funnel_sort"`
-			BinCount        *int                `json:"bin_count"`
-			BarMode         string              `json:"bar_mode"`
-			AreaMode        string              `json:"area_mode"`
-			Layout          string              `json:"layout"`
-			ShowLabels      *bool               `json:"show_labels"`
-			ShowLegend      *bool               `json:"show_legend"`
-			ShowGrid        *bool               `json:"show_grid"`
-			SkipEmpty       *bool               `json:"skip_empty"`
-			MaxLabelLength  *int                `json:"max_label_length"`
-			ShowConnectors  *bool               `json:"show_connectors"`
-			ShowTimeDeltas  *bool               `json:"show_time_deltas"`
-			DecimalPlaces   *int                `json:"decimal_places"`
-			ChartLabel      string              `json:"label"`
-			Prefix          string              `json:"prefix"`
-			Suffix          string              `json:"suffix"`
-			SeriesColors    map[string]string   `json:"series_colors"`
-			DataZoom        *bool               `json:"data_zoom"`
-			Smooth          *bool               `json:"smooth"`
-			ConnectNulls    *bool               `json:"connect_nulls"`
-			BarWidth        string              `json:"bar_width"`
-			BarCategoryGap  string              `json:"bar_category_gap"`
-			RoseType        string              `json:"rose_type"`
-			StartAngle      *int                `json:"start_angle"`
-			PadAngle        *int                `json:"pad_angle"`
-			NodeAlign       string              `json:"node_align"`
-			NodeWidth       *int                `json:"node_width"`
-			NodeGap         *int                `json:"node_gap"`
-			ColorColumn     string              `json:"color_column"`
-			SizeColumn      string              `json:"size_column"`
-			MarkLines       []map[string]any    `json:"mark_lines"`
+			CellID         string            `json:"cell_id"`
+			ChartType      string            `json:"chart_type"`
+			XColumn        string            `json:"x_column"`
+			YColumns       []string          `json:"y_columns"`
+			LatColumn      string            `json:"lat_column"`
+			LonColumn      string            `json:"lon_column"`
+			Title          string            `json:"title"`
+			TimeColumn     string            `json:"time_column"`
+			EndTimeColumn  string            `json:"end_time_column"`
+			LabelColumn    string            `json:"label_column"`
+			GroupBy        string            `json:"group_by"`
+			IDColumn       string            `json:"id_column"`
+			ParentIDColumn string            `json:"parent_id_column"`
+			MetricColumns  []string          `json:"metric_columns"`
+			ValueColumn    string            `json:"value_column"`
+			CategoryColumn string            `json:"category_column"`
+			YAxisColumn    string            `json:"y_axis_column"`
+			FunnelSort     string            `json:"funnel_sort"`
+			BinCount       *int              `json:"bin_count"`
+			BarMode        string            `json:"bar_mode"`
+			AreaMode       string            `json:"area_mode"`
+			Layout         string            `json:"layout"`
+			ShowLabels     *bool             `json:"show_labels"`
+			ShowLegend     *bool             `json:"show_legend"`
+			ShowGrid       *bool             `json:"show_grid"`
+			SkipEmpty      *bool             `json:"skip_empty"`
+			MaxLabelLength *int              `json:"max_label_length"`
+			ShowConnectors *bool             `json:"show_connectors"`
+			ShowTimeDeltas *bool             `json:"show_time_deltas"`
+			DecimalPlaces  *int              `json:"decimal_places"`
+			ChartLabel     string            `json:"label"`
+			Prefix         string            `json:"prefix"`
+			Suffix         string            `json:"suffix"`
+			SeriesColors   map[string]string `json:"series_colors"`
+			DataZoom       *bool             `json:"data_zoom"`
+			Smooth         *bool             `json:"smooth"`
+			ConnectNulls   *bool             `json:"connect_nulls"`
+			BarWidth       string            `json:"bar_width"`
+			BarCategoryGap string            `json:"bar_category_gap"`
+			RoseType       string            `json:"rose_type"`
+			StartAngle     *int              `json:"start_angle"`
+			PadAngle       *int              `json:"pad_angle"`
+			NodeAlign      string            `json:"node_align"`
+			NodeWidth      *int              `json:"node_width"`
+			NodeGap        *int              `json:"node_gap"`
+			ColorColumn    string            `json:"color_column"`
+			SizeColumn     string            `json:"size_column"`
+			MarkLines      []map[string]any  `json:"mark_lines"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
