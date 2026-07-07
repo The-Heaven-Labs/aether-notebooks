@@ -146,7 +146,7 @@ export type WSMessage =
   | { type: 'token'; data: string }
   | { type: 'reasoning'; data: string }
   | { type: 'tool_call'; tool: string; params: string; args: unknown; result: unknown; reasoning?: string }
-  | { type: 'tool_result'; tool: string; params: string; result: string; error?: string }
+  | { type: 'tool_result'; tool: string; params: string; result: string; error?: string; duration_ms?: number }
   | { type: 'cell_created'; cell_id: string; position: number }
   | { type: 'cell_output'; cell_id: string; outputs: Array<{ type: string; data: unknown }> }
   | { type: 'cell_updated'; cell_id: string }

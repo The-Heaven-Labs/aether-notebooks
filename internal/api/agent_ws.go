@@ -280,14 +280,15 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 								Reasoning string `json:"reasoning,omitempty"`
 							}{Type: "tool_call", Tool: toolName, Params: args, Reasoning: reasoning})
 						},
-						func(toolName, params, result, errMsg string) {
+						func(toolName, params, result, errMsg string, durationMs int) {
 							s.agentEngine.PublishSessionEvent(sid, struct {
-								Type   string `json:"type"`
-								Tool   string `json:"tool"`
-								Params string `json:"params"`
-								Result string `json:"result"`
-								Error  string `json:"error,omitempty"`
-							}{Type: "tool_result", Tool: toolName, Params: params, Result: result, Error: errMsg})
+								Type       string `json:"type"`
+								Tool       string `json:"tool"`
+								Params     string `json:"params"`
+								Result     string `json:"result"`
+								Error      string `json:"error,omitempty"`
+								DurationMs int    `json:"duration_ms"`
+							}{Type: "tool_result", Tool: toolName, Params: params, Result: result, Error: errMsg, DurationMs: durationMs})
 						},
 						func(evt agent.EngineEvent) {
 							switch evt.Type {

@@ -531,7 +531,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             }
             break
           case 'tool_result':
-            setMessages((prev) => { const updated = [...prev]; for (let i = updated.length - 1; i >= 0; i--) { if (updated[i].role === 'tool' && updated[i].content === msg.tool) { updated[i] = { ...updated[i], params: msg.params, result: msg.error || msg.result }; break } }; return updated }); break
+            setMessages((prev) => { const updated = [...prev]; for (let i = updated.length - 1; i >= 0; i--) { if (updated[i].role === 'tool' && updated[i].content === msg.tool) { updated[i] = { ...updated[i], params: msg.params, result: msg.error || msg.result, duration_ms: msg.duration_ms }; break } }; return updated }); break
           case 'cell_created':
             if (notebookId) queryClient.invalidateQueries({ queryKey: ['notebook', notebookId] }); scrollToCell(msg.cell_id); break
           case 'cell_output':
@@ -550,9 +550,12 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 base.params = JSON.stringify(m.tool_calls[0].arguments)
                 base.result = m.tool_calls[0].result !== undefined ? JSON.stringify(m.tool_calls[0].result) : undefined
                 base.role = 'tool'
+                base.duration_ms = m.duration_ms
               } else if (m.role === 'tool') {
                 base.result = m.content || ''
+                base.duration_ms = m.duration_ms
               }
+              if (m.duration_ms) base.duration_ms = m.duration_ms
               return base
             })
             if (serverMsgs.length > 0) setMessages(serverMsgs)

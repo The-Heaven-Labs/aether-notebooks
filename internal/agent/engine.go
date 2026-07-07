@@ -247,7 +247,7 @@ func sanitizeChatMessages(msgs []ChatMessage) []ChatMessage {
 	return msgs
 }
 
-func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, imageIDs []string, tools []*ToolDef, masterKey []byte, capturedPageContext *PageContextInfo, onToken func(string), onReasoning func(string), onToolCall func(string, string, string, string), onToolResult func(string, string, string, string), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, *TokenBreakdown, error) {
+func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, imageIDs []string, tools []*ToolDef, masterKey []byte, capturedPageContext *PageContextInfo, onToken func(string), onReasoning func(string), onToolCall func(string, string, string, string), onToolResult func(string, string, string, string, int), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, *TokenBreakdown, error) {
 	var events []EngineEvent
 	slog.Debug("engine: ProcessMessage start", "session_id", sessionID, "msg_len", len(userMessage), "image_count", len(imageIDs))
 
@@ -901,7 +901,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				CreatedAt:  time.Now(),
 			})
 			if onToolResult != nil {
-				onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "")
+				onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "", 0)
 			}
 			continue
 		}
@@ -950,7 +950,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 							CreatedAt:  time.Now(),
 						})
 						if onToolResult != nil {
-							onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "")
+							onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "", 0)
 						}
 						continue
 					}
@@ -967,13 +967,15 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 						CreatedAt:  time.Now(),
 					})
 					if onToolResult != nil {
-						onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "timeout")
+						onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "timeout", 0)
 					}
 					continue
 				}
 			}
 
+			toolStart := time.Now()
 			result, err := toolDef.Handler([]byte(tc.Function.Arguments), toolCtx)
+			toolDurationMs := int(time.Since(toolStart).Milliseconds())
 			if err != nil {
 				resultStr := fmt.Sprintf("error: %s", err.Error())
 				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
@@ -984,10 +986,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					Role:       "tool",
 					ToolCallID: &tc.ID,
 					Content:    resultStr,
+					DurationMs: toolDurationMs,
 					CreatedAt:  time.Now(),
 				})
 				if onToolResult != nil {
-					onToolResult(tc.Function.Name, tc.Function.Arguments, "", err.Error())
+					onToolResult(tc.Function.Name, tc.Function.Arguments, "", err.Error(), toolDurationMs)
 				}
 			} else {
 				resultJSON, _ := json.Marshal(result)
@@ -1000,10 +1003,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					Role:       "tool",
 					ToolCallID: &tc.ID,
 					Content:    resultStr,
+					DurationMs: toolDurationMs,
 					CreatedAt:  time.Now(),
 				})
 				if onToolResult != nil {
-					onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "")
+					onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "", toolDurationMs)
 				}
 			}
 		}
