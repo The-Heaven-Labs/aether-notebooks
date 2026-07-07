@@ -121,6 +121,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const needsCollapseRef = useRef(false)
   const streamingStartedAt = useRef<string | null>(null)
   const [elapsed, setElapsed] = useState(0)
+  const [thinkingOpen, setThinkingOpen] = useState(true)
   const [totalTokens, setTotalTokens] = useState<TokenBreakdown | null>(null)
   const [now, setNow] = useState(Date.now())
   const [subagentView, setSubagentView] = useState<string | null>(() => {
@@ -1001,11 +1002,18 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     return () => handle.removeEventListener('mousedown', onMouseDown)
   }, [width, onResize])
 
-  const MemoizedChatMessage = memo(({ msg, isStreaming: _isStreaming, now }: {
-    msg: ChatMessage; isStreaming: boolean; now: number
+  const MemoizedChatMessage = memo(({ msg }: {
+    msg: ChatMessage
   }) => {
     const [thoughtOpen, setThoughtOpen] = useState(true)
     const [toolOpen, setToolOpen] = useState(false)
+    const [toolNow, setToolNow] = useState(Date.now())
+    useEffect(() => {
+      const needsTimer = (msg.role === 'tool' && !msg.result) || (msg.role === 'subagent' && !msg.result)
+      if (!needsTimer) return
+      const id = setInterval(() => setToolNow(Date.now()), 1000)
+      return () => clearInterval(id)
+    }, [msg.role, msg.result])
     return (
     <div>
       {msg.reasoning && (
@@ -1041,10 +1049,10 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                   <span style={{ opacity: 0.6, fontSize: 11, marginLeft: 'auto' }}>
                     <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginRight: 4 }}>●</span>
                     Working…
-                    {msg.created_at && ` (${Math.floor((now - new Date(msg.created_at).getTime()) / 1000)}s)`}
+                    {msg.created_at && ` (${Math.floor((toolNow - new Date(msg.created_at).getTime()) / 1000)}s)`}
                   </span>
                 ) : msg.duration_ms ? (
-                  <span style={{ opacity: 0.5, fontSize: 10, marginLeft: 'auto' }}>({msg.duration_ms}ms)</span>
+                  <span style={{ opacity: 0.5, fontSize: 10, marginLeft: 'auto' }}>({msg.duration_ms}ms)
                 ) : null}
               </div>
               {toolOpen && (
@@ -1064,7 +1072,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 </div>
               )}
             </>
-          ) : msg.role === 'subagent' ? (
+          ) : msg.role === 'subagent' ?
             (() => {
               let parsedParams: { goal?: string; status?: string; error?: string } = {}
               try { if (msg.params) parsedParams = JSON.parse(msg.params) } catch {}
@@ -1078,7 +1086,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                     <span style={{ opacity: 0.6, fontSize: 10, marginLeft: 'auto' }}>
                       <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginRight: 4 }}>●</span>
                       Working…
-                      {msg.created_at && ` (${Math.floor((now - new Date(msg.created_at).getTime()) / 1000)}s)`}
+                      {msg.created_at && ` (${Math.floor((toolNow - new Date(msg.created_at).getTime()) / 1000)}s)`}
                     </span>
                   ) : (
                     <span style={{ marginLeft: 'auto', fontSize: 10 }}>
@@ -1491,13 +1499,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 <MemoizedChatMessage
                   key={i}
                   msg={msg}
-                  isStreaming={isStreaming}
-                  now={now}
                 />
               ))}
               {isStreaming && !currentStreamingText && (
-                  <details open style={{ ...styles.message, ...styles.reasoningMessage }}>
-                    <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11 }}>{hasPendingTools ? 'Working' : 'Thinking'} <span style={{ opacity: 0.5 }}>• {formatElapsed(elapsed)}</span></summary>
+                  <details open={thinkingOpen} style={{ ...styles.message, ...styles.reasoningMessage }}>
+                    <summary onClick={(e) => { e.preventDefault(); setThinkingOpen((o) => !o) }} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11, userSelect: 'none' }}>{thinkingOpen ? '▼' : '▶'} {hasPendingTools ? 'Working' : 'Thinking'} <span style={{ opacity: 0.5 }}>• {formatElapsed(elapsed)}</span></summary>
                     {streamingStartedAt.current && <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginBottom: 4 }}>{fmtTime(streamingStartedAt.current)}</div>}
                     <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>
                       {hasPendingTools ? <span style={{ color: 'var(--text-muted)' }}>Waiting for tool result…</span> : (currentStreamingReasoning || <span style={{ color: 'var(--text-muted)' }}>...</span>)}
