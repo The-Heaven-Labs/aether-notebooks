@@ -250,13 +250,15 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 
 			subagentDuration := int(time.Since(subagentStart).Milliseconds())
 			completionEvent := map[string]any{
-				"type":        "subagent_status",
-				"task_id":     tid,
-				"status":      status,
-				"goal":        g,
-				"result":      result.Result,
-				"error":       result.Error,
-				"duration_ms": subagentDuration,
+				"type":          "subagent_status",
+				"task_id":       tid,
+				"status":        status,
+				"goal":          g,
+				"result":        result.Result,
+				"error":         result.Error,
+				"duration_ms":   subagentDuration,
+				"tokens_input":  result.TokensIn,
+				"tokens_output": result.TokensOut,
 			}
 			if broadcastFn != nil {
 				broadcastFn(notebookID, completionEvent)

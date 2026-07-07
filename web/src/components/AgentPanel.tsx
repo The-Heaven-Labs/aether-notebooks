@@ -601,6 +601,22 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             }
             break
           case 'subagent_status':
+            if (msg.tokens_input || msg.tokens_output) {
+              setTotalTokens(prev => ({
+                input: (prev?.input || 0) + (msg.tokens_input || 0),
+                output: (prev?.output || 0) + (msg.tokens_output || 0),
+                reasoning: prev?.reasoning || 0,
+                cache_read: prev?.cache_read || 0,
+                model_calls: (prev?.model_calls || 0) + 1,
+                system_prompt: prev?.system_prompt || 0,
+                skill_override: prev?.skill_override || 0,
+                history: prev?.history || 0,
+                user_message: prev?.user_message || 0,
+                tool_definitions: prev?.tool_definitions || 0,
+                tool_calls: prev?.tool_calls || 0,
+                tool_results: prev?.tool_results || 0,
+              }))
+            }
             setMessages((prev) => {
               const existing = prev.findIndex(m => m.role === 'subagent' && m.content === msg.task_id)
               const subagentMsg: ChatMessage = {
