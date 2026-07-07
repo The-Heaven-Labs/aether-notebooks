@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/the-heaven-labs/aether/internal/models"
@@ -274,7 +275,7 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 	// saveMsg saves a message to the subagent conversation immediately.
 	// For tool messages, content is saved as a JSON object with the tool
 	// name and result, which the frontend parses for display.
-	saveMsg := func(role, content, toolCallID string, toolCalls []ToolCall, reasoning string, toolResult ...string) {
+	saveMsg := func(role, content, toolCallID string, toolCalls []ToolCall, reasoning string, durationMs int, toolResult ...string) {
 		storeContent := content
 		if role == "tool" && len(toolResult) > 0 {
 			// Store tool name in content and result in a JSON envelope
@@ -286,13 +287,18 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 		if toolCallID != "" {
 			tcID = &toolCallID
 		}
-		e.pool.Exec(ctx, `INSERT INTO subagent_messages (subagent_task_id, role, content, tool_call_id, tool_calls, reasoning_content, created_at) VALUES ($1,$2,$3,$4,$5,$6,NOW())`,
-			taskID, role, storeContent, tcID, tcJSON, reasoning)
+		dur := durationMs
+		if dur == 0 {
+			dur = 0
+		}
+		e.pool.Exec(ctx, `INSERT INTO subagent_messages (subagent_task_id, role, content, tool_call_id, tool_calls, reasoning_content, duration_ms, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())`,
+			taskID, role, storeContent, tcID, tcJSON, reasoning, dur)
 		event := map[string]any{
 			"type":              "subagent_message",
 			"task_id":           taskID,
 			"role":              role,
 			"content":           storeContent,
+			"duration_ms":       dur,
 			"tool_call_id":      toolCallID,
 			"reasoning_content": reasoning,
 		}
@@ -308,11 +314,11 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 	messages := []ChatMessage{
 		{Role: "user", Content: goal},
 	}
-	saveMsg("user", goal, "", nil, "")
+	saveMsg("user", goal, "", nil, "", 0)
 
 	for turn := 0; turn < maxTurns; turn++ {
 		if subagentLLM == nil {
-			saveMsg("assistant", "Error: no LLM client configured for subagent", "", nil, "")
+			saveMsg("assistant", "Error: no LLM client configured for subagent", "", nil, "", 0)
 			return SubagentResult{TaskID: taskID, Status: "failed", Error: "no LLM client configured for subagent"}
 		}
 
@@ -327,13 +333,13 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 		if err != nil {
 			errMsg := fmt.Sprintf("Error: %s", err.Error())
 			messages = append(messages, ChatMessage{Role: "assistant", Content: errMsg})
-			saveMsg("assistant", errMsg, "", nil, "")
+			saveMsg("assistant", errMsg, "", nil, "", 0)
 			return SubagentResult{TaskID: taskID, Status: "failed", Error: err.Error()}
 		}
 
 		if len(resp.Choices) == 0 {
 			messages = append(messages, ChatMessage{Role: "assistant", Content: "Error: LLM returned an empty response"})
-			saveMsg("assistant", "Error: LLM returned an empty response", "", nil, "")
+			saveMsg("assistant", "Error: LLM returned an empty response", "", nil, "", 0)
 			return SubagentResult{TaskID: taskID, Status: "failed", Error: "no choices in response"}
 		}
 
@@ -348,7 +354,7 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 			ReasoningContent: choice.Message.ReasoningContent,
 		}
 		messages = append(messages, assistantMsg)
-		saveMsg("assistant", assistantMsg.Content, "", assistantMsg.ToolCalls, assistantMsg.ReasoningContent)
+		saveMsg("assistant", assistantMsg.Content, "", assistantMsg.ToolCalls, assistantMsg.ReasoningContent, 0)
 
 		if choice.Message.Content != "" {
 			return SubagentResult{
@@ -364,10 +370,11 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 			toolDef, ok := e.registry.Get(tc.Function.Name)
 			if !ok {
 				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: fmt.Sprintf("unknown tool: %s", tc.Function.Name)})
-				saveMsg("tool", tc.Function.Name, tc.ID, nil, "", fmt.Sprintf("unknown tool: %s", tc.Function.Name))
+				saveMsg("tool", tc.Function.Name, tc.ID, nil, "", 0, fmt.Sprintf("unknown tool: %s", tc.Function.Name))
 				continue
 			}
 
+			toolStart := time.Now()
 			result, err := toolDef.Handler(json.RawMessage(tc.Function.Arguments), &ToolContext{
 				Context:    ctx,
 				UserID:     parentUserID,
@@ -378,23 +385,24 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 				DB:         e.pool,
 				MasterKey:  masterKey,
 			})
+			toolDuration := int(time.Since(toolStart).Milliseconds())
 
 			// Build tool call metadata for the tool_calls JSONB column
 			toolCallMeta := []ToolCall{tc}
 
 			if err != nil {
 				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: err.Error()})
-				saveMsg("tool", tc.Function.Name, "", toolCallMeta, "", err.Error())
+				saveMsg("tool", tc.Function.Name, "", toolCallMeta, "", toolDuration, err.Error())
 			} else {
 				resultJSON, _ := json.Marshal(result)
 				resultStr := string(resultJSON)
 				messages = append(messages, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
-				saveMsg("tool", tc.Function.Name, "", toolCallMeta, "", resultStr)
+				saveMsg("tool", tc.Function.Name, "", toolCallMeta, "", toolDuration, resultStr)
 			}
 		}
 	}
 
-	saveMsg("assistant", "Subagent reached the maximum number of turns and did not complete its task.", "", nil, "")
+	saveMsg("assistant", "Subagent reached the maximum number of turns and did not complete its task.", "", nil, "", 0)
 	return SubagentResult{TaskID: taskID, Status: "failed", Error: "max turns reached"}
 }
 

@@ -77,6 +77,7 @@ interface ChatMessage {
   params?: string
   result?: string
   images?: string[]
+  duration_ms?: number
   created_at?: string
 }
 
@@ -150,17 +151,14 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       const data = await res.json()
       setter(data.flatMap((m: any) => {
         const fn = (tc: any) => tc.function || tc
-        // Assistant with tool_calls → keep reasoning + content, skip tool entries
-        // (tool results will be rendered as separate tool messages)
         if (m.role === 'assistant' && m.tool_calls?.length) {
           const entries: ChatMessage[] = []
           if (m.reasoning_content || m.content) {
             const c = m.content || m.reasoning_content || ''
-            entries.push({ role: 'assistant', content: c, reasoning: c === m.reasoning_content ? undefined : (m.reasoning_content || undefined), created_at: m.created_at })
+            entries.push({ role: 'assistant', content: c, reasoning: c === m.reasoning_content ? undefined : (m.reasoning_content || undefined), duration_ms: m.duration_ms, created_at: m.created_at })
           }
           return entries
         }
-        // Tool result → one entry with name + params + result
         if (m.role === 'tool') {
           let name = 'tool'
           let params: string | undefined
@@ -169,16 +167,14 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           const f = fn(m.tool_calls?.[0])
           if (f?.name) name = f.name
           if (f?.arguments) params = typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)
-          return [{ role: 'tool', content: name, params, result, created_at: m.created_at }]
+          return [{ role: 'tool', content: name, params, result, duration_ms: m.duration_ms, created_at: m.created_at }]
         }
-        // Everything else (user messages, regular assistant)
-        // If the assistant's content is empty but reasoning has the final text,
-        // show reasoning as main content (DeepSeek puts final text in reasoning)
         const finalContent = m.content || (!m.tool_calls?.length ? (m.reasoning_content || '') : '')
         return [{
           role: m.role,
           content: finalContent,
           reasoning: (finalContent === m.reasoning_content) ? undefined : (m.reasoning_content || undefined),
+          duration_ms: m.duration_ms,
           created_at: m.created_at,
         }]
       }))
@@ -1003,13 +999,15 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               <div onClick={() => setToolOpen((o) => !o)} style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
                 <span style={{ opacity: 0.6, fontSize: 11 }}>{toolOpen ? '▼' : '▶'} TOOL </span>
                 <span>{msg.content}</span>
-                {!msg.result && (
+                {!msg.result ? (
                   <span style={{ opacity: 0.6, fontSize: 11, marginLeft: 'auto' }}>
                     <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginRight: 4 }}>●</span>
                     Working…
                     {msg.created_at && ` (${Math.floor((now - new Date(msg.created_at).getTime()) / 1000)}s)`}
                   </span>
-                )}
+                ) : msg.duration_ms ? (
+                  <span style={{ opacity: 0.5, fontSize: 10, marginLeft: 'auto' }}>({msg.duration_ms}ms)</span>
+                ) : null}
               </div>
               {toolOpen && (
                 <div style={{ marginTop: 6, fontSize: 11 }}>
