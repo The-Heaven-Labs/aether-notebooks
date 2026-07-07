@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/the-heaven-labs/aether/internal/auth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/auth"
 )
 
 func TestRegisterAndLogin(t *testing.T) {

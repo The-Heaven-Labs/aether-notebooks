@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/the-heaven-labs/aether/internal/storage"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Engine struct {
@@ -27,11 +27,11 @@ type Engine struct {
 	toolAllowedDomains []string
 	tokenCounter       *TokenCounter
 	store              storage.Storage
-	reasoningEffort        sync.Map // sessionID -> string
-	toolConfirmPending     sync.Map // sessionID -> chan ToolConfirmResult
-	pageContextMap         sync.Map // sessionID -> map[string]string
-	sessionModelConfig     sync.Map // sessionID -> modelConfigID string
-	frontendURL            string
+	reasoningEffort    sync.Map // sessionID -> string
+	toolConfirmPending sync.Map // sessionID -> chan ToolConfirmResult
+	pageContextMap     sync.Map // sessionID -> map[string]string
+	sessionModelConfig sync.Map // sessionID -> modelConfigID string
+	frontendURL        string
 	streams            *StreamManager
 }
 
@@ -374,7 +374,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	}
 
 	llmClient := e.llm
-	contextWindow := 128000 // default
+	contextWindow := 128000   // default
 	compactionThreshold := 70 // default 70%
 	modelName := ""
 	modelConfigID := e.GetSessionModelConfig(sessionID)
@@ -896,22 +896,22 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			if !ok {
 				resultStr := fmt.Sprintf("unknown tool: %s", tc.Function.Name)
 				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
-			estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
-			e.session.AppendMessage(context.Background(), &models.AgentMessage{
-				ID:         uuid.New().String(),
-				SessionID:  sessionID,
-				Role:       "tool",
-				ToolCallID: &tc.ID,
-				Content:    resultStr,
-				CreatedAt:  time.Now(),
-			})
-			if onToolResult != nil {
-				onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "", 0)
+				estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
+				e.session.AppendMessage(context.Background(), &models.AgentMessage{
+					ID:         uuid.New().String(),
+					SessionID:  sessionID,
+					Role:       "tool",
+					ToolCallID: &tc.ID,
+					Content:    resultStr,
+					CreatedAt:  time.Now(),
+				})
+				if onToolResult != nil {
+					onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "", 0)
+				}
+				continue
 			}
-			continue
-		}
 
-		toolCtx := &ToolContext{
+			toolCtx := &ToolContext{
 				Context:       ctx,
 				UserID:        session.UserID,
 				OrgID:         agent.OrgID,
@@ -1172,8 +1172,6 @@ func (e *Engine) FetchImageDataURIs(ctx context.Context, imageIDs []string) ([]s
 	}
 	return dataURIs, nil
 }
-
-
 
 func (e *Engine) HandleSlashCommand(ctx context.Context, sessionID string, command string, orgID string, masterKey []byte) (any, error) {
 	cmd := strings.TrimSpace(command)

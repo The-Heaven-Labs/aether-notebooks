@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/pmezard/go-difflib/difflib"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/models"
-	"github.com/jackc/pgx/v5"
-	"github.com/pmezard/go-difflib/difflib"
 )
 
 const (
@@ -247,8 +247,6 @@ func (s *Server) handleRestoreCellVersion(w http.ResponseWriter, r *http.Request
 type createSnapshotRequest struct {
 	Name string `json:"name"`
 }
-
-
 
 // computeCellDiff computes a line-level diff between old and new cell source.
 func computeCellDiff(cellID string, position int, title, oldSource, newSource string) models.CellDiff {

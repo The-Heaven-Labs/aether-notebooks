@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/the-heaven-labs/aether/internal/crypto"
-	"github.com/the-heaven-labs/aether/internal/database"
-	"github.com/the-heaven-labs/aether/internal/sso"
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/database"
+	"github.com/the-heaven-labs/aether/internal/sso"
 )
 
 var testMasterKey = crypto.DeriveKey("test-master-key-for-tests-only!")

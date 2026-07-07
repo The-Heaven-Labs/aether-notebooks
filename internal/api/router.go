@@ -18,27 +18,27 @@ import (
 
 // Server is the HTTP server for the Aether API, holding all dependencies.
 type Server struct {
-	db                 *database.DB
-	jwt                *auth.JWTIssuer
-	audit              *audit.Logger
-	masterKey          []byte
-	hub                *Hub
-	mux                *http.ServeMux
-	store              storage.Storage
-	platformAdminEmail string
+	db                  *database.DB
+	jwt                 *auth.JWTIssuer
+	audit               *audit.Logger
+	masterKey           []byte
+	hub                 *Hub
+	mux                 *http.ServeMux
+	store               storage.Storage
+	platformAdminEmail  string
 	disableRegistration bool
-	publicURL          string
-	frontendURL        string
-	Cache              *cache.Cache
-	maxAttachmentBytes int64
-	agentEngine        *agent.Engine
-	upgrader           websocket.Upgrader
-	toolAllowedDomains []string
-	sessionCancels     sync.Map    // sessionID -> context.CancelFunc
-	subdomainMW        func(http.Handler) http.Handler // host → org resolution
-	oidcRewriteFrom    string                           // host rewrite for OIDC discovery inside Docker (e.g. "localhost:5557")
-	oidcRewriteTo      string                           // target host rewrite (e.g. "host.docker.internal:5557")
-	frontendHandler    http.Handler                     // embedded web frontend SPA (nil in tests)
+	publicURL           string
+	frontendURL         string
+	Cache               *cache.Cache
+	maxAttachmentBytes  int64
+	agentEngine         *agent.Engine
+	upgrader            websocket.Upgrader
+	toolAllowedDomains  []string
+	sessionCancels      sync.Map                        // sessionID -> context.CancelFunc
+	subdomainMW         func(http.Handler) http.Handler // host → org resolution
+	oidcRewriteFrom     string                          // host rewrite for OIDC discovery inside Docker (e.g. "localhost:5557")
+	oidcRewriteTo       string                          // target host rewrite (e.g. "host.docker.internal:5557")
+	frontendHandler     http.Handler                    // embedded web frontend SPA (nil in tests)
 }
 
 // NewServer creates a new Aether API server with the provided dependencies.

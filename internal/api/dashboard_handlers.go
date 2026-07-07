@@ -6,13 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/models"
-	"github.com/jackc/pgx/v5"
 )
 
 type createDashboardRequest struct {
@@ -79,6 +80,17 @@ func (s *Server) handleCreateDashboard(w http.ResponseWriter, r *http.Request) {
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "dashboard.create", ResourceType: "dashboard", ResourceID: dash.ID,
 	})
+
+	_, aclErr := s.db.Pool.Exec(ctx,
+		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		 VALUES ($1, 'dashboard', $2::uuid, 'user', $3, ARRAY['view','edit','delete','share']),
+		        ($1, 'dashboard', $2::uuid, 'org_role', 'admin', ARRAY['view','edit','delete','share'])
+		 ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
+		claims.OrgID, dash.ID, claims.UserID,
+	)
+	if aclErr != nil {
+		slog.Warn("dashboard ACL seeding failed", "id", dash.ID, "error", aclErr)
+	}
 
 	writeJSON(w, http.StatusCreated, dash)
 }

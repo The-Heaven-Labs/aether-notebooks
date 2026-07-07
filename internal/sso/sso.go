@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"github.com/the-heaven-labs/aether/internal/crypto"
 )
 
 // Provider is the decoded (decrypted) SSO provider record.

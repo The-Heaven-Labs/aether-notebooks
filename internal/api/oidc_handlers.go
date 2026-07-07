@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/jackc/pgx/v5"
+	"github.com/redis/go-redis/v9"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/auth"
 	"github.com/the-heaven-labs/aether/internal/sso"
-	"github.com/jackc/pgx/v5"
-	"github.com/redis/go-redis/v9"
 )
 
 func generateState() (string, error) {
@@ -249,15 +249,15 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		if subdomainOrgID != "" {
 			// Provision into the subdomain-resolved org
 			orgID = subdomainOrgID
-		_, txErr = tx.Exec(ctx,
-			`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'non-admin')`,
-			orgID, userID,
-		)
-		if txErr != nil {
-			writeError(w, http.StatusInternalServerError, "failed to add member")
-			return
-		}
-		role = "non-admin"
+			_, txErr = tx.Exec(ctx,
+				`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'non-admin')`,
+				orgID, userID,
+			)
+			if txErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to add member")
+				return
+			}
+			role = "non-admin"
 		} else {
 			// No subdomain — create a new org (existing behavior)
 			orgName := displayName + "'s Org"

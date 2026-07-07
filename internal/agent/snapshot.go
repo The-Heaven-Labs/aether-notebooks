@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 // CreateNotebookSnapshot captures the full notebook state and returns the created snapshot.

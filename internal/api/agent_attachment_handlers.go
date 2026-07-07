@@ -138,5 +138,3 @@ func (s *Server) handleGetAgentAttachment(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, filename))
 	_, _ = io.Copy(w, rc)
 }
-
-

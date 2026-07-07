@@ -16,25 +16,25 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/api"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/auth"
 	"github.com/the-heaven-labs/aether/internal/sso"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // ─── Test OIDC Server ────────────────────────────────────────────────────────
 
 type testOIDCServer struct {
-	server     *httptest.Server
-	key        *rsa.PrivateKey
-	kid        string
-	baseURL    string
-	sub        string
-	email      string
-	name       string
-	groups     []string
+	server           *httptest.Server
+	key              *rsa.PrivateKey
+	kid              string
+	baseURL          string
+	sub              string
+	email            string
+	name             string
+	groups           []string
 	idTokenHasGroups bool
 }
 
@@ -44,12 +44,12 @@ func newTestOIDCServer(t *testing.T, sub, email, name string, groups []string, i
 	require.NoError(t, err)
 
 	srv := &testOIDCServer{
-		key:        key,
-		kid:        "test-key-1",
-		sub:        sub,
-		email:      email,
-		name:       name,
-		groups:     groups,
+		key:              key,
+		kid:              "test-key-1",
+		sub:              sub,
+		email:            email,
+		name:             name,
+		groups:           groups,
 		idTokenHasGroups: idTokenHasGroups,
 	}
 
@@ -68,13 +68,13 @@ func newTestOIDCServer(t *testing.T, sub, email, name string, groups []string, i
 func (s *testOIDCServer) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"issuer":                               s.baseURL,
-		"authorization_endpoint":               s.baseURL + "/auth",
-		"token_endpoint":                       s.baseURL + "/token",
-		"userinfo_endpoint":                    s.baseURL + "/userinfo",
-		"jwks_uri":                             s.baseURL + "/jwks",
-		"response_types_supported":             []string{"code"},
-		"subject_types_supported":              []string{"public"},
+		"issuer":                                s.baseURL,
+		"authorization_endpoint":                s.baseURL + "/auth",
+		"token_endpoint":                        s.baseURL + "/token",
+		"userinfo_endpoint":                     s.baseURL + "/userinfo",
+		"jwks_uri":                              s.baseURL + "/jwks",
+		"response_types_supported":              []string{"code"},
+		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{"RS256"},
 	})
 }

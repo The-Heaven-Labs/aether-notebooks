@@ -146,16 +146,16 @@ type (
 	}
 
 	Snapshot struct {
-		ID          string             `json:"id"`
-		NotebookID  string             `json:"notebook_id"`
-		Name        string             `json:"name"`
-		Title       string             `json:"title"`
-		CellSources map[string]string  `json:"cell_sources"`
-		Cells       []SnapshotCell     `json:"cells,omitempty"`
-		CreatedBy   string             `json:"created_by"`
-		CreatedAt   time.Time          `json:"created_at"`
-		Auto        bool               `json:"auto"`
-		Changes     *SnapshotChanges   `json:"changes,omitempty"`
+		ID          string            `json:"id"`
+		NotebookID  string            `json:"notebook_id"`
+		Name        string            `json:"name"`
+		Title       string            `json:"title"`
+		CellSources map[string]string `json:"cell_sources"`
+		Cells       []SnapshotCell    `json:"cells,omitempty"`
+		CreatedBy   string            `json:"created_by"`
+		CreatedAt   time.Time         `json:"created_at"`
+		Auto        bool              `json:"auto"`
+		Changes     *SnapshotChanges  `json:"changes,omitempty"`
 	}
 
 	SnapshotCell struct {
@@ -224,19 +224,19 @@ type (
 	}
 
 	Agent struct {
-		ID                    string   `json:"id"`
-		OrgID                 string   `json:"org_id"`
-		Name                  string   `json:"name"`
-		Description           string   `json:"description,omitempty"`
-		ModelConfigID         *string  `json:"model_config_id,omitempty"`
-		SubagentModelConfigID *string  `json:"subagent_model_config_id,omitempty"`
-		SystemPrompt          string   `json:"system_prompt,omitempty"`
-		SkillIDs              []string `json:"skill_ids"`
-		MCPServerIDs          []string `json:"mcp_server_ids"`
-		ToolIDs               []string `json:"tool_ids,omitempty"`
-		FolderID              *string  `json:"folder_id,omitempty"`
-		MaxTurns              *int     `json:"max_turns,omitempty"`
-		CreatedBy             string   `json:"created_by"`
+		ID                    string    `json:"id"`
+		OrgID                 string    `json:"org_id"`
+		Name                  string    `json:"name"`
+		Description           string    `json:"description,omitempty"`
+		ModelConfigID         *string   `json:"model_config_id,omitempty"`
+		SubagentModelConfigID *string   `json:"subagent_model_config_id,omitempty"`
+		SystemPrompt          string    `json:"system_prompt,omitempty"`
+		SkillIDs              []string  `json:"skill_ids"`
+		MCPServerIDs          []string  `json:"mcp_server_ids"`
+		ToolIDs               []string  `json:"tool_ids,omitempty"`
+		FolderID              *string   `json:"folder_id,omitempty"`
+		MaxTurns              *int      `json:"max_turns,omitempty"`
+		CreatedBy             string    `json:"created_by"`
 		CreatedAt             time.Time `json:"created_at"`
 		UpdatedAt             time.Time `json:"updated_at"`
 	}
@@ -253,17 +253,17 @@ type (
 	}
 
 	AgentMessage struct {
-		ID               string     `json:"id"`
-		SessionID        string     `json:"session_id"`
-		Role             string     `json:"role"`
-		Content          string     `json:"content,omitempty"`
-		ToolCallID       *string    `json:"tool_call_id,omitempty"`
-		ReasoningContent string     `json:"reasoning_content,omitempty"`
-		TokensInput      int        `json:"tokens_input,omitempty"`
-		TokensOutput     int        `json:"tokens_output,omitempty"`
-		TokensReasoning  int        `json:"tokens_reasoning,omitempty"`
-		DurationMs       int        `json:"duration_ms,omitempty"`
-		CreatedAt        time.Time  `json:"created_at"`
+		ID               string    `json:"id"`
+		SessionID        string    `json:"session_id"`
+		Role             string    `json:"role"`
+		Content          string    `json:"content,omitempty"`
+		ToolCallID       *string   `json:"tool_call_id,omitempty"`
+		ReasoningContent string    `json:"reasoning_content,omitempty"`
+		TokensInput      int       `json:"tokens_input,omitempty"`
+		TokensOutput     int       `json:"tokens_output,omitempty"`
+		TokensReasoning  int       `json:"tokens_reasoning,omitempty"`
+		DurationMs       int       `json:"duration_ms,omitempty"`
+		CreatedAt        time.Time `json:"created_at"`
 	}
 
 	ModelConfig struct {

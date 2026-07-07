@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/the-heaven-labs/aether/internal/cli"
 	"github.com/spf13/cobra"
+	"github.com/the-heaven-labs/aether/internal/cli"
 )
 
 func main() {

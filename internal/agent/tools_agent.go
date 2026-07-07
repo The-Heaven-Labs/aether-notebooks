@@ -451,11 +451,11 @@ func makeGetSubagentResultsHandler(pool *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("task_ids is required")
 		}
 		type subagentResult struct {
-			ID     string         `json:"id"`
-			Status string         `json:"status"`
-			Goal   string         `json:"goal"`
-			Result any `json:"result,omitempty"`
-			Error  string         `json:"error,omitempty"`
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Goal   string `json:"goal"`
+			Result any    `json:"result,omitempty"`
+			Error  string `json:"error,omitempty"`
 		}
 		results := make([]subagentResult, 0, len(req.TaskIDs))
 		for _, tid := range req.TaskIDs {

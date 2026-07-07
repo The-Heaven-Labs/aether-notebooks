@@ -113,17 +113,17 @@ func (h *modelConfigHandlers) handleGet(w http.ResponseWriter, r *http.Request) 
 func (h *modelConfigHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req struct {
-		Name          string         `json:"name"`
-		Provider      string         `json:"provider"`
-		BaseURL       string         `json:"base_url"`
-		Model         string         `json:"model"`
-		APIKey        string         `json:"api_key"`
-		DefaultParams models.JSONMap `json:"default_params"`
-		ContextWindow int            `json:"context_window"`
-		PricePerInputToken    float64 `json:"price_per_input_token"`
-		PricePerOutputToken   float64 `json:"price_per_output_token"`
-		PricePerCacheReadToken float64 `json:"price_per_cache_read_token"`
-		FolderID      *string        `json:"folder_id"`
+		Name                   string         `json:"name"`
+		Provider               string         `json:"provider"`
+		BaseURL                string         `json:"base_url"`
+		Model                  string         `json:"model"`
+		APIKey                 string         `json:"api_key"`
+		DefaultParams          models.JSONMap `json:"default_params"`
+		ContextWindow          int            `json:"context_window"`
+		PricePerInputToken     float64        `json:"price_per_input_token"`
+		PricePerOutputToken    float64        `json:"price_per_output_token"`
+		PricePerCacheReadToken float64        `json:"price_per_cache_read_token"`
+		FolderID               *string        `json:"folder_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -188,16 +188,16 @@ func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Reques
 	claims := ClaimsFromContext(r.Context())
 
 	var req struct {
-		Name                  *string         `json:"name"`
-		Provider              *string         `json:"provider"`
-		BaseURL               *string         `json:"base_url"`
-		Model                 *string         `json:"model"`
-		APIKey                *string         `json:"api_key"`
-		DefaultParams         *models.JSONMap `json:"default_params"`
-		ContextWindow         *int            `json:"context_window"`
-		PricePerInputToken    *float64        `json:"price_per_input_token"`
-		PricePerOutputToken   *float64        `json:"price_per_output_token"`
-		PricePerCacheReadToken *float64       `json:"price_per_cache_read_token"`
+		Name                   *string         `json:"name"`
+		Provider               *string         `json:"provider"`
+		BaseURL                *string         `json:"base_url"`
+		Model                  *string         `json:"model"`
+		APIKey                 *string         `json:"api_key"`
+		DefaultParams          *models.JSONMap `json:"default_params"`
+		ContextWindow          *int            `json:"context_window"`
+		PricePerInputToken     *float64        `json:"price_per_input_token"`
+		PricePerOutputToken    *float64        `json:"price_per_output_token"`
+		PricePerCacheReadToken *float64        `json:"price_per_cache_read_token"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")

@@ -32,18 +32,18 @@ type ImageURL struct {
 }
 
 type ChatMessage struct {
-	Role             string         `json:"role"`
-	Content          string         `json:"content,omitempty"`
-	ToolCalls        []ToolCall     `json:"tool_calls,omitempty"`
-	ToolCallID       string         `json:"tool_call_id,omitempty"`
-	ReasoningContent string         `json:"reasoning_content,omitempty"`
-	MultiContent     []ContentPart  `json:"-"`
+	Role             string        `json:"role"`
+	Content          string        `json:"content,omitempty"`
+	ToolCalls        []ToolCall    `json:"tool_calls,omitempty"`
+	ToolCallID       string        `json:"tool_call_id,omitempty"`
+	ReasoningContent string        `json:"reasoning_content,omitempty"`
+	MultiContent     []ContentPart `json:"-"`
 }
 
 func (m ChatMessage) MarshalJSON() ([]byte, error) {
 	if len(m.MultiContent) > 0 {
 		msg := map[string]any{
-			"role": m.Role,
+			"role":    m.Role,
 			"content": m.MultiContent,
 		}
 		if len(m.ToolCalls) > 0 {
@@ -59,10 +59,10 @@ func (m ChatMessage) MarshalJSON() ([]byte, error) {
 }
 
 type ChatRequest struct {
-	Model    string        `json:"model"`
-	Messages []ChatMessage `json:"messages"`
-	Tools    []OpenAITool  `json:"tools,omitempty"`
-	Stream   bool          `json:"stream"`
+	Model    string         `json:"model"`
+	Messages []ChatMessage  `json:"messages"`
+	Tools    []OpenAITool   `json:"tools,omitempty"`
+	Stream   bool           `json:"stream"`
 	Extra    map[string]any `json:"-"`
 }
 
@@ -133,26 +133,26 @@ type CompletionTokensDetails struct {
 }
 
 type TokenBreakdown struct {
-	Input               int `json:"input"`
-	Output              int `json:"output"`
-	Reasoning           int `json:"reasoning"`
-	CacheRead           int `json:"cache_read"`
-	ModelCalls          int `json:"model_calls"`
-	SystemPrompt        int `json:"system_prompt"`
-	SkillOverride       int `json:"skill_override"`
-	History             int `json:"history"`
-	UserMessage         int `json:"user_message"`
-	ToolDefinitions     int `json:"tool_definitions"`
-	ToolCalls           int `json:"tool_calls"`
-	ToolResults         int `json:"tool_results"`
-	DurationMs          int `json:"duration_ms"`
+	Input           int `json:"input"`
+	Output          int `json:"output"`
+	Reasoning       int `json:"reasoning"`
+	CacheRead       int `json:"cache_read"`
+	ModelCalls      int `json:"model_calls"`
+	SystemPrompt    int `json:"system_prompt"`
+	SkillOverride   int `json:"skill_override"`
+	History         int `json:"history"`
+	UserMessage     int `json:"user_message"`
+	ToolDefinitions int `json:"tool_definitions"`
+	ToolCalls       int `json:"tool_calls"`
+	ToolResults     int `json:"tool_results"`
+	DurationMs      int `json:"duration_ms"`
 }
 
 func NewLLMClient(baseURL, model string, apiKey []byte, defaultParams map[string]any) *LLMClient {
 	return &LLMClient{
-		baseURL:      baseURL,
-		model:        model,
-		apiKey:       apiKey,
+		baseURL:       baseURL,
+		model:         model,
+		apiKey:        apiKey,
 		defaultParams: defaultParams,
 		httpClient: &http.Client{
 			Timeout: 120 * time.Second,

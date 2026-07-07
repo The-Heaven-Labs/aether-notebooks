@@ -212,29 +212,29 @@ func AgentsCmd() *cobra.Command {
 						return nil
 					},
 				},
-func() *cobra.Command {
-				var notebookID string
-				c := &cobra.Command{
-					Use:   "create <agent-id>",
-					Short: "Create a session for an agent",
-					Args:  cobra.ExactArgs(1),
-					RunE: func(cmd *cobra.Command, args []string) error {
-						cl, err := LoadClient()
-						if err != nil {
-							return err
-						}
-						s, err := cl.CreateSession(args[0], notebookID)
-						if err != nil {
-							return err
-						}
-						PrintJSON(s)
-						return nil
-					},
-				}
-				c.Flags().StringVar(&notebookID, "notebook", "", "Notebook ID (required)")
-				c.MarkFlagRequired("notebook")
-				return c
-			}(),
+				func() *cobra.Command {
+					var notebookID string
+					c := &cobra.Command{
+						Use:   "create <agent-id>",
+						Short: "Create a session for an agent",
+						Args:  cobra.ExactArgs(1),
+						RunE: func(cmd *cobra.Command, args []string) error {
+							cl, err := LoadClient()
+							if err != nil {
+								return err
+							}
+							s, err := cl.CreateSession(args[0], notebookID)
+							if err != nil {
+								return err
+							}
+							PrintJSON(s)
+							return nil
+						},
+					}
+					c.Flags().StringVar(&notebookID, "notebook", "", "Notebook ID (required)")
+					c.MarkFlagRequired("notebook")
+					return c
+				}(),
 				&cobra.Command{
 					Use:   "get <session-id>",
 					Short: "Get a session",

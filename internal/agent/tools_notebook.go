@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
@@ -40,7 +40,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Description: "Delete a notebook and all its cells. This cannot be undone — use with care.",
 			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string","description":"ID of the notebook to delete"}},"required":["notebook_id"]}`,
 		},
-		Handler: makeDeleteNotebookHandler(db),
+		Handler:         makeDeleteNotebookHandler(db),
 		ConfirmRequired: true,
 	})
 
@@ -54,7 +54,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Description: "Update a notebook's title, description, or default connector.",
 			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"connector_id":{"type":"string"}},"required":["notebook_id"]}`,
 		},
-		Handler: makeUpdateNotebookHandler(db),
+		Handler:         makeUpdateNotebookHandler(db),
 		ConfirmRequired: true,
 	})
 
@@ -81,7 +81,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Description: "Create a new cell. Use type 'code' with language 'sql' for database queries, or type 'text' with language 'markdown' for documentation and notes.",
 			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"type":{"type":"string","enum":["code","text"],"description":"Cell type: 'code' for executable queries, 'text' for markdown documentation"},"language":{"type":"string","enum":["sql","markdown"],"description":"Cell language. Defaults to 'sql' for code cells, 'markdown' for text cells. Currently only SQL and markdown are supported."},"source":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell. Required for code cells if the notebook has no default connector."},"position":{"type":"integer"}},"required":["notebook_id","type"]}`,
 		},
-		Handler: makeCreateCellHandler(db),
+		Handler:         makeCreateCellHandler(db),
 		ConfirmRequired: true,
 	})
 
@@ -95,7 +95,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Description: "Change a cell's source, title, description, connector, or other properties",
 			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (from list_cells output, NOT the position number)"},"source":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell"}},"required":["cell_id"]}`,
 		},
-		Handler: makeUpdateCellHandler(db),
+		Handler:         makeUpdateCellHandler(db),
 		ConfirmRequired: true,
 	})
 
@@ -109,7 +109,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Description: "Execute a code cell's SQL query against the database connector. Only works on cells with type 'code' and language 'sql'. Returns tabular results. Skips re-running if cell already has results (use force=true to override). Use for SELECT, SHOW, DESCRIBE queries.",
 			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (from list_cells output, not the position number)"},"force":{"type":"boolean","description":"Set to true to re-run even if the cell already has results"}},"required":["cell_id"]}`,
 		},
-		Handler: makeRunCellHandler(db),
+		Handler:         makeRunCellHandler(db),
 		ConfirmRequired: true,
 	})
 
@@ -136,7 +136,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Description: "Move a cell to a new 1-based position. Cells between the old and new position shift by 1 to make room.",
 			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (the id field from list_cells, not the position number)"},"new_position":{"type":"integer"}},"required":["cell_id","new_position"]}`,
 		},
-		Handler: makeMoveCellHandler(db),
+		Handler:         makeMoveCellHandler(db),
 		ConfirmRequired: true,
 	})
 
@@ -150,7 +150,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Description: "Swap the positions of two cells. Useful for reordering — two swaps can move any cell anywhere without needing to understand position cascading.",
 			Parameters:  `{"type":"object","properties":{"cell_id_a":{"type":"string","description":"UUID of the first cell"},"cell_id_b":{"type":"string","description":"UUID of the second cell"}},"required":["cell_id_a","cell_id_b"]}`,
 		},
-		Handler: makeSwapCellsHandler(db),
+		Handler:         makeSwapCellsHandler(db),
 		ConfirmRequired: true,
 	})
 
@@ -164,7 +164,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Description: "Run an ad-hoc SQL query on a database connector (30s timeout). Use this for quick queries only. For long-running queries, use create_cell + run_cell instead. Returns up to 1000 rows. For SELECT, SHOW, DESCRIBE queries.",
 			Parameters:  `{"type":"object","properties":{"connector_id":{"type":"string","description":"ID of the connector to query"},"query":{"type":"string","description":"The SQL query to execute"},"limit":{"type":"integer","description":"Max rows to return (default 1000)"}},"required":["connector_id","query"]}`,
 		},
-		Handler: makeExecuteSQLHandler(db),
+		Handler:         makeExecuteSQLHandler(db),
 		ConfirmRequired: true,
 	})
 
@@ -191,7 +191,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Description: "Delete a cell from a notebook. Use this to clean up cells that are no longer needed.",
 			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (from list_cells output, not the position number)"}},"required":["cell_id"]}`,
 		},
-		Handler: makeDeleteCellHandler(db),
+		Handler:         makeDeleteCellHandler(db),
 		ConfirmRequired: true,
 	})
 
@@ -335,7 +335,7 @@ func makeReadCellHandler(db *pgxpool.Pool) ToolHandler {
 			var outputs []struct {
 				Type string `json:"type"`
 				Data struct {
-					Columns []string        `json:"columns"`
+					Columns []string         `json:"columns"`
 					Rows    []map[string]any `json:"rows"`
 				} `json:"data"`
 			}
@@ -370,29 +370,29 @@ func makeReadCellHandler(db *pgxpool.Pool) ToolHandler {
 				}
 			}
 		}
-	cellWithSummary := map[string]any{
-		"id":             cell.ID,
-		"notebook_id":    cell.NotebookID,
-		"position":       cell.Position + 1,
-		"type":           cell.Type,
-		"language":       cell.Language,
-		"connector_id":   cell.ConnectorID,
-		"source":         cell.Source,
-		"outputs":        cell.Outputs,
-		"limit":          cell.Limit,
-		"created_at":     cell.CreatedAt,
-		"updated_at":     cell.UpdatedAt,
-		"source_visible": cell.SourceVisible,
-		"cell_collapsed": cell.CellCollapsed,
-		"title":          cell.Title,
-		"description":    cell.Description,
-		"slug":           cell.Slug,
-		"parameters":     cell.Parameters,
-		"slide_break":    cell.SlideBreak,
-		"metadata":       cell.Metadata,
-		"chart_summary":  summary,
-	}
-	return cellWithSummary, nil
+		cellWithSummary := map[string]any{
+			"id":             cell.ID,
+			"notebook_id":    cell.NotebookID,
+			"position":       cell.Position + 1,
+			"type":           cell.Type,
+			"language":       cell.Language,
+			"connector_id":   cell.ConnectorID,
+			"source":         cell.Source,
+			"outputs":        cell.Outputs,
+			"limit":          cell.Limit,
+			"created_at":     cell.CreatedAt,
+			"updated_at":     cell.UpdatedAt,
+			"source_visible": cell.SourceVisible,
+			"cell_collapsed": cell.CellCollapsed,
+			"title":          cell.Title,
+			"description":    cell.Description,
+			"slug":           cell.Slug,
+			"parameters":     cell.Parameters,
+			"slide_break":    cell.SlideBreak,
+			"metadata":       cell.Metadata,
+			"chart_summary":  summary,
+		}
+		return cellWithSummary, nil
 	}
 }
 
@@ -474,7 +474,7 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 
 		if ctx.BroadcastFunc != nil {
 			ctx.BroadcastFunc(req.NotebookID, map[string]any{
-				"type":       "cell_created",
+				"type": "cell_created",
 				"cell": map[string]any{
 					"id":             cellID,
 					"notebook_id":    req.NotebookID,
@@ -807,7 +807,7 @@ func makeMoveCellHandler(db *pgxpool.Pool) ToolHandler {
 		// negative-intermediate shift pattern. -(oldPos+1) is always outside the
 		// range of shifted intermediate values for both increment and decrement.
 		if _, err := tx.Exec(ctx.Context, `UPDATE cells SET position = $1 WHERE id = $2`,
-			-(oldPos+1), cellID); err != nil {
+			-(oldPos + 1), cellID); err != nil {
 			return nil, fmt.Errorf("remove cell: %w", err)
 		}
 
@@ -1026,20 +1026,20 @@ func makeDeleteCellHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
 
-	resolved, err := ctx.ResolveCell(req.CellID)
-	if err != nil {
-		return nil, err
-	}
-	if err := ctx.CheckPermission("notebook", resolved.NotebookID, "edit"); err != nil {
-		return nil, err
-	}
-	notebookID := resolved.NotebookID
-	cellID := resolved.ID
+		resolved, err := ctx.ResolveCell(req.CellID)
+		if err != nil {
+			return nil, err
+		}
+		if err := ctx.CheckPermission("notebook", resolved.NotebookID, "edit"); err != nil {
+			return nil, err
+		}
+		notebookID := resolved.NotebookID
+		cellID := resolved.ID
 
-	// Auto-snapshot before destructive action
-	go EnsureAutoSnapshot(context.Background(), db, notebookID, ctx.UserID, ctx.OrgID)
+		// Auto-snapshot before destructive action
+		go EnsureAutoSnapshot(context.Background(), db, notebookID, ctx.UserID, ctx.OrgID)
 
-	result, err := db.Exec(ctx.Context,
+		result, err := db.Exec(ctx.Context,
 			`DELETE FROM cells WHERE id = $1 AND notebook_id = $2
 			 AND notebook_id IN (SELECT id FROM notebooks WHERE org_id = $3)`,
 			cellID, notebookID, ctx.OrgID,
@@ -1340,10 +1340,10 @@ func makeDeleteNotebookHandler(db *pgxpool.Pool) ToolHandler {
 func makeUpdateNotebookHandler(db *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
-			NotebookID   string  `json:"notebook_id"`
-			Title        *string `json:"title"`
-			Description  *string `json:"description"`
-			ConnectorID  *string `json:"connector_id"`
+			NotebookID  string  `json:"notebook_id"`
+			Title       *string `json:"title"`
+			Description *string `json:"description"`
+			ConnectorID *string `json:"connector_id"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)

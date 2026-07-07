@@ -9,7 +9,7 @@ import (
 )
 
 type TokenCounter struct {
-	mu       sync.RWMutex
+	mu        sync.RWMutex
 	encodings map[string]*tiktoken.Tiktoken
 }
 

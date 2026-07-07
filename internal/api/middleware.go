@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/the-heaven-labs/aether/internal/auth"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-heaven-labs/aether/internal/auth"
 	"golang.org/x/crypto/bcrypt"
 )
 

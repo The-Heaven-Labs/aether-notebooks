@@ -9,8 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/the-heaven-labs/aether/internal/storage"
 	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/storage"
 )
 
 func setupAuditWithStorage(t *testing.T) *AuditFixtures {
