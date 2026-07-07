@@ -1068,7 +1068,12 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               </div>
             )})()
           ) : (
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
+            <div>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
+              {msg.role === 'assistant' && msg.duration_ms ? (
+                <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginTop: 4 }}>{msg.duration_ms}ms</div>
+              ) : null}
+            </div>
           )}
         </div>
       )}
