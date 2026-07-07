@@ -444,8 +444,10 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       }
 
       // 2) Reconnect to last session even without saved messages
-      if (lastSessionId && savedState?.agentId) {
-        const agent = agents.find((a) => a.id === savedState.agentId)
+      if (lastSessionId) {
+        // Use agent from saved state, or fall back to last used agent
+        const agentId = savedState?.agentId || localStorage.getItem(LAST_AGENT_KEY)
+        const agent = agents.find((a) => a.id === agentId)
         if (agent) {
           setSelectedAgent(agent)
           setSessionId(lastSessionId)
