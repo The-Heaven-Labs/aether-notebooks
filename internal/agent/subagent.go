@@ -306,6 +306,7 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 
 	for turn := 0; turn < maxTurns; turn++ {
 		if subagentLLM == nil {
+			saveMsg("assistant", "Error: no LLM client configured for subagent", "", nil, "")
 			return SubagentResult{TaskID: taskID, Status: "failed", Error: "no LLM client configured for subagent"}
 		}
 
@@ -387,6 +388,7 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 		}
 	}
 
+	saveMsg("assistant", "Subagent reached the maximum number of turns and did not complete its task.", "", nil, "")
 	return SubagentResult{TaskID: taskID, Status: "failed", Error: "max turns reached"}
 }
 
