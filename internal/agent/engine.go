@@ -723,6 +723,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		turnStart := time.Now()
 		slog.Debug("engine: calling LLM", "session_id", sessionID, "turn", turn, "msgs", len(chatMsgs), "tools", len(toolsList))
 		chatMsgs = sanitizeChatMessages(chatMsgs)
+		llmStart := time.Now()
 		resp, err := llmClient.Chat(ctx, chatMsgs, toolsList, masterKey)
 		if err != nil {
 			slog.Error("engine: LLM call failed", "session_id", sessionID, "turn", turn, "error", err, "elapsed_ms", time.Since(turnStart).Milliseconds())
@@ -732,6 +733,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			}
 			continue
 		}
+		llmDuration := int(time.Since(llmStart).Milliseconds())
 		llmElapsed := time.Since(turnStart).Milliseconds()
 		llmErrorCount = 0
 
@@ -818,6 +820,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				TokensOutput:     tokBrk.Output,
 				TokensReasoning:  tokBrk.Reasoning,
 				ModelCalls:       modelCalls,
+				DurationMs:       llmDuration,
 				CreatedAt:        time.Now(),
 			}
 			e.session.AppendMessage(ctx, agentMsg)
@@ -855,6 +858,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			TokensOutput:     tokBrk.Output,
 			TokensReasoning:  tokBrk.Reasoning,
 			ModelCalls:       modelCalls,
+			DurationMs:       llmDuration,
 			CreatedAt:        time.Now(),
 		})
 

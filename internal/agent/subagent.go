@@ -332,17 +332,19 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 				subagentTools = append(subagentTools, oat)
 			}
 		}
+		chatStart := time.Now()
 		resp, err := subagentLLM.Chat(ctx, messages, subagentTools, masterKey)
+		chatDuration := int(time.Since(chatStart).Milliseconds())
 		if err != nil {
 			errMsg := fmt.Sprintf("Error: %s", err.Error())
 			messages = append(messages, ChatMessage{Role: "assistant", Content: errMsg})
-			saveMsg("assistant", errMsg, "", nil, "", 0)
+			saveMsg("assistant", errMsg, "", nil, "", chatDuration)
 			return SubagentResult{TaskID: taskID, Status: "failed", Error: err.Error()}
 		}
 
 		if len(resp.Choices) == 0 {
 			messages = append(messages, ChatMessage{Role: "assistant", Content: "Error: LLM returned an empty response"})
-			saveMsg("assistant", "Error: LLM returned an empty response", "", nil, "", 0)
+			saveMsg("assistant", "Error: LLM returned an empty response", "", nil, "", chatDuration)
 			return SubagentResult{TaskID: taskID, Status: "failed", Error: "no choices in response"}
 		}
 
@@ -357,7 +359,7 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 			ReasoningContent: choice.Message.ReasoningContent,
 		}
 		messages = append(messages, assistantMsg)
-		saveMsg("assistant", assistantMsg.Content, "", assistantMsg.ToolCalls, assistantMsg.ReasoningContent, 0)
+		saveMsg("assistant", assistantMsg.Content, "", assistantMsg.ToolCalls, assistantMsg.ReasoningContent, chatDuration)
 
 		if choice.Message.Content != "" {
 			return SubagentResult{

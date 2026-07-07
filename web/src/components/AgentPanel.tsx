@@ -576,11 +576,10 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               const fn = (tc: any) => tc?.function || tc
               setSubagentMessages((prev) => {
                 const next = [...prev]
-                // Assistant with tool_calls → keep reasoning + content
                 if (msg.role === 'assistant' && msg.tool_calls?.length) {
                   if (msg.reasoning_content || msg.content) {
                     const c = msg.content || msg.reasoning_content || ''
-                    next.push({ role: 'assistant', content: c, reasoning: c === msg.reasoning_content ? undefined : (msg.reasoning_content || undefined), created_at: new Date().toISOString() })
+                    next.push({ role: 'assistant', content: c, reasoning: c === msg.reasoning_content ? undefined : (msg.reasoning_content || undefined), duration_ms: msg.duration_ms, created_at: new Date().toISOString() })
                   }
                 } else if (msg.role === 'tool') {
                   let name = 'tool'
@@ -589,10 +588,10 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                   const f = fn(msg.tool_calls?.[0])
                   if (f?.name) name = f.name
                   const params = f?.arguments ? (typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)) : undefined
-                  next.push({ role: 'tool', content: name, params, result, created_at: new Date().toISOString() })
+                  next.push({ role: 'tool', content: name, params, result, duration_ms: msg.duration_ms, created_at: new Date().toISOString() })
                 } else {
                   const c = msg.content || (!msg.tool_calls?.length ? (msg.reasoning_content || '') : '')
-                  next.push({ role: msg.role, content: c, reasoning: c === msg.reasoning_content ? undefined : (msg.reasoning_content || undefined), created_at: new Date().toISOString() })
+                  next.push({ role: msg.role, content: c, reasoning: c === msg.reasoning_content ? undefined : (msg.reasoning_content || undefined), duration_ms: msg.duration_ms, created_at: new Date().toISOString() })
                 }
                 return next
               })
@@ -977,8 +976,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     <div>
       {msg.reasoning && (
         <div style={{ ...styles.message, ...styles.reasoningMessage, marginBottom: 4 }}>
-          <div onClick={() => setThoughtOpen((o) => !o)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11, userSelect: 'none' }}>
-            {thoughtOpen ? '▼' : '▶'} Thinking
+          <div onClick={() => setThoughtOpen((o) => !o)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11, userSelect: 'none', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span>{thoughtOpen ? '▼' : '▶'} Thinking</span>
+            {msg.duration_ms ? <span style={{ opacity: 0.5, fontSize: 10 }}>({msg.duration_ms}ms)</span> : null}
           </div>
           {thoughtOpen && (
             <>
