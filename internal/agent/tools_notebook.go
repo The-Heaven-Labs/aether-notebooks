@@ -655,9 +655,10 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 
 		result, err := exec.Execute(ctx.Context, query, nil, cell.Limit)
 		if err != nil {
+			errTotalTimeMs := time.Since(startTime).Milliseconds()
 			errOutput := models.Output{Type: "error", Data: map[string]string{"message": err.Error()}}
 			outJSON, _ := json.Marshal([]models.Output{errOutput})
-			db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, updated_at = NOW() WHERE id = $2", outJSON, cellID)
+			db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, errTotalTimeMs, cellID)
 			ctx.EmitCellOutput(cellID, []models.Output{errOutput})
 			if ctx.BroadcastFunc != nil {
 				ctx.BroadcastFunc(notebookID, map[string]any{
@@ -668,13 +669,11 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 				})
 			}
 
-			totalTimeMs := time.Since(startTime).Milliseconds()
-
 		return map[string]any{
 				"cell_id":       cellID,
 				"status":        "error",
 				"error":         err.Error(),
-				"total_time_ms": totalTimeMs,
+				"total_time_ms": errTotalTimeMs,
 			}, nil
 		}
 
@@ -683,7 +682,7 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 		tableOutput := models.Output{Type: "table", Data: result}
 		outputs := []models.Output{tableOutput}
 		outJSON, _ := json.Marshal(outputs)
-		db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, updated_at = NOW() WHERE id = $2", outJSON, cellID)
+		db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, totalTimeMs, cellID)
 		ctx.EmitCellOutput(cellID, outputs)
 		if ctx.BroadcastFunc != nil {
 			ctx.BroadcastFunc(notebookID, map[string]any{

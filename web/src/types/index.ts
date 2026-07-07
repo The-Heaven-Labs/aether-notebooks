@@ -48,6 +48,7 @@ export interface Cell {
   limit?: number | null
   metadata?: Record<string, unknown>
   agent_updated_at?: string
+  duration_ms?: number
   metrics?: {
     connect_time_ms: number
     query_time_ms: number

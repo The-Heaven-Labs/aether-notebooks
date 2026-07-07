@@ -252,10 +252,11 @@ export function NotebookPage() {
     return following && userEmail === following.email
   }, [following])
 
-  useNotebookWs(id, useCallback((cellId: string, outputs: Array<{ type: string; data: unknown }>, userEmail?: string) => {
-    setLocalCells((prev) =>
-      prev.map((c) => (c.id === cellId ? { ...c, outputs: outputs as Output[] } : c)),
-    )
+  useNotebookWs(id, useCallback((cellId: string, outputs: Array<{ type: string; data: unknown }>, userEmail?: string, totalTimeMs?: number) => {
+    setLocalCells((prev) => {
+      const metrics = totalTimeMs ? { connect_time_ms: 0, query_time_ms: 0, render_time_ms: 0, total_time_ms: totalTimeMs } : undefined
+      return prev.map((c) => (c.id === cellId ? { ...c, outputs: outputs as Output[], metrics: metrics || c.metrics } : c))
+    })
     setRunningCells((prev) => {
       const next = new Set(prev)
       next.delete(cellId)
@@ -537,10 +538,12 @@ export function NotebookPage() {
             return local
           }
           changed = true
-          if (local) {
-            return { ...nbCell, source: local.source, outputs: local.outputs }
+          const cell = local ? { ...nbCell, source: local.source, outputs: local.outputs } : { ...nbCell }
+          // Derive display metrics from persisted duration_ms
+          if (cell.duration_ms != null && !cell.metrics) {
+            cell.metrics = { connect_time_ms: 0, query_time_ms: 0, render_time_ms: 0, total_time_ms: cell.duration_ms }
           }
-          return nbCell
+          return cell
         })
         return changed ? merged : prev
       })
