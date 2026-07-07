@@ -468,11 +468,13 @@ func makeGetSubagentResultsHandler(pool *pgxpool.Pool) ToolHandler {
 			}
 			r := subagentResult{ID: tid, Status: status, Goal: goal}
 			if resultJSON != nil {
-				var resMap map[string]any
-				if json.Unmarshal(resultJSON, &resMap) == nil {
-					r.Result = resMap
-					if errStr, ok := resMap["error"].(string); ok && errStr != "" {
-						r.Error = errStr
+				var res any
+				if json.Unmarshal(resultJSON, &res) == nil {
+					r.Result = res
+					if resMap, ok := res.(map[string]any); ok {
+						if errStr, ok := resMap["error"].(string); ok && errStr != "" {
+							r.Error = errStr
+						}
 					}
 				} else {
 					r.Result = string(resultJSON)

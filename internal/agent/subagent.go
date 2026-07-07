@@ -242,10 +242,11 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 			if rMap, ok := storedResult.(map[string]any); ok && result.Error != "" {
 				rMap["error"] = result.Error
 			}
+			resultJSON, _ := json.Marshal(storedResult)
 			_, _ = e.pool.Exec(ctx, `
 				UPDATE subagent_tasks SET status = $1, result = $2, tokens_input = $3, tokens_output = $4, completed_at = NOW()
 				WHERE id = $5
-			`, status, storedResult, result.TokensIn, result.TokensOut, tid)
+			`, status, resultJSON, result.TokensIn, result.TokensOut, tid)
 
 			subagentDuration := int(time.Since(subagentStart).Milliseconds())
 			completionEvent := map[string]any{
@@ -367,7 +368,7 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 		messages = append(messages, assistantMsg)
 		saveMsg("assistant", assistantMsg.Content, "", assistantMsg.ToolCalls, assistantMsg.ReasoningContent, chatDuration)
 
-		if choice.Message.Content != "" {
+		if choice.Message.Content != "" && len(choice.Message.ToolCalls) == 0 {
 			return SubagentResult{
 				TaskID:    taskID,
 				Status:    "completed",
