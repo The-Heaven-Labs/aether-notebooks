@@ -331,11 +331,16 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 		WHERE st.id = $1
 	`, taskID).Scan(&systemPrompt)
 
-	messages := []ChatMessage{}
+	// Embed system prompt instructions into the goal so they have equal weight
+	// at the point of generation (some LLMs de-prioritize system messages).
+	userContent := goal
 	if systemPrompt != "" {
-		messages = append(messages, ChatMessage{Role: "system", Content: systemPrompt})
+		userContent = systemPrompt + "\n\n## Task\n\n" + goal
 	}
-	messages = append(messages, ChatMessage{Role: "user", Content: goal})
+
+	messages := []ChatMessage{
+		{Role: "user", Content: userContent},
+	}
 	saveMsg("user", goal, "", nil, "", 0)
 
 	for turn := 0; turn < maxTurns; turn++ {
