@@ -123,7 +123,6 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const [elapsed, setElapsed] = useState(0)
   const [thinkingOpen, setThinkingOpen] = useState(true)
   const [totalTokens, setTotalTokens] = useState<TokenBreakdown | null>(null)
-  const [now, setNow] = useState(Date.now())
   const [subagentView, setSubagentView] = useState<string | null>(() => {
     try { return localStorage.getItem('aether:subagentView') } catch { return null }
   })
@@ -184,11 +183,6 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       }))
     } catch {} finally { setLoading(false) }
   }
-  useEffect(() => {
-    if (!isStreaming || !hasPendingTools) return
-    const id = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [isStreaming, hasPendingTools])
   useEffect(() => {
     if (!isStreaming || !streamingStartedAt.current) { setElapsed(0); return }
     const id = setInterval(() => {
@@ -1072,7 +1066,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 </div>
               )}
             </>
-          ) : msg.role === 'subagent' ?
+          ) : msg.role === 'subagent' ? (
             (() => {
               let parsedParams: { goal?: string; status?: string; error?: string } = {}
               try { if (msg.params) parsedParams = JSON.parse(msg.params) } catch {}
@@ -1162,7 +1156,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           <div ref={subagentScrollRef} style={{ flex: 1, overflow: 'auto', padding: 12 }}>
             {subagentLoading && <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 20 }}>Loading…</div>}
             {subagentMessages.map((m, i) => (
-              <MemoizedChatMessage key={i} msg={m} isStreaming={false} now={now} />
+              <MemoizedChatMessage key={i} msg={m} />
             ))}
             {!subagentLoading && subagentMessages.length === 0 && (
               <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 20 }}>
