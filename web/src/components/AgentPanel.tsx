@@ -126,6 +126,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   })
   const subagentViewRef = useRef<string | null>(null)
   const [subagentMessages, setSubagentMessages] = useState<ChatMessage[]>([])
+  const [subagentTokens, setSubagentTokens] = useState<Record<string, {input: number, output: number}>>({})
   const [subagentLoading, setSubagentLoading] = useState(false)
   const mainScrollRef = useRef<number>(0)
   // Persist subagentView across page refreshes
@@ -487,6 +488,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
   const clearChatState = () => {
     try { localStorage.removeItem(chatStateKey) } catch { /* ignore */ }
+    setSubagentTokens({})
   }
 
   const connectWebSocket = useCallback((sid: string) => {
@@ -602,9 +604,10 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             break
           case 'subagent_status':
             if (msg.tokens_input || msg.tokens_output) {
+              setSubagentTokens(prev => ({ ...prev, [msg.task_id]: { input: msg.tokens_input || 0, output: msg.tokens_output || 0 } }))
               setTotalTokens(prev => ({
-                input: (prev?.input || 0) + (msg.tokens_input || 0),
-                output: (prev?.output || 0) + (msg.tokens_output || 0),
+                input: prev?.input || 0,
+                output: prev?.output || 0,
                 reasoning: prev?.reasoning || 0,
                 cache_read: prev?.cache_read || 0,
                 model_calls: (prev?.model_calls || 0) + 1,
@@ -615,6 +618,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 tool_definitions: prev?.tool_definitions || 0,
                 tool_calls: prev?.tool_calls || 0,
                 tool_results: prev?.tool_results || 0,
+                subagent_input: (prev?.subagent_input || 0) + (msg.tokens_input || 0),
+                subagent_output: (prev?.subagent_output || 0) + (msg.tokens_output || 0),
               }))
             }
             setMessages((prev) => {
@@ -1107,6 +1112,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               ← Back
             </button>
             <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Subagent {subagentView.slice(0, 8)}</span>
+            {subagentTokens[subagentView] && (
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                {subagentTokens[subagentView].input.toLocaleString()}↑ / {subagentTokens[subagentView].output.toLocaleString()}↓
+              </span>
+            )}
             <button onClick={() => {
               const lines: string[] = []
               for (const m of subagentMessages) {
@@ -1355,6 +1365,19 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                           <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.reasoning.toLocaleString()}</span>
                         </div>
                       )}
+
+                      {totalTokens.subagent_input ? (
+                        <div style={{ borderTop: '1px solid var(--border)', margin: '6px 0', paddingTop: 6 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
+                            <span style={{ color: 'var(--text-secondary)', fontSize: 11 }}>Subagent Input</span>
+                            <span style={{ fontSize: 11 }}>{totalTokens.subagent_input.toLocaleString()}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24 }}>
+                            <span style={{ color: 'var(--text-secondary)', fontSize: 11 }}>Subagent Output</span>
+                            <span style={{ fontSize: 11 }}>{totalTokens.subagent_output?.toLocaleString()}</span>
+                          </div>
+                        </div>
+                      ) : null}
 
                       <div style={{ borderTop: '1px solid var(--border)', margin: '6px 0', paddingTop: 6, display: 'flex', justifyContent: 'space-between', gap: 24 }}>
                         <span style={{ color: 'var(--text-secondary)' }}>Total</span>

@@ -140,6 +140,8 @@ export interface TokenBreakdown {
   tool_definitions: number
   tool_calls: number
   tool_results: number
+  subagent_input?: number
+  subagent_output?: number
   duration_ms?: number
 }
 
