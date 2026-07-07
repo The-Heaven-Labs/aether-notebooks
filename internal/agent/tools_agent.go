@@ -68,9 +68,22 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Description string `json:"description"`
 			Parameters  any    `json:"parameters"`
 		}{
+			Name:        "list_agents",
+			Description: "List all agents available in the current organization. Returns agent IDs, names, and descriptions. Use this to find the agent_id to pass to spawn_subagents.",
+			Parameters:  `{"type":"object","properties":{},"required":[]}`,
+		},
+		Handler: makeListAgentsHandler(pool),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
 			Name:        "spawn_subagents",
 			Description: "Execute multiple independent tasks in parallel by launching separate AI sub-agents. Use this when a request has multiple distinct, independent subtasks that can be worked on simultaneously (e.g., exploring different database schemas, writing separate code modules, researching multiple topics). Each sub-agent gets its own goal and runs in parallel. Blocks until all sub-agents complete and returns their results in the tool response — no need to call get_subagent_results afterwards. Respects the agent's max_subagent_turns setting.",
-			Parameters:  `{"type":"object","properties":{"tasks":{"type":"array","description":"List of independent sub-tasks to execute in parallel","minItems":1,"maxItems":5,"items":{"type":"object","properties":{"id":{"type":"string","description":"Short unique identifier for this sub-task (e.g. 'explore_schema', 'build_query', 'research_api')"},"goal":{"type":"string","description":"Clear, specific instruction for the sub-agent. Include what data to query, what to build, or what question to answer."},"agent_id":{"type":"string","description":"Optional agent ID to use for this sub-task. Omit to use the current agent."}},"required":["id","goal"]}}},"required":["tasks"]}`,
+			Parameters:  `{"type":"object","properties":{"tasks":{"type":"array","description":"List of independent sub-tasks to execute in parallel","minItems":1,"maxItems":5,"items":{"type":"object","properties":{"id":{"type":"string","description":"Short unique identifier for this sub-task (e.g. 'explore_schema', 'build_query', 'research_api')"},"goal":{"type":"string","description":"Clear, specific instruction for the sub-agent. Include what data to query, what to build, or what question to answer."},"agent_id":{"type":"string","description":"Optional agent ID (UUID) or agent name to use for this sub-task. Omit to use the current agent. Use list_agents to discover available agents."}},"required":["id","goal"]}}},"required":["tasks"]}`,
 		},
 		Handler: makeSpawnSubagentsHandler(pool, engine),
 	})
@@ -168,6 +181,40 @@ func makeListSkillsHandler(pool *pgxpool.Pool) ToolHandler {
 			skills = []map[string]string{}
 		}
 		return map[string]any{"skills": skills}, nil
+	}
+}
+
+func makeListAgentsHandler(pool *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		rows, err := pool.Query(ctx.Context, `SELECT id, name, description FROM agents WHERE org_id = $1 ORDER BY name`, ctx.OrgID)
+		if err != nil {
+			return nil, fmt.Errorf("list agents: %w", err)
+		}
+		defer rows.Close()
+		var agents []map[string]string
+		for rows.Next() {
+			var id, name string
+			var desc *string
+			if err := rows.Scan(&id, &name, &desc); err != nil {
+				return nil, fmt.Errorf("scan agent: %w", err)
+			}
+			d := ""
+			if desc != nil {
+				d = *desc
+			}
+			agents = append(agents, map[string]string{
+				"id":          id,
+				"name":        name,
+				"description": d,
+			})
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("list agents iter: %w", err)
+		}
+		if agents == nil {
+			agents = []map[string]string{}
+		}
+		return map[string]any{"agents": agents}, nil
 	}
 }
 
@@ -340,8 +387,15 @@ func makeSpawnSubagentsHandler(pool *pgxpool.Pool, engine *Engine) ToolHandler {
 		// Build per-task LLM client map for tasks that specify a different agent
 		taskLLMs := make(map[string]*LLMClient)
 		for i, t := range req.Tasks {
-			if t.AgentID != nil && *t.AgentID != "" && *t.AgentID != agentID {
-				customLLM := engine.defaultSubagentLLM(ctx.Context, pool, *t.AgentID, ctx.MasterKey)
+			if t.AgentID == nil || *t.AgentID == "" || *t.AgentID == agentID {
+				continue
+			}
+			resolvedID := *t.AgentID
+			if _, err := uuid.Parse(*t.AgentID); err != nil {
+				pool.QueryRow(ctx.Context, `SELECT id FROM agents WHERE name = $1 AND org_id = $2`, *t.AgentID, ctx.OrgID).Scan(&resolvedID)
+			}
+			if resolvedID != "" && resolvedID != agentID {
+				customLLM := engine.defaultSubagentLLM(ctx.Context, pool, resolvedID, ctx.MasterKey)
 				if customLLM != nil {
 					taskLLMs[taskIDs[i]] = customLLM
 				}
