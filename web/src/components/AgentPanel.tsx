@@ -787,17 +787,17 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
         }
       } else if (msg.role === 'assistant') {
         if (msg.reasoning) {
-          lines.push(`> **Thinking:** ${msg.reasoning}`)
+          const dur = msg.duration_ms ? ` (${msg.duration_ms}ms)` : ''
+          lines.push(`> **Thinking:${dur}** ${msg.reasoning}`)
         }
-        lines.push(`**Assistant:** ${msg.content}`)
+        const dur = msg.duration_ms ? ` (${msg.duration_ms}ms)` : ''
+        lines.push(`**Assistant:${dur}** ${msg.content}`)
         if (msg.images?.length) {
           lines.push(...msg.images.map(() => '  _[Image]_'))
         }
       } else if (msg.role === 'tool') {
-        if (msg.reasoning) {
-          lines.push(`> **Thinking:** ${msg.reasoning}`)
-        }
-        lines.push(`**Tool: ${msg.content}**`)
+        const dur = msg.duration_ms ? ` (${msg.duration_ms}ms)` : ''
+        lines.push(`**Tool: ${msg.content}${dur}**`)
         if (msg.params) lines.push(`  Params: \`${msg.params}\``)
         if (msg.result) lines.push(`  Result: \`${msg.result.length > 500 ? msg.result.slice(0, 500) + '...' : msg.result}\``)
       }
@@ -1091,9 +1091,28 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               ← Back
             </button>
             <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Subagent {subagentView.slice(0, 8)}</span>
-            <button onClick={() => { const text = subagentMessages.map(m => `${m.role}: ${m.content}${m.result ? '\n' + m.result : ''}`).join('\n\n'); navigator.clipboard.writeText(text) }}
+            <button onClick={() => {
+              const lines: string[] = []
+              for (const m of subagentMessages) {
+                const dur = m.duration_ms ? ` (${m.duration_ms}ms)` : ''
+                if (m.role === 'user') {
+                  lines.push(`**User:** ${m.content}`)
+                } else if (m.role === 'assistant') {
+                  if (m.reasoning) lines.push(`> **Thinking:${dur}** ${m.reasoning}`)
+                  lines.push(`**Assistant:${dur}** ${m.content}`)
+                } else if (m.role === 'tool') {
+                  lines.push(`**Tool: ${m.content}${dur}**`)
+                  if (m.result) lines.push(`  Result: \`${m.result.length > 500 ? m.result.slice(0, 500) + '...' : m.result}\``)
+                }
+                lines.push('')
+              }
+              navigator.clipboard.writeText(lines.join('\n').trim()).then(() => {
+                setCopied(true)
+                setTimeout(() => setCopied(false), 1500)
+              })
+            }}
               style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 11, padding: '3px 8px' }}>
-              Copy chat
+              {copied ? <Check size={12} style={{ color: 'var(--success, #10b981)' }} /> : 'Copy chat'}
             </button>
           </div>
           <div ref={subagentScrollRef} style={{ flex: 1, overflow: 'auto', padding: 12 }}>

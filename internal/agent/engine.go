@@ -1089,18 +1089,28 @@ func (e *Engine) SetLLMClient(llm *LLMClient) {
 }
 
 // defaultSubagentLLM resolves the model config for subagent LLM calls.
-// It looks up the parent agent's model config and creates an LLM client,
+// It prefers subagent_model_config_id over model_config_id on the agent,
 // falling back to the engine's default LLM if no config is found.
 func (e *Engine) defaultSubagentLLM(ctx context.Context, pool *pgxpool.Pool, agentID string, masterKey []byte) *LLMClient {
+	var subagentMCID, mainMCID *string
+	err := pool.QueryRow(ctx, `SELECT subagent_model_config_id, model_config_id FROM agents WHERE id = $1`, agentID).Scan(&subagentMCID, &mainMCID)
+	if err != nil {
+		return e.llm
+	}
+	configID := subagentMCID
+	if configID == nil {
+		configID = mainMCID
+	}
+	if configID == nil {
+		return e.llm
+	}
+
 	var mc models.ModelConfig
 	var defaultParams []byte
-	err := pool.QueryRow(ctx, `
-		SELECT mc.id, mc.org_id, mc.name, mc.provider, mc.base_url, mc.model, mc.api_key_encrypted, mc.default_params, mc.context_window
-		FROM model_configs mc
-		JOIN agents a ON a.model_config_id = mc.id OR a.subagent_model_config_id = mc.id
-		WHERE a.id = $1
-		LIMIT 1
-	`, agentID).Scan(&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow)
+	err = pool.QueryRow(ctx, `
+		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window
+		FROM model_configs WHERE id = $1
+	`, *configID).Scan(&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow)
 	if err != nil {
 		return e.llm
 	}

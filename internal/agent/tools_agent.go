@@ -334,8 +334,19 @@ func makeSpawnSubagentsHandler(pool *pgxpool.Pool, engine *Engine) ToolHandler {
 			}
 		}
 
-		// Create LLM client for subagents from the parent agent's model config
-		subagentLLM := engine.defaultSubagentLLM(ctx.Context, pool, agentID, ctx.MasterKey)
+		// Create default LLM client for subagents from the parent agent's model config
+		defaultLLM := engine.defaultSubagentLLM(ctx.Context, pool, agentID, ctx.MasterKey)
+
+		// Build per-task LLM client map for tasks that specify a different agent
+		taskLLMs := make(map[string]*LLMClient)
+		for i, t := range req.Tasks {
+			if t.AgentID != nil && *t.AgentID != "" && *t.AgentID != agentID {
+				customLLM := engine.defaultSubagentLLM(ctx.Context, pool, *t.AgentID, ctx.MasterKey)
+				if customLLM != nil {
+					taskLLMs[taskIDs[i]] = customLLM
+				}
+			}
+		}
 
 		// Run subagents synchronously and collect results
 		mk := make([]byte, len(ctx.MasterKey))
@@ -343,7 +354,7 @@ func makeSpawnSubagentsHandler(pool *pgxpool.Pool, engine *Engine) ToolHandler {
 		idsCopy := make([]string, len(taskIDs))
 		copy(idsCopy, taskIDs)
 
-		results := engine.RunQueuedTasks(ctx.Context, ctx.SessionID, idsCopy, mk, ctx.BroadcastFunc, ctx.NotebookID, subagentLLM)
+		results := engine.RunQueuedTasks(ctx.Context, ctx.SessionID, idsCopy, mk, ctx.BroadcastFunc, ctx.NotebookID, defaultLLM, taskLLMs)
 
 		type subagentResult struct {
 			ID     string `json:"id"`

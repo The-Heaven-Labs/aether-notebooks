@@ -147,7 +147,7 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 // (status 'queued'). It updates each task's status as it progresses and
 // broadcasts events via broadcastFn so the frontend can track progress.
 // Returns the results of all subagent tasks.
-func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, taskIDs []string, masterKey []byte, broadcastFn func(notebookID string, msg any), notebookID string, llmClient *LLMClient) []SubagentResult {
+func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, taskIDs []string, masterKey []byte, broadcastFn func(notebookID string, msg any), notebookID string, defaultLLM *LLMClient, taskLLMs map[string]*LLMClient) []SubagentResult {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Warn("RunQueuedTasks: panic", "recover", r)
@@ -221,7 +221,13 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 					agentTools = append(agentTools, t)
 				}
 			}
-			result := e.runSubagentLoop(ctx, parentSessionID, tid, g, parentUserID, orgID, orgRole, masterKey, llmClient, agentTools, maxSubagentTurns)
+			client := defaultLLM
+			if taskLLMs != nil {
+				if c, ok := taskLLMs[tid]; ok && c != nil {
+					client = c
+				}
+			}
+			result := e.runSubagentLoop(ctx, parentSessionID, tid, g, parentUserID, orgID, orgRole, masterKey, client, agentTools, maxSubagentTurns)
 			slog.Debug("subagent completed", "task_id", tid, "status", result.Status, "error", result.Error, "result_type", fmt.Sprintf("%T", result.Result))
 
 			// Update final status
