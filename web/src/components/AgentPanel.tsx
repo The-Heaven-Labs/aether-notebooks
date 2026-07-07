@@ -538,6 +538,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             if (notebookId) queryClient.setQueryData(['notebook', notebookId], (old: any) => old ? { ...old, cells: old.cells.map((c: any) => c.id === msg.cell_id ? { ...c, outputs: msg.outputs as any[] } : c) } : old); scrollToCell(msg.cell_id); break
           case 'cell_updated': scrollToCell(msg.cell_id); break
           case 'reconnect_sync': {
+            const _fn = (tc: any) => tc?.function || tc
             const serverMsgs: ChatMessage[] = (msg.messages || []).map((m: any) => {
               const base: ChatMessage = { id: m.id, role: m.role, content: m.content || '', images: m.image_ids?.length ? m.image_ids : undefined, created_at: m.created_at }
               if (m.role === 'subagent') {
@@ -546,8 +547,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 base.params = JSON.stringify({ goal: tc?.name || '', status: tc?.arguments?.status || 'completed', error: tc?.arguments?.error || '' })
                 base.result = tc?.arguments?.status === 'completed' || tc?.arguments?.status === 'failed' ? JSON.stringify(tc?.arguments?.result || tc?.arguments?.status) : undefined
               } else if (m.tool_calls?.length) {
-                base.content = m.tool_calls[0].name
-                base.params = JSON.stringify(m.tool_calls[0].arguments)
+                const tc = _fn(m.tool_calls[0])
+                base.content = tc.name || 'tool'
+                base.params = tc.arguments ? (typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments)) : undefined
                 base.result = m.tool_calls[0].result !== undefined ? JSON.stringify(m.tool_calls[0].result) : undefined
                 base.role = 'tool'
                 base.duration_ms = m.duration_ms
