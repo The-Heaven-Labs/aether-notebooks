@@ -143,12 +143,14 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       const data = await res.json()
       setter(data.flatMap((m: any) => {
         const fn = (tc: any) => tc.function || tc
-        // Assistant with tool_calls → only keep reasoning, let tool messages render the tool
+        // Assistant with tool_calls → keep reasoning + content, skip tool entries
+        // (tool results will be rendered as separate tool messages)
         if (m.role === 'assistant' && m.tool_calls?.length) {
-          if (m.reasoning_content) {
-            return [{ role: 'assistant', content: m.content || '', reasoning: m.reasoning_content, created_at: m.created_at }]
+          const entries: ChatMessage[] = []
+          if (m.reasoning_content || m.content) {
+            entries.push({ role: 'assistant', content: m.content || '', reasoning: m.reasoning_content || undefined, created_at: m.created_at })
           }
-          return [] // skip empty tool-calling assistant
+          return entries
         }
         // Tool result → one entry with name + params + result
         if (m.role === 'tool') {
@@ -554,10 +556,10 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               const fn = (tc: any) => tc?.function || tc
               setSubagentMessages((prev) => {
                 const next = [...prev]
-                // Assistant with tool_calls → only reasoning, don't create tool entries
+                // Assistant with tool_calls → keep reasoning + content
                 if (msg.role === 'assistant' && msg.tool_calls?.length) {
-                  if (msg.reasoning_content) {
-                    next.push({ role: 'assistant', content: msg.content || '', reasoning: msg.reasoning_content, created_at: new Date().toISOString() })
+                  if (msg.reasoning_content || msg.content) {
+                    next.push({ role: 'assistant', content: msg.content || '', reasoning: msg.reasoning_content || undefined, created_at: new Date().toISOString() })
                   }
                 } else if (msg.role === 'tool') {
                   let name = 'tool'
