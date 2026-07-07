@@ -1334,11 +1334,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                   })()}
                   {contextWindow > 0 && (
                     <span style={{ marginLeft: 6, opacity: 0.6 }}>
-                      {(() => {
-                        const si = totalTokens.subagent_input || 0
-                        const so = totalTokens.subagent_output || 0
-                        return `(${Math.round((totalTokens.input + totalTokens.output + si + so) / contextWindow * 100)}%)`
-                      })()}
+                      ({Math.round((totalTokens.input + totalTokens.output) / contextWindow * 100)}%)
                     </span>
                   )}
                 </span>
@@ -1413,7 +1409,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                       {contextWindow > 0 && (
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, color: 'var(--text-muted)', fontSize: 11 }}>
                           <span>Context window</span>
-                          <span>{contextWindow.toLocaleString()} ({Math.round(((totalTokens.input + totalTokens.output + (totalTokens.subagent_input || 0) + (totalTokens.subagent_output || 0)) / contextWindow) * 100)}%)</span>
+                          <span>{contextWindow.toLocaleString()} ({Math.round((totalTokens.input + totalTokens.output) / contextWindow * 100)}%)</span>
                         </div>
                       )}
 
