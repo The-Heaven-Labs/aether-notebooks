@@ -12,7 +12,7 @@ const dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(file
 export default defineConfig({
   plugins: [react()],
   optimizeDeps: {
-    include: ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities']
+    include: ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities', 'rehype-highlight']
   },
   test: {
     projects: [{
