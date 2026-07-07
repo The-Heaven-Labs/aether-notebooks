@@ -211,7 +211,15 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 			e.PublishSessionEvent(parentSessionID, statusEvent)
 
 			// Run the subagent LLM loop with the agent's tools
-			result := e.runSubagentLoop(ctx, parentSessionID, tid, g, parentUserID, orgID, orgRole, masterKey, llmClient, e.registry.List(), maxSubagentTurns)
+			// Filter out spawn_subagents to prevent recursive subagent spawning
+			allTools := e.registry.List()
+			agentTools := make([]*ToolDef, 0, len(allTools))
+			for _, t := range allTools {
+				if t.Function.Name != "spawn_subagents" {
+					agentTools = append(agentTools, t)
+				}
+			}
+			result := e.runSubagentLoop(ctx, parentSessionID, tid, g, parentUserID, orgID, orgRole, masterKey, llmClient, agentTools, maxSubagentTurns)
 
 			// Update final status
 			status := "completed"
