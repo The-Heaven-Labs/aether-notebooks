@@ -229,9 +229,10 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	s.hub.UnsetRunning(cellID)
 	if err != nil {
 		// Store error output
+		errTotalTime := time.Since(startTime).Milliseconds()
 		errOutput := models.Output{Type: "error", Data: map[string]string{"message": err.Error()}}
 		outJSON, _ := json.Marshal([]models.Output{errOutput})
-		s.db.Pool.Exec(bgCtx, "UPDATE cells SET outputs = $1, updated_at = NOW() WHERE id = $2", outJSON, cellID)
+		s.db.Pool.Exec(bgCtx, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, errTotalTime, cellID)
 		s.hub.Broadcast(nbID, map[string]any{"type": "cell_output", "cell_id": cellID, "outputs": []models.Output{errOutput}, "user_email": s.userEmail(bgCtx, claims.UserID)})
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
@@ -243,11 +244,10 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	tableOutput := models.Output{Type: "table", Data: result}
 	cellOutputs := []models.Output{tableOutput}
 	outJSON, _ := json.Marshal(cellOutputs)
-	s.db.Pool.Exec(bgCtx, "UPDATE cells SET outputs = $1, updated_at = NOW() WHERE id = $2", outJSON, cellID)
+	totalTime := time.Since(startTime).Milliseconds()
+	s.db.Pool.Exec(bgCtx, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, totalTime, cellID)
 	s.hub.Broadcast(nbID, map[string]any{"type": "cell_output", "cell_id": cellID, "outputs": cellOutputs, "user_email": s.userEmail(bgCtx, claims.UserID)})
 	renderTime := time.Since(renderStart).Milliseconds()
-
-	totalTime := time.Since(startTime).Milliseconds()
 
 	// Count rows
 	rowCount := 0

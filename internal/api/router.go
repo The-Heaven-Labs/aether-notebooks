@@ -81,9 +81,11 @@ func (s *Server) SetDisableRegistration(disabled bool) {
 	s.disableRegistration = disabled
 }
 
-// SetPublicURL sets the base URL used when building OAuth callback URLs.
+// SetPublicURL sets the base URL used when building OAuth callback URLs and
+// agent resource links.
 func (s *Server) SetPublicURL(u string) {
 	s.publicURL = u
+	s.agentEngine.SetPublicURL(u)
 }
 
 // SetFrontendURL sets the base URL used for post-auth redirects.

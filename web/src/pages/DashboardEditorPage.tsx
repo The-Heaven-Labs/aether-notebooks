@@ -113,6 +113,7 @@ const markSaved = useCallback(() => {
   const [deleteWidgetTarget, setDeleteWidgetTarget] = useState<string | null>(null)
   const isMobileLayout = containerWidth < 600
   const gridContainerRef = useRef<HTMLDivElement | null>(null)
+  const dragStartLayoutRef = useRef<LayoutItem[]>([])
 
   const gridRef = useCallback((el: HTMLDivElement | null) => {
     gridContainerRef.current = el
@@ -215,13 +216,69 @@ const markSaved = useCallback(() => {
     })
   }, [dashboard, qc, id])
 
-  const onResizeStop = useCallback((_layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
-    if (newItem) saveLayout(newItem)
+  const onResizeStop = useCallback((layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
+    if (newItem) {
+      const settled = layout?.find(l => l.i === newItem.i) || newItem
+      saveLayout(settled)
+    }
   }, [saveLayout])
 
-  const onDragStop = useCallback((_layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
-    if (newItem) saveLayout(newItem)
-  }, [saveLayout])
+  const onDragStop = useCallback((layout: Layout, oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
+    if (!newItem) return
+    if (!dashboard) return
+
+    // Save the current dashboard layout for future drag-swap detection
+    dragStartLayoutRef.current = dashboard.widgets?.map(toGridItem) ?? []
+
+    // Check if the dragged widget was dropped at a position that overlaps
+    // with another widget's ORIGINAL position (before compaction). If so,
+    // swap their positions — the library's compaction pushes other widgets
+    // out of the way, but the user wants to swap them.
+    const preSwapWidget = dragStartLayoutRef.current.find(item => {
+      if (item.i === newItem.i) return false
+      return newItem.x < item.x + item.w &&
+        newItem.x + newItem.w > item.x &&
+        newItem.y < item.y + item.h &&
+        newItem.y + newItem.h > item.y
+    })
+
+    if (preSwapWidget && oldItem) {
+      // The dragged widget overlaps with another widget's original position.
+      // Swap the two widgets' positions only — keep their original sizes.
+      const savePromises: Promise<void>[] = []
+      const draggedWidget = dashboard.widgets?.find((w: Widget) => w.id === newItem.i)
+      if (draggedWidget) {
+        savePromises.push(
+          api.put(`/api/v1/dashboards/${dashboard.id}/widgets/${newItem.i}`, {
+            layout: { row: preSwapWidget.y, col: preSwapWidget.x, width: draggedWidget.layout.width, height: draggedWidget.layout.height },
+          }).then(() => {})
+        )
+      }
+      const targetWidget = dashboard.widgets?.find((w: Widget) => w.id === preSwapWidget.i)
+      if (targetWidget) {
+        savePromises.push(
+          api.put(`/api/v1/dashboards/${dashboard.id}/widgets/${preSwapWidget.i}`, {
+            layout: { row: oldItem.y, col: oldItem.x, width: targetWidget.layout.width, height: targetWidget.layout.height },
+          }).then(() => {})
+        )
+      }
+
+      if (savePromises.length) {
+        markSaving()
+        Promise.all(savePromises).then(() => {
+          qc.invalidateQueries({ queryKey: ['dashboard', id] })
+          markSaved()
+        }).catch(() => {
+          setMutationError('Failed to save widget layout')
+          markSaved()
+        })
+      }
+    } else {
+      // No swap — just save the dragged widget's position
+      const settled = layout?.find(l => l.i === newItem.i) || newItem
+      saveLayout(settled)
+    }
+  }, [saveLayout, dashboard, qc, id, markSaving, markSaved])
 
   if (isLoading) {
     return (

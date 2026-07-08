@@ -69,6 +69,7 @@ const WS_URL = (import.meta.env.VITE_WS_URL || 'ws://localhost:8088') + '/api/v1
 const LAST_AGENT_KEY = 'aether:lastAgentId'
 const LAST_SESSION_KEY = 'aether:lastSessionId'
 const CHAT_STATE_KEY = 'aether:agentChat:'
+const DRAFT_KEY = 'aether:agentChatDraft:__global__'
 
 interface ChatMessage {
   id?: string
@@ -113,7 +114,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const chatStateKey = CHAT_STATE_KEY + '__global__'
   const [tasks, setTasks] = useState<AgentTaskItem[]>([])
   const [sessionTitle, setSessionTitle] = useState<string | null>(null)
-  const [input, setInput] = useState('')
+  const [input, setInput] = useState(() => { try { return localStorage.getItem(DRAFT_KEY) || '' } catch { return '' } })
   const [isStreaming, setIsStreaming] = useState(false)
   const [currentStreamingText, setCurrentStreamingText] = useState('')
   const [currentStreamingReasoning, setCurrentStreamingReasoning] = useState('')
@@ -444,8 +445,10 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       }
 
       // 2) Reconnect to last session even without saved messages
-      if (lastSessionId && savedState?.agentId) {
-        const agent = agents.find((a) => a.id === savedState.agentId)
+      if (lastSessionId) {
+        // Use agent from saved state, or fall back to last used agent
+        const agentId = savedState?.agentId || localStorage.getItem(LAST_AGENT_KEY)
+        const agent = agents.find((a) => a.id === agentId)
         if (agent) {
           setSelectedAgent(agent)
           setSessionId(lastSessionId)
@@ -493,6 +496,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
   const clearChatState = () => {
     try { localStorage.removeItem(chatStateKey) } catch { /* ignore */ }
+    try { localStorage.removeItem(DRAFT_KEY) } catch {}
     setSubagentTokens({})
   }
 
@@ -522,10 +526,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
         switch (msg.type) {
           case 'token':
             setIsStreaming(true)
+            if (!streamingStartedAt.current) streamingStartedAt.current = ts()
             setCurrentStreamingText((prev) => { const next = prev + msg.data; streamingTextRef.current = next; return next })
             break
           case 'reasoning':
-            setIsStreaming(true); appendStreamingReasoning(msg.data); break
+            setIsStreaming(true); if (!streamingStartedAt.current) streamingStartedAt.current = ts(); appendStreamingReasoning(msg.data); break
           case 'tool_call':
             setMessages((prev) => [...prev, { role: 'tool', content: msg.tool, params: msg.params, reasoning: msg.reasoning || streamingReasoningRef.current || undefined, duration_ms: msg.duration_ms, created_at: ts() }])
             if (streamingReasoningRef.current) { needsCollapseRef.current = true; updateStreamingReasoning('') }
@@ -547,7 +552,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           case 'reconnect_sync': {
             const _fn = (tc: any) => tc?.function || tc
             const serverMsgs: ChatMessage[] = (msg.messages || []).map((m: any) => {
-              const base: ChatMessage = { id: m.id, role: m.role, content: m.content || '', images: m.image_ids?.length ? m.image_ids : undefined, created_at: m.created_at }
+              const base: ChatMessage = { id: m.id, role: m.role, content: m.content || '', reasoning: m.reasoning_content || undefined, images: m.image_ids?.length ? m.image_ids : undefined, created_at: m.created_at }
               if (m.role === 'subagent') {
                 const tc = m.tool_calls?.[0]
                 base.content = m.content || ''
@@ -572,12 +577,14 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             break
           }
           case 'done': {
-            setIsStreaming(false); updateStreamingReasoning(''); needsCollapseRef.current = false
+            setIsStreaming(false); needsCollapseRef.current = false
             const tk = (msg as any).data?.tokens as TokenBreakdown | undefined
             const dm = tk?.duration_ms
             const finalText = streamingTextRef.current
-            if (finalText) { setMessages((prev) => [...prev, { role: 'assistant', content: finalText, reasoning: ((msg as any).data?.reasoning as string) || undefined, duration_ms: dm, created_at: ts() }]); streamingTextRef.current = ''; setCurrentStreamingText('') }
-            else if (msg.data && 'content' in msg.data && msg.data.content) { setMessages((prev) => [...prev, { role: 'assistant', content: (msg.data as any).content, reasoning: ((msg.data as any)?.reasoning as string) || undefined, duration_ms: dm, created_at: ts() }]) }
+            const finalReasoning = ((msg as any).data?.reasoning as string) || streamingReasoningRef.current || undefined
+            updateStreamingReasoning('')
+            if (finalText) { setMessages((prev) => [...prev, { role: 'assistant', content: finalText, reasoning: finalReasoning, duration_ms: dm, created_at: ts() }]); streamingTextRef.current = ''; setCurrentStreamingText('') }
+            else if (msg.data && 'content' in msg.data && msg.data.content) { setMessages((prev) => [...prev, { role: 'assistant', content: (msg.data as any).content, reasoning: finalReasoning, duration_ms: dm, created_at: ts() }]) }
             if (tk && typeof tk.input === 'number') setTotalTokens(prev => ({ input: (prev?.input || 0) + tk.input, output: (prev?.output || 0) + tk.output, reasoning: (prev?.reasoning || 0) + (tk.reasoning || 0), cache_read: (prev?.cache_read || 0) + (tk.cache_read || 0), model_calls: (prev?.model_calls || 0) + (tk.model_calls || 0), system_prompt: (prev?.system_prompt || 0) + (tk.system_prompt || 0), skill_override: (prev?.skill_override || 0) + (tk.skill_override || 0), history: (prev?.history || 0) + (tk.history || 0), user_message: (prev?.user_message || 0) + (tk.user_message || 0), tool_definitions: (prev?.tool_definitions || 0) + (tk.tool_definitions || 0), tool_calls: (prev?.tool_calls || 0) + (tk.tool_calls || 0), tool_results: (prev?.tool_results || 0) + (tk.tool_results || 0), subagent_input: prev?.subagent_input, subagent_output: prev?.subagent_output }))
             setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50); break
           }
@@ -644,10 +651,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               return [...prev, subagentMsg]
             }); break
           case 'error':
-            setMessages((prev) => [...prev, { role: 'assistant', content: 'Error: ' + msg.message, created_at: ts() }]); setIsStreaming(false); updateStreamingReasoning(''); needsCollapseRef.current = false; setTasks((prev) => prev.map((t) => t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t)); setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50); break
+            updateStreamingReasoning(''); setIsStreaming(false); needsCollapseRef.current = false
+            setMessages((prev) => [...prev, { role: 'assistant', content: 'Error: ' + msg.message, created_at: ts() }]); setTasks((prev) => prev.map((t) => t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t)); setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50); break
           case 'cancelled':
-            setIsStreaming(false); updateStreamingReasoning(''); needsCollapseRef.current = false; setTasks((prev) => prev.map((t) => t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t))
-            const ct = streamingTextRef.current; setMessages((prev) => [...prev, { role: 'assistant', content: ct ? ct + '\n\n*[Cancelled]*' : '*[Cancelled]*', created_at: ts() }]); streamingTextRef.current = ''; setCurrentStreamingText(''); break
+            setIsStreaming(false); needsCollapseRef.current = false; setTasks((prev) => prev.map((t) => t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t))
+            const cancelledText = streamingTextRef.current; setMessages((prev) => [...prev, { role: 'assistant', content: cancelledText ? cancelledText + '\n\n*[Cancelled]*' : '*[Cancelled]*', created_at: ts() }]); streamingTextRef.current = ''; setCurrentStreamingText(''); updateStreamingReasoning(''); break
           case 'slash_result':
             setIsStreaming(false)
             if (msg.command === 'new') { clearChatState(); if (selectedAgentRef.current) { closeWS(); startSession(selectedAgentRef.current) } }
@@ -799,6 +807,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const sendMessage = () => {
     const text = input
     setInput('')
+    try { localStorage.removeItem(DRAFT_KEY) } catch {}
     sendText(text)
   }
 
@@ -1554,8 +1563,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               style={styles.input}
               value={input}
               onChange={(e) => {
-                setInput(e.target.value)
                 const val = e.target.value
+                setInput(val)
+                try { localStorage.setItem(DRAFT_KEY, val) } catch {}
                 // Show picker for any / command, allow longer inputs for /skill: autocomplete
                 const isSkillCommand = val.toLowerCase().startsWith('/skill:')
                 setShowSlashPicker(val.startsWith('/') && (isSkillCommand || val.length <= 15))

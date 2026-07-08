@@ -283,7 +283,7 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 	cellRows, err := s.db.Pool.Query(ctx,
 		`SELECT id, notebook_id, position, type, language, connector_id, source, outputs,
 		        source_visible, outputs_hidden, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), "limit",
-		        COALESCE(metadata, '{}'), created_at, updated_at, agent_updated_at
+		        COALESCE(metadata, '{}'), duration_ms, created_at, updated_at, agent_updated_at
 		 FROM cells WHERE notebook_id = $1 ORDER BY position ASC`,
 		nbID,
 	)
@@ -299,10 +299,11 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 		var lang, connID *string
 		var outputs, cellParams []byte
 		var cellLimit *int
+		var durationMs *int
 		var agentUpdatedAt *time.Time
 		if err := cellRows.Scan(&c.ID, &c.NotebookID, &c.Position, &c.Type, &lang, &connID, &c.Source, &outputs,
 			&c.SourceVisible, &c.OutputsHidden, &c.CellCollapsed, &c.SlideBreak, &cellParams, &c.Title, &c.Description, &c.Slug, &cellLimit,
-			&c.Metadata, &c.CreatedAt, &c.UpdatedAt, &agentUpdatedAt); err != nil {
+			&c.Metadata, &durationMs, &c.CreatedAt, &c.UpdatedAt, &agentUpdatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan cell failed")
 			return
 		}
@@ -316,6 +317,7 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 			c.Limit = cellLimit
 		}
 		c.AgentUpdatedAt = agentUpdatedAt
+		c.DurationMs = durationMs
 		json.Unmarshal(outputs, &c.Outputs)
 		json.Unmarshal(cellParams, &c.Parameters)
 		cells = append(cells, c)

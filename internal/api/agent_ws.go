@@ -178,29 +178,22 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if msg.Type == "reconnect" {
-				var messages []models.AgentMessage
-				if msg.LastMessageID == "" {
-					rows, err := s.db.Pool.Query(ctx, `
-						SELECT id, role, content, tool_calls, image_ids, duration_ms, created_at FROM agent_messages
-						WHERE session_id = $1 ORDER BY created_at
-					`, currentSessionID)
-					if err == nil {
-						messages = scanAgentMessages(rows)
+				// Always return all messages — reconnect_sync is the authoritative
+				// state and replaces the frontend's message list. Partial (id > $2)
+				// responses cause the frontend to lose older messages since it
+				// does a full replacement, not an append.
+				rows, err := s.db.Pool.Query(ctx, `
+					SELECT id, role, content, tool_calls, reasoning_content, image_ids, duration_ms, created_at FROM agent_messages
+					WHERE session_id = $1 ORDER BY created_at
+				`, currentSessionID)
+				if err == nil {
+					messages := scanAgentMessages(rows)
+					if messages != nil {
+						safeSend(struct {
+							Type     string                `json:"type"`
+							Messages []models.AgentMessage `json:"messages"`
+						}{Type: "reconnect_sync", Messages: messages})
 					}
-				} else {
-					rows, err := s.db.Pool.Query(ctx, `
-						SELECT id, role, content, tool_calls, image_ids, duration_ms, created_at FROM agent_messages
-						WHERE session_id = $1 AND id > $2 ORDER BY created_at
-					`, currentSessionID, msg.LastMessageID)
-					if err == nil {
-						messages = scanAgentMessages(rows)
-					}
-				}
-				if messages != nil {
-					safeSend(struct {
-						Type     string                `json:"type"`
-						Messages []models.AgentMessage `json:"messages"`
-					}{Type: "reconnect_sync", Messages: messages})
 				}
 				continue
 			}
@@ -394,10 +387,14 @@ func scanAgentMessages(rows interface {
 		var m models.AgentMessage
 		var content *string
 		var toolCallsJSON []byte
+		var reasoning *string
 		var imageIDs []string
-		rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &imageIDs, &m.DurationMs, &m.CreatedAt)
+		rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &reasoning, &imageIDs, &m.DurationMs, &m.CreatedAt)
 		if content != nil {
 			m.Content = *content
+		}
+		if reasoning != nil {
+			m.ReasoningContent = *reasoning
 		}
 		if toolCallsJSON != nil {
 			json.Unmarshal(toolCallsJSON, &m.ToolCalls)

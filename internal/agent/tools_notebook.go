@@ -655,9 +655,10 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 
 		result, err := exec.Execute(ctx.Context, query, nil, cell.Limit)
 		if err != nil {
+			errTotalTimeMs := time.Since(startTime).Milliseconds()
 			errOutput := models.Output{Type: "error", Data: map[string]string{"message": err.Error()}}
 			outJSON, _ := json.Marshal([]models.Output{errOutput})
-			db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, updated_at = NOW() WHERE id = $2", outJSON, cellID)
+			db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, errTotalTimeMs, cellID)
 			ctx.EmitCellOutput(cellID, []models.Output{errOutput})
 			if ctx.BroadcastFunc != nil {
 				ctx.BroadcastFunc(notebookID, map[string]any{
@@ -668,13 +669,11 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 				})
 			}
 
-			totalTimeMs := time.Since(startTime).Milliseconds()
-
 		return map[string]any{
 				"cell_id":       cellID,
 				"status":        "error",
 				"error":         err.Error(),
-				"total_time_ms": totalTimeMs,
+				"total_time_ms": errTotalTimeMs,
 			}, nil
 		}
 
@@ -683,7 +682,7 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 		tableOutput := models.Output{Type: "table", Data: result}
 		outputs := []models.Output{tableOutput}
 		outJSON, _ := json.Marshal(outputs)
-		db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, updated_at = NOW() WHERE id = $2", outJSON, cellID)
+		db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, totalTimeMs, cellID)
 		ctx.EmitCellOutput(cellID, outputs)
 		if ctx.BroadcastFunc != nil {
 			ctx.BroadcastFunc(notebookID, map[string]any{
@@ -1429,6 +1428,17 @@ func makeCreateNotebookHandler(db *pgxpool.Pool) ToolHandler {
 			if _, err := db.Exec(ctx.Context, `UPDATE notebooks SET connector_id=$1 WHERE id=$2`, defaultID, id); err != nil {
 				slog.Warn("set default connector", "notebook_id", id, "error", err)
 			}
+		}
+
+		_, aclErr := db.Exec(ctx.Context, `
+			INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+			VALUES ($1, 'notebook', $2::uuid, 'user', $3, ARRAY['view','run','edit','share','delete','create']),
+			       ($1, 'notebook', $2::uuid, 'org_role', 'admin', ARRAY['view','run','edit','share','delete','create'])
+			ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
+			ctx.OrgID, id, ctx.UserID,
+		)
+		if aclErr != nil {
+			slog.Warn("seed ACL entries for notebook", "notebook_id", id, "error", aclErr)
 		}
 
 		_ = ctx.AuditLog("notebook.create", "notebook", id)

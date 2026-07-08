@@ -44,6 +44,7 @@ type Cell struct {
 	Slug           string          `json:"slug,omitempty"`
 	Limit          *int            `json:"limit,omitempty"`
 	Metadata       json.RawMessage `json:"metadata,omitempty"`
+	DurationMs     *int            `json:"duration_ms,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
 	AgentUpdatedAt *time.Time      `json:"agent_updated_at,omitempty"`

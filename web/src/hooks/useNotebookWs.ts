@@ -3,7 +3,7 @@ import { getToken } from '../api/client'
 
 export function useNotebookWs(
   notebookId: string | undefined,
-  onCellOutput?: (cellId: string, outputs: Array<{ type: string; data: unknown }>, userEmail?: string) => void,
+  onCellOutput?: (cellId: string, outputs: Array<{ type: string; data: unknown }>, userEmail?: string, totalTimeMs?: number) => void,
   onCellMetadataChanged?: (cellId: string, metadata: Record<string, unknown>, userEmail?: string) => void,
   onCellUpdated?: (cellId: string, updates: Record<string, unknown>, userEmail?: string) => void,
   onCellCreated?: (cell: import('../types').Cell, userEmail?: string) => void,
@@ -50,7 +50,7 @@ export function useNotebookWs(
       try {
         const msg = JSON.parse(event.data)
         if (msg.type === 'cell_output' && onCellOutputRef.current) {
-          onCellOutputRef.current(msg.cell_id, msg.outputs, msg.user_email)
+          onCellOutputRef.current(msg.cell_id, msg.outputs, msg.user_email, msg.total_time_ms)
         } else if (msg.type === 'cell_metadata_changed' && onCellMetadataChangedRef.current) {
           onCellMetadataChangedRef.current(msg.cell_id, msg.metadata, msg.user_email)
         } else if (msg.type === 'cell_updated' && onCellUpdatedRef.current) {
