@@ -172,7 +172,7 @@ const inputStyles: Record<string, React.CSSProperties> = {
   },
 }
 
-function QueryWidget({ widget, qc, widgetsData, dashboardId }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string }) {
+function QueryWidget({ widget, qc, widgetsData, dashboardId, onCellInfo }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string; onCellInfo?: (info: { updatedAt: string; durationMs?: number }) => void }) {
   const { params } = useDashboardParams()
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -254,6 +254,13 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId }: { widget: AnyWidg
   const chartConfig = ((cell as any).metadata?.chart ?? widget.config) as ChartConfig | undefined
   const updatedAt = (cell as any).updated_at
   const durationMs = (cell as any).duration_ms
+
+  useEffect(() => {
+    if (updatedAt && onCellInfo) {
+      onCellInfo({ updatedAt, durationMs })
+    }
+  }, [updatedAt, durationMs, onCellInfo])
+
   return (
     <>
       <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} />
@@ -269,6 +276,7 @@ const queryWidgetStyles: Record<string, React.CSSProperties> = {
 
 function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string; onEdit?: () => void }) {
   const [loading, setLoading] = useState(false)
+  const [cellInfo, setCellInfo] = useState<{ updatedAt: string; durationMs?: number } | null>(null)
 
   const handleRun = useCallback(async () => {
     if (loading || !widget.notebook_id || !widget.cell_id) return
@@ -296,9 +304,6 @@ function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit }: { widget: 
       </div>
     )
   }
-  const cellData = widgetsData?.[widget.cell_id!] as any
-  const updatedAt = cellData?.updated_at
-  const durationMs = cellData?.duration_ms
   return (
     <div style={styles.widgetCard}>
       <div style={styles.widgetPlayBar}>
@@ -321,14 +326,14 @@ function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit }: { widget: 
             <Pencil size={11} />
           </button>
         )}
-        {updatedAt && (
-          <span style={{ fontSize: 10, color: 'var(--text-muted)', opacity: 0.6, marginLeft: 'auto', whiteSpace: 'nowrap' }}>
-            {new Date(updatedAt).toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })} {new Date(updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-            {durationMs != null && <span> · {durationMs}ms</span>}
-          </span>
-        )}
       </div>
-      <QueryWidget widget={widget} qc={qc} widgetsData={widgetsData} dashboardId={dashboardId} />
+      {cellInfo && (
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', padding: '0 12px 4px', opacity: 0.6 }}>
+          Executed at {new Date(cellInfo.updatedAt).toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })} {new Date(cellInfo.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          {cellInfo.durationMs != null && <span> · {cellInfo.durationMs}ms</span>}
+        </div>
+      )}
+      <QueryWidget widget={widget} qc={qc} widgetsData={widgetsData} dashboardId={dashboardId} onCellInfo={setCellInfo} />
     </div>
   )
 }
