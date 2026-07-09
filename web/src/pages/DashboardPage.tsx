@@ -172,7 +172,7 @@ const inputStyles: Record<string, React.CSSProperties> = {
   },
 }
 
-function QueryWidget({ widget, qc, widgetsData, dashboardId, onCellInfo }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string; onCellInfo?: (info: { updatedAt: string; durationMs?: number }) => void }) {
+function QueryWidget({ widget, qc, widgetsData, dashboardId }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string }) {
   const { params } = useDashboardParams()
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -193,10 +193,6 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId, onCellInfo }: { wid
       ? widgetCellData
       : notebook?.cells?.find((c: Cell) => c.id === widget.cell_id)
 
-    if (cell && (cell as any).updated_at && onCellInfo) {
-      onCellInfo({ updatedAt: (cell as any).updated_at, durationMs: (cell as any).duration_ms })
-    }
-
     if (!cell?.source?.includes('{{')) return
 
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -208,7 +204,7 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId, onCellInfo }: { wid
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-  }, [params, notebook, widget.cell_id, widgetCellData, useInlinedData, onCellInfo])
+  }, [params, notebook, widget.cell_id, widgetCellData, useInlinedData])
 
   if (!useInlinedData && isLoading) return <div style={queryWidgetStyles.loading}>Loading…</div>
 
@@ -257,9 +253,17 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId, onCellInfo }: { wid
   }
   const fixedView = widget.type === 'chart' ? 'chart' : 'table'
   const chartConfig = ((cell as any).metadata?.chart ?? widget.config) as ChartConfig | undefined
+  const updatedAt = (cell as any).updated_at
+  const durationMs = (cell as any).duration_ms
+  const footerExtra = updatedAt
+    ? <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)', opacity: 0.6, whiteSpace: 'nowrap' }}>
+        Executed at {new Date(updatedAt).toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })} {new Date(updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+        {durationMs != null && <span> · {durationMs}ms</span>}
+      </span>
+    : null
   return (
     <>
-      <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} />
+      <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} footerExtra={footerExtra} />
     </>
   )
 }
@@ -272,7 +276,6 @@ const queryWidgetStyles: Record<string, React.CSSProperties> = {
 
 function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string; onEdit?: () => void }) {
   const [loading, setLoading] = useState(false)
-  const [cellInfo, setCellInfo] = useState<{ updatedAt: string; durationMs?: number } | null>(null)
 
   const handleRun = useCallback(async () => {
     if (loading || !widget.notebook_id || !widget.cell_id) return
@@ -323,13 +326,7 @@ function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit }: { widget: 
           </button>
         )}
       </div>
-      {cellInfo && (
-        <div style={{ fontSize: 10, color: 'var(--text-muted)', padding: '0 12px 4px', opacity: 0.6 }}>
-          Executed at {new Date(cellInfo.updatedAt).toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })} {new Date(cellInfo.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-          {cellInfo.durationMs != null && <span> · {cellInfo.durationMs}ms</span>}
-        </div>
-      )}
-      <QueryWidget widget={widget} qc={qc} widgetsData={widgetsData} dashboardId={dashboardId} onCellInfo={setCellInfo} />
+      <QueryWidget widget={widget} qc={qc} widgetsData={widgetsData} dashboardId={dashboardId} />
     </div>
   )
 }

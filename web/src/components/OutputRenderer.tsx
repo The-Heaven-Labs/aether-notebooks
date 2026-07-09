@@ -39,21 +39,22 @@ interface Props {
   hideExport?: boolean
   viewMode?: 'table' | 'chart'
   onViewModeChange?: (viewMode: 'table' | 'chart') => void
+  footerExtra?: React.ReactNode
 }
 
-export const OutputRenderer = memo(function OutputRenderer({ outputs, fixedView, cellId, chartConfig, onChartConfigChange, hideExport, viewMode, onViewModeChange }: Props) {
+export const OutputRenderer = memo(function OutputRenderer({ outputs, fixedView, cellId, chartConfig, onChartConfigChange, hideExport, viewMode, onViewModeChange, footerExtra }: Props) {
   if (!outputs || outputs.length === 0) return null
 
   return (
     <div style={styles.container}>
       {outputs.map((out, i) => (
-        <OutputItem key={i} output={out} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} hideExport={hideExport} viewMode={viewMode} onViewModeChange={onViewModeChange} />
+        <OutputItem key={i} output={out} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} hideExport={hideExport} viewMode={viewMode} onViewModeChange={onViewModeChange} footerExtra={footerExtra} />
       ))}
     </div>
   )
 })
 
-function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChange, hideExport, viewMode, onViewModeChange }: { output: Output; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void }) {
+function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChange, hideExport, viewMode, onViewModeChange, footerExtra }: { output: Output; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void; footerExtra?: React.ReactNode }) {
   if (output.type === 'error') {
     return (
       <div style={styles.errorWrap}>
@@ -70,7 +71,7 @@ function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChang
   if (output.type === 'table') {
     const rs = output.data as ResultSet
     if (!rs?.columns?.length) return <p style={styles.empty}>No results returned</p>
-    return <TableOutput rs={rs} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} hideExport={hideExport} viewMode={viewMode} onViewModeChange={onViewModeChange} />
+    return <TableOutput rs={rs} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} hideExport={hideExport} viewMode={viewMode} onViewModeChange={onViewModeChange} footerExtra={footerExtra} />
   }
 
   return null
@@ -280,7 +281,7 @@ function exportJSON(rs: ResultSet): void {
   URL.revokeObjectURL(url)
 }
 
-const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange, hideExport: hideExportProp, viewMode, onViewModeChange }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void }) {
+const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange, hideExport: hideExportProp, viewMode, onViewModeChange, footerExtra }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void; footerExtra?: React.ReactNode }) {
   const storageKey = cellId ? `aether_cell_view_${cellId}` : null
   const hasChartConfig = !!chartConfig?.chartType
   const [dataExportEnabled, setDataExportEnabled] = useState(true)
@@ -507,6 +508,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
             </button>
           </div>
         )}
+        {footerExtra}
       </div>
 
       {view === 'table' ? (
