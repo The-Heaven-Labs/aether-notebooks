@@ -696,7 +696,7 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height:
   }, [])
 
   return (
-    <div ref={wrapperRef} style={{ position: 'relative', height: '100%' }}>
+    <div ref={wrapperRef} style={{ position: 'relative', height: '100%', minHeight: 100 }}>
       <div data-testid="chart-container" ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
       {showReset && (
         <button
