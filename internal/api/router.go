@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/auth"
@@ -43,17 +45,21 @@ type Server struct {
 
 // NewServer creates a new Aether API server with the provided dependencies.
 func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, masterKey []byte, redisCache *cache.Cache) *Server {
+	var rdb *redis.Client
+	if redisCache != nil {
+		rdb = redisCache.Client()
+	}
 	s := &Server{
 		db:        db,
 		jwt:       jwt,
 		audit:     auditLogger,
 		masterKey: masterKey,
-		hub:       NewHub(),
+		hub:       NewHub(rdb),
 		mux:       http.NewServeMux(),
 		Cache:     redisCache,
 		upgrader:  websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
 	}
-	s.agentEngine = agent.NewEngine(context.Background(), db.Pool)
+	s.agentEngine = agent.NewEngine(context.Background(), db.Pool, rdb)
 	s.agentEngine.BroadcastFunc = func(notebookID string, msg any) {
 		s.hub.Broadcast(notebookID, msg)
 	}
@@ -142,6 +148,8 @@ func (s *Server) routes() {
 
 	// Public routes
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.HandleFunc("GET /healthz", s.handleHealth)
+	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
 	s.mux.HandleFunc("GET /swagger.json", s.handleSwaggerJSON)
 	s.mux.HandleFunc("GET /docs", s.handleSwaggerUI)
 	s.mux.Handle("GET /api/v1/_diagnose/master-key", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -158,11 +166,23 @@ func (s *Server) routes() {
 		}
 		writeJSON(w, 200, map[string]string{"status": "ok", "key_hint": "master key is working correctly"})
 	})))
-	s.mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
-	s.mux.HandleFunc("POST /api/v1/auth/register", s.handleRegister)
+	s.mux.Handle("POST /api/v1/auth/login", s.rateLimit(rateLimitConfig{
+		keyFunc: clientIP,
+		limit:   10,
+		window:  time.Minute,
+	})(http.HandlerFunc(s.handleLogin)))
+	s.mux.Handle("POST /api/v1/auth/register", s.rateLimit(rateLimitConfig{
+		keyFunc: clientIP,
+		limit:   5,
+		window:  time.Minute,
+	})(http.HandlerFunc(s.handleRegister)))
 	s.mux.HandleFunc("GET /api/v1/auth/oidc/{provider}", s.handleOIDCLogin)
 	s.mux.HandleFunc("GET /api/v1/auth/oidc/{provider}/callback", s.handleOIDCCallback)
-	s.mux.HandleFunc("GET /api/v1/auth/sso-providers", s.handleSSOProbe)
+	s.mux.Handle("GET /api/v1/auth/sso-providers", s.rateLimit(rateLimitConfig{
+		keyFunc: clientIP,
+		limit:   20,
+		window:  time.Minute,
+	})(http.HandlerFunc(s.handleSSOProbe)))
 	s.mux.HandleFunc("GET /api/v1/auth/config", s.handleRegistrationStatus)
 
 	// Onboarding routes (require auth but allow onboarding role)
@@ -430,4 +450,38 @@ func (s *Server) routes() {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	checks := map[string]string{}
+
+	if err := s.db.Pool.Ping(ctx); err != nil {
+		checks["database"] = "unreachable"
+	} else {
+		checks["database"] = "ok"
+	}
+
+	if s.Cache != nil {
+		if err := s.Cache.Ping(ctx); err != nil {
+			checks["redis"] = "unreachable"
+		} else {
+			checks["redis"] = "ok"
+		}
+	}
+
+	status := http.StatusOK
+	for _, v := range checks {
+		if v != "ok" {
+			status = http.StatusServiceUnavailable
+			break
+		}
+	}
+
+	writeJSON(w, status, map[string]any{
+		"status": status == http.StatusOK,
+		"checks": checks,
+	})
 }

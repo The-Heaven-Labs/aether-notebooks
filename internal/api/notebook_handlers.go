@@ -53,6 +53,10 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.FolderID != nil && *req.FolderID == "" {
+		req.FolderID = nil
+	}
+
 	params, _ := json.Marshal(req.Parameters)
 	if req.Parameters == nil {
 		params = []byte("[]")
@@ -887,6 +891,10 @@ func (s *Server) handleCloneNotebook(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+
+	if req.FolderID != nil && *req.FolderID == "" {
+		req.FolderID = nil
 	}
 
 	var srcTitle, srcDesc string

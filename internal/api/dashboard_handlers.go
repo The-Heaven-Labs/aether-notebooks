@@ -58,6 +58,10 @@ func (s *Server) handleCreateDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.FolderID != nil && *req.FolderID == "" {
+		req.FolderID = nil
+	}
+
 	settingsJSON, _ := json.Marshal(req.Settings)
 	ctx := r.Context()
 
@@ -115,6 +119,11 @@ func (s *Server) handleUpdateDashboard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+
+	if req.FolderID != nil && *req.FolderID == "" {
+		req.FolderID = nil
+	}
+
 	ctx := r.Context()
 
 	// Build dynamic UPDATE query

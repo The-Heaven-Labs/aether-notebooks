@@ -75,5 +75,3 @@ func SeedDevAuditS3Config(ctx context.Context, pool *pgxpool.Pool) {
 	}
 	slog.Info("seeded dev audit S3 config (Garage)")
 }
-
-

@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 )
 
 var upgrader = websocket.Upgrader{
@@ -40,10 +43,22 @@ type Hub struct {
 	mu           sync.RWMutex
 	rooms        map[string]map[*wsConn]bool
 	runningCells sync.Map // cellID → notebookID
+	rdb          *redis.Client
+	pubsub       *redis.PubSub
+	stopCh       chan struct{}
 }
 
-func NewHub() *Hub {
-	return &Hub{rooms: make(map[string]map[*wsConn]bool)}
+func NewHub(rdb *redis.Client) *Hub {
+	h := &Hub{
+		rooms:  make(map[string]map[*wsConn]bool),
+		rdb:    rdb,
+		stopCh: make(chan struct{}),
+	}
+	if rdb != nil {
+		h.pubsub = rdb.Subscribe(context.Background())
+		go h.redisListener()
+	}
+	return h
 }
 
 func (h *Hub) Join(notebookID string, wc *wsConn) {
@@ -51,6 +66,9 @@ func (h *Hub) Join(notebookID string, wc *wsConn) {
 	defer h.mu.Unlock()
 	if h.rooms[notebookID] == nil {
 		h.rooms[notebookID] = make(map[*wsConn]bool)
+		if h.rdb != nil {
+			h.pubsub.Subscribe(context.Background(), "ws:notebook:"+notebookID)
+		}
 	}
 	h.rooms[notebookID][wc] = true
 }
@@ -61,6 +79,46 @@ func (h *Hub) Leave(notebookID string, wc *wsConn) {
 	delete(h.rooms[notebookID], wc)
 	if len(h.rooms[notebookID]) == 0 {
 		delete(h.rooms, notebookID)
+		if h.rdb != nil {
+			h.pubsub.Unsubscribe(context.Background(), "ws:notebook:"+notebookID)
+		}
+	}
+}
+
+func (h *Hub) redisListener() {
+	for {
+		ch := h.pubsub.Channel()
+		for {
+			select {
+			case msg := <-ch:
+				if msg == nil {
+					goto reconnect
+				}
+				notebookID := strings.TrimPrefix(msg.Channel, "ws:notebook:")
+				h.mu.RLock()
+				conns := h.rooms[notebookID]
+				h.mu.RUnlock()
+				for wc := range conns {
+					wc.WriteMessage(websocket.TextMessage, []byte(msg.Payload))
+				}
+			case <-h.stopCh:
+				h.pubsub.Close()
+				return
+			}
+		}
+	reconnect:
+		h.pubsub.Close()
+		time.Sleep(time.Second)
+		h.mu.RLock()
+		rooms := make([]string, 0, len(h.rooms))
+		for r := range h.rooms {
+			rooms = append(rooms, r)
+		}
+		h.mu.RUnlock()
+		h.pubsub = h.rdb.Subscribe(context.Background())
+		for _, r := range rooms {
+			h.pubsub.Subscribe(context.Background(), "ws:notebook:"+r)
+		}
 	}
 }
 
@@ -84,12 +142,19 @@ func (h *Hub) RunningCellsForNotebook(notebookID string) []string {
 }
 
 func (h *Hub) Broadcast(notebookID string, msg interface{}) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return
 	}
+
+	if h.rdb != nil {
+		h.rdb.Publish(context.Background(), "ws:notebook:"+notebookID, data)
+		return
+	}
+
+	// Without Redis, deliver locally only.
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	for wc := range h.rooms[notebookID] {
 		if err := wc.WriteMessage(websocket.TextMessage, data); err != nil {
 			slog.Warn("ws write", "error", err)

@@ -142,9 +142,6 @@ func (s *Server) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
          GROUP BY u.id ORDER BY u.created_at DESC LIMIT $%d OFFSET $%d`,
 		whereClause, len(args)+1, len(args)+2,
 	)
-	if search != "" {
-		args = append(args, "%"+search+"%")
-	}
 	args = append(args, limit, offset)
 
 	rows, err := s.db.Pool.Query(ctx, query, args...)

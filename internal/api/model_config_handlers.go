@@ -140,6 +140,10 @@ func (h *modelConfigHandlers) handleCreate(w http.ResponseWriter, r *http.Reques
 		req.ContextWindow = 128000
 	}
 
+	if req.FolderID != nil && *req.FolderID == "" {
+		req.FolderID = nil
+	}
+
 	cfgID := uuid.New().String()
 	defaultParamsJSON, _ := json.Marshal(req.DefaultParams)
 

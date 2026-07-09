@@ -177,6 +177,10 @@ func (h *toolHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 		req.Config = models.JSONMap{}
 	}
 
+	if req.FolderID != nil && *req.FolderID == "" {
+		req.FolderID = nil
+	}
+
 	toolID := uuid.New().String()
 
 	_, err := h.server.db.Pool.Exec(r.Context(), `
@@ -230,6 +234,10 @@ func (h *toolHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
+	}
+
+	if req.FolderID != nil && *req.FolderID == "" {
+		req.FolderID = nil
 	}
 
 	// Restore redacted secret values from old config

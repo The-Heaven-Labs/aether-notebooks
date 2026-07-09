@@ -13,11 +13,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/the-heaven-labs/aether/internal/storage"
 )
 
 type Engine struct {
+	rdb                *redis.Client // shared Redis client for cross-pod state
 	registry           *ToolRegistry
 	session            *SessionStore
 	llm                *LLMClient
@@ -43,9 +45,18 @@ type ToolConfirmResult struct {
 
 func (e *Engine) SetReasoningEffort(sessionID, effort string) {
 	e.reasoningEffort.Store(sessionID, effort)
+	if e.rdb != nil {
+		e.rdb.Set(context.Background(), "agent:reasoning:"+sessionID, effort, 2*time.Hour)
+	}
 }
 
 func (e *Engine) GetReasoningEffort(sessionID string) string {
+	if e.rdb != nil {
+		val, err := e.rdb.Get(context.Background(), "agent:reasoning:"+sessionID).Result()
+		if err == nil {
+			return val
+		}
+	}
 	if v, ok := e.reasoningEffort.Load(sessionID); ok {
 		if s, ok := v.(string); ok {
 			return s
@@ -56,9 +67,18 @@ func (e *Engine) GetReasoningEffort(sessionID string) string {
 
 func (e *Engine) SetSessionModelConfig(sessionID, modelConfigID string) {
 	e.sessionModelConfig.Store(sessionID, modelConfigID)
+	if e.rdb != nil {
+		e.rdb.Set(context.Background(), "agent:modelcfg:"+sessionID, modelConfigID, 2*time.Hour)
+	}
 }
 
 func (e *Engine) GetSessionModelConfig(sessionID string) string {
+	if e.rdb != nil {
+		val, err := e.rdb.Get(context.Background(), "agent:modelcfg:"+sessionID).Result()
+		if err == nil {
+			return val
+		}
+	}
 	if v, ok := e.sessionModelConfig.Load(sessionID); ok {
 		if s, ok := v.(string); ok {
 			return s
@@ -75,9 +95,22 @@ type PageContextInfo struct {
 
 func (e *Engine) SetPageContext(sessionID string, pc *PageContextInfo) {
 	e.pageContextMap.Store(sessionID, pc)
+	if e.rdb != nil && pc != nil {
+		data, _ := json.Marshal(pc)
+		e.rdb.Set(context.Background(), "agent:pagectx:"+sessionID, data, 2*time.Hour)
+	}
 }
 
 func (e *Engine) GetPageContext(sessionID string) *PageContextInfo {
+	if e.rdb != nil {
+		data, err := e.rdb.Get(context.Background(), "agent:pagectx:"+sessionID).Bytes()
+		if err == nil {
+			var pc PageContextInfo
+			if json.Unmarshal(data, &pc) == nil {
+				return &pc
+			}
+		}
+	}
 	if v, ok := e.pageContextMap.Load(sessionID); ok {
 		if pc, ok := v.(*PageContextInfo); ok {
 			return pc
@@ -86,6 +119,10 @@ func (e *Engine) GetPageContext(sessionID string) *PageContextInfo {
 	return nil
 }
 
+// SetToolConfirm stores a confirmation channel for a session.
+// This is intentionally per-pod (not stored in Redis) because channels are
+// in-memory synchronization primitives — the user's WebSocket must be on the
+// same pod for confirm dialogs to work.
 func (e *Engine) SetToolConfirm(sessionID string, ch chan ToolConfirmResult) {
 	e.toolConfirmPending.Store(sessionID, ch)
 }
@@ -100,7 +137,7 @@ func (e *Engine) ResolveToolConfirm(sessionID string, approved bool, toolName st
 	}
 }
 
-func NewEngine(ctx context.Context, pool *pgxpool.Pool) *Engine {
+func NewEngine(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client) *Engine {
 	engine := &Engine{
 		registry:     NewToolRegistry(),
 		session:      NewSessionStore(pool),

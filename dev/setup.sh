@@ -1,6 +1,16 @@
 #!/bin/sh
 set -e
 
+retry() {
+  local n=0
+  until [ "$n" -ge 10 ]; do
+    "$@" && return
+    n=$((n+1))
+    echo "  retry $n/10: $*"
+    sleep 3
+  done
+  return 1
+}
 
 API_URL="http://api:8080"
 
@@ -20,16 +30,16 @@ go run ./cmd/aether config set api-url "$API_URL"
 echo "Registering admin user..."
 go run ./cmd/aether register --email admin@heaven-labs.com --password admin123 --name "Admin" 2>/dev/null || true
 
-# Login
+# Login with retries (API may restart due to Air rebuild)
 echo "Logging in..."
-go run ./cmd/aether login --email admin@heaven-labs.com --password admin123
+retry go run ./cmd/aether login --email admin@heaven-labs.com --password admin123
 
 # Create Heaven Labs org (ok if already exists)
 echo "Creating Heaven Labs org..."
-go run ./cmd/aether admin orgs create --name "Heaven Labs" --slug heaven-labs 2>/dev/null || true
+retry go run ./cmd/aether admin orgs create --name "Heaven Labs" --slug heaven-labs 2>/dev/null || true
 
 # Re-login to get token for the new org
-go run ./cmd/aether login --email admin@heaven-labs.com --password admin123
+retry go run ./cmd/aether login --email admin@heaven-labs.com --password admin123
 
 # Create connectors (ok if already exists)
 echo "Creating Postgres connector..."
@@ -56,16 +66,19 @@ go run ./cmd/aether register --email nova@heaven-labs.com --password nova123 --n
 go run ./cmd/aether register --email sol@heaven-labs.com --password sol123 --name "Sol" 2>/dev/null || true
 
 # Add test users to Heaven Labs org via API
-TOKEN=$(cat "$HOME/.aether/credentials.json" 2>/dev/null | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
-if [ -n "$TOKEN" ]; then
+CRED_PATH="${HOME}/.aether/credentials.json"
+if [ ! -f "$CRED_PATH" ]; then
+  CRED_PATH="/home/aether/.aether/credentials.json"
+fi
+TOKEN=$(cat "$CRED_PATH" 2>/dev/null | grep -o '"token": "[^"]*"' | cut -d'"' -f4)
+if [ -z "$TOKEN" ]; then
+  echo "  No token found, skipping org member add for test users"
+else
   for USER_EMAIL in nova@heaven-labs.com sol@heaven-labs.com; do
-    USER_ID=$(curl -sf -H "Authorization: Bearer $TOKEN" "http://api:8080/api/v1/admin/users?search=$USER_EMAIL" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
-    if [ -n "$USER_ID" ]; then
-      curl -sf -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
-        "http://api:8080/api/v1/members" \
-        -d "{\"user_id\":\"$USER_ID\",\"role\":\"editor\"}" >/dev/null 2>&1 || true
-      echo "  Added $USER_EMAIL to org"
-    fi
+    retry curl -sf -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+      "http://api:8080/api/v1/members" \
+      -d "{\"email\":\"$USER_EMAIL\",\"role\":\"editor\"}" >/dev/null 2>&1 || true
+    echo "  Added $USER_EMAIL to org"
   done
 fi
 

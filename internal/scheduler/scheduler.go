@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/robfig/cron/v3"
 	"github.com/the-heaven-labs/aether/internal/database"
 )
@@ -51,25 +52,36 @@ func (s *Scheduler) tick() {
 
 	now := time.Now()
 	if now.Hour() == 0 && now.Minute() == 0 {
-		s.runAgentStatsRollup(ctx)
-		s.purgeTrash(ctx)
+		lockID := int64(989899)
+		_, err := s.db.Pool.Exec(ctx, "SELECT pg_advisory_lock($1)", lockID)
+		if err == nil {
+			s.runAgentStatsRollup(ctx)
+			s.purgeTrash(ctx)
+			s.db.Pool.Exec(ctx, "SELECT pg_advisory_unlock($1)", lockID)
+		}
 	}
 
-	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, notebook_id, cron_expression, parameter_overrides
-		 FROM schedules WHERE enabled = TRUE AND next_run_at <= NOW()`)
-	if err != nil {
-		slog.Warn("scheduler: query", "error", err)
-		return
-	}
-	defer rows.Close()
-
-	for rows.Next() {
+	for {
 		var id, nbID, cronExpr string
 		var paramsJSON []byte
-		if err := rows.Scan(&id, &nbID, &cronExpr, &paramsJSON); err != nil {
-			slog.Warn("scheduler: scan", "error", err)
-			continue
+		err := s.db.Pool.QueryRow(ctx,
+			`UPDATE schedules AS s
+			 SET last_run_at = NOW(), next_run_at = GREATEST(NOW(), s.next_run_at + INTERVAL '1 minute'), updated_at = NOW()
+			 WHERE s.id = (
+				 SELECT s2.id FROM schedules s2
+				 WHERE s2.enabled AND s2.next_run_at <= NOW()
+				 ORDER BY s2.next_run_at
+				 LIMIT 1
+				 FOR UPDATE SKIP LOCKED
+			 )
+			 RETURNING s.id, s.notebook_id, s.cron_expression, s.parameter_overrides`,
+		).Scan(&id, &nbID, &cronExpr, &paramsJSON)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				break
+			}
+			slog.Warn("scheduler: claim", "error", err)
+			break
 		}
 
 		var params map[string]string
@@ -78,12 +90,6 @@ func (s *Scheduler) tick() {
 		if err := s.runFunc(ctx, nbID, params); err != nil {
 			slog.Warn("scheduler: run notebook", "notebook_id", nbID, "error", err)
 		}
-
-		next, _ := NextRun(cronExpr)
-		s.db.Pool.Exec(ctx,
-			`UPDATE schedules SET last_run_at = NOW(), next_run_at = $1, updated_at = NOW() WHERE id = $2`,
-			next, id,
-		)
 	}
 }
 

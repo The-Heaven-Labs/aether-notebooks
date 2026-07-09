@@ -94,15 +94,15 @@ func AuditCmd() *cobra.Command {
 						return err
 					}
 					body := map[string]any{
-						"endpoint":           endpoint,
-						"region":             region,
-						"bucket":             bucket,
-						"access_key":         accessKey,
-						"secret_key":         secretKey,
-						"use_role":           useRole,
-						"batch_size":         batchSize,
+						"endpoint":            endpoint,
+						"region":              region,
+						"bucket":              bucket,
+						"access_key":          accessKey,
+						"secret_key":          secretKey,
+						"use_role":            useRole,
+						"batch_size":          batchSize,
 						"flush_interval_secs": flushInterval,
-						"enabled":            true,
+						"enabled":             true,
 					}
 					if err := c.OrgSetAuditS3Config(body); err != nil {
 						return err

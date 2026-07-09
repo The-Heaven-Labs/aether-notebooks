@@ -191,6 +191,8 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     user: "1000:1000"
+    environment:
+      HOME: /home/aether
     volumes:
       - .:/app
       - go-build-cache:/home/aether/.cache/go-build
@@ -214,6 +216,8 @@ services:
       AETHER_API_URL: http://api:8080
       AETHER_RELAY_PORT: "3001"
       LOG_LEVEL: warn
+      REDIS_HOST: aether-redis
+      REDIS_PORT: "6379"
     volumes:
       # Mount the whole relay directory; keep node_modules in a named volume
       # so the container-built binaries aren't overwritten by the host.
@@ -235,11 +239,11 @@ services:
       - ./dev/garage/config.toml:/etc/garage/config.toml:ro
       - garagedata:/var/lib/garage
     healthcheck:
-      test: ["CMD-SHELL", "/garage -c /etc/garage/config.toml status 2>/dev/null | grep -q 'HEALTHY'"]
+      test: ["CMD", "/garage", "-c", "/etc/garage/config.toml", "stats"]
       interval: 10s
       timeout: 5s
-      retries: 30
-      start_period: 15s
+      retries: 3
+      start_period: 10s
 
   garage-setup:
     image: alpine:3.20

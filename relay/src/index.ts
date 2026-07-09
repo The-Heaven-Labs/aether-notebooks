@@ -1,11 +1,20 @@
 import { Server } from '@hocuspocus/server'
+import { Redis } from '@hocuspocus/extension-redis'
 import * as Y from 'yjs'
 
 const API_URL = process.env.AETHER_API_URL || 'http://localhost:8088'
 const PORT = parseInt(process.env.AETHER_RELAY_PORT || '3001')
+const REDIS_HOST = process.env.REDIS_HOST || 'localhost'
+const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379')
 
 const server = new Server({
   port: PORT,
+  extensions: [
+    new Redis({
+      host: REDIS_HOST,
+      port: REDIS_PORT,
+    }),
+  ],
 
   async onLoadDocument({ documentName }) {
     const res = await fetch(`${API_URL}/internal/yjs/${documentName}`)
