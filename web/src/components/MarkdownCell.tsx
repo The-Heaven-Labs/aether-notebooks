@@ -263,6 +263,7 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave, onEditS
   const [splitMode, setSplitMode] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<number | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -334,6 +335,20 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave, onEditS
   const handleImageExpand = useCallback((imgSrc: string) => setViewingImage(imgSrc), [])
   const markdownComponents = useMemo(() => makeMarkdownComponents(handleResize, false, handleImageExpand), [handleResize, handleImageExpand])
 
+  const getImageFile = useCallback((dt: DataTransfer): File | null => {
+    if (dt.items) {
+      for (let i = 0; i < dt.items.length; i++) {
+        if (dt.items[i].kind === 'file' && dt.items[i].type.startsWith('image/')) {
+          return dt.items[i].getAsFile()
+        }
+      }
+    }
+    if (dt.files) {
+      return Array.from(dt.files).find(f => f.type.startsWith('image/')) ?? null
+    }
+    return null
+  }, [])
+
   const uploadImage = useCallback(async (file: File) => {
     const form = new FormData()
     form.append('file', file)
@@ -364,52 +379,53 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave, onEditS
   }, [cell.id, onSourceChange])
 
   const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = Array.from(e.clipboardData.files).filter(f => f.type.startsWith('image/'))
-    if (files.length === 0) return
+    const file = getImageFile(e.clipboardData)
+    if (!file) return
     e.preventDefault()
+    setUploadError(null)
     setUploading(true)
     setUploadProgress(0)
     try {
-      // Simulate progress for better UX
       const progressInterval = setInterval(() => {
         setUploadProgress(prev => prev !== null && prev < 90 ? prev + 10 : prev)
       }, 100)
-      const att = await uploadImage(files[0])
+      const att = await uploadImage(file)
       clearInterval(progressInterval)
       setUploadProgress(100)
       insertImageTag(att)
       setTimeout(() => setUploadProgress(null), 300)
     }
-    catch (err) { 
-      console.error('Image upload failed:', err)
+    catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed')
       setUploadProgress(null)
     }
     finally { setUploading(false) }
-  }, [uploadImage, insertImageTag])
+  }, [uploadImage, insertImageTag, getImageFile])
 
   const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
-    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'))
-    if (files.length === 0) return
+    const file = getImageFile(e.dataTransfer)
+    if (!file) return
     e.preventDefault()
     setDragOver(false)
+    setUploadError(null)
     setUploading(true)
     setUploadProgress(0)
     try {
       const progressInterval = setInterval(() => {
         setUploadProgress(prev => prev !== null && prev < 90 ? prev + 10 : prev)
       }, 100)
-      const att = await uploadImage(files[0])
+      const att = await uploadImage(file)
       clearInterval(progressInterval)
       setUploadProgress(100)
       insertImageTag(att)
       setTimeout(() => setUploadProgress(null), 300)
     }
-    catch (err) { 
-      console.error('Image upload failed:', err)
+    catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed')
       setUploadProgress(null)
     }
     finally { setUploading(false) }
-  }, [uploadImage, insertImageTag])
+  }, [uploadImage, insertImageTag, getImageFile])
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -426,8 +442,8 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave, onEditS
       insertImageTag(att)
       setTimeout(() => setUploadProgress(null), 300)
     }
-    catch (err) { 
-      console.error('Image upload failed:', err)
+    catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed')
       setUploadProgress(null)
     }
     finally { setUploading(false) }
@@ -693,8 +709,8 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave, onEditS
           </div>
           
           <div style={styles.mdToolbarRight}>
-            <span style={styles.mdToolbarHint}>
-              {uploading ? 'Uploading...' : 'Ctrl+V to paste images'}
+            <span style={uploadError ? styles.mdToolbarError : styles.mdToolbarHint}>
+              {uploadError ?? (uploading ? 'Uploading...' : 'Ctrl+V to paste images')}
             </span>
           </div>
         </div>
@@ -842,5 +858,10 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     fontFamily: 'var(--font-mono)',
     color: 'var(--text-muted)',
+  },
+  mdToolbarError: {
+    fontSize: 11,
+    fontFamily: 'var(--font-mono)',
+    color: 'var(--accent-error, #e53e3e)',
   },
 }
