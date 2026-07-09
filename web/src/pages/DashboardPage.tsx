@@ -739,7 +739,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--bg-card)',
     border: '1px solid var(--border-light)',
     borderRadius: 4,
-    overflow: 'hidden',
+    overflow: 'auto',
     height: '100%',
     display: 'flex',
     flexDirection: 'column',
