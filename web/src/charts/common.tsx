@@ -639,9 +639,7 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height:
   const containerRef = useRef<HTMLDivElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
-  const [dynamicHeight, setDynamicHeight] = useState(initialHeight ?? 300)
-
-  const height = initialHeight ?? dynamicHeight
+  const [height, setHeight] = useState<number>(initialHeight ?? 0)
 
   const handleReset = () => {
     chartRef.current?.dispatchAction({ type: 'restore' })
@@ -651,8 +649,9 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height:
     if (initialHeight != null) return
     const el = containerRef.current?.parentElement
     if (!el) return
+    setHeight(el.clientHeight)
     const ro = new ResizeObserver(([entry]) => {
-      setDynamicHeight(entry.contentRect.height)
+      setHeight(entry.contentRect.height)
     })
     ro.observe(el)
     return () => ro.disconnect()
@@ -710,7 +709,7 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height:
   }, [])
 
   return (
-    <div ref={wrapperRef} style={{ position: 'relative', height: '100%', minHeight: 180 }}>
+    <div ref={wrapperRef} style={{ position: 'relative', height: '100%' }}>
       <div data-testid="chart-container" ref={containerRef} style={{ height, width: '100%' }} />
       {showReset && (
         <button
