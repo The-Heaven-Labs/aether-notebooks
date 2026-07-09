@@ -46,7 +46,7 @@ export const OutputRenderer = memo(function OutputRenderer({ outputs, fixedView,
   if (!outputs || outputs.length === 0) return null
 
   return (
-    <div style={{ ...styles.container, height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ ...styles.container, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       {outputs.map((out, i) => (
         <OutputItem key={i} output={out} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} hideExport={hideExport} viewMode={viewMode} onViewModeChange={onViewModeChange} footerExtra={footerExtra} />
       ))}
