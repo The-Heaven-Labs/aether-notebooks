@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useLayoutEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ArrowLeft, Play, Loader2, Pencil, Settings } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -253,12 +253,14 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId }: { widget: AnyWidg
   const fixedView = widget.type === 'chart' ? 'chart' : 'table'
   const chartConfig = ((cell as any).metadata?.chart ?? widget.config) as ChartConfig | undefined
   const updatedAt = (cell as any).updated_at
+  const durationMs = (cell as any).duration_ms
   return (
     <>
       <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} />
       {updatedAt && (
         <div style={queryWidgetStyles.footer}>
-          Last updated {new Date(updatedAt).toLocaleTimeString()}
+          Executed at {new Date(updatedAt).toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })} {new Date(updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          {durationMs != null && <span> · {durationMs}ms</span>}
         </div>
       )}
     </>
@@ -361,6 +363,15 @@ function DashboardContent({ id }: { id: string }) {
     obs.observe(el)
     return () => obs.disconnect()
   }, [])
+
+  useLayoutEffect(() => {
+    const el = gridContainerRef.current
+    if (!el) return
+    const w = el.clientWidth
+    if (w !== containerWidth) {
+      setContainerWidth(w)
+    }
+  })
 
   const { data: dashboard, isLoading, error } = useQuery({
     queryKey: ['dashboard', id],

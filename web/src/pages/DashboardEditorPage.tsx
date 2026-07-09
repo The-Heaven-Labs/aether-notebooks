@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ArrowLeft, X, Plus, Eye, Pencil, Shield } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
@@ -131,6 +131,15 @@ const markSaved = useCallback(() => {
     obs.observe(el)
     return () => obs.disconnect()
   }, [])
+
+  useLayoutEffect(() => {
+    const el = gridContainerRef.current
+    if (!el) return
+    const w = el.clientWidth
+    if (w !== containerWidth) {
+      setContainerWidth(w)
+    }
+  })
 
   const { data: dashboard, isLoading, error } = useQuery({
     queryKey: ['dashboard', id],

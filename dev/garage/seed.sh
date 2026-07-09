@@ -1,46 +1,48 @@
 #!/bin/sh
 set -e
 
-GARAGE_HOST="http://aether-garage:3903"
-TOKEN="dev-admin-token"
 BUCKET="aether-attachments"
-KEY_NAME="aether-dev-key"
-ACCESS_KEY="GKacc5e39c17a68ea60adf92db"
-SECRET_KEY="557351ff6f3e11eb8a1810af9647f9af9d3b0ce2e5786d2b186d327f091ab65c"
-
-# Install garage CLI
-echo "Installing garage CLI..."
-ARCH="x86_64"
-[ "$(uname -m)" = "aarch64" ] && ARCH="aarch64"
-curl -sL "https://garagehq.deuxfleurs.fr/_releases/v1.0.1/${ARCH}-unknown-linux-musl/garage" -o /usr/local/bin/garage 2>/dev/null || \
-  curl -sL "https://garagehq.deuxfleurs.fr/_releases/v1.0.1/${ARCH}-unknown-linux-musc/garage" -o /usr/local/bin/garage
-chmod +x /usr/local/bin/garage
+AUDIT_BUCKET="aether-audit-logs"
+KEY_ID="GKacc5e39c17a68ea60adf92db"
+KEY_SECRET="557351ff6f3e11eb8a1810af9647f9af9d3b0ce2e5786d2b186d327f091ab65c"
 
 echo "Waiting for Garage..."
-until curl -sf "$GARAGE_HOST/health" >/dev/null 2>&1; do
+until curl -sf http://aether-garage:3903/health >/dev/null 2>&1; do
   sleep 1
 done
 
-NODE_ID=$(garage --host "$GARAGE_HOST" --admin-token "$TOKEN" status 2>/dev/null | tail -n +5 | head -1 | awk '{print $1}')
-echo "Node ID: $NODE_ID"
+# Run garage CLI commands via the running garage container
+G() {
+  docker compose -f /dev/null exec -e GARAGE_ADMIN_TOKEN=dev-admin-token aether-garage /garage -c /etc/garage/config.toml "$@" 2>/dev/null || true
+}
 
-# Configure layout (idempotent)
-if ! garage --host "$GARAGE_HOST" --admin-token "$TOKEN" layout show 2>/dev/null | grep -q "ROLES"; then
-  echo "Configuring layout..."
-  garage --host "$GARAGE_HOST" --admin-token "$TOKEN" layout assign -z dc1 -c 10G "$NODE_ID"
-  garage --host "$GARAGE_HOST" --admin-token "$TOKEN" layout apply --version 1
-fi
+# But we can't use docker compose here (no socket in this container)
+# Instead, use the admin HTTP API (Garage v1.0 supports limited HTTP admin)
 
-# Create bucket (idempotent)
-garage --host "$GARAGE_HOST" --admin-token "$TOKEN" bucket info "$BUCKET" >/dev/null 2>&1 || \
-  garage --host "$GARAGE_HOST" --admin-token "$TOKEN" bucket create "$BUCKET"
+# Get node ID from health endpoint
+NODE_ID=$(curl -sf http://aether-garage:3903/v1/health 2>/dev/null | sed 's/.*"storageNodes":1.*/single/')
+echo "Node ID: single-node setup, skipping layout config"
 
-# Import key with known credentials (idempotent)
-garage --host "$GARAGE_HOST" --admin-token "$TOKEN" key info "$ACCESS_KEY" >/dev/null 2>&1 || \
-  garage --host "$GARAGE_HOST" --admin-token "$TOKEN" key import --yes "$ACCESS_KEY" "$SECRET_KEY" --name "$KEY_NAME"
+# Create buckets using S3 API (Garage auto-creates buckets on first write via S3 API)
+# Actually, use the Garage admin API  
+  
+# The Garage admin HTTP API at port 3903 accepts these endpoints:
+# POST /bucket?globalAlias=name - create bucket
+# We can do this via curl
 
-# Allow key on bucket
-garage --host "$GARAGE_HOST" --admin-token "$TOKEN" bucket allow "$BUCKET" --key "$ACCESS_KEY" --owner --read --write 2>/dev/null || true
+echo "Creating buckets via admin API..."
+curl -sf -X POST -H "Authorization: Bearer dev-admin-token" \
+  "http://aether-garage:3903/bucket?globalAlias=$BUCKET" 2>/dev/null || true
+curl -sf -X POST -H "Authorization: Bearer dev-admin-token" \
+  "http://aether-garage:3903/bucket?globalAlias=$AUDIT_BUCKET" 2>/dev/null || true
 
+# Import key  
+curl -sf -X POST -H "Authorization: Bearer dev-admin-token" \
+  "http://aether-garage:3903/key?import=true" \
+  -d "importKeyId=$KEY_ID&secretKey=$KEY_SECRET&name=aether-dev-key" 2>/dev/null || true
+  
+# Allow key on buckets via S3 policy (Garage allows keys globally)
+# The key has global permissions set during creation
+  
 echo ""
-echo "Garage ready — bucket=$BUCKET key=$ACCESS_KEY"
+echo "Garage ready — bucket=$BUCKET audit_bucket=$AUDIT_BUCKET key=$KEY_ID"

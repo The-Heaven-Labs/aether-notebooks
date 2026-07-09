@@ -6,7 +6,7 @@ RUN npm install -g tsx
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+RUN npm install && rm -rf /app/node_modules/.cache && chown -R node:node /app/node_modules
 
 # Source is mounted at runtime
 CMD ["tsx", "watch", "src/index.ts"]

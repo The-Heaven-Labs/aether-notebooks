@@ -2,9 +2,16 @@ FROM golang:1.25-alpine
 
 # Suppress toolchain auto-download — use whatever Go is in the image
 ENV GOTOOLCHAIN=local
+ENV GOCACHE=/home/aether/.cache/go-build
 
-RUN apk add --no-cache git nodejs npm && \
-    go install github.com/air-verse/air@latest
+RUN apk add --no-cache curl git nodejs npm su-exec && \
+    go install github.com/air-verse/air@latest && \
+    addgroup -g 1000 -S aether && adduser -u 1000 -S aether -G aether && \
+    chown -R aether:aether /go/pkg/mod && \
+    mkdir -p /home/aether/.cache && \
+    chown -R aether:aether /home/aether
+
+ENV RUN_AS=aether
 
 WORKDIR /app
 
@@ -13,8 +20,17 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
+# Pre-warm Go build cache so Air's first compile is ~5s instead of ~30s.
+# Cache persists in the image and gets copied to the named volume on first run.
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
+RUN go build -buildvcs=false -o /dev/null ./cmd/aether-server && \
+    chown -R aether:aether /home/aether/.cache/go-build
+
 # Pre-build web deps
 COPY web/package*.json ./web/
 RUN cd web && npm ci
 
+RUN printf '#!/bin/sh\nset -e\nfor d in /app/tmp /app/web/dist /app/cmd/aether-server/frontend-dist; do\n  if [ -d "$d" ]; then\n    chown -R "${RUN_AS}" "$d" 2>/dev/null || true\n  fi\ndone\nexec su-exec "${RUN_AS}" "$@"\n' > /entrypoint.sh && chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["sh", "-c", "cd web && npm run build:watch & air -c .air.toml"]

@@ -217,22 +217,28 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get org membership
+	// Get org membership. Platform admins may log in without one (to create orgs).
 	orgID, orgName, role, err := s.getUserOrg(ctx, userID, req.OrgID)
 	if err != nil {
-		writeError(w, http.StatusForbidden, "no organization membership found")
-		return
+		if !isPlatformAdmin {
+			writeError(w, http.StatusForbidden, "no organization membership found")
+			return
+		}
+		orgID = ""
+		orgName = ""
+		role = "admin"
 	}
 
-	// Auto-create home folder if it doesn't exist for this org membership
-	var folderID string
-	if err := s.db.Pool.QueryRow(ctx,
-		`SELECT id FROM folders WHERE owner_id = $1 AND is_home = true LIMIT 1`,
-		userID,
-	).Scan(&folderID); err == pgx.ErrNoRows {
-		if err := createHomeFolder(ctx, s.db.Pool, orgID, userID, name); err != nil {
-			// Non-fatal: log but don't block login
-			slog.Warn("failed to create home folder", "user_id", userID, "error", err)
+	if orgID != "" {
+		// Auto-create home folder if it doesn't exist for this org membership
+		var folderID string
+		if err := s.db.Pool.QueryRow(ctx,
+			`SELECT id FROM folders WHERE owner_id = $1 AND is_home = true LIMIT 1`,
+			userID,
+		).Scan(&folderID); err == pgx.ErrNoRows {
+			if err := createHomeFolder(ctx, s.db.Pool, orgID, userID, name); err != nil {
+				slog.Warn("failed to create home folder", "user_id", userID, "error", err)
+			}
 		}
 	}
 

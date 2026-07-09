@@ -635,13 +635,28 @@ export function applyCollapsedToTree(data: any, collapsed: Set<string>): any {
   return node
 }
 
-export const EChartsContainer = memo(function EChartsContainer({ option, height = 300, onChartReady, notMerge = true, showReset = false }: EChartsContainerProps) {
+export const EChartsContainer = memo(function EChartsContainer({ option, height: initialHeight, onChartReady, notMerge = true, showReset = false }: EChartsContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const wrapperRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
+  const [dynamicHeight, setDynamicHeight] = useState(initialHeight ?? 300)
+
+  const height = initialHeight ?? dynamicHeight
 
   const handleReset = () => {
     chartRef.current?.dispatchAction({ type: 'restore' })
   }
+
+  useEffect(() => {
+    if (initialHeight != null) return
+    const el = containerRef.current?.parentElement
+    if (!el) return
+    const ro = new ResizeObserver(([entry]) => {
+      setDynamicHeight(entry.contentRect.height)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [initialHeight])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -695,7 +710,7 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height 
   }, [])
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div ref={wrapperRef} style={{ position: 'relative', height: '100%' }}>
       <div data-testid="chart-container" ref={containerRef} style={{ height, width: '100%' }} />
       {showReset && (
         <button

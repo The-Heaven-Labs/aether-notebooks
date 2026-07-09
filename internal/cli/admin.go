@@ -41,6 +41,22 @@ func (c *Client) AdminUpdateUser(id string, isPlatformAdmin bool) error {
 	return c.PutJSON("/api/v1/admin/users/"+id, body, nil)
 }
 
+func (c *Client) AdminGetAuditS3Config() (map[string]any, error) {
+	var cfg map[string]any
+	if err := c.GetJSON("/api/v1/admin/audit/s3-config", &cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func (c *Client) AdminSetAuditS3Config(cfg map[string]any) error {
+	return c.PutJSON("/api/v1/admin/audit/s3-config", cfg, nil)
+}
+
+func (c *Client) AdminTestAuditS3Config() error {
+	return c.PostJSON("/api/v1/admin/audit/s3-config/test", map[string]any{}, nil)
+}
+
 func (c *Client) AdminListSSOProviders() ([]SSOProvider, error) {
 	var resp struct {
 		Providers []SSOProvider `json:"providers"`
@@ -319,6 +335,92 @@ func AdminCmd() *cobra.Command {
 				},
 			)
 			return ssoCmd
+		}(),
+	)
+
+	// audit-s3 subcommand
+	cmd.AddCommand(
+		func() *cobra.Command {
+			var endpoint, region, bucket, accessKey, secretKey string
+			var useRole bool
+			var batchSize, flushInterval int
+
+			auditS3Cmd := &cobra.Command{
+				Use:   "audit-s3",
+				Short: "Manage platform audit S3 export",
+			}
+
+			auditS3Cmd.AddCommand(&cobra.Command{
+				Use:   "get",
+				Short: "Show current audit S3 config",
+				RunE: func(cmd *cobra.Command, args []string) error {
+					c, err := LoadClient()
+					if err != nil {
+						return err
+					}
+					cfg, err := c.AdminGetAuditS3Config()
+					if err != nil {
+						return err
+					}
+					PrintJSON(cfg)
+					return nil
+				},
+			})
+
+			setCmd := &cobra.Command{
+				Use:   "set",
+				Short: "Set audit S3 config",
+				RunE: func(cmd *cobra.Command, args []string) error {
+					c, err := LoadClient()
+					if err != nil {
+						return err
+					}
+					body := map[string]any{
+						"endpoint":           endpoint,
+						"region":             region,
+						"bucket":             bucket,
+						"access_key":         accessKey,
+						"secret_key":         secretKey,
+						"use_role":           useRole,
+						"batch_size":         batchSize,
+						"flush_interval_secs": flushInterval,
+						"enabled":            true,
+					}
+					if err := c.AdminSetAuditS3Config(body); err != nil {
+						return err
+					}
+					fmt.Println("Audit S3 config updated.")
+					return nil
+				},
+			}
+			setCmd.Flags().StringVar(&endpoint, "endpoint", "", "S3 endpoint (leave empty for AWS)")
+			setCmd.Flags().StringVar(&region, "region", "us-east-1", "S3 region")
+			setCmd.Flags().StringVar(&bucket, "bucket", "", "S3 bucket (required)")
+			setCmd.Flags().StringVar(&accessKey, "access-key", "", "S3 access key")
+			setCmd.Flags().StringVar(&secretKey, "secret-key", "", "S3 secret key")
+			setCmd.Flags().BoolVar(&useRole, "use-role", false, "Use IAM role instead of keys")
+			setCmd.Flags().IntVar(&batchSize, "batch-size", 100, "Batch size")
+			setCmd.Flags().IntVar(&flushInterval, "flush-interval", 60, "Flush interval (seconds)")
+			setCmd.MarkFlagRequired("bucket")
+			auditS3Cmd.AddCommand(setCmd)
+
+			auditS3Cmd.AddCommand(&cobra.Command{
+				Use:   "test",
+				Short: "Test S3 connection",
+				RunE: func(cmd *cobra.Command, args []string) error {
+					c, err := LoadClient()
+					if err != nil {
+						return err
+					}
+					if err := c.AdminTestAuditS3Config(); err != nil {
+						return err
+					}
+					fmt.Println("Connection successful.")
+					return nil
+				},
+			})
+
+			return auditS3Cmd
 		}(),
 	)
 

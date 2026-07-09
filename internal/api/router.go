@@ -324,6 +324,14 @@ func (s *Server) routes() {
 	s.mux.Handle("PUT /api/v1/admin/sso/providers/{id}", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminUpdateSSOProvider))))
 	s.mux.Handle("DELETE /api/v1/admin/sso/providers/{id}", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminDeleteSSOProvider))))
 	s.mux.Handle("POST /api/v1/admin/sso/providers/{id}/test", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handleAdminTestSSOProvider))))
+	s.mux.Handle("GET /api/v1/admin/audit/s3-config", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handlePlatformGetAuditS3Config))))
+	s.mux.Handle("PUT /api/v1/admin/audit/s3-config", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handlePlatformUpdateAuditS3Config))))
+	s.mux.Handle("POST /api/v1/admin/audit/s3-config/test", authMW(RequirePlatformAdmin(http.HandlerFunc(s.handlePlatformTestAuditS3Config))))
+
+	// Org-level audit S3 config routes
+	s.mux.Handle("GET /api/v1/audit/s3-config", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgGetAuditS3Config))))
+	s.mux.Handle("PUT /api/v1/audit/s3-config", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgUpdateAuditS3Config))))
+	s.mux.Handle("POST /api/v1/audit/s3-config/test", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgTestAuditS3Config))))
 
 	// Org admin SSO routes
 	s.mux.Handle("GET /api/v1/sso/providers", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgListSSOProviders))))

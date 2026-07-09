@@ -14,46 +14,50 @@ env:
 
 tasks:
 
-  # ── Infrastructure ──────────────────────────────────────────────────────────
+  # ── Infrastructure (dev stack only) ─────────────────────────────────────────
 
   infra:up:
-    desc: Start core infrastructure (Postgres, Redis). Skips any service whose port is already bound.
+    desc: Start dev infrastructure (Postgres, Redis, ClickHouse). Skips any service whose port is already bound.
     cmds:
-      # Postgres — skip if port 5432 already answers
       - |
         if ss -tlnp | grep -q ':5432 '; then
           echo "postgres: port 5432 already in use, skipping"
         else
-          docker compose up -d postgres
+          docker compose -f docker-compose.dev.yml up -d aether-postgres
         fi
-      # Redis — skip if port 6379 already answers
       - |
         if ss -tlnp | grep -q ':6379 '; then
           echo "redis: port 6379 already in use, skipping"
         else
-          docker compose up -d redis
+          docker compose -f docker-compose.dev.yml up -d aether-redis
+        fi
+      - |
+        if ss -tlnp | grep -q ':9000 '; then
+          echo "clickhouse: port 9000 already in use, skipping"
+        else
+          docker compose -f docker-compose.dev.yml up -d aether-clickhouse
         fi
 
   infra:down:
-    desc: Stop all Docker services
+    desc: Stop all dev Docker services
     cmds:
-      - docker compose down
+      - docker compose -f docker-compose.dev.yml down
 
   infra:reset:
-    desc: Tear down and recreate core infrastructure (destroys data)
+    desc: Destroy and recreate dev data (Postgres, Redis, ClickHouse volumes)
     cmds:
-      - docker compose down -v
-      - docker compose up -d postgres redis
+      - docker compose -f docker-compose.dev.yml down -v
+      - docker compose -f docker-compose.dev.yml up -d aether-postgres aether-redis aether-clickhouse
 
   infra:logs:
-    desc: Tail logs from all running services
+    desc: Tail logs from dev services
     cmds:
-      - docker compose logs -f
+      - docker compose -f docker-compose.dev.yml logs -f
 
   infra:ps:
-    desc: Show status of all Docker services
+    desc: Show status of dev Docker services
     cmds:
-      - docker compose ps
+      - docker compose -f docker-compose.dev.yml ps
 
   # ── Build ────────────────────────────────────────────────────────────────────
 
