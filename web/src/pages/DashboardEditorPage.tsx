@@ -816,6 +816,8 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
     position: 'relative',
     height: '100%',
+    display: 'flex',
+    flexDirection: 'column',
   },
   deleteWidgetBtn: {
     position: 'absolute',
