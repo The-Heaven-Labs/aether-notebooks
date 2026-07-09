@@ -204,6 +204,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		req.Email,
 	).Scan(&userID, &passwordHash, &name, &isPlatformAdmin)
 	if err == pgx.ErrNoRows {
+		s.audit.Log(ctx, audit.Entry{
+			Action: "user.login.failure", ResourceType: "user",
+			Metadata: map[string]any{"email": req.Email},
+		})
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -213,6 +217,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !auth.VerifyPassword(req.Password, passwordHash) {
+		s.audit.Log(ctx, audit.Entry{
+			UserID: userID,
+			Action: "user.login.failure", ResourceType: "user", ResourceID: userID,
+			Metadata: map[string]any{"email": req.Email},
+		})
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -468,5 +477,11 @@ func (s *Server) handleUpdateCurrentUser(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to update profile")
 		return
 	}
+
+	s.audit.Log(r.Context(), audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "user.update", ResourceType: "user", ResourceID: claims.UserID,
+	})
+
 	writeJSON(w, http.StatusOK, u)
 }

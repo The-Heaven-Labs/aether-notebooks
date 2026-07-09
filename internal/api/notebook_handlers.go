@@ -852,6 +852,11 @@ func (s *Server) handleImportNotebook(w http.ResponseWriter, r *http.Request) {
 			notebookID, cellType, lang, source, i)
 	}
 
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "notebook.import", ResourceType: "notebook", ResourceID: notebookID,
+	})
+
 	writeJSON(w, http.StatusCreated, map[string]string{"id": notebookID, "title": title})
 }
 

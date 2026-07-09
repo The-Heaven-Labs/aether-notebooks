@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
@@ -1022,6 +1023,11 @@ func (s *Server) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "folder.create", ResourceType: "folder", ResourceID: folder.ID,
+	})
+
 	writeJSON(w, http.StatusCreated, folder)
 }
 
@@ -1124,6 +1130,11 @@ func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update folder")
 		return
 	}
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "folder.update", ResourceType: "folder", ResourceID: folderID,
+	})
 
 	writeJSON(w, http.StatusOK, folder)
 }
@@ -1248,6 +1259,11 @@ func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "folder not found")
 		return
 	}
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "folder.delete", ResourceType: "folder", ResourceID: folderID,
+	})
 
 	w.WriteHeader(http.StatusNoContent)
 }
