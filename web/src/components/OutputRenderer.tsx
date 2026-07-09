@@ -477,7 +477,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
   }, [detail, isDetailActive, navigateDetail, copyDetail])
 
   return (
-    <div style={{ ...styles.tableSection, flex: 1, minHeight: 0 }}>
+    <div style={{ ...styles.tableSection, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{ ...styles.outputBar, flexShrink: 0 }}>
         <span style={styles.rowCount}>
           {rs.rows.length} row{rs.rows.length !== 1 ? 's' : ''} · {rs.columns.length} columns
