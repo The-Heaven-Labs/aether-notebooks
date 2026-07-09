@@ -646,8 +646,25 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height:
     chartRef.current?.dispatchAction({ type: 'restore' })
   }
 
+  // Defer ECharts init until container has a non-zero height
+  const [ready, setReady] = useState(false)
   useEffect(() => {
-    if (!containerRef.current) return
+    if (initialHeight) { setReady(true); return }
+    const el = containerRef.current?.parentElement
+    if (!el) return
+    if (el.clientHeight > 0) { setReady(true); return }
+    const ro = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.height > 0) {
+        setReady(true)
+        ro.disconnect()
+      }
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [initialHeight])
+
+  useEffect(() => {
+    if (!containerRef.current || !ready) return
     if (!chartRef.current) {
       chartRef.current = echarts.init(containerRef.current, undefined, {
         renderer: 'canvas',
@@ -688,7 +705,7 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height:
     })
     ro.observe(containerRef.current)
     return () => ro.disconnect()
-  }, [option])
+  }, [option, ready])
 
   useEffect(() => {
     return () => {
