@@ -53,6 +53,7 @@ export function AuditPage() {
       if (dateTo) params.set('to', dateTo)
       return api.get<{ entries: AuditEntry[]; total: number }>(`/api/v1/audit?${params}`)
     },
+    refetchInterval: 10000,
   })
 
   const entries = data?.entries ?? []

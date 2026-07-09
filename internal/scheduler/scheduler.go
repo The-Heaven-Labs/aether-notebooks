@@ -57,6 +57,7 @@ func (s *Scheduler) tick() {
 		if err == nil {
 			s.runAgentStatsRollup(ctx)
 			s.purgeTrash(ctx)
+			s.purgeAuditLogs(ctx)
 			s.db.Pool.Exec(ctx, "SELECT pg_advisory_unlock($1)", lockID)
 		}
 	}
@@ -139,5 +140,19 @@ func (s *Scheduler) purgeTrash(ctx context.Context) {
 		if err != nil {
 			slog.Warn("scheduler: purge trash", "table", table, "error", err)
 		}
+	}
+}
+
+func (s *Scheduler) purgeAuditLogs(ctx context.Context) {
+	_, err := s.db.Pool.Exec(ctx, `
+		DELETE FROM audit_logs a
+		USING orgs o
+		WHERE a.org_id = o.id
+		AND a.created_at < NOW() - (
+			COALESCE((o.settings->>'audit_retention_days')::int, 7)
+		) * INTERVAL '1 day'
+	`)
+	if err != nil {
+		slog.Warn("scheduler: purge audit logs (by org retention)", "error", err)
 	}
 }
