@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 type orgCreateRequest struct {
@@ -673,6 +675,42 @@ func (s *Server) handleUpdateOrgDataExportSettings(w http.ResponseWriter, r *htt
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"data_export_enabled": req.Enabled})
+}
+
+func (s *Server) handleGetOrgSettings(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	var settingsJSON []byte
+	err := s.db.Pool.QueryRow(r.Context(),
+		`SELECT settings FROM orgs WHERE id = $1`, claims.OrgID,
+	).Scan(&settingsJSON)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	if settingsJSON == nil {
+		settingsJSON = []byte("{}")
+	}
+	var settings models.OrgSettings
+	json.Unmarshal(settingsJSON, &settings)
+	writeJSON(w, http.StatusOK, settings)
+}
+
+func (s *Server) handleUpdateOrgSettings(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	var req models.OrgSettings
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	_, err := s.db.Pool.Exec(r.Context(),
+		`UPDATE orgs SET settings = settings || $1::jsonb WHERE id = $2`,
+		req, claims.OrgID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "update failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, req)
 }
 
 // generateSecureToken returns a hex-encoded random token of the given byte length.

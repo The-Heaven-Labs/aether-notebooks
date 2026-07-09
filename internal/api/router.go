@@ -270,6 +270,10 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/org/data-export", authMW(http.HandlerFunc(s.handleGetOrgDataExportSettings)))
 	s.mux.Handle("PUT /api/v1/org/data-export", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateOrgDataExportSettings))))
 
+	// Org settings (JSONB settings column)
+	s.mux.Handle("GET /api/v1/org/settings", authMW(RequireRole("admin")(http.HandlerFunc(s.handleGetOrgSettings))))
+	s.mux.Handle("PUT /api/v1/org/settings", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateOrgSettings))))
+
 	// WebSocket routes
 	s.mux.Handle("GET /api/v1/ws/notebooks/{id}", authMW(http.HandlerFunc(s.handleNotebookWS)))
 
