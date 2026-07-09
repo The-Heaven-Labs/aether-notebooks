@@ -512,7 +512,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
       </div>
 
       {view === 'table' ? (
-        <div style={{ position: 'relative', display: 'flex' }}>
+        <div style={{ position: 'relative', display: 'flex', flex: 1, minHeight: 0 }}>
           <div ref={scrollAreaRef} className="output-scroll-area" style={{ ...styles.tableWrap, maxHeight: outputHeight, flex: 1, minWidth: 0 }}>
             <table style={styles.table}>
               <thead ref={theadRef}>
@@ -618,7 +618,9 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
           )}
         </div>
       ) : (
-        <ChartView rs={rs} onConfigChange={onChartConfigChange} output={{ type: 'table', data: { columns: rs.columns, rows: rs.rows }, config: chartConfig }} />
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <ChartView rs={rs} onConfigChange={onChartConfigChange} output={{ type: 'table', data: { columns: rs.columns, rows: rs.rows }, config: chartConfig }} />
+        </div>
       )}
 
       <div
