@@ -338,7 +338,9 @@ function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit }: { widget: 
   }
   return (
     <div style={styles.widgetCard}>
-      <QueryWidget widget={widget} qc={qc} widgetsData={widgetsData} dashboardId={dashboardId} loading={loading} onRun={handleRun} onEdit={onEdit} />
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <QueryWidget widget={widget} qc={qc} widgetsData={widgetsData} dashboardId={dashboardId} loading={loading} onRun={handleRun} onEdit={onEdit} />
+      </div>
     </div>
   )
 }

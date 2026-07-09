@@ -46,7 +46,7 @@ export const OutputRenderer = memo(function OutputRenderer({ outputs, fixedView,
   if (!outputs || outputs.length === 0) return null
 
   return (
-    <div style={styles.container}>
+    <div style={{ ...styles.container, height: '100%', display: 'flex', flexDirection: 'column' }}>
       {outputs.map((out, i) => (
         <OutputItem key={i} output={out} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} hideExport={hideExport} viewMode={viewMode} onViewModeChange={onViewModeChange} footerExtra={footerExtra} />
       ))}
@@ -477,8 +477,8 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
   }, [detail, isDetailActive, navigateDetail, copyDetail])
 
   return (
-    <div style={styles.tableSection}>
-      <div style={styles.outputBar}>
+    <div style={{ ...styles.tableSection, flex: 1, minHeight: 0 }}>
+      <div style={{ ...styles.outputBar, flexShrink: 0 }}>
         <span style={styles.rowCount}>
           {rs.rows.length} row{rs.rows.length !== 1 ? 's' : ''} · {rs.columns.length} columns
         </span>
