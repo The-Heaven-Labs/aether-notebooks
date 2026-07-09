@@ -12,8 +12,8 @@
     "@hocuspocus/server": "^3.4.4"
   },
   "devDependencies": {
-    "typescript": "^6.0.3",
-    "@types/node": "^20.11.5",
-    "ts-node": "^10.9.2"
+    "@types/node": "^26.1.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
   }
 }
