@@ -172,7 +172,7 @@ const inputStyles: Record<string, React.CSSProperties> = {
   },
 }
 
-function QueryWidget({ widget, qc, widgetsData, dashboardId }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string }) {
+function QueryWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, onEdit }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string; loading?: boolean; onRun?: () => void; onEdit?: () => void }) {
   const { params } = useDashboardParams()
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -255,12 +255,45 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId }: { widget: AnyWidg
   const chartConfig = ((cell as any).metadata?.chart ?? widget.config) as ChartConfig | undefined
   const updatedAt = (cell as any).updated_at
   const durationMs = (cell as any).duration_ms
-  const footerExtra = updatedAt
-    ? <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)', opacity: 0.6, whiteSpace: 'nowrap' }}>
-        Executed at {new Date(updatedAt).toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })} {new Date(updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-        {durationMs != null && <span> · {durationMs}ms</span>}
-      </span>
-    : null
+  const footerExtra = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+      {onRun && (
+        <button
+          style={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            width: 20, height: 20, borderRadius: 3,
+            border: '1px solid var(--border)', background: 'var(--bg-card)',
+            color: 'var(--text-muted)', cursor: 'pointer', padding: 0,
+          }}
+          onClick={onRun}
+          disabled={loading}
+          title="Refresh widget data"
+        >
+          {loading ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={10} />}
+        </button>
+      )}
+      {onEdit && (
+        <button
+          style={{
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            width: 20, height: 20, borderRadius: 3,
+            border: '1px solid var(--border)', background: 'var(--bg-card)',
+            color: 'var(--text-muted)', cursor: 'pointer', padding: 0,
+          }}
+          onClick={onEdit}
+          title="Edit widget"
+        >
+          <Pencil size={9} />
+        </button>
+      )}
+      {updatedAt && (
+        <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)', opacity: 0.6, whiteSpace: 'nowrap' }}>
+          Executed at {new Date(updatedAt).toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })} {new Date(updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          {durationMs != null && <span> · {durationMs}ms</span>}
+        </span>
+      )}
+    </div>
+  )
   return (
     <>
       <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} footerExtra={footerExtra} />
@@ -305,28 +338,7 @@ function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit }: { widget: 
   }
   return (
     <div style={styles.widgetCard}>
-      <div style={styles.widgetPlayBar}>
-        <button
-          style={styles.widgetPlayBtn}
-          onClick={handleRun}
-          disabled={loading}
-          title="Refresh widget data"
-        >
-          {loading
-            ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} />
-            : <Play size={12} />}
-        </button>
-        {onEdit && (
-          <button
-            style={styles.widgetEditBtn}
-            onClick={onEdit}
-            title="Edit widget"
-          >
-            <Pencil size={11} />
-          </button>
-        )}
-      </div>
-      <QueryWidget widget={widget} qc={qc} widgetsData={widgetsData} dashboardId={dashboardId} />
+      <QueryWidget widget={widget} qc={qc} widgetsData={widgetsData} dashboardId={dashboardId} loading={loading} onRun={handleRun} onEdit={onEdit} />
     </div>
   )
 }
@@ -726,39 +738,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     overflow: 'hidden',
     height: '100%',
-  },
-  widgetPlayBar: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
     display: 'flex',
-    gap: 4,
-    zIndex: 2,
-  },
-  widgetPlayBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 24,
-    height: 24,
-    borderRadius: 4,
-    border: '1px solid var(--border)',
-    background: 'var(--bg-card)',
-    color: 'var(--text-muted)',
-    cursor: 'pointer',
-    padding: 0,
-  },
-  widgetEditBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 24,
-    height: 24,
-    borderRadius: 4,
-    border: '1px solid var(--border)',
-    background: 'var(--bg-card)',
-    color: 'var(--text-muted)',
-    cursor: 'pointer',
-    padding: 0,
+    flexDirection: 'column',
   },
 }
