@@ -1003,7 +1003,7 @@ export function HomePage() {
                     if (e.key === 'Escape') { setCreating(null); setNewName('') }
                   }}
                 />
-                <button style={s.createBtn} disabled={!newName.trim()} onClick={handleCreate}>Create</button>
+                <button style={s.createBtn} disabled={!newName.trim()} title={!newName.trim() ? 'Name is required' : undefined} onClick={handleCreate}>Create</button>
                 <button style={s.cancelBtn} onClick={() => { setCreating(null); setNewName('') }}>Cancel</button>
               </div>
             )}

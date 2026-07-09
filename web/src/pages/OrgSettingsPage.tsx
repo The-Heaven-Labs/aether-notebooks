@@ -190,6 +190,7 @@ function ProviderForm({
             }
           }}
           disabled={testing || !values.discovery_url}
+          title={!values.discovery_url ? 'Discovery URL is required' : undefined}
         >
           {testing ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : null}
           Test Connection

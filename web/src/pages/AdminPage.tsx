@@ -839,6 +839,7 @@ export function AdminPage() {
             <button
               style={styles.btn}
               disabled={!createOrgName.trim() || !createOrgSlug.trim() || creatingOrg}
+              title={!createOrgName.trim() ? 'Organization name is required' : !createOrgSlug.trim() ? 'Slug is required' : undefined}
               onClick={handleCreateOrg}
             >
               {creatingOrg ? 'Creating…' : '+ Create Org'}
