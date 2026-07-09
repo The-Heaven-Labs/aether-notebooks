@@ -192,6 +192,11 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId, onCellInfo }: { wid
     const cell = useInlinedData
       ? widgetCellData
       : notebook?.cells?.find((c: Cell) => c.id === widget.cell_id)
+
+    if (cell && (cell as any).updated_at && onCellInfo) {
+      onCellInfo({ updatedAt: (cell as any).updated_at, durationMs: (cell as any).duration_ms })
+    }
+
     if (!cell?.source?.includes('{{')) return
 
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -203,7 +208,7 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId, onCellInfo }: { wid
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-  }, [params, notebook, widget.cell_id, widgetCellData, useInlinedData])
+  }, [params, notebook, widget.cell_id, widgetCellData, useInlinedData, onCellInfo])
 
   if (!useInlinedData && isLoading) return <div style={queryWidgetStyles.loading}>Loading…</div>
 
@@ -211,14 +216,6 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId, onCellInfo }: { wid
     ? widgetCellData!
     : notebook?.cells?.find((c: Cell) => c.id === widget.cell_id)
   if (!cell) return <div style={queryWidgetStyles.empty}>Cell not found</div>
-
-  const cellUpdatedAt = (cell as any).updated_at
-  const cellDurationMs = (cell as any).duration_ms
-  useEffect(() => {
-    if (cellUpdatedAt && onCellInfo) {
-      onCellInfo({ updatedAt: cellUpdatedAt, durationMs: cellDurationMs })
-    }
-  }, [cellUpdatedAt, cellDurationMs, onCellInfo])
 
   // Markdown cells render their source directly — they don't need to be "run"
   if (cell.type === 'text') {
