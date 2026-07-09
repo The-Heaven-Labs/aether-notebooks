@@ -679,7 +679,12 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height:
       } catch { /* ignore — best-effort preservation */ }
     }
 
-    chartRef.current.setOption(finalOption, { notMerge })
+    try {
+      chartRef.current.setOption(finalOption, { notMerge })
+    } catch {
+      // Container may have 0 size on first render before layout settles.
+      // resize() will re-trigger rendering once the ResizeObserver fires.
+    }
 
     const ro = new ResizeObserver(() => {
       chartRef.current?.resize()
@@ -696,7 +701,7 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height:
   }, [])
 
   return (
-    <div ref={wrapperRef} style={{ position: 'relative', height: '100%' }}>
+    <div ref={wrapperRef} style={{ position: 'relative', height: '100%', minHeight: 100 }}>
       <div data-testid="chart-container" ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
       {showReset && (
         <button
