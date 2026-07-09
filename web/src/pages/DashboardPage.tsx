@@ -212,6 +212,14 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId, onCellInfo }: { wid
     : notebook?.cells?.find((c: Cell) => c.id === widget.cell_id)
   if (!cell) return <div style={queryWidgetStyles.empty}>Cell not found</div>
 
+  const cellUpdatedAt = (cell as any).updated_at
+  const cellDurationMs = (cell as any).duration_ms
+  useEffect(() => {
+    if (cellUpdatedAt && onCellInfo) {
+      onCellInfo({ updatedAt: cellUpdatedAt, durationMs: cellDurationMs })
+    }
+  }, [cellUpdatedAt, cellDurationMs, onCellInfo])
+
   // Markdown cells render their source directly — they don't need to be "run"
   if (cell.type === 'text') {
     return (
@@ -252,15 +260,6 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId, onCellInfo }: { wid
   }
   const fixedView = widget.type === 'chart' ? 'chart' : 'table'
   const chartConfig = ((cell as any).metadata?.chart ?? widget.config) as ChartConfig | undefined
-  const updatedAt = (cell as any).updated_at
-  const durationMs = (cell as any).duration_ms
-
-  useEffect(() => {
-    if (updatedAt && onCellInfo) {
-      onCellInfo({ updatedAt, durationMs })
-    }
-  }, [updatedAt, durationMs, onCellInfo])
-
   return (
     <>
       <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} />
