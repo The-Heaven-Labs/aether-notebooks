@@ -33,7 +33,8 @@ const toGridItem = (w: Widget): LayoutItem => ({
   w: w.layout.width,
   h: w.layout.height,
   minW: 2,
-  minH: 1,
+  minH: w.type === 'input' ? 1 : 4,
+  maxH: 24,
 })
 
 function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width: number; height: number } {

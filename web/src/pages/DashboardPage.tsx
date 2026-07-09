@@ -349,6 +349,9 @@ const toGridItem = (w: Widget): LayoutItem => ({
   y: w.layout.row,
   w: w.layout.width,
   h: w.layout.height,
+  minW: 2,
+  minH: w.type === 'input' ? 1 : 4,
+  maxH: 24,
 })
 
 function DashboardContent({ id }: { id: string }) {
