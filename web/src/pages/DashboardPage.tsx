@@ -257,12 +257,6 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId }: { widget: AnyWidg
   return (
     <>
       <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} />
-      {updatedAt && (
-        <div style={queryWidgetStyles.footer}>
-          Executed at {new Date(updatedAt).toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })} {new Date(updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-          {durationMs != null && <span> · {durationMs}ms</span>}
-        </div>
-      )}
     </>
   )
 }
@@ -271,7 +265,6 @@ const queryWidgetStyles: Record<string, React.CSSProperties> = {
   loading: { padding: '16px', fontSize: 13, color: 'var(--text-muted)' },
   empty: { padding: '16px', fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' },
   markdown: { padding: '16px', fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.6, overflow: 'auto', height: '100%' },
-  footer: { fontSize: 10, color: 'var(--text-muted)', padding: '4px 12px', borderTop: '1px solid var(--border-light)', opacity: 0.6 },
 }
 
 function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string; onEdit?: () => void }) {
@@ -303,6 +296,9 @@ function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit }: { widget: 
       </div>
     )
   }
+  const cellData = widgetsData?.[widget.cell_id!] as any
+  const updatedAt = cellData?.updated_at
+  const durationMs = cellData?.duration_ms
   return (
     <div style={styles.widgetCard}>
       <div style={styles.widgetPlayBar}>
@@ -324,6 +320,12 @@ function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit }: { widget: 
           >
             <Pencil size={11} />
           </button>
+        )}
+        {updatedAt && (
+          <span style={{ fontSize: 10, color: 'var(--text-muted)', opacity: 0.6, marginLeft: 'auto', whiteSpace: 'nowrap' }}>
+            {new Date(updatedAt).toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })} {new Date(updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            {durationMs != null && <span> · {durationMs}ms</span>}
+          </span>
         )}
       </div>
       <QueryWidget widget={widget} qc={qc} widgetsData={widgetsData} dashboardId={dashboardId} />
