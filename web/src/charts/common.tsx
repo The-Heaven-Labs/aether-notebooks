@@ -638,6 +638,9 @@ export function applyCollapsedToTree(data: any, collapsed: Set<string>): any {
 export const EChartsContainer = memo(function EChartsContainer({ option, height: initialHeight, onChartReady, notMerge = true, showReset = false }: EChartsContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
+  const containerStyle: React.CSSProperties = initialHeight
+    ? { height: initialHeight, width: '100%' }
+    : { flex: 1, minHeight: 0, width: '100%' }
 
   const handleReset = () => {
     chartRef.current?.dispatchAction({ type: 'restore' })
@@ -695,8 +698,8 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height:
   }, [])
 
   return (
-    <div style={{ position: 'relative', height: '100%' }}>
-      <div data-testid="chart-container" ref={containerRef} style={{ height: '100%', width: '100%' }} />
+    <div style={{ position: 'relative', flex: initialHeight ? 'none' : 1, minHeight: initialHeight ? undefined : 0 }}>
+      <div data-testid="chart-container" ref={containerRef} style={containerStyle} />
       {showReset && (
         <button
           onClick={handleReset}
