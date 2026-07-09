@@ -638,6 +638,7 @@ export function applyCollapsedToTree(data: any, collapsed: Set<string>): any {
 export const EChartsContainer = memo(function EChartsContainer({ option, height: initialHeight, onChartReady, notMerge = true, showReset = false }: EChartsContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
+  const [ready, setReady] = useState(!!initialHeight)
   const containerStyle: React.CSSProperties = initialHeight
     ? { height: initialHeight, width: '100%' }
     : { flex: 1, minHeight: 0, width: '100%' }
@@ -646,8 +647,27 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height:
     chartRef.current?.dispatchAction({ type: 'restore' })
   }
 
+  // Defer init until container has non-zero size
   useEffect(() => {
-    if (!containerRef.current) return
+    if (ready) return
+    const el = containerRef.current
+    if (!el) return
+    if (el.clientHeight > 0 && el.clientWidth > 0) {
+      setReady(true)
+      return
+    }
+    const ro = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.height > 0 && entry.contentRect.width > 0) {
+        setReady(true)
+        ro.disconnect()
+      }
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [ready])
+
+  useEffect(() => {
+    if (!containerRef.current || !ready) return
     if (!chartRef.current) {
       chartRef.current = echarts.init(containerRef.current, undefined, {
         renderer: 'canvas',
@@ -688,7 +708,7 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height:
     })
     ro.observe(containerRef.current)
     return () => ro.disconnect()
-  }, [option])
+  }, [option, ready])
 
   useEffect(() => {
     return () => {
