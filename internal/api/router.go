@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -166,14 +168,26 @@ func (s *Server) routes() {
 		}
 		writeJSON(w, 200, map[string]string{"status": "ok", "key_hint": "master key is working correctly"})
 	})))
+	loginLimit := 10
+	if v := os.Getenv("AETHER_RATE_LIMIT_LOGIN"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			loginLimit = n
+		}
+	}
+	registerLimit := 5
+	if v := os.Getenv("AETHER_RATE_LIMIT_REGISTER"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			registerLimit = n
+		}
+	}
 	s.mux.Handle("POST /api/v1/auth/login", s.rateLimit(rateLimitConfig{
 		keyFunc: clientIP,
-		limit:   10,
+		limit:   loginLimit,
 		window:  time.Minute,
 	})(http.HandlerFunc(s.handleLogin)))
 	s.mux.Handle("POST /api/v1/auth/register", s.rateLimit(rateLimitConfig{
 		keyFunc: clientIP,
-		limit:   5,
+		limit:   registerLimit,
 		window:  time.Minute,
 	})(http.HandlerFunc(s.handleRegister)))
 	s.mux.HandleFunc("GET /api/v1/auth/oidc/{provider}", s.handleOIDCLogin)

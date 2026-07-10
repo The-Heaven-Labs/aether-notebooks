@@ -635,7 +635,7 @@ export function applyCollapsedToTree(data: any, collapsed: Set<string>): any {
   return node
 }
 
-export const EChartsContainer = memo(function EChartsContainer({ option, height: initialHeight, onChartReady, notMerge = true, showReset = false }: EChartsContainerProps) {
+export const EChartsContainer = memo(function EChartsContainer({ option, onChartReady, notMerge = true, showReset = false }: EChartsContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
