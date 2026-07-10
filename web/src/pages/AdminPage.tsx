@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { AppShell } from '../components/AppShell'
+import { Pagination } from '../components/Pagination'
 import type { SSOProvider } from '../types'
 
 interface Org {
@@ -700,12 +701,9 @@ const PAGE_SIZE = 50
 
 export function AdminPage() {
   useEffect(() => { document.title = "Platform Admin — Aether Notebooks" }, [])
+  const qc = useQueryClient()
   const [tab, setTab] = useState<'orgs' | 'users' | 'sso' | 'audit'>('orgs')
   const isPlatformAdmin = localStorage.getItem('aether_is_platform_admin') === 'true'
-  const [orgs, setOrgs] = useState<Org[]>([])
-  const [users, setUsers] = useState<User[]>([])
-  const [orgsTotal, setOrgsTotal] = useState(0)
-  const [usersTotal, setUsersTotal] = useState(0)
   const [orgPage, setOrgPage] = useState(0)
   const [userPage, setUserPage] = useState(0)
   const [orgSearch, setOrgSearch] = useState('')
@@ -716,28 +714,28 @@ export function AdminPage() {
   const [creatingOrg, setCreatingOrg] = useState(false)
   const [createOrgError, setCreateOrgError] = useState<string | null>(null)
 
-  async function fetchOrgs() {
-    const token = localStorage.getItem('aether_token')
-    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
-    const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(orgPage * PAGE_SIZE) })
-    if (orgSearch) params.set('search', orgSearch)
-    const d = await (await fetch(`/api/v1/admin/orgs?${params}`, { headers })).json()
-    setOrgs(d.orgs ?? [])
-    setOrgsTotal(d.total ?? 0)
-  }
+  const { data: orgsData } = useQuery({
+    queryKey: ['admin', 'orgs', orgPage, orgSearch],
+    queryFn: () => {
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(orgPage * PAGE_SIZE) })
+      if (orgSearch) params.set('search', orgSearch)
+      return api.get<{ orgs: Org[]; total: number }>(`/api/v1/admin/orgs?${params}`)
+    },
+  })
 
-  async function fetchUsers() {
-    const token = localStorage.getItem('aether_token')
-    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
-    const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(userPage * PAGE_SIZE) })
-    if (userSearch) params.set('search', userSearch)
-    const d = await (await fetch(`/api/v1/admin/users?${params}`, { headers })).json()
-    setUsers(d.users ?? [])
-    setUsersTotal(d.total ?? 0)
-  }
+  const { data: usersData } = useQuery({
+    queryKey: ['admin', 'users', userPage, userSearch],
+    queryFn: () => {
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(userPage * PAGE_SIZE) })
+      if (userSearch) params.set('search', userSearch)
+      return api.get<{ users: User[]; total: number }>(`/api/v1/admin/users?${params}`)
+    },
+  })
 
-  useEffect(() => { fetchOrgs() }, [orgPage, orgSearch])
-  useEffect(() => { fetchUsers() }, [userPage, userSearch])
+  const orgs = orgsData?.orgs ?? []
+  const orgsTotal = orgsData?.total ?? 0
+  const users = usersData?.users ?? []
+  const usersTotal = usersData?.total ?? 0
 
   async function handleCreateOrg() {
     if (!createOrgName.trim() || !createOrgSlug.trim()) return
@@ -756,7 +754,7 @@ export function AdminPage() {
       }
       setCreateOrgName('')
       setCreateOrgSlug('')
-      fetchOrgs()
+      qc.invalidateQueries({ queryKey: ['admin', 'orgs'] })
     } catch (e) {
       setCreateOrgError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -767,7 +765,7 @@ export function AdminPage() {
   const togglePlatformAdmin = useMutation({
     mutationFn: ({ id, isPlatformAdmin }: { id: string; isPlatformAdmin: boolean }) =>
       api.put(`/api/v1/admin/users/${id}`, { is_platform_admin: isPlatformAdmin }),
-    onSuccess: () => { setTogglingUserId(null); fetchUsers() },
+    onSuccess: () => { setTogglingUserId(null); qc.invalidateQueries({ queryKey: ['admin', 'users'] }) },
     onError: () => { setTogglingUserId(null) },
   })
 
@@ -872,13 +870,7 @@ export function AdminPage() {
             </tbody>
           </table>
           {orgsTotal > PAGE_SIZE && (
-            <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 16 }}>
-              <button style={styles.pageBtn} disabled={orgPage === 0} onClick={() => setOrgPage(p => p - 1)}>← Prev</button>
-              <span style={{ fontSize: 13, color: 'var(--text-muted)', alignSelf: 'center' }}>
-                {orgPage * PAGE_SIZE + 1}–{Math.min((orgPage + 1) * PAGE_SIZE, orgsTotal)} of {orgsTotal}
-              </span>
-              <button style={styles.pageBtn} disabled={(orgPage + 1) * PAGE_SIZE >= orgsTotal} onClick={() => setOrgPage(p => p + 1)}>Next →</button>
-            </div>
+            <Pagination page={orgPage} pageSize={PAGE_SIZE} total={orgsTotal} onPageChange={setOrgPage} />
           )}
         </>
       )}
@@ -927,13 +919,7 @@ export function AdminPage() {
             </tbody>
           </table>
           {usersTotal > PAGE_SIZE && (
-            <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 16 }}>
-              <button style={styles.pageBtn} disabled={userPage === 0} onClick={() => setUserPage(p => p - 1)}>← Prev</button>
-              <span style={{ fontSize: 13, color: 'var(--text-muted)', alignSelf: 'center' }}>
-                {userPage * PAGE_SIZE + 1}–{Math.min((userPage + 1) * PAGE_SIZE, usersTotal)} of {usersTotal}
-              </span>
-              <button style={styles.pageBtn} disabled={(userPage + 1) * PAGE_SIZE >= usersTotal} onClick={() => setUserPage(p => p + 1)}>Next →</button>
-            </div>
+            <Pagination page={userPage} pageSize={PAGE_SIZE} total={usersTotal} onPageChange={setUserPage} />
           )}
         </>
       )}
@@ -955,6 +941,5 @@ const styles: Record<string, React.CSSProperties> = {
   td: { padding: '10px 12px', fontSize: 13, color: 'var(--text-primary)', borderBottom: '1px solid var(--border)' },
   input: { padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, outline: 'none', color: 'var(--text-primary)', background: 'var(--bg-input)' },
   btn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  pageBtn: { padding: '6px 14px', background: 'var(--bg-input)', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', opacity: 0.8 },
   error: { marginTop: 10, fontSize: 12, color: 'var(--error)' },
 }

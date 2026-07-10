@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/models"
@@ -90,6 +91,10 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	if strings.EqualFold(req.Name, "everyone") {
+		writeError(w, http.StatusBadRequest, "\"everyone\" is a reserved group name")
+		return
+	}
 
 	var g models.Group
 	err := s.db.Pool.QueryRow(ctx,
@@ -132,6 +137,10 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name == "" {
 		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if strings.EqualFold(req.Name, "everyone") {
+		writeError(w, http.StatusBadRequest, "\"everyone\" is a reserved group name")
 		return
 	}
 

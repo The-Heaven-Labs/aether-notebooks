@@ -186,6 +186,8 @@ export function NotebookPage() {
     [cellSaveState]
   )
 
+  const backUrl = (() => { try { const f = sessionStorage.getItem('aether_last_folder'); return f ? `/?folder=${f}` : '/' } catch { return '/' } })()
+
   const anyCellError = useMemo(() =>
     Object.values(cellSaveState).some(s => s.error),
     [cellSaveState]
@@ -1120,7 +1122,7 @@ export function NotebookPage() {
       <div style={styles.header}>
         {/* Row 1: breadcrumb + meta */}
         <div style={styles.headerTopRow}>
-          <Link to="/" style={styles.backBtn} title="Back to Files">
+          <Link to={backUrl} style={styles.backBtn} title="Back to Files">
             <ChevronLeft size={14} style={{ flexShrink: 0 }} />
             <span>Files</span>
           </Link>
