@@ -313,80 +313,58 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Check if user has access to any content inside this home folder at any depth
+		// Check if user has access to any content inside this home folder (direct or descendant)
 		var hasAccess bool
 		err = s.db.Pool.QueryRow(ctx,
 			`SELECT EXISTS (
-				SELECT 1 FROM (
-					-- Direct content in this home folder
-					SELECT 1 FROM notebooks nb WHERE nb.folder_id = $1 AND nb.org_id = $2 AND (
-						EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'user' AND subject_id = $3::text)
-						OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'notebook' AND resource_id = nb.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-						OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-					) LIMIT 1
+				WITH RECURSIVE desc_ids AS (
+					SELECT id FROM folders WHERE parent_id = $1 AND org_id = $2
 					UNION ALL
-					SELECT 1 FROM connectors c WHERE c.folder_id = $1 AND c.org_id = $2 AND (
-						EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'user' AND subject_id = $3::text)
-						OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'connector' AND resource_id = c.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-						OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-					) LIMIT 1
-					UNION ALL
-					SELECT 1 FROM dashboards d2 WHERE d2.folder_id = $1 AND d2.org_id = $2 AND (
-						EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'user' AND subject_id = $3::text)
-						OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'dashboard' AND resource_id = d2.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-						OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-					) LIMIT 1
-					UNION ALL
-					-- Descendant content at any depth
-					WITH RECURSIVE desc_ids AS (
-						SELECT id FROM folders WHERE parent_id = $1 AND org_id = $2
-						UNION ALL
-						SELECT f.id FROM folders f
-						JOIN desc_ids d ON f.parent_id = d.id
-						WHERE f.org_id = $2
-					)
-					SELECT 1 FROM desc_ids d
-					WHERE (
-						EXISTS (
-							SELECT 1 FROM folders f2
-							WHERE f2.id = d.id
-							AND (
-								f2.owner_id = $3
-								OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f2.id AND subject_type = 'user' AND subject_id = $3::text)
-								OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = f2.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-								OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f2.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-							)
-						)
-						OR EXISTS (
-							SELECT 1 FROM notebooks nb
-							WHERE nb.folder_id = d.id AND nb.org_id = $2
-							AND (
-								EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'user' AND subject_id = $3::text)
-								OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'notebook' AND resource_id = nb.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-								OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-							)
-						)
-						OR EXISTS (
-							SELECT 1 FROM connectors c
-							WHERE c.folder_id = d.id AND c.org_id = $2
-							AND (
-								EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'user' AND subject_id = $3::text)
-								OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'connector' AND resource_id = c.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-								OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-							)
-						)
-						OR EXISTS (
-							SELECT 1 FROM dashboards d2
-							WHERE d2.folder_id = d.id AND d2.org_id = $2
-							AND (
-								EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'user' AND subject_id = $3::text)
-								OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'dashboard' AND resource_id = d2.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-								OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-							)
+					SELECT f.id FROM folders f
+					JOIN desc_ids d ON f.parent_id = d.id
+					WHERE f.org_id = $2
+				)
+				SELECT 1 FROM desc_ids d
+				WHERE (
+					EXISTS (
+						SELECT 1 FROM folders f2
+						WHERE f2.id = d.id
+						AND (
+							f2.owner_id = $3
+							OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f2.id AND subject_type = 'user' AND subject_id = $3::text)
+							OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = f2.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
+							OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f2.id AND subject_type = 'org_role' AND subject_id = 'everyone')
 						)
 					)
-					LIMIT 1
-				) t
+					OR EXISTS (
+						SELECT 1 FROM notebooks nb
+						WHERE nb.folder_id = d.id AND nb.org_id = $2
+						AND (
+							EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'user' AND subject_id = $3::text)
+							OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'notebook' AND resource_id = nb.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
+							OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+						)
+					)
+					OR EXISTS (
+						SELECT 1 FROM connectors c
+						WHERE c.folder_id = d.id AND c.org_id = $2
+						AND (
+							EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'user' AND subject_id = $3::text)
+							OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'connector' AND resource_id = c.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
+							OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+						)
+					)
+					OR EXISTS (
+						SELECT 1 FROM dashboards d2
+						WHERE d2.folder_id = d.id AND d2.org_id = $2
+						AND (
+							EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'user' AND subject_id = $3::text)
+							OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'dashboard' AND resource_id = d2.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
+							OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+						)
+					)
+				)
+				LIMIT 1
 			)`,
 			entry.ID, claims.OrgID, claims.UserID, groupIDs,
 		).Scan(&hasAccess)
