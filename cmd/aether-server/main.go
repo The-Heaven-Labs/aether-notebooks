@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -91,8 +92,17 @@ func main() {
 		os.Exit(0)
 	}
 
+	logLevel := slog.LevelInfo
+	switch strings.ToLower(os.Getenv("AETHER_LOG_LEVEL")) {
+	case "warn", "warning":
+		logLevel = slog.LevelWarn
+	case "error":
+		logLevel = slog.LevelError
+	case "debug":
+		logLevel = slog.LevelDebug
+	}
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: logLevel,
 	})))
 
 	cfg, err := config.Load()
@@ -162,8 +172,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Seed dev SSO providers (Keycloak) if none exist yet
+	// Seed dev SSO providers (Keycloak) and audit S3 config (Garage) if none exist yet
 	api.SeedDevSSOProviders(ctx, db.Pool, masterKey)
+	api.SeedDevAuditS3Config(ctx, db.Pool)
 
 	auditLogger := audit.NewLogger(db)
 
@@ -210,6 +221,7 @@ func main() {
 	srv.SetStorage(store)
 	srv.SetAgentStore(store)
 	srv.StartBackgroundJobs(ctx)
+	srv.StartAuditS3Writers(ctx)
 	srv.SetPlatformAdminEmail(cfg.PlatformAdminEmail)
 	srv.SetPublicURL(cfg.PublicURL)
 	srv.SetFrontendURL(cfg.FrontendURL)

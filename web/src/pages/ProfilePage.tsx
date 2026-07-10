@@ -314,6 +314,7 @@ export function ProfilePage() {
                     type="button"
                     style={styles.tokenCreateBtn}
                     disabled={!newTokenName.trim() || createToken.isPending}
+                    title={!newTokenName.trim() ? 'Token name is required' : undefined}
                     onClick={handleCreateToken}
                   >
                     {createToken.isPending ? 'Creating…' : 'Create'}

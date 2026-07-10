@@ -433,6 +433,14 @@ const INLINED_CSS = `
   --selected: #2a2740; --null-color: #666;
 }
 * { margin:0;padding:0;box-sizing:border-box; }
+::-webkit-scrollbar{width:7px;height:7px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#ccc;border-radius:4px}
+::-webkit-scrollbar-thumb:hover{background:#aaa}
+*{scrollbar-width:thin;scrollbar-color:#ccc transparent}
+[data-theme="dark"] ::-webkit-scrollbar-thumb{background:var(--border)}
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover{background:#555}
+[data-theme="dark"] *{scrollbar-color:var(--border) transparent}
 body { font-family:var(--font-sans);background:var(--bg-primary);color:var(--text-primary);font-size:14px;line-height:1.5; }
 .notebook { max-width:960px;margin:0 auto;padding:24px 16px; }
 .header { margin-bottom:24px; }

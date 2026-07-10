@@ -1,9 +1,12 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/audit"
 )
 
@@ -17,12 +20,45 @@ import (
 // @Router /api/v1/admin/orgs [get]
 func (s *Server) handleAdminListOrgs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	rows, err := s.db.Pool.Query(ctx,
+	q := r.URL.Query()
+
+	limit := 50
+	if l, err := strconv.Atoi(q.Get("limit")); err == nil && l > 0 && l <= 500 {
+		limit = l
+	}
+	offset := 0
+	if o, err := strconv.Atoi(q.Get("offset")); err == nil && o >= 0 {
+		offset = o
+	}
+	search := q.Get("search")
+
+	var total int
+	countQuery := `SELECT COUNT(*) FROM orgs o`
+	countArgs := []any{}
+	if search != "" {
+		countQuery += ` WHERE o.name ILIKE $1 OR o.slug ILIKE $1`
+		countArgs = append(countArgs, "%"+search+"%")
+	}
+	s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
+
+	var whereClause string
+	var args []any
+	if search != "" {
+		whereClause = ` WHERE o.name ILIKE $1 OR o.slug ILIKE $1`
+		args = append(args, "%"+search+"%")
+	}
+
+	query := fmt.Sprintf(
 		`SELECT o.id, o.name, o.slug, COUNT(m.user_id) as member_count, o.created_at
          FROM orgs o
          LEFT JOIN org_members m ON m.org_id = o.id
-         GROUP BY o.id ORDER BY o.created_at DESC`,
+         %s
+         GROUP BY o.id ORDER BY o.created_at DESC LIMIT $%d OFFSET $%d`,
+		whereClause, len(args)+1, len(args)+2,
 	)
+	args = append(args, limit, offset)
+
+	rows, err := s.db.Pool.Query(ctx, query, args...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -52,7 +88,7 @@ func (s *Server) handleAdminListOrgs(w http.ResponseWriter, r *http.Request) {
 	if orgs == nil {
 		orgs = []orgSummary{}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"orgs": orgs})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"orgs": orgs, "total": total})
 }
 
 // @Summary List all users
@@ -65,14 +101,47 @@ func (s *Server) handleAdminListOrgs(w http.ResponseWriter, r *http.Request) {
 // @Router /api/v1/admin/users [get]
 func (s *Server) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	rows, err := s.db.Pool.Query(ctx,
+	q := r.URL.Query()
+
+	limit := 50
+	if l, err := strconv.Atoi(q.Get("limit")); err == nil && l > 0 && l <= 500 {
+		limit = l
+	}
+	offset := 0
+	if o, err := strconv.Atoi(q.Get("offset")); err == nil && o >= 0 {
+		offset = o
+	}
+	search := q.Get("search")
+
+	var total int
+	countArgs := []any{}
+	countQuery := `SELECT COUNT(*) FROM users u`
+	if search != "" {
+		countQuery += ` WHERE u.email ILIKE $1 OR u.name ILIKE $1`
+		countArgs = append(countArgs, "%"+search+"%")
+	}
+	s.db.Pool.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
+
+	var whereClause string
+	var args []any
+	if search != "" {
+		whereClause = ` WHERE u.email ILIKE $1 OR u.name ILIKE $1`
+		args = append(args, "%"+search+"%")
+	}
+
+	query := fmt.Sprintf(
 		`SELECT u.id, u.email, u.name, u.is_platform_admin, u.created_at,
                 COALESCE(array_agg(o.name ORDER BY o.name) FILTER (WHERE o.name IS NOT NULL), ARRAY[]::text[]) as orgs
          FROM users u
          LEFT JOIN org_members m ON m.user_id = u.id
          LEFT JOIN orgs o ON o.id = m.org_id
-         GROUP BY u.id ORDER BY u.created_at DESC`,
+         %s
+         GROUP BY u.id ORDER BY u.created_at DESC LIMIT $%d OFFSET $%d`,
+		whereClause, len(args)+1, len(args)+2,
 	)
+	args = append(args, limit, offset)
+
+	rows, err := s.db.Pool.Query(ctx, query, args...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -106,7 +175,7 @@ func (s *Server) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 	if users == nil {
 		users = []userSummary{}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"users": users})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"users": users, "total": total})
 }
 
 // @Summary Update user
@@ -211,6 +280,31 @@ func (s *Server) handleAdminCreateOrg(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create organization")
 		return
 	}
+
+	// Add creating user as org admin
+	if _, err := s.db.Pool.Exec(r.Context(),
+		`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin')`, orgID, claims.UserID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to add org admin")
+		return
+	}
+
+	// Create home folder for the admin
+	var uName string
+	s.db.Pool.QueryRow(r.Context(), `SELECT name FROM users WHERE id = $1`, claims.UserID).Scan(&uName)
+	createHomeFolder(r.Context(), s.db.Pool, orgID, claims.UserID, uName)
+
+	// Ensure Everyone group
+	s.db.Pool.Exec(r.Context(),
+		`INSERT INTO groups (org_id, name) VALUES ($1, 'Everyone') ON CONFLICT DO NOTHING`, orgID,
+	)
+	s.db.Pool.Exec(r.Context(),
+		`INSERT INTO group_members (group_id, user_id)
+		 SELECT g.id, $1 FROM groups g WHERE g.org_id = $2 AND g.name = 'Everyone'
+		 ON CONFLICT (group_id, user_id) DO NOTHING`, claims.UserID, orgID,
+	)
+
+	agent.SeedBuiltinTools(r.Context(), s.db.Pool, orgID)
 
 	s.audit.Log(r.Context(), audit.Entry{
 		OrgID: orgID, UserID: claims.UserID,

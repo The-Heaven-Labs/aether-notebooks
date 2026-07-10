@@ -39,21 +39,22 @@ interface Props {
   hideExport?: boolean
   viewMode?: 'table' | 'chart'
   onViewModeChange?: (viewMode: 'table' | 'chart') => void
+  footerExtra?: React.ReactNode
 }
 
-export const OutputRenderer = memo(function OutputRenderer({ outputs, fixedView, cellId, chartConfig, onChartConfigChange, hideExport, viewMode, onViewModeChange }: Props) {
+export const OutputRenderer = memo(function OutputRenderer({ outputs, fixedView, cellId, chartConfig, onChartConfigChange, hideExport, viewMode, onViewModeChange, footerExtra }: Props) {
   if (!outputs || outputs.length === 0) return null
 
   return (
-    <div style={styles.container}>
+    <div style={{ ...styles.container, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       {outputs.map((out, i) => (
-        <OutputItem key={i} output={out} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} hideExport={hideExport} viewMode={viewMode} onViewModeChange={onViewModeChange} />
+        <OutputItem key={i} output={out} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} hideExport={hideExport} viewMode={viewMode} onViewModeChange={onViewModeChange} footerExtra={footerExtra} />
       ))}
     </div>
   )
 })
 
-function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChange, hideExport, viewMode, onViewModeChange }: { output: Output; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void }) {
+function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChange, hideExport, viewMode, onViewModeChange, footerExtra }: { output: Output; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void; footerExtra?: React.ReactNode }) {
   if (output.type === 'error') {
     return (
       <div style={styles.errorWrap}>
@@ -70,7 +71,7 @@ function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChang
   if (output.type === 'table') {
     const rs = output.data as ResultSet
     if (!rs?.columns?.length) return <p style={styles.empty}>No results returned</p>
-    return <TableOutput rs={rs} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} hideExport={hideExport} viewMode={viewMode} onViewModeChange={onViewModeChange} />
+    return <TableOutput rs={rs} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} hideExport={hideExport} viewMode={viewMode} onViewModeChange={onViewModeChange} footerExtra={footerExtra} />
   }
 
   return null
@@ -280,7 +281,7 @@ function exportJSON(rs: ResultSet): void {
   URL.revokeObjectURL(url)
 }
 
-const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange, hideExport: hideExportProp, viewMode, onViewModeChange }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void }) {
+const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange, hideExport: hideExportProp, viewMode, onViewModeChange, footerExtra }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void; footerExtra?: React.ReactNode }) {
   const storageKey = cellId ? `aether_cell_view_${cellId}` : null
   const hasChartConfig = !!chartConfig?.chartType
   const [dataExportEnabled, setDataExportEnabled] = useState(true)
@@ -476,8 +477,8 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
   }, [detail, isDetailActive, navigateDetail, copyDetail])
 
   return (
-    <div style={styles.tableSection}>
-      <div style={styles.outputBar}>
+    <div style={{ ...styles.tableSection, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ ...styles.outputBar, flexShrink: 0 }}>
         <span style={styles.rowCount}>
           {rs.rows.length} row{rs.rows.length !== 1 ? 's' : ''} · {rs.columns.length} columns
         </span>
@@ -507,10 +508,11 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
             </button>
           </div>
         )}
+        {footerExtra}
       </div>
 
       {view === 'table' ? (
-        <div style={{ position: 'relative', display: 'flex' }}>
+        <div style={{ position: 'relative', display: 'flex', flex: 1, minHeight: 0 }}>
           <div ref={scrollAreaRef} className="output-scroll-area" style={{ ...styles.tableWrap, maxHeight: outputHeight, flex: 1, minWidth: 0 }}>
             <table style={styles.table}>
               <thead ref={theadRef}>
@@ -616,7 +618,9 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
           )}
         </div>
       ) : (
-        <ChartView rs={rs} onConfigChange={onChartConfigChange} output={{ type: 'table', data: { columns: rs.columns, rows: rs.rows }, config: chartConfig }} />
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <ChartView rs={rs} onConfigChange={onChartConfigChange} output={{ type: 'table', data: { columns: rs.columns, rows: rs.rows }, config: chartConfig }} />
+        </div>
       )}
 
       <div

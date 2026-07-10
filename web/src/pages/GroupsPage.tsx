@@ -396,6 +396,10 @@ export function GroupsPage() {
   const handleRenameSubmit = (id: string) => {
     const trimmed = renameValue.trim()
     if (!trimmed) return
+    if (/^everyone$/i.test(trimmed)) {
+      setMutateError('"everyone" is a reserved group name')
+      return
+    }
     updateGroup.mutate({ id, name: trimmed })
   }
 
@@ -410,6 +414,10 @@ export function GroupsPage() {
     const trimmed = newGroupName.trim()
     if (!trimmed) {
       setCreateError('Group name is required')
+      return
+    }
+    if (/^everyone$/i.test(trimmed)) {
+      setCreateError('"everyone" is a reserved group name')
       return
     }
     try {

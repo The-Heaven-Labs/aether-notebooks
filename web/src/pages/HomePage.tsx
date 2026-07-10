@@ -184,12 +184,24 @@ function MoveModal({ target, onConfirm, onClose }: MoveModalProps) {
   const [pickerFolderID, setPickerFolderID] = useState<string | null>(null)
   const [pickerAncestors, setPickerAncestors] = useState<Array<{ id: string; name: string }>>([])
 
+  const isRoot = pickerFolderID === null
+
   const { data, isLoading } = useQuery<FolderContents>({
     queryKey: ['move-picker', pickerFolderID ?? 'root'],
     queryFn: () => pickerFolderID
       ? api.get<FolderContents>(`/api/v1/folders/${pickerFolderID}`)
       : api.get<FolderContents>('/api/v1/folders'),
   })
+
+  const { data: homeFolders } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ['move-picker-home'],
+    queryFn: () => api.get('/api/v1/home'),
+    enabled: isRoot,
+  })
+
+  const allFolders = isRoot && homeFolders
+    ? [...(data?.folders ?? []), ...homeFolders]
+    : data?.folders
 
   function navigateTo(folder: { id: string; name: string }) {
     setPickerAncestors(prev => [...prev, folder])
@@ -228,10 +240,10 @@ function MoveModal({ target, onConfirm, onClose }: MoveModalProps) {
 
         <div style={ms.folderList}>
           {isLoading && <Skeleton count={3} height={24} />}
-          {!isLoading && data && data.folders.length === 0 && (
+          {!isLoading && allFolders && allFolders.length === 0 && (
             <div style={ms.emptyText}>No subfolders here.</div>
           )}
-          {data?.folders.map((f) => (
+          {allFolders?.map((f) => (
             <button key={f.id} style={ms.folderRow} onClick={() => navigateTo({ id: f.id, name: f.name })}>
               <FolderIcon size={14} style={{ color: 'var(--accent)', flexShrink: 0, marginRight: 8 }} />
               <span style={{ flex: 1, textAlign: 'left', fontSize: 13 }}>{f.name}</span>
@@ -271,12 +283,24 @@ function BulkMoveModal({ count, onConfirm, onClose }: { count: number; onConfirm
   const [pickerFolderID, setPickerFolderID] = useState<string | null>(null)
   const [pickerAncestors, setPickerAncestors] = useState<Array<{ id: string; name: string }>>([])
 
+  const isRoot = pickerFolderID === null
+
   const { data, isLoading } = useQuery<FolderContents>({
     queryKey: ['bulk-move-picker', pickerFolderID ?? 'root'],
     queryFn: () => pickerFolderID
       ? api.get<FolderContents>(`/api/v1/folders/${pickerFolderID}`)
       : api.get<FolderContents>('/api/v1/folders'),
   })
+
+  const { data: homeFolders } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ['bulk-move-picker-home'],
+    queryFn: () => api.get('/api/v1/home'),
+    enabled: isRoot,
+  })
+
+  const allFolders = isRoot && homeFolders
+    ? [...(data?.folders ?? []), ...homeFolders]
+    : data?.folders
 
   function navigateTo(folder: { id: string; name: string }) {
     setPickerAncestors(prev => [...prev, folder])
@@ -312,10 +336,10 @@ function BulkMoveModal({ count, onConfirm, onClose }: { count: number; onConfirm
         </div>
         <div style={ms.folderList}>
           {isLoading && <div style={ms.loadingText}>Loading…</div>}
-          {!isLoading && data && data.folders.length === 0 && (
+          {!isLoading && allFolders && allFolders.length === 0 && (
             <div style={ms.emptyText}>No subfolders here.</div>
           )}
-          {data?.folders.map((f) => (
+          {allFolders?.map((f) => (
             <button key={f.id} style={ms.folderRow} onClick={() => navigateTo({ id: f.id, name: f.name })}>
               <FolderIcon size={14} style={{ color: 'var(--accent)', flexShrink: 0, marginRight: 8 }} />
               <span style={{ flex: 1, textAlign: 'left', fontSize: 13 }}>{f.name}</span>
@@ -461,8 +485,10 @@ export function HomePage() {
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false)
 
   const contentsKey = ['folder-contents', folderID ?? 'root']
+  const [fetchKey, setFetchKey] = useState(0)
+
   const { data, isLoading } = useQuery<FolderContents>({
-    queryKey: contentsKey,
+    queryKey: [...contentsKey, fetchKey],
     queryFn: () => folderID
       ? api.get<FolderContents>(`/api/v1/folders/${folderID}`)
       : api.get<FolderContents>('/api/v1/folders'),
@@ -617,9 +643,9 @@ export function HomePage() {
       }
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['folder-contents'] })
-      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
-      qc.invalidateQueries({ queryKey: ['folder-home'] })
+      setFetchKey(k => k + 1)
+      qc.invalidateQueries({ queryKey: ['folder-tree-root'], exact: false, refetchType: 'all' })
+      qc.invalidateQueries({ queryKey: ['folder-home'], exact: false, refetchType: 'all' })
       setMoving(null)
     },
     onError: (e: Error) => setError(e.message),
@@ -790,10 +816,10 @@ export function HomePage() {
       })
       await Promise.all(promises)
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['folder-contents'] })
-      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
-      qc.invalidateQueries({ queryKey: ['folder-home'] })
+      onSuccess: () => {
+      setFetchKey(k => k + 1)
+      qc.invalidateQueries({ queryKey: ['folder-tree-root'], exact: false, refetchType: 'all' })
+      qc.invalidateQueries({ queryKey: ['folder-home'], exact: false, refetchType: 'all' })
       clearSelection()
     },
     onError: (e: Error) => setError(e.message),
@@ -1003,7 +1029,7 @@ export function HomePage() {
                     if (e.key === 'Escape') { setCreating(null); setNewName('') }
                   }}
                 />
-                <button style={s.createBtn} disabled={!newName.trim()} onClick={handleCreate}>Create</button>
+                <button style={s.createBtn} disabled={!newName.trim()} title={!newName.trim() ? 'Name is required' : undefined} onClick={handleCreate}>Create</button>
                 <button style={s.cancelBtn} onClick={() => { setCreating(null); setNewName('') }}>Cancel</button>
               </div>
             )}

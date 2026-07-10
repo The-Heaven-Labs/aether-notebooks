@@ -84,7 +84,7 @@ export function DashboardsPage() {
               onChange={(e) => setNewTitle(e.target.value)}
               autoFocus
             />
-            <button type="submit" style={styles.createBtn} disabled={!newTitle.trim() || createDashboard.isPending}>
+            <button type="submit" style={styles.createBtn} disabled={!newTitle.trim() || createDashboard.isPending} title={!newTitle.trim() ? 'Title is required' : undefined}>
               Create
             </button>
             <button type="button" style={styles.cancelBtn} onClick={() => { setCreating(false); setNewTitle('') }}>

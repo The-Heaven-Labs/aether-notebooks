@@ -29,7 +29,7 @@ export function MembersPage() {
   }, [])
 
   const [showLinkForm, setShowLinkForm] = useState(false)
-  const [linkRole, setLinkRole] = useState('viewer')
+  const [linkRole, setLinkRole] = useState('non-admin')
   const [generatedLink, setGeneratedLink] = useState<string | null>(null)
   const [linkError, setLinkError] = useState<string | null>(null)
   const [linkLoading, setLinkLoading] = useState(false)

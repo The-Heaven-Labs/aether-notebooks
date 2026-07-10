@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, createContext, useContext } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Bot } from 'lucide-react'
 import { TopBar } from './TopBar'
@@ -12,6 +12,12 @@ import { api } from '../api/client'
 interface Props {
   children: React.ReactNode
   noPadding?: boolean
+}
+
+const AgentPanelLayoutContext = createContext<number>(0)
+
+export function useAgentPanelLayoutVersion() {
+  return useContext(AgentPanelLayoutContext)
 }
 
 export function AppShell({ children, noPadding }: Props) {
@@ -46,6 +52,7 @@ export function AppShell({ children, noPadding }: Props) {
   const [viewportHeight, setViewportHeight] = useState(() =>
     typeof window !== 'undefined' ? window.innerHeight : 800
   )
+  const [layoutVersion, setLayoutVersion] = useState(0)
 
   useEffect(() => {
     const handle = () => setViewportHeight(window.innerHeight)
@@ -140,7 +147,12 @@ export function AppShell({ children, noPadding }: Props) {
     localStorage.setItem('aether:agentPanelWidth:__global__', String(globalAgentWidth))
   }, [globalAgentWidth])
 
+  useEffect(() => {
+    setLayoutVersion(v => v + 1)
+  }, [showGlobalAgent, globalAgentMinimized, globalAgentDocked])
+
   return (
+    <AgentPanelLayoutContext.Provider value={layoutVersion}>
     <div style={styles.root}>
       <a href="#main-content" className="skip-link">Skip to content</a>
       <TopBar onShowShortcuts={() => setShowShortcuts(true)} />
@@ -238,6 +250,7 @@ export function AppShell({ children, noPadding }: Props) {
         </div>
       )}
     </div>
+    </AgentPanelLayoutContext.Provider>
   )
 }
 

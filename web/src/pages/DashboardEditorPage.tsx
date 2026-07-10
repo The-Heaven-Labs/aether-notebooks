@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ArrowLeft, X, Plus, Eye, Pencil, Shield } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
@@ -9,7 +9,7 @@ import type { Dashboard, Notebook, Cell, Widget } from '../types'
 import type { ChartConfig } from '../charts/types'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { ErrorBanner } from '../components/ErrorBanner'
-import { GridLayout } from 'react-grid-layout'
+import { GridLayout, noCompactor } from 'react-grid-layout'
 import type { LayoutItem, Layout } from 'react-grid-layout'
 import { Skeleton } from '../components/Skeleton'
 import { PermissionsPanel } from '../components/PermissionsPanel'
@@ -33,7 +33,8 @@ const toGridItem = (w: Widget): LayoutItem => ({
   w: w.layout.width,
   h: w.layout.height,
   minW: 2,
-  minH: 1,
+  minH: 4,
+  maxH: 24,
 })
 
 function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width: number; height: number } {
@@ -113,7 +114,6 @@ const markSaved = useCallback(() => {
   const [deleteWidgetTarget, setDeleteWidgetTarget] = useState<string | null>(null)
   const isMobileLayout = containerWidth < 600
   const gridContainerRef = useRef<HTMLDivElement | null>(null)
-  const dragStartLayoutRef = useRef<LayoutItem[]>([])
 
   const gridRef = useCallback((el: HTMLDivElement | null) => {
     gridContainerRef.current = el
@@ -131,6 +131,15 @@ const markSaved = useCallback(() => {
     obs.observe(el)
     return () => obs.disconnect()
   }, [])
+
+  useLayoutEffect(() => {
+    const el = gridContainerRef.current
+    if (!el) return
+    const w = el.clientWidth
+    if (w !== containerWidth) {
+      setContainerWidth(w)
+    }
+  })
 
   const { data: dashboard, isLoading, error } = useQuery({
     queryKey: ['dashboard', id],
@@ -223,27 +232,33 @@ const markSaved = useCallback(() => {
     }
   }, [saveLayout])
 
+  const lastDragRef = useRef<{ x: number; y: number } | null>(null)
+
+  const onDrag = useCallback((_layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
+    if (newItem) lastDragRef.current = { x: newItem.x, y: newItem.y }
+  }, [])
+
   const onDragStop = useCallback((layout: Layout, oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
     if (!newItem) return
     if (!dashboard) return
 
-    // Save the current dashboard layout for future drag-swap detection
-    dragStartLayoutRef.current = dashboard.widgets?.map(toGridItem) ?? []
+    // Use the last position from onDrag (before the library's drop compaction)
+    // for swap detection. This reflects the user's actual drop target.
+    const targetPos = lastDragRef.current ?? { x: newItem.x, y: newItem.y }
+    lastDragRef.current = null
 
     // Check if the dragged widget was dropped at a position that overlaps
-    // with another widget's ORIGINAL position (before compaction). If so,
-    // swap their positions — the library's compaction pushes other widgets
-    // out of the way, but the user wants to swap them.
-    const preSwapWidget = dragStartLayoutRef.current.find(item => {
+    // with another widget's current position. If so, swap their positions.
+    const preSwapWidget = layout?.find(item => {
       if (item.i === newItem.i) return false
-      return newItem.x < item.x + item.w &&
-        newItem.x + newItem.w > item.x &&
-        newItem.y < item.y + item.h &&
-        newItem.y + newItem.h > item.y
+      return targetPos.x < item.x + item.w &&
+        targetPos.x + item.w > item.x &&
+        targetPos.y < item.y + item.h &&
+        targetPos.y + item.h > item.y
     })
 
     if (preSwapWidget && oldItem) {
-      // The dragged widget overlaps with another widget's original position.
+      // The dragged widget overlaps with another widget's position.
       // Swap the two widgets' positions only — keep their original sizes.
       const savePromises: Promise<void>[] = []
       const draggedWidget = dashboard.widgets?.find((w: Widget) => w.id === newItem.i)
@@ -535,10 +550,12 @@ const markSaved = useCallback(() => {
             <GridLayout
               layout={dashboard.widgets?.map(toGridItem) ?? []}
               width={containerWidth}
+              compactor={noCompactor}
               gridConfig={{ cols: gridCols, rowHeight: 30, margin: [4, 4] }}
               dragConfig={{ enabled: true, handle: '.widget-drag-handle' }}
               resizeConfig={{ enabled: true }}
               onResizeStop={onResizeStop}
+              onDrag={onDrag}
               onDragStop={onDragStop}
               style={{ minHeight: 240 }}
             >
@@ -806,6 +823,8 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
     position: 'relative',
     height: '100%',
+    display: 'flex',
+    flexDirection: 'column',
   },
   deleteWidgetBtn: {
     position: 'absolute',

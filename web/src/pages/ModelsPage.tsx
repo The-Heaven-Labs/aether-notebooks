@@ -201,7 +201,7 @@ export function ModelsPage() {
             <div style={styles.formActions}>
               <span style={{ flex: 1 }} />
               <button type="button" style={styles.cancelBtn} onClick={() => { setCreating(false); setForm(emptyForm()) }}>Cancel</button>
-              <button type="button" style={styles.saveBtn} onClick={() => createMutation.mutate()} disabled={!form.name || !form.model || createMutation.isPending}>
+              <button type="button" style={styles.saveBtn} onClick={() => createMutation.mutate()} disabled={!form.name || !form.model || createMutation.isPending} title={!form.name ? 'Name is required' : !form.model ? 'Model is required' : undefined}>
                 {createMutation.isPending ? 'Creating…' : 'Create'}
               </button>
             </div>
@@ -216,7 +216,7 @@ export function ModelsPage() {
               <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>(leave API key blank to keep current)</span>
               <span style={{ flex: 1 }} />
               <button type="button" style={styles.cancelBtn} onClick={() => { setEditingId(null); setForm(emptyForm()) }}>Cancel</button>
-              <button type="button" style={styles.saveBtn} onClick={() => updateMutation.mutate(editingId!)} disabled={!form.name || updateMutation.isPending}>
+              <button type="button" style={styles.saveBtn} onClick={() => updateMutation.mutate(editingId!)} disabled={!form.name || updateMutation.isPending} title={!form.name ? 'Name is required' : undefined}>
                 {updateMutation.isPending ? 'Saving…' : 'Save'}
               </button>
             </div>

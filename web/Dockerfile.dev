@@ -3,7 +3,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+RUN npm install && rm -rf /app/node_modules/.cache && chown -R node:node /app/node_modules
 
 # Source is mounted at runtime; output goes to web/dist/
 CMD ["npm", "run", "build:watch"]

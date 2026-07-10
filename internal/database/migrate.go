@@ -14,6 +14,13 @@ import (
 var migrationFS embed.FS
 
 func (db *DB) Migrate(ctx context.Context) error {
+	const lockID = 989898
+
+	if _, err := db.Pool.Exec(ctx, "SELECT pg_advisory_lock($1)", lockID); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	defer db.Pool.Exec(ctx, "SELECT pg_advisory_unlock($1)", lockID)
+
 	_, err := db.Pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version TEXT PRIMARY KEY,

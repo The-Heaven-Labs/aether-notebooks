@@ -269,6 +269,7 @@ export function ConnectorsPage() {
                 style={styles.testBtn}
                 onClick={testFormConnection}
                 disabled={!form.host || (form.type === 'postgres' && !form.database) || formTesting}
+                title={!form.host ? 'Host is required' : (form.type === 'postgres' && !form.database) ? 'Database is required' : undefined}
               >
                 {formTesting ? 'Testing…' : 'Test Connection'}
               </button>
@@ -286,6 +287,7 @@ export function ConnectorsPage() {
                 style={styles.saveBtn}
                 onClick={() => createConnector.mutate()}
                 disabled={!form.name || !form.host || (form.type === 'postgres' && !form.database) || createConnector.isPending}
+                title={!form.name ? 'Name is required' : !form.host ? 'Host is required' : (form.type === 'postgres' && !form.database) ? 'Database is required' : undefined}
               >
                 {createConnector.isPending ? 'Creating…' : 'Create'}
               </button>
@@ -379,6 +381,7 @@ export function ConnectorsPage() {
                 style={styles.saveBtn}
                 onClick={() => updateConnector.mutate(editing!)}
                 disabled={!editForm.name || !editForm.host || (editForm.type === 'postgres' && !editForm.database) || updateConnector.isPending}
+                title={!editForm.name ? 'Name is required' : !editForm.host ? 'Host is required' : (editForm.type === 'postgres' && !editForm.database) ? 'Database is required' : undefined}
               >
                 {updateConnector.isPending ? 'Saving…' : 'Save'}
               </button>

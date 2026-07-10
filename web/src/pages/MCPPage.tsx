@@ -128,7 +128,7 @@ export function MCPPage() {
             <div style={styles.formActions}>
               <span style={{ flex: 1 }} />
               <button type="button" style={styles.cancelBtn} onClick={() => { setCreating(false); setForm(emptyForm()) }}>Cancel</button>
-              <button type="button" style={styles.saveBtn} onClick={() => createMutation.mutate()} disabled={!form.name || !form.command || createMutation.isPending}>
+              <button type="button" style={styles.saveBtn} onClick={() => createMutation.mutate()} disabled={!form.name || !form.command || createMutation.isPending} title={!form.name ? 'Name is required' : !form.command ? 'Command is required' : undefined}>
                 {createMutation.isPending ? 'Creating...' : 'Create'}
               </button>
             </div>
@@ -142,7 +142,7 @@ export function MCPPage() {
             <div style={styles.formActions}>
               <span style={{ flex: 1 }} />
               <button type="button" style={styles.cancelBtn} onClick={() => { setEditingId(null); setForm(emptyForm()) }}>Cancel</button>
-              <button type="button" style={styles.saveBtn} onClick={() => updateMutation.mutate(editingId!)} disabled={!form.name || !form.command || updateMutation.isPending}>
+              <button type="button" style={styles.saveBtn} onClick={() => updateMutation.mutate(editingId!)} disabled={!form.name || !form.command || updateMutation.isPending} title={!form.name ? 'Name is required' : !form.command ? 'Command is required' : undefined}>
                 {updateMutation.isPending ? 'Saving...' : 'Save'}
               </button>
             </div>

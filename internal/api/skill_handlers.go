@@ -88,6 +88,10 @@ func (h *skillHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.FolderID != nil && *req.FolderID == "" {
+		req.FolderID = nil
+	}
+
 	skillID := uuid.New().String()
 
 	_, err := h.server.db.Pool.Exec(r.Context(), `

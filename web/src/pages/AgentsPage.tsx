@@ -182,7 +182,7 @@ export function AgentsPage() {
             <div style={styles.formActions}>
               <span style={{ flex: 1 }} />
               <button type="button" style={styles.cancelBtn} onClick={() => { setCreating(false); setForm(emptyForm()) }}>Cancel</button>
-              <button type="button" style={styles.saveBtn} onClick={() => createMutation.mutate()} disabled={!form.name || !form.model_config_id || !form.subagent_model_config_id || createMutation.isPending}>
+              <button type="button" style={styles.saveBtn} onClick={() => createMutation.mutate()} disabled={!form.name || !form.model_config_id || !form.subagent_model_config_id || createMutation.isPending} title={!form.name ? 'Name is required' : !form.model_config_id ? 'Model config is required' : !form.subagent_model_config_id ? 'Subagent model config is required' : undefined}>
                 {createMutation.isPending ? 'Creating...' : 'Create'}
               </button>
             </div>
@@ -200,7 +200,7 @@ export function AgentsPage() {
             <div style={styles.formActions}>
               <span style={{ flex: 1 }} />
               <button type="button" style={styles.cancelBtn} onClick={() => { setEditingId(null); setForm(emptyForm()) }}>Cancel</button>
-              <button type="button" style={styles.saveBtn} onClick={() => updateMutation.mutate(editingId!)} disabled={!form.name || !form.model_config_id || !form.subagent_model_config_id || updateMutation.isPending}>
+              <button type="button" style={styles.saveBtn} onClick={() => updateMutation.mutate(editingId!)} disabled={!form.name || !form.model_config_id || !form.subagent_model_config_id || updateMutation.isPending} title={!form.name ? 'Name is required' : !form.model_config_id ? 'Model config is required' : !form.subagent_model_config_id ? 'Subagent model config is required' : undefined}>
                 {updateMutation.isPending ? 'Saving...' : 'Save'}
               </button>
             </div>

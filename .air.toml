@@ -5,11 +5,11 @@ tmp_dir = "tmp"
   cmd = "go build -buildvcs=false -o ./tmp/main ./cmd/aether-server"
   bin = "./tmp/main"
   delay = 1000
-  exclude_dir = ["tmp", "bin", "relay", "docs", "e2e", "migrations"]
-  include_ext = ["go", "css", "js", "html", "json", "svg", "png", "ico"]
+  exclude_dir = ["tmp", "bin", "relay", "docs", "e2e"]
+  include_ext = ["go", "css", "js", "html", "json", "svg", "png", "ico", "sql"]
   exclude_regex = ["_test\\.go$"]
   log = "build-errors.log"
-  kill_delay = "0s"
+  kill_delay = "2s"
   send_interrupt = true
 
 [log]

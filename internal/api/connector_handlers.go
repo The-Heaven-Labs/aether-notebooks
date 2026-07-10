@@ -52,6 +52,10 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.FolderID != nil && *req.FolderID == "" {
+		req.FolderID = nil
+	}
+
 	configJSON, err := json.Marshal(req.Config)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid config")

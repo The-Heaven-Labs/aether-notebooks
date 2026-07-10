@@ -10,6 +10,11 @@ import { StyledTable } from '../components/StyledTable'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { Pagination } from '../components/Pagination'
 
+interface AuditS3Config {
+  endpoint: string; region: string; bucket: string
+  use_role: boolean; batch_size: number; flush_interval_secs: number; enabled: boolean
+}
+
 const PAGE_SIZE = 50
 
 export function AuditPage() {
@@ -48,6 +53,7 @@ export function AuditPage() {
       if (dateTo) params.set('to', dateTo)
       return api.get<{ entries: AuditEntry[]; total: number }>(`/api/v1/audit?${params}`)
     },
+    refetchInterval: 10000,
   })
 
   const entries = data?.entries ?? []
@@ -145,8 +151,185 @@ export function AuditPage() {
               onPageChange={setPage}
             />
           )}
+
+          <AuditS3ConfigSection />
         </div>
     </AppShell>
+  )
+}
+
+function AuditS3ConfigSection() {
+  const { data: config, error: configError, isLoading } = useQuery<AuditS3Config>({
+    queryKey: ['audit-s3-config'],
+    queryFn: () => api.get('/api/v1/audit/s3-config'),
+    retry: false,
+  })
+  const [endpoint, setEndpoint] = useState('')
+  const [region, setRegion] = useState('us-east-1')
+  const [bucket, setBucket] = useState('')
+  const [accessKey, setAccessKey] = useState('')
+  const [secretKey, setSecretKey] = useState('')
+  const [useRole, setUseRole] = useState(false)
+  const [batchSize, setBatchSize] = useState(100)
+  const [flushIntervalSecs, setFlushIntervalSecs] = useState(60)
+  const [enabled, setEnabled] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [showConfig, setShowConfig] = useState(false)
+
+  useEffect(() => {
+    if (config) {
+      setEndpoint(config.endpoint ?? '')
+      setRegion(config.region ?? 'us-east-1')
+      setBucket(config.bucket ?? '')
+      setUseRole(config.use_role ?? false)
+      setBatchSize(config.batch_size ?? 100)
+      setFlushIntervalSecs(config.flush_interval_secs ?? 60)
+      setEnabled(config.enabled ?? false)
+    }
+  }, [config])
+
+  const isForbidden = configError && ((configError as any)?.status === 403 || (configError as Error)?.message?.includes('403'))
+  if (isLoading || isForbidden) return null
+
+  async function handleSave() {
+    if (!bucket.trim()) { setMessage({ type: 'error', text: 'Bucket is required' }); return }
+    setSaving(true)
+    setMessage(null)
+    try {
+      await api.put('/api/v1/audit/s3-config', {
+        endpoint, region, bucket,
+        access_key: accessKey, secret_key: secretKey,
+        use_role: useRole,
+        batch_size: batchSize, flush_interval_secs: flushIntervalSecs, enabled,
+      })
+      setMessage({ type: 'success', text: 'Configuration saved' })
+    } catch (e) {
+      setMessage({ type: 'error', text: `Save failed: ${(e as Error).message}` })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleTest() {
+    setTesting(true)
+    setMessage(null)
+    try {
+      await api.post('/api/v1/audit/s3-config/test', {})
+      setMessage({ type: 'success', text: 'Connection successful' })
+    } catch (e) {
+      setMessage({ type: 'error', text: `Connection test failed: ${(e as Error).message}` })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const iStyle: React.CSSProperties = {
+    padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 4,
+    fontSize: 13, outline: 'none', color: 'var(--text-primary)',
+    background: 'var(--bg-input)', width: '100%', boxSizing: 'border-box',
+  }
+  const lStyle: React.CSSProperties = {
+    display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4,
+  }
+  const rowStyle: React.CSSProperties = { marginBottom: 16 }
+
+  return (
+    <div style={{ marginTop: 32, borderTop: '1px solid var(--border)', paddingTop: 24 }}>
+      <button
+        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}
+        onClick={() => setShowConfig(!showConfig)}
+      >
+        {showConfig ? '−' : '+'} S3 Export Configuration
+      </button>
+
+      {showConfig && (
+        <div style={{ maxWidth: 600, marginTop: 16 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>
+            Configure S3 storage for audit log export. Entries are written to both Postgres and S3.
+          </p>
+
+          <div style={rowStyle}>
+            <label style={lStyle}>S3 Endpoint</label>
+            <input style={iStyle} value={endpoint} onChange={e => setEndpoint(e.target.value)}
+              placeholder="https://s3.amazonaws.com (leave empty for AWS)" />
+          </div>
+
+          <div style={{ display: 'flex', gap: 12, ...rowStyle } as React.CSSProperties}>
+            <div style={{ flex: 1 }}>
+              <label style={lStyle}>Region</label>
+              <input style={iStyle} value={region} onChange={e => setRegion(e.target.value)} placeholder="us-east-1" />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={lStyle}>Bucket</label>
+              <input style={iStyle} value={bucket} onChange={e => setBucket(e.target.value)} placeholder="my-audit-logs" />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            <input type="checkbox" id="org-audit-s3-use-role" checked={useRole} onChange={e => setUseRole(e.target.checked)} />
+            <label htmlFor="org-audit-s3-use-role" style={{ fontSize: 13, color: 'var(--text-primary)', cursor: 'pointer' }}>
+              Use IAM Role (AWS)
+            </label>
+          </div>
+
+          {!useRole && (
+            <div style={{ display: 'flex', gap: 12, ...rowStyle } as React.CSSProperties}>
+              <div style={{ flex: 1 }}>
+                <label style={lStyle}>Access Key</label>
+                <input style={iStyle} value={accessKey} onChange={e => setAccessKey(e.target.value)} placeholder="AKIA..." type="password" />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={lStyle}>Secret Key</label>
+                <input style={iStyle} value={secretKey} onChange={e => setSecretKey(e.target.value)} placeholder="leave blank to keep existing" type="password" />
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 12, ...rowStyle } as React.CSSProperties}>
+            <div style={{ flex: 1 }}>
+              <label style={lStyle}>Batch Size</label>
+              <input style={iStyle} type="number" value={batchSize} onChange={e => setBatchSize(parseInt(e.target.value) || 100)} min={1} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={lStyle}>Flush Interval (seconds)</label>
+              <input style={iStyle} type="number" value={flushIntervalSecs} onChange={e => setFlushIntervalSecs(parseInt(e.target.value) || 60)} min={1} />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+            <input type="checkbox" id="org-audit-s3-enabled" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
+            <label htmlFor="org-audit-s3-enabled" style={{ fontSize: 13, color: 'var(--text-primary)', cursor: 'pointer' }}>Enabled</label>
+          </div>
+
+          {message && (
+            <div style={{
+              padding: '8px 12px', borderRadius: 4, fontSize: 13, marginBottom: 16,
+              background: message.type === 'success' ? 'var(--accent-light)' : 'var(--error-light)',
+              color: message.type === 'success' ? 'var(--accent)' : 'var(--error)',
+            }}>
+              {message.text}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button style={{
+              padding: '7px 16px', background: 'var(--accent)', color: '#fff',
+              border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+            }} onClick={handleSave} disabled={saving}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            <button style={{
+              padding: '7px 16px', background: 'none', color: 'var(--text-secondary)',
+              border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer',
+            }} onClick={handleTest} disabled={testing}>
+              {testing ? 'Testing…' : 'Test Connection'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 

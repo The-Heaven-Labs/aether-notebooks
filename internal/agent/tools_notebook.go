@@ -669,7 +669,7 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 				})
 			}
 
-		return map[string]any{
+			return map[string]any{
 				"cell_id":       cellID,
 				"status":        "error",
 				"error":         err.Error(),

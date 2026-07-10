@@ -58,6 +58,10 @@ func (s *Server) handleCreateDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.FolderID != nil && *req.FolderID == "" {
+		req.FolderID = nil
+	}
+
 	settingsJSON, _ := json.Marshal(req.Settings)
 	ctx := r.Context()
 
@@ -115,6 +119,11 @@ func (s *Server) handleUpdateDashboard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+
+	if req.FolderID != nil && *req.FolderID == "" {
+		req.FolderID = nil
+	}
+
 	ctx := r.Context()
 
 	// Build dynamic UPDATE query
@@ -495,6 +504,11 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(layoutOut, &widget.Layout)
 	json.Unmarshal(configOut, &widget.Config)
 
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "widget.create", ResourceType: "widget", ResourceID: widget.ID,
+	})
+
 	writeJSON(w, http.StatusCreated, widget)
 }
 
@@ -562,6 +576,12 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "widget not found")
 		return
 	}
+
+	s.audit.Log(r.Context(), audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "widget.update", ResourceType: "widget", ResourceID: widgetID,
+	})
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -604,6 +624,12 @@ func (s *Server) handleDeleteWidget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "widget not found")
 		return
 	}
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "widget.delete", ResourceType: "widget", ResourceID: widgetID,
+	})
+
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -204,6 +204,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		req.Email,
 	).Scan(&userID, &passwordHash, &name, &isPlatformAdmin)
 	if err == pgx.ErrNoRows {
+		s.audit.Log(ctx, audit.Entry{
+			Action: "user.login.failure", ResourceType: "user",
+			Metadata: map[string]any{"email": req.Email},
+		})
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -213,26 +217,37 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !auth.VerifyPassword(req.Password, passwordHash) {
+		s.audit.Log(ctx, audit.Entry{
+			UserID: userID,
+			Action: "user.login.failure", ResourceType: "user", ResourceID: userID,
+			Metadata: map[string]any{"email": req.Email},
+		})
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 
-	// Get org membership
+	// Get org membership. Platform admins may log in without one (to create orgs).
 	orgID, orgName, role, err := s.getUserOrg(ctx, userID, req.OrgID)
 	if err != nil {
-		writeError(w, http.StatusForbidden, "no organization membership found")
-		return
+		if !isPlatformAdmin {
+			writeError(w, http.StatusForbidden, "no organization membership found")
+			return
+		}
+		orgID = ""
+		orgName = ""
+		role = "admin"
 	}
 
-	// Auto-create home folder if it doesn't exist for this org membership
-	var folderID string
-	if err := s.db.Pool.QueryRow(ctx,
-		`SELECT id FROM folders WHERE owner_id = $1 AND is_home = true LIMIT 1`,
-		userID,
-	).Scan(&folderID); err == pgx.ErrNoRows {
-		if err := createHomeFolder(ctx, s.db.Pool, orgID, userID, name); err != nil {
-			// Non-fatal: log but don't block login
-			slog.Warn("failed to create home folder", "user_id", userID, "error", err)
+	if orgID != "" {
+		// Auto-create home folder if it doesn't exist for this org membership
+		var folderID string
+		if err := s.db.Pool.QueryRow(ctx,
+			`SELECT id FROM folders WHERE owner_id = $1 AND is_home = true LIMIT 1`,
+			userID,
+		).Scan(&folderID); err == pgx.ErrNoRows {
+			if err := createHomeFolder(ctx, s.db.Pool, orgID, userID, name); err != nil {
+				slog.Warn("failed to create home folder", "user_id", userID, "error", err)
+			}
 		}
 	}
 
@@ -462,5 +477,11 @@ func (s *Server) handleUpdateCurrentUser(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to update profile")
 		return
 	}
+
+	s.audit.Log(r.Context(), audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "user.update", ResourceType: "user", ResourceID: claims.UserID,
+	})
+
 	writeJSON(w, http.StatusOK, u)
 }

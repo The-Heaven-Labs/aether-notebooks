@@ -78,13 +78,21 @@ func SeedBuiltinTools(ctx context.Context, pool *pgxpool.Pool, orgID string) {
 		}
 		schemaJSON, _ := json.Marshal(schema)
 		config, _ := json.Marshal(map[string]string{"handler_name": bt.HandlerName})
+		toolID := uuid.New().String()
 		_, err := pool.Exec(ctx, `
 			INSERT INTO tools (id, org_id, name, description, type, schema, config, created_by, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, 'builtin', $5, $6, $7, NOW(), NOW())
 			ON CONFLICT (org_id, name) DO NOTHING`,
-			uuid.New().String(), orgID, bt.Name, bt.Description, string(schemaJSON), string(config), systemUserID)
+			toolID, orgID, bt.Name, bt.Description, string(schemaJSON), string(config), systemUserID)
 		if err != nil {
 			slog.Warn("seed builtin tool failed", "tool", bt.Name, "error", err)
+			continue
 		}
+		// Seed ACL so all org members can view and use built-in tools
+		pool.Exec(ctx, `
+			INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+			VALUES ($1, 'tool', $2::uuid, 'org_role', 'everyone', ARRAY['view','use'])
+			ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
+			orgID, toolID)
 	}
 }

@@ -18,6 +18,7 @@ func main() {
 		cli.ConfigCmd(),
 		cli.LoginCmd(),
 		cli.LogoutCmd(),
+		cli.RegisterCmd(),
 		cli.NotebooksCmd(),
 		cli.CellsCmd(),
 		cli.ConnectorsCmd(),

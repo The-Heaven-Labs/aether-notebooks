@@ -276,6 +276,10 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 		maxSubagentTurns = *req.MaxSubagentTurns
 	}
 
+	if req.FolderID != nil && *req.FolderID == "" {
+		req.FolderID = nil
+	}
+
 	agentID := uuid.New().String()
 
 	skillIDs := req.SkillIDs

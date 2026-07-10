@@ -73,3 +73,41 @@ func LogoutCmd() *cobra.Command {
 		},
 	}
 }
+
+func RegisterCmd() *cobra.Command {
+	var email, password, name string
+	cmd := &cobra.Command{
+		Use:   "register",
+		Short: "Register a new user account",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := LoadConfig()
+			if err != nil {
+				return err
+			}
+			body := map[string]string{"email": email, "password": password, "name": name}
+			data, _ := json.Marshal(body)
+			resp, err := http.Post(cfg.APIURL+"/api/v1/auth/register", "application/json", bytes.NewReader(data))
+			if err != nil {
+				return fmt.Errorf("register request failed: %w", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode >= 400 {
+				respData, _ := io.ReadAll(resp.Body)
+				if resp.StatusCode == 409 {
+					fmt.Println("User already exists.")
+					return nil
+				}
+				return fmt.Errorf("register failed: %s", string(respData))
+			}
+			fmt.Println("Registered successfully.")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&email, "email", "", "Email")
+	cmd.Flags().StringVar(&password, "password", "", "Password")
+	cmd.Flags().StringVar(&name, "name", "", "Display name")
+	cmd.MarkFlagRequired("email")
+	cmd.MarkFlagRequired("password")
+	cmd.MarkFlagRequired("name")
+	return cmd
+}

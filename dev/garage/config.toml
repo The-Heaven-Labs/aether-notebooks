@@ -20,3 +20,6 @@ root_domain = ".web.aether.test"
 api_bind_addr = "[::]:3903"
 metrics_token = "dev-metrics-token"
 admin_token = "dev-admin-token"
+
+[log]
+level = "warn"

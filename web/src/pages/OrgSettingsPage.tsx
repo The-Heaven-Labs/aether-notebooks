@@ -190,6 +190,7 @@ function ProviderForm({
             }
           }}
           disabled={testing || !values.discovery_url}
+          title={!values.discovery_url ? 'Discovery URL is required' : undefined}
         >
           {testing ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : null}
           Test Connection
@@ -287,6 +288,10 @@ export function OrgSettingsPage() {
   const [invitationsEnabled, setInvitationsEnabled] = useState(true)
   const [registrationEnabled, setRegistrationEnabled] = useState(true)
   const [dataExportEnabled, setDataExportEnabled] = useState(true)
+  const [auditRetentionDays, setAuditRetentionDays] = useState(7)
+  const [auditRetentionSaving, setAuditRetentionSaving] = useState(false)
+  const [auditRetentionSaved, setAuditRetentionSaved] = useState(false)
+  const [auditRetentionError, setAuditRetentionError] = useState<string | null>(null)
 
   useEffect(() => {
     api.get<{ public_sharing_enabled: boolean }>('/api/v1/org/sharing')
@@ -300,6 +305,9 @@ export function OrgSettingsPage() {
       .catch(() => {})
     api.get<{ data_export_enabled: boolean }>('/api/v1/org/data-export')
       .then(r => setDataExportEnabled(r.data_export_enabled))
+      .catch(() => {})
+    api.get<{ audit_retention_days?: number }>('/api/v1/org/settings')
+      .then(r => setAuditRetentionDays(r.audit_retention_days ?? 7))
       .catch(() => {})
   }, [])
 
@@ -850,7 +858,46 @@ const formInput: React.CSSProperties = {
           </label>
         </section>
 
-        {/* ── H. Message of the Day ── */}
+        {/* ── H. Audit Settings ── */}
+        <section style={styles.section}>
+          <div style={styles.sectionTitle}>Audit Log Retention</div>
+          <p style={styles.sectionDesc}>
+            Automatically delete audit logs older than this many days. Set to 0 to keep logs indefinitely.
+          </p>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="number"
+              min={0}
+              max={365}
+              style={{ ...formInput, width: 100 }}
+              value={auditRetentionDays}
+              onChange={e => setAuditRetentionDays(parseInt(e.target.value) || 0)}
+            />
+            <span style={{ fontSize: 13, color: 'var(--text-muted)', alignSelf: 'center' }}>days</span>
+            <button
+              style={{
+                ...styles.saveBtn,
+                opacity: auditRetentionSaving ? 0.6 : 1,
+              }}
+              onClick={async () => {
+                setAuditRetentionSaving(true)
+                try {
+                  await api.put('/api/v1/org/settings', { audit_retention_days: auditRetentionDays })
+                  setAuditRetentionSaved(true)
+                  setTimeout(() => setAuditRetentionSaved(false), 2000)
+                } catch (e: unknown) { setAuditRetentionError(String(e)) }
+                finally { setAuditRetentionSaving(false) }
+              }}
+              disabled={auditRetentionSaving}
+            >
+              {auditRetentionSaving ? 'Saving…' : 'Save'}
+            </button>
+            {auditRetentionSaved && <span style={{ fontSize: 12, color: 'var(--success, #059669)', alignSelf: 'center' }}>Saved</span>}
+            {auditRetentionError && <span style={{ fontSize: 12, color: 'var(--error)', alignSelf: 'center' }}>{auditRetentionError}</span>}
+          </div>
+        </section>
+
+        {/* ── I. Message of the Day ── */}
         <section style={styles.section}>
           <div style={styles.sectionTitle}>Message of the Day</div>
           <p style={styles.sectionDesc}>
@@ -979,6 +1026,16 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: 10,
+    cursor: 'pointer',
+  },
+  saveBtn: {
+    padding: '7px 16px',
+    background: 'var(--accent)',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 4,
+    fontSize: 13,
+    fontWeight: 600,
     cursor: 'pointer',
   },
 }

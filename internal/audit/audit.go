@@ -38,11 +38,55 @@ type QueryParams struct {
 }
 
 type Logger struct {
-	db *database.DB
+	db             *database.DB
+	platformWriter *S3Writer
+	orgWriters     map[string]*S3Writer // orgID -> S3Writer
 }
 
 func NewLogger(db *database.DB) *Logger {
-	return &Logger{db: db}
+	return &Logger{db: db, orgWriters: make(map[string]*S3Writer)}
+}
+
+func (l *Logger) SetPlatformS3Writer(w *S3Writer) {
+	if l.platformWriter != nil {
+		l.platformWriter.Stop()
+	}
+	l.platformWriter = w
+	if w != nil {
+		w.Start()
+	}
+}
+
+func (l *Logger) StopPlatformS3Writer() {
+	l.SetPlatformS3Writer(nil)
+}
+
+func (l *Logger) SetOrgS3Writer(orgID string, w *S3Writer) {
+	if old, ok := l.orgWriters[orgID]; ok {
+		old.Stop()
+	}
+	l.orgWriters[orgID] = w
+	if w != nil {
+		w.Start()
+	}
+}
+
+func (l *Logger) RemoveOrgS3Writer(orgID string) {
+	if old, ok := l.orgWriters[orgID]; ok {
+		old.Stop()
+		delete(l.orgWriters, orgID)
+	}
+}
+
+func (l *Logger) StopAllS3Writers() {
+	if l.platformWriter != nil {
+		l.platformWriter.Stop()
+		l.platformWriter = nil
+	}
+	for _, w := range l.orgWriters {
+		w.Stop()
+	}
+	l.orgWriters = make(map[string]*S3Writer)
 }
 
 func (l *Logger) Log(ctx context.Context, e Entry) error {
@@ -55,12 +99,26 @@ func (l *Logger) Log(ctx context.Context, e Entry) error {
 		return fmt.Errorf("marshal metadata: %w", err)
 	}
 
-	_, err = l.db.Pool.Exec(ctx,
-		`INSERT INTO audit_logs (org_id, user_id, action, resource_type, resource_id, metadata)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		e.OrgID, nilIfEmpty(e.UserID), e.Action, e.ResourceType, nilIfEmpty(e.ResourceID), metaJSON,
-	)
-	return err
+	if e.OrgID != "" {
+		_, err = l.db.Pool.Exec(ctx,
+			`INSERT INTO audit_logs (org_id, user_id, action, resource_type, resource_id, metadata)
+			 VALUES ($1, $2, $3, $4, $5, $6)`,
+			e.OrgID, nilIfEmpty(e.UserID), e.Action, e.ResourceType, nilIfEmpty(e.ResourceID), metaJSON,
+		)
+	}
+	if err != nil {
+		return err
+	}
+
+	e.CreatedAt = time.Now()
+	if l.platformWriter != nil {
+		l.platformWriter.Write(e)
+	}
+	if w, ok := l.orgWriters[e.OrgID]; ok && w != nil {
+		w.Write(e)
+	}
+
+	return nil
 }
 
 func (l *Logger) Query(ctx context.Context, p QueryParams) ([]Entry, error) {

@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect } from 'react'
 import { api } from '../api/client'
 import { AppShell } from '../components/AppShell'
+import { Pagination } from '../components/Pagination'
 import type { SSOProvider } from '../types'
 
 interface Org {
@@ -10,6 +10,11 @@ interface Org {
 }
 interface User {
   id: string; email: string; name: string; is_platform_admin: boolean; orgs: string[]
+}
+
+interface AuditS3Config {
+  endpoint: string; region: string; bucket: string
+  use_role: boolean; batch_size: number; flush_interval_secs: number; enabled: boolean
 }
 
 // ─── Provider form state ─────────────────────────────────────────────────────
@@ -212,6 +217,168 @@ const formStyles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     color: 'var(--error)',
   },
+}
+
+// ─── Audit S3 Config Tab ────────────────────────────────────────────────────
+
+function AuditS3ConfigTab() {
+  const { data: config } = useQuery<AuditS3Config>({
+    queryKey: ['admin-audit-s3-config'],
+    queryFn: () => api.get('/api/v1/admin/audit/s3-config'),
+  })
+
+  const [endpoint, setEndpoint] = useState('')
+  const [region, setRegion] = useState('us-east-1')
+  const [bucket, setBucket] = useState('')
+  const [accessKey, setAccessKey] = useState('')
+  const [secretKey, setSecretKey] = useState('')
+  const [useRole, setUseRole] = useState(false)
+  const [batchSize, setBatchSize] = useState(100)
+  const [flushIntervalSecs, setFlushIntervalSecs] = useState(60)
+  const [enabled, setEnabled] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  useEffect(() => {
+    if (config) {
+      setEndpoint(config.endpoint ?? '')
+      setRegion(config.region ?? 'us-east-1')
+      setBucket(config.bucket ?? '')
+      setUseRole(config.use_role ?? false)
+      setBatchSize(config.batch_size ?? 100)
+      setFlushIntervalSecs(config.flush_interval_secs ?? 60)
+      setEnabled(config.enabled ?? false)
+    }
+  }, [config])
+
+  async function handleSave() {
+    if (!bucket.trim()) { setMessage({ type: 'error', text: 'Bucket is required' }); return }
+    setSaving(true)
+    setMessage(null)
+    try {
+      await api.put('/api/v1/admin/audit/s3-config', {
+        endpoint, region, bucket,
+        access_key: accessKey, secret_key: secretKey,
+        use_role: useRole,
+        batch_size: batchSize, flush_interval_secs: flushIntervalSecs, enabled,
+      })
+      setMessage({ type: 'success', text: 'Configuration saved' })
+    } catch (e) {
+      setMessage({ type: 'error', text: `Save failed: ${(e as Error).message}` })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleTest() {
+    setTesting(true)
+    setMessage(null)
+    try {
+      await api.post('/api/v1/admin/audit/s3-config/test', {})
+      setMessage({ type: 'success', text: 'Connection successful' })
+    } catch (e) {
+      setMessage({ type: 'error', text: `Connection test failed: ${(e as Error).message}` })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const iStyle: React.CSSProperties = {
+    padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 4,
+    fontSize: 13, outline: 'none', color: 'var(--text-primary)',
+    background: 'var(--bg-input)', width: '100%', boxSizing: 'border-box',
+  }
+  const lStyle: React.CSSProperties = {
+    display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4,
+  }
+  const rowStyle: React.CSSProperties = { marginBottom: 16 }
+
+  return (
+    <div style={{ maxWidth: 600 }}>
+      <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>
+        Configure S3 storage for audit log export. Audit entries are written to both Postgres and S3.
+      </p>
+
+      <div style={rowStyle}>
+        <label style={lStyle}>S3 Endpoint</label>
+        <input style={iStyle} value={endpoint} onChange={e => setEndpoint(e.target.value)}
+          placeholder="https://s3.amazonaws.com (leave empty for AWS)" />
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, ...rowStyle } as React.CSSProperties}>
+        <div style={{ flex: 1 }}>
+          <label style={lStyle}>Region</label>
+          <input style={iStyle} value={region} onChange={e => setRegion(e.target.value)} placeholder="us-east-1" />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={lStyle}>Bucket</label>
+          <input style={iStyle} value={bucket} onChange={e => setBucket(e.target.value)} placeholder="my-audit-logs" />
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+        <input type="checkbox" id="audit-s3-use-role" checked={useRole} onChange={e => setUseRole(e.target.checked)} />
+        <label htmlFor="audit-s3-use-role" style={{ fontSize: 13, color: 'var(--text-primary)', cursor: 'pointer' }}>
+          Use IAM Role (AWS)
+        </label>
+      </div>
+
+      {!useRole && (
+        <div style={{ display: 'flex', gap: 12, ...rowStyle } as React.CSSProperties}>
+          <div style={{ flex: 1 }}>
+            <label style={lStyle}>Access Key</label>
+            <input style={iStyle} value={accessKey} onChange={e => setAccessKey(e.target.value)} placeholder="AKIA..." type="password" />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={lStyle}>Secret Key</label>
+            <input style={iStyle} value={secretKey} onChange={e => setSecretKey(e.target.value)} placeholder="leave blank to keep existing" type="password" />
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 12, ...rowStyle } as React.CSSProperties}>
+        <div style={{ flex: 1 }}>
+          <label style={lStyle}>Batch Size</label>
+          <input style={iStyle} type="number" value={batchSize} onChange={e => setBatchSize(parseInt(e.target.value) || 100)} min={1} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={lStyle}>Flush Interval (seconds)</label>
+          <input style={iStyle} type="number" value={flushIntervalSecs} onChange={e => setFlushIntervalSecs(parseInt(e.target.value) || 60)} min={1} />
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+        <input type="checkbox" id="audit-s3-enabled" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
+        <label htmlFor="audit-s3-enabled" style={{ fontSize: 13, color: 'var(--text-primary)', cursor: 'pointer' }}>Enabled</label>
+      </div>
+
+      {message && (
+        <div style={{
+          padding: '8px 12px', borderRadius: 4, fontSize: 13, marginBottom: 16,
+          background: message.type === 'success' ? 'var(--accent-light)' : 'var(--error-light)',
+          color: message.type === 'success' ? 'var(--accent)' : 'var(--error)',
+        }}>
+          {message.text}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button style={{
+          padding: '7px 16px', background: 'var(--accent)', color: '#fff',
+          border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+        }} onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        <button style={{
+          padding: '7px 16px', background: 'none', color: 'var(--text-secondary)',
+          border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer',
+        }} onClick={handleTest} disabled={testing}>
+          {testing ? 'Testing…' : 'Test Connection'}
+        </button>
+      </div>
+    </div>
+  )
 }
 
 // ─── SSO Providers tab content ───────────────────────────────────────────────
@@ -530,17 +697,45 @@ const ssoStyles: Record<string, React.CSSProperties> = {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
+const PAGE_SIZE = 50
+
 export function AdminPage() {
   useEffect(() => { document.title = "Platform Admin — Aether Notebooks" }, [])
-  const [tab, setTab] = useState<'orgs' | 'users' | 'sso'>('orgs')
+  const qc = useQueryClient()
+  const [tab, setTab] = useState<'orgs' | 'users' | 'sso' | 'audit'>('orgs')
   const isPlatformAdmin = localStorage.getItem('aether_is_platform_admin') === 'true'
-  const [orgs, setOrgs] = useState<Org[]>([])
-  const [users, setUsers] = useState<User[]>([])
+  const [orgPage, setOrgPage] = useState(0)
+  const [userPage, setUserPage] = useState(0)
+  const [orgSearch, setOrgSearch] = useState('')
+  const [userSearch, setUserSearch] = useState('')
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null)
   const [createOrgName, setCreateOrgName] = useState('')
   const [createOrgSlug, setCreateOrgSlug] = useState('')
   const [creatingOrg, setCreatingOrg] = useState(false)
   const [createOrgError, setCreateOrgError] = useState<string | null>(null)
+
+  const { data: orgsData } = useQuery({
+    queryKey: ['admin', 'orgs', orgPage, orgSearch],
+    queryFn: () => {
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(orgPage * PAGE_SIZE) })
+      if (orgSearch) params.set('search', orgSearch)
+      return api.get<{ orgs: Org[]; total: number }>(`/api/v1/admin/orgs?${params}`)
+    },
+  })
+
+  const { data: usersData } = useQuery({
+    queryKey: ['admin', 'users', userPage, userSearch],
+    queryFn: () => {
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(userPage * PAGE_SIZE) })
+      if (userSearch) params.set('search', userSearch)
+      return api.get<{ users: User[]; total: number }>(`/api/v1/admin/users?${params}`)
+    },
+  })
+
+  const orgs = orgsData?.orgs ?? []
+  const orgsTotal = orgsData?.total ?? 0
+  const users = usersData?.users ?? []
+  const usersTotal = usersData?.total ?? 0
 
   async function handleCreateOrg() {
     if (!createOrgName.trim() || !createOrgSlug.trim()) return
@@ -557,12 +752,9 @@ export function AdminPage() {
         const err = await res.json()
         throw new Error(err.error || 'Failed to create org')
       }
-      const token2 = localStorage.getItem('aether_token')
-      const headers2: Record<string, string> = token2 ? { Authorization: `Bearer ${token2}` } : {}
-      const d = await (await fetch('/api/v1/admin/orgs', { headers: headers2 })).json()
-      setOrgs(d.orgs ?? [])
       setCreateOrgName('')
       setCreateOrgSlug('')
+      qc.invalidateQueries({ queryKey: ['admin', 'orgs'] })
     } catch (e) {
       setCreateOrgError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -573,21 +765,9 @@ export function AdminPage() {
   const togglePlatformAdmin = useMutation({
     mutationFn: ({ id, isPlatformAdmin }: { id: string; isPlatformAdmin: boolean }) =>
       api.put(`/api/v1/admin/users/${id}`, { is_platform_admin: isPlatformAdmin }),
-    onSuccess: (_data, { id, isPlatformAdmin }) => {
-      setUsers(prev => prev.map(u => u.id === id ? { ...u, is_platform_admin: isPlatformAdmin } : u))
-      setTogglingUserId(null)
-    },
-    onError: (_err, { id: _id }) => {
-      setTogglingUserId(null)
-    },
+    onSuccess: () => { setTogglingUserId(null); qc.invalidateQueries({ queryKey: ['admin', 'users'] }) },
+    onError: () => { setTogglingUserId(null) },
   })
-
-  useEffect(() => {
-    const token = localStorage.getItem('aether_token')
-    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
-    fetch('/api/v1/admin/orgs', { headers }).then(r => r.json()).then(d => setOrgs(d.orgs ?? []))
-    fetch('/api/v1/admin/users', { headers }).then(r => r.json()).then(d => setUsers(d.users ?? []))
-  }, [])
 
   return (
     <AppShell>
@@ -627,6 +807,16 @@ export function AdminPage() {
             SSO Providers
           </button>
         )}
+        {isPlatformAdmin && (
+          <button
+            role="tab"
+            aria-selected={tab === 'audit'}
+            style={tab === 'audit' ? styles.tabActive : styles.tab}
+            onClick={() => setTab('audit')}
+          >
+            Audit S3
+          </button>
+        )}
       </div>
 
       {isPlatformAdmin && tab === 'orgs' && (
@@ -647,11 +837,19 @@ export function AdminPage() {
             <button
               style={styles.btn}
               disabled={!createOrgName.trim() || !createOrgSlug.trim() || creatingOrg}
+              title={!createOrgName.trim() ? 'Organization name is required' : !createOrgSlug.trim() ? 'Slug is required' : undefined}
               onClick={handleCreateOrg}
             >
               {creatingOrg ? 'Creating…' : '+ Create Org'}
             </button>
             {createOrgError && <span style={styles.error}>{createOrgError}</span>}
+            <span style={{ flex: 1 }} />
+            <input
+              style={{ ...styles.input, maxWidth: 220 }}
+              placeholder="Search orgs…"
+              value={orgSearch}
+              onChange={e => { setOrgSearch(e.target.value); setOrgPage(0) }}
+            />
           </div>
           <table style={styles.table}>
             <thead><tr>
@@ -671,46 +869,63 @@ export function AdminPage() {
               ))}
             </tbody>
           </table>
+          {orgsTotal > PAGE_SIZE && (
+            <Pagination page={orgPage} pageSize={PAGE_SIZE} total={orgsTotal} onPageChange={setOrgPage} />
+          )}
         </>
       )}
 
       {isPlatformAdmin && tab === 'users' && (
-        <table style={styles.table}>
-          <thead><tr>
-            <th style={styles.th}>Email</th>
-            <th style={styles.th}>Name</th>
-            <th style={styles.th}>Platform Admin</th>
-            <th style={styles.th}>Orgs</th>
-          </tr></thead>
-          <tbody>
-            {users.map(u => (
-              <tr key={u.id}>
-                <td style={styles.td}>{u.email}</td>
-                <td style={styles.td}>{u.name}</td>
-                <td style={styles.td}>
-                  <button
-                    style={{
-                      ...ssoStyles.iconBtn,
-                      background: u.is_platform_admin ? 'var(--accent)' : 'transparent',
-                      color: u.is_platform_admin ? '#fff' : 'var(--text-muted)',
-                    }}
-                    disabled={togglingUserId === u.id}
-                    onClick={() => {
-                      setTogglingUserId(u.id)
-                      togglePlatformAdmin.mutate({ id: u.id, isPlatformAdmin: !u.is_platform_admin })
-                    }}
-                  >
-                    {u.is_platform_admin ? 'Admin' : 'User'}
-                  </button>
-                </td>
-                <td style={styles.td}>{u.orgs.join(', ')}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16, justifyContent: 'flex-end' }}>
+            <input
+              style={{ ...styles.input, maxWidth: 280 }}
+              placeholder="Search users by email or name…"
+              value={userSearch}
+              onChange={e => { setUserSearch(e.target.value); setUserPage(0) }}
+            />
+          </div>
+          <table style={styles.table}>
+            <thead><tr>
+              <th style={styles.th}>Email</th>
+              <th style={styles.th}>Name</th>
+              <th style={styles.th}>Platform Admin</th>
+              <th style={styles.th}>Orgs</th>
+            </tr></thead>
+            <tbody>
+              {users.map(u => (
+                <tr key={u.id}>
+                  <td style={styles.td}>{u.email}</td>
+                  <td style={styles.td}>{u.name}</td>
+                  <td style={styles.td}>
+                    <button
+                      style={{
+                        ...ssoStyles.iconBtn,
+                        background: u.is_platform_admin ? 'var(--accent)' : 'transparent',
+                        color: u.is_platform_admin ? '#fff' : 'var(--text-muted)',
+                      }}
+                      disabled={togglingUserId === u.id}
+                      onClick={() => {
+                        setTogglingUserId(u.id)
+                        togglePlatformAdmin.mutate({ id: u.id, isPlatformAdmin: !u.is_platform_admin })
+                      }}
+                    >
+                      {u.is_platform_admin ? 'Admin' : 'User'}
+                    </button>
+                  </td>
+                  <td style={styles.td}>{u.orgs.join(', ')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {usersTotal > PAGE_SIZE && (
+            <Pagination page={userPage} pageSize={PAGE_SIZE} total={usersTotal} onPageChange={setUserPage} />
+          )}
+        </>
       )}
 
       {isPlatformAdmin && tab === 'sso' && <SSOProvidersTab />}
+      {isPlatformAdmin && tab === 'audit' && <AuditS3ConfigTab />}
       </div>
     </AppShell>
   )

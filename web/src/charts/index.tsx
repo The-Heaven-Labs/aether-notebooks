@@ -167,7 +167,7 @@ export type { ChartConfig, ChartModule, ChartType, MarkLineConfig } from './type
 export { CHART_COLORS, EChartsContainer } from './common'
 
 const styles: Record<string, React.CSSProperties> = {
-  wrap: { display: 'flex', flexDirection: 'column' },
+  wrap: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 },
   emptyGuidance: { padding: 24, textAlign: 'center' as const, color: 'var(--text-muted)' },
   emptyIcon: { fontSize: 32, marginBottom: 8 },
   emptyTitle: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 4px' },

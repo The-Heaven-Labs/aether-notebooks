@@ -1,7 +1,6 @@
 package api
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -18,7 +17,6 @@ import (
 // @Failure 429 {object} map[string]string
 // @Router /auth/sso-providers [get]
 func (s *Server) handleSSOProbe(w http.ResponseWriter, r *http.Request) {
-	// Fixed sleep floor to prevent timing-based email enumeration inference.
 	defer func() { time.Sleep(5 * time.Millisecond) }()
 
 	ctx := r.Context()
@@ -36,26 +34,9 @@ func (s *Server) handleSSOProbe(w http.ResponseWriter, r *http.Request) {
 	}
 	domain := parts[1]
 
-	// Rate limit: 20 requests per IP per 60 seconds.
-	ip := clientIP(r)
-	key := fmt.Sprintf("ratelimit:sso-probe:%s", ip)
-
-	count, err := s.Cache.Client().Incr(ctx, key).Result()
-	if err != nil {
-		// If Redis is unavailable, allow the request through rather than blocking users.
-		count = 1
-	} else if count == 1 {
-		// New key — set TTL so it expires after 60 seconds.
-		s.Cache.Client().Expire(ctx, key, 60*time.Second)
-	}
-
-	if count > 20 {
-		writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
-		return
-	}
-
 	orgID := OrgIDFromContext(ctx)
 	var providers []sso.ProbeResult
+	var err error
 	if orgID != "" {
 		providers, err = sso.ListProvidersByDomainForOrg(ctx, s.db.Pool, domain, orgID)
 	} else {

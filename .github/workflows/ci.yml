@@ -9,6 +9,8 @@ on:
 env:
   AETHER_MASTER_KEY: test-master-key-for-ci-at-least-32-bytes!!
   AETHER_JWT_SECRET: test-jwt-secret-for-ci
+  AETHER_RATE_LIMIT_REGISTER: 500
+  AETHER_RATE_LIMIT_LOGIN: 500
 
 jobs:
   go-test:
