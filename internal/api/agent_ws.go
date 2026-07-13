@@ -21,6 +21,7 @@ type agentWSHandler struct {
 type WSMessage struct {
 	Type            string   `json:"type"`
 	Content         string   `json:"content,omitempty"`
+	Answer          string   `json:"answer,omitempty"`
 	Command         string   `json:"command,omitempty"`
 	LastMessageID   string   `json:"last_message_id,omitempty"`
 	ReasoningEffort string   `json:"reasoning_effort,omitempty"`
@@ -230,6 +231,11 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
+			if msg.Type == "question_answer" {
+				s.agentEngine.ResolveQuestion(currentSessionID, msg.Answer)
+				continue
+			}
+
 			if msg.Type == "message" {
 				mu.Lock()
 				if processing {
@@ -324,6 +330,13 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 									Type   string                `json:"type"`
 									Tokens *agent.TokenBreakdown `json:"tokens"`
 								}{Type: "token_update", Tokens: evt.Tokens})
+							case "question":
+								s.agentEngine.PublishSessionEvent(sid, struct {
+									Type        string `json:"type"`
+									Question    string `json:"question"`
+									Options     any    `json:"options,omitempty"`
+									AllowCustom bool   `json:"allow_custom"`
+								}{Type: "question", Question: evt.Question, Options: evt.Options, AllowCustom: evt.AllowCustom})
 							}
 						},
 					)

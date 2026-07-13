@@ -27,6 +27,7 @@ type ToolContext struct {
 	MasterKey        []byte
 	OnEvent          func(EngineEvent)
 	BroadcastFunc    func(notebookID string, msg any)
+	QuestionFunc     func(question string, options any, allowCustom bool) (string, error)
 }
 
 type AgentTask struct {
@@ -36,15 +37,22 @@ type AgentTask struct {
 }
 
 type EngineEvent struct {
-	Type     string          `json:"type"`
-	CellID   string          `json:"cell_id,omitempty"`
-	Position int             `json:"position,omitempty"`
-	Source   string          `json:"source,omitempty"`
-	Tasks    []AgentTask     `json:"tasks,omitempty"`
-	Outputs  any             `json:"outputs,omitempty"`
-	ToolName string          `json:"tool_name,omitempty"`
-	ToolArgs string          `json:"tool_args,omitempty"`
-	Tokens   *TokenBreakdown `json:"tokens,omitempty"`
+	Type        string          `json:"type"`
+	CellID      string          `json:"cell_id,omitempty"`
+	Position    int             `json:"position,omitempty"`
+	Source      string          `json:"source,omitempty"`
+	Tasks       []AgentTask     `json:"tasks,omitempty"`
+	Outputs     any             `json:"outputs,omitempty"`
+	ToolName    string          `json:"tool_name,omitempty"`
+	ToolArgs    string          `json:"tool_args,omitempty"`
+	Tokens      *TokenBreakdown `json:"tokens,omitempty"`
+	Question    string          `json:"question,omitempty"`
+	Options     any             `json:"options,omitempty"`
+	AllowCustom bool            `json:"allow_custom,omitempty"`
+}
+
+type QuestionResult struct {
+	Answer string
 }
 
 func (tc *ToolContext) EmitCellDeleted(cellID string) {

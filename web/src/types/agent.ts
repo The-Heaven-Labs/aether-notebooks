@@ -163,5 +163,6 @@ export type WSMessage =
   | { type: 'reconnect_sync'; messages: AgentMessage[] | null }
   | { type: 'tasks_updated'; data: AgentTaskItem[] }
   | { type: 'tool_confirm_required'; tool_name: string; tool_args: string; current_source?: string }
+  | { type: 'question'; question: string; options?: Array<{ title: string; description?: string } | string>; allow_custom: boolean }
   | { type: 'token_update'; tokens: TokenBreakdown }
   | { type: 'cancelled' }
