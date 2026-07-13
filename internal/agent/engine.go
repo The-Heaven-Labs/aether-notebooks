@@ -31,6 +31,7 @@ type Engine struct {
 	store              storage.Storage
 	reasoningEffort    sync.Map // sessionID -> string
 	toolConfirmPending sync.Map // sessionID -> chan ToolConfirmResult
+	questionPending    sync.Map // sessionID -> chan string
 	pageContextMap     sync.Map // sessionID -> map[string]string
 	sessionModelConfig sync.Map // sessionID -> modelConfigID string
 	frontendURL        string
@@ -134,6 +135,20 @@ func (e *Engine) ResolveToolConfirm(sessionID string, approved bool, toolName st
 	}
 	if ch, ok := v.(chan ToolConfirmResult); ok {
 		ch <- ToolConfirmResult{Approved: approved, ToolName: toolName}
+	}
+}
+
+func (e *Engine) SetQuestionPending(sessionID string, ch chan string) {
+	e.questionPending.Store(sessionID, ch)
+}
+
+func (e *Engine) ResolveQuestion(sessionID string, answer string) {
+	v, ok := e.questionPending.LoadAndDelete(sessionID)
+	if !ok {
+		return
+	}
+	if ch, ok := v.(chan string); ok {
+		ch <- answer
 	}
 }
 
@@ -389,6 +404,20 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				}
 			}
 			tRows.Close()
+		}
+	}
+
+	// Always include the ask_question tool so every agent can ask for user input
+	if qDef, ok := e.registry.Get("ask_question"); ok {
+		alreadyPresent := false
+		for _, t := range agentTools {
+			if t.Function.Name == "ask_question" {
+				alreadyPresent = true
+				break
+			}
+		}
+		if !alreadyPresent {
+			agentTools = append(agentTools, qDef)
 		}
 	}
 
@@ -962,6 +991,24 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				MasterKey:     masterKey,
 				OnEvent:       onEvent,
 				BroadcastFunc: e.BroadcastFunc,
+				QuestionFunc: func(question string, options any, allowCustom bool) (string, error) {
+					ch := make(chan string, 1)
+					e.SetQuestionPending(sessionID, ch)
+					if onEvent != nil {
+						onEvent(EngineEvent{
+							Type:        "question",
+							Question:    question,
+							Options:     options,
+							AllowCustom: allowCustom,
+						})
+					}
+					select {
+					case answer := <-ch:
+						return answer, nil
+					case <-ctx.Done():
+						return "", fmt.Errorf("question timed out waiting for user response")
+					}
+				},
 			}
 
 			if toolDef.ConfirmRequired && onEvent != nil {

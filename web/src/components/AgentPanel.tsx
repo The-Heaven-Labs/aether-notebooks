@@ -25,7 +25,7 @@ export const chatMarkdownComponents = {
   h2: ({ children }: any) => <h2 style={headingStyle(2)}>{children}</h2>,
   h3: ({ children }: any) => <h3 style={headingStyle(3)}>{children}</h3>,
   h4: ({ children }: any) => <h4 style={headingStyle(4)}>{children}</h4>,
-  p: ({ children }: any) => <p style={{ margin: '4px 0', lineHeight: 1.5 }}>{children}</p>,
+  p: ({ children }: any) => <div style={{ margin: '4px 0', lineHeight: 1.5 }}>{children}</div>,
   ul: ({ children }: any) => <ul style={{ margin: '4px 0', paddingLeft: 20 }}>{children}</ul>,
   ol: ({ children }: any) => <ol style={{ margin: '4px 0', paddingLeft: 20 }}>{children}</ol>,
   li: ({ children }: any) => <li style={{ margin: '2px 0' }}>{children}</li>,
@@ -219,6 +219,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const autoConfirmRef = useRef(true)
   autoConfirmRef.current = autoConfirmTool
   const [pendingConfirm, setPendingConfirm] = useState<{ tool: string; args: string; currentSource?: string } | null>(null)
+  const [pendingQuestion, setPendingQuestion] = useState<{ question: string; options?: Array<{ title: string; description?: string } | string>; allowCustom: boolean } | null>(null)
   const sessionApprovedRef = useRef<Set<string>>(new Set())
   const chatClearedRef = useRef(false)
 
@@ -541,6 +542,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             } else {
               setPendingConfirm({ tool: msg.tool_name, args: msg.tool_args, currentSource: (msg as any).current_source || '' })
             }
+            break
+          case 'question':
+            setPendingQuestion({ question: msg.question, options: msg.options, allowCustom: msg.allow_custom })
             break
           case 'tool_result':
             setMessages((prev) => { const updated = [...prev]; for (let i = updated.length - 1; i >= 0; i--) { if (updated[i].role === 'tool' && updated[i].content === msg.tool) { updated[i] = { ...updated[i], params: msg.params, result: msg.error || msg.result, duration_ms: msg.duration_ms }; break } }; return updated }); break
@@ -1112,12 +1116,12 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               </div>
             )})()
           ) : (
-            <div>
+            <>
               <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
               {msg.role === 'assistant' && msg.duration_ms ? (
                 <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginTop: 4 }}>{msg.duration_ms}ms</div>
               ) : null}
-            </div>
+            </>
           )}
         </div>
       )}
@@ -1653,14 +1657,137 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
         </div>
       )}
 
+      {pendingQuestion && <QuestionDialog question={pendingQuestion} wsRef={wsRef} setMessages={setMessages} ts={ts} onClose={() => { setPendingQuestion(null); setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50) }} />}
+
       <style>{`
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
         .agent-select { -webkit-appearance: none; -moz-appearance: none; appearance: none; }
+        details > summary { list-style: none; }
+        details > summary::-webkit-details-marker { display: none; }
       `}</style>
       </>)}
+    </div>
+  )
+}
+
+function QuestionDialog({ question, wsRef, setMessages, ts, onClose }: {
+  question: { question: string; options?: Array<{ title: string; description?: string } | string>; allowCustom: boolean }
+  wsRef: React.MutableRefObject<WebSocket | null>
+  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
+  ts: () => string
+  onClose: () => void
+}) {
+  const [customValue, setCustomValue] = useState('')
+  const [showCustom, setShowCustom] = useState(false)
+  const [focusIdx, setFocusIdx] = useState(0)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const opts = question.options || []
+  const optLen = opts.length
+  const totalItems = optLen + 1
+
+  const optTitle = (o: { title: string; description?: string } | string) => typeof o === 'string' ? o : o.title
+  const optDesc = (o: { title: string; description?: string } | string) => typeof o === 'string' ? undefined : o.description
+
+  const sendAnswer = (answer: string) => {
+    wsRef.current?.send(JSON.stringify({ type: 'question_answer', answer }))
+    setMessages((prev) => [...prev, { role: 'assistant', content: `❓ **${question.question}**\n\n→ ${answer}`, created_at: ts() }])
+    onClose()
+  }
+
+  useEffect(() => {
+    if (showCustom && inputRef.current) {
+      inputRef.current.focus()
+    }
+  }, [showCustom])
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const handler = (e: KeyboardEvent) => {
+      if (showCustom) {
+        if (e.key === 'Escape') {
+          setShowCustom(false)
+          setFocusIdx(Math.max(optLen - 1, 0))
+          e.preventDefault()
+        }
+        return
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setFocusIdx((p) => Math.min(p + 1, totalItems - 1))
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setFocusIdx((p) => Math.max(p - 1, 0))
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        if (focusIdx < optLen) {
+          sendAnswer(optTitle(opts[focusIdx]))
+        } else {
+          setShowCustom(true)
+        }
+      } else if (e.key === 'Escape') {
+        onClose()
+        e.preventDefault()
+      }
+    }
+    el.addEventListener('keydown', handler)
+    if (!showCustom) el.focus()
+    return () => el.removeEventListener('keydown', handler)
+  }, [showCustom, optLen, totalItems, focusIdx, opts, onClose, sendAnswer])
+
+  return (
+    <div ref={containerRef} tabIndex={-1}
+      style={{ position: 'absolute', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 8, padding: 16, maxWidth: '92%', minWidth: 300, fontSize: 13, maxHeight: '80%', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ fontWeight: 600, marginBottom: 12, color: 'var(--text-primary)', fontSize: 14 }}>Question from Agent</div>
+        <div style={{ marginBottom: 12, color: 'var(--text-primary)', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{question.question}</div>
+
+        {!showCustom && (
+          <div role="listbox" aria-label="Options" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+            {opts.map((opt, i) => (
+              <button key={i} role="option" aria-selected={i === focusIdx}
+                onClick={() => sendAnswer(optTitle(opt))}
+                onMouseEnter={() => setFocusIdx(i)}
+                style={{ padding: '8px 12px', border: i === focusIdx ? '2px solid var(--accent)' : '1px solid var(--border)', borderRadius: 6, background: i === focusIdx ? 'var(--accent)' : 'var(--bg-secondary)', cursor: 'pointer', fontSize: 12, textAlign: 'left', transition: 'background 0.1s' }}>
+                <div style={{ color: i === focusIdx ? '#fff' : 'var(--text-primary)', fontWeight: 600, lineHeight: 1.3 }}>{optTitle(opt)}</div>
+                {optDesc(opt) && <div style={{ color: i === focusIdx ? 'rgba(255,255,255,0.7)' : 'var(--text-muted)', fontSize: 11, marginTop: 2, lineHeight: 1.3 }}>{optDesc(opt)}</div>}
+              </button>
+            ))}
+            <button role="option" aria-selected={focusIdx === optLen}
+              onClick={() => setShowCustom(true)}
+              onMouseEnter={() => setFocusIdx(optLen)}
+              style={{ padding: '8px 12px', border: focusIdx === optLen ? '2px solid var(--accent)' : '1px dashed var(--border)', borderRadius: 6, background: focusIdx === optLen ? 'var(--accent)' : 'none', color: focusIdx === optLen ? '#fff' : 'var(--text-secondary)', cursor: 'pointer', fontSize: 12, textAlign: 'left', transition: 'background 0.1s', fontStyle: 'italic' }}>
+              Type your own answer...
+            </button>
+          </div>
+        )}
+
+        {showCustom && (
+          <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+            <input
+              type="text"
+              value={customValue}
+              onChange={(e) => setCustomValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && customValue.trim()) sendAnswer(customValue.trim())
+                if (e.key === 'Escape') { setShowCustom(false); setFocusIdx(Math.max(optLen - 1, 0)); e.stopPropagation() }
+              }}
+              placeholder="Type your answer..."
+              ref={inputRef}
+              style={{ flex: 1, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 12, outline: 'none' }}
+            />
+            <button onClick={() => { if (customValue.trim()) sendAnswer(customValue.trim()) }}
+              disabled={!customValue.trim()}
+              style={{ padding: '8px 14px', border: 'none', borderRadius: 6, background: customValue.trim() ? 'var(--accent)' : 'var(--bg-secondary)', color: customValue.trim() ? '#fff' : 'var(--text-muted)', cursor: customValue.trim() ? 'pointer' : 'default', fontWeight: 600, fontSize: 12 }}>
+              Send
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

@@ -152,6 +152,43 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 		},
 		Handler: makeGetSubagentResultsHandler(pool),
 	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "ask_question",
+			Description: "Ask the user a question and wait for their response. Use this when you need a decision, clarification, or input from the user to proceed. You can provide multiple choice options for the user to pick from, or leave it open-ended.",
+			Parameters:  `{"type":"object","properties":{"question":{"type":"string","description":"The question to ask the user"},"options":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string","description":"The option title/label"},"description":{"type":"string","description":"Optional subtitle or explanation for the option"}},"required":["title"]},"description":"Optional multiple choice options for the user to choose from"},"allow_custom":{"type":"boolean","description":"Whether to allow the user to type a custom answer (default: true)"}},"required":["question"]}`,
+		},
+		Handler: func(args json.RawMessage, ctx *ToolContext) (any, error) {
+			var req struct {
+				Question    string            `json:"question"`
+				Options     []json.RawMessage `json:"options,omitempty"`
+				AllowCustom *bool             `json:"allow_custom,omitempty"`
+			}
+			if err := json.Unmarshal(args, &req); err != nil {
+				return nil, fmt.Errorf("invalid args: %w", err)
+			}
+			if req.Question == "" {
+				return nil, fmt.Errorf("question is required")
+			}
+			allowCustom := true
+			if req.AllowCustom != nil {
+				allowCustom = *req.AllowCustom
+			}
+			if ctx.QuestionFunc == nil {
+				return nil, fmt.Errorf("question functionality not available in this context")
+			}
+			answer, err := ctx.QuestionFunc(req.Question, req.Options, allowCustom)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"answer": answer, "question": req.Question}, nil
+		},
+	})
 }
 
 func makeListSkillsHandler(pool *pgxpool.Pool) ToolHandler {
