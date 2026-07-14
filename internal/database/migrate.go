@@ -46,6 +46,8 @@ func (db *DB) Migrate(ctx context.Context) error {
 
 	for _, f := range files {
 		version := strings.TrimSuffix(f, ".sql")
+		version = strings.TrimPrefix(version, "V")
+		version = strings.ReplaceAll(version, "__", "_")
 
 		var exists bool
 		err := db.Pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1)", version).Scan(&exists)
