@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react'
+import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ArrowLeft, X, Plus, Eye, Pencil, Shield } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
@@ -36,6 +36,27 @@ const toGridItem = (w: Widget): LayoutItem => ({
   minH: 4,
   maxH: 24,
 })
+
+function compactLayout(layout: LayoutItem[]): LayoutItem[] {
+  const sorted = [...layout].sort((a, b) => a.y - b.y || a.x - b.x)
+  const placed: LayoutItem[] = []
+  for (const item of sorted) {
+    let y = item.y
+    let overlaps = true
+    while (overlaps) {
+      overlaps = false
+      for (const p of placed) {
+        if (y < p.y + p.h && item.x < p.x + p.w && item.x + item.w > p.x) {
+          y = p.y + p.h
+          overlaps = true
+          break
+        }
+      }
+    }
+    placed.push({ ...item, y })
+  }
+  return placed
+}
 
 function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width: number; height: number } {
   if (!widgets.length) return { row: 0, col: 0, width: 6, height: 8 }
@@ -150,6 +171,10 @@ const markSaved = useCallback(() => {
   })
 
   const gridCols = dashboard?.settings?.grid_cols ?? 12
+  const compactedLayout = useMemo(
+    () => compactLayout((dashboard?.widgets ?? []).map(toGridItem)),
+    [dashboard?.widgets, gridCols],
+  )
 
   useEffect(() => {
     if (dashboard) {
@@ -548,7 +573,7 @@ const markSaved = useCallback(() => {
         ) : (
           <div ref={gridRef} style={{ minHeight: 240 }}>
             <GridLayout
-              layout={dashboard.widgets?.map(toGridItem) ?? []}
+              layout={compactedLayout}
               width={containerWidth}
               compactor={noCompactor}
               gridConfig={{ cols: gridCols, rowHeight: 30, margin: [4, 4] }}
