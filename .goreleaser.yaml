@@ -64,7 +64,7 @@ release:
     owner: The-Heaven-Labs
     name: aether-notebooks
   extra_files:
-    - glob: dist/aether-migrations-*.tar.gz
+    - glob: aether-migrations-*.tar.gz
 
 changelog:
   use: github-native
