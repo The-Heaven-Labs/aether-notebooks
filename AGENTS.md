@@ -108,7 +108,14 @@ task db:reset          # Drop + recreate dev DB (data loss!)
 |---|---|---|---|---|
 | `AETHER_MASTER_KEY` | **yes** | — | AES key for encrypting connector credentials |
 | `AETHER_JWT_SECRET` | **yes** | — | JWT signing secret |
-| `AETHER_DATABASE_URL` | no | `postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable` | |
+| `AETHER_DATABASE_URL` | no | constructed from individual vars below | Postgres connection URL. When empty, built from `AETHER_DATABASE_HOST`/`PORT`/`NAME`/`USER_ENV`/`PASSWORD_ENV`/`SSLMODE`. |
+| `AETHER_DATABASE_HOST` | no | `localhost` | Postgres host (used when `AETHER_DATABASE_URL` is empty) |
+| `AETHER_DATABASE_PORT` | no | `5432` | Postgres port |
+| `AETHER_DATABASE_NAME` | no | `aether` | Postgres database name |
+| `AETHER_DATABASE_USER_ENV` | no | — | Env var name containing the Postgres user (e.g. `DB_USER_AETHER`). The value of that var is used as the username. |
+| `AETHER_DATABASE_PASSWORD_ENV` | no | — | Env var name containing the Postgres password (e.g. `DB_PASS_AETHER`). The value of that var is used as the password. |
+| `AETHER_DATABASE_SSLMODE` | no | `disable` | Postgres SSL mode |
+| `AETHER_DISABLE_MIGRATIONS` | no | `false` | Skip embedded migrations on startup — set to `"true"` when a pipeline migration job handles them |
 | `AETHER_REDIS_URL` | no | `redis://localhost:6379` | |
 | `AETHER_PORT` | no | `8088` | |
 | `AETHER_OIDC_HOST_REWRITE` | no | — | `from=to` pair for rewriting the OIDC discovery host (e.g. `localhost:5557=host.docker.internal:5557`). Used in Docker dev where the API container must reach Keycloak via a different hostname than what's in the discovery URL. |
@@ -127,6 +134,20 @@ task db:reset          # Drop + recreate dev DB (data loss!)
 | `AETHER_DISABLE_REGISTRATION` | no | `false` | If set to `true`, disables new user registration |
 
 `Taskfile.yml` sets dev values for `AETHER_DATABASE_URL`, `AETHER_MASTER_KEY`, `AETHER_JWT_SECRET`, and `AETHER_PLATFORM_ADMIN_EMAIL` automatically when using `task`. Other vars rely on defaults or are set in `docker-compose.dev.yml`.
+
+### Pipeline Migrations
+
+For production deployments that run migrations as a separate pipeline step before the app starts:
+
+```bash
+# Migration job — only needs DB access, not MasterKey/JWT secrets
+AETHER_DATABASE_URL="postgres://..." aether-server --migrate-only
+
+# App startup — skips migrations when the pipeline handles them
+AETHER_DATABASE_URL="postgres://..." AETHER_DISABLE_MIGRATIONS=true aether-server
+```
+
+The `--migrate-only` flag connects to Postgres, runs all pending migrations, and exits. It skips validation of `AETHER_MASTER_KEY` and `AETHER_JWT_SECRET` since they aren't needed for database operations. For environments using secret-managed credentials, set `AETHER_DATABASE_USER_ENV`/`AETHER_DATABASE_PASSWORD_ENV` to reference the env var names that hold the secret values.
 
 ## Test Users
 
@@ -260,7 +281,7 @@ In dev, `Taskfile.yml` sets `AETHER_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com`
 
 **Internal routes** (`/internal/*`) are unauthenticated by standard JWT middleware — they're called only by the Hocuspocus relay and validated via `handleInternalAuthValidate`. Do not add auth middleware to these.
 
-**Migrations run automatically** on server startup (not a separate migration tool).
+**Migrations run automatically** on server startup by default. For pipeline-based deployments, use `aether-server --migrate-only` as a separate migration step and set `AETHER_DISABLE_MIGRATIONS=true` on the app container. See [Pipeline Migrations](#pipeline-migrations) below.
 
 **Vite proxy**: In dev, Vite forwards `/api`, `/internal`, `/docs`, and `/swagger.json` to `localhost:8088`. The `API_URL` env var overrides the target (used inside Docker).
 

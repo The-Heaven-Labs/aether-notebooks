@@ -170,7 +170,14 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full development setup and coding con
 |---|---|---|---|
 | `AETHER_MASTER_KEY` | Yes | — | AES-256 key for encrypting connector credentials |
 | `AETHER_JWT_SECRET` | Yes | — | JWT signing secret |
-| `AETHER_DATABASE_URL` | No | `postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable` | Postgres connection string |
+| `AETHER_DATABASE_URL` | No | constructed from individual vars below | Postgres connection string. When empty, built from `AETHER_DATABASE_HOST`/`PORT`/`NAME`/`USER_ENV`/`PASSWORD_ENV`/`SSLMODE`. |
+| `AETHER_DATABASE_HOST` | No | `localhost` | Postgres host (used when `AETHER_DATABASE_URL` is empty) |
+| `AETHER_DATABASE_PORT` | No | `5432` | Postgres port |
+| `AETHER_DATABASE_NAME` | No | `aether` | Postgres database name |
+| `AETHER_DATABASE_USER_ENV` | No | — | Env var name containing the Postgres user |
+| `AETHER_DATABASE_PASSWORD_ENV` | No | — | Env var name containing the Postgres password |
+| `AETHER_DATABASE_SSLMODE` | No | `disable` | Postgres SSL mode |
+| `AETHER_DISABLE_MIGRATIONS` | No | `false` | Skip embedded migrations on startup — set to `true` when pipeline handles them |
 | `AETHER_REDIS_URL` | No | `redis://localhost:6379` | Redis connection string |
 | `AETHER_PORT` | No | `8080` | API server listen port |
 | `AETHER_FRONTEND_URL` | No | `http://localhost:5173` | Frontend URL for CORS and OIDC redirect |
