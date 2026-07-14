@@ -32,6 +32,8 @@ import (
 	"github.com/the-heaven-labs/aether/internal/database"
 	"github.com/the-heaven-labs/aether/internal/scheduler"
 	"github.com/the-heaven-labs/aether/internal/storage"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func usage() {
@@ -206,6 +208,9 @@ func main() {
 	api.SeedDevSSOProviders(ctx, db.Pool, masterKey)
 	api.SeedDevAuditS3Config(ctx, db.Pool)
 
+	// Resolve model config env var references
+	resolveModelConfigEnvVars(ctx, db.Pool, masterKey)
+
 	auditLogger := audit.NewLogger(db)
 
 	// Start scheduler (runs due notebook schedules every minute)
@@ -291,4 +296,62 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("stopped")
+}
+
+// resolveModelConfigEnvVars scans model configs with api_key_env_var set,
+// resolves the env var reference, encrypts the value, and updates api_key_encrypted.
+// This runs on every startup so that changing the env var and restarting picks up the new value.
+func resolveModelConfigEnvVars(ctx context.Context, pool *pgxpool.Pool, masterKey []byte) {
+	rows, err := pool.Query(ctx, `SELECT id, api_key_env_var FROM model_configs WHERE api_key_env_var IS NOT NULL`)
+	if err != nil {
+		slog.Warn("resolve model config env vars: query failed", "error", err)
+		return
+	}
+	defer rows.Close()
+
+	type row struct {
+		id       string
+		envVar   string
+	}
+	var toResolve []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.envVar); err != nil {
+			slog.Warn("resolve model config env vars: scan failed", "error", err)
+			continue
+		}
+		toResolve = append(toResolve, r)
+	}
+
+	resolved := 0
+	skipped := 0
+	for _, r := range toResolve {
+		val := os.Getenv(r.envVar)
+		if val == "" {
+			slog.Warn("resolve model config env vars: env var is empty or unset",
+				"model_config_id", r.id, "env_var", r.envVar)
+			skipped++
+			continue
+		}
+		encrypted, err := crypto.Encrypt([]byte(val), masterKey)
+		if err != nil {
+			slog.Warn("resolve model config env vars: encrypt failed",
+				"model_config_id", r.id, "env_var", r.envVar, "error", err)
+			skipped++
+			continue
+		}
+		_, err = pool.Exec(ctx, `UPDATE model_configs SET api_key_encrypted = $1, updated_at = NOW() WHERE id = $2`, encrypted, r.id)
+		if err != nil {
+			slog.Warn("resolve model config env vars: update failed",
+				"model_config_id", r.id, "error", err)
+			skipped++
+			continue
+		}
+		resolved++
+	}
+
+	if resolved > 0 || skipped > 0 {
+		slog.Info("model config env vars resolved",
+			"resolved", resolved, "skipped", skipped)
+	}
 }
