@@ -128,7 +128,7 @@ ALTER TABLE orgs ADD COLUMN public_sharing_enabled BOOLEAN NOT NULL DEFAULT true
 
 | File | Change |
 |---|---|
-| `internal/database/migrations/074_public_tokens.sql` | New migration |
+| `internal/database/migrations/V074__public_tokens.sql` | New migration |
 | `internal/models/` | Add public_token model |
 | `internal/sso/sso.go` | No change |
 | `internal/api/notebook_handlers.go` | Add share/revoke handlers |

@@ -13,7 +13,7 @@
 ### Task 1: Database migration — create tools table, alter agents/skills
 
 **Files:**
-- Create: `internal/database/migrations/064_tools_table.sql`
+- Create: `internal/database/migrations/V064__tools_table.sql`
 
 **Step 1: Write the migration**
 
@@ -51,13 +51,13 @@ ALTER TABLE acl_entries ADD CONSTRAINT acl_entries_resource_type_check
 
 **Step 2: Verify migration parses**
 
-Run: `psql $AETHER_DATABASE_URL -f internal/database/migrations/064_tools_table.sql`
+Run: `psql $AETHER_DATABASE_URL -f internal/database/migrations/V064__tools_table.sql`
 Expected: `CREATE TABLE`, `ALTER TABLE`, `ALTER TABLE`
 
 **Step 3: Commit**
 
 ```bash
-git add internal/database/migrations/064_tools_table.sql
+git add internal/database/migrations/V064__tools_table.sql
 git commit -m "feat(db): add tools table, add tool_ids to agents, drop tool_ids from skills"
 ```
 
@@ -813,7 +813,7 @@ git commit -m "feat(agent): seed built-in tools into tools table per org at star
 ### Task 8: Backfill agents.tool_ids from skills data migration
 
 **Files:**
-- Create: `internal/database/migrations/065_backfill_agent_tool_ids.sql`
+- Create: `internal/database/migrations/V065__backfill_agent_tool_ids.sql`
 
 **Step 1: Write the backfill migration**
 
@@ -867,7 +867,7 @@ func (s *Server) backfillAgentToolIDs(ctx context.Context) {
 **Step 3: Commit**
 
 ```bash
-git add internal/database/migrations/065_backfill_agent_tool_ids.sql
+git add internal/database/migrations/V065__backfill_agent_tool_ids.sql
 git commit -m "feat(db): backfill agents.tool_ids from skills (startup-based)"
 ```
 

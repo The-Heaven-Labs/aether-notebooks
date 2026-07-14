@@ -13,7 +13,7 @@
 ### Task 1: DB Migration — sso_providers columns + sso_group_memberships table
 
 **Files:**
-- Create: `internal/database/migrations/073_sso_group_provisioning.sql`
+- Create: `internal/database/migrations/V073__sso_group_provisioning.sql`
 
 **Step 1: Write the migration**
 
@@ -42,7 +42,7 @@ Expected: migrations apply without error
 **Step 3: Commit**
 
 ```bash
-git add internal/database/migrations/073_sso_group_provisioning.sql
+git add internal/database/migrations/V073__sso_group_provisioning.sql
 git commit -m "feat(db): add sso group provisioning columns and tracking table"
 ```
 

@@ -15,7 +15,7 @@
 ### Task 1: Migration — public_tokens table + org toggle
 
 **Files:**
-- Create: `internal/database/migrations/074_public_tokens.sql`
+- Create: `internal/database/migrations/V074__public_tokens.sql`
 
 **SQL:**
 
@@ -46,7 +46,7 @@ ALTER TABLE orgs ADD COLUMN public_sharing_enabled BOOLEAN NOT NULL DEFAULT true
 **Commit:**
 
 ```bash
-git add internal/database/migrations/074_public_tokens.sql
+git add internal/database/migrations/V074__public_tokens.sql
 git commit -m "feat: add public_tokens table and org sharing toggle"
 ```
 
