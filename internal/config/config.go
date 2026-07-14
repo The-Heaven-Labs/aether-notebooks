@@ -11,6 +11,12 @@ import (
 type Config struct {
 	Port                string
 	DatabaseURL         string
+	DatabaseHost        string
+	DatabasePort        string
+	DatabaseName        string
+	DatabaseUser        string
+	DatabasePassword    string
+	DatabaseSSMode      string
 	RedisURL            string
 	MasterKey           string // for encrypting connector credentials
 	JWTSecret           string
@@ -28,6 +34,7 @@ type Config struct {
 	ToolAllowedDomains  []string // comma-separated domains allowed for webhook tools (bypasses private IP block)
 	OIDCHostRewrite     string   // "from=to" pair for rewriting OIDC discovery host (e.g. "localhost:5557=host.docker.internal:5557")
 	DisableRegistration bool     // when true, new users cannot register via email/password (SSO only)
+	DisableMigrations   bool     // when true, skip embedded migrations on startup (used when pipeline handles migrations)
 }
 
 func parseCommaList(s string) []string {
@@ -44,14 +51,39 @@ func parseCommaList(s string) []string {
 	return result
 }
 
+func resolveEnvRef(key string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		return ""
+	}
+	return os.Getenv(v)
+}
+
 func Load() (*Config, error) {
+	return load(false)
+}
+
+// LoadMigrateOnly loads configuration for migration-only mode.
+// Skips validation of secrets (MasterKey, JWTSecret) since they aren't needed
+// to connect to the database and run migrations.
+func LoadMigrateOnly() (*Config, error) {
+	return load(true)
+}
+
+func load(migrateOnly bool) (*Config, error) {
 	maxAttachmentBytes, err := strconv.ParseInt(envOrDefault("AETHER_MAX_ATTACHMENT_BYTES", "10485760"), 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("invalid AETHER_MAX_ATTACHMENT_BYTES: %w", err)
 	}
 	cfg := &Config{
 		Port:                envOrDefault("AETHER_PORT", "8088"),
-		DatabaseURL:         envOrDefault("AETHER_DATABASE_URL", "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"),
+		DatabaseURL:         os.Getenv("AETHER_DATABASE_URL"),
+		DatabaseHost:        os.Getenv("AETHER_DATABASE_HOST"),
+		DatabasePort:        os.Getenv("AETHER_DATABASE_PORT"),
+		DatabaseName:        os.Getenv("AETHER_DATABASE_NAME"),
+		DatabaseUser:        resolveEnvRef("AETHER_DATABASE_USER_ENV"),
+		DatabasePassword:    resolveEnvRef("AETHER_DATABASE_PASSWORD_ENV"),
+		DatabaseSSMode:      envOrDefault("AETHER_DATABASE_SSLMODE", "disable"),
 		RedisURL:            envOrDefault("AETHER_REDIS_URL", "redis://localhost:6379"),
 		MasterKey:           os.Getenv("AETHER_MASTER_KEY"),
 		JWTSecret:           os.Getenv("AETHER_JWT_SECRET"),
@@ -69,12 +101,41 @@ func Load() (*Config, error) {
 		ToolAllowedDomains:  parseCommaList(os.Getenv("AETHER_TOOL_ALLOWED_DOMAINS")),
 		OIDCHostRewrite:     os.Getenv("AETHER_OIDC_HOST_REWRITE"),
 		DisableRegistration: envOrDefault("AETHER_DISABLE_REGISTRATION", "false") == "true",
+		DisableMigrations:   envOrDefault("AETHER_DISABLE_MIGRATIONS", "false") == "true",
 	}
-	if cfg.MasterKey == "" {
-		return nil, fmt.Errorf("AETHER_MASTER_KEY is required — set this environment variable to a secret value (32+ characters)")
+
+	// If no explicit DatabaseURL, build from individual components.
+	if cfg.DatabaseURL == "" {
+		host := cfg.DatabaseHost
+		if host == "" {
+			host = "localhost"
+		}
+		port := cfg.DatabasePort
+		if port == "" {
+			port = "5432"
+		}
+		name := cfg.DatabaseName
+		if name == "" {
+			name = "aether"
+		}
+		user := cfg.DatabaseUser
+		if user == "" {
+			user = "aether"
+		}
+		password := cfg.DatabasePassword
+		if password == "" {
+			password = "aether_dev"
+		}
+		cfg.DatabaseURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s", user, password, host, port, name, cfg.DatabaseSSMode)
 	}
-	if cfg.JWTSecret == "" {
-		return nil, fmt.Errorf("AETHER_JWT_SECRET is required — set this environment variable to a secret value for signing JWT tokens")
+
+	if !migrateOnly {
+		if cfg.MasterKey == "" {
+			return nil, fmt.Errorf("AETHER_MASTER_KEY is required — set this environment variable to a secret value (32+ characters)")
+		}
+		if cfg.JWTSecret == "" {
+			return nil, fmt.Errorf("AETHER_JWT_SECRET is required — set this environment variable to a secret value for signing JWT tokens")
+		}
 	}
 	if cfg.StorageBackend == "s3" {
 		if cfg.S3Bucket == "" {
