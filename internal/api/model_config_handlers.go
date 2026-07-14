@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/the-heaven-labs/aether/internal/agent"
@@ -10,6 +11,18 @@ import (
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
+
+// parseEnvVarRef checks if s matches ${VAR_NAME} and returns the var name,
+// or empty string if it's not an env var reference.
+func parseEnvVarRef(s string) string {
+	if len(s) > 2 && s[0] == '$' && s[1] == '{' && s[len(s)-1] == '}' {
+		name := s[2 : len(s)-1]
+		if name != "" && !strings.ContainsAny(name, " \t\n{}") {
+			return name
+		}
+	}
+	return ""
+}
 
 type modelConfigHandlers struct {
 	server *Server
@@ -29,7 +42,8 @@ func (h *modelConfigHandlers) handleList(w http.ResponseWriter, r *http.Request)
 	rows, err := h.server.db.Pool.Query(r.Context(), `
 		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted,
 			   default_params, context_window, price_per_input_token, price_per_output_token,
-			   price_per_cache_read_token, folder_id, created_by, created_at, updated_at
+			   price_per_cache_read_token, folder_id, created_by, created_at, updated_at,
+			   api_key_env_var
 		FROM model_configs WHERE org_id = $1 ORDER BY name
 	`, claims.OrgID)
 	if err != nil {
@@ -44,7 +58,8 @@ func (h *modelConfigHandlers) handleList(w http.ResponseWriter, r *http.Request)
 		var defaultParams []byte
 		rows.Scan(&c.ID, &c.OrgID, &c.Name, &c.Provider, &c.BaseURL, &c.Model, &c.APIKeyEncrypted,
 			&defaultParams, &c.ContextWindow, &c.PricePerInputToken, &c.PricePerOutputToken,
-			&c.PricePerCacheReadToken, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
+			&c.PricePerCacheReadToken, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt,
+			&c.APIKeyEnvVar)
 		json.Unmarshal(defaultParams, &c.DefaultParams)
 		allowed, _ := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "model_config", c.ID, "view")
 		if !allowed {
@@ -85,11 +100,13 @@ func (h *modelConfigHandlers) handleGet(w http.ResponseWriter, r *http.Request) 
 	err = h.server.db.Pool.QueryRow(r.Context(), `
 		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted,
 			   default_params, context_window, price_per_input_token, price_per_output_token,
-			   price_per_cache_read_token, folder_id, created_by, created_at, updated_at
+			   price_per_cache_read_token, folder_id, created_by, created_at, updated_at,
+			   api_key_env_var
 		FROM model_configs WHERE id = $1 AND org_id = $2
 	`, id, claims.OrgID).Scan(&c.ID, &c.OrgID, &c.Name, &c.Provider, &c.BaseURL, &c.Model, &apiKeyEncrypted,
 		&defaultParams, &c.ContextWindow, &c.PricePerInputToken, &c.PricePerOutputToken,
-		&c.PricePerCacheReadToken, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
+		&c.PricePerCacheReadToken, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt,
+		&c.APIKeyEnvVar)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "model config not found")
 		return
@@ -130,12 +147,6 @@ func (h *modelConfigHandlers) handleCreate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	encryptedKey, err := crypto.Encrypt([]byte(req.APIKey), h.server.masterKey)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to encrypt API key")
-		return
-	}
-
 	if req.ContextWindow == 0 {
 		req.ContextWindow = 128000
 	}
@@ -147,14 +158,28 @@ func (h *modelConfigHandlers) handleCreate(w http.ResponseWriter, r *http.Reques
 	cfgID := uuid.New().String()
 	defaultParamsJSON, _ := json.Marshal(req.DefaultParams)
 
-	_, err = h.server.db.Pool.Exec(r.Context(), `
+	var encryptedKey []byte
+	var apiKeyEnvVar *string
+	if envVar := parseEnvVarRef(req.APIKey); envVar != "" {
+		apiKeyEnvVar = &envVar
+	} else {
+		var err error
+		encryptedKey, err = crypto.Encrypt([]byte(req.APIKey), h.server.masterKey)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to encrypt API key")
+			return
+		}
+	}
+
+	_, err := h.server.db.Pool.Exec(r.Context(), `
 		INSERT INTO model_configs (id, org_id, name, provider, base_url, model, api_key_encrypted,
 			default_params, context_window, price_per_input_token, price_per_output_token,
-			price_per_cache_read_token, folder_id, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
+			price_per_cache_read_token, folder_id, created_by, created_at, updated_at,
+			api_key_env_var)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW(), $15)
 	`, cfgID, claims.OrgID, req.Name, req.Provider, req.BaseURL, req.Model, encryptedKey,
 		defaultParamsJSON, req.ContextWindow, req.PricePerInputToken, req.PricePerOutputToken,
-		req.PricePerCacheReadToken, req.FolderID, claims.UserID)
+		req.PricePerCacheReadToken, req.FolderID, claims.UserID, apiKeyEnvVar)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -209,21 +234,37 @@ func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Reques
 	}
 
 	if req.APIKey != nil {
-		encrypted, err := crypto.Encrypt([]byte(*req.APIKey), h.server.masterKey)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to encrypt API key")
-			return
-		}
-		result, err := h.server.db.Pool.Exec(r.Context(), `
-			UPDATE model_configs SET api_key_encrypted = $2, updated_at = NOW() WHERE id = $1 AND org_id = $3
-		`, cfgID, encrypted, claims.OrgID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if result.RowsAffected() == 0 {
-			writeError(w, http.StatusNotFound, "model config not found")
-			return
+		if envVar := parseEnvVarRef(*req.APIKey); envVar != "" {
+			result, err := h.server.db.Pool.Exec(r.Context(), `
+				UPDATE model_configs SET api_key_encrypted = '\x'::bytea, api_key_env_var = $2, updated_at = NOW()
+				WHERE id = $1 AND org_id = $3
+			`, cfgID, envVar, claims.OrgID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if result.RowsAffected() == 0 {
+				writeError(w, http.StatusNotFound, "model config not found")
+				return
+			}
+		} else {
+			encrypted, encErr := crypto.Encrypt([]byte(*req.APIKey), h.server.masterKey)
+			if encErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to encrypt API key")
+				return
+			}
+			result, err := h.server.db.Pool.Exec(r.Context(), `
+				UPDATE model_configs SET api_key_encrypted = $2, api_key_env_var = NULL, updated_at = NOW()
+				WHERE id = $1 AND org_id = $3
+			`, cfgID, encrypted, claims.OrgID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if result.RowsAffected() == 0 {
+				writeError(w, http.StatusNotFound, "model config not found")
+				return
+			}
 		}
 	}
 
@@ -304,9 +345,9 @@ func (h *modelConfigHandlers) handleTest(w http.ResponseWriter, r *http.Request)
 	var apiKeyEncrypted []byte
 	var defaultParams []byte
 	err := h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, price_per_input_token, price_per_output_token, price_per_cache_read_token, folder_id, created_by, created_at, updated_at
+		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, price_per_input_token, price_per_output_token, price_per_cache_read_token, folder_id, created_by, created_at, updated_at, api_key_env_var
 		FROM model_configs WHERE id = $1 AND org_id = $2
-	`, cfgID, claims.OrgID).Scan(&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &apiKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.PricePerInputToken, &mc.PricePerOutputToken, &mc.PricePerCacheReadToken, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt)
+	`, cfgID, claims.OrgID).Scan(&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &apiKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.PricePerInputToken, &mc.PricePerOutputToken, &mc.PricePerCacheReadToken, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt, &mc.APIKeyEnvVar)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "model config not found")
 		return
