@@ -12,6 +12,7 @@ type ModelConfig struct {
 	BaseURL                string    `json:"base_url"`
 	Model                  string    `json:"model"`
 	APIKeyEncrypted        []byte    `json:"-"`
+	APIKeyEnvVar           *string   `json:"-"`
 	DefaultParams          JSONMap   `json:"default_params"`
 	ContextWindow          int       `json:"context_window"`
 	PricePerInputToken     float64   `json:"price_per_input_token"`
