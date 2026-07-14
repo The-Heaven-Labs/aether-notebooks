@@ -40,16 +40,24 @@ func usage() {
 Usage: aether-server [options]
 
 Options:
-  -h, --help    Show this help message and exit
+  -h, --help         Show this help message and exit
+  --migrate-only     Only run database migrations and exit (for pipeline migration jobs)
 
 Configuration is done via environment variables:
 
-  Required:
+  Required (unless --migrate-only):
     AETHER_MASTER_KEY           AES key for encrypting connector credentials (32+ chars)
     AETHER_JWT_SECRET           Secret used to sign JWT tokens
 
   Database:
-    AETHER_DATABASE_URL         Postgres connection URL (default: "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable")
+    AETHER_DATABASE_URL         Postgres connection URL (default: constructed from individual vars below)
+    AETHER_DATABASE_HOST        Postgres host (default: "localhost") — used when AETHER_DATABASE_URL is empty
+    AETHER_DATABASE_PORT        Postgres port (default: "5432")
+    AETHER_DATABASE_NAME        Postgres database name (default: "aether")
+    AETHER_DATABASE_USER_ENV    Env var name containing the Postgres user (e.g. "DB_USER_AETHER_NOTEBOOKS")
+    AETHER_DATABASE_PASSWORD_ENV Env var name containing the Postgres password (e.g. "DB_PASS_AETHER_NOTEBOOKS")
+    AETHER_DATABASE_SSLMODE     Postgres SSL mode (default: "disable")
+    AETHER_DISABLE_MIGRATIONS   Skip embedded migrations on startup (default: "false") — set to "true" when pipeline handles migrations
     AETHER_REDIS_URL            Redis connection URL (default: "redis://localhost:6379")
 
   Server:
@@ -86,6 +94,7 @@ func init() {
 
 func main() {
 	showHelp := flag.Bool("help", false, "Show help and exit")
+	migrateOnly := flag.Bool("migrate-only", false, "Only run database migrations and exit")
 	flag.Parse()
 	if *showHelp {
 		flag.Usage()
@@ -105,7 +114,13 @@ func main() {
 		Level: logLevel,
 	})))
 
-	cfg, err := config.Load()
+	var cfg *config.Config
+	var err error
+	if *migrateOnly {
+		cfg, err = config.LoadMigrateOnly()
+	} else {
+		cfg, err = config.Load()
+	}
 	if err != nil {
 		slog.Error("config load failed", "error", err, "hint", "run 'aether-server --help' for configuration options")
 		os.Exit(1)
@@ -113,7 +128,7 @@ func main() {
 
 	ctx := context.Background()
 
-	// Connect to Postgres and run migrations
+	// Connect to Postgres
 	db, err := database.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		slog.Error("database connect failed", "error", err)
@@ -121,11 +136,26 @@ func main() {
 	}
 	defer db.Close()
 
-	if err := db.Migrate(ctx); err != nil {
-		slog.Error("database migration failed", "error", err)
-		os.Exit(1)
+	// --migrate-only: always run migrations and exit (for pipeline migration jobs)
+	if *migrateOnly {
+		if err := db.Migrate(ctx); err != nil {
+			slog.Error("database migration failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("migrate-only: migrations applied, exiting")
+		return
 	}
-	slog.Info("migrations applied")
+
+	// Normal startup — only migrate if not disabled
+	if !cfg.DisableMigrations {
+		if err := db.Migrate(ctx); err != nil {
+			slog.Error("database migration failed", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("migrations applied")
+	} else {
+		slog.Info("migrations disabled by config")
+	}
 
 	// Connect to Redis
 	redisCache, err := cache.New(cfg.RedisURL)
