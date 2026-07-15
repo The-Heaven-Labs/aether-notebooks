@@ -43,26 +43,50 @@ function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width:
   return { row: maxBottom, col: 0, width: 6, height: 8 }
 }
 
-function clampLayout(item: LayoutItem, gridCols: number, layout: Layout): LayoutItem {
+function clampWidth(item: LayoutItem, gridCols: number): LayoutItem {
   const clamped = { ...item }
-  // Clamp width to grid bounds.
   if (clamped.x + clamped.w > gridCols) {
     clamped.w = gridCols - clamped.x
   }
-  // Ensure minimum width.
   if (clamped.w < (clamped.minW ?? 1)) {
     clamped.w = clamped.minW ?? 1
   }
+  return clamped
+}
+
+function clampHeight(item: LayoutItem, layout: Layout): LayoutItem {
+  const clamped = { ...item }
+  // Find the nearest widget below that overlaps in column range.
+  const below = layout
+    .filter(other => other.i !== clamped.i)
+    .filter(other =>
+      clamped.x < other.x + other.w &&
+      clamped.x + clamped.w > other.x &&
+      other.y > clamped.y
+    )
+    .sort((a, b) => a.y - b.y)
+  if (below.length > 0) {
+    const nearestTop = below[0].y
+    const maxH = nearestTop - clamped.y
+    if (maxH >= (clamped.minH ?? 1)) {
+      clamped.h = maxH
+    }
+  }
+  return clamped
+}
+
+function clampPosition(item: LayoutItem, gridCols: number, layout: Layout): LayoutItem {
+  let clamped = clampWidth(item, gridCols)
   // Shift down until no collision with other widgets.
-  const hasCollision = (y: number) =>
+  const hasCollision = () =>
     layout.some(other => {
       if (other.i === clamped.i) return false
       return clamped.x < other.x + other.w &&
         clamped.x + clamped.w > other.x &&
-        y < other.y + other.h &&
-        y + clamped.h > other.y
+        clamped.y < other.y + other.h &&
+        clamped.y + clamped.h > other.y
     })
-  while (hasCollision(clamped.y)) {
+  while (hasCollision()) {
     clamped.y++
   }
   return clamped
@@ -253,7 +277,8 @@ const markSaved = useCallback(() => {
   const onResizeStop = useCallback((layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
     if (newItem) {
       const settled = layout?.find(l => l.i === newItem.i) || newItem
-      saveLayout(clampLayout(settled, gridCols, layout))
+      const clamped = clampHeight(clampWidth(settled, gridCols), layout)
+      saveLayout(clamped)
     }
   }, [saveLayout, gridCols])
 
@@ -316,7 +341,7 @@ const markSaved = useCallback(() => {
     } else {
       // No swap — just save the dragged widget's position
       const settled = layout?.find(l => l.i === newItem.i) || newItem
-      saveLayout(clampLayout(settled, gridCols, layout))
+      saveLayout(clampPosition(settled, gridCols, layout))
     }
   }, [saveLayout, dashboard, qc, id, markSaving, markSaved, gridCols])
 
