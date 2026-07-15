@@ -428,6 +428,31 @@ func (s *Server) handleDeleteDashboard(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// validateWidgetLayout checks that a widget layout is within grid bounds.
+func (s *Server) validateWidgetLayout(ctx context.Context, dashID string, layout models.WidgetLayout) error {
+	if layout.Col < 0 || layout.Row < 0 || layout.Width <= 0 || layout.Height <= 0 {
+		return fmt.Errorf("invalid layout dimensions")
+	}
+
+	// Fetch the dashboard's grid_cols setting (default 12).
+	var gridCols int
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE((settings->>'grid_cols')::int, 12) FROM dashboards WHERE id=$1`, dashID,
+	).Scan(&gridCols)
+	if err != nil {
+		return fmt.Errorf("failed to read dashboard settings")
+	}
+	if gridCols <= 0 {
+		gridCols = 12
+	}
+
+	if layout.Col+layout.Width > gridCols {
+		return fmt.Errorf("layout exceeds grid columns")
+	}
+
+	return nil
+}
+
 // @Summary Add a widget
 // @Description Add a widget to a dashboard
 // @Tags dashboards
@@ -480,6 +505,12 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusForbidden, "you don't have permission to view this notebook")
 			return
 		}
+	}
+
+	// Validate widget layout bounds.
+	if err := s.validateWidgetLayout(ctx, dashID, req.Layout); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	if req.Config == nil {
@@ -555,6 +586,12 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Layout == nil {
 		writeError(w, http.StatusBadRequest, "layout required")
+		return
+	}
+
+	// Validate widget layout bounds.
+	if err := s.validateWidgetLayout(r.Context(), dashID, *req.Layout); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
