@@ -43,6 +43,31 @@ function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width:
   return { row: maxBottom, col: 0, width: 6, height: 8 }
 }
 
+function clampLayout(item: LayoutItem, gridCols: number, layout: Layout): LayoutItem {
+  const clamped = { ...item }
+  // Clamp width to grid bounds.
+  if (clamped.x + clamped.w > gridCols) {
+    clamped.w = gridCols - clamped.x
+  }
+  // Ensure minimum width.
+  if (clamped.w < (clamped.minW ?? 1)) {
+    clamped.w = clamped.minW ?? 1
+  }
+  // Shift down until no collision with other widgets.
+  const hasCollision = (y: number) =>
+    layout.some(other => {
+      if (other.i === clamped.i) return false
+      return clamped.x < other.x + other.w &&
+        clamped.x + clamped.w > other.x &&
+        y < other.y + other.h &&
+        y + clamped.h > other.y
+    })
+  while (hasCollision(clamped.y)) {
+    clamped.y++
+  }
+  return clamped
+}
+
 function WidgetContent({ widget }: { widget: Widget }) {
   const { data: notebook, isLoading } = useQuery({
     queryKey: ['notebook', widget.notebook_id],
@@ -228,9 +253,9 @@ const markSaved = useCallback(() => {
   const onResizeStop = useCallback((layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
     if (newItem) {
       const settled = layout?.find(l => l.i === newItem.i) || newItem
-      saveLayout(settled)
+      saveLayout(clampLayout(settled, gridCols, layout))
     }
-  }, [saveLayout])
+  }, [saveLayout, gridCols])
 
   const lastDragRef = useRef<{ x: number; y: number } | null>(null)
 
@@ -291,9 +316,9 @@ const markSaved = useCallback(() => {
     } else {
       // No swap — just save the dragged widget's position
       const settled = layout?.find(l => l.i === newItem.i) || newItem
-      saveLayout(settled)
+      saveLayout(clampLayout(settled, gridCols, layout))
     }
-  }, [saveLayout, dashboard, qc, id, markSaving, markSaved])
+  }, [saveLayout, dashboard, qc, id, markSaving, markSaved, gridCols])
 
   if (isLoading) {
     return (
