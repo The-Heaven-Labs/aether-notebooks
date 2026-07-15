@@ -62,15 +62,14 @@ function clampHeight(item: LayoutItem, layout: Layout): LayoutItem {
     .filter(other =>
       clamped.x < other.x + other.w &&
       clamped.x + clamped.w > other.x &&
-      other.y > clamped.y
+      other.y >= clamped.y
     )
     .sort((a, b) => a.y - b.y)
   if (below.length > 0) {
     const nearestTop = below[0].y
     const maxH = nearestTop - clamped.y
-    if (maxH >= (clamped.minH ?? 1)) {
-      clamped.h = maxH
-    }
+    if (maxH < 1) return clamped
+    clamped.h = maxH
   }
   return clamped
 }
@@ -276,8 +275,11 @@ const markSaved = useCallback(() => {
 
   const onResizeStop = useCallback((layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
     if (newItem) {
-      const settled = layout?.find(l => l.i === newItem.i) || newItem
-      const clamped = clampHeight(clampWidth(settled, gridCols), layout)
+      // Use newItem's dimensions (w, h) but get the item from layout for position (x, y)
+      // to ensure we're working with the library's final computed position.
+      const settled = layout?.find(l => l.i === newItem.i)
+      const combined = settled ? { ...settled, w: newItem.w, h: newItem.h } : newItem
+      const clamped = clampHeight(clampWidth(combined, gridCols), layout)
       saveLayout(clamped)
     }
   }, [saveLayout, gridCols])
