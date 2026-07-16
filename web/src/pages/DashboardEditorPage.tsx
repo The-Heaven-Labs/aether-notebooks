@@ -583,9 +583,9 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--border)',
   },
   subHeader: {
-    background: 'var(--bg-primary)',
-    borderBottom: '1px solid var(--border)',
-    height: 84,
+    background: 'var(--nav-bg)',
+    borderBottom: '1px solid var(--nav-border)',
+    height: 44,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
