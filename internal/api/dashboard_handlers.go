@@ -435,6 +435,28 @@ func (s *Server) validateWidgetLayout(ctx context.Context, dashID string, layout
 	return validate.WidgetLayout(ctx, s.db.Pool, dashID, layout, excludeWidgetID)
 }
 
+// validateWidgetLayoutBounds checks only grid bounds, without overlap validation.
+// Used for updates where the frontend compactor already prevents overlap.
+func (s *Server) validateWidgetLayoutBounds(ctx context.Context, dashID string, layout models.WidgetLayout) error {
+	if layout.Col < 0 || layout.Row < 0 || layout.Width <= 0 || layout.Height <= 0 {
+		return fmt.Errorf("invalid layout dimensions")
+	}
+	var gridCols int
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE((settings->>'grid_cols')::int, 12) FROM dashboards WHERE id=$1`, dashID,
+	).Scan(&gridCols)
+	if err != nil {
+		return fmt.Errorf("failed to read dashboard settings")
+	}
+	if gridCols <= 0 {
+		gridCols = 12
+	}
+	if layout.Col+layout.Width > gridCols {
+		return fmt.Errorf("layout exceeds grid columns")
+	}
+	return nil
+}
+
 // @Summary Add a widget
 // @Description Add a widget to a dashboard
 // @Tags dashboards
@@ -571,8 +593,9 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate widget layout bounds and overlap.
-	if err := s.validateWidgetLayout(r.Context(), dashID, *req.Layout, widgetID); err != nil {
+	// Validate widget layout bounds only (overlap is handled by the frontend compactor
+	// during drag/resize, and the backend cannot know which widgets were moved together).
+	if err := s.validateWidgetLayoutBounds(r.Context(), dashID, *req.Layout); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

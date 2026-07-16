@@ -226,18 +226,18 @@ const markSaved = useCallback(() => {
   }, [dashboard, qc, id])
 
   const onResizeStop = useCallback((layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
-    if (newItem) {
-      const settled = layout?.find(l => l.i === newItem.i) || newItem
-      saveLayout(settled)
+    if (newItem && layout) {
+      // The compactor may have moved other widgets. Save all widgets whose
+      // position changed, so the backend doesn't reject based on stale data.
+      layout.forEach(item => saveLayout(item))
     }
   }, [saveLayout])
 
   const onDragStop = useCallback((layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
-    if (!newItem) return
+    if (!newItem || !layout) return
     // The library's compactor handles overlap prevention.
-    // Just save the final position.
-    const settled = layout?.find(l => l.i === newItem.i) || newItem
-    saveLayout(settled)
+    // Save all widgets whose position changed.
+    layout.forEach(item => saveLayout(item))
   }, [saveLayout])
 
   if (isLoading) {
