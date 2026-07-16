@@ -142,7 +142,7 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
 export default function App() {
   useEffect(() => {
     const style = document.createElement('style')
-    style.textContent = '.react-resizable-handle { display: none !important } div[style*="ns-resize"] { display: none !important }'
+    style.textContent = 'div[style*="height: 8px"][style*="border-top: 1px"] { display: none !important }'
     document.head.appendChild(style)
   }, [])
 
