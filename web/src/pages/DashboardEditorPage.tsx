@@ -645,12 +645,12 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   addWidgetBtn: {
-    padding: '6px 16px',
+    padding: '5px 12px',
     background: 'var(--accent)',
     color: '#fff',
     border: 'none',
     borderRadius: 4,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: 600,
     cursor: 'pointer',
   },
@@ -739,7 +739,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 8,
   },
   addWidgetBtnMobile: {
-    padding: '6px 10px',
+    padding: '5px 12px',
   },
   mobileGrid: {
     display: 'flex',
