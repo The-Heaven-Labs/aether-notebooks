@@ -258,6 +258,12 @@ h1:hover a, h2:hover a, h3:hover a, h4:hover a, h5:hover a, h6:hover a {
   border-radius: 4px !important;
 }
 
+/* Hide resize handles — they appear as decorative lines below widgets but
+   don't work in view mode or notebooks. Resizing is handled by the library. */
+.react-resizable-handle {
+  display: none !important;
+}
+
 /* ── Global scrollbar (light mode) ─────────────────────────────────────── */
 *::-webkit-scrollbar {
   width: 7px;
