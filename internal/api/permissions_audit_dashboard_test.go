@@ -272,7 +272,7 @@ func TestDashboard_Widgets(t *testing.T) {
 			"/api/v1/dashboards/"+f.OrgA.Dashboards.GroupACL+"/widgets",
 			map[string]any{
 				"type": "chart", "notebook_id": testNbID, "cell_id": testCellID,
-				"layout": map[string]any{"row": 0, "col": 0, "width": 6, "height": 4},
+				"layout": map[string]any{"row": 0, "col": 6, "width": 6, "height": 4},
 			})
 		t.Logf("bobA create widget in GroupACL: %d %s", status, body)
 		require.Equal(t, http.StatusCreated, status)

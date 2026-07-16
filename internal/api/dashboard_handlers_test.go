@@ -164,6 +164,39 @@ func TestWidgetLayoutValidation_NegativeValues(t *testing.T) {
 	}
 }
 
+func TestWidgetLayoutValidation_Overlap(t *testing.T) {
+	os.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	token := registerAndGetToken(t, srv, fmt.Sprintf("wval-overlap-%d@example.com", ts), "WVal Overlap Org")
+
+	body, _ := json.Marshal(map[string]interface{}{"title": "Overlap Dashboard"})
+	req := httptest.NewRequest("POST", "/api/v1/dashboards", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create dashboard: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var dashResp map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&dashResp)
+	dashID := dashResp["id"].(string)
+
+	// First widget — should succeed
+	code := addWidget(t, srv, token, dashID, map[string]int{"row": 0, "col": 0, "width": 6, "height": 8})
+	if code != http.StatusCreated {
+		t.Fatalf("first widget: expected 201, got %d", code)
+	}
+
+	// Second widget at same position — should fail (overlap)
+	code = addWidget(t, srv, token, dashID, map[string]int{"row": 0, "col": 0, "width": 6, "height": 8})
+	if code != http.StatusBadRequest {
+		t.Fatalf("overlapping widget: expected 400, got %d", code)
+	}
+}
+
 func TestWidgetLayoutValidation_Valid(t *testing.T) {
 	os.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)

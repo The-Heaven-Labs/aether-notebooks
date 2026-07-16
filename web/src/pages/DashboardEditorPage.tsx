@@ -275,11 +275,9 @@ const markSaved = useCallback(() => {
 
   const onResizeStop = useCallback((layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
     if (newItem) {
-      // Use newItem's dimensions (w, h) but get the item from layout for position (x, y)
-      // to ensure we're working with the library's final computed position.
-      const settled = layout?.find(l => l.i === newItem.i)
-      const combined = settled ? { ...settled, w: newItem.w, h: newItem.h } : newItem
-      const clamped = clampHeight(clampWidth(combined, gridCols), layout)
+      // newItem has the correct final position and dimensions from the library.
+      // Use layout only for collision detection with OTHER widgets.
+      const clamped = clampHeight(clampWidth(newItem, gridCols), layout)
       saveLayout(clamped)
     }
   }, [saveLayout, gridCols])
