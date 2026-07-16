@@ -9,7 +9,7 @@ import type { Dashboard, Notebook, Cell, Widget } from '../types'
 import type { ChartConfig } from '../charts/types'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { ErrorBanner } from '../components/ErrorBanner'
-import { GridLayout, noCompactor } from 'react-grid-layout'
+import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem, Layout } from 'react-grid-layout'
 import { Skeleton } from '../components/Skeleton'
 import { PermissionsPanel } from '../components/PermissionsPanel'
@@ -226,74 +226,19 @@ const markSaved = useCallback(() => {
   }, [dashboard, qc, id])
 
   const onResizeStop = useCallback((layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
-    if (newItem) {
-      const settled = layout?.find(l => l.i === newItem.i) || newItem
-      saveLayout(settled)
+    if (newItem && layout) {
+      // The compactor may have moved other widgets. Save all widgets whose
+      // position changed, so the backend doesn't reject based on stale data.
+      layout.forEach(item => saveLayout(item))
     }
   }, [saveLayout])
 
-  const lastDragRef = useRef<{ x: number; y: number } | null>(null)
-
-  const onDrag = useCallback((_layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
-    if (newItem) lastDragRef.current = { x: newItem.x, y: newItem.y }
-  }, [])
-
-  const onDragStop = useCallback((layout: Layout, oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
-    if (!newItem) return
-    if (!dashboard) return
-
-    // Use the last position from onDrag (before the library's drop compaction)
-    // for swap detection. This reflects the user's actual drop target.
-    const targetPos = lastDragRef.current ?? { x: newItem.x, y: newItem.y }
-    lastDragRef.current = null
-
-    // Check if the dragged widget was dropped at a position that overlaps
-    // with another widget's current position. If so, swap their positions.
-    const preSwapWidget = layout?.find(item => {
-      if (item.i === newItem.i) return false
-      return targetPos.x < item.x + item.w &&
-        targetPos.x + item.w > item.x &&
-        targetPos.y < item.y + item.h &&
-        targetPos.y + item.h > item.y
-    })
-
-    if (preSwapWidget && oldItem) {
-      // The dragged widget overlaps with another widget's position.
-      // Swap the two widgets' positions only — keep their original sizes.
-      const savePromises: Promise<void>[] = []
-      const draggedWidget = dashboard.widgets?.find((w: Widget) => w.id === newItem.i)
-      if (draggedWidget) {
-        savePromises.push(
-          api.put(`/api/v1/dashboards/${dashboard.id}/widgets/${newItem.i}`, {
-            layout: { row: preSwapWidget.y, col: preSwapWidget.x, width: draggedWidget.layout.width, height: draggedWidget.layout.height },
-          }).then(() => {})
-        )
-      }
-      const targetWidget = dashboard.widgets?.find((w: Widget) => w.id === preSwapWidget.i)
-      if (targetWidget) {
-        savePromises.push(
-          api.put(`/api/v1/dashboards/${dashboard.id}/widgets/${preSwapWidget.i}`, {
-            layout: { row: oldItem.y, col: oldItem.x, width: targetWidget.layout.width, height: targetWidget.layout.height },
-          }).then(() => {})
-        )
-      }
-
-      if (savePromises.length) {
-        markSaving()
-        Promise.all(savePromises).then(() => {
-          qc.invalidateQueries({ queryKey: ['dashboard', id] })
-          markSaved()
-        }).catch(() => {
-          setMutationError('Failed to save widget layout')
-          markSaved()
-        })
-      }
-    } else {
-      // No swap — just save the dragged widget's position
-      const settled = layout?.find(l => l.i === newItem.i) || newItem
-      saveLayout(settled)
-    }
-  }, [saveLayout, dashboard, qc, id, markSaving, markSaved])
+  const onDragStop = useCallback((layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
+    if (!newItem || !layout) return
+    // The library's compactor handles overlap prevention.
+    // Save all widgets whose position changed.
+    layout.forEach(item => saveLayout(item))
+  }, [saveLayout])
 
   if (isLoading) {
     return (
@@ -550,12 +495,10 @@ const markSaved = useCallback(() => {
             <GridLayout
               layout={dashboard.widgets?.map(toGridItem) ?? []}
               width={containerWidth}
-              compactor={noCompactor}
               gridConfig={{ cols: gridCols, rowHeight: 30, margin: [4, 4] }}
               dragConfig={{ enabled: true, handle: '.widget-drag-handle' }}
               resizeConfig={{ enabled: true }}
               onResizeStop={onResizeStop}
-              onDrag={onDrag}
               onDragStop={onDragStop}
               style={{ minHeight: 240 }}
             >
@@ -640,9 +583,9 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--border)',
   },
   subHeader: {
-    background: 'var(--bg-primary)',
-    borderBottom: '1px solid var(--border)',
-    height: 84,
+    background: 'var(--nav-bg)',
+    borderBottom: '1px solid var(--nav-border)',
+    height: 44,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -702,12 +645,12 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   addWidgetBtn: {
-    padding: '6px 16px',
+    padding: '5px 12px',
     background: 'var(--accent)',
     color: '#fff',
     border: 'none',
     borderRadius: 4,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: 600,
     cursor: 'pointer',
   },
@@ -796,7 +739,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 8,
   },
   addWidgetBtnMobile: {
-    padding: '6px 10px',
+    padding: '5px 12px',
   },
   mobileGrid: {
     display: 'flex',

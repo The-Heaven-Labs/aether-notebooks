@@ -417,3 +417,53 @@ If a file was accidentally committed that should be ignored (e.g., `CLAUDE.md`, 
 3. `git remote add origin <url> && git push origin main --force`
 
 This rewrites history — coordinate with the team before doing it.
+
+## Code Style
+
+### Go
+- Format with `gofmt` (no exceptions). Run `task fmt` before committing.
+- Standard library `net/http ServeMux` — no frameworks (gin, chi, etc.).
+- Error handling: use `errors.Is` / `errors.As` for sentinel checking, not `==`.
+- Structs grouped by purpose; exported types get doc comments.
+- Tests: `testing` package + `testify/require` or `testify/assert`. No mocking — tests hit a real database.
+
+Example (`internal/api/permissions.go:23-30`):
+```go
+var resourceTable = map[string]string{
+    "notebook":     "notebooks",
+    "connector":    "connectors",
+    "dashboard":    "dashboards",
+    "agent":        "agents",
+    "model_config": "model_configs",
+    "skill":        "skills",
+    "mcp_server":   "mcp_servers",
+}
+```
+
+### TypeScript / React
+- Functional components with hooks — no class components.
+- Explicit typing everywhere — avoid `any` unless unavoidable (use `unknown` + type guard).
+- Imports: `react` first, then third-party, then local modules (no blank-line rule enforced).
+- CSS via CSS variables (`var(--accent)`, `var(--text-primary)`) — no hardcoded colors.
+- Test files co-located with components (e.g., `Cell.test.tsx` beside `Cell.tsx`) using Vitest.
+
+Example (`web/src/components/Cell.tsx:1-4`):
+```tsx
+import { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback, memo } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff } from 'lucide-react'
+```
+
+### Database
+- Migrations in `migrations/` with Flyway-compatible naming (`V<number>__<description>.sql`).
+- Applied automatically on server startup — no manual migration tool.
+- All schema changes get a new migration file; do not edit existing migrations.
+
+## Boundaries
+
+| Tier | What |
+|---|---|
+| **Always** | Run `task check` before pushing. Write tests for new handlers and executors. Use the `aether` CLI for API interactions. Follow existing patterns (router, middleware, error handling). |
+| **Ask first** | Introducing new major dependencies, changing the DB schema in a non-backward-compatible way, adding new services to the Docker Compose stack, modifying the CI pipeline or release process. |
+| **Never** | Commit secrets, API keys, or tokens. Force-push to `main`. Bypass ACL checks or introduce auth bypasses. Edit a migration that has already been applied in a release. Use `any` in TypeScript without a documented reason. |
