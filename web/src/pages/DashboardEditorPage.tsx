@@ -9,7 +9,7 @@ import type { Dashboard, Notebook, Cell, Widget } from '../types'
 import type { ChartConfig } from '../charts/types'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { ErrorBanner } from '../components/ErrorBanner'
-import { GridLayout, noCompactor } from 'react-grid-layout'
+import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem, Layout } from 'react-grid-layout'
 import { Skeleton } from '../components/Skeleton'
 import { PermissionsPanel } from '../components/PermissionsPanel'
@@ -41,54 +41,6 @@ function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width:
   if (!widgets.length) return { row: 0, col: 0, width: 6, height: 8 }
   const maxBottom = widgets.reduce((max, w) => Math.max(max, w.layout.row + w.layout.height), 0)
   return { row: maxBottom, col: 0, width: 6, height: 8 }
-}
-
-function clampWidth(item: LayoutItem, gridCols: number): LayoutItem {
-  const clamped = { ...item }
-  if (clamped.x + clamped.w > gridCols) {
-    clamped.w = gridCols - clamped.x
-  }
-  if (clamped.w < (clamped.minW ?? 1)) {
-    clamped.w = clamped.minW ?? 1
-  }
-  return clamped
-}
-
-function clampHeight(item: LayoutItem, layout: Layout): LayoutItem {
-  const clamped = { ...item }
-  // Find the nearest widget below that overlaps in column range.
-  const below = layout
-    .filter(other => other.i !== clamped.i)
-    .filter(other =>
-      clamped.x < other.x + other.w &&
-      clamped.x + clamped.w > other.x &&
-      other.y >= clamped.y
-    )
-    .sort((a, b) => a.y - b.y)
-  if (below.length > 0) {
-    const nearestTop = below[0].y
-    const maxH = nearestTop - clamped.y
-    if (maxH < 1) return clamped
-    clamped.h = maxH
-  }
-  return clamped
-}
-
-function clampPosition(item: LayoutItem, gridCols: number, layout: Layout): LayoutItem {
-  let clamped = clampWidth(item, gridCols)
-  // Shift down until no collision with other widgets.
-  const hasCollision = () =>
-    layout.some(other => {
-      if (other.i === clamped.i) return false
-      return clamped.x < other.x + other.w &&
-        clamped.x + clamped.w > other.x &&
-        clamped.y < other.y + other.h &&
-        clamped.y + clamped.h > other.y
-    })
-  while (hasCollision()) {
-    clamped.y++
-  }
-  return clamped
 }
 
 function WidgetContent({ widget }: { widget: Widget }) {
@@ -275,75 +227,18 @@ const markSaved = useCallback(() => {
 
   const onResizeStop = useCallback((layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
     if (newItem) {
-      // newItem has the correct final position and dimensions from the library.
-      // Use layout only for collision detection with OTHER widgets.
-      const clamped = clampHeight(clampWidth(newItem, gridCols), layout)
-      saveLayout(clamped)
-    }
-  }, [saveLayout, gridCols])
-
-  const lastDragRef = useRef<{ x: number; y: number } | null>(null)
-
-  const onDrag = useCallback((_layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
-    if (newItem) lastDragRef.current = { x: newItem.x, y: newItem.y }
-  }, [])
-
-  const onDragStop = useCallback((layout: Layout, oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
-    if (!newItem) return
-    if (!dashboard) return
-
-    // Use the last position from onDrag (before the library's drop compaction)
-    // for swap detection. This reflects the user's actual drop target.
-    const targetPos = lastDragRef.current ?? { x: newItem.x, y: newItem.y }
-    lastDragRef.current = null
-
-    // Check if the dragged widget was dropped at a position that overlaps
-    // with another widget's current position. If so, swap their positions.
-    const preSwapWidget = layout?.find(item => {
-      if (item.i === newItem.i) return false
-      return targetPos.x < item.x + item.w &&
-        targetPos.x + item.w > item.x &&
-        targetPos.y < item.y + item.h &&
-        targetPos.y + item.h > item.y
-    })
-
-    if (preSwapWidget && oldItem) {
-      // The dragged widget overlaps with another widget's position.
-      // Swap the two widgets' positions only — keep their original sizes.
-      const savePromises: Promise<void>[] = []
-      const draggedWidget = dashboard.widgets?.find((w: Widget) => w.id === newItem.i)
-      if (draggedWidget) {
-        savePromises.push(
-          api.put(`/api/v1/dashboards/${dashboard.id}/widgets/${newItem.i}`, {
-            layout: { row: preSwapWidget.y, col: preSwapWidget.x, width: draggedWidget.layout.width, height: draggedWidget.layout.height },
-          }).then(() => {})
-        )
-      }
-      const targetWidget = dashboard.widgets?.find((w: Widget) => w.id === preSwapWidget.i)
-      if (targetWidget) {
-        savePromises.push(
-          api.put(`/api/v1/dashboards/${dashboard.id}/widgets/${preSwapWidget.i}`, {
-            layout: { row: oldItem.y, col: oldItem.x, width: targetWidget.layout.width, height: targetWidget.layout.height },
-          }).then(() => {})
-        )
-      }
-
-      if (savePromises.length) {
-        markSaving()
-        Promise.all(savePromises).then(() => {
-          qc.invalidateQueries({ queryKey: ['dashboard', id] })
-          markSaved()
-        }).catch(() => {
-          setMutationError('Failed to save widget layout')
-          markSaved()
-        })
-      }
-    } else {
-      // No swap — just save the dragged widget's position
       const settled = layout?.find(l => l.i === newItem.i) || newItem
-      saveLayout(clampPosition(settled, gridCols, layout))
+      saveLayout(settled)
     }
-  }, [saveLayout, dashboard, qc, id, markSaving, markSaved, gridCols])
+  }, [saveLayout])
+
+  const onDragStop = useCallback((layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
+    if (!newItem) return
+    // The library's compactor handles overlap prevention.
+    // Just save the final position.
+    const settled = layout?.find(l => l.i === newItem.i) || newItem
+    saveLayout(settled)
+  }, [saveLayout])
 
   if (isLoading) {
     return (
@@ -600,12 +495,10 @@ const markSaved = useCallback(() => {
             <GridLayout
               layout={dashboard.widgets?.map(toGridItem) ?? []}
               width={containerWidth}
-              compactor={noCompactor}
               gridConfig={{ cols: gridCols, rowHeight: 30, margin: [4, 4] }}
               dragConfig={{ enabled: true, handle: '.widget-drag-handle' }}
               resizeConfig={{ enabled: true }}
               onResizeStop={onResizeStop}
-              onDrag={onDrag}
               onDragStop={onDragStop}
               style={{ minHeight: 240 }}
             >
