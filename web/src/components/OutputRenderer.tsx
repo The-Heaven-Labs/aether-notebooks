@@ -740,7 +740,7 @@ const styles: Record<string, React.CSSProperties> = {
     overflowAnchor: 'none',
   },
   resizeHandle: {
-    display: 'flex',
+    display: 'none',
     alignItems: 'center',
     justifyContent: 'center',
     height: 8,
