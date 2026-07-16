@@ -11,6 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-heaven-labs/aether/internal/models"
+	"github.com/the-heaven-labs/aether/internal/validate"
 )
 
 func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
@@ -298,6 +300,16 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 			"height": req.Height,
 		})
 
+		// Validate layout bounds and overlap.
+		if err := validate.WidgetLayout(ctx.Context, pool, req.DashboardID, models.WidgetLayout{
+			Row:    req.Row,
+			Col:    req.Col,
+			Width:  req.Width,
+			Height: req.Height,
+		}, ""); err != nil {
+			return nil, fmt.Errorf("invalid layout: %w", err)
+		}
+
 		// Copy the cell's chart config into widget config as fallback
 		var cellChart json.RawMessage
 		pool.QueryRow(ctx.Context, `SELECT metadata->'chart' FROM cells WHERE id = $1`, req.CellID).Scan(&cellChart)
@@ -373,6 +385,16 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 			b, _ := json.Marshal(l)
 			s := string(b)
 			layout = &s
+
+			// Validate layout bounds and overlap.
+			if err := validate.WidgetLayout(ctx.Context, pool, req.DashboardID, models.WidgetLayout{
+				Row:    l["row"],
+				Col:    l["col"],
+				Width:  l["width"],
+				Height: l["height"],
+			}, req.WidgetID); err != nil {
+				return nil, fmt.Errorf("invalid layout: %w", err)
+			}
 		}
 
 		if layout != nil {
