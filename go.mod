@@ -16,7 +16,7 @@ require (
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/redis/go-redis/v9 v9.21.0
-	github.com/reearth/ygo v1.30.0
+	github.com/reearth/ygo v1.34.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/shopspring/decimal v1.4.0
 	github.com/spf13/cobra v1.10.2
