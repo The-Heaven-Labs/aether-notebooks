@@ -141,12 +141,8 @@ func load(migrateOnly bool) (*Config, error) {
 		if cfg.S3Bucket == "" {
 			return nil, fmt.Errorf("AETHER_S3_BUCKET is required when AETHER_STORAGE_BACKEND=s3")
 		}
-		if cfg.S3AccessKey == "" {
-			return nil, fmt.Errorf("AETHER_S3_ACCESS_KEY is required when AETHER_STORAGE_BACKEND=s3")
-		}
-		if cfg.S3SecretKey == "" {
-			return nil, fmt.Errorf("AETHER_S3_SECRET_KEY is required when AETHER_STORAGE_BACKEND=s3")
-		}
+		// Access key and secret are optional — when both are empty,
+		// the S3 client uses the default AWS credential chain (IRSA, env vars, etc.)
 	}
 	if cfg.Port == "" {
 		cfg.Port = "8088"
