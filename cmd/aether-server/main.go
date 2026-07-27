@@ -75,8 +75,8 @@ Configuration is done via environment variables:
     AETHER_S3_ENDPOINT          S3-compatible endpoint URL
     AETHER_S3_BUCKET            S3 bucket name
     AETHER_S3_REGION            S3 region (default: "us-east-1")
-    AETHER_S3_ACCESS_KEY        S3 access key
-    AETHER_S3_SECRET_KEY        S3 secret key
+    AETHER_S3_ACCESS_KEY        S3 access key (optional — when omitted, uses IAM role / default credential chain)
+    AETHER_S3_SECRET_KEY        S3 secret key (optional — when omitted, uses IAM role / default credential chain)
 
   Admin:
     AETHER_PLATFORM_ADMIN_EMAIL Email of user to auto-promote to platform admin
@@ -310,8 +310,8 @@ func resolveModelConfigEnvVars(ctx context.Context, pool *pgxpool.Pool, masterKe
 	defer rows.Close()
 
 	type row struct {
-		id       string
-		envVar   string
+		id     string
+		envVar string
 	}
 	var toResolve []row
 	for rows.Next() {

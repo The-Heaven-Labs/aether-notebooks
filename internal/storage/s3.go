@@ -26,11 +26,18 @@ type S3Config struct {
 }
 
 func NewS3Storage(cfg S3Config) (Storage, error) {
-	opts := []func(*awsconfig.LoadOptions) error{
-		awsconfig.WithRegion(cfg.Region),
-		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			cfg.AccessKey, cfg.SecretKey, "",
-		)),
+	var opts []func(*awsconfig.LoadOptions) error
+
+	if cfg.AccessKey == "" && cfg.SecretKey == "" {
+		// Use default credential chain — picks up IRSA, env vars, EC2 metadata, etc.
+		opts = append(opts, awsconfig.WithRegion(cfg.Region))
+	} else {
+		opts = append(opts,
+			awsconfig.WithRegion(cfg.Region),
+			awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+				cfg.AccessKey, cfg.SecretKey, "",
+			)),
+		)
 	}
 
 	awsCfg, err := awsconfig.LoadDefaultConfig(context.Background(), opts...)
