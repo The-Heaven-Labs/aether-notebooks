@@ -128,7 +128,7 @@ func load(migrateOnly bool) (*Config, error) {
 		if password == "" {
 			password = "aether_dev"
 		}
-		cfg.DatabaseURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s&options=-c%%20search_path%%3D%s", user, password, host, port, name, cfg.DatabaseSSMode, cfg.DatabaseSchema)
+		cfg.DatabaseURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s", user, password, host, port, name, cfg.DatabaseSSMode)
 	}
 
 	if !migrateOnly {
