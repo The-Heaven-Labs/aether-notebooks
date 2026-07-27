@@ -17,6 +17,7 @@ type Config struct {
 	DatabaseUser        string
 	DatabasePassword    string
 	DatabaseSSMode      string
+	DatabaseSchema      string // PostgreSQL search_path
 	RedisURL            string
 	MasterKey           string // for encrypting connector credentials
 	JWTSecret           string
@@ -84,6 +85,7 @@ func load(migrateOnly bool) (*Config, error) {
 		DatabaseUser:        resolveEnvRef("AETHER_DATABASE_USER_ENV"),
 		DatabasePassword:    resolveEnvRef("AETHER_DATABASE_PASSWORD_ENV"),
 		DatabaseSSMode:      envOrDefault("AETHER_DATABASE_SSLMODE", "disable"),
+		DatabaseSchema:      envOrDefault("AETHER_DATABASE_SCHEMA", "aether_notebooks"),
 		RedisURL:            envOrDefault("AETHER_REDIS_URL", "redis://localhost:6379"),
 		MasterKey:           os.Getenv("AETHER_MASTER_KEY"),
 		JWTSecret:           os.Getenv("AETHER_JWT_SECRET"),
@@ -126,7 +128,7 @@ func load(migrateOnly bool) (*Config, error) {
 		if password == "" {
 			password = "aether_dev"
 		}
-		cfg.DatabaseURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s", user, password, host, port, name, cfg.DatabaseSSMode)
+		cfg.DatabaseURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s&search_path=%s", user, password, host, port, name, cfg.DatabaseSSMode, cfg.DatabaseSchema)
 	}
 
 	if !migrateOnly {
