@@ -171,6 +171,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full development setup and coding con
 | `AETHER_MASTER_KEY` | Yes | — | AES-256 key for encrypting connector credentials |
 | `AETHER_JWT_SECRET` | Yes | — | JWT signing secret |
 | `AETHER_DATABASE_URL` | No | `postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable` | Postgres connection string |
+| `AETHER_DATABASE_SCHEMA` | No | `aether_notebooks` | Postgres schema applied via SET after connecting (not in DSN for PgBouncer compat) |
 | `AETHER_REDIS_URL` | No | `redis://localhost:6379` | Redis connection string |
 | `AETHER_PORT` | No | `8080` | API server listen port |
 | `AETHER_FRONTEND_URL` | No | `http://localhost:5173` | Frontend URL for CORS and OIDC redirect |

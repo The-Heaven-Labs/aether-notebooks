@@ -14,7 +14,10 @@ type DB struct {
 }
 
 // Connect establishes a PostgreSQL connection pool using the provided URL.
-func Connect(ctx context.Context, dsn string) (*DB, error) {
+// If schema is non-empty, SET search_path is executed after connecting to
+// ensure tables are found in the correct schema (avoids PgBouncer filtering
+// of search_path as a startup parameter).
+func Connect(ctx context.Context, dsn string, schema string) (*DB, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
@@ -23,6 +26,14 @@ func Connect(ctx context.Context, dsn string) (*DB, error) {
 		pool.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
+
+	if schema != "" {
+		if _, err := pool.Exec(ctx, "SET search_path TO "+schema+", public"); err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("set search_path: %w", err)
+		}
+	}
+
 	return &DB{Pool: pool}, nil
 }
 

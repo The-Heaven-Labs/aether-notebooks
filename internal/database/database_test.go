@@ -14,7 +14,7 @@ func TestConnect(t *testing.T) {
 		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
 	}
 
-	db, err := database.Connect(context.Background(), dsn)
+	db, err := database.Connect(context.Background(), dsn, "")
 	if err != nil {
 		t.Fatalf("failed to connect: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestMigrate(t *testing.T) {
 		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
 	}
 
-	db, err := database.Connect(context.Background(), dsn)
+	db, err := database.Connect(context.Background(), dsn, "")
 	if err != nil {
 		t.Fatalf("failed to connect: %v", err)
 	}

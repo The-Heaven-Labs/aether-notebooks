@@ -59,7 +59,7 @@ Configuration is done via environment variables:
     AETHER_DATABASE_USER_ENV    Env var name containing the Postgres user (e.g. "DB_USER_AETHER_NOTEBOOKS")
     AETHER_DATABASE_PASSWORD_ENV Env var name containing the Postgres password (e.g. "DB_PASS_AETHER_NOTEBOOKS")
     AETHER_DATABASE_SSLMODE     Postgres SSL mode (default: "disable")
-    AETHER_DATABASE_SCHEMA      PostgreSQL schema / search_path (default: "aether_notebooks")
+    AETHER_DATABASE_SCHEMA      PostgreSQL schema / search_path (default: "aether_notebooks") — applied via SET after connecting
     AETHER_DISABLE_MIGRATIONS   Skip embedded migrations on startup (default: "false") — set to "true" when pipeline handles migrations
     AETHER_REDIS_URL            Redis connection URL (default: "redis://localhost:6379")
 
@@ -135,7 +135,7 @@ func main() {
 	ctx := context.Background()
 
 	// Connect to Postgres
-	db, err := database.Connect(ctx, cfg.DatabaseURL)
+	db, err := database.Connect(ctx, cfg.DatabaseURL, cfg.DatabaseSchema)
 	if err != nil {
 		slog.Error("database connect failed", "error", err)
 		os.Exit(1)
