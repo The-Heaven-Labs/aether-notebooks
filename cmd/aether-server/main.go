@@ -59,6 +59,7 @@ Configuration is done via environment variables:
     AETHER_DATABASE_USER_ENV    Env var name containing the Postgres user (e.g. "DB_USER_AETHER_NOTEBOOKS")
     AETHER_DATABASE_PASSWORD_ENV Env var name containing the Postgres password (e.g. "DB_PASS_AETHER_NOTEBOOKS")
     AETHER_DATABASE_SSLMODE     Postgres SSL mode (default: "disable")
+    AETHER_DATABASE_SCHEMA      PostgreSQL schema / search_path (default: "aether_notebooks")
     AETHER_DISABLE_MIGRATIONS   Skip embedded migrations on startup (default: "false") — set to "true" when pipeline handles migrations
     AETHER_REDIS_URL            Redis connection URL (default: "redis://localhost:6379")
 
@@ -83,6 +84,9 @@ Configuration is done via environment variables:
 
   OIDC / SSO:
     AETHER_OIDC_HOST_REWRITE    "from=to" pair to rewrite the OIDC discovery host
+
+  Dev:
+    AETHER_ENABLE_DEV_SEED      Enable dev-only seeding (SSO provider, audit S3 config) (default: "false")
 
   Webhooks:
     AETHER_TOOL_ALLOWED_DOMAINS Comma-separated list of allowed domains for webhook tools
@@ -204,9 +208,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Seed dev SSO providers (Keycloak) and audit S3 config (Garage) if none exist yet
-	api.SeedDevSSOProviders(ctx, db.Pool, masterKey)
-	api.SeedDevAuditS3Config(ctx, db.Pool)
+	// Seed dev SSO providers (Keycloak) and audit S3 config (Garage) if enabled
+	if os.Getenv("AETHER_ENABLE_DEV_SEED") == "true" {
+		api.SeedDevSSOProviders(ctx, db.Pool, masterKey)
+		api.SeedDevAuditS3Config(ctx, db.Pool)
+	}
 
 	// Resolve model config env var references
 	resolveModelConfigEnvVars(ctx, db.Pool, masterKey)
