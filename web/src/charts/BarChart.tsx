@@ -62,7 +62,7 @@ function BarChartComponent({ data, config }: ChartProps) {
         { type: 'inside' as const, start: 0, end: 100, ...(isHorizontal ? { yAxisIndex: 0 } : {}) },
         { type: 'slider' as const, start: 0, end: 100, bottom: 8, height: 20, borderColor: colors.border, textStyle: { fontSize: 10, color: colors.textMuted } },
       ] : undefined,
-      xAxis: mlXAxis ? [isHorizontal ? valAxis : catAxis, mlXAxis] : (isHorizontal ? valAxis : catAxis),
+      xAxis: mlXAxis ? [isHorizontal ? valAxis : catAxis, mlXAxis].filter(Boolean) : (isHorizontal ? valAxis : catAxis),
       yAxis: isHorizontal ? catAxis : valAxis,
       series: [...series, ...mlSeries],
     }

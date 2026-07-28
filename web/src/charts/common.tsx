@@ -679,15 +679,27 @@ export const EChartsContainer = memo(function EChartsContainer({ option, onChart
       } catch { /* ignore — best-effort preservation */ }
     }
 
-    try {
-      chartRef.current.setOption(finalOption, { notMerge })
-    } catch {
-      // Container may have 0 size on first render before layout settles.
-      // resize() will re-trigger rendering once the ResizeObserver fires.
+    const hasSize = containerRef.current &&
+      containerRef.current.clientWidth > 0 &&
+      containerRef.current.clientHeight > 0
+
+    if (hasSize) {
+      try {
+        chartRef.current.setOption(finalOption, { notMerge })
+      } catch {
+        // option may be incomplete during transitions; resize will retry
+      }
     }
 
     const ro = new ResizeObserver(() => {
-      chartRef.current?.resize()
+      try {
+        if (chartRef.current && containerRef.current &&
+            containerRef.current.clientHeight > 0) {
+          chartRef.current.resize()
+        }
+      } catch {
+        // ignore — ECharts may throw during transition; next observation recovers
+      }
     })
     ro.observe(containerRef.current)
     return () => ro.disconnect()
@@ -701,7 +713,7 @@ export const EChartsContainer = memo(function EChartsContainer({ option, onChart
   }, [])
 
   return (
-    <div ref={wrapperRef} style={{ position: 'relative', flex: 1, minHeight: 0 }}>
+    <div ref={wrapperRef} style={{ position: 'relative', flex: 1, minHeight: 300 }}>
       <div data-testid="chart-container" ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
       {showReset && (
         <button

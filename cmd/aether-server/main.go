@@ -85,6 +85,10 @@ Configuration is done via environment variables:
   OIDC / SSO:
     AETHER_OIDC_HOST_REWRITE    "from=to" pair to rewrite the OIDC discovery host
 
+  Frontend Runtime Config:
+    AETHER_API_URL              Base URL for REST API from the SPA (default: same-origin)
+    AETHER_RELAY_URL            WebSocket URL of the Hocuspocus relay (default: derived from origin as wss://<origin>/relay)
+
   Dev:
     AETHER_ENABLE_DEV_SEED      Enable dev-only seeding (SSO provider, audit S3 config) (default: "false")
 
@@ -270,7 +274,10 @@ func main() {
 	srv.SetToolAllowedDomains(cfg.ToolAllowedDomains)
 	srv.SetOIDCHostRewrite(cfg.OIDCHostRewrite)
 	srv.SetDisableRegistration(cfg.DisableRegistration)
-	srv.SetFrontendHandler(frontendHandler())
+	srv.SetFrontendHandler(frontendHandler(&runtimeConfig{
+		APIURL:   cfg.APIURL,
+		RelayURL: cfg.RelayURL,
+	}))
 	httpSrv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      srv,
