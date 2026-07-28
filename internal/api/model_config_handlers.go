@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/google/uuid"
@@ -160,10 +162,21 @@ func (h *modelConfigHandlers) handleCreate(w http.ResponseWriter, r *http.Reques
 
 	var encryptedKey []byte
 	var apiKeyEnvVar *string
+	var err error
 	if envVar := parseEnvVarRef(req.APIKey); envVar != "" {
 		apiKeyEnvVar = &envVar
+		val, ok := os.LookupEnv(envVar)
+		if !ok || val == "" {
+			writeError(w, http.StatusBadRequest,
+				fmt.Sprintf("environment variable %q is not set or empty", envVar))
+			return
+		}
+		encryptedKey, err = crypto.Encrypt([]byte(val), h.server.masterKey)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to encrypt API key")
+			return
+		}
 	} else {
-		var err error
 		encryptedKey, err = crypto.Encrypt([]byte(req.APIKey), h.server.masterKey)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to encrypt API key")
@@ -171,7 +184,7 @@ func (h *modelConfigHandlers) handleCreate(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	_, err := h.server.db.Pool.Exec(r.Context(), `
+	_, err = h.server.db.Pool.Exec(r.Context(), `
 		INSERT INTO model_configs (id, org_id, name, provider, base_url, model, api_key_encrypted,
 			default_params, context_window, price_per_input_token, price_per_output_token,
 			price_per_cache_read_token, folder_id, created_by, created_at, updated_at,
@@ -235,10 +248,21 @@ func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Reques
 
 	if req.APIKey != nil {
 		if envVar := parseEnvVarRef(*req.APIKey); envVar != "" {
+			val, ok := os.LookupEnv(envVar)
+			if !ok || val == "" {
+				writeError(w, http.StatusBadRequest,
+					fmt.Sprintf("environment variable %q is not set or empty", envVar))
+				return
+			}
+			encrypted, encErr := crypto.Encrypt([]byte(val), h.server.masterKey)
+			if encErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to encrypt API key")
+				return
+			}
 			result, err := h.server.db.Pool.Exec(r.Context(), `
-				UPDATE model_configs SET api_key_encrypted = '\x'::bytea, api_key_env_var = $2, updated_at = NOW()
-				WHERE id = $1 AND org_id = $3
-			`, cfgID, envVar, claims.OrgID)
+				UPDATE model_configs SET api_key_encrypted = $2, api_key_env_var = $3, updated_at = NOW()
+				WHERE id = $1 AND org_id = $4
+			`, cfgID, encrypted, envVar, claims.OrgID)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, err.Error())
 				return

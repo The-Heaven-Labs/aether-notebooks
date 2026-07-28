@@ -88,8 +88,7 @@ func (s *Server) handleCreateDashboard(w http.ResponseWriter, r *http.Request) {
 
 	_, aclErr := s.db.Pool.Exec(ctx,
 		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-		 VALUES ($1, 'dashboard', $2::uuid, 'user', $3, ARRAY['view','edit','delete','share']),
-		        ($1, 'dashboard', $2::uuid, 'org_role', 'admin', ARRAY['view','edit','delete','share'])
+		 VALUES ($1, 'dashboard', $2::uuid, 'user', $3, ARRAY['view','edit','delete','share'])
 		 ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
 		claims.OrgID, dash.ID, claims.UserID,
 	)

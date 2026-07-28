@@ -247,8 +247,7 @@ func makeCreateDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 
 		_, aclErr := pool.Exec(ctx.Context, `
 			INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-			VALUES ($1, 'dashboard', $2::uuid, 'user', $3, ARRAY['view','edit','delete','share']),
-			       ($1, 'dashboard', $2::uuid, 'org_role', 'admin', ARRAY['view','edit','delete','share'])
+			VALUES ($1, 'dashboard', $2::uuid, 'user', $3, ARRAY['view','edit','delete','share'])
 			ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
 			ctx.OrgID, id, ctx.UserID,
 		)
@@ -920,8 +919,7 @@ func makeImportNotebookHandler(pool *pgxpool.Pool) ToolHandler {
 
 		if _, err := tx.Exec(ctx.Context, `
 			INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-			VALUES ($1, 'notebook', $2::uuid, 'user', $3, ARRAY['view','run','edit','share','delete','create']),
-			       ($1, 'notebook', $2::uuid, 'org_role', 'admin', ARRAY['view','run','edit','share','delete','create'])
+			VALUES ($1, 'notebook', $2::uuid, 'user', $3, ARRAY['view','run','edit','share','delete','create'])
 			ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
 			ctx.OrgID, nbID, ctx.UserID,
 		); err != nil {

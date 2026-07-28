@@ -56,7 +56,9 @@ func NewClickHouseExecutor(cfg models.ConnectorConfig) (*ClickHouseExecutor, err
 
 // chBaseType strips Nullable(...) and LowCardinality(...) wrappers and
 // returns the bare type name without parameters (e.g. "DateTime64(3)" → "DateTime64").
-func chBaseType(t string) (base string, nullable bool) {
+// For compound types (Array, Map, Tuple, etc.) it also returns the inner type string
+// (the content inside the outermost parentheses).
+func chBaseType(t string) (base string, inner string, nullable bool) {
 	if strings.HasPrefix(t, "Nullable(") && strings.HasSuffix(t, ")") {
 		t = t[9 : len(t)-1]
 		nullable = true
@@ -65,9 +67,10 @@ func chBaseType(t string) (base string, nullable bool) {
 		t = t[15 : len(t)-1]
 	}
 	if idx := strings.IndexByte(t, '('); idx >= 0 {
+		inner = t[idx+1 : len(t)-1]
 		t = t[:idx]
 	}
-	return t, nullable
+	return t, inner, nullable
 }
 
 // chAllocDest returns a pointer suitable for scanning a ClickHouse column.
@@ -75,7 +78,8 @@ func chBaseType(t string) (base string, nullable bool) {
 // (Int128/Int256/UInt128/UInt256) use *big.Int.
 // Nullable columns require a pointer-to-pointer so the driver can set nil.
 func chAllocDest(typeName string) interface{} {
-	base, nullable := chBaseType(typeName)
+	base, inner, nullable := chBaseType(typeName)
+	_ = inner // available for future typed allocation
 	if nullable {
 		switch base {
 		case "String", "FixedString", "UUID", "Enum8", "Enum16":
@@ -126,6 +130,21 @@ func chAllocDest(typeName string) interface{} {
 		case "Decimal":
 			var v *decimal.Decimal
 			return &v
+		case "Array":
+			var v *[]any
+			return &v
+		case "Map":
+			var v *map[string]any
+			return &v
+		case "Tuple":
+			var v *map[string]any
+			return &v
+		case "JSON", "Object", "Variant":
+			var v *any
+			return &v
+		case "Nested":
+			var v *[]map[string]any
+			return &v
 		default:
 			var v *string
 			return &v
@@ -164,6 +183,16 @@ func chAllocDest(typeName string) interface{} {
 		return new(time.Time)
 	case "Decimal":
 		return new(decimal.Decimal)
+	case "Array":
+		return new([]any)
+	case "Map":
+		return new(map[string]any)
+	case "Tuple":
+		return new(map[string]any)
+	case "JSON", "Object", "Variant":
+		return new(any)
+	case "Nested":
+		return new([]map[string]any)
 	default:
 		return new(string)
 	}
@@ -283,6 +312,34 @@ func chExtractValue(dest interface{}) interface{} {
 			return nil
 		}
 		return (*v).Format(time.RFC3339)
+	case *[]any:
+		return *v
+	case **[]any:
+		if *v == nil {
+			return nil
+		}
+		return **v
+	case *map[string]any:
+		return *v
+	case **map[string]any:
+		if *v == nil {
+			return nil
+		}
+		return **v
+	case *any:
+		return *v
+	case **any:
+		if *v == nil {
+			return nil
+		}
+		return **v
+	case *[]map[string]any:
+		return *v
+	case **[]map[string]any:
+		if *v == nil {
+			return nil
+		}
+		return **v
 	default:
 		return fmt.Sprintf("%v", dest)
 	}
