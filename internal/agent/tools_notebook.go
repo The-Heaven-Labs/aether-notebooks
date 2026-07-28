@@ -461,8 +461,8 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 
 		now := time.Now()
 		_, err := db.Exec(ctx.Context, `
-			INSERT INTO cells (id, notebook_id, type, language, connector_id, source, position, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+			INSERT INTO cells (id, notebook_id, type, language, connector_id, source, position, "limit", created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 1000, $8, $8)
 		`, cellID, req.NotebookID, req.Type, language, connID, req.Source, position, now)
 		if err != nil {
 			return nil, fmt.Errorf("create cell: %w", err)

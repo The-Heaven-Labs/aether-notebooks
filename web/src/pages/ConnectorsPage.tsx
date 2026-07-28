@@ -454,13 +454,6 @@ export function ConnectorsPage() {
                         <><Loader2 size={11} style={{ animation: 'spin 1s linear infinite', marginRight: 4 }} />Testing…</>
                       ) : 'Test'}
                     </button>
-                    {test && test !== undefined && (
-                      <StatusBadge
-                        status={test.ok ? 'success' : 'error'}
-                        label={test.ok ? 'Connected' : (test.error ?? 'Failed')}
-                        icon={test.ok ? <Check size={12} /> : <X size={12} />}
-                      />
-                    )}
                     <button type="button" style={styles.editBtn} onClick={() => {
                       setEditing(c.id)
                       setEditForm({
