@@ -21,30 +21,41 @@ func frontendHandler(cfg *runtimeConfig) http.Handler {
 	if err != nil {
 		panic(err)
 	}
-	fileServer := http.FileServer(http.FS(sub))
+	return frontendHandlerWithFS(sub, cfg)
+}
+
+func frontendHandlerWithFS(assets fs.FS, cfg *runtimeConfig) http.Handler {
+	fileServer := http.FileServer(http.FS(assets))
 
 	cfgJSON, _ := json.Marshal(cfg)
 	injectTag := []byte(`<script>window.__AETHER_CONFIG__=` + string(cfgJSON) + `</script>`)
 
+	idxBytes, err := fs.ReadFile(assets, "index.html")
+	idxInjected := []byte{}
+	if err == nil {
+		idxInjected = bytes.Replace(idxBytes, []byte("</head>"), append(injectTag, []byte("</head>")...), 1)
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
-		if path == "/" || path == "/index.html" {
-			idx, err := fs.ReadFile(sub, "index.html")
-			if err == nil {
-				idx = bytes.Replace(idx, []byte("</head>"), append(injectTag, []byte("</head>")...), 1)
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				w.Header().Set("Cache-Control", "no-cache")
-				w.Write(idx)
+		// Serve static assets (JS, CSS, images, fonts) directly
+		if path != "/" && path != "/index.html" {
+			if _, err := fs.Stat(assets, path[1:]); err == nil {
+				fileServer.ServeHTTP(w, r)
 				return
 			}
 		}
 
-		if path != "/" {
-			if _, err := fs.Stat(sub, path[1:]); err != nil {
-				r.URL.Path = "/"
-			}
+		// Serve index.html with config injection.
+		// This covers root path ("/"), "/index.html", and all SPA fallback
+		// routes ("/notebooks/<id>", "/dashboards", etc.).
+		if len(idxInjected) > 0 {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Write(idxInjected)
+		} else {
+			fileServer.ServeHTTP(w, r)
 		}
-		fileServer.ServeHTTP(w, r)
 	})
 }
