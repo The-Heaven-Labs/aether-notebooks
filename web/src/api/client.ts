@@ -1,4 +1,5 @@
-const BASE_URL = import.meta.env.VITE_API_URL || ''
+import { getApiUrl } from '../config'
+const BASE_URL = getApiUrl()
 
 export function getToken(): string | null {
   return localStorage.getItem('aether_token')

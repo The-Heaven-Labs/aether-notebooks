@@ -65,7 +65,8 @@ interface AgentPanelProps {
   docked?: boolean
 }
 
-const WS_URL = (import.meta.env.VITE_WS_URL || `${window.location.origin.replace(/^http/, 'ws')}`) + '/api/v1/ws/agents/'
+import { getWsUrl } from '../config'
+const WS_URL = getWsUrl() + '/api/v1/ws/agents/'
 const LAST_AGENT_KEY = 'aether:lastAgentId'
 const LAST_SESSION_KEY = 'aether:lastSessionId'
 const CHAT_STATE_KEY = 'aether:agentChat:'

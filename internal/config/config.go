@@ -34,6 +34,8 @@ type Config struct {
 	MaxAttachmentBytes  int64
 	ToolAllowedDomains  []string // comma-separated domains allowed for webhook tools (bypasses private IP block)
 	OIDCHostRewrite     string   // "from=to" pair for rewriting OIDC discovery host (e.g. "localhost:5557=host.docker.internal:5557")
+	APIURL              string   // base URL for REST API from the SPA (empty = same-origin)
+	RelayURL            string   // WebSocket URL of the Hocuspocus relay (empty = derive from origin)
 	DisableRegistration bool     // when true, new users cannot register via email/password (SSO only)
 	DisableMigrations   bool     // when true, skip embedded migrations on startup (used when pipeline handles migrations)
 }
@@ -102,6 +104,8 @@ func load(migrateOnly bool) (*Config, error) {
 		MaxAttachmentBytes:  maxAttachmentBytes,
 		ToolAllowedDomains:  parseCommaList(os.Getenv("AETHER_TOOL_ALLOWED_DOMAINS")),
 		OIDCHostRewrite:     os.Getenv("AETHER_OIDC_HOST_REWRITE"),
+		APIURL:              os.Getenv("AETHER_API_URL"),
+		RelayURL:            os.Getenv("AETHER_RELAY_URL"),
 		DisableRegistration: envOrDefault("AETHER_DISABLE_REGISTRATION", "false") == "true",
 		DisableMigrations:   envOrDefault("AETHER_DISABLE_MIGRATIONS", "false") == "true",
 	}

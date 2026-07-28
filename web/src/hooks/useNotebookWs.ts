@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { getToken } from '../api/client'
+import { getWsUrl } from '../config'
 
 export function useNotebookWs(
   notebookId: string | undefined,
@@ -37,8 +38,7 @@ export function useNotebookWs(
     const token = getToken()
     if (!token) return
 
-    const base = import.meta.env.VITE_API_URL || window.location.origin
-    const wsBase = base.replace(/^http/, 'ws')
+    const wsBase = getWsUrl()
     const url = `${wsBase}/api/v1/ws/notebooks/${notebookId}?token=${token}`
 
     const ws = new WebSocket(url)
