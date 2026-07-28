@@ -1432,8 +1432,7 @@ func makeCreateNotebookHandler(db *pgxpool.Pool) ToolHandler {
 
 		_, aclErr := db.Exec(ctx.Context, `
 			INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-			VALUES ($1, 'notebook', $2::uuid, 'user', $3, ARRAY['view','run','edit','share','delete','create']),
-			       ($1, 'notebook', $2::uuid, 'org_role', 'admin', ARRAY['view','run','edit','share','delete','create'])
+			VALUES ($1, 'notebook', $2::uuid, 'user', $3, ARRAY['view','run','edit','share','delete','create'])
 			ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
 			ctx.OrgID, id, ctx.UserID,
 		)

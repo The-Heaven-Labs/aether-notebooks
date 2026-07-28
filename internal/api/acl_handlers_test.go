@@ -37,8 +37,8 @@ func TestACLGetAndPut(t *testing.T) {
 	}
 	var entries []any
 	json.NewDecoder(rec.Body).Decode(&entries)
-	if len(entries) != 2 {
-		t.Errorf("expected 2 initial ACL entries (creator + admin), got %d", len(entries))
+	if len(entries) != 1 {
+		t.Errorf("expected 1 initial ACL entry (creator), got %d", len(entries))
 	}
 
 	// PUT ACL — set one entry

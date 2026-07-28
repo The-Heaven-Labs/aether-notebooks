@@ -72,7 +72,7 @@ export function ProfilePage() {
     (localStorage.getItem('aether_theme') ?? 'dark') as 'light' | 'dark'
   )
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
-  const [adminMode, setAdminMode] = useState(() => localStorage.getItem('aether_admin_mode') !== 'false')
+  const [adminMode, setAdminMode] = useState(() => localStorage.getItem('aether_admin_mode') === 'true')
 
   // Token management state
   const [showTokenForm, setShowTokenForm] = useState(false)

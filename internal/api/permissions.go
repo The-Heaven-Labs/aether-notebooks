@@ -156,49 +156,56 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 	}
 
 	// 5. Sort: most specific first; within same specificity, user > group > org_role
-	sort.Slice(candidates, func(i, j int) bool {
+	sort.SliceStable(candidates, func(i, j int) bool {
 		if candidates[i].specificity != candidates[j].specificity {
 			return candidates[i].specificity < candidates[j].specificity
 		}
 		return candidates[i].subjectRank < candidates[j].subjectRank
 	})
 
-	// 6. Find first entry that matches this user
+	// 6. Evaluate candidates: if any matching entry grants the action → allow.
+	//    A matching org_role:everyone entry that grants the action is sufficient
+	//    even when a more-specific non-everyone entry lacks the action (restrictive).
+	//    view is implied by use/edit/share/delete/admin.
 	var (
-		matchedNonEveryoneEntry bool
-		aclExistsButUserNotInIt bool
+		everyoneGrants   bool
+		restrictiveMatch bool
 	)
 	for _, c := range candidates {
 		if !matchesUser(c, userID, orgRole, groupIDs) {
-			aclExistsButUserNotInIt = true
 			continue
 		}
+
+		grantsAction := false
 		for _, a := range c.actions {
-			if a == action {
-				return true, nil
+			if a == action || (action == "view" && isViewImpliedBy(a)) {
+				grantsAction = true
+				break
 			}
 		}
-		// org_role:everyone entries are not restrictive - they don't block org role defaults
-		if c.subjectType == "org_role" && c.subjectID == "everyone" {
-			aclExistsButUserNotInIt = false // org_role:everyone doesn't count as restrictive
-			continue
+
+		if grantsAction {
+			if c.subjectType == "org_role" && c.subjectID == "everyone" {
+				everyoneGrants = true
+			} else {
+				return true, nil
+			}
+		} else if !(c.subjectType == "org_role" && c.subjectID == "everyone") {
+			restrictiveMatch = true
 		}
-		// User matched entry but action not granted - this is restrictive, don't fall through
-		matchedNonEveryoneEntry = true
-		break
 	}
 
-	// 7. User matched a restrictive ACL but action not granted
-	if matchedNonEveryoneEntry {
+	// 7. org_role:everyone grants the action → allow
+	if everyoneGrants {
+		return true, nil
+	}
+
+	// 8. Restrictive match without everyone grant → deny
+	if restrictiveMatch {
 		return false, nil
 	}
 
-	// 8. ACL exists in chain but user not in it → DENY
-	if aclExistsButUserNotInIt {
-		return false, nil
-	}
-
-	// 9. No ACL matched user → DENY (deny-by-default)
+	// 9. No matching entry → DENY (deny-by-default)
 	return false, nil
 }
 
@@ -228,6 +235,16 @@ func subjectRank(subjectType string) int {
 	default:
 		return 2
 	}
+}
+
+// isViewImpliedBy returns true if the given action implies "view" permission.
+// Users who can use/edit/share/delete/admin a resource should always be able to see it.
+func isViewImpliedBy(action string) bool {
+	switch action {
+	case "use", "edit", "share", "delete", "admin":
+		return true
+	}
+	return false
 }
 
 // requirePermission returns middleware that checks if the authenticated user has

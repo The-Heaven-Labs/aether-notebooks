@@ -449,7 +449,7 @@ export function PermissionsPanel({
   }
 
   function handleAddEntry() {
-    if (!newSubjectKey || newActions.length === 0) return
+    if (!newSubjectKey || newActions.length === 0 || aclLoading) return
     const [subjectType, subjectId] = newSubjectKey.split(':') as ['user' | 'group' | 'org_role', string]
     const current = draft ?? aclData ?? []
     const updated: AclEntry[] = [
@@ -640,7 +640,7 @@ export function PermissionsPanel({
                       ...styles.saveBtn,
                       opacity: saveAcl.isPending ? 0.6 : 1,
                     }}
-                    disabled={saveAcl.isPending}
+                    disabled={saveAcl.isPending || aclLoading}
                     onClick={() => saveAcl.mutate(draft.map(({ id: _id, ...rest }) => rest))}
                   >
                     {saveAcl.isPending ? 'Saving…' : 'Save'}
