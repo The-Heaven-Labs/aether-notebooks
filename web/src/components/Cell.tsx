@@ -106,7 +106,7 @@ const sqlHighlight = HighlightStyle.define([
 
 // ── Yjs collaboration cache (shared across all cells in a notebook) ───────────
 
-const RELAY_URL = import.meta.env.VITE_RELAY_URL || 'ws://localhost:3001'
+const RELAY_URL = import.meta.env.VITE_RELAY_URL || `${window.location.origin.replace(/^http/, 'ws')}/relay`
 
 export interface NotebookCollab {
   doc: Y.Doc
