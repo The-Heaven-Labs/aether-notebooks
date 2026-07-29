@@ -36,6 +36,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+var (
+	version   = "dev"
+	commit    = "none"
+	buildDate = "unknown"
+)
+
 func usage() {
 	fmt.Fprintf(os.Stderr, `Aether Notebooks Server
 
@@ -270,6 +276,7 @@ func main() {
 	srv.SetPlatformAdminEmail(cfg.PlatformAdminEmail)
 	srv.SetPublicURL(cfg.PublicURL)
 	srv.SetFrontendURL(cfg.FrontendURL)
+	srv.SetVersion(version, commit, buildDate)
 	srv.SetMaxAttachmentBytes(cfg.MaxAttachmentBytes)
 	srv.SetToolAllowedDomains(cfg.ToolAllowedDomains)
 	srv.SetOIDCHostRewrite(cfg.OIDCHostRewrite)

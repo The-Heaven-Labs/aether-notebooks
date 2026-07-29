@@ -423,7 +423,7 @@ export function useGroupBySeries(
         connectNulls: false,
         symbol: 'circle',
         symbolSize: 4,
-        lineStyle: { width: 2 },
+        lineStyle: { width: (config as any).lineWidth ?? 2 },
         itemStyle: {
           color: config.seriesColors?.[group] ?? colors[gi % colors.length],
         },

@@ -107,9 +107,9 @@ export function ModelsPage() {
       api_key: form.api_key,
       context_window: form.context_window,
       default_params: defaultParams(),
-      price_per_input_token: form.price_per_input_token,
-      price_per_output_token: form.price_per_output_token,
-      price_per_cache_read_token: form.price_per_cache_read_token,
+      price_per_input_token: form.price_per_input_token / 1_000_000,
+      price_per_output_token: form.price_per_output_token / 1_000_000,
+      price_per_cache_read_token: form.price_per_cache_read_token / 1_000_000,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['model-configs'] })
@@ -129,9 +129,9 @@ export function ModelsPage() {
       ...(form.api_key ? { api_key: form.api_key } : {}),
       context_window: form.context_window,
       default_params: defaultParams(),
-      price_per_input_token: form.price_per_input_token,
-      price_per_output_token: form.price_per_output_token,
-      price_per_cache_read_token: form.price_per_cache_read_token,
+      price_per_input_token: form.price_per_input_token / 1_000_000,
+      price_per_output_token: form.price_per_output_token / 1_000_000,
+      price_per_cache_read_token: form.price_per_cache_read_token / 1_000_000,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['model-configs'] })
@@ -178,9 +178,9 @@ export function ModelsPage() {
       compaction_threshold: typeof threshold === 'number' ? threshold : 70,
       reasoning_effort_options: Array.isArray(effortOpts) ? effortOpts.join(', ') : 'low, medium, high',
       reasoning_effort: typeof effort === 'string' ? effort : '',
-      price_per_input_token: config.price_per_input_token ?? 0,
-      price_per_output_token: config.price_per_output_token ?? 0,
-      price_per_cache_read_token: config.price_per_cache_read_token ?? 0,
+      price_per_input_token: (config.price_per_input_token ?? 0) * 1_000_000,
+      price_per_output_token: (config.price_per_output_token ?? 0) * 1_000_000,
+      price_per_cache_read_token: (config.price_per_cache_read_token ?? 0) * 1_000_000,
     })
     setEditingId(config.id)
   }

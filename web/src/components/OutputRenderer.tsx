@@ -194,6 +194,8 @@ interface DetailPanel {
   colIndex: number
   value: string
   colName: string
+  isArray: boolean
+  arrayItems: unknown[]
 }
 
 const NUMERIC_TYPES = new Set([
@@ -396,8 +398,18 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
     [rs.rows, sortColIndex, sort.direction, sortType],
   )
 
-  const openDetail = useCallback((rowIndex: number, colIndex: number, value: string) => {
-    setDetail({ rowIndex, colIndex, value, colName: rs.columns[colIndex].name })
+  const openDetail = useCallback((rowIndex: number, colIndex: number, value: string, rawValue: unknown) => {
+    const prettyValue = typeof rawValue === 'object' && rawValue !== null
+      ? JSON.stringify(rawValue, null, 2)
+      : value
+    setDetail({
+      rowIndex,
+      colIndex,
+      value: prettyValue,
+      colName: rs.columns[colIndex].name,
+      isArray: Array.isArray(rawValue),
+      arrayItems: Array.isArray(rawValue) ? rawValue : [],
+    })
     if (cellId) setActiveDetailCell(cellId)
   }, [cellId, rs.columns])
 
@@ -413,31 +425,51 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
     if (newRow < 0 || newRow >= displayRows.length) return
     if (newCol < 0 || newCol >= rs.columns.length) return
     const rawValue = (displayRows[newRow] as unknown[])[newCol]
-    const value = rawValue === null || rawValue === undefined
+    const strValue = rawValue === null || rawValue === undefined
       ? ''
       : typeof rawValue === 'object'
         ? JSON.stringify(rawValue)
         : String(rawValue)
-    setDetail({ rowIndex: newRow, colIndex: newCol, value, colName: rs.columns[newCol].name })
+    const prettyValue = typeof rawValue === 'object' && rawValue !== null
+      ? JSON.stringify(rawValue, null, 2)
+      : strValue
+    setDetail({
+      rowIndex: newRow,
+      colIndex: newCol,
+      value: prettyValue,
+      colName: rs.columns[newCol].name,
+      isArray: Array.isArray(rawValue),
+      arrayItems: Array.isArray(rawValue) ? rawValue : [],
+    })
   }, [detail, displayRows, rs.columns])
+
+  const [page, setPage] = useState(0)
+  const PAGE_SIZE = 100
+  const pagedRows = displayRows.slice(0, (page + 1) * PAGE_SIZE)
+  const hasMore = pagedRows.length < displayRows.length
 
   const memoizedTbody = useMemo(() => (
     <tbody>
-      {displayRows.map((row, i) => (
+      {pagedRows.map((row, i) => (
         <tr key={i}>
           <td style={{ ...styles.td, ...styles.rowNumTd }}>
             <span style={styles.rowNum}>{i + 1}</span>
           </td>
           {(row as unknown[]).map((cell, j) => {
+            const isArray = Array.isArray(cell)
             const strValue = typeof cell === 'object' ? JSON.stringify(cell) : String(cell)
-            const isTruncated = strValue.length > MAX_CELL_DISPLAY
-            const displayValue = isTruncated ? strValue.slice(0, MAX_CELL_DISPLAY) + '…' : strValue
+            const displayValue = isArray
+              ? `[${cell.length} item${cell.length !== 1 ? 's' : ''}]`
+              : strValue.length > MAX_CELL_DISPLAY
+                ? strValue.slice(0, MAX_CELL_DISPLAY) + '…'
+                : strValue
+            const isTruncated = strValue.length > MAX_CELL_DISPLAY && !isArray
             const isObj = typeof cell === 'object'
             return (
               <td key={j} data-row={i} data-col={j} style={styles.td}>
                 <span
-                  style={isTruncated ? styles.truncatedCell : styles.clickableCell}
-                  onClick={() => openDetail(i, j, strValue)}
+                  style={isTruncated || isArray ? styles.truncatedCell : styles.clickableCell}
+                  onClick={() => openDetail(i, j, strValue, cell)}
                   title={isTruncated ? 'Click to view full value' : undefined}
                 >
                   {cell === null ? (
@@ -452,7 +484,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
         </tr>
       ))}
     </tbody>
-  ), [displayRows, rs.columns, openDetail])
+  ), [pagedRows, rs.columns, openDetail])
 
   useEffect(() => {
     if (activeCellRef.current) {
@@ -470,7 +502,16 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
       if (e.key === 'ArrowUp') { e.preventDefault(); navigateDetail(-1, 0) }
       if (e.key === 'ArrowRight') { e.preventDefault(); navigateDetail(0, 1) }
       if (e.key === 'ArrowLeft') { e.preventDefault(); navigateDetail(0, -1) }
-      if (e.key === 'c' && (e.ctrlKey || e.metaKey)) { copyDetail() }
+      if (e.key === 'c' && (e.ctrlKey || e.metaKey)) {
+        const active = document.activeElement
+        if (active?.closest('.cm-editor') ||
+            active?.tagName === 'INPUT' ||
+            active?.tagName === 'TEXTAREA') {
+          return
+        }
+        e.preventDefault()
+        copyDetail()
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -549,6 +590,16 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
               </thead>
               {memoizedTbody}
             </table>
+            {hasMore && (
+              <div style={styles.loadMoreWrap}>
+                <button
+                  style={styles.loadMoreBtn}
+                  onClick={() => setPage(p => p + 1)}
+                >
+                  Load more rows ({displayRows.length - pagedRows.length} remaining)
+                </button>
+              </div>
+            )}
           </div>
 
           {detail && isDetailActive && (
@@ -612,7 +663,25 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
                 </div>
               </div>
               <div style={styles.detailBody}>
-                <pre style={styles.detailValue}>{detail.value}</pre>
+                {detail.isArray ? (
+                  <table style={styles.arrayTable}>
+                    <thead><tr><th style={styles.arrayTableHeader}>Index</th><th style={styles.arrayTableHeader}>Value</th></tr></thead>
+                    <tbody>
+                      {detail.arrayItems.map((item, idx) => (
+                        <tr key={idx}>
+                          <td style={styles.arrayIndex}>{idx}</td>
+                          <td style={styles.arrayValue}>
+                            {typeof item === 'object' && item !== null
+                              ? JSON.stringify(item, null, 2)
+                              : String(item)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <pre style={styles.detailValue}>{detail.value}</pre>
+                )}
               </div>
             </div>
           )}
@@ -915,5 +984,56 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-all',
     lineHeight: 1.6,
+  },
+  arrayTable: {
+    width: '100%',
+    borderCollapse: 'collapse',
+    fontSize: 12,
+    fontFamily: 'var(--font-mono)',
+  },
+  arrayTableHeader: {
+    padding: '6px 10px',
+    textAlign: 'left',
+    borderBottom: '1px solid var(--border)',
+    fontWeight: 700,
+    color: 'var(--text-muted)',
+    fontSize: 10,
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.05em',
+    position: 'sticky' as const,
+    top: 0,
+    background: 'var(--bg-card)',
+  },
+  arrayIndex: {
+    padding: '3px 10px',
+    color: 'var(--text-muted)',
+    fontSize: 11,
+    borderBottom: '1px solid var(--border-light)',
+    whiteSpace: 'nowrap' as const,
+    verticalAlign: 'top' as const,
+  },
+  arrayValue: {
+    padding: '3px 10px',
+    color: 'var(--text-primary)',
+    fontSize: 12,
+    borderBottom: '1px solid var(--border-light)',
+    whiteSpace: 'pre-wrap' as const,
+    wordBreak: 'break-all' as const,
+  },
+  loadMoreWrap: {
+    display: 'flex',
+    justifyContent: 'center',
+    padding: '8px',
+  },
+  loadMoreBtn: {
+    padding: '5px 16px',
+    fontSize: 12,
+    fontWeight: 500,
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    background: 'var(--bg-card)',
+    color: 'var(--text-secondary)',
+    cursor: 'pointer',
+    fontFamily: 'var(--font-sans)',
   },
 }

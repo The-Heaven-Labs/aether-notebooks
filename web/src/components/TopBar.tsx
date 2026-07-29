@@ -103,6 +103,13 @@ export function TopBar({ onShowShortcuts }: TopBarProps) {
                 Settings
               </Link>
             )}
+            <Link
+              to="/about"
+              style={styles.dropdownLink}
+              onClick={() => setOpen(false)}
+            >
+              About
+            </Link>
             <a
               href="/docs"
               target="_blank"

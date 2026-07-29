@@ -195,6 +195,26 @@ export function AxisConfigPanel({
           </div>
         </div>
       )}
+      {(config.chartType === 'line' || config.chartType === 'area') && (
+        <div style={styles.row}>
+          <div style={styles.section}>
+            <div style={styles.sectionLabel}>Line width</div>
+            <select
+              aria-label="Line width"
+              style={styles.select}
+              value={String(config.lineWidth ?? 2)}
+              onChange={e => onChange({ ...config, lineWidth: parseInt(e.target.value) || 2 })}
+            >
+              <option value="1">Thin (1px)</option>
+              <option value="2">Normal (2px)</option>
+              <option value="3">Medium (3px)</option>
+              <option value="4">Thick (4px)</option>
+              <option value="6">Heavy (6px)</option>
+            </select>
+            <ConfigHint>Stroke width of the line</ConfigHint>
+          </div>
+        </div>
+      )}
 
       {/* Group By */}
       {!showPieOptions && (

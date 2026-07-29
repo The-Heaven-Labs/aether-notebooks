@@ -239,13 +239,14 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	// Execute — respects cancellation and connector timeout
 	queryStart := time.Now()
 	result, err := exec.Execute(execCtx, resolvedSource, req.Parameters, maxRows)
+	wasCancelled := execCtx.Err() != nil
 	execCancel()
 	s.hub.DeleteCancelFunc(cellID)
 	s.hub.UnsetRunning(cellID)
 
 	// Some drivers (ClickHouse) may return empty results instead of context.Canceled
 	// when the query was cancelled mid-flight. Check if our context was cancelled.
-	if err == nil && execCtx.Err() == context.Canceled && (result == nil || len(result.Rows) == 0) {
+	if err == nil && wasCancelled && (result == nil || len(result.Rows) == 0) {
 		err = context.Canceled
 	}
 
