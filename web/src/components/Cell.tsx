@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard, Code2, AlignLeft } from 'lucide-react'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
-import { defaultKeymap, indentWithTab } from '@codemirror/commands'
+import { defaultKeymap } from '@codemirror/commands'
 import { sql, PostgreSQL, MySQL } from '@codemirror/lang-sql'
 import { javascript } from '@codemirror/lang-javascript'
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language'
@@ -311,23 +311,47 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
     const ytext = collab.doc.getText(`cell:${cell.id}`)
     const compartment = collabCompartment.current
 
-    const formatSQL = (view: EditorView) => {
-      const raw = view.state.doc.toString()
-      try {
-        const lang = cell.language === 'javascript' ? 'postgresql' : 'sql'
-        const formatted = format(raw, { language: lang, tabWidth: 2 })
-        collab.doc.transact(() => { ytext.delete(0, ytext.length); ytext.insert(0, formatted) })
-        onSourceChangeRef.current(cell.id, formatted)
-      } catch { /* leave as-is */ }
-      return true
-    }
-
     const cellKeymap = keymap.of([
       { key: 'Mod-Enter', run: () => { onRunRef.current(cell.id); return true } },
-      { key: 'Mod-Shift-f', run: formatSQL },
-      { key: 'Mod-Shift-l', run: formatSQL },
+      {
+        key: 'Mod-Shift-f',
+        run: (view) => {
+          const raw = view.state.doc.toString()
+          try {
+            const formatted = format(raw, { language: 'sql', tabWidth: 2 })
+            collab.doc.transact(() => { ytext.delete(0, ytext.length); ytext.insert(0, formatted) })
+          } catch { /* leave as-is */ }
+          return true
+        },
+      },
+      {
+        key: 'Tab',
+        run: (view) => {
+          const pos = view.state.selection.main.from
+          view.dispatch({
+            changes: { from: pos, to: view.state.selection.main.to, insert: '  ' },
+            selection: { anchor: pos + 2, head: pos + 2 },
+          })
+          return true
+        },
+      },
+      {
+        key: 'Shift-Tab',
+        run: (view) => {
+          const pos = view.state.selection.main.from
+          const line = view.state.doc.lineAt(pos)
+          const beforeCursor = view.state.sliceDoc(Math.max(line.from, pos - 2), pos)
+          const spaces = beforeCursor.length - beforeCursor.replace(/^ {1,2}/, '').length
+          if (spaces > 0) {
+            view.dispatch({
+              changes: { from: pos - spaces, to: pos, insert: '' },
+              selection: { anchor: pos - spaces, head: pos - spaces },
+            })
+          }
+          return true
+        },
+      },
       ...defaultKeymap,
-      indentWithTab,
     ])
 
     const view = new EditorView({
@@ -366,6 +390,20 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
     })
     editorViews.set(cell.id, view)
 
+    // Window-level format shortcut (more reliable than CodeMirror keymap for browser-conflicting combos)
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F') && e.altKey) {
+        e.preventDefault()
+        e.stopPropagation()
+        const raw = view.state.doc.toString()
+        try {
+          const formatted = format(raw, { language: 'sql', tabWidth: 2 })
+          collab.doc.transact(() => { ytext.delete(0, ytext.length); ytext.insert(0, formatted) })
+        } catch { /* leave as-is */ }
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+
     // Detect CodeMirror focus/blur for edit mode tracking
     const cmEditor = view.dom
     const handleFocus = () => onEditStartRef.current?.()
@@ -403,6 +441,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
 
     return () => {
       editorViews.delete(cell.id)
+      window.removeEventListener('keydown', onKeyDown)
       cmEditor.removeEventListener('focusin', handleFocus)
       cmEditor.removeEventListener('focusout', handleBlur)
       if (onSynced) collab.provider.off('synced', onSynced)
@@ -718,7 +757,7 @@ export const Cell = memo(function Cell({
                   } catch { /* leave as-is */ }
                 }
               }}
-              title="Format SQL (Ctrl+Shift+F)"
+              title="Format SQL (Ctrl+Alt+F)"
               aria-label="Format SQL"
             >
               <AlignLeft size={11} />
