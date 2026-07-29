@@ -1,141 +1,137 @@
-import { useEffect, useState } from 'react'
+import { useMemo, useRef, useState, useEffect, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
-import type { Dashboard, Widget } from '../types'
-import { EmptyState } from '../components/EmptyState'
+import { useQuery } from '@tanstack/react-query'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { api } from '../api/client'
+import { Skeleton } from '../components/Skeleton'
+import { OutputRenderer } from '../components/OutputRenderer'
+import type { Dashboard, Widget, Output } from '../types'
+import type { ChartConfig } from '../charts'
 
 interface DashboardWithWidgets extends Dashboard {
   widgets: Widget[]
+  widgets_data?: Record<string, { cell_id: string; source: string; type: string; language: string; outputs: Output[]; metadata?: Record<string, unknown>; updated_at?: string }>
 }
+
+const ROW_HEIGHT = 30
+const MARGIN = 4
 
 export function PublicDashboardPage() {
   const { token } = useParams<{ token: string }>()
-  const [dashboard, setDashboard] = useState<DashboardWithWidgets | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { data: dashboard, isLoading, error } = useQuery({
+    queryKey: ['public', token],
+    queryFn: () => api.get<DashboardWithWidgets>(`/api/v1/public/${token}`),
+    enabled: !!token,
+  })
+
+  const gridRef = useRef<HTMLDivElement | null>(null)
+  const [containerWidth, setContainerWidth] = useState(800)
+  const [gap] = useState(MARGIN)
+
+  const measureRef = useCallback((el: HTMLDivElement | null) => {
+    gridRef.current = el
+    if (el) {
+      setContainerWidth(el.clientWidth)
+    }
+  }, [])
 
   useEffect(() => {
-    if (!token) {
-      setError('Invalid dashboard link')
-      setLoading(false)
-      return
-    }
+    const el = gridRef.current
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width)
+      }
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
-    fetch(`/api/v1/public/${token}`)
-      .then((res) => {
-        if (res.status === 404) throw new Error('Dashboard not found or is not public')
-        if (!res.ok) throw new Error(`Failed to load dashboard (${res.status})`)
-        return res.json() as Promise<DashboardWithWidgets>
-      })
-      .then((data) => {
-        setDashboard(data)
-        setLoading(false)
-      })
-      .catch((err: Error) => {
-        setError(err.message)
-        setLoading(false)
-      })
-  }, [token])
-
-  if (loading) {
-    return (
-      <div style={styles.centeredPage}>
-        <div style={styles.loadingDot} />
-      </div>
-    )
-  }
-
-  if (error || !dashboard) {
-    return (
-      <div style={styles.centeredPage}>
-        <div style={styles.errorBox}>
-          <p style={styles.errorTitle}>Unable to load dashboard</p>
-          <p style={styles.errorDetail}>{error ?? 'Dashboard not found'}</p>
-        </div>
-      </div>
-    )
-  }
+  if (isLoading) return <div style={{ padding: 40 }}><Skeleton count={5} height={40} /></div>
+  if (error) return <div style={{ padding: 40, color: 'var(--error)' }}>Not found or sharing disabled</div>
+  if (!dashboard) return null
 
   const widgets = dashboard.widgets ?? []
+  const widgetsData = dashboard.widgets_data ?? {}
+  const cols = dashboard.settings?.grid_cols ?? 12
+  const colWidth = (containerWidth - (cols - 1) * gap) / cols
+  const totalHeight = widgets.reduce((max, w) => {
+    return Math.max(max, (w.layout?.row ?? 0) + (w.layout?.height ?? 4))
+  }, 0) * (ROW_HEIGHT + gap)
 
   return (
-    <div style={styles.page}>
-      <header style={styles.header}>
-        <div style={styles.headerInner}>
-          <span style={styles.brandMark}>Aether</span>
-          <h1 style={styles.title}>{dashboard.title}</h1>
-          <span style={styles.readOnlyBadge}>Read-only</span>
+    <div style={pageStyles.page}>
+      <header style={pageStyles.header}>
+        <div style={pageStyles.headerInner}>
+          <span style={pageStyles.brandMark}>Aether</span>
+          <h1 style={pageStyles.title}>{dashboard.title}</h1>
+          <span style={pageStyles.readOnlyBadge}>Read-only</span>
         </div>
       </header>
-
-      <main style={styles.body}>
+      <main style={pageStyles.body}>
         {widgets.length === 0 ? (
-          <EmptyState
-            title="No widgets in this dashboard"
-            text="The dashboard owner hasn't added any widgets yet."
-          />
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+            <p style={{ fontSize: 14, fontWeight: 600, margin: '0 0 4px' }}>No widgets in this dashboard</p>
+            <p style={{ fontSize: 13, margin: 0 }}>The dashboard owner hasn't added any widgets yet.</p>
+          </div>
         ) : (
-          <div style={styles.grid}>
-            {widgets.map((widget) => (
-              <div key={widget.id} style={styles.widgetCard}>
-                <div style={styles.widgetHeader}>
-                  <span style={styles.widgetTypeBadge}>{widget.type}</span>
+          <div ref={measureRef} style={{ minHeight: totalHeight, position: 'relative' }}>
+            {widgets.map((widget) => {
+              const cellData = widgetsData[widget.cell_id!]
+              if (!cellData || !cellData.outputs?.length) return null
+
+              const l = widget.layout
+              const left = l.col * (colWidth + gap)
+              const top = l.row * (ROW_HEIGHT + gap)
+              const width = l.width * colWidth + (l.width - 1) * gap
+              const height = l.height * ROW_HEIGHT + (l.height - 1) * gap
+
+              const isChart = widget.type === 'chart'
+              const fixedView = isChart ? 'chart' : 'table'
+              const chartConfig = { ...((cellData.metadata?.chart || {}) as object), ...(widget.config || {}) } as ChartConfig
+
+              return (
+                <div key={widget.id} style={{
+                  position: 'absolute' as const,
+                  left, top, width, height,
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 4,
+                  overflow: 'hidden',
+                  display: 'flex',
+                  flexDirection: 'column',
+                }}>
+                  {cellData.type === 'text' ? (
+                    <div style={{ padding: 16, fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.6, overflow: 'auto', height: '100%' }}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{cellData.source || ''}</ReactMarkdown>
+                    </div>
+                  ) : (
+                    <OutputRenderer
+                      outputs={cellData.outputs}
+                      fixedView={fixedView}
+                      chartConfig={chartConfig}
+                      footerExtra={cellData.updated_at ? (
+                        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                          Executed at {new Date(cellData.updated_at).toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })} {new Date(cellData.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        </span>
+                      ) : undefined}
+                    />
+                  )}
                 </div>
-                <div style={styles.widgetBody}>
-                  <div style={styles.widgetRef}>
-                    <span style={styles.widgetRefLabel}>Notebook</span>
-                    <code style={styles.widgetRefValue}>{widget.notebook_id.slice(0, 8)}…</code>
-                  </div>
-                  <div style={styles.widgetRef}>
-                    <span style={styles.widgetRefLabel}>Cell</span>
-                    <code style={styles.widgetRefValue}>{widget.cell_id.slice(0, 8)}…</code>
-                  </div>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </main>
-
-      <footer style={styles.footer}>
-        <span style={styles.footerText}>Powered by Aether</span>
+      <footer style={pageStyles.footer}>
+        <span style={pageStyles.footerText}>Powered by Aether</span>
       </footer>
     </div>
   )
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  centeredPage: {
-    minHeight: '100vh',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'var(--bg-primary)',
-  },
-  loadingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: '50%',
-    background: 'var(--accent)',
-    opacity: 0.5,
-  },
-  errorBox: {
-    textAlign: 'center',
-    padding: '32px 40px',
-    background: 'white',
-    borderRadius: 4,
-    border: '1px solid var(--border)',
-  },
-  errorTitle: {
-    fontSize: 16,
-    fontWeight: 700,
-    color: 'var(--text-primary)',
-    margin: '0 0 8px',
-  },
-  errorDetail: {
-    fontSize: 13,
-    color: 'var(--text-muted)',
-    margin: 0,
-  },
+const pageStyles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: '100vh',
     background: 'var(--bg-primary)',
@@ -195,62 +191,6 @@ const styles: Record<string, React.CSSProperties> = {
     margin: '0 auto',
     padding: '40px 40px',
     width: '100%',
-  },
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(2, 1fr)',
-    gap: 16,
-  },
-  widgetCard: {
-    background: 'white',
-    border: '1px solid var(--border)',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  widgetHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    padding: '10px 14px',
-    borderBottom: '1px solid var(--border)',
-    background: 'var(--bg-secondary)',
-  },
-  widgetTypeBadge: {
-    fontSize: 11,
-    fontWeight: 700,
-    textTransform: 'uppercase',
-    letterSpacing: '0.06em',
-    color: 'var(--accent)',
-    background: '#f0edff',
-    padding: '2px 8px',
-    borderRadius: 4,
-  },
-  widgetBody: {
-    padding: '14px 16px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-  },
-  widgetRef: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-  },
-  widgetRefLabel: {
-    fontSize: 11,
-    fontWeight: 600,
-    color: 'var(--text-muted)',
-    textTransform: 'uppercase',
-    letterSpacing: '0.04em',
-    width: 60,
-    flexShrink: 0,
-  },
-  widgetRefValue: {
-    fontSize: 12,
-    color: 'var(--text-secondary)',
-    fontFamily: 'var(--font-mono)',
-    background: 'var(--bg-secondary)',
-    padding: '2px 6px',
-    borderRadius: 4,
   },
   footer: {
     borderTop: '1px solid var(--border)',

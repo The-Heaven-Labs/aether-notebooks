@@ -29,6 +29,16 @@ type updateDashboardRequest struct {
 	FolderID *string                   `json:"folder_id,omitempty"`
 }
 
+type widgetCellData struct {
+	CellID    string          `json:"cell_id"`
+	Source    string          `json:"source"`
+	Type      string          `json:"type"`
+	Language  string          `json:"language"`
+	Outputs   json.RawMessage `json:"outputs"`
+	Metadata  json.RawMessage `json:"metadata"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
 type addWidgetRequest struct {
 	NotebookID *string                `json:"notebook_id"`
 	CellID     *string                `json:"cell_id"`
@@ -284,16 +294,6 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "load widgets failed")
 		return
-	}
-
-	type widgetCellData struct {
-		CellID    string          `json:"cell_id"`
-		Source    string          `json:"source"`
-		Type      string          `json:"type"`
-		Language  string          `json:"language"`
-		Outputs   json.RawMessage `json:"outputs"`
-		Metadata  json.RawMessage `json:"metadata"`
-		UpdatedAt time.Time       `json:"updated_at"`
 	}
 
 	type dashboardWithWidgets struct {
@@ -862,11 +862,41 @@ func (s *Server) servePublicDashboard(w http.ResponseWriter, r *http.Request, da
 		return
 	}
 
-	type dashboardWithWidgets struct {
-		models.Dashboard
-		Widgets []models.Widget `json:"widgets"`
+	// Load cell data for all widgets
+	widgetsData := make(map[string]widgetCellData)
+	cellIDs := make([]string, 0, len(widgets))
+	for _, w := range widgets {
+		if w.CellID != nil {
+			cellIDs = append(cellIDs, *w.CellID)
+		}
 	}
-	writeJSON(w, http.StatusOK, dashboardWithWidgets{Dashboard: dash, Widgets: widgets})
+	if len(cellIDs) > 0 {
+		rows, err := s.db.Pool.Query(ctx,
+			`SELECT c.id, c.source, c.type, c.language, c.outputs, COALESCE(c.metadata, '{}'), c.updated_at
+			 FROM cells c WHERE c.id = ANY($1)`,
+			cellIDs,
+		)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var cd widgetCellData
+				var outputs, metadata []byte
+				if err := rows.Scan(&cd.CellID, &cd.Source, &cd.Type, &cd.Language, &outputs, &metadata, &cd.UpdatedAt); err != nil {
+					continue
+				}
+				cd.Outputs = outputs
+				cd.Metadata = metadata
+				widgetsData[cd.CellID] = cd
+			}
+		}
+	}
+
+	type publicDashboardWithWidgets struct {
+		models.Dashboard
+		Widgets     []models.Widget           `json:"widgets"`
+		WidgetsData map[string]widgetCellData `json:"widgets_data"`
+	}
+	writeJSON(w, http.StatusOK, publicDashboardWithWidgets{Dashboard: dash, Widgets: widgets, WidgetsData: widgetsData})
 }
 
 func (s *Server) loadWidgets(ctx context.Context, dashID string) ([]models.Widget, error) {
