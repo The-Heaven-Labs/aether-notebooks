@@ -376,6 +376,16 @@ func makeCreateSkillHandler(pool *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("create skill: %w", err)
 		}
 
+		// Seed ACL so the requesting user can view/edit the skill
+		if _, aclErr := pool.Exec(ctx.Context, `
+			INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+			VALUES ($1, 'skill', $2, 'user', $3, ARRAY['view','edit','delete'])
+			ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
+			ctx.OrgID, skillID, ctx.UserID,
+		); aclErr != nil {
+			slog.Warn("seed ACL entries for skill", "skill_id", skillID, "error", aclErr)
+		}
+
 		return map[string]any{"skill_id": skillID}, nil
 	}
 }

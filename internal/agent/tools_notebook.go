@@ -1410,6 +1410,9 @@ func makeCreateNotebookHandler(db *pgxpool.Pool) ToolHandler {
 
 		var folderID *string
 		if req.FolderID != nil && *req.FolderID != "" {
+			if err := ctx.CheckPermission("folder", *req.FolderID, "edit"); err != nil {
+				return nil, err
+			}
 			folderID = req.FolderID
 		}
 

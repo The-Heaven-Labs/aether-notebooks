@@ -659,3 +659,211 @@ func TestAgentSwapCells(t *testing.T) {
 	// Verify no duplicates
 	verifyPositions(t, db.Pool, nbID, 3)
 }
+
+func TestAgentCreateNotebookSeedsACLForUser(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+
+	// Create a second user (editor) who should NOT have access
+	editorID := uuid.New().String()
+	now := time.Now()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO users (id, email, name, password_hash, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $5)
+	`, editorID, "editor-"+uuid.New().String()[:8]+"@example.com", "Editor", "hash", now)
+	if err != nil {
+		t.Fatalf("create editor: %v", err)
+	}
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ($1, $2, 'editor', $3)
+	`, orgID, editorID, now)
+	if err != nil {
+		t.Fatalf("create editor member: %v", err)
+	}
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	createNotebookDef, ok := reg.Get("create_notebook")
+	if !ok {
+		t.Fatalf("create_notebook tool not found")
+	}
+
+	// Use non-admin context for the creating user
+	ctx := &agent.ToolContext{
+		Context:   context.Background(),
+		UserID:    userID,
+		OrgID:     orgID,
+		OrgRole:   "editor",
+		DB:        db.Pool,
+		MasterKey: nil,
+	}
+
+	args, _ := json.Marshal(map[string]any{
+		"title": "ACL Test Notebook",
+	})
+	result, err := createNotebookDef.Handler(args, ctx)
+	if err != nil {
+		t.Fatalf("create notebook: %v", err)
+	}
+	nbID := result.(map[string]any)["notebook_id"].(string)
+
+	// Verify ACL entry exists for the creator
+	var aclCount int
+	err = db.Pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM acl_entries
+		WHERE resource_type = 'notebook' AND resource_id = $1::uuid
+		AND subject_type = 'user' AND subject_id = $2
+	`, nbID, userID).Scan(&aclCount)
+	if err != nil {
+		t.Fatalf("query ACL: %v", err)
+	}
+	if aclCount != 1 {
+		t.Fatalf("expected 1 ACL entry for creator, got %d", aclCount)
+	}
+
+	// Verify the editor does NOT have an ACL entry
+	var editorACLCount int
+	err = db.Pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM acl_entries
+		WHERE resource_type = 'notebook' AND resource_id = $1::uuid
+		AND subject_type = 'user' AND subject_id = $2
+	`, nbID, editorID).Scan(&editorACLCount)
+	if err != nil {
+		t.Fatalf("query editor ACL: %v", err)
+	}
+	if editorACLCount != 0 {
+		t.Fatalf("expected 0 ACL entries for non-creator, got %d", editorACLCount)
+	}
+
+	t.Logf("notebook %s seeded ACL correctly for user %s", nbID, userID)
+}
+
+func TestAgentCreateSkillSeedsACLForUser(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterAgentTools(reg, db.Pool, nil)
+	createSkillDef, ok := reg.Get("create_skill")
+	if !ok {
+		t.Fatalf("create_skill tool not found")
+	}
+
+	// Insert a minimal agent + session so the skill handler's SQL subquery works
+	agentID := uuid.New().String()
+	sessionID := uuid.New().String()
+	now := time.Now()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO agents (id, org_id, name, created_by, created_at, updated_at)
+		VALUES ($1, $2, 'test-agent', $3, $4, $4)
+	`, agentID, orgID, userID, now)
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO agent_sessions (id, agent_id, user_id, created_at)
+		VALUES ($1, $2, $3, $4)
+	`, sessionID, agentID, userID, now)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	ctx := &agent.ToolContext{
+		Context:   context.Background(),
+		UserID:    userID,
+		OrgID:     orgID,
+		OrgRole:   "editor",
+		SessionID: sessionID,
+		DB:        db.Pool,
+		MasterKey: nil,
+	}
+
+	args, _ := json.Marshal(map[string]any{
+		"name":          "test-skill",
+		"system_prompt": "You are a test skill.",
+	})
+	result, err := createSkillDef.Handler(args, ctx)
+	if err != nil {
+		t.Fatalf("create skill: %v", err)
+	}
+	skillID := result.(map[string]any)["skill_id"].(string)
+
+	// Verify ACL entry exists for the creator
+	var aclCount int
+	err = db.Pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM acl_entries
+		WHERE resource_type = 'skill' AND resource_id = $1
+		AND subject_type = 'user' AND subject_id = $2
+	`, skillID, userID).Scan(&aclCount)
+	if err != nil {
+		t.Fatalf("query ACL: %v", err)
+	}
+	if aclCount != 1 {
+		t.Fatalf("expected 1 ACL entry for creator, got %d", aclCount)
+	}
+
+	t.Logf("skill %s seeded ACL correctly for user %s", skillID, userID)
+}
+
+func TestAgentCreateNotebookInFolderWithoutPermissionDenied(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+
+	// Create a folder owned by another user
+	otherUserID := uuid.New().String()
+	now := time.Now()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO users (id, email, name, password_hash, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $5)
+	`, otherUserID, "other-"+uuid.New().String()[:8]+"@example.com", "Other", "hash", now)
+	if err != nil {
+		t.Fatalf("create other user: %v", err)
+	}
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ($1, $2, 'editor', $3)
+	`, orgID, otherUserID, now)
+	if err != nil {
+		t.Fatalf("create other member: %v", err)
+	}
+
+	folderID := uuid.New().String()
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO folders (id, org_id, name, created_by, created_at, updated_at)
+		VALUES ($1, $2, 'restricted', $3, $4, $4)
+	`, folderID, orgID, otherUserID, now)
+	if err != nil {
+		t.Fatalf("create folder: %v", err)
+	}
+	// Seed ACL so only otherUserID can edit this folder
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		VALUES ($1, 'folder', $2::uuid, 'user', $3, ARRAY['view','edit','delete'])
+	`, orgID, folderID, otherUserID)
+	if err != nil {
+		t.Fatalf("seed folder ACL: %v", err)
+	}
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	createNotebookDef, ok := reg.Get("create_notebook")
+	if !ok {
+		t.Fatalf("create_notebook tool not found")
+	}
+
+	ctx := &agent.ToolContext{
+		Context:   context.Background(),
+		UserID:    userID,
+		OrgID:     orgID,
+		OrgRole:   "editor",
+		DB:        db.Pool,
+		MasterKey: nil,
+	}
+
+	args, _ := json.Marshal(map[string]any{
+		"title":     "Should Fail",
+		"folder_id": folderID,
+	})
+	_, err = createNotebookDef.Handler(args, ctx)
+	if err == nil {
+		t.Fatalf("expected error when creating notebook in folder without permission, got nil")
+	}
+	t.Logf("correctly denied notebook creation in restricted folder: %v", err)
+}

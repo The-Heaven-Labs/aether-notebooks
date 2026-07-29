@@ -278,6 +278,7 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 
 	// Check view_with_data permission
 	viewWithData, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "view_with_data")
+	shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "share")
 
 	widgets, err := s.loadWidgets(ctx, dashID)
 	if err != nil {
@@ -291,6 +292,7 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 		Type      string          `json:"type"`
 		Language  string          `json:"language"`
 		Outputs   json.RawMessage `json:"outputs"`
+		Metadata  json.RawMessage `json:"metadata"`
 		UpdatedAt time.Time       `json:"updated_at"`
 	}
 
@@ -299,12 +301,14 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 		Widgets         []models.Widget           `json:"widgets"`
 		WidgetsData     map[string]widgetCellData `json:"widgets_data,omitempty"`
 		CanViewWithData bool                      `json:"can_view_with_data"`
+		CanShare        bool                      `json:"can_share"`
 	}
 
 	resp := dashboardWithWidgets{
 		Dashboard:       dash,
 		Widgets:         widgets,
 		CanViewWithData: viewWithData,
+		CanShare:        shareOK,
 	}
 
 	if viewWithData && len(widgets) > 0 {
@@ -318,7 +322,7 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 
 		if len(cellIDs) > 0 {
 			rows, err := s.db.Pool.Query(ctx,
-				`SELECT c.id, c.source, c.type, c.language, c.outputs, c.updated_at
+				`SELECT c.id, c.source, c.type, c.language, c.outputs, COALESCE(c.metadata, '{}'), c.updated_at
 				 FROM cells c
 				 JOIN notebooks n ON n.id = c.notebook_id AND n.org_id = $1
 				 WHERE c.id = ANY($2)`,
@@ -329,11 +333,12 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 				widgetsData := make(map[string]widgetCellData, len(cellIDs))
 				for rows.Next() {
 					var cd widgetCellData
-					var outputs []byte
-					if err := rows.Scan(&cd.CellID, &cd.Source, &cd.Type, &cd.Language, &outputs, &cd.UpdatedAt); err != nil {
+					var outputs, metadata []byte
+					if err := rows.Scan(&cd.CellID, &cd.Source, &cd.Type, &cd.Language, &outputs, &metadata, &cd.UpdatedAt); err != nil {
 						continue
 					}
 					cd.Outputs = outputs
+					cd.Metadata = metadata
 					widgetsData[cd.CellID] = cd
 				}
 				resp.WidgetsData = widgetsData
@@ -582,38 +587,57 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 			Width  int `json:"width"`
 			Height int `json:"height"`
 		} `json:"layout,omitempty"`
+		Config map[string]interface{} `json:"config,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if req.Layout == nil {
-		writeError(w, http.StatusBadRequest, "layout required")
+	if req.Layout == nil && req.Config == nil {
+		writeError(w, http.StatusBadRequest, "layout or config required")
 		return
 	}
 
-	// Validate widget layout bounds only (overlap is handled by the frontend compactor
-	// during drag/resize, and the backend cannot know which widgets were moved together).
-	if err := s.validateWidgetLayoutBounds(r.Context(), dashID, *req.Layout); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+	setParts := []string{}
+	args := []interface{}{}
+
+	if req.Layout != nil {
+		// Validate widget layout bounds only (overlap is handled by the frontend compactor
+		// during drag/resize, and the backend cannot know which widgets were moved together).
+		if err := s.validateWidgetLayoutBounds(r.Context(), dashID, *req.Layout); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		layoutJSON, err := json.Marshal(req.Layout)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to encode layout")
+			return
+		}
+		setParts = append(setParts, fmt.Sprintf("layout=$%d", len(args)+1))
+		args = append(args, layoutJSON)
 	}
 
-	layout, err := json.Marshal(req.Layout)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to encode layout")
-		return
+	if req.Config != nil {
+		configJSON, err := json.Marshal(req.Config)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to encode config")
+			return
+		}
+		setParts = append(setParts, fmt.Sprintf("config=$%d", len(args)+1))
+		args = append(args, configJSON)
 	}
 
-	var id string
-	err = s.db.Pool.QueryRow(r.Context(),
-		`UPDATE widgets SET layout=$1, updated_at=NOW()
-         WHERE id=$2 AND dashboard_id=$3
-           AND dashboard_id IN (SELECT id FROM dashboards WHERE org_id=$4)
-         RETURNING id`,
-		layout, widgetID, dashID, claims.OrgID,
-	).Scan(&id)
-	if err != nil {
+	setParts = append(setParts, "updated_at=NOW()")
+	args = append(args, widgetID, dashID, claims.OrgID)
+
+	sql := fmt.Sprintf(
+		`UPDATE widgets SET %s WHERE id=$%d AND dashboard_id=$%d AND dashboard_id IN (SELECT id FROM dashboards WHERE org_id=$%d) RETURNING id`,
+		strings.Join(setParts, ", "),
+		len(args)-2, len(args)-1, len(args),
+	)
+
+	if err := s.db.Pool.QueryRow(r.Context(), sql, args...).Scan(new(string)); err != nil {
 		writeError(w, http.StatusNotFound, "widget not found")
 		return
 	}

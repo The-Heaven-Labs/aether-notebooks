@@ -291,17 +291,17 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 	if isOrgAdmin {
 		filteredEntries = entries
 	} else {
-	for _, entry := range entries {
-		// Check if user owns this home folder
-		if entry.OwnerID != nil && *entry.OwnerID == claims.UserID {
-			filteredEntries = append(filteredEntries, entry)
-			continue
-		}
+		for _, entry := range entries {
+			// Check if user owns this home folder
+			if entry.OwnerID != nil && *entry.OwnerID == claims.UserID {
+				filteredEntries = append(filteredEntries, entry)
+				continue
+			}
 
-		// Check if user has direct ACL access on this home folder (explicit entries only)
-		var hasACL bool
-		s.db.Pool.QueryRow(ctx,
-			`SELECT EXISTS (
+			// Check if user has direct ACL access on this home folder (explicit entries only)
+			var hasACL bool
+			s.db.Pool.QueryRow(ctx,
+				`SELECT EXISTS (
 				SELECT 1 FROM acl_entries
 				WHERE resource_type = 'folder' AND resource_id = $1
 				AND (
@@ -311,17 +311,17 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 				)
 				LIMIT 1
 			)`,
-			entry.ID, claims.UserID, groupIDs,
-		).Scan(&hasACL)
-		if hasACL {
-			filteredEntries = append(filteredEntries, entry)
-			continue
-		}
+				entry.ID, claims.UserID, groupIDs,
+			).Scan(&hasACL)
+			if hasACL {
+				filteredEntries = append(filteredEntries, entry)
+				continue
+			}
 
-		// Check if user has access to any content inside this home folder (direct or descendant)
-		var hasAccess bool
-		err = s.db.Pool.QueryRow(ctx,
-			`SELECT EXISTS (
+			// Check if user has access to any content inside this home folder (direct or descendant)
+			var hasAccess bool
+			err = s.db.Pool.QueryRow(ctx,
+				`SELECT EXISTS (
 				WITH RECURSIVE desc_ids AS (
 					SELECT id FROM folders WHERE parent_id = $1 AND org_id = $2
 					UNION ALL
@@ -371,15 +371,15 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 				)
 				LIMIT 1
 			)`,
-			entry.ID, claims.OrgID, claims.UserID, groupIDs,
-		).Scan(&hasAccess)
-		if err != nil {
-			continue
+				entry.ID, claims.OrgID, claims.UserID, groupIDs,
+			).Scan(&hasAccess)
+			if err != nil {
+				continue
+			}
+			if hasAccess {
+				filteredEntries = append(filteredEntries, entry)
+			}
 		}
-		if hasAccess {
-			filteredEntries = append(filteredEntries, entry)
-		}
-	}
 	}
 
 	// For each filtered home folder, get sub-folders the user can access

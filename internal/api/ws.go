@@ -253,7 +253,6 @@ func (s *Server) handleNotebookWS(w http.ResponseWriter, r *http.Request) {
 		wc.WriteJSON(map[string]any{"type": "sync", "running_cells": runningCells})
 	}
 
-
 	defer func() {
 		s.hub.Leave(nbID, wc)
 		raw.Close()
