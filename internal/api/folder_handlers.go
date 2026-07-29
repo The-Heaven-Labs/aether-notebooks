@@ -286,6 +286,11 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 
 	// Filter home folders: show if user owns it OR has ACL access OR has access to any content inside
 	var filteredEntries []homeFolderEntry
+	// Org admins bypass ACLs only when admin mode is enabled — they see all home folders
+	isOrgAdmin := claims.Role == "admin" && adminModeFromContext(r.Context())
+	if isOrgAdmin {
+		filteredEntries = entries
+	} else {
 	for _, entry := range entries {
 		// Check if user owns this home folder
 		if entry.OwnerID != nil && *entry.OwnerID == claims.UserID {
@@ -375,14 +380,18 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 			filteredEntries = append(filteredEntries, entry)
 		}
 	}
+	}
 
 	// For each filtered home folder, get sub-folders the user can access
 	for i := range filteredEntries {
-		subRows, err := s.db.Pool.Query(ctx,
-			`SELECT f.id, f.org_id, f.parent_id, f.name, f.is_home, f.owner_id, f.created_by, f.created_at, f.updated_at
+		subQuery := `SELECT f.id, f.org_id, f.parent_id, f.name, f.is_home, f.owner_id, f.created_by, f.created_at, f.updated_at
 			 FROM folders f
-			 WHERE f.parent_id = $1 AND f.org_id = $2
-			 AND (
+			 WHERE f.parent_id = $1 AND f.org_id = $2`
+		var subArgs []any
+		if isOrgAdmin {
+			subArgs = []any{filteredEntries[i].ID, claims.OrgID}
+		} else {
+			subQuery += ` AND (
 			   f.owner_id = $3
 			   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'user' AND subject_id = $3::text)
 			   OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = f.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
@@ -445,10 +454,11 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 				   LIMIT 1
 			   )
 		   )
-			 )
-			 ORDER BY f.name`,
-			filteredEntries[i].ID, claims.OrgID, claims.UserID, groupIDs,
-		)
+			 )`
+			subArgs = []any{filteredEntries[i].ID, claims.OrgID, claims.UserID, groupIDs}
+		}
+		subQuery += ` ORDER BY f.name`
+		subRows, err := s.db.Pool.Query(ctx, subQuery, subArgs...)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "query failed")
 			return
@@ -514,9 +524,19 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 	}
 	groupRows.Close()
 
+	isOrgAdmin := claims.Role == "admin" && adminModeFromContext(r.Context())
+
 	// Folders at root: include folders user can access AND has content inside, EXCLUDE is_home folders
-	rows, err := s.db.Pool.Query(ctx,
-		`SELECT f.id, f.org_id, f.parent_id, f.name, f.is_home, f.owner_id, f.created_by, f.created_at, f.updated_at
+	var folderQuery string
+	var folderArgs []any
+	if isOrgAdmin {
+		folderQuery = `SELECT f.id, f.org_id, f.parent_id, f.name, f.is_home, f.owner_id, f.created_by, f.created_at, f.updated_at
+			 FROM folders f
+			 WHERE f.org_id = $1 AND f.parent_id IS NULL AND f.is_home = false
+			 ORDER BY f.name`
+		folderArgs = []any{claims.OrgID}
+	} else {
+		folderQuery = `SELECT f.id, f.org_id, f.parent_id, f.name, f.is_home, f.owner_id, f.created_by, f.created_at, f.updated_at
 		 FROM folders f
 		 WHERE f.org_id = $1 AND f.parent_id IS NULL AND f.is_home = false
 		 AND (
@@ -596,9 +616,10 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 			   )
 		   )
 		 )
-		 ORDER BY f.name`,
-		claims.OrgID, claims.UserID, groupIDs,
-	)
+		 ORDER BY f.name`
+		folderArgs = []any{claims.OrgID, claims.UserID, groupIDs}
+	}
+	rows, err := s.db.Pool.Query(ctx, folderQuery, folderArgs...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return

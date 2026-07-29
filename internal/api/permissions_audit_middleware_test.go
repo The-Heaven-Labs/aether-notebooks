@@ -144,11 +144,29 @@ func TestMiddleware_RequirePlatformAdmin(t *testing.T) {
 	}
 }
 
-func TestMiddleware_AdminModeOff(t *testing.T) {
+func TestMiddleware_AdminBypass(t *testing.T) {
 	t.Parallel()
 	f := SetupAuditTest(t)
 
-	t.Run("adminA admin mode off on no-ACL connector — denied", func(t *testing.T) {
+	t.Run("adminA no bypass without header — denied", func(t *testing.T) {
+		path := "/api/v1/connectors/" + f.OrgA.Connectors.NoACL
+		req := f.Request(t, "adminA", "GET", path, nil)
+		req.Header.Del("X-AETHER-Admin-Mode")
+		rec := httptest.NewRecorder()
+		f.srv.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("adminA bypass with header — allowed", func(t *testing.T) {
+		path := "/api/v1/connectors/" + f.OrgA.Connectors.NoACL
+		req := f.Request(t, "adminA", "GET", path, nil)
+		req.Header.Set("X-AETHER-Admin-Mode", "true")
+		rec := httptest.NewRecorder()
+		f.srv.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("adminA no bypass with mode=false on no-ACL connector — denied", func(t *testing.T) {
 		path := "/api/v1/connectors/" + f.OrgA.Connectors.NoACL
 		req := f.Request(t, "adminA", "GET", path, nil)
 		req.Header.Set("X-AETHER-Admin-Mode", "false")
@@ -157,10 +175,10 @@ func TestMiddleware_AdminModeOff(t *testing.T) {
 		require.Equal(t, http.StatusForbidden, rec.Code)
 	})
 
-	t.Run("adminA admin mode off on everyone-ACL connector — allowed", func(t *testing.T) {
+	t.Run("adminA no header on everyone-ACL connector — allowed (via ACL)", func(t *testing.T) {
 		path := "/api/v1/connectors/" + f.OrgA.Connectors.EveryoneACL
 		req := f.Request(t, "adminA", "GET", path, nil)
-		req.Header.Set("X-AETHER-Admin-Mode", "false")
+		req.Header.Del("X-AETHER-Admin-Mode")
 		rec := httptest.NewRecorder()
 		f.srv.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)

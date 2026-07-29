@@ -64,7 +64,7 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 	}
 	everyoneRows.Close()
 
-	// Org admins bypass ACLs when admin mode is enabled — scoped to their org
+	// Org admins bypass ACLs only when admin mode is enabled — scoped to their org
 	if orgRole == "admin" && adminModeFromContext(ctx) {
 		var resourceOrgID string
 		if resourceType == "folder" {

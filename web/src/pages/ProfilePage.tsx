@@ -33,7 +33,6 @@ interface CreatedToken {
 }
 
 export function ProfilePage() {
-  const { user: authUser } = useAuth()
   const qc = useQueryClient()
   const { data: user } = useQuery<UserProfile>({
     queryKey: ['profile'],
@@ -73,6 +72,7 @@ export function ProfilePage() {
   )
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [adminMode, setAdminMode] = useState(() => localStorage.getItem('aether_admin_mode') === 'true')
+  const { user: authUser } = useAuth()
 
   // Token management state
   const [showTokenForm, setShowTokenForm] = useState(false)
@@ -198,6 +198,7 @@ export function ProfilePage() {
               </div>
             </div>
           )}
+
           {saveStatus === 'saved' && (
             <ErrorBanner message="Profile updated successfully" variant="info" onDismiss={() => setSaveStatus('idle')} />
           )}

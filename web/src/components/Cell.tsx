@@ -557,6 +557,13 @@ export const Cell = memo(function Cell({
           {index !== undefined && <span style={styles.cellNumber}>{index + 1}</span>}
           <span style={styles.cellTypeTag}>{isCode ? 'SQL' : 'MD'}</span>
 
+          {running && (
+            <span style={styles.runningBadge}>
+              <Loader2 size={10} style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }} />
+              Running…
+            </span>
+          )}
+
           {/* Connector: badge → inline select on click */}
           {isCode && (
             connectorOpen ? (
@@ -889,6 +896,15 @@ const styles: Record<string, React.CSSProperties> = {
     textTransform: 'uppercase' as const,
     flexShrink: 0,
     userSelect: 'none',
+  },
+  runningBadge: {
+    fontSize: 10,
+    fontFamily: 'var(--font-mono)',
+    color: 'var(--accent)',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    flexShrink: 0,
   },
   connectorBadge: {
     fontSize: 11,

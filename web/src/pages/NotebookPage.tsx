@@ -1228,12 +1228,6 @@ export function NotebookPage() {
             placeholder="Select a connector"
             allowClear
           />
-          {runningCount > 0 && (
-            <span style={styles.runningBadge}>
-              <Loader2 size={12} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />
-              Running {runningCount} cell{runningCount > 1 ? 's' : ''}…
-            </span>
-          )}
           <CollaboratorAvatars
             provider={collab?.provider}
             currentUserEmail={userEmail}
@@ -1800,11 +1794,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: 12,
-  },
-  runningBadge: {
-    fontSize: 12,
-    color: '#8a8278',
-    fontFamily: 'var(--font-mono)',
   },
   runAllBtn: {
     padding: '6px 16px',
