@@ -27,7 +27,7 @@ const NOTEBOOK_SHORTCUTS: ShortcutEntry[] = [
   { key: 'M', action: 'Convert to markdown' },
   { key: 'Y', action: 'Convert to code' },
   { key: 'Shift+M', action: 'Toggle slide merge' },
-  { key: 'Ctrl+Alt+F', action: 'Format SQL' },
+  { key: 'Ctrl+.', action: 'Format SQL' },
   { key: 'Ctrl+Shift+F', action: 'Format SQL (may conflict with browser)' },
 ]
 
