@@ -678,7 +678,7 @@ export function NotebookPage() {
     )
   }, [id, qc])
 
-  const updateCellMeta = useCallback(async (cellId: string, updates: Partial<Pick<Cell, 'source_visible' | 'outputs_hidden' | 'cell_collapsed' | 'slide_break' | 'title' | 'slug'>>) => {
+  const updateCellMeta = useCallback(async (cellId: string, updates: Partial<Pick<Cell, 'source_visible' | 'outputs_hidden' | 'cell_collapsed' | 'slide_break' | 'title' | 'slug' | 'limit'>>) => {
     try {
       await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, updates)
       setLocalCells((prev) => prev.map((c) => c.id === cellId ? { ...c, ...updates } : c))
