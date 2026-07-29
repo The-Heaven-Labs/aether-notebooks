@@ -72,6 +72,8 @@ export interface ChartConfig {
   // Scatter
   colorColumn?: string
   sizeColumn?: string
+  // Log scale (bar, line, area, scatter)
+  logScale?: boolean
   // Marklines (reference lines for axis-based charts)
   markLines?: MarkLineConfig[]
   // Pie/Donut

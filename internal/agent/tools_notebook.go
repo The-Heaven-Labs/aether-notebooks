@@ -487,9 +487,9 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 					"outputs_hidden": false,
 					"cell_collapsed": false,
 					"slide_break":    false,
-				"created_at":     now,
-				"updated_at":     now,
-				"limit":          1000,
+					"created_at":     now,
+					"updated_at":     now,
+					"limit":          1000,
 				},
 				"user_email": "agent@aether",
 			})

@@ -47,7 +47,7 @@ export function ConnectorsPage() {
   const [editForm, setEditForm] = useState<ConnectorForm>(defaultForm())
   const [form, setForm] = useState<ConnectorForm>(defaultForm())
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error?: string }>>({})
-  const [testingId, setTestingId] = useState<string | null>(null)
+  const [testingIds, setTestingIds] = useState<Record<string, boolean>>({})
   const [createError, setCreateError] = useState<string | null>(null)
   const [editError, setEditError] = useState<string | null>(null)
   const [formTest, setFormTest] = useState<{ ok: boolean; error?: string } | null>(null)
@@ -60,6 +60,15 @@ export function ConnectorsPage() {
     queryKey: ['connectors'],
     queryFn: () => api.get<Connector[]>('/api/v1/connectors'),
   })
+
+  const [autoTested, setAutoTested] = useState(false)
+
+  useEffect(() => {
+    if (connectors.length > 0 && !autoTested) {
+      setAutoTested(true)
+      connectors.forEach(c => testConnector(c.id))
+    }
+  }, [connectors, autoTested])
 
   useEffect(() => {
     const editId = searchParams.get('edit')
@@ -152,16 +161,15 @@ export function ConnectorsPage() {
   })
 
   const testConnector = async (id: string) => {
-    // Clear previous result to show fresh test is running
     setTestResults((prev) => ({ ...prev, [id]: undefined as unknown as { ok: boolean; error?: string } }))
-    setTestingId(id)
+    setTestingIds((prev) => ({ ...prev, [id]: true }))
     try {
       const result = await api.post<{ ok: boolean; error?: string }>(`/api/v1/connectors/${id}/test`, {})
       setTestResults((prev) => ({ ...prev, [id]: result }))
     } catch (e) {
       setTestResults((prev) => ({ ...prev, [id]: { ok: false, error: String(e) } }))
     } finally {
-      setTestingId(null)
+      setTestingIds((prev) => { const n = { ...prev }; delete n[id]; return n })
     }
   }
 
@@ -434,7 +442,7 @@ export function ConnectorsPage() {
                     {c.config?.database ?? '—'}
                   </td>
                   <td style={cellStyle}>
-                    {testingId === c.id ? (
+                    {testingIds[c.id] ? (
                       <StatusBadge status="neutral" label="Testing…" />
                     ) : test ? (
                       <StatusBadge
@@ -449,8 +457,8 @@ export function ConnectorsPage() {
                     )}
                   </td>
                   <td style={styles.tdActions}>
-                    <button type="button" style={styles.actionBtn} onClick={() => testConnector(c.id)} disabled={testingId === c.id}>
-                      {testingId === c.id ? (
+                    <button type="button" style={styles.actionBtn} onClick={() => testConnector(c.id)} disabled={testingIds[c.id]}>
+                      {testingIds[c.id] ? (
                         <><Loader2 size={11} style={{ animation: 'spin 1s linear infinite', marginRight: 4 }} />Testing…</>
                       ) : 'Test'}
                     </button>
