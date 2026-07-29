@@ -459,7 +459,11 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
             const isArray = Array.isArray(cell)
             const strValue = typeof cell === 'object' ? JSON.stringify(cell) : String(cell)
             const displayValue = isArray
-              ? `[${cell.length} item${cell.length !== 1 ? 's' : ''}]`
+              ? (() => {
+                  const first = cell[0]
+                  const s = first === null || first === undefined ? '' : typeof first === 'object' ? JSON.stringify(first) : String(first)
+                  return s.length > MAX_CELL_DISPLAY ? s.slice(0, MAX_CELL_DISPLAY) + '…' : s
+                })()
               : strValue.length > MAX_CELL_DISPLAY
                 ? strValue.slice(0, MAX_CELL_DISPLAY) + '…'
                 : strValue
