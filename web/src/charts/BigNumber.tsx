@@ -47,7 +47,7 @@ function BigNumberComponent({ data, config }: ChartProps) {
       flexDirection: 'column',
       alignItems: 'center',
       justifyContent: 'center',
-      height: '100%',
+      flex: 1,
       minHeight: 0,
       padding: `min(24px, ${containerHeight * 0.1}px)`,
       gap: config.label ? Math.max(2, containerHeight * 0.02) : 0,
