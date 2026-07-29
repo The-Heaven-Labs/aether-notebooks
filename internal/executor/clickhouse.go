@@ -395,6 +395,10 @@ func (c *ClickHouseExecutor) Execute(ctx context.Context, query string, params m
 		count++
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+
 	if resultRows == nil {
 		resultRows = [][]interface{}{}
 	}
@@ -433,6 +437,10 @@ func (c *ClickHouseExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
 			tableOrder = append(tableOrder, key)
 		}
 		tableMap[key].Columns = append(tableMap[key].Columns, ColumnInfo{Name: col, Type: dtype, Description: comment})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("schema rows: %w", err)
 	}
 
 	// Fetch table-level comments
