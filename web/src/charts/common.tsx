@@ -695,7 +695,12 @@ export const EChartsContainer = memo(function EChartsContainer({ option, onChart
       try {
         if (chartRef.current && containerRef.current &&
             containerRef.current.clientHeight > 0) {
-          chartRef.current.resize()
+          const currentOpt = chartRef.current.getOption() as any
+          if (!currentOpt?.series?.length) {
+            chartRef.current.setOption(finalOption, { notMerge })
+          } else {
+            chartRef.current.resize()
+          }
         }
       } catch {
         // ignore — ECharts may throw during transition; next observation recovers
