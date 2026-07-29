@@ -12,7 +12,7 @@ import { tags } from '@lezer/highlight'
 import { format } from 'sql-formatter'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
-import { yCollab, ySyncFacet, YSyncConfig, yUndoManagerKeymap } from 'y-codemirror.next'
+import { yCollab, ySyncFacet, YSyncConfig } from 'y-codemirror.next'
 import { OutputRenderer } from './OutputRenderer'
 const MarkdownView = lazy(() => import('./MarkdownCell').then(m => ({ default: m.MarkdownView })))
 import type { Cell as APICell, Connector } from '../types'
@@ -354,7 +354,6 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
         },
       },
       ...defaultKeymap,
-      ...yUndoManagerKeymap,
     ])
 
     const view = new EditorView({
@@ -414,9 +413,8 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
       }
       // Activate yCollab with our config last (overrides yCollab's internal one)
       // so the observer's origin guard matches our transact origin above.
-      const undoManager = new Y.UndoManager(ytext, { captureTimeout: 2000 })
       view.dispatch({ effects: compartment.reconfigure([
-        yCollab(ytext, collab.provider.awareness, { undoManager }),
+        yCollab(ytext, collab.provider.awareness),
         ySyncFacet.of(ySyncConfig),
       ]) })
     }
