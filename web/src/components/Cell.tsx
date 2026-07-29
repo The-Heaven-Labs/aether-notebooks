@@ -315,7 +315,9 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
       const raw = editorView.state.doc.toString()
       try {
         const formatted = format(raw, { language: 'sql', tabWidth: 2 })
-        collab.doc.transact(() => { ytext.delete(0, ytext.length); ytext.insert(0, formatted) })
+        editorView.dispatch({
+          changes: { from: 0, to: raw.length, insert: formatted },
+        })
       } catch { /* leave as-is */ }
       return true
     }
@@ -727,18 +729,13 @@ export const Cell = memo(function Cell({
             <button
               style={styles.actionBtn}
               onClick={() => {
-                const view = editorViews.get(cell.id)
-                if (view) {
-                  const raw = view.state.doc.toString()
+                const edView = editorViews.get(cell.id)
+                if (edView) {
+                  const raw = edView.state.doc.toString()
                   try {
                     const lang = cell.language === 'javascript' ? 'postgresql' : 'sql'
                     const formatted = format(raw, { language: lang, tabWidth: 2 })
-                    const collab = collabCache.get(notebookId)
-                    if (collab) {
-                      const ytext = collab.doc.getText(`cell:${cell.id}`)
-                      collab.doc.transact(() => { ytext.delete(0, ytext.length); ytext.insert(0, formatted) })
-                    }
-                    onSourceChange(cell.id, formatted)
+                    edView.dispatch({ changes: { from: 0, to: raw.length, insert: formatted } })
                   } catch { /* leave as-is */ }
                 }
               }}
