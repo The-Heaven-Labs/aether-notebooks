@@ -618,7 +618,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
           )}
         </div>
       ) : (
-        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1, minHeight: fixedView ? 0 : 300, display: 'flex', flexDirection: 'column' }}>
           <ChartView rs={rs} onConfigChange={onChartConfigChange} output={{ type: 'table', data: { columns: rs.columns, rows: rs.rows }, config: chartConfig }} />
         </div>
       )}
