@@ -1,3 +1,4 @@
+import { useRef, useEffect, useState } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
 import { ChartTypeSelect, CHART_COLORS } from './common'
 import { ConfigHint } from './ConfigHint'
@@ -18,24 +19,43 @@ function getColor(skipEmpty?: boolean): string {
 }
 
 function BigNumberComponent({ data, config }: ChartProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [containerHeight, setContainerHeight] = useState(200)
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerHeight(entry.contentRect.height)
+      }
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const valueFontSize = Math.max(16, Math.min(120, containerHeight * 0.45))
+  const subFontSize = Math.max(10, Math.min(60, valueFontSize * 0.5))
+  const labelFontSize = Math.max(9, Math.min(24, valueFontSize * 0.25))
+
   const col = config.valueColumn || data.columns[0]?.name || ''
   const row = data.rows[0]
   const value = row ? row[data.columns.findIndex(c => c.name === col)] : null
 
   return (
-    <div style={{
+    <div ref={containerRef} style={{
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
       justifyContent: 'center',
       height: '100%',
-      minHeight: 200,
-      padding: 24,
-      gap: config.label ? 8 : 0,
+      minHeight: 0,
+      padding: `min(24px, ${containerHeight * 0.1}px)`,
+      gap: config.label ? Math.max(2, containerHeight * 0.02) : 0,
+      overflow: 'hidden',
     }}>
       {config.label && (
         <div style={{
-          fontSize: 13,
+          fontSize: labelFontSize,
           fontWeight: 600,
           color: 'var(--text-muted)',
           textTransform: 'uppercase',
@@ -46,7 +66,7 @@ function BigNumberComponent({ data, config }: ChartProps) {
         </div>
       )}
       <div style={{
-        fontSize: 56,
+        fontSize: valueFontSize,
         fontWeight: 700,
         color: config.seriesColors?.value ?? getColor(config.skipEmpty),
         lineHeight: 1.1,
@@ -54,9 +74,9 @@ function BigNumberComponent({ data, config }: ChartProps) {
         textAlign: 'center',
         wordBreak: 'break-word',
       }}>
-        {config.prefix && <span style={{ fontSize: 28, fontWeight: 400, color: 'var(--text-muted)', marginRight: 4 }}>{config.prefix}</span>}
+        {config.prefix && <span style={{ fontSize: subFontSize, fontWeight: 400, color: 'var(--text-muted)', marginRight: 4 }}>{config.prefix}</span>}
         {formatNumber(value, config.decimalPlaces)}
-        {config.suffix && <span style={{ fontSize: 28, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 4 }}>{config.suffix}</span>}
+        {config.suffix && <span style={{ fontSize: subFontSize, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 4 }}>{config.suffix}</span>}
       </div>
     </div>
   )
