@@ -311,19 +311,19 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
     const ytext = collab.doc.getText(`cell:${cell.id}`)
     const compartment = collabCompartment.current
 
+    const formatCell = (editorView: EditorView) => {
+      const raw = editorView.state.doc.toString()
+      try {
+        const formatted = format(raw, { language: 'sql', tabWidth: 2 })
+        collab.doc.transact(() => { ytext.delete(0, ytext.length); ytext.insert(0, formatted) })
+      } catch { /* leave as-is */ }
+      return true
+    }
+
     const cellKeymap = keymap.of([
       { key: 'Mod-Enter', run: () => { onRunRef.current(cell.id); return true } },
-      {
-        key: 'Mod-Shift-f',
-        run: (view) => {
-          const raw = view.state.doc.toString()
-          try {
-            const formatted = format(raw, { language: 'sql', tabWidth: 2 })
-            collab.doc.transact(() => { ytext.delete(0, ytext.length); ytext.insert(0, formatted) })
-          } catch { /* leave as-is */ }
-          return true
-        },
-      },
+      { key: 'Mod-Shift-f', run: formatCell },
+      { key: 'Ctrl-.', run: formatCell },
       {
         key: 'Tab',
         run: (view) => {
@@ -390,20 +390,6 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
     })
     editorViews.set(cell.id, view)
 
-    // Window-level format shortcut (more reliable than CodeMirror keymap for browser-conflicting combos)
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F') && e.altKey) {
-        e.preventDefault()
-        e.stopPropagation()
-        const raw = view.state.doc.toString()
-        try {
-          const formatted = format(raw, { language: 'sql', tabWidth: 2 })
-          collab.doc.transact(() => { ytext.delete(0, ytext.length); ytext.insert(0, formatted) })
-        } catch { /* leave as-is */ }
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-
     // Detect CodeMirror focus/blur for edit mode tracking
     const cmEditor = view.dom
     const handleFocus = () => onEditStartRef.current?.()
@@ -441,7 +427,6 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
 
     return () => {
       editorViews.delete(cell.id)
-      window.removeEventListener('keydown', onKeyDown)
       cmEditor.removeEventListener('focusin', handleFocus)
       cmEditor.removeEventListener('focusout', handleBlur)
       if (onSynced) collab.provider.off('synced', onSynced)
@@ -757,7 +742,7 @@ export const Cell = memo(function Cell({
                   } catch { /* leave as-is */ }
                 }
               }}
-              title="Format SQL (Ctrl+Alt+F)"
+              title="Format SQL (Ctrl+.)"
               aria-label="Format SQL"
             >
               <AlignLeft size={11} />
