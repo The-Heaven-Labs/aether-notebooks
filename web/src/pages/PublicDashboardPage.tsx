@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useEffect, useCallback } from 'react'
+import { useRef, useState, useEffect, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
@@ -89,7 +89,7 @@ export function PublicDashboardPage() {
 
               const isChart = widget.type === 'chart'
               const fixedView = isChart ? 'chart' : 'table'
-              const chartConfig = { ...((cellData.metadata?.chart || {}) as object), ...(widget.config || {}) } as ChartConfig
+              const chartConfig = { ...(cellData.metadata?.chart || {}), ...(widget.config || {}) } as ChartConfig | undefined
 
               return (
                 <div key={widget.id} style={{
