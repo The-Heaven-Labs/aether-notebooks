@@ -222,7 +222,7 @@ interface Props {
   onMoveDown?: (cellId: string) => void
   onSwitchType?: (cellId: string) => void
   onDuplicate?: (cellId: string) => void
-  running?: boolean
+  running?: boolean | number
   saveState?: SaveState
   runAt?: Date
   metrics?: { connect_time_ms: number; query_time_ms: number; render_time_ms: number; total_time_ms: number }
@@ -485,6 +485,14 @@ export const Cell = memo(function Cell({
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(cell.title ?? '')
+  const [elapsedSec, setElapsedSec] = useState(0)
+  useEffect(() => {
+    if (!running) { setElapsedSec(0); return }
+    const start = typeof running === 'number' ? running : Date.now()
+    setElapsedSec(Math.floor((Date.now() - start) / 1000))
+    const id = setInterval(() => setElapsedSec(Math.floor((Date.now() - start) / 1000)), 1000)
+    return () => clearInterval(id)
+  }, [running])
 
   const isCode = cell.type === 'code'
   const sourceVisible = cell.source_visible ?? true
@@ -560,7 +568,7 @@ export const Cell = memo(function Cell({
           {running && (
             <span style={styles.runningBadge}>
               <Loader2 size={10} style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }} />
-              Running…
+              Running… {elapsedSec}s
             </span>
           )}
 

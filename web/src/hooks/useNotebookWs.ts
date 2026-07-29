@@ -10,8 +10,8 @@ export function useNotebookWs(
   onCellCreated?: (cell: import('../types').Cell, userEmail?: string) => void,
   onCellDeleted?: (cellId: string, userEmail?: string) => void,
   onNotebookRefresh?: (reason?: string) => void,
-  onCellExecuting?: (cellId: string) => void,
-  onSync?: (data: { running_cells?: string[] }) => void,
+  onCellExecuting?: (cellId: string, startedAt?: string) => void,
+  onSync?: (data: { running_cells?: Array<{ cell_id: string; started_at: string }> }) => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -66,7 +66,7 @@ export function useNotebookWs(
         } else if (msg.type === 'notebook_refresh' && onNotebookRefreshRef.current) {
           onNotebookRefreshRef.current(msg.reason)
         } else if (msg.type === 'cell_executing' && onCellExecutingRef.current) {
-          onCellExecutingRef.current(msg.cell_id)
+          onCellExecutingRef.current(msg.cell_id, msg.started_at)
         } else if (msg.type === 'sync' && onSyncRef.current) {
           onSyncRef.current(msg)
         }
