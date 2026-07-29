@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard, Code2, AlignLeft } from 'lucide-react'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
-import { defaultKeymap } from '@codemirror/commands'
+import { defaultKeymap, historyKeymap } from '@codemirror/commands'
 import { sql, PostgreSQL, MySQL } from '@codemirror/lang-sql'
 import { javascript } from '@codemirror/lang-javascript'
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language'
@@ -354,6 +354,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
         },
       },
       ...defaultKeymap,
+      ...historyKeymap,
     ])
 
     const view = new EditorView({
@@ -414,7 +415,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
       // Activate yCollab with our config last (overrides yCollab's internal one)
       // so the observer's origin guard matches our transact origin above.
       view.dispatch({ effects: compartment.reconfigure([
-        yCollab(ytext, collab.provider.awareness),
+        yCollab(ytext, collab.provider.awareness, { undoManager: false }),
         ySyncFacet.of(ySyncConfig),
       ]) })
     }
