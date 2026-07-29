@@ -460,9 +460,13 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
             const strValue = typeof cell === 'object' ? JSON.stringify(cell) : String(cell)
             const displayValue = isArray
               ? (() => {
-                  const first = cell[0]
-                  const s = first === null || first === undefined ? '' : typeof first === 'object' ? JSON.stringify(first) : String(first)
-                  return s.length > MAX_CELL_DISPLAY ? s.slice(0, MAX_CELL_DISPLAY) + '…' : s
+                  const items = (cell as unknown[]).map(v => v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))
+                  const needle = items.join(', ')
+                  const prefix = '['
+                  const suffix = ']'
+                  const maxLen = MAX_CELL_DISPLAY - prefix.length - suffix.length
+                  const truncated = needle.length > maxLen ? needle.slice(0, maxLen) + '…' : needle
+                  return prefix + truncated + suffix
                 })()
               : strValue.length > MAX_CELL_DISPLAY
                 ? strValue.slice(0, MAX_CELL_DISPLAY) + '…'
@@ -472,7 +476,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
             return (
               <td key={j} data-row={i} data-col={j} style={styles.td}>
                 <span
-                  style={isTruncated || isArray ? styles.truncatedCell : styles.clickableCell}
+                  style={isTruncated ? styles.truncatedCell : styles.clickableCell}
                   onClick={() => openDetail(i, j, strValue, cell)}
                   title={isTruncated ? 'Click to view full value' : undefined}
                 >
