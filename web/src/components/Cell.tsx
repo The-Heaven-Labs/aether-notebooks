@@ -414,8 +414,9 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
       }
       // Activate yCollab with our config last (overrides yCollab's internal one)
       // so the observer's origin guard matches our transact origin above.
+      const undoManager = new Y.UndoManager(ytext, { captureTimeout: 2000 })
       view.dispatch({ effects: compartment.reconfigure([
-        yCollab(ytext, collab.provider.awareness),
+        yCollab(ytext, collab.provider.awareness, { undoManager }),
         ySyncFacet.of(ySyncConfig),
       ]) })
     }
