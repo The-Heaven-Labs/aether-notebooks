@@ -233,6 +233,7 @@ func (s *Server) routes() {
 	s.mux.Handle("PUT /api/v1/notebooks/{notebook_id}/cells/{cell_id}", authMW(http.HandlerFunc(s.handleUpdateCell)))
 	s.mux.Handle("DELETE /api/v1/notebooks/{notebook_id}/cells/{cell_id}", authMW(http.HandlerFunc(s.handleDeleteCell)))
 	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/cells/{cell_id}/execute", authMW(http.HandlerFunc(s.handleExecuteCell)))
+	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/cells/{cell_id}/cancel", authMW(http.HandlerFunc(s.handleCancelCell)))
 	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/cells/{cell_id}/duplicate", authMW(http.HandlerFunc(s.handleDuplicateCell)))
 
 	// Cell history routes

@@ -33,7 +33,7 @@ const toGridItem = (w: Widget): LayoutItem => ({
   w: w.layout.width,
   h: w.layout.height,
   minW: 2,
-  minH: 4,
+  minH: w.type === 'chart' ? 2 : 4,
   maxH: 24,
 })
 

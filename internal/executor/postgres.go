@@ -47,6 +47,11 @@ func NewPostgresExecutor(cfg models.ConnectorConfig) (*PostgresExecutor, error) 
 func (p *PostgresExecutor) Execute(ctx context.Context, query string, params map[string]string, maxRows int) (*ResultSet, error) {
 	resolved := ResolveParams(query, params)
 
+	// Tag queries with the Aether user email for tracing in the database query_log
+	if userEmail, ok := ctx.Value(CtxUserEmail{}).(string); ok && userEmail != "" {
+		resolved = fmt.Sprintf("/* aether_user:%s */ %s", userEmail, resolved)
+	}
+
 	rows, err := p.pool.Query(ctx, resolved)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)

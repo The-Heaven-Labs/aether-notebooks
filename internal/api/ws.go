@@ -48,6 +48,7 @@ type Hub struct {
 	mu           sync.RWMutex
 	rooms        map[string]map[*wsConn]bool
 	runningCells sync.Map // cellID → runningCellInfo
+	cancelFuncs  sync.Map // cellID → context.CancelFunc
 	rdb          *redis.Client
 	pubsub       *redis.PubSub
 	stopCh       chan struct{}
@@ -157,6 +158,22 @@ func (h *Hub) RunningCellsForNotebook(notebookID string) []map[string]any {
 		return true
 	})
 	return cells
+}
+
+func (h *Hub) SetCancelFunc(cellID string, cancel context.CancelFunc) {
+	h.cancelFuncs.Store(cellID, cancel)
+}
+
+func (h *Hub) GetCancelFunc(cellID string) (context.CancelFunc, bool) {
+	v, ok := h.cancelFuncs.Load(cellID)
+	if !ok {
+		return nil, false
+	}
+	return v.(context.CancelFunc), true
+}
+
+func (h *Hub) DeleteCancelFunc(cellID string) {
+	h.cancelFuncs.Delete(cellID)
 }
 
 func (h *Hub) loadRunningCellsFromRedis() {

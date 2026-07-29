@@ -203,6 +203,19 @@ export function NotebookPage() {
   const [following, setFollowing] = useState<{ email: string; name: string } | null>(null)
   const [viewOpen, setViewOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
+  const cancelCell = useCallback(async (cellId: string) => {
+    try {
+      await api.post(`/api/v1/notebooks/${id}/cells/${cellId}/cancel`, {})
+    } catch {
+      // Ignore — the query may have already finished
+    }
+    setRunningCells((prev) => {
+      const next = { ...prev }
+      delete next[cellId]
+      return next
+    })
+  }, [id])
+
   const [cellRunAt, setCellRunAt] = useState<Record<string, Date>>({})
   const [focusedCellId, setFocusedCellId] = useState<string | null>(null)
   const [allCollapsed, setAllCollapsed] = useState(false)
@@ -1479,6 +1492,7 @@ export function NotebookPage() {
                             connectors={connectors}
                             notebookId={id!}
                             onRun={notebook?.can_run ? saveAndRun : noop}
+                            onCancel={runningCells[cell.id] ? cancelCell : undefined}
                             onDelete={readOnly ? noop : stableDeleteHandler}
                             onSourceChange={readOnly ? noop : updateSource}
                             onSave={readOnly ? undefined : saveCellSource}

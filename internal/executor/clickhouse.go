@@ -348,6 +348,11 @@ func chExtractValue(dest interface{}) interface{} {
 func (c *ClickHouseExecutor) Execute(ctx context.Context, query string, params map[string]string, maxRows int) (*ResultSet, error) {
 	resolved := ResolveParams(query, params)
 
+	// Tag queries with the Aether user email for tracing in the database query_log
+	if userEmail, ok := ctx.Value(CtxUserEmail{}).(string); ok && userEmail != "" {
+		resolved = fmt.Sprintf("/* aether_user:%s */ %s", userEmail, resolved)
+	}
+
 	// Use Exec for commands that don't return rows
 	upper := strings.TrimSpace(strings.ToUpper(resolved))
 	if hasPrefixAny(upper, []string{"USE ", "SET ", "CREATE ", "DROP ", "ALTER ",
