@@ -3,6 +3,7 @@ import * as echarts from 'echarts/core'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
 import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, ChartTypeSelect } from './common'
 import { ConfigHint } from './ConfigHint'
+import { useGroupValues } from './AxisConfigPanel'
 
 const WORLD_GEO_URL = 'https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json'
 
@@ -58,13 +59,17 @@ function MapChartComponent({ data, config }: ChartProps) {
 
   const maxVal = useMemo(() => Math.max(...allPts.map(p => p.val), 1), [allPts])
 
+  const groupList = useMemo(() => {
+    if (!hasGroupBy) return []
+    return [...new Set(allPts.map(p => p.group).filter(Boolean))] as string[]
+  }, [hasGroupBy, allPts])
+
   const groupPalette = useMemo(() => {
     if (!hasGroupBy) return null
-    const groups = [...new Set(allPts.map(p => p.group).filter(Boolean))] as string[]
     const map: Record<string, string> = {}
-    groups.forEach((g, i) => { map[g] = config.seriesColors?.[g] ?? colors.palette[i % colors.palette.length] })
+    groupList.forEach((g, i) => { map[g] = config.seriesColors?.[g] ?? colors.palette[i % colors.palette.length] })
     return map
-  }, [hasGroupBy, allPts, config.seriesColors, colors.palette])
+  }, [hasGroupBy, groupList, config.seriesColors, colors.palette])
 
   const tooltipFmt = useCallback((params: any) => {
     if (!params.data) return ''
@@ -78,18 +83,61 @@ function MapChartComponent({ data, config }: ChartProps) {
 
   const option = useMemo(() => {
     if (allPts.length === 0) return {}
+    const dark = document.documentElement.getAttribute('data-theme') === 'dark'
 
-    const scatterData = allPts.map(p => ({
-      value: [p.lon, p.lat, p.val],
-      name: p.name,
-      itemStyle: { color: groupPalette?.[p.group] ?? p.color },
-    }))
+    const buildSeries = (coords: 'geo' | 'cartesian') => {
+      if (hasGroupBy) {
+        return groupList.map((group) => {
+          const pts = allPts.filter(p => p.group === group)
+          const maxGrpVal = Math.max(...pts.map(p => p.val), 1)
+          const grpColor = groupPalette?.[group] ?? CHART_COLORS[0]
+          return {
+            name: group,
+            type: 'scatter' as const,
+            coordinateSystem: coords === 'geo' ? 'geo' as const : undefined,
+            data: pts.map(p => coords === 'geo'
+              ? { value: [p.lon, p.lat, p.val], name: p.name, itemStyle: { color: grpColor } }
+              : [p.lon, p.lat]),
+            symbolSize: (val: number[]) => Math.max(5, Math.min(28, ((val[2] ?? 1) / maxGrpVal) * 28)),
+            itemStyle: { color: grpColor },
+            label: {
+              show: config.showLabels,
+              formatter: (pp: any) => pp.data?.name ?? '',
+              fontSize: 10,
+              color: colors.text,
+              position: 'right' as const,
+            },
+          }
+        })
+      }
+      const scatterData = allPts.map(p => ({
+        value: [p.lon, p.lat, p.val],
+        name: p.name,
+        itemStyle: { color: p.color },
+      }))
+      return [{
+        type: 'scatter' as const,
+        coordinateSystem: coords === 'geo' ? 'geo' as const : undefined,
+        data: scatterData,
+        symbolSize: (val: number[]) => Math.max(5, Math.min(28, ((val[2] ?? 1) / maxVal) * 28)),
+        itemStyle: coords !== 'geo' ? { color: allPts[0]?.color ?? CHART_COLORS[0], opacity: 0.85 } : undefined,
+        label: {
+          show: config.showLabels,
+          formatter: (pp: any) => pp.data?.name ?? '',
+          fontSize: 10,
+          color: colors.text,
+          position: 'right' as const,
+        },
+      }]
+    }
 
     if (geoReady && mapRegistered) {
-      const dark = document.documentElement.getAttribute('data-theme') === 'dark'
       return {
         tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: tooltipFmt },
         title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
+        legend: config.showLegend !== false && hasGroupBy
+          ? { show: true, top: config.title ? 32 : 0, textStyle: { fontSize: 11, color: colors.textMuted } }
+          : { show: false },
         geo: {
           map: 'world',
           roam: true,
@@ -112,19 +160,7 @@ function MapChartComponent({ data, config }: ChartProps) {
           },
           label: { show: false },
         },
-        series: [{
-          type: 'scatter' as const,
-          coordinateSystem: 'geo' as const,
-          data: scatterData,
-          symbolSize: (val: number[]) => Math.max(5, Math.min(28, ((val[2] ?? 1) / maxVal) * 28)),
-          label: {
-            show: config.showLabels,
-            formatter: (pp: any) => pp.data?.name ?? '',
-            fontSize: 10,
-            color: colors.text,
-            position: 'right' as const,
-          },
-            }],
+        series: buildSeries('geo'),
       }
     }
 
@@ -132,36 +168,28 @@ function MapChartComponent({ data, config }: ChartProps) {
     return {
       tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: tooltipFmt },
       title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
-      grid: { top: config.title ? 46 : 20, right: 16, bottom: 8, left: 16, containLabel: true },
+      legend: config.showLegend !== false && hasGroupBy
+        ? { show: true, top: config.title ? 32 : 0, textStyle: { fontSize: 11, color: colors.textMuted } }
+        : { show: false },
+      grid: { top: config.title ? 56 : config.showLegend !== false && hasGroupBy ? 30 : 20, right: 16, bottom: 8, left: 16, containLabel: true },
       dataZoom: [
         { type: 'inside' as const, xAxisIndex: 0, filterMode: 'none' },
         { type: 'inside' as const, yAxisIndex: 0, filterMode: 'none' },
       ],
       xAxis: { type: 'value' as const, name: lonCol || 'Longitude', min: -180, max: 180, ...getAxisStyle() },
       yAxis: { type: 'value' as const, name: latCol || 'Latitude', min: -90, max: 90, ...getAxisStyle() },
-      series: [{
-        type: 'scatter' as const,
-        data: allPts.map(p => [p.lon, p.lat]),
-        symbolSize: (val: number[]) => {
-          const pt = allPts.find(p => p.lon === val[0] && p.lat === val[1])
-          return Math.max(5, Math.min(28, ((pt?.val ?? 1) / maxVal) * 28))
-        },
-        itemStyle: { color: allPts[0]?.color ?? CHART_COLORS[0], opacity: 0.85 },
-        label: {
-          show: config.showLabels,
-          formatter: (pp: any) => allPts.find(p => p.lon === pp.data?.[0] && p.lat === pp.data?.[1])?.name ?? '',
-          fontSize: 10,
-          color: colors.text,
-          position: 'right' as const,
-        },
-      }],
+      series: buildSeries('cartesian'),
     }
-  }, [allPts, maxVal, geoReady, latCol, lonCol, valCol, labelCol, config.title, config.showLabels, config.seriesColors, colors, tooltipFmt, groupPalette])
+  }, [allPts, maxVal, geoReady, latCol, lonCol, valCol, labelCol, config.title, config.showLabels, config.showLegend, config.seriesColors, colors, tooltipFmt, groupPalette, hasGroupBy, groupList])
 
   return <EChartsContainer option={option} height={400} notMerge showReset />
 }
 
-function MapConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
+function MapConfigPanel({ config, columns, onChange, data }: ConfigPanelProps) {
+  const localGroupValues = useGroupValues(config, columns, data)
+  const groupValues = localGroupValues
+  const hasGroupBy = !!(config.groupBy && groupValues.length > 0)
+
   return (
     <div style={styles.panel}>
       <div style={styles.section}>
@@ -219,7 +247,7 @@ function MapConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
         <ConfigHint>Column for marker text labels</ConfigHint>
       </div>
       <div style={styles.section}>
-        <div style={styles.sectionLabel}>Group by (optional)</div>
+        <div style={styles.sectionLabel}>Group by</div>
         <select
           aria-label="Group by"
           style={styles.select}
@@ -229,7 +257,7 @@ function MapConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
           <option value="">— None —</option>
           {columns.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
-        <ConfigHint>Color points by this column's values</ConfigHint>
+        <ConfigHint>Split points into colored groups by this column</ConfigHint>
       </div>
       <label style={styles.checkbox}>
         <input
@@ -240,16 +268,52 @@ function MapConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
         Show labels
       </label>
       <ConfigHint>Display text labels next to markers</ConfigHint>
-      <div style={styles.section}>
-        <div style={styles.sectionLabel}>Marker color</div>
+      <label style={styles.checkbox}>
         <input
-          type="color"
-          value={config.seriesColors?.point ?? CHART_COLORS[0]}
-          onChange={e => onChange({ ...config, seriesColors: { ...config.seriesColors, point: e.target.value } })}
-          style={{ width: 32, height: 32, padding: 0, border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', background: 'none' }}
+          type="checkbox"
+          checked={config.showLegend !== false}
+          onChange={e => onChange({ ...config, showLegend: e.target.checked })}
         />
-        <ConfigHint>Color for point markers on the map</ConfigHint>
-      </div>
+        Show legend
+      </label>
+      <ConfigHint>Display group legend (only with Group by)</ConfigHint>
+      {hasGroupBy ? (
+        <div style={styles.section}>
+          <div style={styles.sectionLabel}>Group colors</div>
+          <div style={styles.colorRow}>
+            {groupValues.map((group, i) => {
+              const defaultColor = CHART_COLORS[i % CHART_COLORS.length]
+              const currentColor = config.seriesColors?.[group] ?? defaultColor
+              return (
+                <label key={group} style={styles.colorLabel}>
+                  <input
+                    type="color"
+                    value={currentColor}
+                    onChange={e => {
+                      const newColors = { ...config.seriesColors, [group]: e.target.value }
+                      onChange({ ...config, seriesColors: newColors })
+                    }}
+                    style={styles.colorInput}
+                  />
+                  <span style={styles.colorText}>{group.substring(0, 10)}</span>
+                </label>
+              )
+            })}
+          </div>
+          <ConfigHint>Color for each group value</ConfigHint>
+        </div>
+      ) : (
+        <div style={styles.section}>
+          <div style={styles.sectionLabel}>Marker color</div>
+          <input
+            type="color"
+            value={config.seriesColors?.point ?? CHART_COLORS[0]}
+            onChange={e => onChange({ ...config, seriesColors: { ...config.seriesColors, point: e.target.value } })}
+            style={styles.colorInput}
+          />
+          <ConfigHint>Color for point markers on the map</ConfigHint>
+        </div>
+      )}
     </div>
   )
 }
