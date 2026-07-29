@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard, Code2, AlignLeft } from 'lucide-react'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
-import { defaultKeymap } from '@codemirror/commands'
+import { defaultKeymap, historyKeymap } from '@codemirror/commands'
 import { sql, PostgreSQL, MySQL } from '@codemirror/lang-sql'
 import { javascript } from '@codemirror/lang-javascript'
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language'
@@ -315,9 +315,8 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
       const raw = editorView.state.doc.toString()
       try {
         const formatted = format(raw, { language: 'sql', tabWidth: 2 })
-        editorView.dispatch({
-          changes: { from: 0, to: raw.length, insert: formatted },
-        })
+        collab.doc.transact(() => { ytext.delete(0, ytext.length); ytext.insert(0, formatted) })
+        onSourceChangeRef.current(cell.id, formatted)
       } catch { /* leave as-is */ }
       return true
     }
@@ -354,6 +353,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
         },
       },
       ...defaultKeymap,
+      ...historyKeymap,
     ])
 
     const view = new EditorView({
@@ -735,11 +735,16 @@ export const Cell = memo(function Cell({
                   try {
                     const lang = cell.language === 'javascript' ? 'postgresql' : 'sql'
                     const formatted = format(raw, { language: lang, tabWidth: 2 })
-                    edView.dispatch({ changes: { from: 0, to: raw.length, insert: formatted } })
+                    const collab = collabCache.get(notebookId)
+                    if (collab) {
+                      const ytext = collab.doc.getText(`cell:${cell.id}`)
+                      collab.doc.transact(() => { ytext.delete(0, ytext.length); ytext.insert(0, formatted) })
+                    }
+                    onSourceChange(cell.id, formatted)
                   } catch { /* leave as-is */ }
                 }
               }}
-              title="Format SQL (Ctrl+.)"
+              title="Format SQL (Ctrl+Shift+F / Ctrl+.)"
               aria-label="Format SQL"
             >
               <AlignLeft size={11} />
