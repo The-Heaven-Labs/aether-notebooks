@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard, Code2, AlignLeft } from 'lucide-react'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
-import { defaultKeymap, historyKeymap } from '@codemirror/commands'
+import { defaultKeymap } from '@codemirror/commands'
 import { sql, PostgreSQL, MySQL } from '@codemirror/lang-sql'
 import { javascript } from '@codemirror/lang-javascript'
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language'
@@ -12,7 +12,7 @@ import { tags } from '@lezer/highlight'
 import { format } from 'sql-formatter'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
-import { yCollab, ySyncFacet, YSyncConfig } from 'y-codemirror.next'
+import { yCollab, ySyncFacet, YSyncConfig, yUndoManagerKeymap } from 'y-codemirror.next'
 import { OutputRenderer } from './OutputRenderer'
 const MarkdownView = lazy(() => import('./MarkdownCell').then(m => ({ default: m.MarkdownView })))
 import type { Cell as APICell, Connector } from '../types'
@@ -354,7 +354,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
         },
       },
       ...defaultKeymap,
-      ...historyKeymap,
+      ...yUndoManagerKeymap,
     ])
 
     const view = new EditorView({
