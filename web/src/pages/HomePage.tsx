@@ -512,6 +512,16 @@ export function HomePage() {
     }
   }, [folderID, homeFolders, setSearchParams, user?.user_id])
 
+  // Expose home folder ID for Sidebar/TopBar navigation
+  useEffect(() => {
+    if (homeFolders && homeFolders.length > 0) {
+      const myHome = homeFolders.find(h => h.owner_id === user?.user_id)
+      if (myHome) {
+        sessionStorage.setItem('aether_home_folder_id', myHome.id)
+      }
+    }
+  }, [homeFolders, user?.user_id])
+
   
 
   const { data: ancestors = [] } = useQuery<Array<{ id: string; name: string }>>({

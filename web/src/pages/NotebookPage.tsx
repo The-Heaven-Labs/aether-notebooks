@@ -148,7 +148,7 @@ export function NotebookPage() {
   const { id } = useParams<{ id: string }>()
   const qc = useQueryClient()
   const [collabVersion, setCollabVersion] = useState(0)
-  const [runningCells, setRunningCells] = useState<Set<string>>(new Set())
+  const [runningCells, setRunningCells] = useState<Record<string, number>>({})
   const [localCells, setLocalCells] = useState<Cell[]>([])
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
@@ -203,6 +203,19 @@ export function NotebookPage() {
   const [following, setFollowing] = useState<{ email: string; name: string } | null>(null)
   const [viewOpen, setViewOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
+  const cancelCell = useCallback(async (cellId: string) => {
+    try {
+      await api.post(`/api/v1/notebooks/${id}/cells/${cellId}/cancel`, {})
+    } catch {
+      // Ignore — the query may have already finished
+    }
+    setRunningCells((prev) => {
+      const next = { ...prev }
+      delete next[cellId]
+      return next
+    })
+  }, [id])
+
   const [cellRunAt, setCellRunAt] = useState<Record<string, Date>>({})
   const [focusedCellId, setFocusedCellId] = useState<string | null>(null)
   const [allCollapsed, setAllCollapsed] = useState(false)
@@ -260,8 +273,8 @@ export function NotebookPage() {
       return prev.map((c) => (c.id === cellId ? { ...c, outputs: outputs as Output[], metrics: metrics || c.metrics } : c))
     })
     setRunningCells((prev) => {
-      const next = new Set(prev)
-      next.delete(cellId)
+      const next = { ...prev }
+      delete next[cellId]
       return next
     })
     setCellRunAt((prev) => ({ ...prev, [cellId]: new Date() }))
@@ -318,14 +331,14 @@ export function NotebookPage() {
     )
   }, [id, qc]), useCallback(() => {
     qc.invalidateQueries({ queryKey: ['notebook', id] })
-  }, [id, qc]), useCallback((cellId: string) => {
-    setRunningCells((prev) => new Set(prev).add(cellId))
-  }, []), useCallback((data: { running_cells?: string[] }) => {
+  }, [id, qc]), useCallback((cellId: string, startedAt?: string) => {
+    setRunningCells((prev) => ({ ...prev, [cellId]: startedAt ? new Date(startedAt).getTime() : Date.now() }))
+  }, []), useCallback((data: { running_cells?: Array<{ cell_id: string; started_at: string }> }) => {
     const cells = data.running_cells
     if (cells?.length) {
       setRunningCells((prev) => {
-        const next = new Set(prev)
-        for (const id of cells) next.add(id)
+        const next = { ...prev }
+        for (const c of cells) next[c.cell_id] = new Date(c.started_at).getTime()
         return next
       })
     }
@@ -678,7 +691,7 @@ export function NotebookPage() {
     )
   }, [id, qc])
 
-  const updateCellMeta = useCallback(async (cellId: string, updates: Partial<Pick<Cell, 'source_visible' | 'outputs_hidden' | 'cell_collapsed' | 'slide_break' | 'title' | 'slug'>>) => {
+  const updateCellMeta = useCallback(async (cellId: string, updates: Partial<Pick<Cell, 'source_visible' | 'outputs_hidden' | 'cell_collapsed' | 'slide_break' | 'title' | 'slug' | 'limit'>>) => {
     try {
       await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, updates)
       setLocalCells((prev) => prev.map((c) => c.id === cellId ? { ...c, ...updates } : c))
@@ -895,7 +908,7 @@ export function NotebookPage() {
 
       await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { source: cell.source })
 
-      setRunningCells((s) => new Set(s).add(cellId))
+      setRunningCells((s) => ({ ...s, [cellId]: Date.now() }))
       pendingExecRef.current.add(cellId)
       try {
         const result = await api.post<{ outputs: Output[]; metrics?: { connect_time_ms: number; query_time_ms: number; render_time_ms: number; total_time_ms: number } }>(
@@ -916,8 +929,8 @@ export function NotebookPage() {
       } finally {
         setTimeout(() => pendingExecRef.current.delete(cellId), 3000)
         setRunningCells((s) => {
-          const next = new Set(s)
-          next.delete(cellId)
+          const next = { ...s }
+          delete next[cellId]
           return next
         })
       }
@@ -1228,12 +1241,6 @@ export function NotebookPage() {
             placeholder="Select a connector"
             allowClear
           />
-          {runningCount > 0 && (
-            <span style={styles.runningBadge}>
-              <Loader2 size={12} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />
-              Running {runningCount} cell{runningCount > 1 ? 's' : ''}…
-            </span>
-          )}
           <CollaboratorAvatars
             provider={collab?.provider}
             currentUserEmail={userEmail}
@@ -1485,6 +1492,7 @@ export function NotebookPage() {
                             connectors={connectors}
                             notebookId={id!}
                             onRun={notebook?.can_run ? saveAndRun : noop}
+                            onCancel={runningCells[cell.id] ? cancelCell : undefined}
                             onDelete={readOnly ? noop : stableDeleteHandler}
                             onSourceChange={readOnly ? noop : updateSource}
                             onSave={readOnly ? undefined : saveCellSource}
@@ -1494,7 +1502,7 @@ export function NotebookPage() {
                             onMoveDown={readOnly || i === localCells.length - 1 ? undefined : stableMoveDown}
                             onSwitchType={readOnly ? undefined : switchCellType}
                             onDuplicate={readOnly ? undefined : stableDuplicate}
-                            running={runningCells.has(cell.id)}
+                            running={runningCells[cell.id] ?? false}
                             saveState={cellSaveState[cell.id]}
                             runAt={cellRunAt[cell.id]}
                             metrics={cell.metrics}
@@ -1800,11 +1808,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: 12,
-  },
-  runningBadge: {
-    fontSize: 12,
-    color: '#8a8278',
-    fontFamily: 'var(--font-mono)',
   },
   runAllBtn: {
     padding: '6px 16px',

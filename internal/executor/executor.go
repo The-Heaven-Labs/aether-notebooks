@@ -77,3 +77,6 @@ func hasPrefixAny(s string, prefixes []string) bool {
 	}
 	return false
 }
+
+// CtxUserEmail is the context key for the Aether user email, used for query tracing.
+type CtxUserEmail struct{}

@@ -43,7 +43,7 @@ function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width:
   return { row: maxBottom, col: 0, width: 6, height: 8 }
 }
 
-function WidgetContent({ widget }: { widget: Widget }) {
+function WidgetContent({ widget, onConfigSave }: { widget: Widget; onConfigSave: (widgetId: string, config: Record<string, unknown>) => void }) {
   const { data: notebook, isLoading } = useQuery({
     queryKey: ['notebook', widget.notebook_id],
     queryFn: () => api.get<NotebookWithCells>(`/api/v1/notebooks/${widget.notebook_id}`),
@@ -67,8 +67,15 @@ function WidgetContent({ widget }: { widget: Widget }) {
     return <div style={widgetContentStyles.empty}>No results yet — run the notebook first</div>
   }
   const fixedView = widget.type === 'chart' ? 'chart' : 'table'
-  const chartConfig = (cell.metadata?.chart ?? widget.config) as ChartConfig | undefined
-  return <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} />
+  const chartConfig = { ...(cell.metadata?.chart as object || {}), ...(widget.config as object || {}) } as ChartConfig
+  return (
+    <OutputRenderer
+      outputs={cell.outputs}
+      fixedView={fixedView}
+      chartConfig={chartConfig}
+      onChartConfigChange={(config) => onConfigSave(widget.id, config as unknown as Record<string, unknown>)}
+    />
+  )
 }
 
 const widgetContentStyles: Record<string, React.CSSProperties> = {
@@ -202,6 +209,13 @@ const markSaved = useCallback(() => {
   const deleteWidget = useMutation({
     mutationFn: (widgetId: string) =>
       api.delete(`/api/v1/dashboards/${id}/widgets/${widgetId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboard', id] }),
+    onError: (err: Error) => setMutationError(err.message),
+  })
+
+  const saveWidgetConfig = useMutation({
+    mutationFn: ({ widgetId, config }: { widgetId: string; config: Record<string, unknown> }) =>
+      api.put(`/api/v1/dashboards/${id}/widgets/${widgetId}`, { config }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboard', id] }),
     onError: (err: Error) => setMutationError(err.message),
   })
@@ -486,7 +500,7 @@ const markSaved = useCallback(() => {
                 >
                   <X size={12} />
                 </button>
-                <WidgetContent widget={widget} />
+                <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} />
               </div>
             ))}
           </div>
@@ -538,7 +552,7 @@ const markSaved = useCallback(() => {
                     >
                       <X size={12} />
                     </button>
-                    <WidgetContent widget={widget} />
+                    <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} />
                   </div>
                 </div>
               ))}

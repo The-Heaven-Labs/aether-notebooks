@@ -48,7 +48,11 @@ export function ShareModal({ resourceType, resourceId, canShare = true, onClose,
   const [confirmShare, setConfirmShare] = useState(false)
   const initialCellRef = useRef<HTMLDivElement>(null)
 
-  const publicUrl = token ? `${window.location.origin}/public/${token}` : null
+  const publicUrl = token
+    ? resourceType === 'dashboard'
+      ? `${window.location.origin}/public/dashboards/${token}`
+      : `${window.location.origin}/public/${token}`
+    : null
 
   // Resolve creator name from members
   useEffect(() => {

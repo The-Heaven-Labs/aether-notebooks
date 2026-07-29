@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -211,30 +213,57 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 
 	bgCtx := context.Background()
 
+	// Create cancelable context for query execution
+	execCtx, execCancel := context.WithCancel(bgCtx)
+	s.hub.SetCancelFunc(cellID, execCancel)
+
+	// Tag the context with the user email for ClickHouse query tracing
+	execCtx = context.WithValue(execCtx, executor.CtxUserEmail{}, s.userEmail(bgCtx, claims.UserID))
+
 	// Set query timeout from connector config (0 = unlimited)
-	execCtx := bgCtx
+	var timeoutCancel context.CancelFunc
 	if timeout > 0 {
-		var cancel context.CancelFunc
-		execCtx, cancel = context.WithTimeout(bgCtx, time.Duration(timeout)*time.Second)
-		defer cancel()
+		execCtx, timeoutCancel = context.WithTimeout(execCtx, time.Duration(timeout)*time.Second)
 	}
+	defer func() {
+		if timeoutCancel != nil {
+			timeoutCancel()
+		}
+	}()
 
 	// Broadcast executing state and track in Hub (survives page refresh)
-	s.hub.Broadcast(nbID, map[string]any{"type": "cell_executing", "cell_id": cellID})
-	s.hub.SetRunning(cellID, nbID)
+	execStart := time.Now()
+	s.hub.Broadcast(nbID, map[string]any{"type": "cell_executing", "cell_id": cellID, "started_at": execStart})
+	s.hub.SetRunning(cellID, nbID, execStart)
 
-	// Execute — survives HTTP disconnect, respects connector timeout
+	// Execute — respects cancellation and connector timeout
 	queryStart := time.Now()
 	result, err := exec.Execute(execCtx, resolvedSource, req.Parameters, maxRows)
+	execCancel()
+	s.hub.DeleteCancelFunc(cellID)
 	s.hub.UnsetRunning(cellID)
+
+	// Some drivers (ClickHouse) may return empty results instead of context.Canceled
+	// when the query was cancelled mid-flight. Check if our context was cancelled.
+	if err == nil && execCtx.Err() == context.Canceled && (result == nil || len(result.Rows) == 0) {
+		err = context.Canceled
+	}
+
 	if err != nil {
+		// Check if the query was cancelled by the user
+		errMsg := err.Error()
+		isCancelled := errors.Is(err, context.Canceled) || strings.Contains(errMsg, "context canceled") || strings.Contains(errMsg, "cancelled")
+		if isCancelled {
+			errMsg = "Query cancelled"
+		}
 		// Store error output
 		errTotalTime := time.Since(startTime).Milliseconds()
-		errOutput := models.Output{Type: "error", Data: map[string]string{"message": err.Error()}}
+		errOutput := models.Output{Type: "error", Data: map[string]string{"message": errMsg}}
 		outJSON, _ := json.Marshal([]models.Output{errOutput})
 		s.db.Pool.Exec(bgCtx, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, errTotalTime, cellID)
 		s.hub.Broadcast(nbID, map[string]any{"type": "cell_output", "cell_id": cellID, "outputs": []models.Output{errOutput}, "user_email": s.userEmail(bgCtx, claims.UserID)})
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		s.hub.Broadcast(nbID, map[string]any{"type": "cell_cancelled", "cell_id": cellID})
+		writeError(w, http.StatusUnprocessableEntity, errMsg)
 		return
 	}
 	queryTime := time.Since(queryStart).Milliseconds()
@@ -287,4 +316,29 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 			"duration_ms":  totalTime,
 		},
 	})
+}
+
+// @Summary Cancel a running cell execution
+// @Description Cancel the currently running query for a cell
+// @Tags cells
+// @Accept json
+// @Produce json
+// @Param notebook_id path string true "Notebook ID"
+// @Param cell_id path string true "Cell ID"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Security BearerAuth
+// @Router /notebooks/{notebook_id}/cells/{cell_id}/cancel [post]
+func (s *Server) handleCancelCell(w http.ResponseWriter, r *http.Request) {
+	cellID := r.PathValue("cell_id")
+
+	cancel, ok := s.hub.GetCancelFunc(cellID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "no running query found for this cell")
+		return
+	}
+
+	cancel()
+	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
 }

@@ -537,6 +537,7 @@ export function GroupsPage() {
           )}
           {groups.map((group) => {
             const isExpanded = expandedId === group.id
+            const isEveryone = /^everyone$/i.test(group.name)
             const currentMembers = groupMembers[group.id] ?? []
             const isLoadingGroup = loadingMembers[group.id] ?? false
 
@@ -573,12 +574,15 @@ export function GroupsPage() {
                     ) : (
                       <span style={styles.groupName}>{group.name}</span>
                     )}
+                    {isEveryone && (
+                      <span style={styles.systemBadge}>System</span>
+                    )}
                     <span style={styles.memberCount}>
                       {group.member_count} {group.member_count === 1 ? 'member' : 'members'}
                     </span>
                   </button>
 
-                  {isAdmin && (
+                  {isAdmin && !isEveryone && (
                     <div style={styles.actions}>
                       {isRenaming ? (
                         <>
@@ -641,6 +645,11 @@ export function GroupsPage() {
                 {/* Expanded content */}
                 {isExpanded && (
                   <div style={{ ...styles.expandedBody, borderRadius: '0 0 6px 6px' }}>
+                    {isEveryone && (
+                      <div style={styles.systemNote}>
+                        All organization members are automatically part of this group. Membership cannot be managed manually.
+                      </div>
+                    )}
                     {isLoadingGroup && (
                       <div style={styles.loadingText}>Loading members…</div>
                     )}
@@ -651,7 +660,7 @@ export function GroupsPage() {
                       <div key={m.user_id} style={styles.memberRow}>
                         <span style={styles.memberName}>{m.name || m.email}</span>
                         <span style={styles.memberEmail}>{m.email}</span>
-                        {isAdmin && (
+                        {isAdmin && !isEveryone && (
 <button
                           type="button"
                           style={styles.removeBtn}
@@ -667,7 +676,7 @@ export function GroupsPage() {
                       </div>
                     ))}
 
-                    {isAdmin && (
+                    {isAdmin && !isEveryone && (
                       <div style={styles.addMemberRow}>
                         <MemberDropdown
                           options={availableToAdd}
@@ -858,6 +867,26 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'transparent',
     cursor: 'pointer',
     color: 'inherit',
+  },
+  systemBadge: {
+    fontSize: 10,
+    fontWeight: 600,
+    color: 'var(--text-muted)',
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
+    borderRadius: 3,
+    padding: '1px 6px',
+    marginLeft: 6,
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.5px',
+    lineHeight: '18px',
+  },
+  systemNote: {
+    fontSize: 12,
+    color: 'var(--text-muted)',
+    fontStyle: 'italic',
+    padding: '4px 0 8px 0',
+    lineHeight: 1.5,
   },
   deleteBtn: {
     padding: '4px 10px',

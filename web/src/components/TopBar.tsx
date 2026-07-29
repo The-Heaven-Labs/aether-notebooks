@@ -35,6 +35,7 @@ export function TopBar({ onShowShortcuts }: TopBarProps) {
   const email = localStorage.getItem('aether_user_email') ?? ''
   const orgName = localStorage.getItem('aether_org_name') ?? ''
   const isPlatformAdmin = localStorage.getItem('aether_is_platform_admin') === 'true'
+  const homeFolderId = sessionStorage.getItem('aether_home_folder_id')
   const initials = name ? name[0].toUpperCase() : email ? email[0].toUpperCase() : '?'
 
   useEffect(() => {
@@ -57,7 +58,7 @@ export function TopBar({ onShowShortcuts }: TopBarProps) {
       >
         <Menu size={18} />
       </button>
-      <Link to="/" style={styles.brand}>
+      <Link to={homeFolderId ? { pathname: '/', search: `?folder=${homeFolderId}` } : '/'} style={styles.brand}>
         <div style={styles.logo}><LogoMark /></div>
         <span style={styles.appName}>Aether</span>
       </Link>

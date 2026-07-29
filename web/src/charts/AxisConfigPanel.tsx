@@ -364,6 +364,16 @@ export function AxisConfigPanel({
           />
           Smooth
         </label>
+        {(['bar', 'line', 'area', 'scatter'] as const).includes(config.chartType as any) && (
+          <label style={styles.checkbox}>
+            <input
+              type="checkbox"
+              checked={config.logScale ?? false}
+              onChange={e => onChange({ ...config, logScale: e.target.checked })}
+            />
+            Log scale
+          </label>
+        )}
       </div>
       <ConfigHint>Legend identifies each series, Grid shows background lines, Labels show values on data points</ConfigHint>
 

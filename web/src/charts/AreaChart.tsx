@@ -59,10 +59,10 @@ function AreaChartComponent({ data, config }: ChartProps) {
         { type: 'slider' as const, start: 0, end: 100, bottom: 8, height: 20, borderColor: colors.border, textStyle: { fontSize: 10, color: colors.textMuted } },
       ] : undefined,
       xAxis: mlXAxis ? [baseXAxis, mlXAxis] : baseXAxis,
-      yAxis: { type: 'value' as const, ...getAxisStyle(config.showGrid) },
+      yAxis: { type: config.logScale ? 'log' as const : 'value' as const, ...getAxisStyle(config.showGrid) },
       series: [...series, ...mlSeries],
     }
-  }, [chartData, xAxis, yAxes, hasGroupBy, groupSeries, xValues, config.title, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, config.connectNulls, config.dataZoom, config.smooth, config.markLines, colors])
+  }, [chartData, xAxis, yAxes, hasGroupBy, groupSeries, xValues, config.title, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, config.connectNulls, config.dataZoom, config.smooth, config.markLines, config.logScale, colors])
   // title is used in grid.top calculation above
 
   return <EChartsContainer option={option} showReset />

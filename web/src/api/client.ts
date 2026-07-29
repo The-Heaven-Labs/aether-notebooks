@@ -37,8 +37,10 @@ async function request<T>(
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
   }
-  headers['X-AETHER-Admin-Mode'] =
-    localStorage.getItem('aether_admin_mode') === 'true' ? 'true' : 'false'
+
+  if (localStorage.getItem('aether_admin_mode') === 'true') {
+    headers['X-AETHER-Admin-Mode'] = 'true'
+  }
 
   const res = await fetch(BASE_URL + path, {
     method,

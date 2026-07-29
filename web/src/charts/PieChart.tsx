@@ -35,7 +35,23 @@ function PieChartComponent({ data, config }: ChartProps) {
   return <EChartsContainer option={option} showReset />
 }
 
-function PieConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
+function PieConfigPanel({ config, columns, onChange, data }: ConfigPanelProps) {
+  const sliceNames = useMemo(() => {
+    if (!data || !config.xAxis || !data.rows || !data.columns) return []
+    const colIndex = data.columns.findIndex(c => c.name === config.xAxis)
+    if (colIndex < 0) return []
+    const seen = new Set<string>()
+    const names: string[] = []
+    for (const row of data.rows) {
+      const val = String(row[colIndex] ?? '')
+      if (!seen.has(val)) {
+        seen.add(val)
+        names.push(val)
+      }
+    }
+    return names
+  }, [data, config.xAxis])
+
   return (
     <div style={styles.panel}>
       <div style={styles.section}>
@@ -75,6 +91,35 @@ function PieConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
         Donut (ring)
       </label>
       <ConfigHint>Show as a ring chart with a hole in the center</ConfigHint>
+
+      {/* Series Colors — one color picker per slice */}
+      {sliceNames.length > 0 && (
+        <div style={styles.section}>
+          <div style={styles.sectionLabel}>Series colors</div>
+          <div style={styles.colorRow}>
+            {sliceNames.map((name, i) => {
+              const defaultColor = CHART_COLORS[i % CHART_COLORS.length]
+              const currentColor = config.seriesColors?.[name] ?? defaultColor
+              return (
+                <label key={name} style={styles.colorLabel}>
+                  <input
+                    type="color"
+                    value={currentColor}
+                    onChange={e => {
+                      const newColors = { ...config.seriesColors, [name]: e.target.value }
+                      onChange({ ...config, seriesColors: newColors })
+                    }}
+                    style={styles.colorInput}
+                  />
+                  <span style={styles.colorText}>{name.substring(0, 8)}</span>
+                </label>
+              )
+            })}
+          </div>
+          <ConfigHint>Customize the color for each slice</ConfigHint>
+        </div>
+      )}
+
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Rose type</div>
         <select
@@ -126,6 +171,10 @@ const styles: Record<string, React.CSSProperties> = {
   checkbox: { fontSize: 12, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 4 },
   row: { display: 'flex', gap: 10 },
   input: { fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4 },
+  colorRow: { display: 'flex', gap: 8, flexWrap: 'wrap' },
+  colorLabel: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, fontSize: 10, color: 'var(--text-muted)' },
+  colorInput: { width: 24, height: 24, padding: 0, border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', background: 'transparent' },
+  colorText: { fontSize: 9, maxWidth: 40, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
 }
 
 export const PieChartModule: ChartModule = {

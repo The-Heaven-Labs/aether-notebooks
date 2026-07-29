@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useLayoutEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, Play, Loader2, Pencil, Settings } from 'lucide-react'
+import { ArrowLeft, Play, Loader2, Pencil, Settings, Globe } from 'lucide-react'
+import { ShareModal } from '../components/ShareModal'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
@@ -21,6 +22,7 @@ interface NotebookWithCells extends Notebook {
 
 interface DashboardWithWidgets extends Dashboard {
   widgets: Widget[]
+  can_share?: boolean
 }
 
 // Widget type extended with input widget variants (config is typed loosely)
@@ -175,6 +177,12 @@ const inputStyles: Record<string, React.CSSProperties> = {
 function QueryWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, onEdit }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string; loading?: boolean; onRun?: () => void; onEdit?: () => void }) {
   const { params } = useDashboardParams()
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const handleChartConfigChange = useCallback((config: ChartConfig) => {
+    if (!dashboardId) return
+    api.put(`/api/v1/dashboards/${dashboardId}/widgets/${widget.id}`, { config }).then(() => {
+      qc.invalidateQueries({ queryKey: ['dashboard', dashboardId] })
+    })
+  }, [dashboardId, widget.id, qc])
 
   // Use widgets_data when available (view_with_data permission) instead of fetching notebooks individually
   const widgetCellData = widgetsData?.[widget.cell_id!]
@@ -252,7 +260,7 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, onE
     )
   }
   const fixedView = widget.type === 'chart' ? 'chart' : 'table'
-  const chartConfig = ((cell as any).metadata?.chart ?? widget.config) as ChartConfig | undefined
+  const chartConfig = { ...((cell as any).metadata?.chart as object || {}), ...(widget.config as object || {}) } as ChartConfig
   const updatedAt = (cell as any).updated_at
   const durationMs = (cell as any).duration_ms
   const footerExtra = (
@@ -296,7 +304,7 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, onE
   )
   return (
     <>
-      <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} footerExtra={footerExtra} />
+      <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} onChartConfigChange={handleChartConfigChange} footerExtra={footerExtra} />
     </>
   )
 }
@@ -362,6 +370,7 @@ function DashboardContent({ id }: { id: string }) {
   const [containerWidth, setContainerWidth] = useState(0)
   const [refreshSeconds, setRefreshSeconds] = useState<number>(0)
   const [refreshCustom, setRefreshCustom] = useState(false)
+  const [showShare, setShowShare] = useState(false)
   const gridContainerRef = useRef<HTMLDivElement | null>(null)
 
   const gridRef = useCallback((el: HTMLDivElement | null) => {
@@ -515,6 +524,21 @@ function DashboardContent({ id }: { id: string }) {
             <Settings size={12} /> Edit
           </Link>
 
+          {dashboard?.can_share !== false && (
+            <button
+              style={{
+                padding: '5px 12px', fontSize: 12, fontWeight: 600,
+                background: 'none', color: 'var(--text-secondary)',
+                border: '1px solid var(--border)', borderRadius: 4,
+                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
+              }}
+              onClick={() => setShowShare(true)}
+              title="Share dashboard"
+            >
+              <Globe size={12} /> Share
+            </button>
+          )}
+
           {/* Column count selector */}
           <div style={{ display: 'flex', gap: 2, background: 'var(--border-light)', padding: 2, borderRadius: 4 }}>
             {[6, 8, 12, 16, 24].map(cols => (
@@ -643,6 +667,14 @@ function DashboardContent({ id }: { id: string }) {
           </div>
         )}
       </div>
+      {showShare && dashboard && (
+        <ShareModal
+          resourceType="dashboard"
+          resourceId={dashboard.id}
+          canShare={dashboard.can_share ?? false}
+          onClose={() => setShowShare(false)}
+        />
+      )}
     </AppShell>
   )
 }

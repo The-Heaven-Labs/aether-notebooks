@@ -213,6 +213,7 @@ interface Props {
   connectors: Connector[]
   notebookId: string
   onRun: (cellId: string) => void
+  onCancel?: (cellId: string) => void
   onDelete: (cellId: string) => void
   onSourceChange: (cellId: string, source: string) => void
   onSave?: (cellId: string, source: string) => void
@@ -222,7 +223,7 @@ interface Props {
   onMoveDown?: (cellId: string) => void
   onSwitchType?: (cellId: string) => void
   onDuplicate?: (cellId: string) => void
-  running?: boolean
+  running?: boolean | number
   saveState?: SaveState
   runAt?: Date
   metrics?: { connect_time_ms: number; query_time_ms: number; render_time_ms: number; total_time_ms: number }
@@ -453,6 +454,7 @@ export const Cell = memo(function Cell({
   connectors,
   notebookId,
   onRun,
+  onCancel,
   onDelete,
   onSourceChange,
   onSave,
@@ -485,6 +487,14 @@ export const Cell = memo(function Cell({
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(cell.title ?? '')
+  const [elapsedSec, setElapsedSec] = useState(0)
+  useEffect(() => {
+    if (!running) { setElapsedSec(0); return }
+    const start = typeof running === 'number' ? running : Date.now()
+    setElapsedSec(Math.floor((Date.now() - start) / 1000))
+    const id = setInterval(() => setElapsedSec(Math.floor((Date.now() - start) / 1000)), 1000)
+    return () => clearInterval(id)
+  }, [running])
 
   const isCode = cell.type === 'code'
   const sourceVisible = cell.source_visible ?? true
@@ -556,6 +566,25 @@ export const Cell = memo(function Cell({
         <div style={styles.metaLeft}>
           {index !== undefined && <span style={styles.cellNumber}>{index + 1}</span>}
           <span style={styles.cellTypeTag}>{isCode ? 'SQL' : 'MD'}</span>
+
+          {running && (
+            <>
+              <span style={styles.runningBadge}>
+                <Loader2 size={10} style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }} />
+                Running… {elapsedSec}s
+              </span>
+              {onCancel && (
+                <button
+                  style={styles.cancelRunBtn}
+                  onClick={(e) => { e.stopPropagation(); onCancel(cell.id) }}
+                  title="Cancel query"
+                  aria-label="Cancel query"
+                >
+                  <X size={10} />
+                </button>
+              )}
+            </>
+          )}
 
           {/* Connector: badge → inline select on click */}
           {isCode && (
@@ -656,7 +685,7 @@ export const Cell = memo(function Cell({
               <button
                 style={{ ...styles.actionBtn, opacity: hasConnector ? 1 : 0.4 }}
                 onClick={(e) => { e.stopPropagation(); onRun(cell.id) }}
-                disabled={running}
+                disabled={!!running}
                 title={hasConnector ? 'Run (Ctrl+Enter)' : 'Select a connector first'}
                 aria-label="Run cell (Ctrl+Enter)"
               >
@@ -889,6 +918,31 @@ const styles: Record<string, React.CSSProperties> = {
     textTransform: 'uppercase' as const,
     flexShrink: 0,
     userSelect: 'none',
+  },
+  runningBadge: {
+    fontSize: 10,
+    fontFamily: 'var(--font-mono)',
+    color: 'var(--accent)',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    flexShrink: 0,
+  },
+  cancelRunBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '1px 4px',
+    fontSize: 10,
+    fontFamily: 'var(--font-mono)',
+    fontWeight: 600,
+    color: 'var(--error)',
+    background: 'none',
+    border: '1px solid var(--error)',
+    borderRadius: 3,
+    cursor: 'pointer',
+    lineHeight: 1,
+    flexShrink: 0,
   },
   connectorBadge: {
     fontSize: 11,

@@ -35,6 +35,7 @@ export function Sidebar() {
   const location = useLocation()
   const isMobile = useMediaQuery(768)
   const isTablet = useMediaQuery(1024)
+  const homeFolderId = sessionStorage.getItem('aether_home_folder_id')
   const NAV_ITEMS = useMemo(() =>
     ALL_NAV_ITEMS.filter(item => {
       if (item.to === '/audit') return user?.role === 'admin'
@@ -88,7 +89,7 @@ export function Sidebar() {
         {NAV_ITEMS.map(({ to, title, icon, desc }) => (
           <NavLink
             key={to}
-            to={to}
+            to={to === '/' && homeFolderId ? { pathname: '/', search: `?folder=${homeFolderId}` } : to}
             end={to === '/'}
             title={desc}
             style={({ isActive }) => itemStyle(isActive)}

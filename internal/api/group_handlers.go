@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -130,6 +131,16 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	groupID := r.PathValue("id")
 	ctx := r.Context()
 
+	isEveryone, err := s.isEveryoneGroup(ctx, groupID, claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "group not found")
+		return
+	}
+	if isEveryone {
+		writeError(w, http.StatusBadRequest, "the \"Everyone\" group cannot be renamed")
+		return
+	}
+
 	var req createGroupRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -145,7 +156,7 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var g models.Group
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`UPDATE groups SET name=$1 WHERE id=$2 AND org_id=$3
 		 RETURNING id, org_id, name, created_at`,
 		req.Name, groupID, claims.OrgID,
@@ -161,6 +172,18 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, g)
 }
 
+func (s *Server) isEveryoneGroup(ctx context.Context, groupID, orgID string) (bool, error) {
+	var name string
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT name FROM groups WHERE id=$1 AND org_id=$2`,
+		groupID, orgID,
+	).Scan(&name)
+	if err != nil {
+		return false, err
+	}
+	return strings.EqualFold(name, "everyone"), nil
+}
+
 // @Summary Delete a group
 // @Description Delete a group
 // @Tags groups
@@ -173,6 +196,16 @@ func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	groupID := r.PathValue("id")
 	ctx := r.Context()
+
+	isEveryone, err := s.isEveryoneGroup(ctx, groupID, claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "group not found")
+		return
+	}
+	if isEveryone {
+		writeError(w, http.StatusBadRequest, "the \"Everyone\" group cannot be deleted")
+		return
+	}
 
 	result, err := s.db.Pool.Exec(ctx,
 		`DELETE FROM groups WHERE id=$1 AND org_id=$2`,
@@ -267,6 +300,16 @@ func (s *Server) handleAddGroupMember(w http.ResponseWriter, r *http.Request) {
 	groupID := r.PathValue("id")
 	ctx := r.Context()
 
+	isEveryone, err := s.isEveryoneGroup(ctx, groupID, claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "group not found")
+		return
+	}
+	if isEveryone {
+		writeError(w, http.StatusBadRequest, "cannot add members to the \"Everyone\" group — all org members are automatically included")
+		return
+	}
+
 	var req addGroupMemberRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -278,7 +321,7 @@ func (s *Server) handleAddGroupMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var exists bool
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM groups WHERE id=$1 AND org_id=$2)`,
 		groupID, claims.OrgID,
 	).Scan(&exists)
@@ -326,8 +369,18 @@ func (s *Server) handleRemoveGroupMember(w http.ResponseWriter, r *http.Request)
 	userID := r.PathValue("user_id")
 	ctx := r.Context()
 
+	isEveryone, err := s.isEveryoneGroup(ctx, groupID, claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "group not found")
+		return
+	}
+	if isEveryone {
+		writeError(w, http.StatusBadRequest, "cannot remove members from the \"Everyone\" group — all org members are automatically included")
+		return
+	}
+
 	var exists bool
-	err := s.db.Pool.QueryRow(ctx,
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM groups WHERE id=$1 AND org_id=$2)`,
 		groupID, claims.OrgID,
 	).Scan(&exists)

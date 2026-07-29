@@ -51,7 +51,7 @@ function BarChartComponent({ data, config }: ChartProps) {
       : { top: config.title ? 56 : config.showLegend !== false ? 30 : 8, right: 16, bottom: config.dataZoom ? 32 : 8, left: 16, containLabel: true }
 
     const catAxis = { type: 'category' as const, data: effectiveXData, ...getAxisStyle(config.showGrid) }
-    const valAxis = { type: 'value' as const, ...getAxisStyle(config.showGrid) }
+    const valAxis = { type: config.logScale ? 'log' as const : 'value' as const, ...getAxisStyle(config.showGrid) }
 
     return {
       tooltip: { trigger: isHorizontal ? 'axis' as const : 'axis' as const, axisPointer: isHorizontal ? { type: 'shadow' as const } : undefined, ...getTooltipStyle() },
@@ -66,7 +66,7 @@ function BarChartComponent({ data, config }: ChartProps) {
       yAxis: isHorizontal ? catAxis : valAxis,
       series: [...series, ...mlSeries],
     }
-  }, [chartData, xAxis, yAxes, isStacked, isHorizontal, hasGroupBy, groupSeries, xValues, config.title, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, config.dataZoom, config.barWidth, config.barCategoryGap, config.markLines, colors])
+  }, [chartData, xAxis, yAxes, isStacked, isHorizontal, hasGroupBy, groupSeries, xValues, config.title, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, config.dataZoom, config.barWidth, config.barCategoryGap, config.markLines, config.logScale, colors])
 
   return <EChartsContainer option={option} showReset />
 }

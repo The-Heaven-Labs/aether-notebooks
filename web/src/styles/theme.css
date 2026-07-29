@@ -348,6 +348,11 @@ input[type="color"] {
   100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); border-left-color: transparent; }
 }
 
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .cell-flash {
   animation: cellFlashPulse 1.5s ease-out;
   border-left: 3px solid var(--accent);

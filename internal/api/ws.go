@@ -39,10 +39,16 @@ func (w *wsConn) WriteMessage(messageType int, data []byte) error {
 func (w *wsConn) ReadMessage() (int, []byte, error) { return w.conn.ReadMessage() }
 func (w *wsConn) Close() error                      { return w.conn.Close() }
 
+type runningCellInfo struct {
+	NotebookID string    `json:"notebook_id"`
+	StartedAt  time.Time `json:"started_at"`
+}
+
 type Hub struct {
 	mu           sync.RWMutex
 	rooms        map[string]map[*wsConn]bool
-	runningCells sync.Map // cellID → notebookID
+	runningCells sync.Map // cellID → runningCellInfo
+	cancelFuncs  sync.Map // cellID → context.CancelFunc
 	rdb          *redis.Client
 	pubsub       *redis.PubSub
 	stopCh       chan struct{}
@@ -58,6 +64,7 @@ func NewHub(rdb *redis.Client) *Hub {
 		h.pubsub = rdb.Subscribe(context.Background())
 		go h.redisListener()
 	}
+	h.loadRunningCellsFromRedis()
 	return h
 }
 
@@ -122,23 +129,74 @@ func (h *Hub) redisListener() {
 	}
 }
 
-func (h *Hub) SetRunning(cellID, notebookID string) {
-	h.runningCells.Store(cellID, notebookID)
+func (h *Hub) SetRunning(cellID, notebookID string, startedAt time.Time) {
+	info := runningCellInfo{NotebookID: notebookID, StartedAt: startedAt}
+	h.runningCells.Store(cellID, info)
+	if h.rdb != nil {
+		data, _ := json.Marshal(info)
+		h.rdb.Set(context.Background(), "cell:running:"+cellID, data, 5*time.Minute)
+	}
 }
 
 func (h *Hub) UnsetRunning(cellID string) {
 	h.runningCells.Delete(cellID)
+	if h.rdb != nil {
+		h.rdb.Del(context.Background(), "cell:running:"+cellID)
+	}
 }
 
-func (h *Hub) RunningCellsForNotebook(notebookID string) []string {
-	var cells []string
+func (h *Hub) RunningCellsForNotebook(notebookID string) []map[string]any {
+	var cells []map[string]any
 	h.runningCells.Range(func(key, value any) bool {
-		if value.(string) == notebookID {
-			cells = append(cells, key.(string))
+		info := value.(runningCellInfo)
+		if info.NotebookID == notebookID {
+			cells = append(cells, map[string]any{
+				"cell_id":    key.(string),
+				"started_at": info.StartedAt,
+			})
 		}
 		return true
 	})
 	return cells
+}
+
+func (h *Hub) SetCancelFunc(cellID string, cancel context.CancelFunc) {
+	h.cancelFuncs.Store(cellID, cancel)
+}
+
+func (h *Hub) GetCancelFunc(cellID string) (context.CancelFunc, bool) {
+	v, ok := h.cancelFuncs.Load(cellID)
+	if !ok {
+		return nil, false
+	}
+	return v.(context.CancelFunc), true
+}
+
+func (h *Hub) DeleteCancelFunc(cellID string) {
+	h.cancelFuncs.Delete(cellID)
+}
+
+func (h *Hub) loadRunningCellsFromRedis() {
+	if h.rdb == nil {
+		return
+	}
+	ctx := context.Background()
+	keys, err := h.rdb.Keys(ctx, "cell:running:*").Result()
+	if err != nil {
+		return
+	}
+	for _, key := range keys {
+		data, err := h.rdb.Get(ctx, key).Result()
+		if err != nil {
+			continue
+		}
+		var info runningCellInfo
+		if err := json.Unmarshal([]byte(data), &info); err != nil {
+			continue
+		}
+		cellID := strings.TrimPrefix(key, "cell:running:")
+		h.runningCells.Store(cellID, info)
+	}
 }
 
 func (h *Hub) Broadcast(notebookID string, msg interface{}) {
