@@ -26,7 +26,7 @@ interface AxisConfigPanelProps {
   groupValues?: string[]
 }
 
-function useGroupValues(config: ChartConfig, columns: string[], data?: { columns: { name: string; type?: string }[]; rows: unknown[][] }): string[] {
+export function useGroupValues(config: ChartConfig, columns: string[], data?: { columns: { name: string; type?: string }[]; rows: unknown[][] }): string[] {
   return useMemo(() => {
     if (!config.groupBy) return []
     const colIndex = data
