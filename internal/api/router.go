@@ -43,6 +43,9 @@ type Server struct {
 	oidcRewriteFrom     string                          // host rewrite for OIDC discovery inside Docker (e.g. "localhost:5557")
 	oidcRewriteTo       string                          // target host rewrite (e.g. "host.docker.internal:5557")
 	frontendHandler     http.Handler                    // embedded web frontend SPA (nil in tests)
+	version             string                          // build version (set via ldflags)
+	commit              string                          // git commit (set via ldflags)
+	buildDate           string                          // build date (set via ldflags)
 }
 
 // NewServer creates a new Aether API server with the provided dependencies.
@@ -129,6 +132,13 @@ func (s *Server) SetOIDCHostRewrite(rule string) {
 	}
 }
 
+// SetVersion sets build version information for the /api/v1/version endpoint.
+func (s *Server) SetVersion(ver, cmt, date string) {
+	s.version = ver
+	s.commit = cmt
+	s.buildDate = date
+}
+
 // SetFrontendHandler sets the embedded web frontend handler.
 // Used as a catch-all route to serve the SPA at GET /.
 func (s *Server) SetFrontendHandler(h http.Handler) {
@@ -154,6 +164,25 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
 	s.mux.HandleFunc("GET /swagger.json", s.handleSwaggerJSON)
 	s.mux.HandleFunc("GET /docs", s.handleSwaggerUI)
+	s.mux.HandleFunc("GET /api/v1/version", func(w http.ResponseWriter, r *http.Request) {
+		v := s.version
+		if v == "" {
+			v = "dev"
+		}
+		c := s.commit
+		if c == "" {
+			c = "none"
+		}
+		bd := s.buildDate
+		if bd == "" {
+			bd = "unknown"
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"version":   v,
+			"commit":    c,
+			"buildDate": bd,
+		})
+	})
 	s.mux.Handle("GET /api/v1/_diagnose/master-key", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		test := []byte("diagnostic-ping")
 		enc, err := crypto.Encrypt(test, s.masterKey)

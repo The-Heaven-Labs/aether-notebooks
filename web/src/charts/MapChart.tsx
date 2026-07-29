@@ -38,15 +38,9 @@ function MapChartComponent({ data, config }: ChartProps) {
   const lonCol = config.xAxis ?? data.columns.find(c => /^lon/i.test(c.name) || /^lng/i.test(c.name))?.name ?? ''
   const valCol = config.yAxis?.[1] ?? ''
   const labelCol = config.labelColumn ?? ''
+  const groupByCol = config.groupBy
 
-  const tooltipFmt = useCallback((params: any) => {
-    if (!params.data) return ''
-    const lon = params.data.value?.[0] ?? params.data?.[0]
-    const lat = params.data.value?.[1] ?? params.data?.[1]
-    const pt = allPts.find(p => p.lon === lon && p.lat === lat)
-    const name = pt?.name || `(${Number(lon)?.toFixed(1)}, ${Number(lat)?.toFixed(1)})`
-    return valCol ? `${name}<br/>${valCol}: ${pt?.val ?? ''}` : name
-  }, [])
+  const hasGroupBy = !!(groupByCol && chartData.some(row => groupByCol in row))
 
   const allPts = useMemo(() =>
     chartData
@@ -55,13 +49,32 @@ function MapChartComponent({ data, config }: ChartProps) {
         lat: Number(d[latCol]),
         val: valCol ? Number(d[valCol]) : 1,
         name: labelCol ? String(d[labelCol] ?? '') : '',
+        group: groupByCol ? String(d[groupByCol] ?? '') : '',
         color: config.seriesColors?.point ?? CHART_COLORS[0],
       }))
       .filter(d => !isNaN(d.lon) && !isNaN(d.lat)),
-    [chartData, latCol, lonCol, valCol, labelCol, config.seriesColors]
+    [chartData, latCol, lonCol, valCol, labelCol, groupByCol, config.seriesColors]
   )
 
   const maxVal = useMemo(() => Math.max(...allPts.map(p => p.val), 1), [allPts])
+
+  const groupPalette = useMemo(() => {
+    if (!hasGroupBy) return null
+    const groups = [...new Set(allPts.map(p => p.group).filter(Boolean))] as string[]
+    const map: Record<string, string> = {}
+    groups.forEach((g, i) => { map[g] = config.seriesColors?.[g] ?? colors.palette[i % colors.palette.length] })
+    return map
+  }, [hasGroupBy, allPts, config.seriesColors, colors.palette])
+
+  const tooltipFmt = useCallback((params: any) => {
+    if (!params.data) return ''
+    const lon = params.data.value?.[0] ?? params.data?.[0]
+    const lat = params.data.value?.[1] ?? params.data?.[1]
+    const pt = allPts.find(p => p.lon === lon && p.lat === lat)
+    const name = pt?.name || `(${Number(lon)?.toFixed(1)}, ${Number(lat)?.toFixed(1)})`
+    const groupInfo = pt?.group ? ` (${pt.group})` : ''
+    return valCol ? `${name}${groupInfo}<br/>${valCol}: ${pt?.val ?? ''}` : `${name}${groupInfo}`
+  }, [allPts, valCol])
 
   const option = useMemo(() => {
     if (allPts.length === 0) return {}
@@ -69,7 +82,7 @@ function MapChartComponent({ data, config }: ChartProps) {
     const scatterData = allPts.map(p => ({
       value: [p.lon, p.lat, p.val],
       name: p.name,
-      itemStyle: { color: p.color },
+      itemStyle: { color: groupPalette?.[p.group] ?? p.color },
     }))
 
     if (geoReady && mapRegistered) {
@@ -143,7 +156,7 @@ function MapChartComponent({ data, config }: ChartProps) {
         },
       }],
     }
-  }, [allPts, maxVal, geoReady, latCol, lonCol, valCol, labelCol, config.title, config.showLabels, config.seriesColors, colors, tooltipFmt])
+  }, [allPts, maxVal, geoReady, latCol, lonCol, valCol, labelCol, config.title, config.showLabels, config.seriesColors, colors, tooltipFmt, groupPalette])
 
   return <EChartsContainer option={option} height={400} notMerge showReset />
 }
@@ -205,6 +218,19 @@ function MapConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
         </select>
         <ConfigHint>Column for marker text labels</ConfigHint>
       </div>
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Group by (optional)</div>
+        <select
+          aria-label="Group by"
+          style={styles.select}
+          value={config.groupBy ?? ''}
+          onChange={e => onChange({ ...config, groupBy: e.target.value || undefined })}
+        >
+          <option value="">— None —</option>
+          {columns.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <ConfigHint>Color points by this column's values</ConfigHint>
+      </div>
       <label style={styles.checkbox}>
         <input
           type="checkbox"
@@ -239,7 +265,7 @@ const styles: Record<string, React.CSSProperties> = {
 export const MapChartModule: ChartModule = {
   Component: MapChartComponent,
   ConfigPanel: MapConfigPanel,
-  defaultConfig: { chartType: 'map', showLabels: false, showLegend: false, showGrid: false },
+  defaultConfig: { chartType: 'map', showLabels: false, showLegend: false, showGrid: false, groupBy: undefined },
   detectColumns: (columns) => {
     const latCol = columns.find(c => /^lat/i.test(c.name))
     const lonCol = columns.find(c => /^lon/i.test(c.name) || /^lng/i.test(c.name))

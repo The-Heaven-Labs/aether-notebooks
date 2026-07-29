@@ -21,6 +21,7 @@ import { ProfilePage } from './pages/ProfilePage'
 import { GroupsPage } from './pages/GroupsPage'
 import { OrgSettingsPage } from './pages/OrgSettingsPage'
 import { AgentsPage } from './pages/AgentsPage'
+import { AboutPage } from './pages/AboutPage'
 import { ModelsPage } from './pages/ModelsPage'
 import { SkillsPage } from './pages/SkillsPage'
 import { ToolsPage } from './pages/ToolsPage'
@@ -119,6 +120,7 @@ function AppRoutes() {
       <Route path="/groups" element={<ProtectedRoute><GroupsPage /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><OrgSettingsPage /></ProtectedRoute>} />
       <Route path="/agents" element={<ProtectedRoute><AgentsPage /></ProtectedRoute>} />
+      <Route path="/about" element={<ProtectedRoute><AboutPage /></ProtectedRoute>} />
       <Route path="/models" element={<ProtectedRoute><ModelsPage /></ProtectedRoute>} />
       <Route path="/skills" element={<ProtectedRoute><SkillsPage /></ProtectedRoute>} />
       <Route path="/tools" element={<ProtectedRoute><ToolsPage /></ProtectedRoute>} />

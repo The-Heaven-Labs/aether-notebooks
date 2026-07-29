@@ -13,6 +13,7 @@ function LineChartComponent({ data, config }: ChartProps) {
   const option = useMemo(() => {
     const effectiveXData = hasGroupBy ? xValues : chartData.map(d => d[xAxis])
 
+    const lineWidth = config.lineWidth ?? 2
     const series = hasGroupBy
       ? groupSeries.map(s => ({
           ...s,
@@ -21,7 +22,7 @@ function LineChartComponent({ data, config }: ChartProps) {
           connectNulls: config.connectNulls ?? false,
           symbol: 'circle',
           symbolSize: 6,
-          lineStyle: { width: 2 },
+          lineStyle: { width: lineWidth },
           label: config.showLabels ? { show: true, position: 'top' as const, fontSize: 10, color: colors.textMuted } : undefined,
         }))
       : yAxes.map((y, i) => ({
@@ -33,7 +34,7 @@ function LineChartComponent({ data, config }: ChartProps) {
           symbol: 'circle',
           symbolSize: 6,
           itemStyle: { color: config.seriesColors?.[y] ?? CHART_COLORS[i % CHART_COLORS.length] },
-          lineStyle: { width: 2 },
+          lineStyle: { width: lineWidth },
           label: config.showLabels ? { show: true, position: 'top' as const, fontSize: 10, color: colors.textMuted } : undefined,
         }))
 
@@ -57,7 +58,7 @@ function LineChartComponent({ data, config }: ChartProps) {
       yAxis: { type: config.logScale ? 'log' as const : 'value' as const, ...getAxisStyle(config.showGrid) },
       series: [...series, ...mlSeries],
     }
-  }, [chartData, xAxis, yAxes, hasGroupBy, groupSeries, xValues, config.title, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, config.dataZoom, config.smooth, config.connectNulls, config.markLines, config.logScale, colors])
+  }, [chartData, xAxis, yAxes, hasGroupBy, groupSeries, xValues, config.title, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, config.dataZoom, config.smooth, config.connectNulls, config.markLines, config.logScale, config.lineWidth, colors])
 
   return <EChartsContainer option={option} showReset />
 }
@@ -69,7 +70,7 @@ function LineConfigPanel({ config, columns, onChange, data, groupValues }: Confi
 export const LineChartModule: ChartModule = {
   Component: LineChartComponent,
   ConfigPanel: LineConfigPanel,
-  defaultConfig: { chartType: 'line', showLegend: true, showGrid: true, showLabels: false, skipEmpty: true },
+  defaultConfig: { chartType: 'line', showLegend: true, showGrid: true, showLabels: false, skipEmpty: true, lineWidth: 2 },
   detectColumns: (columns) => detectAxisColumns(columns),
   requirements: { minColumns: 2 },
 }

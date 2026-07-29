@@ -1,10 +1,10 @@
 import { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard, Code2 } from 'lucide-react'
+import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard, Code2, AlignLeft } from 'lucide-react'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
-import { defaultKeymap } from '@codemirror/commands'
+import { defaultKeymap, indentWithTab } from '@codemirror/commands'
 import { sql, PostgreSQL, MySQL } from '@codemirror/lang-sql'
 import { javascript } from '@codemirror/lang-javascript'
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language'
@@ -311,21 +311,23 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
     const ytext = collab.doc.getText(`cell:${cell.id}`)
     const compartment = collabCompartment.current
 
+    const formatSQL = (view: EditorView) => {
+      const raw = view.state.doc.toString()
+      try {
+        const lang = cell.language === 'javascript' ? 'postgresql' : 'sql'
+        const formatted = format(raw, { language: lang, tabWidth: 2 })
+        collab.doc.transact(() => { ytext.delete(0, ytext.length); ytext.insert(0, formatted) })
+        onSourceChangeRef.current(cell.id, formatted)
+      } catch { /* leave as-is */ }
+      return true
+    }
+
     const cellKeymap = keymap.of([
       { key: 'Mod-Enter', run: () => { onRunRef.current(cell.id); return true } },
-      {
-        key: 'Mod-Shift-f',
-        run: (view) => {
-          const raw = view.state.doc.toString()
-          try {
-            const formatted = format(raw, { language: 'sql', tabWidth: 2 })
-            collab.doc.transact(() => { ytext.delete(0, ytext.length); ytext.insert(0, formatted) })
-            onSourceChangeRef.current(cell.id, formatted)
-          } catch { /* leave as-is */ }
-          return true
-        },
-      },
+      { key: 'Mod-Shift-f', run: formatSQL },
+      { key: 'Mod-Shift-l', run: formatSQL },
       ...defaultKeymap,
+      indentWithTab,
     ])
 
     const view = new EditorView({
@@ -670,7 +672,8 @@ export const Cell = memo(function Cell({
             <input
               style={styles.titleInput}
               value={cell.title ?? ''}
-              onChange={(e) => onUpdateCellMeta?.(cell.id, { title: e.target.value })}
+              onFocus={(e) => { setTitleDraft(e.target.value); setEditingTitle(true) }}
+              onChange={() => {}}
               onClick={(e) => e.stopPropagation()}
               placeholder={generateTitlePlaceholder(cell.source, isCode)}
             />
@@ -696,6 +699,31 @@ export const Cell = memo(function Cell({
               </button>
             )
           })()}
+          {isCode && (
+            <button
+              style={styles.actionBtn}
+              onClick={() => {
+                const view = editorViews.get(cell.id)
+                if (view) {
+                  const raw = view.state.doc.toString()
+                  try {
+                    const lang = cell.language === 'javascript' ? 'postgresql' : 'sql'
+                    const formatted = format(raw, { language: lang, tabWidth: 2 })
+                    const collab = collabCache.get(notebookId)
+                    if (collab) {
+                      const ytext = collab.doc.getText(`cell:${cell.id}`)
+                      collab.doc.transact(() => { ytext.delete(0, ytext.length); ytext.insert(0, formatted) })
+                    }
+                    onSourceChange(cell.id, formatted)
+                  } catch { /* leave as-is */ }
+                }
+              }}
+              title="Format SQL (Ctrl+Shift+F)"
+              aria-label="Format SQL"
+            >
+              <AlignLeft size={11} />
+            </button>
+          )}
           <button style={styles.actionBtn} onClick={() => onSwitchType?.(cell.id)} title={isCode ? 'Convert to Markdown cell' : 'Convert to SQL cell'} aria-label={isCode ? 'Convert to Markdown cell' : 'Convert to SQL cell'}>
             {isCode ? 'MD' : 'SQL'}
           </button>

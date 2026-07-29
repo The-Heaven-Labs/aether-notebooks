@@ -58,6 +58,7 @@ export interface ChartConfig {
   // Line/Area
   connectNulls?: boolean
   areaMode?: 'area' | 'stacked'
+  lineWidth?: number
   // Sankey
   nodeAlign?: 'justify' | 'left' | 'right'
   nodeWidth?: number

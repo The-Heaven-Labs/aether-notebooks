@@ -1356,7 +1356,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                     if (!mc || (!mc.price_per_input_token && !mc.price_per_output_token)) return null
                     const si = totalTokens.subagent_input || 0
                     const so = totalTokens.subagent_output || 0
-                    const cost = ((totalTokens.input + si) * mc.price_per_input_token + (totalTokens.output + so) * mc.price_per_output_token + (totalTokens.cache_read ?? 0) * mc.price_per_cache_read_token) / 1000000
+                    const cost = ((totalTokens.input + si) * mc.price_per_input_token + (totalTokens.output + so) * mc.price_per_output_token + (totalTokens.cache_read ?? 0) * mc.price_per_cache_read_token)
                     return <span style={{ marginLeft: 6, opacity: 0.7, fontSize: 10 }}>${cost < 0.01 ? cost.toFixed(6) : cost.toFixed(4)}</span>
                   })()}
                   {contextWindow > 0 && (
@@ -1381,18 +1381,18 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 4 }}>
                         <span style={{ color: 'var(--text-secondary)' }}>Input</span>
-                        <span>{totalTokens.input.toLocaleString()} <span style={{ fontSize: 10, opacity: 0.6 }}>{costFmt(mc => mc.price_per_input_token * totalTokens.input / 1000000)}</span></span>
+                        <span>{totalTokens.input.toLocaleString()} <span style={{ fontSize: 10, opacity: 0.6 }}>{costFmt(mc => mc.price_per_input_token * totalTokens.input)}</span></span>
                       </div>
                       {totalTokens.cache_read > 0 && (
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2, paddingLeft: 16 }}>
                           <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Cache read</span>
-                          <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.cache_read.toLocaleString()} <span style={{ fontSize: 10, opacity: 0.6 }}>{costFmt(mc => mc.price_per_cache_read_token * totalTokens.cache_read / 1000000)}</span></span>
+                          <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.cache_read.toLocaleString()} <span style={{ fontSize: 10, opacity: 0.6 }}>{costFmt(mc => mc.price_per_cache_read_token * totalTokens.cache_read)}</span></span>
                         </div>
                       )}
 
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 4 }}>
                         <span style={{ color: 'var(--text-secondary)' }}>Output</span>
-                        <span>{totalTokens.output.toLocaleString()} <span style={{ fontSize: 10, opacity: 0.6 }}>{costFmt(mc => mc.price_per_output_token * totalTokens.output / 1000000)}</span></span>
+                        <span>{totalTokens.output.toLocaleString()} <span style={{ fontSize: 10, opacity: 0.6 }}>{costFmt(mc => mc.price_per_output_token * totalTokens.output)}</span></span>
                       </div>
                       {totalTokens.reasoning > 0 && (
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 4, paddingLeft: 16 }}>
@@ -1422,7 +1422,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                           const total = totalTokens.input + totalTokens.output + si + so
                           const mc = modelConfigs.find(m => m.id === modelConfigId)
                           const cost = mc && (mc.price_per_input_token || mc.price_per_output_token)
-                            ? ((totalTokens.input + si) * mc.price_per_input_token + (totalTokens.output + so) * mc.price_per_output_token + (totalTokens.cache_read || 0) * mc.price_per_cache_read_token) / 1000000
+                            ? ((totalTokens.input + si) * mc.price_per_input_token + (totalTokens.output + so) * mc.price_per_output_token + (totalTokens.cache_read || 0) * mc.price_per_cache_read_token)
                             : null
                           return total.toLocaleString() + (cost !== null ? `  $${cost < 0.01 ? cost.toFixed(6) : cost.toFixed(4)}` : '')
                         })()}</span>

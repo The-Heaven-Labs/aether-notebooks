@@ -14,6 +14,7 @@ function AreaChartComponent({ data, config }: ChartProps) {
   const option = useMemo(() => {
     const effectiveXData = hasGroupBy ? xValues : chartData.map(d => d[xAxis])
 
+    const lineWidth = config.lineWidth ?? 2
     const series = hasGroupBy
       ? groupSeries.map(s => ({
           ...s,
@@ -24,7 +25,7 @@ function AreaChartComponent({ data, config }: ChartProps) {
           areaStyle: { opacity: 0.15 },
           symbol: 'circle',
           symbolSize: 4,
-          lineStyle: { width: 2 },
+          lineStyle: { width: lineWidth },
           label: config.showLabels ? { show: true, position: 'top' as const, fontSize: 10, color: colors.textMuted } : undefined,
         }))
       : yAxes.map((y, i) => ({
@@ -38,7 +39,7 @@ function AreaChartComponent({ data, config }: ChartProps) {
           symbol: 'circle',
           symbolSize: 4,
           itemStyle: { color: config.seriesColors?.[y] ?? CHART_COLORS[i % CHART_COLORS.length] },
-          lineStyle: { width: 2 },
+          lineStyle: { width: lineWidth },
           label: config.showLabels ? { show: true, position: 'top' as const, fontSize: 10, color: colors.textMuted } : undefined,
         }))
 
@@ -62,7 +63,7 @@ function AreaChartComponent({ data, config }: ChartProps) {
       yAxis: { type: config.logScale ? 'log' as const : 'value' as const, ...getAxisStyle(config.showGrid) },
       series: [...series, ...mlSeries],
     }
-  }, [chartData, xAxis, yAxes, hasGroupBy, groupSeries, xValues, config.title, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, config.connectNulls, config.dataZoom, config.smooth, config.markLines, config.logScale, colors])
+  }, [chartData, xAxis, yAxes, hasGroupBy, groupSeries, xValues, config.title, config.seriesColors, config.showLegend, config.showLabels, config.showGrid, config.connectNulls, config.dataZoom, config.smooth, config.markLines, config.logScale, config.lineWidth, colors])
   // title is used in grid.top calculation above
 
   return <EChartsContainer option={option} showReset />
@@ -75,7 +76,7 @@ function AreaConfigPanel({ config, columns, onChange, data, groupValues }: Confi
 export const AreaChartModule: ChartModule = {
   Component: AreaChartComponent,
   ConfigPanel: AreaConfigPanel,
-  defaultConfig: { chartType: 'area', showLegend: true, showGrid: true, showLabels: false, skipEmpty: true },
+  defaultConfig: { chartType: 'area', showLegend: true, showGrid: true, showLabels: false, skipEmpty: true, lineWidth: 2 },
   detectColumns: (columns) => detectAxisColumns(columns),
   requirements: { minColumns: 2 },
 }

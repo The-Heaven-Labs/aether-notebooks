@@ -534,6 +534,7 @@ export function NotebookPage() {
   const initializedRef = useRef(false)
   useEffect(() => {
     initializedRef.current = false
+    setLocalCells([])
   }, [id])
   useEffect(() => {
     if (notebook && !initializedRef.current) {
@@ -550,10 +551,15 @@ export function NotebookPage() {
         const merged = notebook.cells.map(nbCell => {
           const local = prev.find(c => c.id === nbCell.id)
           if (local && local.source === nbCell.source) {
-            return local
+            if (pendingExecRef.current.has(nbCell.id)) {
+              return local
+            }
+            return { ...local, outputs: nbCell.outputs, metrics: nbCell.metrics }
           }
           changed = true
-          const cell = local ? { ...nbCell, source: local.source, outputs: local.outputs } : { ...nbCell }
+          const cell = local
+            ? { ...nbCell, source: local.source, outputs: pendingExecRef.current.has(nbCell.id) ? local.outputs : nbCell.outputs }
+            : { ...nbCell }
           // Derive display metrics from persisted duration_ms
           if (cell.duration_ms != null && !cell.metrics) {
             cell.metrics = { connect_time_ms: 0, query_time_ms: 0, render_time_ms: 0, total_time_ms: cell.duration_ms }
