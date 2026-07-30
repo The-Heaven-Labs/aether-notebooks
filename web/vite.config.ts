@@ -11,6 +11,14 @@ const dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(file
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  server: {
+    proxy: {
+      '/api': { target: 'http://localhost:8088', changeOrigin: true },
+      '/internal': { target: 'http://localhost:8088', changeOrigin: true },
+      '/docs': { target: 'http://localhost:8088', changeOrigin: true },
+      '/swagger.json': { target: 'http://localhost:8088', changeOrigin: true },
+    }
+  },
   optimizeDeps: {
     include: ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities', 'rehype-highlight']
   },
