@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard, Code2, AlignLeft } from 'lucide-react'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
-import { defaultKeymap } from '@codemirror/commands'
+import { defaultKeymap, historyKeymap, history } from '@codemirror/commands'
 import { sql, PostgreSQL, MySQL } from '@codemirror/lang-sql'
 import { javascript } from '@codemirror/lang-javascript'
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language'
@@ -354,6 +354,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
         },
       },
       ...defaultKeymap,
+      ...historyKeymap,
     ])
 
     const view = new EditorView({
@@ -373,6 +374,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
             // Fix cursor visibility: use text color so it's always visible in any theme
             '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--text-primary)' },
           }),
+          history(),
           EditorView.editable.of(!readOnly),
           EditorView.contentAttributes.of({
             'aria-label': cell.title
@@ -414,7 +416,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
       // Activate yCollab with our config last (overrides yCollab's internal one)
       // so the observer's origin guard matches our transact origin above.
       view.dispatch({ effects: compartment.reconfigure([
-        yCollab(ytext, collab.provider.awareness),
+        yCollab(ytext, collab.provider.awareness, { undoManager: false }),
         ySyncFacet.of(ySyncConfig),
       ]) })
     }
@@ -739,7 +741,7 @@ export const Cell = memo(function Cell({
                   } catch { /* leave as-is */ }
                 }
               }}
-              title="Format SQL (Ctrl+.)"
+              title="Format SQL (Ctrl+Shift+F / Ctrl+.)"
               aria-label="Format SQL"
             >
               <AlignLeft size={11} />
