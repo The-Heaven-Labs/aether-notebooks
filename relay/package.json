@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@hocuspocus/extension-redis": "^4.4.0",
-    "@hocuspocus/server": "^3.4.4"
+    "@hocuspocus/server": "^4.4.0"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
