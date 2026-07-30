@@ -157,12 +157,14 @@ services:
       AETHER_PORT: "8080"
       AETHER_OIDC_HOST_REWRITE: localhost:5557=host.docker.internal:5557
       AETHER_LOG_LEVEL: warn
+      AETHER_RELAY_URL: ws://localhost:3001
       AETHER_STORAGE_BACKEND: s3
       AETHER_S3_ENDPOINT: http://aether-garage:3900
       AETHER_S3_BUCKET: aether-attachments
       AETHER_S3_REGION: us-east-1
       AETHER_S3_ACCESS_KEY: GKacc5e39c17a68ea60adf92db
       AETHER_S3_SECRET_KEY: 557351ff6f3e11eb8a1810af9647f9af9d3b0ce2e5786d2b186d327f091ab65c
+      CHOKIDAR_USEPOLLING: "true"
     volumes:
       # Mount entire repo so Air can watch and rebuild on Go file changes.
       # Named volumes for the Go caches survive container restarts, making
@@ -264,6 +266,8 @@ services:
       context: ./web
       dockerfile: Dockerfile.dev
     user: "1000:1000"
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
     volumes:
       - ./web:/app
       - web-node-modules:/app/node_modules
