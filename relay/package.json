@@ -9,7 +9,7 @@
     "dev": "ts-node src/index.ts"
   },
   "dependencies": {
-    "@hocuspocus/extension-redis": "^3.4.4",
+    "@hocuspocus/extension-redis": "^4.4.0",
     "@hocuspocus/server": "^3.4.4"
   },
   "devDependencies": {
