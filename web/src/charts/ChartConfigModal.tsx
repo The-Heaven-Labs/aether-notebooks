@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type React from 'react'
 import { X, Save } from 'lucide-react'
-import type { ChartConfig, ChartModule } from './types'
+import type { ChartConfig } from './types'
+import { CHART_MODULES } from './registry'
 import { ConfirmModal } from '../components/ConfirmModal'
 
 interface ChartConfigModalProps {
@@ -11,11 +12,24 @@ interface ChartConfigModalProps {
   groupValues: string[]
   onSave: (config: ChartConfig) => void
   onClose: () => void
-  mod: ChartModule
 }
 
-export function ChartConfigModal({ config, columns, data, groupValues, onSave, onClose, mod }: ChartConfigModalProps) {
-  const [workingConfig, setWorkingConfig] = useState<ChartConfig>(() => deepCloneConfig(config))
+export function ChartConfigModal({ config, columns, data, groupValues, onSave, onClose }: ChartConfigModalProps) {
+  const [workingConfig, setWorkingConfig] = useState<ChartConfig>(() => {
+    const cloned = deepCloneConfig(config)
+    // Auto-detect column mappings on first open if config has no explicit columns set
+    if (!cloned.xAxis && (!cloned.yAxis || cloned.yAxis.length === 0) && columns.length > 0 && data) {
+      const mod = CHART_MODULES[cloned.chartType ?? 'bar']
+      if (mod?.detectColumns) {
+        const detected = mod.detectColumns(
+          data.columns.map(c => ({ name: c.name, type: c.type ?? '' })),
+          data.rows,
+        )
+        return { ...cloned, ...detected }
+      }
+    }
+    return cloned
+  })
   const [showConfirm, setShowConfirm] = useState(false)
   const dirtyRef = useRef(false)
 
@@ -23,12 +37,29 @@ export function ChartConfigModal({ config, columns, data, groupValues, onSave, o
     dirtyRef.current = true
   }, [])
 
-  const effectiveConfig: ChartConfig = mod ? { ...mod.defaultConfig, ...workingConfig } : workingConfig
+  const chartType = workingConfig.chartType ?? 'bar'
+  const prevChartTypeRef = useRef(chartType)
+  const currentMod = CHART_MODULES[chartType]
+  const effectiveConfig: ChartConfig = currentMod ? { ...currentMod.defaultConfig, ...workingConfig } : workingConfig
 
   const handleChange = useCallback((newCfg: ChartConfig) => {
+    const newType = newCfg.chartType ?? 'bar'
+    const prevType = prevChartTypeRef.current
+    prevChartTypeRef.current = newType
+    // When chart type changes, auto-detect column mappings for the new module
+    if (newType !== prevType && columns.length > 0 && data) {
+      const newMod = CHART_MODULES[newType]
+      if (newMod?.detectColumns) {
+        const detected = newMod.detectColumns(
+          data.columns.map(c => ({ name: c.name, type: c.type ?? '' })),
+          data.rows,
+        )
+        newCfg = { ...newCfg, ...detected }
+      }
+    }
     setWorkingConfig(newCfg)
     markDirty()
-  }, [markDirty])
+  }, [markDirty, columns, data])
 
   const handleSave = useCallback(() => {
     onSave(workingConfig)
@@ -92,15 +123,15 @@ export function ChartConfigModal({ config, columns, data, groupValues, onSave, o
           </div>
           <div style={styles.body}>
             <div style={styles.preview}>
-              {mod ? (
-                <mod.Component data={data as any} config={effectiveConfig} />
+              {currentMod ? (
+                <currentMod.Component data={data as any} config={effectiveConfig} />
               ) : (
                 <div style={{ color: 'var(--text-muted)', padding: 16 }}>Unknown chart type</div>
               )}
             </div>
             <div style={styles.configPanel}>
-              {mod && (
-                <mod.ConfigPanel
+              {currentMod && (
+                <currentMod.ConfigPanel
                   config={workingConfig}
                   columns={columns}
                   data={data}

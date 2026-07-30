@@ -73,6 +73,8 @@ export interface ChartConfig {
   // Scatter
   colorColumn?: string
   sizeColumn?: string
+  // Map
+  mapMode?: 'points' | 'choropleth'
   // Log scale (bar, line, area, scatter)
   logScale?: boolean
   // Marklines (reference lines for axis-based charts)
