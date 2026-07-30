@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard, Code2, AlignLeft } from 'lucide-react'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
-import { defaultKeymap, historyKeymap } from '@codemirror/commands'
+import { defaultKeymap, historyKeymap, history } from '@codemirror/commands'
 import { sql, PostgreSQL, MySQL } from '@codemirror/lang-sql'
 import { javascript } from '@codemirror/lang-javascript'
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language'
@@ -374,6 +374,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
             // Fix cursor visibility: use text color so it's always visible in any theme
             '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--text-primary)' },
           }),
+          history(),
           EditorView.editable.of(!readOnly),
           EditorView.contentAttributes.of({
             'aria-label': cell.title
