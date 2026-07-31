@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { AppShell } from '../components/AppShell'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Pagination } from '../components/Pagination'
 import type { SSOProvider } from '../types'
 
@@ -718,6 +719,7 @@ export function AdminPage() {
   const [orgDeleteError, setOrgDeleteError] = useState<string | null>(null)
   const [confirmDeleteUser, setConfirmDeleteUser] = useState<User | null>(null)
   const [userDeleteError, setUserDeleteError] = useState<string | null>(null)
+  const orgConfirmInputRef = useRef<HTMLInputElement>(null)
 
   const { data: orgsData } = useQuery({
     queryKey: ['admin', 'orgs', orgPage, orgSearch],
@@ -877,41 +879,31 @@ export function AdminPage() {
               onChange={e => { setOrgSearch(e.target.value); setOrgPage(0) }}
             />
           </div>
-          {confirmDeleteOrg && (
-            <div style={deleteStyles.panel}>
-              <div style={deleteStyles.panelTitle}>Delete organization "{confirmDeleteOrg.name}"?</div>
-              <div style={deleteStyles.panelBody}>
-                This permanently deletes the org and <strong>all of its data</strong> (notebooks, folders, groups,
-                members, connectors, tools, MCP servers, dashboards, audit logs). This cannot be undone.
-              </div>
-              <label style={deleteStyles.label}>
-                Type <strong>{confirmDeleteOrg.slug}</strong> to confirm
-                <input
-                  style={deleteStyles.input}
-                  value={confirmOrgName}
-                  onChange={e => setConfirmOrgName(e.target.value)}
-                  placeholder={confirmDeleteOrg.slug}
-                />
+          <ConfirmDialog
+            open={!!confirmDeleteOrg}
+            title="Delete organization?"
+            message={`This permanently deletes "${confirmDeleteOrg?.name}" and all of its data (notebooks, folders, groups, members, connectors, tools, MCP servers, dashboards, audit logs). This cannot be undone.`}
+            confirmLabel="Delete Org"
+            destructive
+            confirmDisabled={confirmOrgName !== confirmDeleteOrg?.slug || deleteOrg.isPending}
+            defaultFocusRef={orgConfirmInputRef}
+            onConfirm={() => { if (confirmDeleteOrg) deleteOrg.mutate(confirmDeleteOrg.id) }}
+            onCancel={() => { setConfirmDeleteOrg(null); setConfirmOrgName(''); setOrgDeleteError(null) }}
+          >
+            <div style={{ marginBottom: 4 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>
+                Type <strong>{confirmDeleteOrg?.slug}</strong> to confirm
               </label>
+              <input
+                ref={orgConfirmInputRef}
+                style={{ ...styles.input, width: '100%', boxSizing: 'border-box' }}
+                value={confirmOrgName}
+                onChange={e => setConfirmOrgName(e.target.value)}
+                placeholder={confirmDeleteOrg?.slug}
+              />
               {orgDeleteError && <div style={deleteStyles.error}>{orgDeleteError}</div>}
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  style={{ ...styles.btn, background: 'var(--error)' }}
-                  disabled={confirmOrgName !== confirmDeleteOrg.slug || deleteOrg.isPending}
-                  onClick={() => deleteOrg.mutate(confirmDeleteOrg.id)}
-                >
-                  {deleteOrg.isPending ? 'Deleting…' : 'Delete Org'}
-                </button>
-                <button
-                  style={deleteStyles.cancelBtn}
-                  onClick={() => { setConfirmDeleteOrg(null); setConfirmOrgName(''); setOrgDeleteError(null) }}
-                  disabled={deleteOrg.isPending}
-                >
-                  Cancel
-                </button>
-              </div>
             </div>
-          )}
+          </ConfirmDialog>
           <table style={styles.table}>
             <thead><tr>
               <th style={styles.th}>Name</th>
@@ -955,32 +947,18 @@ export function AdminPage() {
               onChange={e => { setUserSearch(e.target.value); setUserPage(0) }}
             />
           </div>
-          {confirmDeleteUser && (
-            <div style={deleteStyles.panel}>
-              <div style={deleteStyles.panelTitle}>Delete user "{confirmDeleteUser.email}"?</div>
-              <div style={deleteStyles.panelBody}>
-                This permanently removes the user from all orgs and groups, deletes their home folders and
-                personal data, and reassigns their notebooks and dashboards to you. This cannot be undone.
-              </div>
-              {userDeleteError && <div style={deleteStyles.error}>{userDeleteError}</div>}
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  style={{ ...styles.btn, background: 'var(--error)' }}
-                  disabled={deleteUser.isPending}
-                  onClick={() => deleteUser.mutate(confirmDeleteUser.id)}
-                >
-                  {deleteUser.isPending ? 'Deleting…' : 'Delete User'}
-                </button>
-                <button
-                  style={deleteStyles.cancelBtn}
-                  onClick={() => { setConfirmDeleteUser(null); setUserDeleteError(null) }}
-                  disabled={deleteUser.isPending}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
+          <ConfirmDialog
+            open={!!confirmDeleteUser}
+            title="Delete user?"
+            message={`This permanently removes "${confirmDeleteUser?.email}" from all orgs and groups, deletes their home folders and personal data, and reassigns their notebooks and dashboards to you. This cannot be undone.`}
+            confirmLabel="Delete User"
+            destructive
+            confirmDisabled={deleteUser.isPending}
+            onConfirm={() => { if (confirmDeleteUser) deleteUser.mutate(confirmDeleteUser.id) }}
+            onCancel={() => { setConfirmDeleteUser(null); setUserDeleteError(null) }}
+          >
+            {userDeleteError && <div style={deleteStyles.error}>{userDeleteError}</div>}
+          </ConfirmDialog>
           <table style={styles.table}>
             <thead><tr>
               <th style={styles.th}>Email</th>
@@ -1050,19 +1028,6 @@ const styles: Record<string, React.CSSProperties> = {
 }
 
 const deleteStyles: Record<string, React.CSSProperties> = {
-  panel: {
-    background: 'var(--bg-secondary)',
-    border: '1px solid var(--border)',
-    borderLeft: '3px solid var(--error)',
-    borderRadius: 6,
-    padding: '14px 16px',
-    marginBottom: 16,
-  },
-  panelTitle: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 },
-  panelBody: { fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 },
-  label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 12 },
-  input: { padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, outline: 'none', color: 'var(--text-primary)', background: 'var(--bg-input)' },
-  cancelBtn: { padding: '7px 16px', background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer' },
   dangerBtn: { padding: '4px 10px', background: 'transparent', color: 'var(--error)', border: '1px solid var(--error)', borderRadius: 4, fontSize: 12, cursor: 'pointer' },
-  error: { marginBottom: 10, fontSize: 12, color: 'var(--error)' },
+  error: { marginTop: 6, fontSize: 12, color: 'var(--error)' },
 }

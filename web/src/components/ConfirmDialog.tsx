@@ -8,6 +8,9 @@ export interface ConfirmDialogProps {
   confirmLabel?: string
   cancelLabel?: string
   destructive?: boolean
+  confirmDisabled?: boolean
+  defaultFocusRef?: React.RefObject<HTMLInputElement | null>
+  children?: React.ReactNode
   onConfirm: () => void
   onCancel: () => void
 }
@@ -19,6 +22,9 @@ export function ConfirmDialog({
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
   destructive = false,
+  confirmDisabled = false,
+  defaultFocusRef,
+  children,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -27,21 +33,25 @@ export function ConfirmDialog({
 
   useEffect(() => {
     if (open) {
-      // Default focus on Cancel (safer — prevents accidental destructive actions)
-      cancelRef.current?.focus()
+      // Default focus on Cancel (safer — prevents accidental destructive actions),
+      // unless a custom focus target is provided (e.g. a confirmation input).
+      ;(defaultFocusRef?.current ?? cancelRef.current)?.focus()
       const handleKey = (e: KeyboardEvent) => {
         if (e.key === 'Escape') {
           onCancel()
           return
         }
-        // Left/Right arrows to switch between buttons
+        // Left/Right arrows to switch between buttons (only while a button is focused,
+        // so inputs keep their natural arrow-key behavior)
         if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-          e.preventDefault()
           const active = document.activeElement
-          if (active === cancelRef.current) {
-            confirmRef.current?.focus()
-          } else {
-            cancelRef.current?.focus()
+          if (active === cancelRef.current || active === confirmRef.current) {
+            e.preventDefault()
+            if (active === cancelRef.current) {
+              confirmRef.current?.focus()
+            } else {
+              cancelRef.current?.focus()
+            }
           }
           return
         }
@@ -63,12 +73,12 @@ export function ConfirmDialog({
           }
           return
         }
-        // Enter to activate focused button
+        // Enter to activate focused button (skipped while the confirm action is disabled)
         if (e.key === 'Enter') {
           const active = document.activeElement
           if (active === cancelRef.current) {
             onCancel()
-          } else {
+          } else if (!confirmDisabled) {
             onConfirm()
           }
         }
@@ -76,7 +86,7 @@ export function ConfirmDialog({
       document.addEventListener('keydown', handleKey)
       return () => document.removeEventListener('keydown', handleKey)
     }
-  }, [open, onCancel, onConfirm])
+  }, [open, onCancel, onConfirm, confirmDisabled, defaultFocusRef])
 
   if (!open) return null
 
@@ -86,9 +96,12 @@ export function ConfirmDialog({
         <div style={styles.header}>
           <span style={styles.title}>{title}</span>
         </div>
-        {message && (
+        {(message || children) && (
           <div style={styles.body}>
-            <p style={styles.message}>{message}</p>
+            {message && (
+              <p style={styles.message}>{message}</p>
+            )}
+            {children}
           </div>
         )}
         <div style={styles.footer}>
@@ -97,9 +110,11 @@ export function ConfirmDialog({
           </button>
           <button
             ref={confirmRef}
+            disabled={confirmDisabled}
             style={{
               ...styles.confirmBtn,
               ...(destructive ? styles.confirmBtnDestructive : {}),
+              ...(confirmDisabled ? { opacity: 0.6, cursor: 'not-allowed' } : {}),
             }}
             onClick={onConfirm}
           >
