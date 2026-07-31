@@ -713,6 +713,11 @@ export function AdminPage() {
   const [createOrgSlug, setCreateOrgSlug] = useState('')
   const [creatingOrg, setCreatingOrg] = useState(false)
   const [createOrgError, setCreateOrgError] = useState<string | null>(null)
+  const [confirmDeleteOrg, setConfirmDeleteOrg] = useState<Org | null>(null)
+  const [confirmOrgName, setConfirmOrgName] = useState('')
+  const [orgDeleteError, setOrgDeleteError] = useState<string | null>(null)
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState<User | null>(null)
+  const [userDeleteError, setUserDeleteError] = useState<string | null>(null)
 
   const { data: orgsData } = useQuery({
     queryKey: ['admin', 'orgs', orgPage, orgSearch],
@@ -767,6 +772,27 @@ export function AdminPage() {
       api.put(`/api/v1/admin/users/${id}`, { is_platform_admin: isPlatformAdmin }),
     onSuccess: () => { setTogglingUserId(null); qc.invalidateQueries({ queryKey: ['admin', 'users'] }) },
     onError: () => { setTogglingUserId(null) },
+  })
+
+  const deleteOrg = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/admin/orgs/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'orgs'] })
+      setConfirmDeleteOrg(null)
+      setConfirmOrgName('')
+      setOrgDeleteError(null)
+    },
+    onError: (e: unknown) => setOrgDeleteError(String(e)),
+  })
+
+  const deleteUser = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/admin/users/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'users'] })
+      setConfirmDeleteUser(null)
+      setUserDeleteError(null)
+    },
+    onError: (e: unknown) => setUserDeleteError(String(e)),
   })
 
   return (
@@ -851,12 +877,48 @@ export function AdminPage() {
               onChange={e => { setOrgSearch(e.target.value); setOrgPage(0) }}
             />
           </div>
+          {confirmDeleteOrg && (
+            <div style={deleteStyles.panel}>
+              <div style={deleteStyles.panelTitle}>Delete organization "{confirmDeleteOrg.name}"?</div>
+              <div style={deleteStyles.panelBody}>
+                This permanently deletes the org and <strong>all of its data</strong> (notebooks, folders, groups,
+                members, connectors, tools, MCP servers, dashboards, audit logs). This cannot be undone.
+              </div>
+              <label style={deleteStyles.label}>
+                Type <strong>{confirmDeleteOrg.slug}</strong> to confirm
+                <input
+                  style={deleteStyles.input}
+                  value={confirmOrgName}
+                  onChange={e => setConfirmOrgName(e.target.value)}
+                  placeholder={confirmDeleteOrg.slug}
+                />
+              </label>
+              {orgDeleteError && <div style={deleteStyles.error}>{orgDeleteError}</div>}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  style={{ ...styles.btn, background: 'var(--error)' }}
+                  disabled={confirmOrgName !== confirmDeleteOrg.slug || deleteOrg.isPending}
+                  onClick={() => deleteOrg.mutate(confirmDeleteOrg.id)}
+                >
+                  {deleteOrg.isPending ? 'Deleting…' : 'Delete Org'}
+                </button>
+                <button
+                  style={deleteStyles.cancelBtn}
+                  onClick={() => { setConfirmDeleteOrg(null); setConfirmOrgName(''); setOrgDeleteError(null) }}
+                  disabled={deleteOrg.isPending}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           <table style={styles.table}>
             <thead><tr>
               <th style={styles.th}>Name</th>
               <th style={styles.th}>Slug</th>
               <th style={styles.th}>Members</th>
               <th style={styles.th}>Created</th>
+              <th style={styles.th}>Actions</th>
             </tr></thead>
             <tbody>
               {orgs.map(o => (
@@ -865,6 +927,14 @@ export function AdminPage() {
                   <td style={styles.td}>{o.slug}</td>
                   <td style={styles.td}>{o.member_count}</td>
                   <td style={styles.td}>{new Date(o.created_at).toLocaleDateString()}</td>
+                  <td style={styles.td}>
+                    <button
+                      style={deleteStyles.dangerBtn}
+                      onClick={() => { setConfirmDeleteOrg(o); setConfirmOrgName(''); setOrgDeleteError(null) }}
+                    >
+                      Delete
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -885,12 +955,39 @@ export function AdminPage() {
               onChange={e => { setUserSearch(e.target.value); setUserPage(0) }}
             />
           </div>
+          {confirmDeleteUser && (
+            <div style={deleteStyles.panel}>
+              <div style={deleteStyles.panelTitle}>Delete user "{confirmDeleteUser.email}"?</div>
+              <div style={deleteStyles.panelBody}>
+                This permanently removes the user from all orgs and groups, deletes their home folders and
+                personal data, and reassigns their notebooks and dashboards to you. This cannot be undone.
+              </div>
+              {userDeleteError && <div style={deleteStyles.error}>{userDeleteError}</div>}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  style={{ ...styles.btn, background: 'var(--error)' }}
+                  disabled={deleteUser.isPending}
+                  onClick={() => deleteUser.mutate(confirmDeleteUser.id)}
+                >
+                  {deleteUser.isPending ? 'Deleting…' : 'Delete User'}
+                </button>
+                <button
+                  style={deleteStyles.cancelBtn}
+                  onClick={() => { setConfirmDeleteUser(null); setUserDeleteError(null) }}
+                  disabled={deleteUser.isPending}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           <table style={styles.table}>
             <thead><tr>
               <th style={styles.th}>Email</th>
               <th style={styles.th}>Name</th>
               <th style={styles.th}>Platform Admin</th>
               <th style={styles.th}>Orgs</th>
+              <th style={styles.th}>Actions</th>
             </tr></thead>
             <tbody>
               {users.map(u => (
@@ -914,6 +1011,14 @@ export function AdminPage() {
                     </button>
                   </td>
                   <td style={styles.td}>{u.orgs.join(', ')}</td>
+                  <td style={styles.td}>
+                    <button
+                      style={deleteStyles.dangerBtn}
+                      onClick={() => { setConfirmDeleteUser(u); setUserDeleteError(null) }}
+                    >
+                      Delete
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -942,4 +1047,22 @@ const styles: Record<string, React.CSSProperties> = {
   input: { padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, outline: 'none', color: 'var(--text-primary)', background: 'var(--bg-input)' },
   btn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   error: { marginTop: 10, fontSize: 12, color: 'var(--error)' },
+}
+
+const deleteStyles: Record<string, React.CSSProperties> = {
+  panel: {
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
+    borderLeft: '3px solid var(--error)',
+    borderRadius: 6,
+    padding: '14px 16px',
+    marginBottom: 16,
+  },
+  panelTitle: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 },
+  panelBody: { fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 },
+  label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 12 },
+  input: { padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, outline: 'none', color: 'var(--text-primary)', background: 'var(--bg-input)' },
+  cancelBtn: { padding: '7px 16px', background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer' },
+  dangerBtn: { padding: '4px 10px', background: 'transparent', color: 'var(--error)', border: '1px solid var(--error)', borderRadius: 4, fontSize: 12, cursor: 'pointer' },
+  error: { marginBottom: 10, fontSize: 12, color: 'var(--error)' },
 }

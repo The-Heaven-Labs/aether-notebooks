@@ -67,7 +67,7 @@ func SeedDevAuditS3Config(ctx context.Context, pool *pgxpool.Pool) {
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
 		"http://aether-garage:3900", "us-east-1", "aether-audit-logs",
 		"GKacc5e39c17a68ea60adf92db", "557351ff6f3e11eb8a1810af9647f9af9d3b0ce2e5786d2b186d327f091ab65c",
-		false, 100, 60, true,
+		false, 100, 60, false,
 	)
 	if err != nil {
 		slog.Warn("failed to seed dev audit S3 config", "error", err)
