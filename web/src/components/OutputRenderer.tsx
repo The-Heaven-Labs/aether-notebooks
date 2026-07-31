@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo, memo } from 'react'
 import type React from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import type { Output, ResultSet, Column } from '../types'
 import { ChartView } from '../charts'
 import type { ChartConfig } from '../charts'
@@ -180,7 +181,13 @@ const typeIconStyles: Record<string, React.CSSProperties> = {
 
 const OUTPUT_MIN_HEIGHT = 80
 const OUTPUT_DEFAULT_HEIGHT = 340
-const MAX_CELL_DISPLAY = 100
+
+// Virtualized result-table geometry. Rows are windowed vertically and columns
+// horizontally via @tanstack/react-virtual so the DOM stays bounded regardless
+// of result size (see UPSTREAM_FIX_TABLE_VIRTUALIZATION design).
+const ROW_HEIGHT = 32
+const COL_WIDTH = 140
+const ROW_NUM_WIDTH = 40
 
 type SortDirection = 'none' | 'asc' | 'desc'
 
@@ -398,6 +405,27 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
     [rs.rows, sortColIndex, sort.direction, sortType],
   )
 
+  const rowVirtualizer = useVirtualizer({
+    count: displayRows.length,
+    getScrollElement: () => scrollAreaRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 8,
+  })
+  const columnVirtualizer = useVirtualizer({
+    count: rs.columns.length,
+    getScrollElement: () => scrollAreaRef.current,
+    estimateSize: () => COL_WIDTH,
+    horizontal: true,
+    overscan: 4,
+  })
+
+  // Bring a target row/col into the virtual window (used by detail navigation).
+  const scrollToCell = useCallback((row: number, col: number) => {
+    if (!scrollAreaRef.current || typeof scrollAreaRef.current.scrollTo !== 'function') return
+    rowVirtualizer.scrollToIndex(row, { align: 'auto' })
+    columnVirtualizer.scrollToIndex(col, { align: 'auto' })
+  }, [rowVirtualizer, columnVirtualizer])
+
   const openDetail = useCallback((rowIndex: number, colIndex: number, value: string, rawValue: unknown) => {
     const prettyValue = typeof rawValue === 'object' && rawValue !== null
       ? JSON.stringify(rawValue, null, 2)
@@ -424,6 +452,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
     const newCol = detail.colIndex + colDelta
     if (newRow < 0 || newRow >= displayRows.length) return
     if (newCol < 0 || newCol >= rs.columns.length) return
+    scrollToCell(newRow, newCol)
     const rawValue = (displayRows[newRow] as unknown[])[newCol]
     const strValue = rawValue === null || rawValue === undefined
       ? ''
@@ -441,64 +470,57 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
       isArray: Array.isArray(rawValue),
       arrayItems: Array.isArray(rawValue) ? rawValue : [],
     })
-  }, [detail, displayRows, rs.columns])
+  }, [detail, displayRows, rs.columns, scrollToCell])
 
-  const [page, setPage] = useState(0)
-  const PAGE_SIZE = 100
-  const pagedRows = displayRows.slice(0, (page + 1) * PAGE_SIZE)
-  const hasMore = pagedRows.length < displayRows.length
+  const virtualRows = rowVirtualizer.getVirtualItems()
+  const virtualColumns = columnVirtualizer.getVirtualItems()
 
-  const memoizedTbody = useMemo(() => (
-    <tbody>
-      {pagedRows.map((row, i) => (
-        <tr key={i}>
-          <td style={{ ...styles.td, ...styles.rowNumTd }}>
-            <span style={styles.rowNum}>{i + 1}</span>
-          </td>
-          {(row as unknown[]).map((cell, j) => {
-            const isArray = Array.isArray(cell)
-            const strValue = typeof cell === 'object' ? JSON.stringify(cell) : String(cell)
-            const displayValue = isArray
-              ? (() => {
-                  const items = (cell as unknown[]).map(v => v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))
-                  const needle = items.join(', ')
-                  const prefix = '['
-                  const suffix = ']'
-                  const maxLen = MAX_CELL_DISPLAY - prefix.length - suffix.length
-                  const truncated = needle.length > maxLen ? needle.slice(0, maxLen) + '…' : needle
-                  return prefix + truncated + suffix
-                })()
-              : strValue.length > MAX_CELL_DISPLAY
-                ? strValue.slice(0, MAX_CELL_DISPLAY) + '…'
-                : strValue
-            const isTruncated = strValue.length > MAX_CELL_DISPLAY && !isArray
-            const isObj = typeof cell === 'object'
-            return (
-              <td key={j} data-row={i} data-col={j} style={styles.td}>
-                <span
-                  style={isTruncated ? styles.truncatedCell : styles.clickableCell}
-                  onClick={() => openDetail(i, j, strValue, cell)}
-                  title={isTruncated ? 'Click to view full value' : undefined}
+  const virtualTbody = (
+    <tbody style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
+      {virtualRows.map(vr => {
+        const row = displayRows[vr.index] as unknown[]
+        return (
+          <tr
+            key={vr.key}
+            style={{ position: 'absolute', top: 0, left: 0, transform: `translateY(${vr.start}px)` }}
+          >
+            <td style={{ ...styles.rowNumTd, position: 'absolute', left: 0, width: ROW_NUM_WIDTH, height: vr.size, padding: 0 }}>
+              <span style={styles.rowNumCell}>{vr.index + 1}</span>
+            </td>
+            {virtualColumns.map(vc => {
+              const cell = row[vc.index]
+              const isObj = typeof cell === 'object' && cell !== null
+              const strValue = cell === null || cell === undefined
+                ? ''
+                : typeof cell === 'object'
+                  ? JSON.stringify(cell)
+                  : String(cell)
+              return (
+                <td
+                  key={vc.key}
+                  data-row={vr.index}
+                  data-col={vc.index}
+                  style={{ ...styles.virtualTd, left: ROW_NUM_WIDTH + vc.start, width: vc.size, height: vr.size }}
+                  title={strValue}
+                  onDoubleClick={() => openDetail(vr.index, vc.index, strValue, cell)}
                 >
-                  {cell === null ? (
-                    <span style={styles.null}>null</span>
-                  ) : (
-                    <span style={isObj ? styles.json : undefined}>{displayValue}</span>
-                  )}
-                </span>
-              </td>
-            )
-          })}
-        </tr>
-      ))}
+                  <span style={isObj ? { ...styles.cellText, ...styles.json } : styles.cellText}>
+                    {cell === null ? <span style={styles.null}>null</span> : strValue}
+                  </span>
+                </td>
+              )
+            })}
+          </tr>
+        )
+      })}
     </tbody>
-  ), [pagedRows, rs.columns, openDetail])
+  )
 
   useEffect(() => {
     if (activeCellRef.current) {
       const headerHeight = theadRef.current?.offsetHeight ?? 0
       activeCellRef.current.style.scrollMarginTop = `${headerHeight}px`
-      activeCellRef.current.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      activeCellRef.current.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
     }
   }, [detail?.rowIndex, detail?.colIndex])
 
@@ -563,10 +585,18 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
       {view === 'table' ? (
         <div style={{ position: 'relative', display: 'flex', flex: 1, minHeight: 0 }}>
           <div ref={scrollAreaRef} className="output-scroll-area" style={{ ...styles.tableWrap, maxHeight: outputHeight, flex: 1, minWidth: 0 }}>
-            <table style={styles.table}>
+            <table
+              style={{
+                ...styles.table,
+                width: ROW_NUM_WIDTH + columnVirtualizer.getTotalSize(),
+                tableLayout: 'fixed',
+                borderCollapse: 'separate',
+                borderSpacing: 0,
+              }}
+            >
               <thead ref={theadRef}>
                 <tr>
-                  <th style={{ ...styles.th, ...styles.rowNumTh, cursor: 'default' }}>
+                  <th style={{ ...styles.th, ...styles.rowNumTh, width: ROW_NUM_WIDTH, cursor: 'default' }}>
                     <span style={styles.colName}>#</span>
                   </th>
                   {rs.columns.map((col) => {
@@ -574,7 +604,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
                     return (
                       <th
                         key={col.name}
-                        style={{ ...styles.th, cursor: 'pointer', userSelect: 'none' }}
+                        style={{ ...styles.th, width: COL_WIDTH, cursor: 'pointer', userSelect: 'none' }}
                         onClick={() => handleColumnClick(col.name)}
                         title={`Sort by ${col.name}`}
                       >
@@ -596,18 +626,8 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
                   })}
                 </tr>
               </thead>
-              {memoizedTbody}
+              {virtualTbody}
             </table>
-            {hasMore && (
-              <div style={styles.loadMoreWrap}>
-                <button
-                  style={styles.loadMoreBtn}
-                  onClick={() => setPage(p => p + 1)}
-                >
-                  Load more rows ({displayRows.length - pagedRows.length} remaining)
-                </button>
-              </div>
-            )}
           </div>
 
           {detail && isDetailActive && (
@@ -861,7 +881,13 @@ const styles: Record<string, React.CSSProperties> = {
     width: 1,
     minWidth: 40,
   },
-  rowNum: {
+  rowNumCell: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: '100%',
+    boxSizing: 'border-box',
+    padding: '7px 8px',
     fontSize: 11,
     color: 'var(--text-muted)',
     fontFamily: 'var(--font-mono)',
@@ -873,9 +899,21 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-mono)',
     fontSize: 12,
   },
-  td: {
-    padding: '7px 16px',
+  virtualTd: {
+    position: 'absolute',
     borderBottom: '1px solid var(--border-light)',
+    padding: 0,
+    overflow: 'hidden',
+  },
+  cellText: {
+    display: 'flex',
+    alignItems: 'center',
+    height: '100%',
+    boxSizing: 'border-box',
+    padding: '7px 16px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
     color: 'var(--text-primary)',
     fontSize: 13,
   },
@@ -887,17 +925,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-mono)',
     fontSize: 11,
     color: 'var(--text-muted)',
-  },
-  truncatedCell: {
-    cursor: 'pointer',
-    textDecoration: 'underline',
-    textDecorationStyle: 'dotted',
-    textDecorationColor: 'var(--text-muted)',
-    color: 'var(--text-primary)',
-  },
-  clickableCell: {
-    cursor: 'pointer',
-    color: 'var(--text-primary)',
   },
   tdActive: {
     background: 'var(--accent-light)',
@@ -1027,21 +1054,5 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: '1px solid var(--border-light)',
     whiteSpace: 'pre-wrap' as const,
     wordBreak: 'break-all' as const,
-  },
-  loadMoreWrap: {
-    display: 'flex',
-    justifyContent: 'center',
-    padding: '8px',
-  },
-  loadMoreBtn: {
-    padding: '5px 16px',
-    fontSize: 12,
-    fontWeight: 500,
-    border: '1px solid var(--border)',
-    borderRadius: 4,
-    background: 'var(--bg-card)',
-    color: 'var(--text-secondary)',
-    cursor: 'pointer',
-    fontFamily: 'var(--font-sans)',
   },
 }
