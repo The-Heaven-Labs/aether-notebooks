@@ -5,7 +5,7 @@ ENV GOTOOLCHAIN=local
 ENV GOCACHE=/home/aether/.cache/go-build
 
 RUN apk add --no-cache curl git nodejs npm su-exec && \
-    go install github.com/air-verse/air@latest && \
+    go install github.com/air-verse/air@v1.65.3 && \
     addgroup -g 1000 -S aether && adduser -u 1000 -S aether -G aether && \
     chown -R aether:aether /go/pkg/mod && \
     mkdir -p /home/aether/.cache && \
