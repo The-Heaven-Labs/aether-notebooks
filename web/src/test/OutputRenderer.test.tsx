@@ -132,6 +132,18 @@ describe('TableOutput virtualization', () => {
     })
   })
 
+  it('keeps the sticky header painted above the virtualized rows', async () => {
+    const { container } = render(<OutputRenderer outputs={[makeBigOutput(50, 3)]} />)
+    await waitFor(() => expect(getRenderedRows(container).length).toBeGreaterThan(0))
+    const th = container.querySelector('thead th')!
+    const styles = getComputedStyle(th)
+    // The virtual rows are absolutely positioned + transformed (stacking
+    // contexts). Without an explicit z-index on the sticky header, rows paint
+    // over it and the header becomes unreadable while scrolling.
+    expect(styles.position).toBe('sticky')
+    expect(styles.zIndex).toBe('2')
+  })
+
   it('opens the detail panel with the full value on double-click', async () => {
     const longValue = 'payload-'.repeat(40)
     const { container } = render(

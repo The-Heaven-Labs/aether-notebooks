@@ -867,6 +867,7 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap',
     position: 'sticky',
     top: 0,
+    zIndex: 2,
   },
   rowNumTh: {
     padding: '9px 8px',
