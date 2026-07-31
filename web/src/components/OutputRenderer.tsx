@@ -502,7 +502,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
                   data-col={vc.index}
                   style={{ ...styles.virtualTd, left: ROW_NUM_WIDTH + vc.start, width: vc.size, height: vr.size }}
                   title={strValue}
-                  onDoubleClick={() => openDetail(vr.index, vc.index, strValue, cell)}
+                  onClick={() => openDetail(vr.index, vc.index, strValue, cell)}
                 >
                   <span style={isObj ? { ...styles.cellText, ...styles.json } : styles.cellText}>
                     {cell === null ? <span style={styles.null}>null</span> : strValue}
@@ -905,6 +905,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: '1px solid var(--border-light)',
     padding: 0,
     overflow: 'hidden',
+    cursor: 'pointer',
   },
   cellText: {
     display: 'flex',
