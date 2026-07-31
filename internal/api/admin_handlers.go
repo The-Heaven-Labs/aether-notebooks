@@ -1,11 +1,13 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/audit"
 )
@@ -312,4 +314,250 @@ func (s *Server) handleAdminCreateOrg(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusCreated, map[string]string{"id": orgID, "name": req.Name, "slug": req.Slug})
+}
+
+// @Summary Delete user
+// @Description Permanently delete a user account. Removes the user from all orgs and
+// @Description groups, deletes their home folders and personal data, and reassigns
+// @Description ownership of org-shared resources (notebooks, dashboards, agents, etc.)
+// @Description to the platform admin performing the deletion.
+// @Tags admin
+// @Produce json
+// @Param id path string true "User ID"
+// @Success 204
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /api/v1/admin/users/{id} [delete]
+func (s *Server) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
+	targetID := r.PathValue("id")
+	if targetID == "" {
+		writeError(w, http.StatusBadRequest, "missing user id")
+		return
+	}
+
+	claims := ClaimsFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	// Prevent self-deletion (same guard as self-demotion in handleAdminUpdateUser).
+	if claims.UserID == targetID {
+		writeError(w, http.StatusBadRequest, "cannot delete your own account")
+		return
+	}
+
+	ctx := r.Context()
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	var email string
+	if err := tx.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, targetID).Scan(&email); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load user")
+		return
+	}
+
+	// Remove the user as an ACL subject (their home folder and resource grants).
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM acl_entries WHERE subject_type = 'user' AND subject_id = $1`, targetID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to clean up ACLs")
+		return
+	}
+
+	// Delete the user's folders (home folders + any folders they own). Child
+	// folders are removed via parent_id ON DELETE CASCADE and resource
+	// folder_id references fall back to NULL.
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM folders WHERE owner_id = $1`, targetID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete folders")
+		return
+	}
+
+	// Reassign org-shared content to the platform admin so it survives the
+	// user deletion. created_by is a historical reference with no permission
+	// semantics, so reassignment is safe even across orgs.
+	reassign := []string{
+		`UPDATE folders SET created_by = $2 WHERE created_by = $1`,
+		`UPDATE notebooks SET created_by = $2 WHERE created_by = $1`,
+		`UPDATE dashboards SET created_by = $2 WHERE created_by = $1`,
+		`UPDATE agents SET created_by = $2 WHERE created_by = $1`,
+		`UPDATE model_configs SET created_by = $2 WHERE created_by = $1`,
+		`UPDATE skills SET created_by = $2 WHERE created_by = $1`,
+		`UPDATE mcp_servers SET created_by = $2 WHERE created_by = $1`,
+		`UPDATE tools SET created_by = $2 WHERE created_by = $1`,
+		`UPDATE agent_versions SET changed_by = $2 WHERE changed_by = $1`,
+	}
+	for _, q := range reassign {
+		if _, err := tx.Exec(ctx, q, targetID, claims.UserID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to reassign resources")
+			return
+		}
+	}
+
+	// Null out the optional created_by references on org-shared resources.
+	if _, err := tx.Exec(ctx,
+		`UPDATE templates SET created_by = NULL WHERE created_by = $1`, targetID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to clean up templates")
+		return
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE connectors SET created_by = NULL WHERE created_by = $1`, targetID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to clean up connectors")
+		return
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE cell_versions SET created_by = NULL WHERE created_by = $1`, targetID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to clean up cell versions")
+		return
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE motd_messages SET created_by = NULL WHERE created_by = $1`, targetID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to clean up MOTD messages")
+		return
+	}
+
+	// Delete the user's personal/credential data.
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM api_tokens WHERE user_id = $1`, targetID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete API tokens")
+		return
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM agent_sessions WHERE user_id = $1`, targetID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete agent sessions")
+		return
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM agent_stats_daily WHERE user_id = $1`, targetID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete agent stats")
+		return
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM attachments WHERE created_by = $1`, targetID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete attachments")
+		return
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM org_invites WHERE created_by = $1`, targetID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete invites")
+		return
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM org_invite_links WHERE created_by = $1`, targetID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete invite links")
+		return
+	}
+
+	// Delete the user last. Remaining references (org_members, group_members,
+	// sso_group_memberships, public_tokens) cascade; audit_logs set user_id NULL.
+	if _, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, targetID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete user")
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
+		return
+	}
+
+	s.audit.Log(ctx, audit.Entry{
+		UserID: claims.UserID,
+		Action: "user.delete", ResourceType: "user", ResourceID: targetID,
+		Metadata: map[string]any{"email": email},
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// @Summary Delete organization
+// @Description Permanently delete an organization and all of its data (notebooks,
+// @Description folders, groups, members, connectors, tools, MCP servers, dashboards,
+// @Description SSO bindings, audit logs, etc.). This is irreversible.
+// @Tags admin
+// @Produce json
+// @Param id path string true "Organization ID"
+// @Success 204
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /api/v1/admin/orgs/{id} [delete]
+func (s *Server) handleAdminDeleteOrg(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("id")
+	if orgID == "" {
+		writeError(w, http.StatusBadRequest, "missing org id")
+		return
+	}
+
+	claims := ClaimsFromContext(r.Context())
+	if claims == nil {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	ctx := r.Context()
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	var name string
+	if err := tx.QueryRow(ctx, `SELECT name FROM orgs WHERE id = $1`, orgID).Scan(&name); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "organization not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load organization")
+		return
+	}
+
+	// These two tables reference orgs without ON DELETE CASCADE; clean them up
+	// before deleting the org row. Everything else cascades.
+	if _, err := tx.Exec(ctx, `DELETE FROM api_tokens WHERE org_id = $1`, orgID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete API tokens")
+		return
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM motd_messages WHERE org_id = $1`, orgID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete MOTD messages")
+		return
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM orgs WHERE id = $1`, orgID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete organization")
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
+		return
+	}
+
+	s.audit.Log(ctx, audit.Entry{
+		UserID: claims.UserID,
+		Action: "org.delete", ResourceType: "org", ResourceID: orgID,
+		Metadata: map[string]any{"name": name},
+	})
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -170,6 +170,10 @@ definitions:
         type: string
       id:
         type: string
+      max_subagent_turns:
+        type: integer
+      max_subagents:
+        type: integer
       max_turns:
         type: integer
       mcp_server_ids:
@@ -387,6 +391,12 @@ definitions:
         type: string
       org_id:
         type: string
+      price_per_cache_read_token:
+        type: number
+      price_per_input_token:
+        type: number
+      price_per_output_token:
+        type: number
       provider:
         type: string
       updated_at:
@@ -910,6 +920,74 @@ paths:
       summary: Test SSO provider
       tags:
       - sso
+  /agent-attachments/{id}:
+    get:
+      description: Retrieve an image attachment for an agent session
+      parameters:
+      - description: Attachment ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get agent session attachment
+      tags:
+      - agents
+  /agent-sessions/{session_id}/attachments:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Upload an image attachment for an agent session (vision support)
+      parameters:
+      - description: Session ID
+        in: path
+        name: session_id
+        required: true
+        type: string
+      - description: Image file to upload
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upload agent session attachment
+      tags:
+      - agents
   /agents:
     get:
       description: List all agents for the current organization
@@ -1225,6 +1303,40 @@ paths:
       summary: Create organization
       tags:
       - admin
+  /api/v1/admin/orgs/{id}:
+    delete:
+      description: |-
+        Permanently delete an organization and all of its data (notebooks,
+        folders, groups, members, connectors, tools, MCP servers, dashboards,
+        SSO bindings, audit logs, etc.). This is irreversible.
+      parameters:
+      - description: Organization ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete organization
+      tags:
+      - admin
   /api/v1/admin/users:
     get:
       description: Returns all users across all organizations
@@ -1248,6 +1360,46 @@ paths:
       tags:
       - admin
   /api/v1/admin/users/{id}:
+    delete:
+      description: |-
+        Permanently delete a user account. Removes the user from all orgs and
+        groups, deletes their home folders and personal data, and reassigns
+        ownership of org-shared resources (notebooks, dashboards, agents, etc.)
+        to the platform admin performing the deletion.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete user
+      tags:
+      - admin
     put:
       consumes:
       - application/json
@@ -4014,6 +4166,48 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a cell
+      tags:
+      - cells
+  /notebooks/{notebook_id}/cells/{cell_id}/cancel:
+    post:
+      consumes:
+      - application/json
+      description: Cancel the currently running query for a cell
+      parameters:
+      - description: Notebook ID
+        in: path
+        name: notebook_id
+        required: true
+        type: string
+      - description: Cell ID
+        in: path
+        name: cell_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cancel a running cell execution
       tags:
       - cells
   /notebooks/{notebook_id}/cells/{cell_id}/duplicate:

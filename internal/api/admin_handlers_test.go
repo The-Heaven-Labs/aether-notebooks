@@ -165,3 +165,223 @@ func TestAdminUpdateUser_RequiresPlatformAdmin(t *testing.T) {
 	s.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
+
+func TestAdminDeleteUser(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+
+	// Ensure the test org referenced by memberships exists.
+	_, err := s.DB().Pool.Exec(ctx,
+		`INSERT INTO orgs (id, name, slug) VALUES ($1, 'Test Org', 'test-org') ON CONFLICT (id) DO NOTHING`, testOrgID)
+	require.NoError(t, err)
+
+	// Ensure the platform admin (testUserID) exists as a DB row so reassigned
+	// resources can reference them.
+	_, err = s.DB().Pool.Exec(ctx,
+		`INSERT INTO users (id, email, password_hash, name, email_verified)
+		 VALUES ($1, 'platform-admin@example.com', 'x', 'Platform Admin', false)
+		 ON CONFLICT (id) DO NOTHING`, testUserID)
+	require.NoError(t, err)
+
+	// Create a user with org membership, home folder, notebook, connector, API token.
+	email := fmt.Sprintf("delete-target-%d@example.com", time.Now().UnixNano())
+	var targetID string
+	err = s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO users (email, password_hash, name, email_verified)
+		 VALUES ($1, 'x', 'Delete Me', false) RETURNING id`, email,
+	).Scan(&targetID)
+	require.NoError(t, err)
+
+	_, err = s.DB().Pool.Exec(ctx,
+		`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'editor')`, testOrgID, targetID)
+	require.NoError(t, err)
+
+	var folderID string
+	err = s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO folders (org_id, name, is_home, owner_id, created_by)
+		 VALUES ($1, $2, true, $3, $3) RETURNING id`, testOrgID, email, targetID,
+	).Scan(&folderID)
+	require.NoError(t, err)
+
+	_, err = s.DB().Pool.Exec(ctx,
+		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		 VALUES ($1, 'folder', $2, 'user', $3, ARRAY['view','create','edit','manage','delete'])`,
+		testOrgID, folderID, targetID)
+	require.NoError(t, err)
+
+	var nbID string
+	err = s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO notebooks (org_id, title, created_by) VALUES ($1, 'Owned Notebook', $2) RETURNING id`,
+		testOrgID, targetID,
+	).Scan(&nbID)
+	require.NoError(t, err)
+
+	var connID string
+	err = s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO connectors (org_id, name, type, config_encrypted) VALUES ($1, 'Owned Connector', 'postgres', '\x00') RETURNING id`,
+		testOrgID,
+	).Scan(&connID)
+	require.NoError(t, err)
+	_, err = s.DB().Pool.Exec(ctx,
+		`UPDATE connectors SET created_by = $1 WHERE id = $2`, targetID, connID)
+	require.NoError(t, err)
+
+	_, err = s.DB().Pool.Exec(ctx,
+		`INSERT INTO api_tokens (user_id, org_id, name, token_hash) VALUES ($1, $2, 'test', 'hash')`,
+		targetID, testOrgID)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/users/"+targetID, nil)
+	req = withPlatformAdminClaims(req)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNoContent, w.Code)
+
+	// User deleted.
+	var count int
+	err = s.DB().Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE id = $1`, targetID).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+
+	// Membership + home folder + ACL + API token cleaned up.
+	err = s.DB().Pool.QueryRow(ctx, `SELECT COUNT(*) FROM org_members WHERE user_id = $1`, targetID).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+	err = s.DB().Pool.QueryRow(ctx, `SELECT COUNT(*) FROM folders WHERE owner_id = $1`, targetID).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM acl_entries WHERE subject_type = 'user' AND subject_id = $1`, targetID).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+	err = s.DB().Pool.QueryRow(ctx, `SELECT COUNT(*) FROM api_tokens WHERE user_id = $1`, targetID).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+
+	// Notebook reassigned to the platform admin (testUserID); connector's created_by nulled.
+	var creator string
+	err = s.DB().Pool.QueryRow(ctx, `SELECT created_by FROM notebooks WHERE id = $1`, nbID).Scan(&creator)
+	require.NoError(t, err)
+	assert.Equal(t, testUserID, creator)
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COALESCE(created_by::text, '') FROM connectors WHERE id = $1`, connID).Scan(&creator)
+	require.NoError(t, err)
+	assert.Equal(t, "", creator)
+}
+
+func TestAdminDeleteUser_SelfDeletionBlocked(t *testing.T) {
+	s := setupTestServer(t)
+
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/users/"+testUserID, nil)
+	req = withPlatformAdminClaims(req)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestAdminDeleteUser_NotFound(t *testing.T) {
+	s := setupTestServer(t)
+
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/users/00000000-0000-0000-0000-000000000000", nil)
+	req = withPlatformAdminClaims(req)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestAdminDeleteUser_RequiresPlatformAdmin(t *testing.T) {
+	s := setupTestServer(t)
+
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/users/some-user-id", nil)
+	req = withAdminClaims(req, testOrgID)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestAdminDeleteOrg(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+
+	// Ensure the platform admin (testUserID) exists as a DB row so memberships can reference it.
+	_, err := s.DB().Pool.Exec(ctx,
+		`INSERT INTO users (id, email, password_hash, name, email_verified)
+		 VALUES ($1, 'platform-admin@example.com', 'x', 'Platform Admin', false)
+		 ON CONFLICT (id) DO NOTHING`, testUserID)
+	require.NoError(t, err)
+
+	slug := fmt.Sprintf("del-org-%d", time.Now().UnixNano())
+	var orgID string
+	err = s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`, "Delete Org", slug,
+	).Scan(&orgID)
+	require.NoError(t, err)
+
+	_, err = s.DB().Pool.Exec(ctx,
+		`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin')`, orgID, testUserID)
+	require.NoError(t, err)
+
+	var nbID string
+	err = s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO notebooks (org_id, title, created_by) VALUES ($1, 'Org Notebook', $2) RETURNING id`,
+		orgID, testUserID,
+	).Scan(&nbID)
+	require.NoError(t, err)
+
+	_, err = s.DB().Pool.Exec(ctx,
+		`INSERT INTO folders (org_id, name, is_home, owner_id, created_by)
+		 VALUES ($1, 'Home', true, $2, $2)`, orgID, testUserID)
+	require.NoError(t, err)
+
+	_, err = s.DB().Pool.Exec(ctx,
+		`INSERT INTO api_tokens (user_id, org_id, name, token_hash) VALUES ($1, $2, 'test', 'hash')`,
+		testUserID, orgID)
+	require.NoError(t, err)
+
+	_, err = s.DB().Pool.Exec(ctx,
+		`INSERT INTO motd_messages (org_id, content) VALUES ($1, 'hello')`, orgID)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/orgs/"+orgID, nil)
+	req = withPlatformAdminClaims(req)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNoContent, w.Code)
+
+	var count int
+	err = s.DB().Pool.QueryRow(ctx, `SELECT COUNT(*) FROM orgs WHERE id = $1`, orgID).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+	err = s.DB().Pool.QueryRow(ctx, `SELECT COUNT(*) FROM notebooks WHERE org_id = $1`, orgID).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+	err = s.DB().Pool.QueryRow(ctx, `SELECT COUNT(*) FROM folders WHERE org_id = $1`, orgID).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+	err = s.DB().Pool.QueryRow(ctx, `SELECT COUNT(*) FROM api_tokens WHERE org_id = $1`, orgID).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+	err = s.DB().Pool.QueryRow(ctx, `SELECT COUNT(*) FROM motd_messages WHERE org_id = $1`, orgID).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+}
+
+func TestAdminDeleteOrg_NotFound(t *testing.T) {
+	s := setupTestServer(t)
+
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/orgs/00000000-0000-0000-0000-000000000000", nil)
+	req = withPlatformAdminClaims(req)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestAdminDeleteOrg_RequiresPlatformAdmin(t *testing.T) {
+	s := setupTestServer(t)
+
+	req := httptest.NewRequest("DELETE", "/api/v1/admin/orgs/some-org-id", nil)
+	req = withAdminClaims(req, testOrgID)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}

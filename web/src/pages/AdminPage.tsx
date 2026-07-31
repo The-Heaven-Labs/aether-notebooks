@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { AppShell } from '../components/AppShell'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Pagination } from '../components/Pagination'
 import type { SSOProvider } from '../types'
 
@@ -713,6 +714,12 @@ export function AdminPage() {
   const [createOrgSlug, setCreateOrgSlug] = useState('')
   const [creatingOrg, setCreatingOrg] = useState(false)
   const [createOrgError, setCreateOrgError] = useState<string | null>(null)
+  const [confirmDeleteOrg, setConfirmDeleteOrg] = useState<Org | null>(null)
+  const [confirmOrgName, setConfirmOrgName] = useState('')
+  const [orgDeleteError, setOrgDeleteError] = useState<string | null>(null)
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState<User | null>(null)
+  const [userDeleteError, setUserDeleteError] = useState<string | null>(null)
+  const orgConfirmInputRef = useRef<HTMLInputElement>(null)
 
   const { data: orgsData } = useQuery({
     queryKey: ['admin', 'orgs', orgPage, orgSearch],
@@ -767,6 +774,27 @@ export function AdminPage() {
       api.put(`/api/v1/admin/users/${id}`, { is_platform_admin: isPlatformAdmin }),
     onSuccess: () => { setTogglingUserId(null); qc.invalidateQueries({ queryKey: ['admin', 'users'] }) },
     onError: () => { setTogglingUserId(null) },
+  })
+
+  const deleteOrg = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/admin/orgs/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'orgs'] })
+      setConfirmDeleteOrg(null)
+      setConfirmOrgName('')
+      setOrgDeleteError(null)
+    },
+    onError: (e: unknown) => setOrgDeleteError(String(e)),
+  })
+
+  const deleteUser = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/admin/users/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'users'] })
+      setConfirmDeleteUser(null)
+      setUserDeleteError(null)
+    },
+    onError: (e: unknown) => setUserDeleteError(String(e)),
   })
 
   return (
@@ -851,12 +879,38 @@ export function AdminPage() {
               onChange={e => { setOrgSearch(e.target.value); setOrgPage(0) }}
             />
           </div>
+          <ConfirmDialog
+            open={!!confirmDeleteOrg}
+            title="Delete organization?"
+            message={`This permanently deletes "${confirmDeleteOrg?.name}" and all of its data (notebooks, folders, groups, members, connectors, tools, MCP servers, dashboards, audit logs). This cannot be undone.`}
+            confirmLabel="Delete Org"
+            destructive
+            confirmDisabled={confirmOrgName !== confirmDeleteOrg?.slug || deleteOrg.isPending}
+            defaultFocusRef={orgConfirmInputRef}
+            onConfirm={() => { if (confirmDeleteOrg) deleteOrg.mutate(confirmDeleteOrg.id) }}
+            onCancel={() => { setConfirmDeleteOrg(null); setConfirmOrgName(''); setOrgDeleteError(null) }}
+          >
+            <div style={{ marginBottom: 4 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>
+                Type <strong>{confirmDeleteOrg?.slug}</strong> to confirm
+              </label>
+              <input
+                ref={orgConfirmInputRef}
+                style={{ ...styles.input, width: '100%', boxSizing: 'border-box' }}
+                value={confirmOrgName}
+                onChange={e => setConfirmOrgName(e.target.value)}
+                placeholder={confirmDeleteOrg?.slug}
+              />
+              {orgDeleteError && <div style={deleteStyles.error}>{orgDeleteError}</div>}
+            </div>
+          </ConfirmDialog>
           <table style={styles.table}>
             <thead><tr>
               <th style={styles.th}>Name</th>
               <th style={styles.th}>Slug</th>
               <th style={styles.th}>Members</th>
               <th style={styles.th}>Created</th>
+              <th style={styles.th}>Actions</th>
             </tr></thead>
             <tbody>
               {orgs.map(o => (
@@ -865,6 +919,14 @@ export function AdminPage() {
                   <td style={styles.td}>{o.slug}</td>
                   <td style={styles.td}>{o.member_count}</td>
                   <td style={styles.td}>{new Date(o.created_at).toLocaleDateString()}</td>
+                  <td style={styles.td}>
+                    <button
+                      style={deleteStyles.dangerBtn}
+                      onClick={() => { setConfirmDeleteOrg(o); setConfirmOrgName(''); setOrgDeleteError(null) }}
+                    >
+                      Delete
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -885,12 +947,25 @@ export function AdminPage() {
               onChange={e => { setUserSearch(e.target.value); setUserPage(0) }}
             />
           </div>
+          <ConfirmDialog
+            open={!!confirmDeleteUser}
+            title="Delete user?"
+            message={`This permanently removes "${confirmDeleteUser?.email}" from all orgs and groups, deletes their home folders and personal data, and reassigns their notebooks and dashboards to you. This cannot be undone.`}
+            confirmLabel="Delete User"
+            destructive
+            confirmDisabled={deleteUser.isPending}
+            onConfirm={() => { if (confirmDeleteUser) deleteUser.mutate(confirmDeleteUser.id) }}
+            onCancel={() => { setConfirmDeleteUser(null); setUserDeleteError(null) }}
+          >
+            {userDeleteError && <div style={deleteStyles.error}>{userDeleteError}</div>}
+          </ConfirmDialog>
           <table style={styles.table}>
             <thead><tr>
               <th style={styles.th}>Email</th>
               <th style={styles.th}>Name</th>
               <th style={styles.th}>Platform Admin</th>
               <th style={styles.th}>Orgs</th>
+              <th style={styles.th}>Actions</th>
             </tr></thead>
             <tbody>
               {users.map(u => (
@@ -914,6 +989,14 @@ export function AdminPage() {
                     </button>
                   </td>
                   <td style={styles.td}>{u.orgs.join(', ')}</td>
+                  <td style={styles.td}>
+                    <button
+                      style={deleteStyles.dangerBtn}
+                      onClick={() => { setConfirmDeleteUser(u); setUserDeleteError(null) }}
+                    >
+                      Delete
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -942,4 +1025,9 @@ const styles: Record<string, React.CSSProperties> = {
   input: { padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, outline: 'none', color: 'var(--text-primary)', background: 'var(--bg-input)' },
   btn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   error: { marginTop: 10, fontSize: 12, color: 'var(--error)' },
+}
+
+const deleteStyles: Record<string, React.CSSProperties> = {
+  dangerBtn: { padding: '4px 10px', background: 'transparent', color: 'var(--error)', border: '1px solid var(--error)', borderRadius: 4, fontSize: 12, cursor: 'pointer' },
+  error: { marginTop: 6, fontSize: 12, color: 'var(--error)' },
 }
