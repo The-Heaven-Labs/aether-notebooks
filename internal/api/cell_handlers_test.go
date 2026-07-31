@@ -12,6 +12,60 @@ import (
 	"time"
 )
 
+func TestCellLimitClearToUnlimited(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("cell-limit-%d@example.com", ts)
+	token := registerAndGetToken(t, srv, email, "Cell Limit Org")
+	nbID := createNotebook(t, srv, token, "Cell Limit NB")
+
+	// New cells default to LIMIT 1000 (migration V016).
+	cellID := createCell(t, srv, token, nbID, "sql", "SELECT 1", "")
+
+	put := func(t *testing.T, body map[string]any) map[string]any {
+		t.Helper()
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest("PUT", "/api/v1/notebooks/"+nbID+"/cells/"+cellID, bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-AETHER-Admin-Mode", "true")
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("update cell: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp map[string]any
+		json.NewDecoder(rec.Body).Decode(&resp)
+		return resp
+	}
+
+	// Unrelated update keeps the default limit.
+	first := put(t, map[string]any{"source": "SELECT 2"})
+	if first["limit"].(float64) != 1000 {
+		t.Fatalf("expected default limit 1000, got %v", first["limit"])
+	}
+
+	// An explicit null clears the limit (the UI's "Unlimited" option sends
+	// {"limit": null}). Previously this was indistinguishable from an absent
+	// key, so the cell stayed capped at LIMIT 1000.
+	cleared := put(t, map[string]any{"limit": nil})
+	if _, ok := cleared["limit"]; ok {
+		t.Fatalf("expected limit to be cleared to null, got %v", cleared["limit"])
+	}
+
+	// A later update without the limit key must not re-apply a stale limit.
+	again := put(t, map[string]any{"source": "SELECT 3"})
+	if _, ok := again["limit"]; ok {
+		t.Fatalf("expected limit to stay null after unrelated update, got %v", again["limit"])
+	}
+
+	// Setting an explicit value still works.
+	set := put(t, map[string]any{"limit": 10})
+	if set["limit"].(float64) != 10 {
+		t.Fatalf("expected limit 10, got %v", set["limit"])
+	}
+}
+
 func TestDuplicateCell(t *testing.T) {
 	srv := setupTestServer(t)
 	ts := time.Now().UnixNano()
