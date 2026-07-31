@@ -144,7 +144,7 @@ describe('TableOutput virtualization', () => {
     expect(styles.zIndex).toBe('2')
   })
 
-  it('opens the detail panel with the full value on double-click', async () => {
+  it('opens the detail panel with the full value on click', async () => {
     const longValue = 'payload-'.repeat(40)
     const { container } = render(
       <OutputRenderer
@@ -154,7 +154,7 @@ describe('TableOutput virtualization', () => {
     )
     await waitFor(() => expect(getRenderedRows(container).length).toBeGreaterThan(0))
     const td = container.querySelector('td[data-row="0"][data-col="0"]')!
-    fireEvent.doubleClick(td)
+    fireEvent.click(td)
     await waitFor(() => expect(screen.getByLabelText('Copy value')).toBeDefined())
     const pre = container.querySelector('pre')
     expect(pre?.textContent).toBe(longValue)
