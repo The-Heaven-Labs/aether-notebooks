@@ -301,15 +301,6 @@ h1:hover a, h2:hover a, h3:hover a, h4:hover a, h5:hover a, h6:hover a {
   opacity: 1;
 }
 
-/* ── Virtualized result table ───────────────────────────────────────────── */
-/* Cheap safety net: even if a non-virtualized path renders extra rows, the
-   browser skips layout/paint for off-screen rows instead of blocking the
-   main thread. Row height matches the virtualizer estimate (ROW_HEIGHT). */
-.output-scroll-area tr {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 32px;
-}
-
 /* ── CodeMirror cursor/caret color ──────────────────────────────────────── */
 /* border-left is set via CodeMirror theme extension in Cell.tsx
    caret-color is set globally above via .cm-editor */
