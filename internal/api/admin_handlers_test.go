@@ -175,6 +175,14 @@ func TestAdminDeleteUser(t *testing.T) {
 		`INSERT INTO orgs (id, name, slug) VALUES ($1, 'Test Org', 'test-org') ON CONFLICT (id) DO NOTHING`, testOrgID)
 	require.NoError(t, err)
 
+	// Ensure the platform admin (testUserID) exists as a DB row so reassigned
+	// resources can reference them.
+	_, err = s.DB().Pool.Exec(ctx,
+		`INSERT INTO users (id, email, password_hash, name, email_verified)
+		 VALUES ($1, 'platform-admin@example.com', 'x', 'Platform Admin', false)
+		 ON CONFLICT (id) DO NOTHING`, testUserID)
+	require.NoError(t, err)
+
 	// Create a user with org membership, home folder, notebook, connector, API token.
 	email := fmt.Sprintf("delete-target-%d@example.com", time.Now().UnixNano())
 	var targetID string
