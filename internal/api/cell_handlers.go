@@ -35,8 +35,31 @@ type updateCellRequest struct {
 	Title         *string            `json:"title,omitempty"`
 	Description   *string            `json:"description,omitempty"`
 	Slug          *string            `json:"slug,omitempty"`
-	Limit         *int               `json:"limit,omitempty"`
+	Limit         NullableInt        `json:"limit"`
 	Metadata      json.RawMessage    `json:"metadata,omitempty"`
+}
+
+// NullableInt distinguishes an explicitly-null JSON value ("limit": null,
+// used by the UI to clear a cell's row limit) from a missing key. A plain
+// *int unmarshals both to nil, so a "clear to null" update was silently
+// dropped and unlimited cells stayed capped at their previous LIMIT.
+type NullableInt struct {
+	Value   *int
+	Present bool
+}
+
+func (n *NullableInt) UnmarshalJSON(b []byte) error {
+	n.Present = true
+	if string(b) == "null" {
+		n.Value = nil
+		return nil
+	}
+	var v int
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	n.Value = &v
+	return nil
 }
 
 // @Summary Create a cell
@@ -261,9 +284,9 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 		args = append(args, paramsJSON)
 		argN++
 	}
-	if req.Limit != nil {
+	if req.Limit.Present {
 		query += fmt.Sprintf(", \"limit\" = $%d", argN)
-		args = append(args, *req.Limit)
+		args = append(args, req.Limit.Value)
 		argN++
 	}
 
@@ -357,8 +380,8 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 	if req.Slug != nil {
 		updateMsg["slug"] = *req.Slug
 	}
-	if req.Limit != nil {
-		updateMsg["limit"] = *req.Limit
+	if req.Limit.Present {
+		updateMsg["limit"] = req.Limit.Value
 	}
 	updateMsg["user_email"] = s.userEmail(ctx, claims.UserID)
 	s.hub.Broadcast(nbID, updateMsg)
