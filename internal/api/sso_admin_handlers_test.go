@@ -15,12 +15,14 @@ func TestPlatformAdminSSOProviderCRUD(t *testing.T) {
 	s := setupTestServer(t)
 
 	createBody := map[string]any{
-		"name":            "Acme Okta",
-		"client_id":       "abc123",
-		"client_secret":   "super-secret",
-		"discovery_url":   "https://acme.okta.com/.well-known/openid-configuration",
-		"allowed_domains": []string{"acme.com", "acme.org"},
-		"enabled":         true,
+		"name":              "Acme Okta",
+		"client_id":         "abc123",
+		"client_secret":     "super-secret",
+		"discovery_url":     "https://acme.okta.com/.well-known/openid-configuration",
+		"allowed_domains":   []string{"acme.com", "acme.org"},
+		"enabled":           true,
+		"provisioning_mode": "join_provider_org",
+		"default_role":      "viewer",
 	}
 
 	// 1. Create a platform provider → 201
@@ -43,6 +45,10 @@ func TestPlatformAdminSSOProviderCRUD(t *testing.T) {
 	assert.Equal(t, "https://acme.okta.com/.well-known/openid-configuration", created["discovery_url"])
 	assert.Nil(t, created["client_secret"], "client_secret must not be returned")
 	assert.True(t, created["enabled"].(bool))
+	assert.Equal(t, "join_provider_org", created["provisioning_mode"])
+	assert.Equal(t, "viewer", created["default_role"])
+	_, hasCallback := created["callback_url"]
+	assert.True(t, hasCallback, "callback_url should be present in the response")
 
 	// 2. List providers → includes the created one
 	req = httptest.NewRequest("GET", "/api/v1/admin/sso/providers", nil)

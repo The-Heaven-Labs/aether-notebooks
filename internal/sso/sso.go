@@ -15,23 +15,25 @@ import (
 
 // Provider is the decoded (decrypted) SSO provider record.
 type Provider struct {
-	ID             string
-	Scope          string  // "platform" or "org"
-	OrgID          *string // nil for platform providers
-	Name           string
-	ProviderType   string
-	ClientID       string
-	ClientSecret   string // decrypted
-	DiscoveryURL   string
-	AllowedDomains []string
-	Enabled        bool
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	Scopes         []string `json:"scopes"`
-	GroupsClaim    string   `json:"groups_claim"`
-	GroupPrefix    string   `json:"group_prefix"`
-	AutoSyncGroups bool     `json:"auto_sync_groups"`
-	GetUserInfo    bool     `json:"get_user_info"`
+	ID               string
+	Scope            string  // "platform" or "org"
+	OrgID            *string // nil for platform providers
+	Name             string
+	ProviderType     string
+	ClientID         string
+	ClientSecret     string // decrypted
+	DiscoveryURL     string
+	AllowedDomains   []string
+	Enabled          bool
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	Scopes           []string `json:"scopes"`
+	GroupsClaim      string   `json:"groups_claim"`
+	GroupPrefix      string   `json:"group_prefix"`
+	AutoSyncGroups   bool     `json:"auto_sync_groups"`
+	GetUserInfo      bool     `json:"get_user_info"`
+	ProvisioningMode string   `json:"provisioning_mode"`
+	DefaultRole      string   `json:"default_role"`
 }
 
 // encryptSecret encrypts the client secret and encodes it as hex for text storage.
@@ -64,6 +66,7 @@ func scanProvider(row pgx.Row) (Provider, string, error) {
 		&p.ID, &p.Scope, &p.OrgID, &p.Name, &p.ProviderType,
 		&p.ClientID, &encSecret, &p.DiscoveryURL,
 		&p.AllowedDomains, &p.Enabled, &p.Scopes, &p.GroupsClaim, &p.GroupPrefix, &p.AutoSyncGroups, &p.GetUserInfo,
+		&p.ProvisioningMode, &p.DefaultRole,
 		&p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
@@ -78,7 +81,7 @@ func scanProvider(row pgx.Row) (Provider, string, error) {
 	return p, encSecret, nil
 }
 
-const selectProviderCols = `id, scope, org_id, name, provider_type, client_id, client_secret_enc, discovery_url, allowed_domains, enabled, scopes, groups_claim, group_prefix, auto_sync_groups, get_user_info, created_at, updated_at`
+const selectProviderCols = `id, scope, org_id, name, provider_type, client_id, client_secret_enc, discovery_url, allowed_domains, enabled, scopes, groups_claim, group_prefix, auto_sync_groups, get_user_info, provisioning_mode, default_role, created_at, updated_at`
 
 // CreateProvider inserts a new provider, encrypting the client_secret before storing.
 func CreateProvider(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, p Provider) (Provider, error) {
@@ -93,13 +96,19 @@ func CreateProvider(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, p
 	if p.Scopes == nil {
 		p.Scopes = []string{}
 	}
+	if p.ProvisioningMode == "" {
+		p.ProvisioningMode = "create_org"
+	}
+	if p.DefaultRole == "" {
+		p.DefaultRole = "non-admin"
+	}
 
 	row := pool.QueryRow(ctx,
-		`INSERT INTO sso_providers (scope, org_id, name, provider_type, client_id, client_secret_enc, discovery_url, allowed_domains, enabled, scopes, groups_claim, group_prefix, auto_sync_groups, get_user_info)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		`INSERT INTO sso_providers (scope, org_id, name, provider_type, client_id, client_secret_enc, discovery_url, allowed_domains, enabled, scopes, groups_claim, group_prefix, auto_sync_groups, get_user_info, provisioning_mode, default_role)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		 RETURNING `+selectProviderCols,
 		p.Scope, p.OrgID, p.Name, p.ProviderType, p.ClientID, encSecret, p.DiscoveryURL, p.AllowedDomains, p.Enabled,
-		p.Scopes, p.GroupsClaim, p.GroupPrefix, p.AutoSyncGroups, p.GetUserInfo,
+		p.Scopes, p.GroupsClaim, p.GroupPrefix, p.AutoSyncGroups, p.GetUserInfo, p.ProvisioningMode, p.DefaultRole,
 	)
 
 	result, encFromDB, err := scanProvider(row)
@@ -207,6 +216,7 @@ func collectProviders(rows pgx.Rows, masterKey []byte) ([]Provider, error) {
 			&p.ID, &p.Scope, &p.OrgID, &p.Name, &p.ProviderType,
 			&p.ClientID, &encSecret, &p.DiscoveryURL,
 			&p.AllowedDomains, &p.Enabled, &p.Scopes, &p.GroupsClaim, &p.GroupPrefix, &p.AutoSyncGroups, &p.GetUserInfo,
+			&p.ProvisioningMode, &p.DefaultRole,
 			&p.CreatedAt, &p.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan provider: %w", err)
@@ -260,15 +270,34 @@ func UpdateProvider(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, p
 		encSecret = existingEnc
 	}
 
+	// Preserve existing provisioning settings when omitted in a partial update
+	// (e.g. the frontend enable/disable toggle sends only `enabled`).
+	if p.ProvisioningMode == "" || p.DefaultRole == "" {
+		var existingMode, existingRole string
+		err := pool.QueryRow(ctx,
+			`SELECT provisioning_mode, default_role FROM sso_providers WHERE id=$1`, p.ID,
+		).Scan(&existingMode, &existingRole)
+		if err != nil {
+			return Provider{}, fmt.Errorf("update provider: failed to read existing provisioning settings: %w", err)
+		}
+		if p.ProvisioningMode == "" {
+			p.ProvisioningMode = existingMode
+		}
+		if p.DefaultRole == "" {
+			p.DefaultRole = existingRole
+		}
+	}
+
 	row := pool.QueryRow(ctx,
 		`UPDATE sso_providers
 		 SET name=$1, client_id=$2, client_secret_enc=$3, discovery_url=$4, allowed_domains=$5, enabled=$6,
 		     scopes=$7, groups_claim=$8, group_prefix=$9, auto_sync_groups=$10, get_user_info=$11,
+		     provisioning_mode=$12, default_role=$13,
 		     updated_at=now()
-		 WHERE id=$12
+		 WHERE id=$14
 		 RETURNING `+selectProviderCols,
 		p.Name, p.ClientID, encSecret, p.DiscoveryURL, p.AllowedDomains, p.Enabled,
-		p.Scopes, p.GroupsClaim, p.GroupPrefix, p.AutoSyncGroups, p.GetUserInfo, p.ID,
+		p.Scopes, p.GroupsClaim, p.GroupPrefix, p.AutoSyncGroups, p.GetUserInfo, p.ProvisioningMode, p.DefaultRole, p.ID,
 	)
 
 	result, encFromDB, err := scanProvider(row)

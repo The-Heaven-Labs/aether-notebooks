@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import { OutputRenderer } from '../components/OutputRenderer'
+import { ReadOnlyCode } from '../components/ReadOnlyCode'
 import { makeMarkdownComponents } from '../components/MarkdownCell'
 import type { ChartConfig } from '../charts'
 import type { Notebook, Cell, Output } from '../types'
@@ -125,7 +126,7 @@ export function PresentationPage() {
                 }}
               >
                 {cell.source_visible !== false && (
-                  <pre style={styles.codePre}>{cell.source}</pre>
+                  <ReadOnlyCode source={cell.source} language={cell.language} size="large" />
                 )}
                 {cell.outputs_hidden !== true && (cell.outputs ?? []).length > 0 && (
                   <OutputRenderer
@@ -214,15 +215,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--bg-elevated)',
     borderRadius: 4,
     overflow: 'hidden',
-  },
-  codePre: {
-    margin: 0,
-    padding: '24px',
-    fontSize: 16,
-    fontFamily: 'var(--font-mono, monospace)',
-    color: 'var(--text-primary)',
-    whiteSpace: 'pre-wrap',
-    overflowX: 'auto',
   },
   nav: {
     display: 'flex',

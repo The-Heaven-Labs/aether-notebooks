@@ -32,6 +32,8 @@ interface ProviderFormValues {
   group_prefix: string
   auto_sync_groups: boolean
   get_user_info: boolean
+  provisioning_mode: 'create_org' | 'join_provider_org' | 'deny'
+  default_role: 'admin' | 'non-admin' | 'viewer'
 }
 
 const emptyForm: ProviderFormValues = {
@@ -46,6 +48,8 @@ const emptyForm: ProviderFormValues = {
   group_prefix: '',
   auto_sync_groups: false,
   get_user_info: false,
+  provisioning_mode: 'create_org',
+  default_role: 'non-admin',
 }
 
 function providerToForm(p: SSOProvider): ProviderFormValues {
@@ -61,6 +65,8 @@ function providerToForm(p: SSOProvider): ProviderFormValues {
     group_prefix: p.group_prefix ?? '',
     auto_sync_groups: p.auto_sync_groups ?? false,
     get_user_info: p.get_user_info ?? false,
+    provisioning_mode: p.provisioning_mode ?? 'create_org',
+    default_role: p.default_role ?? 'non-admin',
   }
 }
 
@@ -84,11 +90,15 @@ function ProviderForm({
   const [values, setValues] = useState<ProviderFormValues>(initial)
 
   const set = (field: keyof ProviderFormValues) =>
-    (e: React.ChangeEvent<HTMLInputElement>) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
       setValues(v => ({ ...v, [field]: field === 'enabled' || field === 'auto_sync_groups' || field === 'get_user_info' ? (e.target as HTMLInputElement).checked : e.target.value }))
 
   return (
     <div style={formStyles.container}>
+      <div style={formStyles.infoBox}>
+        <strong>Redirect URI</strong> — register this URL in your IdP after creating the provider:
+        <code style={formStyles.infoCode}>{window.location.origin}/api/v1/auth/oidc/&lt;provider-id&gt;/callback</code>
+      </div>
       <div style={formStyles.grid}>
         <label style={formStyles.label}>
           Name
@@ -149,6 +159,28 @@ function ProviderForm({
         <label style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <input type="checkbox" checked={values.get_user_info} onChange={set('get_user_info')} />
           Call UserInfo Endpoint
+        </label>
+        <label style={formStyles.label}>
+          Provisioning Mode
+          <select style={formStyles.input} value={values.provisioning_mode} onChange={set('provisioning_mode')}>
+            <option value="create_org">Create a personal org (default)</option>
+            <option value="join_provider_org">Join the provider's org</option>
+            <option value="deny">Deny new account creation</option>
+          </select>
+          <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: 11 }}>
+            How brand-new SSO users are provisioned. "Join the provider's org" places them in the org that owns this provider; "Deny" allows SSO only for existing members.
+          </span>
+        </label>
+        <label style={formStyles.label}>
+          Default Role
+          <select style={formStyles.input} value={values.default_role} onChange={set('default_role')}>
+            <option value="non-admin">Non-admin</option>
+            <option value="viewer">Viewer</option>
+            <option value="admin">Admin</option>
+          </select>
+          <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: 11 }}>
+            Role assigned to auto-provisioned members (non-admin recommended).
+          </span>
         </label>
       </div>
       {error && <div style={formStyles.error}>{error}</div>}
@@ -217,6 +249,24 @@ const formStyles: Record<string, React.CSSProperties> = {
     marginTop: 10,
     fontSize: 12,
     color: 'var(--error)',
+  },
+  infoBox: {
+    marginBottom: 12,
+    padding: '8px 12px',
+    borderRadius: 4,
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
+    fontSize: 12,
+    color: 'var(--text-secondary)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+  },
+  infoCode: {
+    fontSize: 12,
+    fontFamily: 'var(--font-mono)',
+    color: 'var(--text-primary)',
+    wordBreak: 'break-all',
   },
 }
 
@@ -400,11 +450,20 @@ function SSOProvidersTab() {
   const [togglingId, setTogglingId] = useState<string | null>(null)
   const [testingId, setTestingId] = useState<string | null>(null)
   const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string }>>({})
+  const [createdProvider, setCreatedProvider] = useState<SSOProvider | null>(null)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+
+  async function copyText(text: string, key?: string) {
+    try { await navigator.clipboard.writeText(text) } catch { /* ignore clipboard errors */ }
+    setCopiedId(key ?? text)
+    setTimeout(() => setCopiedId(null), 1500)
+  }
 
   const createProvider = useMutation({
-    mutationFn: (body: Record<string, unknown>) => api.post('/api/v1/admin/sso/providers', body),
-    onSuccess: () => {
+    mutationFn: (body: Record<string, unknown>) => api.post<SSOProvider>('/api/v1/admin/sso/providers', body),
+    onSuccess: (created) => {
       qc.invalidateQueries({ queryKey: ['admin', 'sso', 'providers'] })
+      setCreatedProvider(created)
       setShowAddForm(false)
       setAddFormError(null)
     },
@@ -469,6 +528,8 @@ function SSOProvidersTab() {
       group_prefix: values.group_prefix,
       auto_sync_groups: values.auto_sync_groups,
       get_user_info: values.get_user_info,
+      provisioning_mode: values.provisioning_mode,
+      default_role: values.default_role,
     }
     createProvider.mutate(body)
   }
@@ -488,6 +549,8 @@ function SSOProvidersTab() {
       group_prefix: values.group_prefix,
       auto_sync_groups: values.auto_sync_groups,
       get_user_info: values.get_user_info,
+      provisioning_mode: values.provisioning_mode,
+      default_role: values.default_role,
     }
     if (values.client_secret) body.client_secret = values.client_secret
     updateProvider.mutate({ id, body })
@@ -517,6 +580,29 @@ function SSOProvidersTab() {
         />
       )}
 
+      {createdProvider && (
+        <div style={ssoStyles.createdBanner}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--success)' }}>Provider created</div>
+          <div style={ssoStyles.createdRow}>
+            <span style={{ color: 'var(--text-muted)' }}>Provider ID (UUID):</span>
+            <code style={ssoStyles.createdCode}>{createdProvider.id}</code>
+            <button style={ssoStyles.copyBtn} onClick={() => copyText(createdProvider.id, createdProvider.id)}>
+              {copiedId === createdProvider.id ? '✓ Copied' : 'Copy'}
+            </button>
+          </div>
+          {createdProvider.callback_url && (
+            <div style={ssoStyles.createdRow}>
+              <span style={{ color: 'var(--text-muted)' }}>Redirect URI:</span>
+              <code style={ssoStyles.createdCode}>{createdProvider.callback_url}</code>
+              <button style={ssoStyles.copyBtn} onClick={() => copyText(createdProvider.callback_url!, 'cb-' + createdProvider.id)}>
+                {copiedId === 'cb-' + createdProvider.id ? '✓ Copied' : 'Copy'}
+              </button>
+            </div>
+          )}
+          <button style={ssoStyles.iconBtn} onClick={() => setCreatedProvider(null)}>Dismiss</button>
+        </div>
+      )}
+
       {isLoading ? (
         <div style={ssoStyles.empty}>Loading…</div>
       ) : providers.length === 0 && !showAddForm ? (
@@ -530,6 +616,17 @@ function SSOProvidersTab() {
                   <span style={ssoStyles.rowName}>{p.name}</span>
                   <span style={ssoStyles.rowMeta}>
                     {p.client_id} · {p.discovery_url}
+                  </span>
+                  <span style={ssoStyles.rowMeta}>
+                    <code style={{ fontSize: 11 }}>{p.id}</code>
+                    <button style={ssoStyles.copyBtn} onClick={() => copyText(p.id, p.id)}>
+                      {copiedId === p.id ? '✓' : 'Copy ID'}
+                    </button>
+                    {p.callback_url && (
+                      <button style={ssoStyles.copyBtn} onClick={() => copyText(p.callback_url!, 'cb-' + p.id)}>
+                        {copiedId === 'cb-' + p.id ? '✓' : 'Copy Redirect URI'}
+                      </button>
+                    )}
                   </span>
                 </div>
                 <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
@@ -661,6 +758,43 @@ const ssoStyles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+  },
+  copyBtn: {
+    fontSize: 11,
+    color: 'var(--text-secondary)',
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
+    borderRadius: 3,
+    padding: '1px 6px',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    whiteSpace: 'nowrap',
+  },
+  createdBanner: {
+    marginBottom: 12,
+    padding: '10px 14px',
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+  },
+  createdRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    fontSize: 12,
+  },
+  createdCode: {
+    fontSize: 12,
+    fontFamily: 'var(--font-mono)',
+    color: 'var(--text-primary)',
+    wordBreak: 'break-all',
+    flex: 1,
   },
   badgeEnabled: {
     padding: '2px 8px',

@@ -7,6 +7,7 @@ import rehypeRaw from 'rehype-raw'
 import { api } from '../api/client'
 import { Skeleton } from '../components/Skeleton'
 import { OutputRenderer } from '../components/OutputRenderer'
+import { ReadOnlyCode } from '../components/ReadOnlyCode'
 import { makeMarkdownComponents } from '../components/MarkdownCell'
 import type { Notebook, Parameter, Output } from '../types'
 import type { ChartConfig } from '../charts'
@@ -69,17 +70,17 @@ export function PublicNotebookPage() {
                 <>
                   {cell.source && (
                     <div style={s.codeEditor}>
-                      <pre style={{ margin: 0, fontFamily: 'var(--font-mono)', fontSize: 13, lineHeight: 1.65, color: 'var(--text-primary)' }}>{cell.source}</pre>
+                      <ReadOnlyCode source={cell.source} language={cell.language} />
                     </div>
                   )}
                   {!cell.outputs_hidden && cell.outputs.length > 0 && (
                     <div style={s.outputWrap}>
                       <OutputRenderer
                         outputs={cell.outputs}
+                        cellId={cell.id}
                         chartConfig={chartConfig}
                         viewMode={viewMode}
                         hideExport
-                        fixedView={viewMode === 'chart' ? 'chart' : undefined}
                       />
                     </div>
                   )}
