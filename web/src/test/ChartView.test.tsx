@@ -71,6 +71,21 @@ test('renders hierarchy tree chart', () => {
   expect(screen.getByTestId('chart-container')).toBeInTheDocument()
 })
 
+test('renders big number chart with long value on a single line', () => {
+  const output = {
+    type: 'table',
+    data: {
+      columns: [{ name: 'revenue', type: 'float' }],
+      rows: [[1234567890123]],
+    },
+    config: { chartType: 'big_number' as const },
+  }
+  render(<ChartView output={output} />)
+  const value = screen.getByText(/1234567890123|1[,.]234/)
+  expect(value).toBeInTheDocument()
+  expect(value).toHaveStyle({ whiteSpace: 'nowrap' })
+})
+
 test('shows Configure button that toggles config panel', () => {
   const config = { chartType: 'bar' as const, xAxis: 'month', yAxis: ['revenue'] }
   render(<ChartView output={{ ...tableOutput, config }} onConfigChange={() => {}} />)

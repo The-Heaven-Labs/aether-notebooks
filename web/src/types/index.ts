@@ -276,6 +276,9 @@ export interface SSOProvider {
   group_prefix: string
   auto_sync_groups: boolean
   get_user_info: boolean
+  provisioning_mode?: 'create_org' | 'join_provider_org' | 'deny'
+  default_role?: 'admin' | 'non-admin' | 'viewer'
+  callback_url?: string
   org_id?: string
   name: string
   provider_type: string

@@ -282,3 +282,88 @@ func TestListEnabledProvidersForOrg(t *testing.T) {
 	assert.True(t, ids[orgProvider.ID], "org-scoped provider should appear")
 	assert.True(t, ids[platformProvider.ID], "enabled platform provider should appear")
 }
+
+func TestCreateProviderProvisioningDefaults(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	// Omitting the new fields should default to create_org / non-admin.
+	created, err := sso.CreateProvider(ctx, db.Pool, testMasterKey, makePlatformProvider("prov-defaults-test"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		db.Pool.Exec(ctx, `DELETE FROM sso_providers WHERE id=$1`, created.ID)
+	})
+	assert.Equal(t, "create_org", created.ProvisioningMode)
+	assert.Equal(t, "non-admin", created.DefaultRole)
+}
+
+func TestCreateProviderWithProvisioningSettings(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+	orgID := createTestOrg(t, db)
+
+	input := sso.Provider{
+		Scope:            "org",
+		OrgID:            &orgID,
+		Name:             "prov-settings-test",
+		ProviderType:     "oidc",
+		ClientID:         "prov-client",
+		ClientSecret:     "prov-secret",
+		DiscoveryURL:     "https://accounts.example.com/.well-known/openid-configuration",
+		AllowedDomains:   []string{"example.com"},
+		Enabled:          true,
+		Scopes:           []string{},
+		ProvisioningMode: "join_provider_org",
+		DefaultRole:      "viewer",
+	}
+
+	created, err := sso.CreateProvider(ctx, db.Pool, testMasterKey, input)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		db.Pool.Exec(ctx, `DELETE FROM sso_providers WHERE id=$1`, created.ID)
+	})
+
+	assert.Equal(t, "join_provider_org", created.ProvisioningMode)
+	assert.Equal(t, "viewer", created.DefaultRole)
+
+	got, err := sso.GetProvider(ctx, db.Pool, testMasterKey, created.ID, "")
+	require.NoError(t, err)
+	assert.Equal(t, "join_provider_org", got.ProvisioningMode)
+	assert.Equal(t, "viewer", got.DefaultRole)
+}
+
+func TestUpdateProviderPreservesProvisioningWhenOmitted(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	input := sso.Provider{
+		Scope:            "platform",
+		Name:             "prov-preserve-test",
+		ProviderType:     "oidc",
+		ClientID:         "preserve-client",
+		ClientSecret:     "preserve-secret",
+		DiscoveryURL:     "https://accounts.example.com/.well-known/openid-configuration",
+		AllowedDomains:   []string{},
+		Scopes:           []string{},
+		Enabled:          true,
+		ProvisioningMode: "join_provider_org",
+		DefaultRole:      "viewer",
+	}
+	created, err := sso.CreateProvider(ctx, db.Pool, testMasterKey, input)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		db.Pool.Exec(ctx, `DELETE FROM sso_providers WHERE id=$1`, created.ID)
+	})
+
+	// Simulate a partial update (e.g. the frontend enable/disable toggle) that
+	// omits provisioning fields — they should be preserved, not reset.
+	p := created
+	p.Name = "Updated"
+	p.ProvisioningMode = ""
+	p.DefaultRole = ""
+
+	updated, err := sso.UpdateProvider(ctx, db.Pool, testMasterKey, p)
+	require.NoError(t, err)
+	assert.Equal(t, "join_provider_org", updated.ProvisioningMode)
+	assert.Equal(t, "viewer", updated.DefaultRole)
+}

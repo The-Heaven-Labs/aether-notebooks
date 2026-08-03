@@ -21,25 +21,37 @@ function getColor(skipEmpty?: boolean): string {
 function BigNumberComponent({ data, config }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerHeight, setContainerHeight] = useState(200)
+  const [containerWidth, setContainerWidth] = useState(0)
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
         setContainerHeight(entry.contentRect.height)
+        setContainerWidth(entry.contentRect.width)
       }
     })
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
 
-  const valueFontSize = Math.max(16, Math.min(120, containerHeight * 0.45))
-  const subFontSize = Math.max(10, Math.min(60, valueFontSize * 0.5))
-  const labelFontSize = Math.max(9, Math.min(24, valueFontSize * 0.25))
-
   const col = config.valueColumn || data.columns[0]?.name || ''
   const row = data.rows[0]
   const value = row ? row[data.columns.findIndex(c => c.name === col)] : null
+  const formatted = formatNumber(value, config.decimalPlaces)
+  const fullString = (config.prefix ?? '') + formatted + (config.suffix ?? '')
+
+  // Height-derived size caps the value; width-derived size keeps it on one line.
+  const heightFontSize = Math.max(16, Math.min(120, containerHeight * 0.45))
+  let widthFontSize = 120
+  if (containerWidth > 0 && fullString.length > 0) {
+    const padding = 16
+    const availableWidth = containerWidth - padding
+    widthFontSize = availableWidth / (fullString.length * 0.62)
+  }
+  const valueFontSize = Math.max(12, Math.min(heightFontSize, widthFontSize))
+  const subFontSize = Math.max(10, Math.min(60, valueFontSize * 0.5))
+  const labelFontSize = Math.max(9, Math.min(24, valueFontSize * 0.25))
 
   return (
     <div ref={containerRef} style={{
@@ -72,7 +84,8 @@ function BigNumberComponent({ data, config }: ChartProps) {
         lineHeight: 1.1,
         letterSpacing: '-1.5px',
         textAlign: 'center',
-        wordBreak: 'break-word',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
       }}>
         {config.prefix && <span style={{ fontSize: subFontSize, fontWeight: 400, color: 'var(--text-muted)', marginRight: 4 }}>{config.prefix}</span>}
         {formatNumber(value, config.decimalPlaces)}

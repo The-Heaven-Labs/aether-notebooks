@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,6 +25,18 @@ func generateState() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// provisioningRole maps a provider's default_role to a valid org_members role.
+// `viewer` was folded into `non-admin` by migration V077.
+func provisioningRole(role string) string {
+	if role == "viewer" {
+		return "non-admin"
+	}
+	if role == "" {
+		return "non-admin"
+	}
+	return role
 }
 
 // oidcHTTPClient returns an HTTP client tailored to the OIDC provider's discovery URL.
@@ -82,6 +95,16 @@ func (s *Server) callbackURL(r *http.Request, providerID string) string {
 		base = fmt.Sprintf("%s://%s", scheme, r.Host)
 	}
 	return fmt.Sprintf("%s/api/v1/auth/oidc/%s/callback", base, providerID)
+}
+
+// callbackURLForID builds the callback URL for a provider without a request,
+// using the configured public URL. It returns an empty string when
+// AETHER_PUBLIC_URL is unset, since the host cannot be resolved offline.
+func (s *Server) callbackURLForID(providerID string) string {
+	if s.publicURL == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/api/v1/auth/oidc/%s/callback", s.publicURL, providerID)
 }
 
 // @Summary OIDC login
@@ -223,81 +246,210 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		claims.Email,
 	).Scan(&userID, &orgID, &role)
 
+	// Resolve the org this provider belongs to. For org-scoped providers it's
+	// the provider's own org_id; for platform-scoped providers enabled for a
+	// specific org, prefer the subdomain-resolved org (existing semantics);
+	// otherwise there is no target org.
+	providerOrgID := ""
+	if dbProvider.OrgID != nil {
+		providerOrgID = *dbProvider.OrgID
+	}
+	targetOrgID := providerOrgID
+	if dbProvider.Scope == "platform" && subdomainOrgID != "" {
+		targetOrgID = subdomainOrgID
+	}
+
 	if err == pgx.ErrNoRows {
-		// New user — provision into subdomain org or create new org
-		tx, txErr := s.db.Pool.Begin(ctx)
-		if txErr != nil {
-			writeError(w, http.StatusInternalServerError, "database error")
+		// New user — provision according to the provider's provisioning mode.
+		switch dbProvider.ProvisioningMode {
+		case "deny":
+			writeError(w, http.StatusForbidden, "automatic account creation is disabled for this SSO provider")
 			return
-		}
-		defer tx.Rollback(ctx)
-
-		displayName := claims.Name
-		if displayName == "" {
-			displayName = claims.Email
-		}
-
-		txErr = tx.QueryRow(ctx,
-			`INSERT INTO users (email, name, email_verified) VALUES ($1, $2, TRUE) RETURNING id`,
-			claims.Email, displayName,
-		).Scan(&userID)
-		if txErr != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create user")
-			return
-		}
-
-		if subdomainOrgID != "" {
-			// Provision into the subdomain-resolved org
-			orgID = subdomainOrgID
-			_, txErr = tx.Exec(ctx,
-				`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'non-admin')`,
-				orgID, userID,
-			)
-			if txErr != nil {
-				writeError(w, http.StatusInternalServerError, "failed to add member")
+		case "join_provider_org":
+			if targetOrgID == "" {
+				writeError(w, http.StatusForbidden, "SSO provider is not configured for auto-provisioning on this host")
 				return
 			}
-			role = "non-admin"
-		} else {
-			// No subdomain — create a new org (existing behavior)
-			orgName := displayName + "'s Org"
-			orgSlug := slugify(displayName)
+			if len(dbProvider.AllowedDomains) > 0 {
+				domain := emailDomain(claims.Email)
+				if !slices.Contains(dbProvider.AllowedDomains, domain) {
+					writeError(w, http.StatusForbidden, "email domain not allowed for this SSO provider")
+					return
+				}
+			}
+			tx, txErr := s.db.Pool.Begin(ctx)
+			if txErr != nil {
+				writeError(w, http.StatusInternalServerError, "database error")
+				return
+			}
+			defer tx.Rollback(ctx)
+
+			displayName := claims.Name
+			if displayName == "" {
+				displayName = claims.Email
+			}
+
 			txErr = tx.QueryRow(ctx,
-				`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
-				orgName, orgSlug,
-			).Scan(&orgID)
+				`INSERT INTO users (email, name, email_verified) VALUES ($1, $2, TRUE) RETURNING id`,
+				claims.Email, displayName,
+			).Scan(&userID)
 			if txErr != nil {
-				writeError(w, http.StatusInternalServerError, "failed to create org")
+				writeError(w, http.StatusInternalServerError, "failed to create user")
 				return
 			}
 
+			orgID = targetOrgID
+			role = provisioningRole(dbProvider.DefaultRole)
 			_, txErr = tx.Exec(ctx,
-				`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin')`,
-				orgID, userID,
+				`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, $3)`,
+				orgID, userID, role,
 			)
 			if txErr != nil {
 				writeError(w, http.StatusInternalServerError, "failed to add member")
 				return
 			}
-			role = "admin"
-		}
 
-		if txErr = createHomeFolder(ctx, tx, orgID, userID, displayName); txErr != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create home folder")
-			return
-		}
+			if txErr = createHomeFolder(ctx, tx, orgID, userID, displayName); txErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to create home folder")
+				return
+			}
 
-		if txErr = tx.Commit(ctx); txErr != nil {
-			writeError(w, http.StatusInternalServerError, "failed to commit")
-			return
+			if txErr = tx.Commit(ctx); txErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to commit")
+				return
+			}
+			s.audit.Log(ctx, audit.Entry{
+				OrgID: orgID, UserID: userID,
+				Action: "org.auto_join", ResourceType: "org", ResourceID: orgID,
+				Metadata: map[string]any{"provisioning_mode": dbProvider.ProvisioningMode},
+			})
+		default: // create_org — current behavior (backwards-compatible)
+			tx, txErr := s.db.Pool.Begin(ctx)
+			if txErr != nil {
+				writeError(w, http.StatusInternalServerError, "database error")
+				return
+			}
+			defer tx.Rollback(ctx)
+
+			displayName := claims.Name
+			if displayName == "" {
+				displayName = claims.Email
+			}
+
+			txErr = tx.QueryRow(ctx,
+				`INSERT INTO users (email, name, email_verified) VALUES ($1, $2, TRUE) RETURNING id`,
+				claims.Email, displayName,
+			).Scan(&userID)
+			if txErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to create user")
+				return
+			}
+
+			if subdomainOrgID != "" {
+				// Provision into the subdomain-resolved org
+				orgID = subdomainOrgID
+				_, txErr = tx.Exec(ctx,
+					`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'non-admin')`,
+					orgID, userID,
+				)
+				if txErr != nil {
+					writeError(w, http.StatusInternalServerError, "failed to add member")
+					return
+				}
+				role = "non-admin"
+			} else {
+				// No subdomain — create a new org (existing behavior)
+				orgName := displayName + "'s Org"
+				orgSlug := slugify(displayName)
+				txErr = tx.QueryRow(ctx,
+					`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
+					orgName, orgSlug,
+				).Scan(&orgID)
+				if txErr != nil {
+					writeError(w, http.StatusInternalServerError, "failed to create org")
+					return
+				}
+
+				_, txErr = tx.Exec(ctx,
+					`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin')`,
+					orgID, userID,
+				)
+				if txErr != nil {
+					writeError(w, http.StatusInternalServerError, "failed to add member")
+					return
+				}
+				role = "admin"
+			}
+
+			if txErr = createHomeFolder(ctx, tx, orgID, userID, displayName); txErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to create home folder")
+				return
+			}
+
+			if txErr = tx.Commit(ctx); txErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to commit")
+				return
+			}
+			s.audit.Log(ctx, audit.Entry{
+				OrgID: orgID, UserID: userID,
+				Action: "org.auto_join", ResourceType: "org", ResourceID: orgID,
+				Metadata: map[string]any{"provisioning_mode": dbProvider.ProvisioningMode},
+			})
 		}
-		s.audit.Log(ctx, audit.Entry{
-			OrgID: orgID, UserID: userID,
-			Action: "org.auto_join", ResourceType: "org", ResourceID: orgID,
-		})
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "database error")
 		return
+	}
+
+	// Existing user logging in via a join_provider_org provider who is not yet
+	// a member of the provider's org — auto-join them (subject to allowed_domains).
+	if dbProvider.ProvisioningMode == "join_provider_org" && targetOrgID != "" && targetOrgID != orgID {
+		var domainAllowed bool
+		if len(dbProvider.AllowedDomains) == 0 {
+			domainAllowed = true
+		} else {
+			domainAllowed = slices.Contains(dbProvider.AllowedDomains, emailDomain(claims.Email))
+		}
+		if domainAllowed {
+			var isMember bool
+			s.db.Pool.QueryRow(ctx,
+				`SELECT EXISTS(SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2)`,
+				targetOrgID, userID,
+			).Scan(&isMember)
+			if !isMember {
+				tx, txErr := s.db.Pool.Begin(ctx)
+				if txErr == nil {
+					role = provisioningRole(dbProvider.DefaultRole)
+					_, txErr = tx.Exec(ctx,
+						`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, $3)`,
+						targetOrgID, userID, role,
+					)
+					if txErr == nil {
+						txErr = createHomeFolder(ctx, tx, targetOrgID, userID, "")
+					}
+					if txErr != nil {
+						tx.Rollback(ctx)
+					} else {
+						tx.Commit(ctx)
+						s.audit.Log(ctx, audit.Entry{
+							OrgID: targetOrgID, UserID: userID,
+							Action: "org.auto_join", ResourceType: "org", ResourceID: targetOrgID,
+							Metadata: map[string]any{"provisioning_mode": dbProvider.ProvisioningMode},
+						})
+					}
+				}
+			}
+		}
+		// Switch the session to the provider's org (either pre-existing or just auto-joined).
+		var isMember bool
+		s.db.Pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2)`,
+			targetOrgID, userID,
+		).Scan(&isMember)
+		if isMember {
+			orgID = targetOrgID
+			role = provisioningRole(dbProvider.DefaultRole)
+		}
 	}
 
 	// Existing user logging in with a subdomain org that differs from their

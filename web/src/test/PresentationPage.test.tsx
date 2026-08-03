@@ -39,7 +39,9 @@ test('Next button advances to second cell', async () => {
   renderPresentation()
   await screen.findByText(/Slide 1/)
   fireEvent.click(screen.getByRole('button', { name: /next/i }))
-  expect(screen.getByText('SELECT 1')).toBeInTheDocument()
+  await waitFor(() => {
+    expect(document.body.textContent).toContain('SELECT 1')
+  })
 })
 
 test('Previous button is disabled on first cell', async () => {

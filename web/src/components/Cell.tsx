@@ -7,13 +7,13 @@ import { EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, history } from '@codemirror/commands'
 import { sql, PostgreSQL, MySQL } from '@codemirror/lang-sql'
 import { javascript } from '@codemirror/lang-javascript'
-import { syntaxHighlighting, HighlightStyle } from '@codemirror/language'
-import { tags } from '@lezer/highlight'
+import { syntaxHighlighting } from '@codemirror/language'
 import { format } from 'sql-formatter'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import { yCollab, ySyncFacet, YSyncConfig } from 'y-codemirror.next'
 import { OutputRenderer } from './OutputRenderer'
+import { sqlHighlight } from './sqlHighlight'
 const MarkdownView = lazy(() => import('./MarkdownCell').then(m => ({ default: m.MarkdownView })))
 import type { Cell as APICell, Connector } from '../types'
 import type { ChartConfig } from '../charts'
@@ -85,14 +85,6 @@ function normalizeChartConfig(raw: unknown): ChartConfig | undefined {
   }
   return Object.fromEntries(Object.entries(result).filter(([_, v]) => v != null)) as unknown as ChartConfig
 }
-
-const sqlHighlight = HighlightStyle.define([
-  { tag: tags.keyword, class: 'cm-keyword' },
-  { tag: tags.string, class: 'cm-string' },
-  { tag: tags.comment, class: 'cm-comment' },
-  { tag: tags.function(tags.name), class: 'cm-function' },
-  { tag: tags.number, class: 'cm-number' },
-])
 
 // ── Yjs collaboration cache (shared across all cells in a notebook) ───────────
 

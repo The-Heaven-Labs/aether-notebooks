@@ -569,3 +569,165 @@ func TestFullOIDCCallbackWithGroupSync(t *testing.T) {
 	}
 	assert.Equal(t, []string{"aether-analysts", "aether-engineering"}, names)
 }
+
+// ─── Provisioning-mode callback tests ──────────────────────────────────────
+
+func TestOIDCCallbackJoinProviderOrg(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+
+	// Create an org that "owns" the SSO provider.
+	ts := time.Now().UnixNano()
+	slug := fmt.Sprintf("join-org-%d", ts)
+	var orgID string
+	err := s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
+		slug, slug,
+	).Scan(&orgID)
+	require.NoError(t, err)
+
+	email := fmt.Sprintf("joinsso-%d@example.com", ts)
+	oidcSrv := newTestOIDCServer(t, "join-sso-user", email, "Join SSO User", nil, false)
+
+	dbProvider := sso.Provider{
+		Scope:            "org",
+		OrgID:            &orgID,
+		Name:             "Join Org OIDC",
+		ProviderType:     "oidc",
+		ClientID:         "test-client-id",
+		ClientSecret:     "test-secret",
+		DiscoveryURL:     oidcSrv.baseURL,
+		AllowedDomains:   []string{"example.com"},
+		Scopes:           []string{"openid", "profile", "email"},
+		Enabled:          true,
+		ProvisioningMode: "join_provider_org",
+		DefaultRole:      "viewer",
+	}
+	created, err := sso.CreateProvider(ctx, s.DB().Pool, s.MasterKey(), dbProvider)
+	require.NoError(t, err)
+
+	state := fmt.Sprintf("join-state-%d", time.Now().UnixNano())
+	_, err = s.Cache.Client().SetNX(ctx, fmt.Sprintf("oidc:state:%s", state), "1", 10*time.Minute).Result()
+	require.NoError(t, err)
+
+	callbackURL := fmt.Sprintf("/api/v1/auth/oidc/%s/callback?code=test-code&state=%s", created.ID, state)
+	req := httptest.NewRequest("GET", callbackURL, nil)
+	req.Host = "localhost"
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusFound, rec.Code, "callback body: %s", rec.Body.String())
+
+	// User should exist and be a member of the provider's org with the default role.
+	var userID string
+	err = s.DB().Pool.QueryRow(ctx, `SELECT id FROM users WHERE email=$1`, email).Scan(&userID)
+	require.NoError(t, err, "user should have been created")
+
+	var memberOrgID, role string
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT org_id, role FROM org_members WHERE user_id=$1`, userID,
+	).Scan(&memberOrgID, &role)
+	require.NoError(t, err, "user should be a member of an org")
+	assert.Equal(t, orgID, memberOrgID, "user should be provisioned into the provider's org")
+	assert.Equal(t, "non-admin", role, "viewer default_role should map to non-admin in org_members")
+}
+
+func TestOIDCCallbackJoinProviderOrgDomainNotAllowed(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+
+	ts := time.Now().UnixNano()
+	slug := fmt.Sprintf("join-deny-org-%d", ts)
+	var orgID string
+	err := s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
+		slug, slug,
+	).Scan(&orgID)
+	require.NoError(t, err)
+
+	// Email domain does NOT match allowed_domains.
+	email := fmt.Sprintf("blocked-%d@other.com", ts)
+	oidcSrv := newTestOIDCServer(t, "blocked-user", email, "Blocked User", nil, false)
+
+	dbProvider := sso.Provider{
+		Scope:            "org",
+		OrgID:            &orgID,
+		Name:             "Deny Org OIDC",
+		ProviderType:     "oidc",
+		ClientID:         "test-client-id",
+		ClientSecret:     "test-secret",
+		DiscoveryURL:     oidcSrv.baseURL,
+		AllowedDomains:   []string{"example.com"},
+		Scopes:           []string{"openid", "profile", "email"},
+		Enabled:          true,
+		ProvisioningMode: "join_provider_org",
+		DefaultRole:      "non-admin",
+	}
+	created, err := sso.CreateProvider(ctx, s.DB().Pool, s.MasterKey(), dbProvider)
+	require.NoError(t, err)
+
+	state := fmt.Sprintf("join-deny-state-%d", time.Now().UnixNano())
+	_, err = s.Cache.Client().SetNX(ctx, fmt.Sprintf("oidc:state:%s", state), "1", 10*time.Minute).Result()
+	require.NoError(t, err)
+
+	callbackURL := fmt.Sprintf("/api/v1/auth/oidc/%s/callback?code=test-code&state=%s", created.ID, state)
+	req := httptest.NewRequest("GET", callbackURL, nil)
+	req.Host = "localhost"
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusForbidden, rec.Code, "domain-mismatch should be rejected")
+
+	var count int
+	err = s.DB().Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE email=$1`, email).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count, "user should NOT have been created when domain is not allowed")
+}
+
+func TestOIDCCallbackDenyMode(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+
+	ts := time.Now().UnixNano()
+	slug := fmt.Sprintf("deny-org-%d", ts)
+	var orgID string
+	err := s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
+		slug, slug,
+	).Scan(&orgID)
+	require.NoError(t, err)
+
+	email := fmt.Sprintf("deny-%d@example.com", ts)
+	oidcSrv := newTestOIDCServer(t, "deny-user", email, "Deny User", nil, false)
+
+	dbProvider := sso.Provider{
+		Scope:            "org",
+		OrgID:            &orgID,
+		Name:             "Deny Mode OIDC",
+		ProviderType:     "oidc",
+		ClientID:         "test-client-id",
+		ClientSecret:     "test-secret",
+		DiscoveryURL:     oidcSrv.baseURL,
+		AllowedDomains:   []string{},
+		Scopes:           []string{"openid", "profile", "email"},
+		Enabled:          true,
+		ProvisioningMode: "deny",
+		DefaultRole:      "non-admin",
+	}
+	created, err := sso.CreateProvider(ctx, s.DB().Pool, s.MasterKey(), dbProvider)
+	require.NoError(t, err)
+
+	state := fmt.Sprintf("deny-state-%d", time.Now().UnixNano())
+	_, err = s.Cache.Client().SetNX(ctx, fmt.Sprintf("oidc:state:%s", state), "1", 10*time.Minute).Result()
+	require.NoError(t, err)
+
+	callbackURL := fmt.Sprintf("/api/v1/auth/oidc/%s/callback?code=test-code&state=%s", created.ID, state)
+	req := httptest.NewRequest("GET", callbackURL, nil)
+	req.Host = "localhost"
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusForbidden, rec.Code, "deny mode should reject new users")
+
+	var count int
+	err = s.DB().Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE email=$1`, email).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count, "user should NOT have been created in deny mode")
+}

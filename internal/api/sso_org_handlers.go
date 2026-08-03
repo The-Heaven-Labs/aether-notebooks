@@ -15,22 +15,25 @@ import (
 
 // platformProviderResponse extends providerResponse with an org-specific enabled flag.
 type platformProviderResponse struct {
-	ID             string    `json:"id"`
-	Scope          string    `json:"scope"`
-	Name           string    `json:"name"`
-	ProviderType   string    `json:"provider_type"`
-	ClientID       string    `json:"client_id"`
-	DiscoveryURL   string    `json:"discovery_url"`
-	AllowedDomains []string  `json:"allowed_domains"`
-	Enabled        bool      `json:"enabled"`
-	EnabledForOrg  bool      `json:"enabled_for_org"`
-	Scopes         []string  `json:"scopes"`
-	GroupsClaim    string    `json:"groups_claim"`
-	GroupPrefix    string    `json:"group_prefix"`
-	AutoSyncGroups bool      `json:"auto_sync_groups"`
-	GetUserInfo    bool      `json:"get_user_info"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID               string    `json:"id"`
+	Scope            string    `json:"scope"`
+	Name             string    `json:"name"`
+	ProviderType     string    `json:"provider_type"`
+	ClientID         string    `json:"client_id"`
+	DiscoveryURL     string    `json:"discovery_url"`
+	AllowedDomains   []string  `json:"allowed_domains"`
+	Enabled          bool      `json:"enabled"`
+	EnabledForOrg    bool      `json:"enabled_for_org"`
+	Scopes           []string  `json:"scopes"`
+	GroupsClaim      string    `json:"groups_claim"`
+	GroupPrefix      string    `json:"group_prefix"`
+	AutoSyncGroups   bool      `json:"auto_sync_groups"`
+	GetUserInfo      bool      `json:"get_user_info"`
+	ProvisioningMode string    `json:"provisioning_mode"`
+	DefaultRole      string    `json:"default_role"`
+	CallbackURL      string    `json:"callback_url"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // ssoSettingsResponse is the JSON shape for org SSO settings.
@@ -57,7 +60,7 @@ func (s *Server) handleOrgListSSOProviders(w http.ResponseWriter, r *http.Reques
 
 	resp := make([]providerResponse, len(providers))
 	for i, p := range providers {
-		resp[i] = providerToResponse(p)
+		resp[i] = s.providerToResponse(p)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"providers": resp})
 }
@@ -97,20 +100,22 @@ func (s *Server) handleOrgCreateSSOProvider(w http.ResponseWriter, r *http.Reque
 
 	orgID := claims.OrgID
 	p := sso.Provider{
-		Scope:          "org",
-		OrgID:          &orgID,
-		Name:           req.Name,
-		ProviderType:   "oidc",
-		ClientID:       req.ClientID,
-		ClientSecret:   *req.ClientSecret,
-		DiscoveryURL:   req.DiscoveryURL,
-		AllowedDomains: domains,
-		Enabled:        req.Enabled,
-		Scopes:         scopes,
-		GroupsClaim:    req.GroupsClaim,
-		GroupPrefix:    req.GroupPrefix,
-		AutoSyncGroups: req.AutoSyncGroups,
-		GetUserInfo:    req.GetUserInfo,
+		Scope:            "org",
+		OrgID:            &orgID,
+		Name:             req.Name,
+		ProviderType:     "oidc",
+		ClientID:         req.ClientID,
+		ClientSecret:     *req.ClientSecret,
+		DiscoveryURL:     req.DiscoveryURL,
+		AllowedDomains:   domains,
+		Enabled:          req.Enabled,
+		Scopes:           scopes,
+		GroupsClaim:      req.GroupsClaim,
+		GroupPrefix:      req.GroupPrefix,
+		AutoSyncGroups:   req.AutoSyncGroups,
+		GetUserInfo:      req.GetUserInfo,
+		ProvisioningMode: req.ProvisioningMode,
+		DefaultRole:      req.DefaultRole,
 	}
 
 	created, err := sso.CreateProvider(r.Context(), s.db.Pool, s.masterKey, p)
@@ -124,7 +129,7 @@ func (s *Server) handleOrgCreateSSOProvider(w http.ResponseWriter, r *http.Reque
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "sso_provider.create", ResourceType: "sso_provider", ResourceID: created.ID, ResourceName: created.Name,
 	})
-	writeJSON(w, http.StatusCreated, providerToResponse(created))
+	writeJSON(w, http.StatusCreated, s.providerToResponse(created))
 }
 
 // @Summary Update org SSO provider
@@ -181,18 +186,20 @@ func (s *Server) handleOrgUpdateSSOProvider(w http.ResponseWriter, r *http.Reque
 	}
 
 	p := sso.Provider{
-		ID:             id,
-		Name:           req.Name,
-		ClientID:       req.ClientID,
-		ClientSecret:   secret,
-		DiscoveryURL:   req.DiscoveryURL,
-		AllowedDomains: domains,
-		Enabled:        req.Enabled,
-		Scopes:         req.Scopes,
-		GroupsClaim:    req.GroupsClaim,
-		GroupPrefix:    req.GroupPrefix,
-		AutoSyncGroups: req.AutoSyncGroups,
-		GetUserInfo:    req.GetUserInfo,
+		ID:               id,
+		Name:             req.Name,
+		ClientID:         req.ClientID,
+		ClientSecret:     secret,
+		DiscoveryURL:     req.DiscoveryURL,
+		AllowedDomains:   domains,
+		Enabled:          req.Enabled,
+		Scopes:           req.Scopes,
+		GroupsClaim:      req.GroupsClaim,
+		GroupPrefix:      req.GroupPrefix,
+		AutoSyncGroups:   req.AutoSyncGroups,
+		GetUserInfo:      req.GetUserInfo,
+		ProvisioningMode: req.ProvisioningMode,
+		DefaultRole:      req.DefaultRole,
 	}
 
 	updated, err := sso.UpdateProvider(r.Context(), s.db.Pool, s.masterKey, p)
@@ -210,7 +217,7 @@ func (s *Server) handleOrgUpdateSSOProvider(w http.ResponseWriter, r *http.Reque
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "sso_provider.update", ResourceType: "sso_provider", ResourceID: id, ResourceName: req.Name,
 	})
-	writeJSON(w, http.StatusOK, providerToResponse(updated))
+	writeJSON(w, http.StatusOK, s.providerToResponse(updated))
 }
 
 // @Summary Delete org SSO provider
@@ -313,22 +320,25 @@ func (s *Server) handleOrgListPlatformProviders(w http.ResponseWriter, r *http.R
 			scopes = []string{}
 		}
 		resp[i] = platformProviderResponse{
-			ID:             p.ID,
-			Scope:          p.Scope,
-			Name:           p.Name,
-			ProviderType:   p.ProviderType,
-			ClientID:       p.ClientID,
-			DiscoveryURL:   p.DiscoveryURL,
-			AllowedDomains: domains(p.AllowedDomains),
-			Enabled:        p.Enabled,
-			EnabledForOrg:  enabledSet[p.ID],
-			Scopes:         scopes,
-			GroupsClaim:    p.GroupsClaim,
-			GroupPrefix:    p.GroupPrefix,
-			AutoSyncGroups: p.AutoSyncGroups,
-			GetUserInfo:    p.GetUserInfo,
-			CreatedAt:      p.CreatedAt,
-			UpdatedAt:      p.UpdatedAt,
+			ID:               p.ID,
+			Scope:            p.Scope,
+			Name:             p.Name,
+			ProviderType:     p.ProviderType,
+			ClientID:         p.ClientID,
+			DiscoveryURL:     p.DiscoveryURL,
+			AllowedDomains:   domains(p.AllowedDomains),
+			Enabled:          p.Enabled,
+			EnabledForOrg:    enabledSet[p.ID],
+			Scopes:           scopes,
+			GroupsClaim:      p.GroupsClaim,
+			GroupPrefix:      p.GroupPrefix,
+			AutoSyncGroups:   p.AutoSyncGroups,
+			GetUserInfo:      p.GetUserInfo,
+			ProvisioningMode: p.ProvisioningMode,
+			DefaultRole:      p.DefaultRole,
+			CallbackURL:      s.callbackURLForID(p.ID),
+			CreatedAt:        p.CreatedAt,
+			UpdatedAt:        p.UpdatedAt,
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"providers": resp})
