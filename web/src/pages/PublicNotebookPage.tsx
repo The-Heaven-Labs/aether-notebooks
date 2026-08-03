@@ -46,7 +46,7 @@ export function PublicNotebookPage() {
           <span style={s.readOnlyBadge}>Read-only</span>
         </div>
       </header>
-      <main style={{ maxWidth: 900, margin: '0 auto', padding: '24px 32px' }}>
+      <main style={{ width: '100%', maxWidth: 1200, margin: '0 auto', padding: '24px 40px', boxSizing: 'border-box' }}>
         {data.notebook.description && (
           <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 24 }}>{data.notebook.description}</p>
         )}
