@@ -246,6 +246,33 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		},
 		Handler: makeRestoreSnapshotHandler(db),
 	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "list_notebook_parameters",
+			Description: "List the parameter definitions on a notebook. Parameters are variables referenced in SQL cells as {{param_name}}. Returns each parameter's name, type, and default value.",
+			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string","description":"The notebook ID (defaults to the current notebook if omitted)"}},"required":[]}`,
+		},
+		Handler: makeListNotebookParametersHandler(db),
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "set_notebook_parameters",
+			Description: "Set the notebook's parameter definitions. Replaces ALL existing parameters — send the complete list. Each parameter is referenced in SQL as {{name}}. Use list_notebook_parameters first to see current values, then modify and send back the full array.",
+			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string","description":"The notebook ID (defaults to the current notebook if omitted)"},"parameters":{"type":"array","description":"Complete list of notebook parameters. Replaces all existing ones.","items":{"type":"object","properties":{"name":{"type":"string","description":"Parameter name — used as {{name}} in SQL"},"type":{"type":"string","enum":["string","date","number","boolean"],"description":"Parameter type"},"default":{"type":"string","description":"Default value when no runtime override is provided"}},"required":["name","type"]}}},"required":["parameters"]}`,
+		},
+		Handler:         makeSetNotebookParametersHandler(db),
+		ConfirmRequired: true,
+	})
 }
 
 func makeReadCellHandler(db *pgxpool.Pool) ToolHandler {
@@ -1450,6 +1477,118 @@ func makeCreateNotebookHandler(db *pgxpool.Pool) ToolHandler {
 			"notebook_id": id,
 			"title":       req.Title,
 			"description": req.Description,
+		}, nil
+	}
+}
+
+func makeListNotebookParametersHandler(db *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			NotebookID string `json:"notebook_id"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if req.NotebookID == "" {
+			req.NotebookID = ctx.NotebookID
+		}
+		if req.NotebookID == "" {
+			return nil, fmt.Errorf("notebook_id is required")
+		}
+		if err := ctx.CheckPermission("notebook", req.NotebookID, "view"); err != nil {
+			return nil, err
+		}
+
+		var paramsJSON []byte
+		err := db.QueryRow(ctx.Context,
+			`SELECT parameters FROM notebooks WHERE id = $1`,
+			req.NotebookID,
+		).Scan(&paramsJSON)
+		if err != nil {
+			return nil, fmt.Errorf("notebook not found: %w", err)
+		}
+
+		var params []models.Parameter
+		json.Unmarshal(paramsJSON, &params)
+		if params == nil {
+			params = []models.Parameter{}
+		}
+
+		return map[string]any{
+			"notebook_id": req.NotebookID,
+			"parameters":  params,
+			"count":       len(params),
+		}, nil
+	}
+}
+
+func makeSetNotebookParametersHandler(db *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			NotebookID string             `json:"notebook_id"`
+			Parameters []models.Parameter `json:"parameters"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if req.NotebookID == "" {
+			req.NotebookID = ctx.NotebookID
+		}
+		if req.NotebookID == "" {
+			return nil, fmt.Errorf("notebook_id is required")
+		}
+		if err := ctx.CheckPermission("notebook", req.NotebookID, "edit"); err != nil {
+			return nil, err
+		}
+
+		// Validate: no duplicate names, no empty names
+		seen := map[string]bool{}
+		for _, p := range req.Parameters {
+			if p.Name == "" {
+				return nil, fmt.Errorf("parameter name cannot be empty")
+			}
+			if seen[p.Name] {
+				return nil, fmt.Errorf("duplicate parameter name: %s", p.Name)
+			}
+			seen[p.Name] = true
+		}
+
+		if req.Parameters == nil {
+			req.Parameters = []models.Parameter{}
+		}
+
+		paramsJSON, _ := json.Marshal(req.Parameters)
+
+		var paramsOut []byte
+		err := db.QueryRow(ctx.Context,
+			`UPDATE notebooks SET parameters = $1, updated_at = NOW()
+			 WHERE id = $2 AND org_id = $3
+			 RETURNING parameters`,
+			paramsJSON, req.NotebookID, ctx.OrgID,
+		).Scan(&paramsOut)
+		if err != nil {
+			return nil, fmt.Errorf("update notebook parameters: %w", err)
+		}
+
+		var updated []models.Parameter
+		json.Unmarshal(paramsOut, &updated)
+
+		_ = ctx.AuditLog("notebook.update_parameters", "notebook", req.NotebookID)
+
+		// Broadcast to all notebook viewers via WebSocket
+		if ctx.BroadcastFunc != nil {
+			ctx.BroadcastFunc(req.NotebookID, map[string]any{
+				"type":       "notebook_refresh",
+				"reason":     "parameters_updated",
+				"user_email": "agent@aether",
+			})
+		}
+
+		return map[string]any{
+			"notebook_id": req.NotebookID,
+			"parameters":  updated,
+			"count":       len(updated),
+			"status":      "updated",
 		}, nil
 	}
 }
