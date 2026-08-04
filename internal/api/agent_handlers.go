@@ -30,7 +30,7 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
 		SELECT a.id, a.org_id, a.name, a.description, a.model_config_id, a.subagent_model_config_id,
-			   a.system_prompt, a.skill_ids, a.tool_ids, a.folder_id, a.max_turns, a.created_by, a.created_at, a.updated_at,
+			   a.system_prompt, a.skill_ids, a.tool_ids, a.all_builtin_tools, a.folder_id, a.max_turns, a.created_by, a.created_at, a.updated_at,
 			   mc.default_params
 		FROM agents a
 		LEFT JOIN model_configs mc ON mc.id = a.model_config_id
@@ -48,7 +48,7 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 		var desc, sysPrompt *string
 		var mcDefaultParams []byte
 		if err := rows.Scan(&a.ID, &a.OrgID, &a.Name, &desc, &a.ModelConfigID, &a.SubagentModelConfigID,
-			&sysPrompt, &a.SkillIDs, &a.ToolIDs, &a.FolderID, &a.MaxTurns, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt,
+			&sysPrompt, &a.SkillIDs, &a.ToolIDs, &a.AllBuiltinTools, &a.FolderID, &a.MaxTurns, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt,
 			&mcDefaultParams); err != nil {
 			continue
 		}
@@ -248,6 +248,7 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 		SystemPrompt          string   `json:"system_prompt"`
 		SkillIDs              []string `json:"skill_ids"`
 		ToolIDs               []string `json:"tool_ids"`
+		AllBuiltinTools       *bool    `json:"all_builtin_tools"`
 		MCPServerIDs          []string `json:"mcp_server_ids"`
 		FolderID              *string  `json:"folder_id"`
 		MaxTurns              *int     `json:"max_turns"`
@@ -280,6 +281,11 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 		req.FolderID = nil
 	}
 
+	allBuiltinTools := false
+	if req.AllBuiltinTools != nil {
+		allBuiltinTools = *req.AllBuiltinTools
+	}
+
 	agentID := uuid.New().String()
 
 	skillIDs := req.SkillIDs
@@ -289,10 +295,10 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 
 	_, err := h.server.db.Pool.Exec(r.Context(), `
 		INSERT INTO agents (id, org_id, name, description, model_config_id, subagent_model_config_id,
-			system_prompt, skill_ids, tool_ids, folder_id, max_turns, max_subagents, max_subagent_turns, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
+			system_prompt, skill_ids, tool_ids, all_builtin_tools, folder_id, max_turns, max_subagents, max_subagent_turns, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
 	`, agentID, claims.OrgID, req.Name, req.Description, req.ModelConfigID, req.SubagentModelConfigID,
-		req.SystemPrompt, skillIDs, req.ToolIDs, req.FolderID, req.MaxTurns, maxSubAgents, maxSubagentTurns, claims.UserID)
+		req.SystemPrompt, skillIDs, req.ToolIDs, allBuiltinTools, req.FolderID, req.MaxTurns, maxSubAgents, maxSubagentTurns, claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -366,10 +372,10 @@ func (h *agentHandlers) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 	var desc, sysPrompt *string
 	err = h.server.db.Pool.QueryRow(r.Context(), `
 		SELECT id, org_id, name, description, model_config_id, subagent_model_config_id,
-			   system_prompt, skill_ids, tool_ids, folder_id, max_turns, created_by, created_at, updated_at
+			   system_prompt, skill_ids, tool_ids, all_builtin_tools, folder_id, max_turns, created_by, created_at, updated_at
 		FROM agents WHERE id = $1 AND org_id = $2
 	`, agentID, claims.OrgID).Scan(&a.ID, &a.OrgID, &a.Name, &desc, &a.ModelConfigID, &a.SubagentModelConfigID,
-		&sysPrompt, &a.SkillIDs, &a.ToolIDs, &a.FolderID, &a.MaxTurns, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt)
+		&sysPrompt, &a.SkillIDs, &a.ToolIDs, &a.AllBuiltinTools, &a.FolderID, &a.MaxTurns, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
@@ -441,6 +447,7 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 		SystemPrompt          *string  `json:"system_prompt"`
 		SkillIDs              []string `json:"skill_ids"`
 		ToolIDs               []string `json:"tool_ids"`
+		AllBuiltinTools       *bool    `json:"all_builtin_tools"`
 		ModelConfigID         *string  `json:"model_config_id"`
 		SubagentModelConfigID *string  `json:"subagent_model_config_id"`
 		MCPServerIDs          []string `json:"mcp_server_ids"`
@@ -470,14 +477,15 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 			system_prompt = COALESCE($4, system_prompt),
 			skill_ids = COALESCE($5, skill_ids),
 			tool_ids = COALESCE($6, tool_ids),
-			model_config_id = COALESCE($7, model_config_id),
-			subagent_model_config_id = COALESCE($8, subagent_model_config_id),
-			max_turns = COALESCE($9, max_turns),
-			max_subagents = COALESCE($10, max_subagents),
-			max_subagent_turns = COALESCE($11, max_subagent_turns),
+			all_builtin_tools = COALESCE($7, all_builtin_tools),
+			model_config_id = COALESCE($8, model_config_id),
+			subagent_model_config_id = COALESCE($9, subagent_model_config_id),
+			max_turns = COALESCE($10, max_turns),
+			max_subagents = COALESCE($11, max_subagents),
+			max_subagent_turns = COALESCE($12, max_subagent_turns),
 			updated_at = NOW()
-		WHERE id = $1 AND org_id = $12
-	`, agentID, req.Name, req.Description, req.SystemPrompt, req.SkillIDs, req.ToolIDs, req.ModelConfigID, req.SubagentModelConfigID, req.MaxTurns, updateMaxSubAgents, updateMaxSubagentTurns, claims.OrgID)
+		WHERE id = $1 AND org_id = $13
+	`, agentID, req.Name, req.Description, req.SystemPrompt, req.SkillIDs, req.ToolIDs, req.AllBuiltinTools, req.ModelConfigID, req.SubagentModelConfigID, req.MaxTurns, updateMaxSubAgents, updateMaxSubagentTurns, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

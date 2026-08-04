@@ -55,6 +55,8 @@ var BuiltinTools = []BuiltinToolDef{
 	{Name: "create_snapshot", Description: "Create a notebook snapshot", HandlerName: "create_snapshot"},
 	{Name: "list_snapshots", Description: "List notebook snapshots", HandlerName: "list_snapshots"},
 	{Name: "restore_snapshot", Description: "Restore a notebook snapshot", HandlerName: "restore_snapshot"},
+	{Name: "list_notebook_parameters", Description: "List a notebook's parameter definitions", HandlerName: "list_notebook_parameters"},
+	{Name: "set_notebook_parameters", Description: "Replace a notebook's parameter definitions", HandlerName: "set_notebook_parameters"},
 	{Name: "ask_question", Description: "Ask the user a question and wait for their response. Use this when you need a decision, clarification, or input from the user to proceed. You can provide multiple choice options for the user to pick from, or leave it open-ended.", HandlerName: "ask_question", Schema: map[string]any{"type": "object", "properties": map[string]any{"question": map[string]any{"type": "string", "description": "The question to ask the user"}, "options": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"title": map[string]any{"type": "string", "description": "The option title/label"}, "description": map[string]any{"type": "string", "description": "Optional subtitle or explanation"}}, "required": []any{"title"}}, "description": "Optional multiple choice options"}, "allow_custom": map[string]any{"type": "boolean", "description": "Whether to allow the user to type a custom answer (default: true)"}}, "required": []any{"question"}}},
 }
 

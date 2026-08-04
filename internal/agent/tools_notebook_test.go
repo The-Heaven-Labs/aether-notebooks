@@ -867,3 +867,282 @@ func TestAgentCreateNotebookInFolderWithoutPermissionDenied(t *testing.T) {
 	}
 	t.Logf("correctly denied notebook creation in restricted folder: %v", err)
 }
+
+func TestAgentListNotebookParametersEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	listDef, ok := reg.Get("list_notebook_parameters")
+	if !ok {
+		t.Fatalf("list_notebook_parameters tool not found")
+	}
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+
+	args, _ := json.Marshal(map[string]any{"notebook_id": nbID})
+	result, err := listDef.Handler(args, ctx)
+	if err != nil {
+		t.Fatalf("list parameters: %v", err)
+	}
+	resultMap := result.(map[string]any)
+	if resultMap["count"].(int) != 0 {
+		t.Fatalf("expected count 0, got %v", resultMap["count"])
+	}
+	params, ok := resultMap["parameters"].([]models.Parameter)
+	if !ok || len(params) != 0 {
+		t.Fatalf("expected empty parameters, got %v", resultMap["parameters"])
+	}
+	t.Logf("list_notebook_parameters correctly returned an empty list")
+}
+
+func TestAgentSetAndListNotebookParameters(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	listDef, _ := reg.Get("list_notebook_parameters")
+	setDef, _ := reg.Get("set_notebook_parameters")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+
+	// Set two parameters (mimics the agent's read-modify-write pattern)
+	setArgs, _ := json.Marshal(map[string]any{
+		"notebook_id": nbID,
+		"parameters": []map[string]any{
+			{"name": "start_date", "type": "date", "default": "2026-01-01"},
+			{"name": "region", "type": "string", "default": "BR"},
+		},
+	})
+	result, err := setDef.Handler(setArgs, ctx)
+	if err != nil {
+		t.Fatalf("set parameters: %v", err)
+	}
+	resultMap := result.(map[string]any)
+	if resultMap["status"] != "updated" {
+		t.Fatalf("expected status=updated, got %v", resultMap)
+	}
+	if resultMap["count"].(int) != 2 {
+		t.Fatalf("expected count 2, got %v", resultMap["count"])
+	}
+
+	// Verify persisted in DB
+	var paramsJSON []byte
+	if err := db.Pool.QueryRow(context.Background(), `SELECT parameters FROM notebooks WHERE id = $1`, nbID).Scan(&paramsJSON); err != nil {
+		t.Fatalf("query parameters: %v", err)
+	}
+	var stored []models.Parameter
+	if err := json.Unmarshal(paramsJSON, &stored); err != nil {
+		t.Fatalf("parse parameters: %v", err)
+	}
+	if len(stored) != 2 || stored[0].Name != "start_date" || stored[0].Default != "2026-01-01" {
+		t.Fatalf("unexpected stored parameters: %+v", stored)
+	}
+
+	// List should return them
+	listArgs, _ := json.Marshal(map[string]any{"notebook_id": nbID})
+	listResult, err := listDef.Handler(listArgs, ctx)
+	if err != nil {
+		t.Fatalf("list parameters: %v", err)
+	}
+	listMap := listResult.(map[string]any)
+	if listMap["count"].(int) != 2 {
+		t.Fatalf("expected listed count 2, got %v", listMap["count"])
+	}
+
+	// Update an existing default + delete one (atomic replace pattern)
+	setArgs2, _ := json.Marshal(map[string]any{
+		"notebook_id": nbID,
+		"parameters": []map[string]any{
+			{"name": "start_date", "type": "date", "default": "2026-06-01"},
+		},
+	})
+	if _, err := setDef.Handler(setArgs2, ctx); err != nil {
+		t.Fatalf("set parameters (replace): %v", err)
+	}
+
+	listResult2, err := listDef.Handler(listArgs, ctx)
+	if err != nil {
+		t.Fatalf("list parameters after replace: %v", err)
+	}
+	listMap2 := listResult2.(map[string]any)
+	if listMap2["count"].(int) != 1 {
+		t.Fatalf("expected count 1 after replace, got %v", listMap2["count"])
+	}
+	listed := listMap2["parameters"].([]models.Parameter)
+	if listed[0].Name != "start_date" || listed[0].Default != "2026-06-01" {
+		t.Fatalf("expected updated start_date default, got %+v", listed[0])
+	}
+	t.Logf("set/list notebook parameters round-trip verified")
+}
+
+func TestAgentSetNotebookParametersDefaultsToContextNotebook(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	listDef, _ := reg.Get("list_notebook_parameters")
+	setDef, _ := reg.Get("set_notebook_parameters")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+
+	// Omit notebook_id — should default to ctx.NotebookID
+	setArgs, _ := json.Marshal(map[string]any{
+		"parameters": []map[string]any{
+			{"name": "limit", "type": "number", "default": "100"},
+		},
+	})
+	if _, err := setDef.Handler(setArgs, ctx); err != nil {
+		t.Fatalf("set parameters without notebook_id: %v", err)
+	}
+
+	listArgs, _ := json.Marshal(map[string]any{})
+	listResult, err := listDef.Handler(listArgs, ctx)
+	if err != nil {
+		t.Fatalf("list parameters without notebook_id: %v", err)
+	}
+	listMap := listResult.(map[string]any)
+	if listMap["count"].(int) != 1 {
+		t.Fatalf("expected count 1, got %v", listMap["count"])
+	}
+	t.Logf("parameter tools correctly defaulted to the context notebook")
+}
+
+func TestAgentSetNotebookParametersRequiresNotebookID(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	setDef, _ := reg.Get("set_notebook_parameters")
+
+	// No ctx.NotebookID and no notebook_id arg
+	ctx := setupToolContext(t, db, orgID, userID, "")
+	args, _ := json.Marshal(map[string]any{
+		"parameters": []map[string]any{{"name": "x", "type": "string"}},
+	})
+	if _, err := setDef.Handler(args, ctx); err == nil {
+		t.Fatalf("expected error when notebook_id is missing, got nil")
+	}
+	t.Logf("set_notebook_parameters correctly requires notebook_id")
+}
+
+func TestAgentSetNotebookParametersValidation(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	setDef, _ := reg.Get("set_notebook_parameters")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+
+	// Duplicate names should be rejected
+	dupArgs, _ := json.Marshal(map[string]any{
+		"notebook_id": nbID,
+		"parameters": []map[string]any{
+			{"name": "region", "type": "string"},
+			{"name": "region", "type": "string"},
+		},
+	})
+	if _, err := setDef.Handler(dupArgs, ctx); err == nil {
+		t.Fatalf("expected error for duplicate parameter names, got nil")
+	}
+
+	// Empty names should be rejected
+	emptyArgs, _ := json.Marshal(map[string]any{
+		"notebook_id": nbID,
+		"parameters":  []map[string]any{{"name": "", "type": "string"}},
+	})
+	if _, err := setDef.Handler(emptyArgs, ctx); err == nil {
+		t.Fatalf("expected error for empty parameter name, got nil")
+	}
+	t.Logf("set_notebook_parameters correctly validates parameter names")
+}
+
+func TestAgentSetNotebookParametersOrgIsolation(t *testing.T) {
+	db := setupTestDB(t)
+	orgA, userA := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgA, userA)
+
+	// User in a different org
+	orgB, userB := createTestOrgAndUser(t, db.Pool)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	setDef, _ := reg.Get("set_notebook_parameters")
+
+	// Non-admin ctx from org B trying to set params on org A's notebook
+	ctx := &agent.ToolContext{
+		Context: context.Background(),
+		UserID:  userB,
+		OrgID:   orgB,
+		OrgRole: "editor",
+		DB:      db.Pool,
+	}
+	args, _ := json.Marshal(map[string]any{
+		"notebook_id": nbID,
+		"parameters":  []map[string]any{{"name": "hacked", "type": "string"}},
+	})
+	if _, err := setDef.Handler(args, ctx); err == nil {
+		t.Fatalf("expected cross-org set to fail, got nil")
+	}
+
+	// Admin ctx from org B bypasses ACL but the org-scoped UPDATE must still fail
+	adminCtx := &agent.ToolContext{
+		Context: context.Background(),
+		UserID:  userB,
+		OrgID:   orgB,
+		OrgRole: "admin",
+		DB:      db.Pool,
+	}
+	if _, err := setDef.Handler(args, adminCtx); err == nil {
+		t.Fatalf("expected cross-org set with admin role to fail, got nil")
+	}
+
+	// Verify org A's notebook was not modified
+	var paramsJSON []byte
+	if err := db.Pool.QueryRow(context.Background(), `SELECT parameters FROM notebooks WHERE id = $1`, nbID).Scan(&paramsJSON); err != nil {
+		t.Fatalf("query parameters: %v", err)
+	}
+	var stored []models.Parameter
+	json.Unmarshal(paramsJSON, &stored)
+	if len(stored) != 0 {
+		t.Fatalf("expected no parameters stored, got %+v", stored)
+	}
+	t.Logf("cross-org parameter writes correctly blocked")
+}
+
+func TestSeedBuiltinToolsIncludesParameterTools(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+
+	agent.SeedBuiltinTools(context.Background(), db.Pool, orgID)
+
+	var count int
+	err := db.Pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM tools
+		WHERE org_id = $1 AND type = 'builtin'
+		  AND name IN ('list_notebook_parameters', 'set_notebook_parameters')
+	`, orgID).Scan(&count)
+	if err != nil {
+		t.Fatalf("query tools: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected 2 parameter tools seeded, got %d", count)
+	}
+
+	// Running the seed again must be idempotent (ON CONFLICT DO NOTHING)
+	var countBefore int
+	db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM tools WHERE org_id = $1 AND type = 'builtin'`, orgID).Scan(&countBefore)
+	agent.SeedBuiltinTools(context.Background(), db.Pool, orgID)
+	var countAfter int
+	db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM tools WHERE org_id = $1 AND type = 'builtin'`, orgID).Scan(&countAfter)
+	if countAfter != countBefore {
+		t.Fatalf("seed is not idempotent: %d before, %d after", countBefore, countAfter)
+	}
+	t.Logf("SeedBuiltinTools includes parameter tools and is idempotent (user %s)", userID)
+}

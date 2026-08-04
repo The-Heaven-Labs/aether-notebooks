@@ -84,6 +84,7 @@ type Agent struct {
 	MCPServerIDs          []string       `json:"mcp_server_ids"`
 	MCPServers            []MCPServerOrg `json:"mcp_servers"`
 	ToolIDs               []string       `json:"tool_ids,omitempty"`
+	AllBuiltinTools       bool           `json:"all_builtin_tools"`
 	Tools                 []Tool         `json:"tools,omitempty"`
 	ModelConfigParams     JSONMap        `json:"model_config_params,omitempty"`
 	FolderID              *string        `json:"folder_id,omitempty"`

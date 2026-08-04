@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/the-heaven-labs/aether/internal/models"
@@ -319,8 +320,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	var systemPrompt string
 	var skillIDs []byte
 	var toolIDs []byte
-	err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, description, model_config_id, subagent_model_config_id, system_prompt, array_to_json(skill_ids)::text, array_to_json(tool_ids)::text, folder_id, max_turns, created_by, created_at, updated_at FROM agents WHERE id = $1`, session.AgentID).Scan(
-		&agent.ID, &agent.OrgID, &agent.Name, &agent.Description, &agent.ModelConfigID, &agent.SubagentModelConfigID, &systemPrompt, &skillIDs, &toolIDs, &agent.FolderID, &agent.MaxTurns, &agent.CreatedBy, &agent.CreatedAt, &agent.UpdatedAt)
+	err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, description, model_config_id, subagent_model_config_id, system_prompt, array_to_json(skill_ids)::text, array_to_json(tool_ids)::text, folder_id, max_turns, all_builtin_tools, created_by, created_at, updated_at FROM agents WHERE id = $1`, session.AgentID).Scan(
+		&agent.ID, &agent.OrgID, &agent.Name, &agent.Description, &agent.ModelConfigID, &agent.SubagentModelConfigID, &systemPrompt, &skillIDs, &toolIDs, &agent.FolderID, &agent.MaxTurns, &agent.AllBuiltinTools, &agent.CreatedBy, &agent.CreatedAt, &agent.UpdatedAt)
 	if err != nil {
 		return "", "", nil, events, nil, fmt.Errorf("get agent: %w", err)
 	}
@@ -363,49 +364,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	}
 
 	// Load agent tools from tools table
-	agentTools := make([]*ToolDef, 0)
-	if len(agent.ToolIDs) > 0 {
-		tRows, err := e.pool.Query(ctx, `
-			SELECT id, org_id, name, description, type, schema, config
-			FROM tools WHERE id = ANY($1)`, agent.ToolIDs)
-		if err != nil {
-			slog.Warn("engine: failed to query agent tools", "session_id", sessionID, "error", err)
-		} else {
-			for tRows.Next() {
-				var t models.Tool
-				var schema, config []byte
-				if err := tRows.Scan(&t.ID, &t.OrgID, &t.Name, &t.Description, &t.Type, &schema, &config); err != nil {
-					continue
-				}
-				if schema != nil {
-					json.Unmarshal(schema, &t.Schema)
-				}
-				if t.Schema == nil {
-					t.Schema = models.JSONMap{}
-				}
-				if config != nil {
-					json.Unmarshal(config, &t.Config)
-				}
-				// Check runtime permission: user must have 'use' on the tool
-				if orgRole != "admin" {
-					allowed, err := e.checkToolUsePermission(ctx, session.UserID, agent.OrgID, orgRole, t.ID)
-					if err != nil || !allowed {
-						slog.Warn("engine: user lacks use permission for tool", "tool", t.Name, "user", session.UserID, "error", err)
-						continue
-					}
-				}
-				toolDef, err := e.resolveToolDef(&t)
-				if err != nil {
-					slog.Warn("engine: failed to resolve tool", "tool", t.Name, "error", err)
-					continue
-				}
-				if toolDef != nil {
-					agentTools = append(agentTools, toolDef)
-				}
-			}
-			tRows.Close()
-		}
-	}
+	agentTools := e.loadAgentToolDefs(ctx, agent, session.UserID, orgRole)
 
 	// Always include the ask_question tool so every agent can ask for user input
 	if qDef, ok := e.registry.Get("ask_question"); ok {
@@ -1115,6 +1074,71 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	tokBrk.ToolCalls = estimatedToolCalls
 	tokBrk.ToolResults = estimatedToolResults
 	return "", "", allToolCalls, events, tokBrk, fmt.Errorf("max turns reached")
+}
+
+// loadAgentToolDefs resolves the set of tools an agent may use at runtime.
+// When agent.AllBuiltinTools is true, every built-in tool for the org is
+// loaded (plus any explicitly assigned non-builtin tools); otherwise only the
+// tools in agent.ToolIDs are loaded, matching the legacy behavior.
+func (e *Engine) loadAgentToolDefs(ctx context.Context, agent models.Agent, sessionUserID, orgRole string) []*ToolDef {
+	agentTools := make([]*ToolDef, 0)
+	var toolRows pgx.Rows
+	var err error
+	if agent.AllBuiltinTools {
+		toolRows, err = e.pool.Query(ctx, `
+			SELECT id, org_id, name, description, type, schema, config
+			FROM tools
+			WHERE org_id = $1
+			  AND (type = 'builtin'
+			       OR (id = ANY($2) AND type != 'builtin'))
+			ORDER BY type, name`,
+			agent.OrgID, agent.ToolIDs)
+	} else if len(agent.ToolIDs) > 0 {
+		toolRows, err = e.pool.Query(ctx, `
+			SELECT id, org_id, name, description, type, schema, config
+			FROM tools WHERE id = ANY($1)`, agent.ToolIDs)
+	}
+	if err != nil {
+		slog.Warn("engine: failed to query agent tools", "agent_id", agent.ID, "error", err)
+		return agentTools
+	}
+	if toolRows == nil {
+		return agentTools
+	}
+	defer toolRows.Close()
+	for toolRows.Next() {
+		var t models.Tool
+		var schema, config []byte
+		if err := toolRows.Scan(&t.ID, &t.OrgID, &t.Name, &t.Description, &t.Type, &schema, &config); err != nil {
+			continue
+		}
+		if schema != nil {
+			json.Unmarshal(schema, &t.Schema)
+		}
+		if t.Schema == nil {
+			t.Schema = models.JSONMap{}
+		}
+		if config != nil {
+			json.Unmarshal(config, &t.Config)
+		}
+		// Check runtime permission: user must have 'use' on the tool
+		if orgRole != "admin" {
+			allowed, err := e.checkToolUsePermission(ctx, sessionUserID, agent.OrgID, orgRole, t.ID)
+			if err != nil || !allowed {
+				slog.Warn("engine: user lacks use permission for tool", "tool", t.Name, "user", sessionUserID, "error", err)
+				continue
+			}
+		}
+		toolDef, err := e.resolveToolDef(&t)
+		if err != nil {
+			slog.Warn("engine: failed to resolve tool", "tool", t.Name, "error", err)
+			continue
+		}
+		if toolDef != nil {
+			agentTools = append(agentTools, toolDef)
+		}
+	}
+	return agentTools
 }
 
 func (e *Engine) resolveToolDef(t *models.Tool) (*ToolDef, error) {

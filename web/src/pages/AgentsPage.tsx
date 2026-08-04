@@ -18,6 +18,7 @@ interface AgentForm {
   subagent_model_config_id: string
   skill_ids: string[]
   tool_ids: string[]
+  all_builtin_tools: boolean
   mcp_server_ids: string[]
   max_turns: number
   max_subagents: number
@@ -32,6 +33,7 @@ const emptyForm = (): AgentForm => ({
   subagent_model_config_id: '',
   skill_ids: [],
   tool_ids: [],
+  all_builtin_tools: false,
   mcp_server_ids: [],
   max_turns: 90,
   max_subagents: 5,
@@ -84,6 +86,7 @@ export function AgentsPage() {
       subagent_model_config_id: form.subagent_model_config_id || undefined,
       skill_ids: form.skill_ids,
       tool_ids: form.tool_ids,
+      all_builtin_tools: form.all_builtin_tools || undefined,
       mcp_server_ids: form.mcp_server_ids,
       max_turns: form.max_turns || undefined,
       max_subagents: form.max_subagents || undefined,
@@ -107,6 +110,7 @@ export function AgentsPage() {
       subagent_model_config_id: form.subagent_model_config_id || undefined,
       skill_ids: form.skill_ids,
       tool_ids: form.tool_ids,
+      all_builtin_tools: form.all_builtin_tools || undefined,
       mcp_server_ids: form.mcp_server_ids,
       max_turns: form.max_turns || undefined,
       max_subagents: form.max_subagents || undefined,
@@ -137,6 +141,7 @@ export function AgentsPage() {
       subagent_model_config_id: agent.subagent_model_config_id ?? '',
       skill_ids: agent.skill_ids ?? [],
       tool_ids: agent.tool_ids ?? [],
+      all_builtin_tools: agent.all_builtin_tools ?? false,
       mcp_server_ids: agent.mcp_server_ids ?? [],
       max_turns: agent.max_turns ?? 90,
       max_subagents: agent.max_subagents ?? 5,
@@ -432,21 +437,40 @@ function AgentFormFields({ form, setForm, modelConfigs, skills, tools, mcpServer
 
         {tools.length > 0 && (
           <>
+            {/* All built-in tools toggle */}
+            <div style={{ marginBottom: 10, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-input)' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', color: 'var(--text-primary)' }}>
+                <input
+                  type="checkbox"
+                  checked={form.all_builtin_tools}
+                  onChange={e => setForm(f => ({ ...f, all_builtin_tools: e.target.checked }))}
+                />
+                <span>All built-in tools</span>
+              </label>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 22, marginTop: 2 }}>
+                When enabled, this agent automatically gets access to all current and future built-in tools.
+                Custom tools (webhooks, SQL queries) can still be added individually below.
+              </div>
+            </div>
+
             {/* Built-in tools: single toggle */}
             {filteredBuiltinTools.length > 0 && (
               <div style={{ marginBottom: 6 }}>
-                <label style={{ ...styles.checkboxLabel, fontWeight: 600, color: 'var(--text-primary)' }}>
+                <label style={{ ...styles.checkboxLabel, fontWeight: 600, color: form.all_builtin_tools ? 'var(--text-muted)' : 'var(--text-primary)' }}>
                   <input
                     type="checkbox"
-                    checked={builtinEnabled}
-                    onChange={toggleBuiltinAll}
+                    checked={form.all_builtin_tools || builtinEnabled}
+                    onChange={form.all_builtin_tools ? undefined : toggleBuiltinAll}
+                    disabled={form.all_builtin_tools}
                     ref={el => { if (el) el.indeterminate = builtinTools.some(t => form.tool_ids.includes(t.id)) && !builtinEnabled }}
                   />
                   <span>Built-in Tools ({builtinTools.length})</span>
                 </label>
                 {!toolSearch && (
                   <div style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 22, marginTop: 2 }}>
-                    {builtinTools.map(t => t.name).join(', ')}
+                    {form.all_builtin_tools
+                      ? 'All built-in tools are included'
+                      : builtinTools.map(t => t.name).join(', ')}
                   </div>
                 )}
               </div>

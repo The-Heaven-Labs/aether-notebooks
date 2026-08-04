@@ -9,6 +9,7 @@ export interface Agent {
   skill_ids: string[]
   skills?: Skill[]
   tool_ids: string[]
+  all_builtin_tools?: boolean
   tools?: Tool[]
   mcp_server_ids: string[]
   mcp_servers: MCPServerOrg[]
