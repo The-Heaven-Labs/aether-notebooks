@@ -89,30 +89,154 @@ func TestEngineLoadAgentToolDefs_AllBuiltin(t *testing.T) {
 
 	engine := newTestEngine(db)
 
-	agent := models.Agent{
-		ID:              uuid.New().String(),
-		OrgID:           orgID,
-		AllBuiltinTools: true,
-		ToolIDs:         []string{},
+	// New semantics: agent whose tool_ids contains every built-in tool gets every built-in tool.
+	// Explicitly select all builtins via tool_ids (no AllBuiltinTools flag).
+	var allIDs []string
+	err := db.Pool.QueryRow(context.Background(), `SELECT array_agg(id) FROM tools WHERE org_id = $1 AND type='builtin'`, orgID).Scan((*string)(nil))
+	// fallback: collect via seeded lookup of known names
+	_ = err
+	rows, _ := db.Pool.Query(context.Background(), `SELECT id FROM tools WHERE org_id=$1 AND type='builtin'`, orgID)
+	if rows != nil {
+		for rows.Next() {
+			var id string
+			rows.Scan(&id)
+			allIDs = append(allIDs, id)
+		}
+		rows.Close()
 	}
 
-	defs := engine.loadAgentToolDefs(context.Background(), agent, userID, "admin")
+	agent := models.Agent{
+		ID:      uuid.New().String(),
+		OrgID:   orgID,
+		ToolIDs: allIDs,
+	}
+
+	defs := engine.loadAgentToolDefs(context.Background(), agent, userID, "admin", true)
 
 	names := map[string]bool{}
 	for _, d := range defs {
 		names[d.Function.Name] = true
 	}
 	if !names["list_notebook_parameters"] {
-		t.Fatalf("all_builtin agent missing list_notebook_parameters tool (got %d defs)", len(defs))
+		t.Fatalf("agent missing list_notebook_parameters tool (got %d defs)", len(defs))
 	}
 	if !names["set_notebook_parameters"] {
-		t.Fatalf("all_builtin agent missing set_notebook_parameters tool (got %d defs)", len(defs))
+		t.Fatalf("agent missing set_notebook_parameters tool (got %d defs)", len(defs))
 	}
-	// The full built-in set should be present, well beyond just the two new tools.
 	if len(defs) < 10 {
 		t.Fatalf("expected all built-in tools loaded, got only %d", len(defs))
 	}
-	t.Logf("all_builtin agent loaded %d tools including the new parameter tools", len(defs))
+	t.Logf("explicit-all-builtin agent loaded %d tools", len(defs))
+}
+
+func TestEngineLoadAgentToolDefs_AlwaysUsesToolIDs(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	SeedBuiltinTools(context.Background(), db.Pool, orgID)
+
+	engine := newTestEngine(db)
+
+	// Legacy AllBuiltinTools=true but tool_ids lists only 2 tools – only those 2 should be returned.
+	paramToolIDs := seededToolIDs(t, db, orgID, "list_notebook_parameters", "set_notebook_parameters")
+	agent := models.Agent{
+		ID:              uuid.New().String(),
+		OrgID:           orgID,
+		AllBuiltinTools: true,
+		ToolIDs:         paramToolIDs,
+	}
+
+	defs := engine.loadAgentToolDefs(context.Background(), agent, userID, "admin", true)
+
+	names := map[string]bool{}
+	for _, d := range defs {
+		names[d.Function.Name] = true
+	}
+	if len(defs) != 2 {
+		t.Fatalf("expected exactly 2 tools despite legacy AllBuiltinTools=true, got %d: %v", len(defs), names)
+	}
+	if !names["list_notebook_parameters"] || !names["set_notebook_parameters"] {
+		t.Fatalf("expected only the 2 selected tools, got %v", names)
+	}
+	t.Logf("legacy-all_builtin flag ignored, only tool_ids honoured")
+}
+
+func TestEngineLoadAgentToolDefs_AdminRespectsToolACL(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	SeedBuiltinTools(context.Background(), db.Pool, orgID)
+
+	engine := newTestEngine(db)
+
+	toolIDs := seededToolIDs(t, db, orgID, "execute_sql", "list_notebook_parameters")
+	// Revoke use permission for execute_sql by deleting the everyone grant
+	var execID string
+	db.Pool.QueryRow(context.Background(), `SELECT id FROM tools WHERE org_id=$1 AND name='execute_sql'`, orgID).Scan(&execID)
+	_, err := db.Pool.Exec(context.Background(), `DELETE FROM acl_entries WHERE resource_type='tool' AND resource_id=$1::uuid AND org_id=$2 AND subject_type='org_role' AND subject_id='everyone'`, execID, orgID)
+	if err != nil {
+		t.Fatalf("revoke acl: %v", err)
+	}
+
+	agent := models.Agent{
+		ID:      uuid.New().String(),
+		OrgID:   orgID,
+		ToolIDs: toolIDs,
+	}
+
+	// adminMode OFF => should respect ACL, execute_sql should be filtered out
+	defs := engine.loadAgentToolDefs(context.Background(), agent, userID, "admin", false)
+
+	names := map[string]bool{}
+	for _, d := range defs {
+		names[d.Function.Name] = true
+	}
+	if names["execute_sql"] {
+		t.Fatalf("admin with adminMode OFF should not have execute_sql after ACL revocation, got %v", names)
+	}
+	if !names["list_notebook_parameters"] {
+		t.Fatalf("expected list_notebook_parameters still allowed, got %v", names)
+	}
+	if len(defs) != 1 {
+		t.Fatalf("expected exactly 1 tool after ACL filter, got %d: %v", len(defs), names)
+	}
+}
+
+func TestEngineLoadAgentToolDefs_AdminModeBypassesToolACL(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	SeedBuiltinTools(context.Background(), db.Pool, orgID)
+
+	engine := newTestEngine(db)
+
+	toolIDs := seededToolIDs(t, db, orgID, "execute_sql", "list_notebook_parameters")
+	var execID string
+	db.Pool.QueryRow(context.Background(), `SELECT id FROM tools WHERE org_id=$1 AND name='execute_sql'`, orgID).Scan(&execID)
+	_, err := db.Pool.Exec(context.Background(), `DELETE FROM acl_entries WHERE resource_type='tool' AND resource_id=$1::uuid AND org_id=$2 AND subject_type='org_role' AND subject_id='everyone'`, execID, orgID)
+	if err != nil {
+		t.Fatalf("revoke acl: %v", err)
+	}
+
+	agent := models.Agent{
+		ID:      uuid.New().String(),
+		OrgID:   orgID,
+		ToolIDs: toolIDs,
+	}
+
+	// adminMode ON => should bypass ACL and get both tools
+	defs := engine.loadAgentToolDefs(context.Background(), agent, userID, "admin", true)
+
+	names := map[string]bool{}
+	for _, d := range defs {
+		names[d.Function.Name] = true
+	}
+	if !names["execute_sql"] {
+		t.Fatalf("admin with adminMode ON should bypass ACL and have execute_sql, got %v", names)
+	}
+	if !names["list_notebook_parameters"] {
+		t.Fatalf("expected list_notebook_parameters, got %v", names)
+	}
+	if len(defs) != 2 {
+		t.Fatalf("expected 2 tools with adminMode ON, got %d: %v", len(defs), names)
+	}
 }
 
 func TestEngineLoadAgentToolDefs_ExplicitSelection(t *testing.T) {
@@ -130,7 +254,7 @@ func TestEngineLoadAgentToolDefs_ExplicitSelection(t *testing.T) {
 		ToolIDs:         paramToolIDs,
 	}
 
-	defs := engine.loadAgentToolDefs(context.Background(), agent, userID, "admin")
+	defs := engine.loadAgentToolDefs(context.Background(), agent, userID, "admin", true)
 
 	names := map[string]bool{}
 	for _, d := range defs {
@@ -161,7 +285,7 @@ func TestEngineLoadAgentToolDefs_ExplicitSkipsUnselected(t *testing.T) {
 		ToolIDs:         paramToolIDs,
 	}
 
-	defs := engine.loadAgentToolDefs(context.Background(), agent, userID, "admin")
+	defs := engine.loadAgentToolDefs(context.Background(), agent, userID, "admin", true)
 
 	for _, d := range defs {
 		if d.Function.Name == "set_notebook_parameters" {
