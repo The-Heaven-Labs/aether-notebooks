@@ -510,7 +510,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       wsRef.current = null
     }
     const token = getToken()
-    const ws = new WebSocket(WS_URL + sid + '?token=' + token)
+    const adminParam = localStorage.getItem('aether_admin_mode') === 'true' ? '&admin_mode=true' : ''
+    const ws = new WebSocket(WS_URL + sid + '?token=' + token + adminParam)
     wsRef.current = ws
     reconnectAttemptsRef.current = 0
 
@@ -518,6 +519,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
         const e = reasoningEffortRef.current
         if (e) { ws.send(JSON.stringify({ type: 'set_reasoning_effort', reasoning_effort: e })) }
         if (pageContext) { ws.send(JSON.stringify({ type: 'set_page_context', page_context: { type: pageContext.type, id: pageContext.id || '', title: pageContext.title || '' } })) }
+        ws.send(JSON.stringify({ type: 'set_admin_mode', admin_mode: localStorage.getItem('aether_admin_mode') === 'true' }))
         const savedState = loadChatState()
         const lastId = savedState?.lastMessageId || ''
         ws.send(JSON.stringify({ type: 'reconnect', last_message_id: lastId }))
