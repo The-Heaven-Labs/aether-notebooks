@@ -79,7 +79,7 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool) func(http.Handle
 				}
 			}
 
-			adminMode := r.Header.Get("X-AETHER-Admin-Mode") == "true"
+			adminMode := r.Header.Get("X-AETHER-Admin-Mode") == "true" || r.URL.Query().Get("admin_mode") == "true"
 			ctx = context.WithValue(ctx, adminModeKey, adminMode)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -143,7 +143,7 @@ func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler,
 			}
 
 			ctx := context.WithValue(r.Context(), claimsKey, claims)
-			adminMode := r.Header.Get("X-AETHER-Admin-Mode") == "true"
+			adminMode := r.Header.Get("X-AETHER-Admin-Mode") == "true" || r.URL.Query().Get("admin_mode") == "true"
 			ctx = context.WithValue(ctx, adminModeKey, adminMode)
 
 			// Update last_used_at in background

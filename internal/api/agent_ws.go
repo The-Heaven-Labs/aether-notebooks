@@ -27,6 +27,7 @@ type WSMessage struct {
 	ReasoningEffort string   `json:"reasoning_effort,omitempty"`
 	ModelConfigID   string   `json:"model_config_id,omitempty"`
 	Approved        bool     `json:"approved,omitempty"`
+	AdminMode       bool     `json:"admin_mode,omitempty"`
 	Images          []string `json:"images,omitempty"`
 	PageContext     *struct {
 		Type  string `json:"type"`
@@ -76,6 +77,12 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	if !allowed {
 		writeError(w, http.StatusForbidden, "access denied")
 		return
+	}
+
+	// Capture admin mode for this session so the engine can respect per-tool ACLs
+	// unless the profile-page "admin mode" toggle is ON.
+	if s.agentEngine != nil {
+		s.agentEngine.SessionStore().SetAdminMode(sessionID, adminModeFromContext(r.Context()))
 	}
 
 	conn, err := s.upgrader.Upgrade(w, r, nil)
@@ -223,6 +230,12 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 			if msg.Type == "set_model_config" {
 				s.agentEngine.SetSessionModelConfig(currentSessionID, msg.ModelConfigID)
 				slog.Debug("ws: set model config", "session_id", currentSessionID, "model_config_id", msg.ModelConfigID)
+				continue
+			}
+
+			if msg.Type == "set_admin_mode" {
+				s.agentEngine.SessionStore().SetAdminMode(currentSessionID, msg.AdminMode)
+				slog.Debug("ws: set admin mode", "session_id", currentSessionID, "admin_mode", msg.AdminMode)
 				continue
 			}
 

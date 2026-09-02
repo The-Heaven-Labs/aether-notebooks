@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,14 +13,19 @@ import (
 )
 
 type SessionStore struct {
-	pool *pgxpool.Pool
+	pool       *pgxpool.Pool
+	adminModes sync.Map // sessionID -> bool
 }
 
 func NewSessionStore(pool *pgxpool.Pool) *SessionStore {
 	return &SessionStore{pool: pool}
 }
 
-func (s *SessionStore) CreateSession(ctx context.Context, agentID, notebookID, userID string, maxTurns int, title *string) (*models.AgentSession, error) {
+func (s *SessionStore) CreateSession(ctx context.Context, agentID, notebookID, userID string, maxTurns int, title *string, adminMode ...bool) (*models.AgentSession, error) {
+	var am bool
+	if len(adminMode) > 0 {
+		am = adminMode[0]
+	}
 	session := &models.AgentSession{
 		ID:         uuid.New().String(),
 		AgentID:    agentID,
@@ -28,6 +34,7 @@ func (s *SessionStore) CreateSession(ctx context.Context, agentID, notebookID, u
 		MaxTurns:   maxTurns,
 		Title:      title,
 		CreatedAt:  time.Now(),
+		AdminMode:  am,
 	}
 
 	var nbID *string
@@ -41,8 +48,30 @@ func (s *SessionStore) CreateSession(ctx context.Context, agentID, notebookID, u
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
 	}
+	if am {
+		s.adminModes.Store(session.ID, true)
+	}
 
 	return session, nil
+}
+
+// SetAdminMode stores the transient admin-mode flag for a session.
+func (s *SessionStore) SetAdminMode(sessionID string, adminMode bool) {
+	if adminMode {
+		s.adminModes.Store(sessionID, true)
+	} else {
+		s.adminModes.Delete(sessionID)
+	}
+}
+
+// GetAdminMode returns the transient admin-mode flag for a session.
+func (s *SessionStore) GetAdminMode(sessionID string) bool {
+	if v, ok := s.adminModes.Load(sessionID); ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return false
 }
 
 func (s *SessionStore) GetSession(ctx context.Context, sessionID string) (*models.AgentSession, error) {
@@ -64,6 +93,11 @@ func (s *SessionStore) GetSession(ctx context.Context, sessionID string) (*model
 	}
 	if title != nil {
 		session.Title = title
+	}
+	if v, ok := s.adminModes.Load(session.ID); ok {
+		if b, ok := v.(bool); ok {
+			session.AdminMode = b
+		}
 	}
 	return &session, nil
 }
