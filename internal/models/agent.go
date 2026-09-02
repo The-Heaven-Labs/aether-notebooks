@@ -84,16 +84,17 @@ type Agent struct {
 	MCPServerIDs          []string       `json:"mcp_server_ids"`
 	MCPServers            []MCPServerOrg `json:"mcp_servers"`
 	ToolIDs               []string       `json:"tool_ids,omitempty"`
-	AllBuiltinTools       bool           `json:"all_builtin_tools"`
-	Tools                 []Tool         `json:"tools,omitempty"`
-	ModelConfigParams     JSONMap        `json:"model_config_params,omitempty"`
-	FolderID              *string        `json:"folder_id,omitempty"`
-	MaxTurns              *int           `json:"max_turns,omitempty"`
-	MaxSubAgents          int            `json:"max_subagents,omitempty"`
-	MaxSubagentTurns      int            `json:"max_subagent_turns,omitempty"`
-	CreatedBy             string         `json:"created_by"`
-	CreatedAt             time.Time      `json:"created_at"`
-	UpdatedAt             time.Time      `json:"updated_at"`
+	// Deprecated: UI-only legacy field, no longer read by the engine.
+	AllBuiltinTools   bool      `json:"all_builtin_tools,omitempty"`
+	Tools             []Tool    `json:"tools,omitempty"`
+	ModelConfigParams JSONMap   `json:"model_config_params,omitempty"`
+	FolderID          *string   `json:"folder_id,omitempty"`
+	MaxTurns          *int      `json:"max_turns,omitempty"`
+	MaxSubAgents      int       `json:"max_subagents,omitempty"`
+	MaxSubagentTurns  int       `json:"max_subagent_turns,omitempty"`
+	CreatedBy         string    `json:"created_by"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type AgentSession struct {
@@ -105,6 +106,9 @@ type AgentSession struct {
 	Title      *string    `json:"title,omitempty"`
 	EndedAt    *time.Time `json:"ended_at,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
+	// AdminMode is a per-session transient flag derived from the X-AETHER-Admin-Mode
+	// header at session creation / WebSocket connection time. It is not persisted.
+	AdminMode bool `json:"admin_mode,omitempty"`
 }
 
 type ToolCall struct {

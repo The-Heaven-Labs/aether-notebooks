@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/the-heaven-labs/aether/internal/models"
@@ -364,7 +363,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	}
 
 	// Load agent tools from tools table
-	agentTools := e.loadAgentToolDefs(ctx, agent, session.UserID, orgRole)
+	agentTools := e.loadAgentToolDefs(ctx, agent, session.UserID, orgRole, session.AdminMode)
 
 	// Always include the ask_question tool so every agent can ask for user input
 	if qDef, ok := e.registry.Get("ask_question"); ok {
@@ -1077,32 +1076,22 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 }
 
 // loadAgentToolDefs resolves the set of tools an agent may use at runtime.
-// When agent.AllBuiltinTools is true, every built-in tool for the org is
-// loaded (plus any explicitly assigned non-builtin tools); otherwise only the
-// tools in agent.ToolIDs are loaded, matching the legacy behavior.
-func (e *Engine) loadAgentToolDefs(ctx context.Context, agent models.Agent, sessionUserID, orgRole string) []*ToolDef {
+// Tool access is governed solely by agent.ToolIDs; the legacy all_builtin_tools
+// flag is ignored. Permission is checked via checkToolUsePermission unless
+// adminMode is true (profile-page toggle).
+func (e *Engine) loadAgentToolDefs(ctx context.Context, agent models.Agent, sessionUserID, orgRole string, adminMode bool) []*ToolDef {
 	agentTools := make([]*ToolDef, 0)
-	var toolRows pgx.Rows
-	var err error
-	if agent.AllBuiltinTools {
-		toolRows, err = e.pool.Query(ctx, `
-			SELECT id, org_id, name, description, type, schema, config
-			FROM tools
-			WHERE org_id = $1
-			  AND (type = 'builtin'
-			       OR (id = ANY($2) AND type != 'builtin'))
-			ORDER BY type, name`,
-			agent.OrgID, agent.ToolIDs)
-	} else if len(agent.ToolIDs) > 0 {
-		toolRows, err = e.pool.Query(ctx, `
-			SELECT id, org_id, name, description, type, schema, config
-			FROM tools WHERE id = ANY($1)`, agent.ToolIDs)
-	}
-	if err != nil {
-		slog.Warn("engine: failed to query agent tools", "agent_id", agent.ID, "error", err)
+	if len(agent.ToolIDs) == 0 {
 		return agentTools
 	}
-	if toolRows == nil {
+	toolRows, err := e.pool.Query(ctx, `
+		SELECT id, org_id, name, description, type, schema, config
+		FROM tools
+		WHERE org_id = $1 AND id = ANY($2)
+		ORDER BY type, name`,
+		agent.OrgID, agent.ToolIDs)
+	if err != nil {
+		slog.Warn("engine: failed to query agent tools", "agent_id", agent.ID, "error", err)
 		return agentTools
 	}
 	defer toolRows.Close()
@@ -1121,8 +1110,9 @@ func (e *Engine) loadAgentToolDefs(ctx context.Context, agent models.Agent, sess
 		if config != nil {
 			json.Unmarshal(config, &t.Config)
 		}
-		// Check runtime permission: user must have 'use' on the tool
-		if orgRole != "admin" {
+		// Always check runtime permission. Admins bypass it only when the
+		// profile-page "admin mode" toggle is ON for the session owner.
+		if !adminMode {
 			allowed, err := e.checkToolUsePermission(ctx, sessionUserID, agent.OrgID, orgRole, t.ID)
 			if err != nil || !allowed {
 				slog.Warn("engine: user lacks use permission for tool", "tool", t.Name, "user", sessionUserID, "error", err)
@@ -1163,9 +1153,6 @@ func (e *Engine) resolveToolDef(t *models.Tool) (*ToolDef, error) {
 }
 
 func (e *Engine) checkToolUsePermission(ctx context.Context, userID, orgID, orgRole, toolID string) (bool, error) {
-	if orgRole == "admin" {
-		return true, nil
-	}
 	var exists bool
 	err := e.pool.QueryRow(ctx, `
 		SELECT EXISTS(
@@ -1423,7 +1410,7 @@ func (e *Engine) summarizeAndNewSession(ctx context.Context, sessionID string, m
 	}
 
 	// 3. Create a new session
-	newSession, err := e.session.CreateSession(ctx, oldSession.AgentID, oldSession.NotebookID, oldSession.UserID, oldSession.MaxTurns, nil)
+	newSession, err := e.session.CreateSession(ctx, oldSession.AgentID, oldSession.NotebookID, oldSession.UserID, oldSession.MaxTurns, nil, oldSession.AdminMode)
 	if err != nil {
 		return nil, fmt.Errorf("create new session: %w", err)
 	}

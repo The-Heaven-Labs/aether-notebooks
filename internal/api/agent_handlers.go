@@ -259,6 +259,9 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
+	if req.AllBuiltinTools != nil {
+		slog.Warn("all_builtin_tools is deprecated and ignored; use tool_ids", "agent_name", req.Name)
+	}
 	if req.SkillIDs == nil {
 		req.SkillIDs = []string{}
 	}
@@ -281,11 +284,6 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 		req.FolderID = nil
 	}
 
-	allBuiltinTools := false
-	if req.AllBuiltinTools != nil {
-		allBuiltinTools = *req.AllBuiltinTools
-	}
-
 	agentID := uuid.New().String()
 
 	skillIDs := req.SkillIDs
@@ -295,10 +293,10 @@ func (h *agentHandlers) handleCreateAgent(w http.ResponseWriter, r *http.Request
 
 	_, err := h.server.db.Pool.Exec(r.Context(), `
 		INSERT INTO agents (id, org_id, name, description, model_config_id, subagent_model_config_id,
-			system_prompt, skill_ids, tool_ids, all_builtin_tools, folder_id, max_turns, max_subagents, max_subagent_turns, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+			system_prompt, skill_ids, tool_ids, folder_id, max_turns, max_subagents, max_subagent_turns, created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
 	`, agentID, claims.OrgID, req.Name, req.Description, req.ModelConfigID, req.SubagentModelConfigID,
-		req.SystemPrompt, skillIDs, req.ToolIDs, allBuiltinTools, req.FolderID, req.MaxTurns, maxSubAgents, maxSubagentTurns, claims.UserID)
+		req.SystemPrompt, skillIDs, req.ToolIDs, req.FolderID, req.MaxTurns, maxSubAgents, maxSubagentTurns, claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -459,6 +457,9 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
+	if req.AllBuiltinTools != nil {
+		slog.Warn("all_builtin_tools is deprecated and ignored; use tool_ids", "agent_id", agentID)
+	}
 
 	// Custom COALESCE for max_subagents (nullable int with default)
 	var updateMaxSubAgents any
@@ -477,15 +478,14 @@ func (h *agentHandlers) handleUpdateAgent(w http.ResponseWriter, r *http.Request
 			system_prompt = COALESCE($4, system_prompt),
 			skill_ids = COALESCE($5, skill_ids),
 			tool_ids = COALESCE($6, tool_ids),
-			all_builtin_tools = COALESCE($7, all_builtin_tools),
-			model_config_id = COALESCE($8, model_config_id),
-			subagent_model_config_id = COALESCE($9, subagent_model_config_id),
-			max_turns = COALESCE($10, max_turns),
-			max_subagents = COALESCE($11, max_subagents),
-			max_subagent_turns = COALESCE($12, max_subagent_turns),
+			model_config_id = COALESCE($7, model_config_id),
+			subagent_model_config_id = COALESCE($8, subagent_model_config_id),
+			max_turns = COALESCE($9, max_turns),
+			max_subagents = COALESCE($10, max_subagents),
+			max_subagent_turns = COALESCE($11, max_subagent_turns),
 			updated_at = NOW()
-		WHERE id = $1 AND org_id = $13
-	`, agentID, req.Name, req.Description, req.SystemPrompt, req.SkillIDs, req.ToolIDs, req.AllBuiltinTools, req.ModelConfigID, req.SubagentModelConfigID, req.MaxTurns, updateMaxSubAgents, updateMaxSubagentTurns, claims.OrgID)
+		WHERE id = $1 AND org_id = $12
+	`, agentID, req.Name, req.Description, req.SystemPrompt, req.SkillIDs, req.ToolIDs, req.ModelConfigID, req.SubagentModelConfigID, req.MaxTurns, updateMaxSubAgents, updateMaxSubagentTurns, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -650,6 +650,9 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if h.server.agentEngine != nil {
+		h.server.agentEngine.SessionStore().SetAdminMode(sessionID, adminModeFromContext(r.Context()))
 	}
 
 	// Look up the model's context window for display purposes
