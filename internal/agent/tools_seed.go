@@ -91,10 +91,18 @@ func SeedBuiltinTools(ctx context.Context, pool *pgxpool.Pool, orgID string) {
 			slog.Warn("seed builtin tool failed", "tool", bt.Name, "error", err)
 			continue
 		}
-		// Seed ACL so all org members can view and use built-in tools
+		// Seed management ACL: all org members can view tools (UI listing);
+		// 'use' is not needed — assignment is gated by validateToolAccess which checks
+		// user-level or org-role 'use' permission. Built-in tools default to view-only
+		// for 'everyone'; admins get full management.
 		pool.Exec(ctx, `
 			INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-			VALUES ($1, 'tool', $2::uuid, 'org_role', 'everyone', ARRAY['view','use'])
+			VALUES ($1, 'tool', $2::uuid, 'org_role', 'everyone', ARRAY['view'])
+			ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
+			orgID, toolID)
+		pool.Exec(ctx, `
+			INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+			VALUES ($1, 'tool', $2::uuid, 'org_role', 'admin', ARRAY['view','use','edit','delete'])
 			ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
 			orgID, toolID)
 	}

@@ -363,7 +363,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	}
 
 	// Load agent tools from tools table
-	agentTools := e.loadAgentToolDefs(ctx, agent, session.UserID, orgRole, session.AdminMode)
+	// Tool ACLs are enforced at assignment time (validateToolAccess in agent_handlers.go);
+	// tool_ids is the sole execution enforcement point.
+	agentTools := e.loadAgentToolDefs(ctx, agent)
 
 	// Always include the ask_question tool so every agent can ask for user input
 	if qDef, ok := e.registry.Get("ask_question"); ok {
@@ -916,10 +918,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 
 			toolDef, ok := toolLookup[tc.Function.Name]
 			if !ok {
-				toolDef, ok = e.registry.Get(tc.Function.Name)
-			}
-			if !ok {
-				resultStr := fmt.Sprintf("unknown tool: %s", tc.Function.Name)
+				slog.Warn("engine: tool call rejected — not in agent tool_ids",
+					"tool", tc.Function.Name,
+					"session_id", sessionID,
+					"agent_id", agent.ID)
+				resultStr := fmt.Sprintf("tool not available: %s", tc.Function.Name)
 				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
 				estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
 				e.session.AppendMessage(context.Background(), &models.AgentMessage{
@@ -1077,9 +1080,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 
 // loadAgentToolDefs resolves the set of tools an agent may use at runtime.
 // Tool access is governed solely by agent.ToolIDs; the legacy all_builtin_tools
-// flag is ignored. Permission is checked via checkToolUsePermission unless
-// adminMode is true (profile-page toggle).
-func (e *Engine) loadAgentToolDefs(ctx context.Context, agent models.Agent, sessionUserID, orgRole string, adminMode bool) []*ToolDef {
+// flag is ignored. Tool ACLs are checked at assignment time (validateToolAccess)
+// — no ACL check at load time. tool_ids is the sole execution enforcement point.
+func (e *Engine) loadAgentToolDefs(ctx context.Context, agent models.Agent) []*ToolDef {
 	agentTools := make([]*ToolDef, 0)
 	if len(agent.ToolIDs) == 0 {
 		return agentTools
@@ -1109,15 +1112,6 @@ func (e *Engine) loadAgentToolDefs(ctx context.Context, agent models.Agent, sess
 		}
 		if config != nil {
 			json.Unmarshal(config, &t.Config)
-		}
-		// Always check runtime permission. Admins bypass it only when the
-		// profile-page "admin mode" toggle is ON for the session owner.
-		if !adminMode {
-			allowed, err := e.checkToolUsePermission(ctx, sessionUserID, agent.OrgID, orgRole, t.ID)
-			if err != nil || !allowed {
-				slog.Warn("engine: user lacks use permission for tool", "tool", t.Name, "user", sessionUserID, "error", err)
-				continue
-			}
 		}
 		toolDef, err := e.resolveToolDef(&t)
 		if err != nil {
@@ -1150,26 +1144,6 @@ func (e *Engine) resolveToolDef(t *models.Tool) (*ToolDef, error) {
 	default:
 		return nil, fmt.Errorf("unknown tool type: %s", t.Type)
 	}
-}
-
-func (e *Engine) checkToolUsePermission(ctx context.Context, userID, orgID, orgRole, toolID string) (bool, error) {
-	var exists bool
-	err := e.pool.QueryRow(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM acl_entries
-			WHERE resource_type = 'tool' AND resource_id = $1 AND org_id = $2
-			AND (
-				(subject_type = 'user' AND subject_id = $3)
-				OR (subject_type = 'org_role' AND subject_id = $4)
-				OR (subject_type = 'org_role' AND subject_id = 'everyone')
-			)
-			AND 'use' = ANY(actions)
-		)
-	`, toolID, orgID, userID, orgRole).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("check tool use permission: %w", err)
-	}
-	return exists, nil
 }
 
 func (e *Engine) GetRegistry() *ToolRegistry {
