@@ -2,11 +2,16 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/database"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
@@ -56,8 +61,11 @@ func createEngineTestOrgAndUser(t *testing.T, db *database.DB) (orgID, userID st
 
 func newTestEngine(db *database.DB) *Engine {
 	engine := &Engine{
-		registry: NewToolRegistry(),
-		pool:     db.Pool,
+		registry:     NewToolRegistry(),
+		pool:         db.Pool,
+		tokenCounter: NewTokenCounter(),
+		streams:      NewStreamManager(),
+		session:      NewSessionStore(db.Pool),
 	}
 	RegisterNotebookTools(engine.registry, db.Pool)
 	RegisterAgentTools(engine.registry, db.Pool, engine)
@@ -84,7 +92,7 @@ func seededToolIDs(t *testing.T, db *database.DB, orgID string, names ...string)
 
 func TestEngineLoadAgentToolDefs_AllBuiltin(t *testing.T) {
 	db := setupEngineTestDB(t)
-	orgID, userID := createEngineTestOrgAndUser(t, db)
+	orgID, _ := createEngineTestOrgAndUser(t, db)
 	SeedBuiltinTools(context.Background(), db.Pool, orgID)
 
 	engine := newTestEngine(db)
@@ -111,7 +119,7 @@ func TestEngineLoadAgentToolDefs_AllBuiltin(t *testing.T) {
 		ToolIDs: allIDs,
 	}
 
-	defs := engine.loadAgentToolDefs(context.Background(), agent, userID, "admin", true)
+	defs := engine.loadAgentToolDefs(context.Background(), agent)
 
 	names := map[string]bool{}
 	for _, d := range defs {
@@ -131,7 +139,7 @@ func TestEngineLoadAgentToolDefs_AllBuiltin(t *testing.T) {
 
 func TestEngineLoadAgentToolDefs_AlwaysUsesToolIDs(t *testing.T) {
 	db := setupEngineTestDB(t)
-	orgID, userID := createEngineTestOrgAndUser(t, db)
+	orgID, _ := createEngineTestOrgAndUser(t, db)
 	SeedBuiltinTools(context.Background(), db.Pool, orgID)
 
 	engine := newTestEngine(db)
@@ -145,7 +153,7 @@ func TestEngineLoadAgentToolDefs_AlwaysUsesToolIDs(t *testing.T) {
 		ToolIDs:         paramToolIDs,
 	}
 
-	defs := engine.loadAgentToolDefs(context.Background(), agent, userID, "admin", true)
+	defs := engine.loadAgentToolDefs(context.Background(), agent)
 
 	names := map[string]bool{}
 	for _, d := range defs {
@@ -160,88 +168,9 @@ func TestEngineLoadAgentToolDefs_AlwaysUsesToolIDs(t *testing.T) {
 	t.Logf("legacy-all_builtin flag ignored, only tool_ids honoured")
 }
 
-func TestEngineLoadAgentToolDefs_AdminRespectsToolACL(t *testing.T) {
-	db := setupEngineTestDB(t)
-	orgID, userID := createEngineTestOrgAndUser(t, db)
-	SeedBuiltinTools(context.Background(), db.Pool, orgID)
-
-	engine := newTestEngine(db)
-
-	toolIDs := seededToolIDs(t, db, orgID, "execute_sql", "list_notebook_parameters")
-	// Revoke use permission for execute_sql by deleting the everyone grant
-	var execID string
-	db.Pool.QueryRow(context.Background(), `SELECT id FROM tools WHERE org_id=$1 AND name='execute_sql'`, orgID).Scan(&execID)
-	_, err := db.Pool.Exec(context.Background(), `DELETE FROM acl_entries WHERE resource_type='tool' AND resource_id=$1::uuid AND org_id=$2 AND subject_type='org_role' AND subject_id='everyone'`, execID, orgID)
-	if err != nil {
-		t.Fatalf("revoke acl: %v", err)
-	}
-
-	agent := models.Agent{
-		ID:      uuid.New().String(),
-		OrgID:   orgID,
-		ToolIDs: toolIDs,
-	}
-
-	// adminMode OFF => should respect ACL, execute_sql should be filtered out
-	defs := engine.loadAgentToolDefs(context.Background(), agent, userID, "admin", false)
-
-	names := map[string]bool{}
-	for _, d := range defs {
-		names[d.Function.Name] = true
-	}
-	if names["execute_sql"] {
-		t.Fatalf("admin with adminMode OFF should not have execute_sql after ACL revocation, got %v", names)
-	}
-	if !names["list_notebook_parameters"] {
-		t.Fatalf("expected list_notebook_parameters still allowed, got %v", names)
-	}
-	if len(defs) != 1 {
-		t.Fatalf("expected exactly 1 tool after ACL filter, got %d: %v", len(defs), names)
-	}
-}
-
-func TestEngineLoadAgentToolDefs_AdminModeBypassesToolACL(t *testing.T) {
-	db := setupEngineTestDB(t)
-	orgID, userID := createEngineTestOrgAndUser(t, db)
-	SeedBuiltinTools(context.Background(), db.Pool, orgID)
-
-	engine := newTestEngine(db)
-
-	toolIDs := seededToolIDs(t, db, orgID, "execute_sql", "list_notebook_parameters")
-	var execID string
-	db.Pool.QueryRow(context.Background(), `SELECT id FROM tools WHERE org_id=$1 AND name='execute_sql'`, orgID).Scan(&execID)
-	_, err := db.Pool.Exec(context.Background(), `DELETE FROM acl_entries WHERE resource_type='tool' AND resource_id=$1::uuid AND org_id=$2 AND subject_type='org_role' AND subject_id='everyone'`, execID, orgID)
-	if err != nil {
-		t.Fatalf("revoke acl: %v", err)
-	}
-
-	agent := models.Agent{
-		ID:      uuid.New().String(),
-		OrgID:   orgID,
-		ToolIDs: toolIDs,
-	}
-
-	// adminMode ON => should bypass ACL and get both tools
-	defs := engine.loadAgentToolDefs(context.Background(), agent, userID, "admin", true)
-
-	names := map[string]bool{}
-	for _, d := range defs {
-		names[d.Function.Name] = true
-	}
-	if !names["execute_sql"] {
-		t.Fatalf("admin with adminMode ON should bypass ACL and have execute_sql, got %v", names)
-	}
-	if !names["list_notebook_parameters"] {
-		t.Fatalf("expected list_notebook_parameters, got %v", names)
-	}
-	if len(defs) != 2 {
-		t.Fatalf("expected 2 tools with adminMode ON, got %d: %v", len(defs), names)
-	}
-}
-
 func TestEngineLoadAgentToolDefs_ExplicitSelection(t *testing.T) {
 	db := setupEngineTestDB(t)
-	orgID, userID := createEngineTestOrgAndUser(t, db)
+	orgID, _ := createEngineTestOrgAndUser(t, db)
 	SeedBuiltinTools(context.Background(), db.Pool, orgID)
 
 	engine := newTestEngine(db)
@@ -254,7 +183,7 @@ func TestEngineLoadAgentToolDefs_ExplicitSelection(t *testing.T) {
 		ToolIDs:         paramToolIDs,
 	}
 
-	defs := engine.loadAgentToolDefs(context.Background(), agent, userID, "admin", true)
+	defs := engine.loadAgentToolDefs(context.Background(), agent)
 
 	names := map[string]bool{}
 	for _, d := range defs {
@@ -271,7 +200,7 @@ func TestEngineLoadAgentToolDefs_ExplicitSelection(t *testing.T) {
 
 func TestEngineLoadAgentToolDefs_ExplicitSkipsUnselected(t *testing.T) {
 	db := setupEngineTestDB(t)
-	orgID, userID := createEngineTestOrgAndUser(t, db)
+	orgID, _ := createEngineTestOrgAndUser(t, db)
 	SeedBuiltinTools(context.Background(), db.Pool, orgID)
 
 	engine := newTestEngine(db)
@@ -285,7 +214,7 @@ func TestEngineLoadAgentToolDefs_ExplicitSkipsUnselected(t *testing.T) {
 		ToolIDs:         paramToolIDs,
 	}
 
-	defs := engine.loadAgentToolDefs(context.Background(), agent, userID, "admin", true)
+	defs := engine.loadAgentToolDefs(context.Background(), agent)
 
 	for _, d := range defs {
 		if d.Function.Name == "set_notebook_parameters" {
@@ -296,4 +225,551 @@ func TestEngineLoadAgentToolDefs_ExplicitSkipsUnselected(t *testing.T) {
 		t.Fatalf("expected exactly 1 tool, got %d", len(defs))
 	}
 	t.Logf("explicit agent correctly excluded the unselected tool")
+}
+
+func TestEngineLoadAgentToolDefs_NoACLCheckAnymore(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, _ := createEngineTestOrgAndUser(t, db)
+	SeedBuiltinTools(context.Background(), db.Pool, orgID)
+	engine := newTestEngine(db)
+
+	toolIDs := seededToolIDs(t, db, orgID, "execute_sql")
+	var execID string
+	db.Pool.QueryRow(context.Background(), `SELECT id FROM tools WHERE org_id=$1 AND name='execute_sql'`, orgID).Scan(&execID)
+	// Delete the 'everyone' ACL entry - under old model this would block the tool
+	_, _ = db.Pool.Exec(context.Background(), `DELETE FROM acl_entries WHERE resource_type='tool' AND resource_id=$1::uuid AND org_id=$2`, execID, orgID)
+
+	agent := models.Agent{
+		ID:      uuid.New().String(),
+		OrgID:   orgID,
+		ToolIDs: toolIDs,
+	}
+	// New model: tool_ids is sole gate, ACL deletion should NOT affect loading
+	defs := engine.loadAgentToolDefs(context.Background(), agent)
+	names := map[string]bool{}
+	for _, d := range defs {
+		names[d.Function.Name] = true
+	}
+	if !names["execute_sql"] {
+		t.Fatalf("loadAgentToolDefs should load execute_sql even without ACL entry (tool_ids is sole gate), got %v", names)
+	}
+	if len(defs) != 1 {
+		t.Fatalf("expected 1 tool, got %d: %v", len(defs), names)
+	}
+}
+
+func TestEngineLoadAgentToolDefs_AdminModeIrrelevant(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, _ := createEngineTestOrgAndUser(t, db)
+	SeedBuiltinTools(context.Background(), db.Pool, orgID)
+	engine := newTestEngine(db)
+
+	toolIDs := seededToolIDs(t, db, orgID, "execute_sql", "list_notebook_parameters")
+	agent := models.Agent{
+		ID:      uuid.New().String(),
+		OrgID:   orgID,
+		ToolIDs: toolIDs,
+	}
+	defs := engine.loadAgentToolDefs(context.Background(), agent)
+	names := map[string]bool{}
+	for _, d := range defs {
+		names[d.Function.Name] = true
+	}
+	if !names["execute_sql"] || !names["list_notebook_parameters"] {
+		t.Fatalf("expected both tools irrespective of AdminMode, got %v", names)
+	}
+	if len(defs) != 2 {
+		t.Fatalf("expected 2 tools, got %d: %v", len(defs), names)
+	}
+}
+
+func TestSeedBuiltinTools_ACLDoesNotGrantUseToEveryone(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, _ := createEngineTestOrgAndUser(t, db)
+	SeedBuiltinTools(context.Background(), db.Pool, orgID)
+
+	// Check 'everyone' entry has view only
+	rows, err := db.Pool.Query(context.Background(), `
+		SELECT resource_id, actions FROM acl_entries
+		WHERE org_id=$1 AND resource_type='tool' AND subject_type='org_role' AND subject_id='everyone'
+	`, orgID)
+	if err != nil {
+		t.Fatalf("query acl: %v", err)
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var rid string
+		var actions []string
+		if err := rows.Scan(&rid, &actions); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		count++
+		hasUse := false
+		hasView := false
+		for _, a := range actions {
+			if a == "use" {
+				hasUse = true
+			}
+			if a == "view" {
+				hasView = true
+			}
+		}
+		if hasUse {
+			t.Fatalf("everyone ACL should NOT contain 'use', got %v for %s", actions, rid)
+		}
+		if !hasView {
+			t.Fatalf("everyone ACL should contain 'view', got %v for %s", actions, rid)
+		}
+	}
+	if count == 0 {
+		t.Fatalf("no everyone ACL entries found")
+	}
+	// Check admin entry has view,use,edit,delete
+	rows2, err := db.Pool.Query(context.Background(), `
+		SELECT actions FROM acl_entries
+		WHERE org_id=$1 AND resource_type='tool' AND subject_type='org_role' AND subject_id='admin'
+	`, orgID)
+	if err != nil {
+		t.Fatalf("query admin acl: %v", err)
+	}
+	defer rows2.Close()
+	adminCount := 0
+	for rows2.Next() {
+		var actions []string
+		if err := rows2.Scan(&actions); err != nil {
+			t.Fatalf("scan admin: %v", err)
+		}
+		adminCount++
+		m := map[string]bool{}
+		for _, a := range actions {
+			m[a] = true
+		}
+		for _, need := range []string{"view", "use", "edit", "delete"} {
+			if !m[need] {
+				t.Fatalf("admin ACL should contain %s, got %v", need, actions)
+			}
+		}
+	}
+	if adminCount == 0 {
+		t.Fatalf("no admin ACL entries found")
+	}
+}
+
+// --- Helpers for ProcessMessage tests ---
+
+func createTestNotebook(t *testing.T, db *database.DB, orgID, userID string) string {
+	t.Helper()
+	nbID := uuid.New().String()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO notebooks (id, org_id, title, created_by, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,NOW(),NOW())
+	`, nbID, orgID, "Test Notebook", userID)
+	if err != nil {
+		t.Fatalf("create notebook: %v", err)
+	}
+	return nbID
+}
+
+func createTestAgentRow(t *testing.T, db *database.DB, orgID, userID string, toolIDs []string) string {
+	t.Helper()
+	agentID := uuid.New().String()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO agents (id, org_id, name, description, system_prompt, skill_ids, tool_ids, folder_id, max_turns, created_by, created_at, updated_at)
+		VALUES ($1,$2,$3,'',$4,'{}',$5,NULL,10,$6,NOW(),NOW())
+	`, agentID, orgID, "Test Agent", "you are helpful", toolIDs, userID)
+	if err != nil {
+		t.Fatalf("create agent row: %v", err)
+	}
+	_, _ = db.Pool.Exec(context.Background(), `
+		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		VALUES ($1,'agent',$2,'user',$3, ARRAY['view','edit','delete'])
+		ON CONFLICT DO NOTHING
+	`, orgID, agentID, userID)
+	return agentID
+}
+
+func createTestSession(t *testing.T, db *database.DB, agentID, notebookID, userID string) string {
+	t.Helper()
+	sid := uuid.New().String()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, created_at)
+		VALUES ($1,$2,$3,$4,10,NOW())
+	`, sid, agentID, notebookID, userID)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	return sid
+}
+
+func newMockLLMServerWithCapture(t *testing.T, masterKey []byte, responses []ChatResponse, capture *[]map[string]any) *httptest.Server {
+	t.Helper()
+	var idx atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var reqBody map[string]any
+		json.NewDecoder(r.Body).Decode(&reqBody)
+		*capture = append(*capture, reqBody)
+		i := int(idx.Load())
+		if i >= len(responses) {
+			i = len(responses) - 1
+		}
+		idx.Add(1)
+		resp := responses[i]
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	return srv
+}
+
+func TestProcessMessage_ToolNotInToolIDs_RejectedAtExecution(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	SeedBuiltinTools(context.Background(), db.Pool, orgID)
+	engine := newTestEngine(db)
+
+	paramIDs := seededToolIDs(t, db, orgID, "list_notebook_parameters")
+	agentID := createTestAgentRow(t, db, orgID, userID, paramIDs)
+	nbID := createTestNotebook(t, db, orgID, userID)
+	sid := createTestSession(t, db, agentID, nbID, userID)
+
+	masterKey := make([]byte, 32)
+	for i := range masterKey {
+		masterKey[i] = byte(i)
+	}
+	// Mock LLM: first turn returns tool call to execute_sql (not in tool_ids), second turn returns final answer
+	callID := uuid.New().String()
+	responses := []ChatResponse{
+		{
+			Choices: []Choice{{
+				Message: ChatMessage{
+					ToolCalls: []ToolCall{{ID: callID, Type: "function", Function: struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					}{Name: "execute_sql", Arguments: `{"connector_id":"x","query":"SELECT 1"}`}}},
+				},
+				FinishReason: "tool_calls",
+			}},
+			Usage: Usage{PromptTokens: 10, CompletionTokens: 5},
+		},
+		{
+			Choices: []Choice{{
+				Message:      ChatMessage{Content: "done"},
+				FinishReason: "stop",
+			}},
+			Usage: Usage{PromptTokens: 10, CompletionTokens: 5},
+		},
+	}
+	var captured []map[string]any
+	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
+	defer srv.Close()
+	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	// Need to set pool's engine session store etc - already via newTestEngine the pool is set, but we need to ensure engine.pool is set
+	engine.pool = db.Pool
+	// Session store needs pool as well
+	engine.session = NewSessionStore(db.Pool)
+
+	_, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "hello", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+	// Verify tool result in DB contains "tool not available"
+	rows, _ := db.Pool.Query(context.Background(), `SELECT content FROM agent_messages WHERE session_id=$1 AND role='tool' ORDER BY created_at`, sid)
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var content *string
+		rows.Scan(&content)
+		if content != nil && (*content == `tool not available: execute_sql` || *content == `"tool not available: execute_sql"` || contains(*content, "tool not available: execute_sql")) {
+			found = true
+		}
+	}
+	if !found {
+		// also check via tool_calls result stringified JSON
+		rows2, _ := db.Pool.Query(context.Background(), `SELECT content FROM agent_messages WHERE session_id=$1 AND role='tool'`, sid)
+		defer rows2.Close()
+		var msgs []string
+		for rows2.Next() {
+			var c *string
+			rows2.Scan(&c)
+			if c != nil {
+				msgs = append(msgs, *c)
+			}
+		}
+		t.Fatalf("expected tool result 'tool not available: execute_sql', got messages: %v", msgs)
+	}
+	// Also verify execute_sql handler was NOT invoked (tool result is rejection, not error from handler)
+	// The captured tools list should NOT have been used to allow handler - but we already checked rejection.
+}
+
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (func() bool {
+		for i := 0; i <= len(s)-len(sub); i++ {
+			if s[i:i+len(sub)] == sub {
+				return true
+			}
+		}
+		return false
+	})()
+}
+
+func TestProcessMessage_DoesNotAdvertiseUnlistedTools(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	SeedBuiltinTools(context.Background(), db.Pool, orgID)
+	engine := newTestEngine(db)
+	paramIDs := seededToolIDs(t, db, orgID, "list_notebook_parameters")
+	agentID := createTestAgentRow(t, db, orgID, userID, paramIDs)
+	nbID := createTestNotebook(t, db, orgID, userID)
+	sid := createTestSession(t, db, agentID, nbID, userID)
+	masterKey := make([]byte, 32)
+	responses := []ChatResponse{{
+		Choices: []Choice{{Message: ChatMessage{Content: "hello"}, FinishReason: "stop"}},
+		Usage:   Usage{PromptTokens: 1, CompletionTokens: 1},
+	}}
+	var captured []map[string]any
+	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
+	defer srv.Close()
+	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.pool = db.Pool
+	engine.session = NewSessionStore(db.Pool)
+	_, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "hi", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("ProcessMessage: %v", err)
+	}
+	if len(captured) == 0 {
+		t.Fatalf("no LLM request captured")
+	}
+	firstReq := captured[0]
+	toolsRaw, ok := firstReq["tools"]
+	if !ok {
+		t.Fatalf("tools not in request: %v", firstReq)
+	}
+	tools, _ := json.Marshal(toolsRaw)
+	var toolList []map[string]any
+	json.Unmarshal(tools, &toolList)
+	hasExecute := false
+	hasListParams := false
+	for _, tl := range toolList {
+		if fn, ok := tl["function"].(map[string]any); ok {
+			if name, _ := fn["name"].(string); name == "execute_sql" {
+				hasExecute = true
+			}
+			if name, _ := fn["name"].(string); name == "list_notebook_parameters" {
+				hasListParams = true
+			}
+		}
+	}
+	if hasExecute {
+		t.Fatalf("execute_sql should NOT be advertised when not in tool_ids, got tools: %v", toolList)
+	}
+	if !hasListParams {
+		t.Fatalf("list_notebook_parameters SHOULD be advertised, got %v", toolList)
+	}
+}
+
+func TestProcessMessage_RegistryFallbackRemoved(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	SeedBuiltinTools(context.Background(), db.Pool, orgID)
+	engine := newTestEngine(db)
+	// empty tool_ids
+	agentID := createTestAgentRow(t, db, orgID, userID, []string{})
+	nbID := createTestNotebook(t, db, orgID, userID)
+	sid := createTestSession(t, db, agentID, nbID, userID)
+	masterKey := make([]byte, 32)
+	responses := []ChatResponse{
+		{
+			Choices: []Choice{{
+				Message: ChatMessage{ToolCalls: []ToolCall{{ID: uuid.New().String(), Type: "function", Function: struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				}{Name: "execute_sql", Arguments: `{"connector_id":"x","query":"SELECT 1"}`}}}},
+				FinishReason: "tool_calls",
+			}},
+			Usage: Usage{PromptTokens: 5, CompletionTokens: 5},
+		},
+		{
+			Choices: []Choice{{Message: ChatMessage{Content: "done"}, FinishReason: "stop"}},
+			Usage:   Usage{PromptTokens: 5, CompletionTokens: 5},
+		},
+	}
+	var captured []map[string]any
+	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
+	defer srv.Close()
+	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.pool = db.Pool
+	engine.session = NewSessionStore(db.Pool)
+	_, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "hi", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("ProcessMessage: %v", err)
+	}
+	rows, _ := db.Pool.Query(context.Background(), `SELECT content FROM agent_messages WHERE session_id=$1 AND role='tool'`, sid)
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var c *string
+		rows.Scan(&c)
+		if c != nil && contains(*c, "tool not available: execute_sql") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected rejection for execute_sql with empty tool_ids (fallback removed)")
+	}
+}
+
+func TestEndToEnd_ToolRemovedFromAgent_CannotCall(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	SeedBuiltinTools(context.Background(), db.Pool, orgID)
+	engine := newTestEngine(db)
+	ids := seededToolIDs(t, db, orgID, "execute_sql", "list_notebook_parameters")
+	agentID := createTestAgentRow(t, db, orgID, userID, ids)
+	// Verify both tools loaded initially
+	var agent models.Agent
+	var toolIDs []string
+	db.Pool.QueryRow(context.Background(), `SELECT tool_ids FROM agents WHERE id=$1`, agentID).Scan(&toolIDs)
+	agent = models.Agent{ID: agentID, OrgID: orgID, ToolIDs: toolIDs}
+	defs := engine.loadAgentToolDefs(context.Background(), agent)
+	if len(defs) != 2 {
+		t.Fatalf("expected 2 tools initially, got %d", len(defs))
+	}
+	// Remove execute_sql
+	listOnly := seededToolIDs(t, db, orgID, "list_notebook_parameters")
+	_, err := db.Pool.Exec(context.Background(), `UPDATE agents SET tool_ids=$1 WHERE id=$2`, listOnly, agentID)
+	if err != nil {
+		t.Fatalf("update agent: %v", err)
+	}
+	agent.ToolIDs = listOnly
+	defs = engine.loadAgentToolDefs(context.Background(), agent)
+	names := map[string]bool{}
+	for _, d := range defs {
+		names[d.Function.Name] = true
+	}
+	if names["execute_sql"] {
+		t.Fatalf("execute_sql should not be loaded after removal")
+	}
+	if !names["list_notebook_parameters"] {
+		t.Fatalf("list_notebook_parameters should still be loaded")
+	}
+	// Also test execution rejection after removal
+	nbID := createTestNotebook(t, db, orgID, userID)
+	sid := createTestSession(t, db, agentID, nbID, userID)
+	masterKey := make([]byte, 32)
+	responses := []ChatResponse{
+		{
+			Choices: []Choice{{
+				Message: ChatMessage{
+					ToolCalls: []ToolCall{{
+						ID:   uuid.New().String(),
+						Type: "function",
+						Function: struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						}{Name: "execute_sql", Arguments: `{}`},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}},
+			Usage: Usage{PromptTokens: 1, CompletionTokens: 1},
+		},
+		{
+			Choices: []Choice{{
+				Message:      ChatMessage{Content: "done"},
+				FinishReason: "stop",
+			}},
+			Usage: Usage{PromptTokens: 1, CompletionTokens: 1},
+		},
+	}
+	var captured []map[string]any
+	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
+	defer srv.Close()
+	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.pool = db.Pool
+	engine.session = NewSessionStore(db.Pool)
+	_, _, _, _, _, err = engine.ProcessMessage(context.Background(), sid, "hi", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("ProcessMessage: %v", err)
+	}
+	rows, _ := db.Pool.Query(context.Background(), `SELECT content FROM agent_messages WHERE session_id=$1 AND role='tool'`, sid)
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var c *string
+		rows.Scan(&c)
+		if c != nil && contains(*c, "tool not available: execute_sql") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected tool not available after removal")
+	}
+}
+
+func TestEndToEnd_AdminModeDoesNotBypassToolIDs(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	SeedBuiltinTools(context.Background(), db.Pool, orgID)
+	engine := newTestEngine(db)
+	// Agent without execute_sql
+	paramIDs := seededToolIDs(t, db, orgID, "list_notebook_parameters")
+	agentID := createTestAgentRow(t, db, orgID, userID, paramIDs)
+	nbID := createTestNotebook(t, db, orgID, userID)
+	sid := createTestSession(t, db, agentID, nbID, userID)
+	// Simulate AdminMode ON via session store
+	engine.session = NewSessionStore(db.Pool)
+	engine.session.SetAdminMode(sid, true)
+	masterKey := make([]byte, 32)
+	responses := []ChatResponse{
+		{
+			Choices: []Choice{{
+				Message: ChatMessage{
+					ToolCalls: []ToolCall{{
+						ID:   uuid.New().String(),
+						Type: "function",
+						Function: struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						}{Name: "execute_sql", Arguments: `{}`},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}},
+			Usage: Usage{PromptTokens: 1, CompletionTokens: 1},
+		},
+		{
+			Choices: []Choice{{
+				Message:      ChatMessage{Content: "done"},
+				FinishReason: "stop",
+			}},
+			Usage: Usage{PromptTokens: 1, CompletionTokens: 1},
+		},
+	}
+	var captured []map[string]any
+	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
+	defer srv.Close()
+	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.pool = db.Pool
+	_, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "hi", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("ProcessMessage: %v", err)
+	}
+	rows, _ := db.Pool.Query(context.Background(), `SELECT content FROM agent_messages WHERE session_id=$1 AND role='tool'`, sid)
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var c *string
+		rows.Scan(&c)
+		if c != nil && contains(*c, "tool not available: execute_sql") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("AdminMode should NOT bypass tool_ids: expected rejection for execute_sql")
+	}
 }

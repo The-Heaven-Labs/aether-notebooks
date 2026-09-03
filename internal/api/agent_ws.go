@@ -280,7 +280,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					// Stream events are published to the SHARED session stream so that
 					// any WebSocket connection (including a new one that reconnects after
 					// page navigation) receives the real-time output.
-					_, reasoning, _, events, tokBrk, err := s.agentEngine.ProcessMessage(msgCtx, sid, content, images, s.agentEngine.GetRegistry().List(), s.masterKey, capturedPageCtx,
+					_, reasoning, _, events, tokBrk, err := s.agentEngine.ProcessMessage(msgCtx, sid, content, images, nil, s.masterKey, capturedPageCtx,
 						func(token string) {
 							s.agentEngine.PublishSessionEvent(sid, WSResponse{Type: "token", Data: token})
 						},
