@@ -184,15 +184,16 @@ func NewEngine(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client) *Engi
 // compactChatHistory replaces older conversation history with an LLM-generated summary
 // when the token count approaches the context window limit.
 // It keeps the system prompt (index 0) and the last 8 messages, summarizing everything in between.
-func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsgs []ChatMessage, masterKey []byte, sessionID string) []ChatMessage {
+// Returns the compacted messages and the summary text (empty if no compaction).
+func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsgs []ChatMessage, masterKey []byte, sessionID string) ([]ChatMessage, string) {
 	if len(chatMsgs) <= 10 {
-		return chatMsgs
+		return chatMsgs, ""
 	}
 
 	// Keep system message (index 0) and last 8 messages (recent context + current turn)
 	keepEnd := len(chatMsgs) - 8
 	if keepEnd <= 1 {
-		return chatMsgs
+		return chatMsgs, ""
 	}
 
 	oldMsgs := chatMsgs[1:keepEnd]
@@ -213,7 +214,7 @@ func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsg
 	}, nil, masterKey)
 	if err != nil {
 		slog.Warn("compaction summarization failed", "session_id", sessionID, "error", err)
-		return chatMsgs
+		return chatMsgs, ""
 	}
 
 	summary := ""
@@ -221,7 +222,7 @@ func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsg
 		summary = resp.Choices[0].Message.Content
 	}
 	if summary == "" {
-		return chatMsgs
+		return chatMsgs, ""
 	}
 
 	compacted := make([]ChatMessage, 0, keepEnd+8)
@@ -233,7 +234,7 @@ func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsg
 	compacted = append(compacted, chatMsgs[keepEnd:]...)
 
 	slog.Info("context compaction completed", "session_id", sessionID, "old_msgs", len(oldMsgs), "new_msgs", len(compacted))
-	return compacted
+	return compacted, summary
 }
 
 // sanitizeChatMessages ensures every assistant message with tool_calls has
@@ -300,7 +301,7 @@ func sanitizeChatMessages(msgs []ChatMessage) []ChatMessage {
 	return msgs
 }
 
-func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, imageIDs []string, tools []*ToolDef, masterKey []byte, capturedPageContext *PageContextInfo, onToken func(string), onReasoning func(string), onToolCall func(string, string, string, string, int), onToolResult func(string, string, string, string, int), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, *TokenBreakdown, error) {
+func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, imageIDs []string, tools []*ToolDef, masterKey []byte, capturedPageContext *PageContextInfo, onToken func(string), onReasoning func(string), onToolCall func(string, string, string, string, int), onToolResult func(string, string, string, string, int, int), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, *TokenBreakdown, error) {
 	var events []EngineEvent
 	slog.Debug("engine: ProcessMessage start", "session_id", sessionID, "msg_len", len(userMessage), "image_count", len(imageIDs))
 
@@ -521,6 +522,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	}
 
 	for i, m := range messages {
+		if m.Role == "compaction" {
+			continue
+		}
 		if m.Role == "assistant" {
 			if len(m.ToolCalls) > 0 && m.Content == "" {
 				// Tool-calling assistant message without content — keep as-is
@@ -780,6 +784,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			tokBrk.CacheRead += resp.Usage.PromptTokensDetails.CachedTokens
 		}
 
+		currentContextTokens := resp.Usage.PromptTokens
 		if onEvent != nil {
 			onEvent(EngineEvent{
 				Type: "token_update",
@@ -796,14 +801,36 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					ToolDefinitions: toolDefTokens,
 					ToolCalls:       estimatedToolCalls,
 					ToolResults:     estimatedToolResults,
+					ContextCurrent:  currentContextTokens,
 				},
 			})
 		}
 
-		// Auto-compact if approaching context window limit
-		if compactionThreshold > 0 && apiInputTotal > contextWindow*compactionThreshold/100 && len(chatMsgs) > 10 {
-			chatMsgs = e.compactChatHistory(ctx, llmClient, chatMsgs, masterKey, sessionID)
-			slog.Info("context compaction triggered", "session_id", sessionID, "tokens", apiInputTotal, "context_window", contextWindow)
+		// Auto-compact if approaching context window limit (use current context, not cumulative)
+		if compactionThreshold > 0 && currentContextTokens > 0 && currentContextTokens > contextWindow*compactionThreshold/100 && len(chatMsgs) > 10 {
+			beforeCtx := currentContextTokens
+			compacted, summary := e.compactChatHistory(ctx, llmClient, chatMsgs, masterKey, sessionID)
+			if summary != "" && len(compacted) < len(chatMsgs) {
+				chatMsgs = compacted
+				slog.Info("context compaction triggered", "session_id", sessionID, "tokens", beforeCtx, "context_window", contextWindow)
+				// Persist compaction divider for reconnect_sync
+				compactionMsg := &models.AgentMessage{
+					ID:           uuid.New().String(),
+					SessionID:    sessionID,
+					Role:         "compaction",
+					Content:      summary,
+					TokensDirect: beforeCtx,
+					CreatedAt:    time.Now(),
+				}
+				_ = e.session.AppendMessage(ctx, compactionMsg)
+				if onEvent != nil {
+					onEvent(EngineEvent{
+						Type:    "context_compacted",
+						Tokens:  &TokenBreakdown{Input: beforeCtx, ContextCurrent: beforeCtx},
+						Summary: summary,
+					})
+				}
+			}
 		}
 
 		choice := resp.Choices[0]
@@ -914,7 +941,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				Name:      tc.Function.Name,
 				Arguments: args,
 			})
-			estimatedToolCalls += e.tokenCounter.CountText(tc.Function.Arguments, modelName)
+			argsTok := e.tokenCounter.CountText(tc.Function.Arguments, modelName)
+			estimatedToolCalls += argsTok
 
 			toolDef, ok := toolLookup[tc.Function.Name]
 			if !ok {
@@ -924,17 +952,20 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					"agent_id", agent.ID)
 				resultStr := fmt.Sprintf("tool not available: %s", tc.Function.Name)
 				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
-				estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
+				resultTok := e.tokenCounter.CountText(resultStr, modelName)
+				estimatedToolResults += resultTok
+				tokensDirect := argsTok + resultTok
 				e.session.AppendMessage(context.Background(), &models.AgentMessage{
-					ID:         uuid.New().String(),
-					SessionID:  sessionID,
-					Role:       "tool",
-					ToolCallID: &tc.ID,
-					Content:    resultStr,
-					CreatedAt:  time.Now(),
+					ID:           uuid.New().String(),
+					SessionID:    sessionID,
+					Role:         "tool",
+					ToolCallID:   &tc.ID,
+					Content:      resultStr,
+					TokensDirect: tokensDirect,
+					CreatedAt:    time.Now(),
 				})
 				if onToolResult != nil {
-					onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "", 0)
+					onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "", 0, tokensDirect)
 				}
 				continue
 			}
@@ -991,34 +1022,40 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					if !res.Approved {
 						resultStr := fmt.Sprintf("Tool call '%s' was denied by user", tc.Function.Name)
 						chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
-						estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
+						resultTok := e.tokenCounter.CountText(resultStr, modelName)
+						estimatedToolResults += resultTok
+						tokensDirect := argsTok + resultTok
 						e.session.AppendMessage(context.Background(), &models.AgentMessage{
-							ID:         uuid.New().String(),
-							SessionID:  sessionID,
-							Role:       "tool",
-							ToolCallID: &tc.ID,
-							Content:    resultStr,
-							CreatedAt:  time.Now(),
+							ID:           uuid.New().String(),
+							SessionID:    sessionID,
+							Role:         "tool",
+							ToolCallID:   &tc.ID,
+							Content:      resultStr,
+							TokensDirect: tokensDirect,
+							CreatedAt:    time.Now(),
 						})
 						if onToolResult != nil {
-							onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "", 0)
+							onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "", 0, tokensDirect)
 						}
 						continue
 					}
 				case <-ctx.Done():
 					resultStr := fmt.Sprintf("Tool call '%s' timed out waiting for approval", tc.Function.Name)
 					chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
-					estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
+					resultTok := e.tokenCounter.CountText(resultStr, modelName)
+					estimatedToolResults += resultTok
+					tokensDirect := argsTok + resultTok
 					e.session.AppendMessage(context.Background(), &models.AgentMessage{
-						ID:         uuid.New().String(),
-						SessionID:  sessionID,
-						Role:       "tool",
-						ToolCallID: &tc.ID,
-						Content:    resultStr,
-						CreatedAt:  time.Now(),
+						ID:           uuid.New().String(),
+						SessionID:    sessionID,
+						Role:         "tool",
+						ToolCallID:   &tc.ID,
+						Content:      resultStr,
+						TokensDirect: tokensDirect,
+						CreatedAt:    time.Now(),
 					})
 					if onToolResult != nil {
-						onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "timeout", 0)
+						onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "timeout", 0, tokensDirect)
 					}
 					continue
 				}
@@ -1030,35 +1067,41 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			if err != nil {
 				resultStr := fmt.Sprintf("error: %s", err.Error())
 				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
-				estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
+				resultTok := e.tokenCounter.CountText(resultStr, modelName)
+				estimatedToolResults += resultTok
+				tokensDirect := argsTok + resultTok
 				e.session.AppendMessage(context.Background(), &models.AgentMessage{
-					ID:         uuid.New().String(),
-					SessionID:  sessionID,
-					Role:       "tool",
-					ToolCallID: &tc.ID,
-					Content:    resultStr,
-					DurationMs: toolDurationMs,
-					CreatedAt:  time.Now(),
+					ID:           uuid.New().String(),
+					SessionID:    sessionID,
+					Role:         "tool",
+					ToolCallID:   &tc.ID,
+					Content:      resultStr,
+					TokensDirect: tokensDirect,
+					DurationMs:   toolDurationMs,
+					CreatedAt:    time.Now(),
 				})
 				if onToolResult != nil {
-					onToolResult(tc.Function.Name, tc.Function.Arguments, "", err.Error(), toolDurationMs)
+					onToolResult(tc.Function.Name, tc.Function.Arguments, "", err.Error(), toolDurationMs, tokensDirect)
 				}
 			} else {
 				resultJSON, _ := json.Marshal(result)
 				resultStr := string(resultJSON)
 				chatMsgs = append(chatMsgs, ChatMessage{Role: "tool", ToolCallID: tc.ID, Content: resultStr})
-				estimatedToolResults += e.tokenCounter.CountText(resultStr, modelName)
+				resultTok := e.tokenCounter.CountText(resultStr, modelName)
+				estimatedToolResults += resultTok
+				tokensDirect := argsTok + resultTok
 				e.session.AppendMessage(context.Background(), &models.AgentMessage{
-					ID:         uuid.New().String(),
-					SessionID:  sessionID,
-					Role:       "tool",
-					ToolCallID: &tc.ID,
-					Content:    resultStr,
-					DurationMs: toolDurationMs,
-					CreatedAt:  time.Now(),
+					ID:           uuid.New().String(),
+					SessionID:    sessionID,
+					Role:         "tool",
+					ToolCallID:   &tc.ID,
+					Content:      resultStr,
+					TokensDirect: tokensDirect,
+					DurationMs:   toolDurationMs,
+					CreatedAt:    time.Now(),
 				})
 				if onToolResult != nil {
-					onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "", toolDurationMs)
+					onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "", toolDurationMs, tokensDirect)
 				}
 			}
 		}

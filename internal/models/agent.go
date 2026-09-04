@@ -131,6 +131,7 @@ type AgentMessage struct {
 	TokensInput      int        `json:"tokens_input,omitempty"`
 	TokensOutput     int        `json:"tokens_output,omitempty"`
 	TokensReasoning  int        `json:"tokens_reasoning,omitempty"`
+	TokensDirect     int        `json:"tokens_direct,omitempty"`
 	ModelCalls       int        `json:"model_calls,omitempty"`
 	DurationMs       int        `json:"duration_ms,omitempty"`
 	ImageIDs         []string   `json:"image_ids,omitempty"`

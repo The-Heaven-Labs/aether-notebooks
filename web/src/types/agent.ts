@@ -96,12 +96,13 @@ export interface AgentSession {
 export interface AgentMessage {
   id: string
   session_id: string
-  role: 'user' | 'assistant' | 'tool'
+  role: 'user' | 'assistant' | 'tool' | 'compaction'
   content?: string
   tool_call_id?: string
   tool_calls?: ToolCall[]
   tokens_input?: number
   tokens_output?: number
+  tokens_direct?: number
   image_ids?: string[]
   created_at: string
 }
@@ -113,6 +114,7 @@ export interface ToolCall {
   result?: unknown
   error?: string
   duration_ms?: number
+  tokens_direct?: number
 }
 
 export interface SubagentTask {
@@ -141,6 +143,7 @@ export interface TokenBreakdown {
   tool_definitions: number
   tool_calls: number
   tool_results: number
+  context_current?: number
   subagent_input?: number
   subagent_output?: number
   duration_ms?: number
@@ -150,7 +153,7 @@ export type WSMessage =
   | { type: 'token'; data: string }
   | { type: 'reasoning'; data: string }
   | { type: 'tool_call'; tool: string; params: string; args: unknown; result: unknown; reasoning?: string; duration_ms?: number }
-  | { type: 'tool_result'; tool: string; params: string; result: string; error?: string; duration_ms?: number }
+  | { type: 'tool_result'; tool: string; params: string; result: string; error?: string; duration_ms?: number; tokens_direct?: number }
   | { type: 'cell_created'; cell_id: string; position: number }
   | { type: 'cell_output'; cell_id: string; outputs: Array<{ type: string; data: unknown }> }
   | { type: 'cell_updated'; cell_id: string }
@@ -161,9 +164,10 @@ export type WSMessage =
   | { type: 'error'; message: string }
   | { type: 'slash_result'; command: string; data: unknown }
   | { type: 'backpressure_warning'; dropped_tokens: number }
-  | { type: 'reconnect_sync'; messages: AgentMessage[] | null }
+  | { type: 'reconnect_sync'; messages: AgentMessage[] | null; running?: boolean }
   | { type: 'tasks_updated'; data: AgentTaskItem[] }
   | { type: 'tool_confirm_required'; tool_name: string; tool_args: string; current_source?: string }
   | { type: 'question'; question: string; options?: Array<{ title: string; description?: string } | string>; allow_custom: boolean }
   | { type: 'token_update'; tokens: TokenBreakdown }
+  | { type: 'context_compacted'; summary: string; tokens?: TokenBreakdown }
   | { type: 'cancelled' }

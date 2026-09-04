@@ -46,6 +46,7 @@ type EngineEvent struct {
 	ToolName    string          `json:"tool_name,omitempty"`
 	ToolArgs    string          `json:"tool_args,omitempty"`
 	Tokens      *TokenBreakdown `json:"tokens,omitempty"`
+	Summary     string          `json:"summary,omitempty"`
 	Question    string          `json:"question,omitempty"`
 	Options     any             `json:"options,omitempty"`
 	AllowCustom bool            `json:"allow_custom,omitempty"`

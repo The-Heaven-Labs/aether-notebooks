@@ -145,6 +145,7 @@ type TokenBreakdown struct {
 	ToolDefinitions int `json:"tool_definitions"`
 	ToolCalls       int `json:"tool_calls"`
 	ToolResults     int `json:"tool_results"`
+	ContextCurrent  int `json:"context_current,omitempty"`
 	DurationMs      int `json:"duration_ms"`
 }
 
