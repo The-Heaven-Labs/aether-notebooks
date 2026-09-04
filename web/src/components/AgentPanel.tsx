@@ -81,8 +81,170 @@ interface ChatMessage {
   result?: string
   images?: string[]
   duration_ms?: number
+  tokens_direct?: number
+  tokens_before?: number
+  tokens_after?: number
   created_at?: string
 }
+
+
+// Hoisted to module scope to prevent remount on parent re-render (Issue 4)
+function fmtTime(iso?: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k'
+  return String(n)
+}
+
+function CompactionDivider({ msg, fmtTime }: { msg: ChatMessage; fmtTime: (iso?: string) => string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div style={{ ...styles.message, background: 'var(--bg-elevated)', border: '1px dashed var(--border)', borderRadius: 6, padding: '8px 10px', fontSize: 11 }}>
+      <div onClick={() => setOpen(o => !o)} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, userSelect: 'none' }}>
+        <span>{open ? '▼' : '▶'} ⚙ Context compacted</span>
+        {msg.tokens_before !== undefined && msg.tokens_after !== undefined ? (
+          <span style={{ opacity: 0.6, fontSize: 10 }}>{msg.tokens_before?.toLocaleString()} → {msg.tokens_after?.toLocaleString()} tokens</span>
+        ) : null}
+        <span style={{ marginLeft: 'auto', opacity: 0.5, fontSize: 10 }}>{fmtTime(msg.created_at)}</span>
+      </div>
+      {open && msg.content && (
+        <div style={{ marginTop: 6, whiteSpace: 'pre-wrap', fontSize: 11, opacity: 0.9 }}>{msg.content}</div>
+      )}
+    </div>
+  )
+}
+
+const MemoizedChatMessage = memo(function MemoizedChatMessageInner({ msg, subagentView, onSubagentSelect }: {
+  msg: ChatMessage
+  subagentView: string | null
+  onSubagentSelect: (id: string) => void
+}) {
+  const [thoughtOpen, setThoughtOpen] = useState(true)
+  const [toolOpen, setToolOpen] = useState(false)
+  const [toolNow, setToolNow] = useState(Date.now())
+  useEffect(() => {
+    const needsTimer = (msg.role === 'tool' && !msg.result) || (msg.role === 'subagent' && !msg.result)
+    if (!needsTimer) return
+    const id = setInterval(() => setToolNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [msg.role, msg.result])
+  return (
+    <div>
+      {msg.reasoning && (
+        <div style={{ ...styles.message, ...styles.reasoningMessage, marginBottom: 4 }}>
+          <div onClick={() => setThoughtOpen((o) => !o)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11, userSelect: 'none', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span>{thoughtOpen ? '▼' : '▶'} Thinking</span>
+            {msg.duration_ms ? <span style={{ opacity: 0.5, fontSize: 10 }}>({msg.duration_ms}ms)</span> : null}
+          </div>
+          {thoughtOpen && (
+            <>
+              {msg.created_at && <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginBottom: 4 }}>{fmtTime(msg.created_at)}</div>}
+              <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{msg.reasoning}</div>
+            </>
+          )}
+        </div>
+      )}
+      {msg.role !== 'reasoning' && (
+        <div style={{ ...styles.message, ...(msg.role === 'user' ? styles.userMessage : msg.role === 'tool' ? styles.toolMessage : msg.role === 'compaction' ? styles.compactionMessage : styles.assistantMessage) }}>
+          {msg.created_at && (
+            <div style={{ fontSize: 9, color: msg.role === 'user' ? 'rgba(255,255,255,0.5)' : 'var(--text-muted)', marginBottom: 4, textAlign: msg.role === 'user' ? 'right' : 'left' }}>
+              {fmtTime(msg.created_at)}
+            </div>
+          )}
+          {msg.images && msg.images.length > 0 && (
+            <AgentMessageImages images={msg.images} />
+          )}
+          {msg.role === 'compaction' ? (
+            <CompactionDivider msg={msg} fmtTime={fmtTime} />
+          ) : msg.role === 'tool' ? (
+            <>
+              <div onClick={() => setToolOpen((o) => !o)} style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ opacity: 0.6, fontSize: 11 }}>{toolOpen ? '▼' : '▶'} TOOL </span>
+                <span>{msg.content}</span>
+                {msg.tokens_direct !== undefined && msg.tokens_direct !== null ? (
+                  <span style={{ opacity: 0.5, fontSize: 10, marginLeft: 6 }}>{formatTokens(msg.tokens_direct)} tok</span>
+                ) : null}
+                {!msg.result ? (
+                  <span style={{ opacity: 0.6, fontSize: 11, marginLeft: 'auto' }}>
+                    <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginRight: 4 }}>●</span>
+                    Working…
+                    {msg.created_at && ` (${Math.floor((toolNow - new Date(msg.created_at).getTime()) / 1000)}s)`}
+                  </span>
+                ) : msg.duration_ms ? (
+                  <span style={{ opacity: 0.5, fontSize: 10, marginLeft: 'auto' }}>({msg.duration_ms}ms)</span>
+                ) : null}
+              </div>
+              {toolOpen && (
+                <div style={{ marginTop: 6, fontSize: 11 }}>
+                  {msg.params && (
+                    <div style={{ marginBottom: 4 }}>
+                      <span style={{ opacity: 0.5 }}>Params: </span>
+                      <code style={{ fontSize: 10 }}>{msg.params}</code>
+                    </div>
+                  )}
+                  {msg.result && (
+                    <div>
+                      <span style={{ opacity: 0.5 }}>Result: </span>
+                      <code style={{ fontSize: 10, whiteSpace: 'pre-wrap' }}>{msg.result.length > 300 ? msg.result.slice(0, 300) + '...' : msg.result}</code>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          ) : msg.role === 'subagent' ? (
+            (() => {
+              let parsedParams: { goal?: string; status?: string; error?: string } = {}
+              try { if (msg.params) parsedParams = JSON.parse(msg.params) } catch {}
+              return (
+              <div onClick={() => { if (msg.content) onSubagentSelect(msg.content) }}
+                style={{ fontSize: 11, opacity: 0.8, cursor: 'pointer', borderRadius: 4, padding: '2px 4px', border: subagentView === msg.content ? '1px solid var(--accent)' : '1px solid transparent' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ opacity: 0.5, fontSize: 10 }}>SUBAGENT</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, opacity: 0.5 }}>{msg.content?.slice(0, 8)}</span>
+                  {!msg.result ? (
+                    <span style={{ opacity: 0.6, fontSize: 10, marginLeft: 'auto' }}>
+                      <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginRight: 4 }}>●</span>
+                      Working…
+                      {msg.created_at && ` (${Math.floor((toolNow - new Date(msg.created_at).getTime()) / 1000)}s)`}
+                    </span>
+                  ) : (
+                    <span style={{ marginLeft: 'auto', fontSize: 10 }}>
+                      {msg.result?.includes('failed') ? '❌ Failed' : '✅ Done'}
+                      {msg.duration_ms ? ` (${msg.duration_ms}ms)` : ''}
+                    </span>
+                  )}
+                </div>
+                {parsedParams.goal && (
+                  <div style={{ marginTop: 4, opacity: 0.6, fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>{parsedParams.goal}</div>
+                )}
+                {msg.result && msg.result !== '"completed"' && msg.result !== '"failed"' && (
+                  <div style={{ marginTop: 4, fontSize: 10, maxHeight: 60, overflow: 'auto', opacity: 0.7, whiteSpace: 'pre-wrap' }}>
+                    {msg.result.length > 200 ? msg.result.slice(0, 200) + '…' : msg.result}
+                  </div>
+                )}
+                {parsedParams.error && (
+                  <div style={{ marginTop: 4, fontSize: 10, color: 'var(--error, #ef4444)', opacity: 0.8 }}>{parsedParams.error}</div>
+                )}
+              </div>
+            )})()
+          ) : (
+            <>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
+              {msg.role === 'assistant' && msg.duration_ms ? (
+                <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginTop: 4 }}>{msg.duration_ms}ms</div>
+              ) : null}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+})
+
 
 interface PendingImage {
   id: string
@@ -117,6 +279,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const [sessionTitle, setSessionTitle] = useState<string | null>(null)
   const [input, setInput] = useState(() => { try { return localStorage.getItem(DRAFT_KEY) || '' } catch { return '' } })
   const [isStreaming, setIsStreaming] = useState(false)
+  const [hasCompacted, setHasCompacted] = useState(false)
   const [currentStreamingText, setCurrentStreamingText] = useState('')
   const [currentStreamingReasoning, setCurrentStreamingReasoning] = useState('')
   const streamingReasoningRef = useRef('')
@@ -194,11 +357,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   }, [isStreaming])
   const ts = () => new Date().toISOString()
   const formatElapsed = (s: number) => s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
-  const fmtTime = (iso?: string) => {
-    if (!iso) return ''
-    const d = new Date(iso)
-    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
-  }
+
   const costFmt = (compute: (mc: ModelConfig) => number): string => {
     const mc = modelConfigs.find(m => m.id === modelConfigId)
     if (!mc || (!mc.price_per_input_token && !mc.price_per_output_token)) return ''
@@ -500,6 +659,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     try { localStorage.removeItem(chatStateKey) } catch { /* ignore */ }
     try { localStorage.removeItem(DRAFT_KEY) } catch {}
     setSubagentTokens({})
+    setHasCompacted(false)
   }
 
   const connectWebSocket = useCallback((sid: string) => {
@@ -536,7 +696,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           case 'reasoning':
             setIsStreaming(true); if (!streamingStartedAt.current) streamingStartedAt.current = ts(); appendStreamingReasoning(msg.data); break
           case 'tool_call':
-            setMessages((prev) => [...prev, { role: 'tool', content: msg.tool, params: msg.params, reasoning: msg.reasoning || streamingReasoningRef.current || undefined, duration_ms: msg.duration_ms, created_at: ts() }])
+            setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'tool', content: msg.tool, params: msg.params, reasoning: msg.reasoning || streamingReasoningRef.current || undefined, duration_ms: msg.duration_ms, created_at: ts() }])
             if (streamingReasoningRef.current) { needsCollapseRef.current = true; updateStreamingReasoning('') }
             break
           case 'tool_confirm_required':
@@ -550,7 +710,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             setPendingQuestion({ question: msg.question, options: msg.options, allowCustom: msg.allow_custom })
             break
           case 'tool_result':
-            setMessages((prev) => { const updated = [...prev]; for (let i = updated.length - 1; i >= 0; i--) { if (updated[i].role === 'tool' && updated[i].content === msg.tool) { updated[i] = { ...updated[i], params: msg.params, result: msg.error || msg.result, duration_ms: msg.duration_ms }; break } }; return updated }); break
+            setMessages((prev) => { const updated = [...prev]; for (let i = updated.length - 1; i >= 0; i--) { if (updated[i].role === 'tool' && updated[i].content === msg.tool) { updated[i] = { ...updated[i], params: msg.params, result: msg.error || msg.result, duration_ms: msg.duration_ms, tokens_direct: (msg as any).tokens_direct } as ChatMessage; break } }; return updated }); break
           case 'cell_created':
             if (notebookId) queryClient.invalidateQueries({ queryKey: ['notebook', notebookId] }); scrollToCell(msg.cell_id); break
           case 'cell_output':
@@ -577,10 +737,27 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 base.duration_ms = m.duration_ms
               }
               if (m.duration_ms) base.duration_ms = m.duration_ms
+              if (m.tokens_direct !== undefined) (base as any).tokens_direct = m.tokens_direct
+              if (m.role === 'compaction') {
+                (base as any).tokens_before = m.tokens_direct ? m.tokens_direct : undefined
+                base.content = m.content || ''
+              }
               return base
             })
             if (serverMsgs.length > 0) setMessages(serverMsgs)
             streamingTextRef.current = ''; setCurrentStreamingText('')
+            const running = (msg as any).running
+            setIsStreaming(!!running)
+            if (running && !streamingStartedAt.current) streamingStartedAt.current = ts()
+            break
+          }
+          case 'context_compacted': {
+            const summary = (msg as any).summary as string
+            const tokens = (msg as any).tokens as TokenBreakdown | undefined
+            const before = tokens?.input ?? 0
+            const after = tokens?.context_current
+            setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'compaction', content: summary, tokens_before: before, tokens_after: after, created_at: ts() }])
+            setHasCompacted(true)
             break
           }
           case 'done': {
@@ -590,8 +767,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             const finalText = streamingTextRef.current
             const finalReasoning = ((msg as any).data?.reasoning as string) || streamingReasoningRef.current || undefined
             updateStreamingReasoning('')
-            if (finalText) { setMessages((prev) => [...prev, { role: 'assistant', content: finalText, reasoning: finalReasoning, duration_ms: dm, created_at: ts() }]); streamingTextRef.current = ''; setCurrentStreamingText('') }
-            else if (msg.data && 'content' in msg.data && msg.data.content) { setMessages((prev) => [...prev, { role: 'assistant', content: (msg.data as any).content, reasoning: finalReasoning, duration_ms: dm, created_at: ts() }]) }
+            if (finalText) { setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: finalText, reasoning: finalReasoning, duration_ms: dm, created_at: ts() }]); streamingTextRef.current = ''; setCurrentStreamingText('') }
+            else if (msg.data && 'content' in msg.data && msg.data.content) { setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: (msg.data as any).content, reasoning: finalReasoning, duration_ms: dm, created_at: ts() }]) }
             if (tk && typeof tk.input === 'number') setTotalTokens(prev => ({ input: (prev?.input || 0) + tk.input, output: (prev?.output || 0) + tk.output, reasoning: (prev?.reasoning || 0) + (tk.reasoning || 0), cache_read: (prev?.cache_read || 0) + (tk.cache_read || 0), model_calls: (prev?.model_calls || 0) + (tk.model_calls || 0), system_prompt: (prev?.system_prompt || 0) + (tk.system_prompt || 0), skill_override: (prev?.skill_override || 0) + (tk.skill_override || 0), history: (prev?.history || 0) + (tk.history || 0), user_message: (prev?.user_message || 0) + (tk.user_message || 0), tool_definitions: (prev?.tool_definitions || 0) + (tk.tool_definitions || 0), tool_calls: (prev?.tool_calls || 0) + (tk.tool_calls || 0), tool_results: (prev?.tool_results || 0) + (tk.tool_results || 0), subagent_input: prev?.subagent_input, subagent_output: prev?.subagent_output }))
             setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50); break
           }
@@ -644,7 +821,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             setMessages((prev) => {
               const existing = prev.findIndex(m => m.role === 'subagent' && m.content === msg.task_id)
               const subagentMsg: ChatMessage = {
-                role: 'subagent', content: msg.task_id,
+                id: crypto.randomUUID(), role: 'subagent', content: msg.task_id,
                 params: JSON.stringify({ goal: msg.goal, status: msg.status, error: msg.error }),
                 result: msg.status === 'completed' || msg.status === 'failed' ? JSON.stringify(msg.result || msg.status) : undefined,
                 duration_ms: msg.duration_ms,
@@ -659,10 +836,10 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             }); break
           case 'error':
             updateStreamingReasoning(''); setIsStreaming(false); needsCollapseRef.current = false
-            setMessages((prev) => [...prev, { role: 'assistant', content: 'Error: ' + msg.message, created_at: ts() }]); setTasks((prev) => prev.map((t) => t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t)); setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50); break
+            setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: 'Error: ' + msg.message, created_at: ts() }]); setTasks((prev) => prev.map((t) => t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t)); setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50); break
           case 'cancelled':
             setIsStreaming(false); needsCollapseRef.current = false; setTasks((prev) => prev.map((t) => t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t))
-            const cancelledText = streamingTextRef.current; setMessages((prev) => [...prev, { role: 'assistant', content: cancelledText ? cancelledText + '\n\n*[Cancelled]*' : '*[Cancelled]*', created_at: ts() }]); streamingTextRef.current = ''; setCurrentStreamingText(''); updateStreamingReasoning(''); break
+            const cancelledText = streamingTextRef.current; setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: cancelledText ? cancelledText + '\n\n*[Cancelled]*' : '*[Cancelled]*', created_at: ts() }]); streamingTextRef.current = ''; setCurrentStreamingText(''); updateStreamingReasoning(''); break
           case 'slash_result':
             setIsStreaming(false)
             if (msg.command === 'new') { clearChatState(); if (selectedAgentRef.current) { closeWS(); startSession(selectedAgentRef.current) } }
@@ -673,21 +850,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             }
             else if (msg.data) setMessages((prev) => [...prev, { role: 'assistant', content: JSON.stringify(msg.data, null, 2), created_at: ts() }])
             break
-          case 'reconnect_sync': {
-            const sm = msg.messages as Array<any>; if (!sm?.length) break
-            const conv = sm.map((m: any) => {
-              const b: any = { created_at: m.created_at || ts(), images: m.image_ids?.length ? m.image_ids : undefined }
-              if (m.role === 'tool') return { ...b, role: 'tool', content: m.tool_call_id || 'tool', params: JSON.stringify(m.tool_calls?.[0]?.arguments || {}), result: m.content }
-              if (m.tool_calls?.length) return { ...b, role: 'tool', content: m.tool_calls.map((tc: any) => tc.name).join(', '), params: JSON.stringify(m.tool_calls.map((tc: any) => tc.arguments)), result: undefined }
-              return { ...b, role: m.role, content: m.content || '' }
-            })
-            setMessages(conv); setTasks([])
-            const ti = sm.reduce((s: number, m: any) => s + (m.tokens_input || 0), 0); const to = sm.reduce((s: number, m: any) => s + (m.tokens_output || 0), 0); const tr = sm.reduce((s: number, m: any) => s + (m.tokens_reasoning || 0), 0)
-            if (ti > 0 || to > 0) setTotalTokens(prev => ({ input: ti, output: to, reasoning: tr, cache_read: 0, model_calls: 0, system_prompt: 0, skill_override: 0, history: 0, user_message: 0, tool_definitions: 0, tool_calls: 0, tool_results: 0, subagent_input: prev?.subagent_input || 0, subagent_output: prev?.subagent_output || 0 }))
-            break
-          }
+          
           case 'token_update':
-            setTotalTokens(prev => { const t = msg.tokens; return { input: t?.input ?? (prev?.input || 0), output: t?.output ?? (prev?.output || 0), reasoning: t?.reasoning ?? (prev?.reasoning || 0), cache_read: t?.cache_read ?? (prev?.cache_read || 0), model_calls: t?.model_calls ?? (prev?.model_calls || 0), system_prompt: t?.system_prompt ?? (prev?.system_prompt || 0), skill_override: t?.skill_override ?? (prev?.skill_override || 0), history: t?.history ?? (prev?.history || 0), user_message: t?.user_message ?? (prev?.user_message || 0), tool_definitions: t?.tool_definitions ?? (prev?.tool_definitions || 0), tool_calls: t?.tool_calls ?? (prev?.tool_calls || 0), tool_results: t?.tool_results ?? (prev?.tool_results || 0), subagent_input: prev?.subagent_input, subagent_output: prev?.subagent_output } }); break
+            setTotalTokens(prev => { const t = msg.tokens as any; return { input: t?.input ?? (prev?.input || 0), output: t?.output ?? (prev?.output || 0), reasoning: t?.reasoning ?? (prev?.reasoning || 0), cache_read: t?.cache_read ?? (prev?.cache_read || 0), model_calls: t?.model_calls ?? (prev?.model_calls || 0), system_prompt: t?.system_prompt ?? (prev?.system_prompt || 0), skill_override: t?.skill_override ?? (prev?.skill_override || 0), history: t?.history ?? (prev?.history || 0), user_message: t?.user_message ?? (prev?.user_message || 0), tool_definitions: t?.tool_definitions ?? (prev?.tool_definitions || 0), tool_calls: t?.tool_calls ?? (prev?.tool_calls || 0), tool_results: t?.tool_results ?? (prev?.tool_results || 0), context_current: t?.context_current ?? (prev as any)?.context_current, subagent_input: prev?.subagent_input, subagent_output: prev?.subagent_output } as TokenBreakdown }); break
           case 'tasks_updated':
             setTasks((prev) => { const inc = msg.data as AgentTaskItem[]; const m = [...prev]; for (const t of inc) { const idx = m.findIndex((x) => x.id === t.id); if (idx >= 0) m[idx] = { ...m[idx], ...t, ...(t.description ? {} : { description: m[idx].description }) }; else m.push(t) }; return m }); break
         }
@@ -724,6 +889,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       setMessages([])
       setTasks([])
       setTotalTokens(null)
+      setHasCompacted(false)
       setContextWindow(res.context_window ?? 0)
       connectWebSocket(res.session_id)
     } catch {
@@ -737,6 +903,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     setSessionTitle(null)
     setMessages([])
     setTasks([])
+    setHasCompacted(false)
     connectWebSocket(sessionID)
   }
 
@@ -1012,124 +1179,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     return () => handle.removeEventListener('mousedown', onMouseDown)
   }, [width, onResize])
 
-  const MemoizedChatMessage = memo(({ msg }: {
-    msg: ChatMessage
-  }) => {
-    const [thoughtOpen, setThoughtOpen] = useState(true)
-    const [toolOpen, setToolOpen] = useState(false)
-    const [toolNow, setToolNow] = useState(Date.now())
-    useEffect(() => {
-      const needsTimer = (msg.role === 'tool' && !msg.result) || (msg.role === 'subagent' && !msg.result)
-      if (!needsTimer) return
-      const id = setInterval(() => setToolNow(Date.now()), 1000)
-      return () => clearInterval(id)
-    }, [msg.role, msg.result])
-    return (
-    <div>
-      {msg.reasoning && (
-        <div style={{ ...styles.message, ...styles.reasoningMessage, marginBottom: 4 }}>
-          <div onClick={() => setThoughtOpen((o) => !o)} style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11, userSelect: 'none', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span>{thoughtOpen ? '▼' : '▶'} Thinking</span>
-            {msg.duration_ms ? <span style={{ opacity: 0.5, fontSize: 10 }}>({msg.duration_ms}ms)</span> : null}
-          </div>
-          {thoughtOpen && (
-            <>
-              {msg.created_at && <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginBottom: 4 }}>{fmtTime(msg.created_at)}</div>}
-              <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{msg.reasoning}</div>
-            </>
-          )}
-        </div>
-      )}
-      {msg.role !== 'reasoning' && (
-        <div style={{ ...styles.message, ...(msg.role === 'user' ? styles.userMessage : msg.role === 'tool' ? styles.toolMessage : styles.assistantMessage) }}>
-          {msg.created_at && (
-            <div style={{ fontSize: 9, color: msg.role === 'user' ? 'rgba(255,255,255,0.5)' : 'var(--text-muted)', marginBottom: 4, textAlign: msg.role === 'user' ? 'right' : 'left' }}>
-              {fmtTime(msg.created_at)}
-            </div>
-          )}
-          {msg.images && msg.images.length > 0 && (
-            <AgentMessageImages images={msg.images} />
-          )}
-          {msg.role === 'tool' ? (
-            <>
-              <div onClick={() => setToolOpen((o) => !o)} style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ opacity: 0.6, fontSize: 11 }}>{toolOpen ? '▼' : '▶'} TOOL </span>
-                <span>{msg.content}</span>
-                {!msg.result ? (
-                  <span style={{ opacity: 0.6, fontSize: 11, marginLeft: 'auto' }}>
-                    <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginRight: 4 }}>●</span>
-                    Working…
-                    {msg.created_at && ` (${Math.floor((toolNow - new Date(msg.created_at).getTime()) / 1000)}s)`}
-                  </span>
-                ) : msg.duration_ms ? (
-                  <span style={{ opacity: 0.5, fontSize: 10, marginLeft: 'auto' }}>({msg.duration_ms}ms)</span>
-                ) : null}
-              </div>
-              {toolOpen && (
-                <div style={{ marginTop: 6, fontSize: 11 }}>
-                  {msg.params && (
-                    <div style={{ marginBottom: 4 }}>
-                      <span style={{ opacity: 0.5 }}>Params: </span>
-                      <code style={{ fontSize: 10 }}>{msg.params}</code>
-                    </div>
-                  )}
-                  {msg.result && (
-                    <div>
-                      <span style={{ opacity: 0.5 }}>Result: </span>
-                      <code style={{ fontSize: 10, whiteSpace: 'pre-wrap' }}>{msg.result.length > 300 ? msg.result.slice(0, 300) + '...' : msg.result}</code>
-                    </div>
-                  )}
-                </div>
-              )}
-            </>
-          ) : msg.role === 'subagent' ? (
-            (() => {
-              let parsedParams: { goal?: string; status?: string; error?: string } = {}
-              try { if (msg.params) parsedParams = JSON.parse(msg.params) } catch {}
-              return (
-              <div onClick={() => { if (msg.content) { const el = document.querySelector('[data-main-scroll]'); mainScrollRef.current = el?.scrollTop || 0; subagentViewRef.current = msg.content; setSubagentView(msg.content); fetchSubagentMessages(msg.content, setSubagentMessages, setSubagentLoading) } }}
-                style={{ fontSize: 11, opacity: 0.8, cursor: 'pointer', borderRadius: 4, padding: '2px 4px', border: subagentView === msg.content ? '1px solid var(--accent)' : '1px solid transparent' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ opacity: 0.5, fontSize: 10 }}>SUBAGENT</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, opacity: 0.5 }}>{msg.content?.slice(0, 8)}</span>
-                  {!msg.result ? (
-                    <span style={{ opacity: 0.6, fontSize: 10, marginLeft: 'auto' }}>
-                      <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginRight: 4 }}>●</span>
-                      Working…
-                      {msg.created_at && ` (${Math.floor((toolNow - new Date(msg.created_at).getTime()) / 1000)}s)`}
-                    </span>
-                  ) : (
-                    <span style={{ marginLeft: 'auto', fontSize: 10 }}>
-                      {msg.result?.includes('failed') ? '❌ Failed' : '✅ Done'}
-                      {msg.duration_ms ? ` (${msg.duration_ms}ms)` : ''}
-                    </span>
-                  )}
-                </div>
-                {parsedParams.goal && (
-                  <div style={{ marginTop: 4, opacity: 0.6, fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>{parsedParams.goal}</div>
-                )}
-                {msg.result && msg.result !== '"completed"' && msg.result !== '"failed"' && (
-                  <div style={{ marginTop: 4, fontSize: 10, maxHeight: 60, overflow: 'auto', opacity: 0.7, whiteSpace: 'pre-wrap' }}>
-                    {msg.result.length > 200 ? msg.result.slice(0, 200) + '…' : msg.result}
-                  </div>
-                )}
-                {parsedParams.error && (
-                  <div style={{ marginTop: 4, fontSize: 10, color: 'var(--error, #ef4444)', opacity: 0.8 }}>{parsedParams.error}</div>
-                )}
-              </div>
-            )})()
-          ) : (
-            <>
-              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={chatMarkdownComponents}>{msg.content}</ReactMarkdown>
-              {msg.role === 'assistant' && msg.duration_ms ? (
-                <div style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.5, marginTop: 4 }}>{msg.duration_ms}ms</div>
-              ) : null}
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  )})
+
   return (
     <div ref={panelRef} style={{ ...styles.panel, width }}>
       {subagentView ? (
@@ -1172,7 +1222,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           <div ref={subagentScrollRef} style={{ flex: 1, overflow: 'auto', padding: 12 }}>
             {subagentLoading && <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 20 }}>Loading…</div>}
             {subagentMessages.map((m, i) => (
-              <MemoizedChatMessage key={i} msg={m} />
+              <MemoizedChatMessage key={m.id ?? i} msg={m} subagentView={subagentView} onSubagentSelect={(id) => { const el = document.querySelector('[data-main-scroll]'); mainScrollRef.current = el?.scrollTop || 0; subagentViewRef.current = id; setSubagentView(id); fetchSubagentMessages(id, setSubagentMessages, setSubagentLoading) }} />
             ))}
             {!subagentLoading && subagentMessages.length === 0 && (
               <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 20 }}>
@@ -1363,7 +1413,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                   })()}
                   {contextWindow > 0 && (
                     <span style={{ marginLeft: 6, opacity: 0.6 }}>
-                      ({Math.round((totalTokens.input + totalTokens.output) / contextWindow * 100)}%)
+                      ({Math.round((totalTokens.input + totalTokens.output) / contextWindow * 100)}%){hasCompacted ? ' ⚙' : ''}
                     </span>
                   )}
                 </span>
@@ -1441,6 +1491,18 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                           <span>{contextWindow.toLocaleString()} ({Math.round((totalTokens.input + totalTokens.output) / contextWindow * 100)}%)</span>
                         </div>
                       )}
+                      {(totalTokens as any).context_current !== undefined && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, color: 'var(--text-secondary)', fontSize: 11, marginTop: 2 }}>
+                          <span>Context <span style={{ fontSize: 10, opacity: 0.6 }}>(current)</span></span>
+                          <span>{(totalTokens as any).context_current.toLocaleString()} / {contextWindow.toLocaleString()} ({contextWindow ? Math.round((totalTokens as any).context_current / contextWindow * 100) : 0}%)</span>
+                        </div>
+                      )}
+                      {hasCompacted && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, fontSize: 10, color: 'var(--accent)' }}>
+                          <span>⚙ Compacted</span>
+                          <span style={{ opacity: 0.6, fontSize: 9 }}>context was summarized</span>
+                        </div>
+                      )}
 
                       {(totalTokens.system_prompt > 0 || totalTokens.tool_definitions > 0 || totalTokens.history > 0) && (
                         <div style={{ borderTop: '1px dashed var(--border)', margin: '6px 0', paddingTop: 6 }}>
@@ -1487,6 +1549,28 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                               <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.tool_results.toLocaleString()}</span>
                             </div>
                           )}
+                          {(() => {
+                            const byTool: Record<string, number> = {}
+                            for (const m of messages) {
+                              if (m.tokens_direct && m.content) {
+                                const name = m.content.split(' ')[0] || m.content
+                                byTool[name] = (byTool[name] || 0) + m.tokens_direct
+                              }
+                            }
+                            const entries = Object.entries(byTool).sort((a, b) => b[1] - a[1])
+                            if (entries.length === 0) return null
+                            return (
+                              <div style={{ marginTop: 8, borderTop: '1px dashed var(--border)', paddingTop: 6 }}>
+                                <div style={{ color: 'var(--text-muted)', fontSize: 10, marginBottom: 4 }}>Tool I/O (direct)</div>
+                                {entries.map(([name, tok]) => (
+                                  <div key={name} style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
+                                    <span style={{ color: 'var(--text-muted)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>{name}</span>
+                                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{tok.toLocaleString()} <span style={{ fontSize: 9, opacity: 0.6 }}>{tok >= 1000 ? (tok/1000).toFixed(1)+'k' : ''}</span></span>
+                                  </div>
+                                ))}
+                              </div>
+                            )
+                          })()}
                         </div>
                       )}
                     </div>
@@ -1507,10 +1591,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               </div>
             )}
               {messages.map((msg, i) => (
-                <MemoizedChatMessage
-                  key={i}
-                  msg={msg}
-                />
+                <MemoizedChatMessage key={msg.id ?? i} msg={msg} subagentView={subagentView} onSubagentSelect={(id) => { const el = document.querySelector('[data-main-scroll]'); mainScrollRef.current = el?.scrollTop || 0; subagentViewRef.current = id; setSubagentView(id); fetchSubagentMessages(id, setSubagentMessages, setSubagentLoading) }} />
               ))}
               {isStreaming && !currentStreamingText && (
                   <details open={thinkingOpen} style={{ ...styles.message, ...styles.reasoningMessage }}>
@@ -1978,6 +2059,11 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'white',
     alignSelf: 'flex-end',
     borderBottomRightRadius: 2,
+  },
+  compactionMessage: {
+    background: 'var(--bg-elevated)',
+    border: '1px dashed var(--border)',
+    borderRadius: 6,
   },
   assistantMessage: {
     background: 'var(--bg-secondary)',

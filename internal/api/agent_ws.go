@@ -191,16 +191,18 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 				// responses cause the frontend to lose older messages since it
 				// does a full replacement, not an append.
 				rows, err := s.db.Pool.Query(ctx, `
-					SELECT id, role, content, tool_calls, reasoning_content, image_ids, duration_ms, created_at FROM agent_messages
+					SELECT id, role, content, tool_calls, reasoning_content, image_ids, COALESCE(duration_ms,0), COALESCE(tokens_direct,0), created_at FROM agent_messages
 					WHERE session_id = $1 ORDER BY created_at
 				`, currentSessionID)
 				if err == nil {
 					messages := scanAgentMessages(rows)
 					if messages != nil {
+						_, running := s.sessionCancels.Load(currentSessionID)
 						safeSend(struct {
 							Type     string                `json:"type"`
 							Messages []models.AgentMessage `json:"messages"`
-						}{Type: "reconnect_sync", Messages: messages})
+							Running  bool                  `json:"running"`
+						}{Type: "reconnect_sync", Messages: messages, Running: running})
 					}
 				}
 				continue
@@ -296,15 +298,16 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 								DurationMs int    `json:"duration_ms"`
 							}{Type: "tool_call", Tool: toolName, Params: args, Reasoning: reasoning, DurationMs: durationMs})
 						},
-						func(toolName, params, result, errMsg string, durationMs int) {
+						func(toolName, params, result, errMsg string, durationMs int, tokensDirect int) {
 							s.agentEngine.PublishSessionEvent(sid, struct {
-								Type       string `json:"type"`
-								Tool       string `json:"tool"`
-								Params     string `json:"params"`
-								Result     string `json:"result"`
-								Error      string `json:"error,omitempty"`
-								DurationMs int    `json:"duration_ms"`
-							}{Type: "tool_result", Tool: toolName, Params: params, Result: result, Error: errMsg, DurationMs: durationMs})
+								Type         string `json:"type"`
+								Tool         string `json:"tool"`
+								Params       string `json:"params"`
+								Result       string `json:"result"`
+								Error        string `json:"error,omitempty"`
+								DurationMs   int    `json:"duration_ms"`
+								TokensDirect int    `json:"tokens_direct"`
+							}{Type: "tool_result", Tool: toolName, Params: params, Result: result, Error: errMsg, DurationMs: durationMs, TokensDirect: tokensDirect})
 						},
 						func(evt agent.EngineEvent) {
 							switch evt.Type {
@@ -343,6 +346,12 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 									Type   string                `json:"type"`
 									Tokens *agent.TokenBreakdown `json:"tokens"`
 								}{Type: "token_update", Tokens: evt.Tokens})
+							case "context_compacted":
+								s.agentEngine.PublishSessionEvent(sid, struct {
+									Type    string                `json:"type"`
+									Summary string                `json:"summary"`
+									Tokens  *agent.TokenBreakdown `json:"tokens"`
+								}{Type: "context_compacted", Summary: evt.Summary, Tokens: evt.Tokens})
 							case "question":
 								s.agentEngine.PublishSessionEvent(sid, struct {
 									Type        string `json:"type"`
@@ -415,7 +424,7 @@ func scanAgentMessages(rows interface {
 		var toolCallsJSON []byte
 		var reasoning *string
 		var imageIDs []string
-		rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &reasoning, &imageIDs, &m.DurationMs, &m.CreatedAt)
+		rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &reasoning, &imageIDs, &m.DurationMs, &m.TokensDirect, &m.CreatedAt)
 		if content != nil {
 			m.Content = *content
 		}
