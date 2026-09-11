@@ -7,9 +7,9 @@ function AreaChartComponent({ data, config }: ChartProps) {
   const { xAxis, yAxes } = useAxisColumns(data, config)
   const chartData = useRowsAsObjects(data)
   const colors = useChartColors()
-  const { series: groupSeries, xValues } = useGroupBySeries(chartData, { ...config, xAxis, yAxis: yAxes }, colors.palette)
-  const hasGroupBy = !!(config.groupBy && chartData.some(row => config.groupBy! in row))
   const isStacked = config.areaMode === 'stacked'
+  const { series: groupSeries, xValues } = useGroupBySeries(chartData, { ...config, xAxis, yAxis: yAxes }, colors.palette, isStacked)
+  const hasGroupBy = !!(config.groupBy && chartData.some(row => config.groupBy! in row))
 
   const option = useMemo(() => {
     const effectiveXData = hasGroupBy ? xValues : chartData.map(d => d[xAxis])
@@ -32,7 +32,9 @@ function AreaChartComponent({ data, config }: ChartProps) {
           name: y,
           type: 'line' as const,
           stack: isStacked ? 'a' : undefined,
-          data: chartData.map(d => d[y]),
+          // In stacked mode nulls already count as 0 in the cumulative math —
+          // coerce so the band doesn't pinch and the tooltip agrees.
+          data: chartData.map(d => d[y] ?? (isStacked ? 0 : null)),
           smooth: config.smooth ?? false,
           connectNulls: config.connectNulls ?? false,
           areaStyle: { opacity: 0.15 },
@@ -51,7 +53,12 @@ function AreaChartComponent({ data, config }: ChartProps) {
     const baseXAxis = { type: 'category' as const, data: effectiveXData, boundaryGap: false, ...getAxisStyle(config.showGrid) }
 
     return {
-      tooltip: { trigger: 'axis' as const, ...getTooltipStyle() },
+      tooltip: {
+        trigger: 'axis' as const,
+        ...getTooltipStyle(),
+        // Stacked math treats null as 0 — render it that way instead of '-'.
+        ...(isStacked ? { valueFormatter: (v: unknown) => v ?? 0 } : {}),
+      },
       title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
       legend: config.showLegend !== false ? { show: true, top: config.title ? 32 : 0, textStyle: { fontSize: 11, color: colors.textMuted } } : { show: false },
       grid: { top: config.title ? 56 : config.showLegend !== false ? 30 : 8, right: 16, bottom: config.dataZoom ? 32 : 8, left: 16, containLabel: true },

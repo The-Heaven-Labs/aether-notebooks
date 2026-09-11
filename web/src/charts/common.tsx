@@ -388,6 +388,10 @@ export function useGroupBySeries(
   chartData: Record<string, unknown>[],
   config: { xAxis?: string; yAxis?: string[]; groupBy?: string; seriesColors?: Record<string, string> },
   palette?: string[],
+  // When true, missing values become 0 instead of null. Opt-in per caller:
+  // only stacked charts want this (their cumulative math already treats null
+  // as 0, so the band and tooltip should agree).
+  coalesceNulls?: boolean,
 ): { series: any[]; xValues: string[] } {
   const colors = palette ?? (getCurrentPalette())
   return useMemo(() => {
@@ -418,7 +422,7 @@ export function useGroupBySeries(
       yCols.map((y) => ({
         name: yCols.length > 1 ? `${group} (${y})` : group,
         type: 'line' as const,
-        data: xValues.map(x => xMap.get(x)?.get(group)?.[y] ?? null),
+        data: xValues.map(x => xMap.get(x)?.get(group)?.[y] ?? (coalesceNulls ? 0 : null)),
         smooth: false,
         connectNulls: false,
         symbol: 'circle',
@@ -431,7 +435,7 @@ export function useGroupBySeries(
     )
 
     return { series, xValues }
-  }, [chartData, config.xAxis, config.yAxis, config.groupBy, config.seriesColors, colors])
+  }, [chartData, config.xAxis, config.yAxis, config.groupBy, config.seriesColors, colors, coalesceNulls])
 }
 
 // Detect dark mode and provide explicit colors for ECharts (canvas doesn't support CSS vars)

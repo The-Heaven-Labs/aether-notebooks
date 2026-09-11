@@ -217,7 +217,7 @@ function TimelineChartComponent({ data, config }: ChartProps) {
                 overflow: 'truncate' as const,
                 ellipsis: '…',
               } : undefined,
-              labelLayout: showLabels ? { hideOverlap: true } : undefined,
+              labelLayout: showLabels ? { hideOverlap: config.hideLabelOverlap ?? true } : undefined,
               emphasis: {
                 scale: 1.5,
                 label: { show: true, fontSize: 12, fontWeight: 'bold' as const },
@@ -240,7 +240,7 @@ function TimelineChartComponent({ data, config }: ChartProps) {
       },
       height: chartHeight,
     }
-  }, [chartData, groups, isRangeMode, showLabels, timeCol, endTimeCol, labelCol, groupByCol, config.title, config.seriesColors, config.showConnectors, config.showTimeDeltas, config.showGrid, colors, truncateLabel])
+  }, [chartData, groups, isRangeMode, showLabels, timeCol, endTimeCol, labelCol, groupByCol, config.title, config.seriesColors, config.showConnectors, config.showTimeDeltas, config.showGrid, config.hideLabelOverlap, colors, truncateLabel])
 
   return <EChartsContainer option={option} height={height} notMerge showReset />
 }
@@ -272,6 +272,16 @@ function TimelineConfigPanel({ config, columns, onChange, data, groupValues: pro
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Chart type</div>
         <ChartTypeSelect value={config.chartType ?? 'timeline'} onChange={v => onChange({ ...config, chartType: v as any })} />
+      </div>
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Title</div>
+        <input
+          aria-label="Title"
+          style={styles.input}
+          value={config.title ?? ''}
+          placeholder="Chart title"
+          onChange={e => onChange({ ...config, title: e.target.value })}
+        />
       </div>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Time column</div>
@@ -408,6 +418,25 @@ function TimelineConfigPanel({ config, columns, onChange, data, groupValues: pro
         </label>
       </div>
       <ConfigHint>Connectors draw lines between related events, Time deltas show time differences</ConfigHint>
+      <div style={styles.row}>
+        <label style={styles.checkbox}>
+          <input
+            type="checkbox"
+            checked={config.showGrid ?? true}
+            onChange={e => onChange({ ...config, showGrid: e.target.checked })}
+          />
+          Grid
+        </label>
+        <label style={styles.checkbox}>
+          <input
+            type="checkbox"
+            checked={config.hideLabelOverlap ?? true}
+            onChange={e => onChange({ ...config, hideLabelOverlap: e.target.checked })}
+          />
+          Hide overlapping labels
+        </label>
+      </div>
+      <ConfigHint>Grid shows background lines. Uncheck Hide overlapping labels to always show every event label.</ConfigHint>
     </div>
   )
 }
@@ -418,6 +447,7 @@ const styles: Record<string, React.CSSProperties> = {
   section: { flex: 1, display: 'flex', flexDirection: 'column', gap: 4 },
   sectionLabel: { fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' as const, letterSpacing: 0.5 },
   select: { fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4 },
+  input: { fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4 },
   checkbox: { fontSize: 12, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 4 },
   colorRow: { display: 'flex', flexWrap: 'wrap', gap: 4 },
   colorLabel: { display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: 'var(--text-muted)' },

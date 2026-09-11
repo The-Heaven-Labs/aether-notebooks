@@ -160,6 +160,14 @@ function HistogramConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
         />
         Show bar values
       </label>
+      <label style={styles.checkbox}>
+        <input
+          type="checkbox"
+          checked={config.showGrid ?? true}
+          onChange={e => onChange({ ...config, showGrid: e.target.checked })}
+        />
+        Grid
+      </label>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Bar color</div>
         <input

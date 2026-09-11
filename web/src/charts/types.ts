@@ -35,7 +35,6 @@ export interface ChartConfig {
   parentIdColumn?: string
   metricColumns?: string[]
   layout?: 'top-down' | 'left-to-right'
-  nodeSpacing?: number
   // Big number
   valueColumn?: string
   label?: string
@@ -83,10 +82,13 @@ export interface ChartConfig {
   roseType?: 'radius' | 'area'
   startAngle?: number
   padAngle?: number
+  labelPosition?: 'outside' | 'inside'
+  minShowLabelAngle?: number
   // Timeline-specific
   maxLabelLength?: number
   showConnectors?: boolean
   showTimeDeltas?: boolean
+  hideLabelOverlap?: boolean
 }
 
 export interface ChartProps {
