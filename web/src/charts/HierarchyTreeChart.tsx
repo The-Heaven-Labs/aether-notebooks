@@ -192,17 +192,42 @@ function HierarchyTreeComponent({ data, config }: ChartProps) {
   )
 }
 
-function HierarchyTreeConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
+function HierarchyTreeConfigPanel({ config, columns, onChange, data }: ConfigPanelProps) {
   const idCols = columns.filter(c => {
     const t = c.toLowerCase()
     return t.includes('id') || t.includes('pid') || t.includes('key') || t.includes('code')
   })
+  const nodeNames = useMemo(() => {
+    if (!data?.rows?.length || !data.columns?.length) return []
+    const labelIdx = data.columns.findIndex(c => c.name === (config.labelColumn ?? ''))
+    const idIdx = data.columns.findIndex(c => c.name === (config.idColumn ?? data.columns[0]?.name))
+    const seen = new Set<string>()
+    const names: string[] = []
+    for (const row of data.rows) {
+      const val = String((labelIdx >= 0 ? row[labelIdx] : undefined) ?? (idIdx >= 0 ? row[idIdx] : '') ?? '')
+      if (val && !seen.has(val)) {
+        seen.add(val)
+        names.push(val)
+      }
+    }
+    return names
+  }, [data, config.labelColumn, config.idColumn])
 
   return (
     <div style={styles.panel}>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Chart type</div>
         <ChartTypeSelect value={config.chartType ?? 'hierarchy_tree'} onChange={v => onChange({ ...config, chartType: v as any })} />
+      </div>
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Title</div>
+        <input
+          aria-label="Title"
+          style={styles.input}
+          value={config.title ?? ''}
+          placeholder="Chart title"
+          onChange={e => onChange({ ...config, title: e.target.value })}
+        />
       </div>
       <div style={styles.row}>
         <div style={styles.section}>
@@ -290,26 +315,32 @@ function HierarchyTreeConfigPanel({ config, columns, onChange }: ConfigPanelProp
         </select>
         <ConfigHint>Tree orientation direction</ConfigHint>
       </div>
-      <div style={styles.section}>
-        <div style={styles.sectionLabel}>Horizontal spacing</div>
-        <select
-          aria-label="Horizontal spacing"
-          style={styles.select}
-          value={String(config.nodeSpacing ?? 50)}
-          onChange={e => {
-            const val = Number(e.target.value)
-            const newConfig = { ...config, nodeSpacing: val }
-            onChange(newConfig)
-          }}
-        >
-          <option value="20">Tight</option>
-          <option value="35">Compact</option>
-          <option value="50">Normal</option>
-          <option value="70">Wide</option>
-          <option value="100">Very wide</option>
-        </select>
-        <ConfigHint>Distance between sibling nodes</ConfigHint>
-      </div>
+      {nodeNames.length > 0 && (
+        <div style={styles.section}>
+          <div style={styles.sectionLabel}>Node colors</div>
+          <div style={styles.colorRow}>
+            {nodeNames.map((name, i) => {
+              const defaultColor = CHART_COLORS[i % CHART_COLORS.length]
+              const currentColor = config.seriesColors?.[name] ?? defaultColor
+              return (
+                <label key={name} style={styles.colorLabel}>
+                  <input
+                    type="color"
+                    value={currentColor}
+                    onChange={e => {
+                      const newColors = { ...config.seriesColors, [name]: e.target.value }
+                      onChange({ ...config, seriesColors: newColors })
+                    }}
+                    style={styles.colorInput}
+                  />
+                  <span style={styles.colorText}>{name.substring(0, 8)}</span>
+                </label>
+              )
+            })}
+          </div>
+          <ConfigHint>Customize the color for each node</ConfigHint>
+        </div>
+      )}
     </div>
   )
 }
@@ -320,6 +351,11 @@ const styles: Record<string, React.CSSProperties> = {
   section: { flex: 1, display: 'flex', flexDirection: 'column', gap: 4 },
   sectionLabel: { fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' as const, letterSpacing: 0.5 },
   select: { fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4, width: '100%', boxSizing: 'border-box' as const },
+  input: { fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4, width: '100%', boxSizing: 'border-box' as const },
+  colorRow: { display: 'flex', gap: 8, flexWrap: 'wrap' },
+  colorLabel: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, fontSize: 10, color: 'var(--text-muted)' },
+  colorInput: { width: 24, height: 24, padding: 0, border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', background: 'transparent' },
+  colorText: { fontSize: 9, maxWidth: 40, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   clearButton: { position: 'absolute', top: 4, right: 4, fontSize: 10, padding: '2px 6px', background: 'var(--bg-hover)', color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer', lineHeight: 1 },
   resetButton: { position: 'absolute', bottom: 8, right: 8, fontSize: 11, padding: '4px 10px', background: 'var(--bg-card)', color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', boxShadow: 'var(--shadow-sm)' },
 }

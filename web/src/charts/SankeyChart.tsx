@@ -113,12 +113,41 @@ function SankeyChartComponent({ data, config }: ChartProps) {
   return <EChartsContainer option={option} showReset />
 }
 
-function SankeyConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
+function SankeyConfigPanel({ config, columns, onChange, data }: ConfigPanelProps) {
+  const nodeNames = useMemo(() => {
+    if (!data?.rows?.length || !data.columns?.length) return []
+    const srcIdx = data.columns.findIndex(c => c.name === (config.xAxis ?? ''))
+    const tgtIdx = data.columns.findIndex(c => c.name === (config.yAxis?.[0] ?? ''))
+    const seen = new Set<string>()
+    const names: string[] = []
+    for (const row of data.rows) {
+      for (const idx of [srcIdx, tgtIdx]) {
+        if (idx < 0) continue
+        const val = String(row[idx] ?? '')
+        if (val && !seen.has(val)) {
+          seen.add(val)
+          names.push(val)
+        }
+      }
+    }
+    return names
+  }, [data, config.xAxis, config.yAxis])
+
   return (
     <div style={styles.panel}>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Chart type</div>
         <ChartTypeSelect value={config.chartType ?? 'sankey'} onChange={v => onChange({ ...config, chartType: v as any })} />
+      </div>
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Title</div>
+        <input
+          aria-label="Title"
+          style={styles.input}
+          value={config.title ?? ''}
+          placeholder="Chart title"
+          onChange={e => onChange({ ...config, title: e.target.value })}
+        />
       </div>
       <div style={styles.section}>
         <div style={styles.sectionLabel}>Source column</div>
@@ -199,6 +228,32 @@ function SankeyConfigPanel({ config, columns, onChange }: ConfigPanelProps) {
           <option value="right">Right</option>
         </select>
       </div>
+      {nodeNames.length > 0 && (
+        <div style={styles.section}>
+          <div style={styles.sectionLabel}>Node colors</div>
+          <div style={styles.colorRow}>
+            {nodeNames.map((name, i) => {
+              const defaultColor = CHART_COLORS[i % CHART_COLORS.length]
+              const currentColor = config.seriesColors?.[name] ?? defaultColor
+              return (
+                <label key={name} style={styles.colorLabel}>
+                  <input
+                    type="color"
+                    value={currentColor}
+                    onChange={e => {
+                      const newColors = { ...config.seriesColors, [name]: e.target.value }
+                      onChange({ ...config, seriesColors: newColors })
+                    }}
+                    style={styles.colorInput}
+                  />
+                  <span style={styles.colorText}>{name.substring(0, 8)}</span>
+                </label>
+              )
+            })}
+          </div>
+          <ConfigHint>Customize the color for each node</ConfigHint>
+        </div>
+      )}
     </div>
   )
 }
@@ -209,6 +264,11 @@ const styles: Record<string, React.CSSProperties> = {
   section: { flex: 1, display: 'flex', flexDirection: 'column', gap: 4 },
   sectionLabel: { fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 },
   select: { fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4 },
+  input: { fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4 },
+  colorRow: { display: 'flex', gap: 8, flexWrap: 'wrap' },
+  colorLabel: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, fontSize: 10, color: 'var(--text-muted)' },
+  colorInput: { width: 24, height: 24, padding: 0, border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', background: 'transparent' },
+  colorText: { fontSize: 9, maxWidth: 40, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
 }
 
 export const SankeyChartModule: ChartModule = {

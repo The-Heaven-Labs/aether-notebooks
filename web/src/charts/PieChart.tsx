@@ -1,7 +1,50 @@
 import { useMemo } from 'react'
-import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, useChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns, ChartTypeSelect } from './common'
+import type { ChartModule, ChartProps, ConfigPanelProps, ChartConfig } from './types'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getContrastTextColor, useChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns, ChartTypeSelect } from './common'
 import { ConfigHint } from './ConfigHint'
+
+// Label plumbing shared by the option builder below (and unit-tested):
+// when labels are on, every slice gets an explicit visible label — ECharts 6
+// hides overlapping pie labels by default (labelLayout.hideOverlap), so we
+// disable the hiding and keep repositioning (avoidLabelOverlap) instead.
+// Inside labels sit on colored slices, so their color contrasts per-slice.
+export function buildPieSeriesLabelConfig(
+  config: Pick<ChartConfig, 'showLabels' | 'labelPosition' | 'minShowLabelAngle'>,
+  outsideColor: string,
+): {
+  label: Record<string, unknown>
+  labelLine: Record<string, unknown>
+  labelLayout: { hideOverlap: boolean }
+  avoidLabelOverlap: boolean
+  minShowLabelAngle: number
+} {
+  if (config.showLabels === false) {
+    return {
+      label: { show: false },
+      labelLine: { show: false },
+      labelLayout: { hideOverlap: false },
+      avoidLabelOverlap: true,
+      minShowLabelAngle: 0,
+    }
+  }
+  const position = config.labelPosition ?? 'outside'
+  return {
+    label: {
+      show: true,
+      position,
+      fontSize: 11,
+      color: position === 'inside'
+        ? (params: { color?: unknown }) => getContrastTextColor(String(params?.color ?? '#888888'))
+        : outsideColor,
+    },
+    labelLine: position === 'outside'
+      ? { show: true, length: 12, length2: 12 }
+      : { show: false },
+    labelLayout: { hideOverlap: false },
+    avoidLabelOverlap: true,
+    minShowLabelAngle: config.minShowLabelAngle ?? 0,
+  }
+}
 
 function PieChartComponent({ data, config }: ChartProps) {
   const { xAxis, yAxes } = useAxisColumns(data, config)
@@ -10,6 +53,7 @@ function PieChartComponent({ data, config }: ChartProps) {
   const valueKey = yAxes[0] ?? data.columns[1]?.name ?? ''
   const nameKey = config.labelColumn || xAxis
   const isDonut = config.chartType === 'donut'
+  const { showLabels, labelPosition, minShowLabelAngle } = config
 
   const option = useMemo(() => ({
     tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: '{b}: {c} ({d}%)' },
@@ -24,13 +68,13 @@ function PieChartComponent({ data, config }: ChartProps) {
         value: d[valueKey],
         itemStyle: { color: config.seriesColors?.[String(d[nameKey])] ?? CHART_COLORS[i % CHART_COLORS.length] },
       })),
-      label: config.showLabels !== false ? { fontSize: 11, color: colors.text } : { show: false },
+      ...buildPieSeriesLabelConfig({ showLabels, labelPosition, minShowLabelAngle }, colors.text),
       emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.2)' } },
       roseType: config.roseType || false,
       startAngle: config.startAngle ?? 90,
       padAngle: config.padAngle ?? 0,
     }],
-  }), [chartData, nameKey, valueKey, isDonut, config.title, config.seriesColors, config.showLegend, config.showLabels, config.roseType, config.startAngle, config.padAngle, colors])
+  }), [chartData, nameKey, valueKey, isDonut, config.title, config.seriesColors, config.showLegend, showLabels, labelPosition, minShowLabelAngle, config.roseType, config.startAngle, config.padAngle, colors])
 
   return <EChartsContainer option={option} showReset />
 }
@@ -91,6 +135,67 @@ function PieConfigPanel({ config, columns, onChange, data }: ConfigPanelProps) {
         Donut (ring)
       </label>
       <ConfigHint>Show as a ring chart with a hole in the center</ConfigHint>
+
+      {/* Title */}
+      <div style={styles.section}>
+        <div style={styles.sectionLabel}>Title</div>
+        <input
+          aria-label="Title"
+          style={styles.input}
+          value={config.title ?? ''}
+          placeholder="Chart title"
+          onChange={e => onChange({ ...config, title: e.target.value })}
+        />
+      </div>
+
+      {/* Labels + Legend — always-visible labels when enabled */}
+      <div style={styles.row}>
+        <label style={styles.checkbox}>
+          <input
+            type="checkbox"
+            checked={config.showLabels !== false}
+            onChange={e => onChange({ ...config, showLabels: e.target.checked })}
+          />
+          Show labels
+        </label>
+        <label style={styles.checkbox}>
+          <input
+            type="checkbox"
+            checked={config.showLegend !== false}
+            onChange={e => onChange({ ...config, showLegend: e.target.checked })}
+          />
+          Legend
+        </label>
+      </div>
+      {config.showLabels !== false && (
+        <div style={styles.row}>
+          <div style={styles.section}>
+            <div style={styles.sectionLabel}>Label position</div>
+            <select
+              aria-label="Label position"
+              style={styles.select}
+              value={config.labelPosition ?? 'outside'}
+              onChange={e => onChange({ ...config, labelPosition: e.target.value as 'outside' | 'inside' })}
+            >
+              <option value="outside">Outside (with guide lines)</option>
+              <option value="inside">Inside slices</option>
+            </select>
+          </div>
+          <div style={styles.section}>
+            <div style={styles.sectionLabel}>Min label angle</div>
+            <input
+              aria-label="Min label angle"
+              type="number"
+              min={0}
+              max={90}
+              style={styles.input}
+              value={config.minShowLabelAngle ?? 0}
+              onChange={e => onChange({ ...config, minShowLabelAngle: parseInt(e.target.value) || 0 })}
+            />
+            <ConfigHint>Slices smaller than this angle (deg) hide their label; 0 shows all</ConfigHint>
+          </div>
+        </div>
+      )}
 
       {/* Series Colors — one color picker per slice */}
       {sliceNames.length > 0 && (
@@ -180,7 +285,7 @@ const styles: Record<string, React.CSSProperties> = {
 export const PieChartModule: ChartModule = {
   Component: PieChartComponent,
   ConfigPanel: PieConfigPanel,
-  defaultConfig: { chartType: 'pie', showLegend: true, showLabels: true, skipEmpty: true },
+  defaultConfig: { chartType: 'pie', showLegend: true, showLabels: true, labelPosition: 'outside', minShowLabelAngle: 0, skipEmpty: true },
   detectColumns: (columns) => detectAxisColumns(columns),
   requirements: { minColumns: 2 },
 }

@@ -157,7 +157,7 @@ export function AxisConfigPanel({
               <option value="no">No</option>
               <option value="yes">Yes</option>
             </select>
-            <ConfigHint>Stack multiple series on top of each other</ConfigHint>
+            <ConfigHint>Stack multiple series on top of each other. In stacked mode each band's thickness is its series' value, and later series stack above earlier ones.</ConfigHint>
           </div>
         </div>
       )}
@@ -394,8 +394,18 @@ export function AxisConfigPanel({
             Log scale
           </label>
         )}
+        {(config.chartType === 'line' || config.chartType === 'area') && (
+          <label style={styles.checkbox}>
+            <input
+              type="checkbox"
+              checked={config.connectNulls ?? false}
+              onChange={e => onChange({ ...config, connectNulls: e.target.checked })}
+            />
+            Connect nulls
+          </label>
+        )}
       </div>
-      <ConfigHint>Legend identifies each series, Grid shows background lines, Labels show values on data points</ConfigHint>
+      <ConfigHint>Legend identifies each series, Grid shows background lines, Labels show values on data points. Connect nulls bridges gaps where data is missing.</ConfigHint>
 
       {/* Marklines */}
       <div style={styles.row}>

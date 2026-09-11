@@ -142,6 +142,15 @@ function FunnelConfigPanel({ config, columns, onChange, data }: ConfigPanelProps
         />
         Show labels
       </label>
+      <label style={styles.checkbox}>
+        <input
+          type="checkbox"
+          checked={config.skipEmpty ?? true}
+          onChange={e => onChange({ ...config, skipEmpty: e.target.checked })}
+        />
+        Skip empty stages
+      </label>
+      <ConfigHint>Hide stages with zero or missing values</ConfigHint>
       {stages.length > 0 && (
         <div style={styles.section}>
           <div style={styles.sectionLabel}>Stage colors</div>
