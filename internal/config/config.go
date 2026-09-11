@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -32,12 +33,13 @@ type Config struct {
 	S3AccessKey         string
 	S3SecretKey         string
 	MaxAttachmentBytes  int64
-	ToolAllowedDomains  []string // comma-separated domains allowed for webhook tools (bypasses private IP block)
-	OIDCHostRewrite     string   // "from=to" pair for rewriting OIDC discovery host (e.g. "localhost:5557=host.docker.internal:5557")
-	APIURL              string   // base URL for REST API from the SPA (empty = same-origin)
-	RelayURL            string   // WebSocket URL of the Hocuspocus relay (empty = derive from origin)
-	DisableRegistration bool     // when true, new users cannot register via email/password (SSO only)
-	DisableMigrations   bool     // when true, skip embedded migrations on startup (used when pipeline handles migrations)
+	ToolAllowedDomains  []string      // comma-separated domains allowed for webhook tools (bypasses private IP block)
+	OIDCHostRewrite     string        // "from=to" pair for rewriting OIDC discovery host (e.g. "localhost:5557=host.docker.internal:5557")
+	APIURL              string        // base URL for REST API from the SPA (empty = same-origin)
+	RelayURL            string        // WebSocket URL of the Hocuspocus relay (empty = derive from origin)
+	DisableRegistration bool          // when true, new users cannot register via email/password (SSO only)
+	DisableMigrations   bool          // when true, skip embedded migrations on startup (used when pipeline handles migrations)
+	StatsRollupInterval time.Duration // agent stats rollup cadence (AETHER_AGENT_STATS_ROLLUP_INTERVAL, default 1h, floor 5m)
 }
 
 func parseCommaList(s string) []string {
@@ -78,6 +80,10 @@ func load(migrateOnly bool) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid AETHER_MAX_ATTACHMENT_BYTES: %w", err)
 	}
+	statsRollupInterval, err := parseStatsRollupInterval(os.Getenv("AETHER_AGENT_STATS_ROLLUP_INTERVAL"))
+	if err != nil {
+		return nil, err
+	}
 	cfg := &Config{
 		Port:                envOrDefault("AETHER_PORT", "8088"),
 		DatabaseURL:         os.Getenv("AETHER_DATABASE_URL"),
@@ -108,6 +114,7 @@ func load(migrateOnly bool) (*Config, error) {
 		RelayURL:            os.Getenv("AETHER_RELAY_URL"),
 		DisableRegistration: envOrDefault("AETHER_DISABLE_REGISTRATION", "false") == "true",
 		DisableMigrations:   envOrDefault("AETHER_DISABLE_MIGRATIONS", "false") == "true",
+		StatsRollupInterval: statsRollupInterval,
 	}
 
 	// If no explicit DatabaseURL, build from individual components.
@@ -154,6 +161,23 @@ func load(migrateOnly bool) (*Config, error) {
 		cfg.Port = "8088"
 	}
 	return cfg, nil
+}
+
+// parseStatsRollupInterval parses AETHER_AGENT_STATS_ROLLUP_INTERVAL as a Go
+// duration. Empty means the 1h default; values below the 5m floor are raised
+// to it so a misconfigured env var cannot hot-loop the rollup.
+func parseStatsRollupInterval(raw string) (time.Duration, error) {
+	if raw == "" {
+		return time.Hour, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid AETHER_AGENT_STATS_ROLLUP_INTERVAL %q: %w", raw, err)
+	}
+	if d < 5*time.Minute {
+		return 5 * time.Minute, nil
+	}
+	return d, nil
 }
 
 func envOrDefault(key, defaultVal string) string {

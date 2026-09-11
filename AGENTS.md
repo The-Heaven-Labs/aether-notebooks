@@ -123,6 +123,7 @@ task db:reset          # Drop + recreate dev DB (data loss!)
 | `AETHER_S3_ACCESS_KEY` | no | — | S3 access key |
 | `AETHER_S3_SECRET_KEY` | no | — | S3 secret key |
 | `AETHER_MAX_ATTACHMENT_BYTES` | no | `10485760` | Maximum attachment file size in bytes |
+| `AETHER_AGENT_STATS_ROLLUP_INTERVAL` | no | `1h` | Agent usage hourly-rollup cadence (Go duration, floor `5m`) |
 | `AETHER_TOOL_ALLOWED_DOMAINS` | no | — | Comma-separated list of allowed domains for webhook tools |
 | `AETHER_DISABLE_REGISTRATION` | no | `false` | If set to `true`, disables new user registration |
 

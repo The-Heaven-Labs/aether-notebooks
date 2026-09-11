@@ -234,6 +234,7 @@ func main() {
 		slog.Info("scheduler: running notebook", "notebook_id", notebookID)
 		return nil
 	})
+	sched.SetStatsRollupInterval(cfg.StatsRollupInterval)
 	sched.Start()
 	defer sched.Stop()
 

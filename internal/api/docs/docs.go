@@ -748,7 +748,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Get usage statistics for all agents in the organization",
+                "description": "Org-wide agent usage statistics from hourly rollups, with optional filters",
                 "produces": [
                     "application/json"
                 ],
@@ -756,14 +756,89 @@ const docTemplate = `{
                     "agents"
                 ],
                 "summary": "Get agent stats",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Start (RFC3339, default now-30d)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End (RFC3339, default now)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by user",
+                        "name": "user_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by agent",
+                        "name": "agent_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "hour or day (default day)",
+                        "name": "granularity",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/models.AgentStatsDaily"
+                                "type": "object"
                             }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/agents/stats/rollup": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Synchronously roll up recent agent usage into hourly buckets (idempotent)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Roll up agent stats now",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
                         }
                     },
                     "500": {
@@ -1053,7 +1128,16 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/models.AgentStatsDaily"
+                                "type": "object"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
                             }
                         }
                     },
@@ -8157,10 +8241,16 @@ const docTemplate = `{
                 "auto_sync_groups": {
                     "type": "boolean"
                 },
+                "callback_url": {
+                    "type": "string"
+                },
                 "client_id": {
                     "type": "string"
                 },
                 "created_at": {
+                    "type": "string"
+                },
+                "default_role": {
                     "type": "string"
                 },
                 "discovery_url": {
@@ -8185,6 +8275,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "provider_type": {
+                    "type": "string"
+                },
+                "provisioning_mode": {
                     "type": "string"
                 },
                 "scope": {
@@ -8282,6 +8375,10 @@ const docTemplate = `{
         "models.Agent": {
             "type": "object",
             "properties": {
+                "all_builtin_tools": {
+                    "description": "Deprecated: UI-only legacy field, no longer read by the engine.",
+                    "type": "boolean"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -8368,6 +8465,10 @@ const docTemplate = `{
         "models.AgentSession": {
             "type": "object",
             "properties": {
+                "admin_mode": {
+                    "description": "AdminMode is a per-session transient flag derived from the X-AETHER-Admin-Mode\nheader at session creation / WebSocket connection time. It is not persisted.",
+                    "type": "boolean"
+                },
                 "agent_id": {
                     "type": "string"
                 },
@@ -8388,32 +8489,6 @@ const docTemplate = `{
                 },
                 "title": {
                     "type": "string"
-                },
-                "user_id": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.AgentStatsDaily": {
-            "type": "object",
-            "properties": {
-                "agent_id": {
-                    "type": "string"
-                },
-                "date": {
-                    "type": "string"
-                },
-                "messages_count": {
-                    "type": "integer"
-                },
-                "sessions_count": {
-                    "type": "integer"
-                },
-                "tokens_input": {
-                    "type": "integer"
-                },
-                "tokens_output": {
-                    "type": "integer"
                 },
                 "user_id": {
                     "type": "string"

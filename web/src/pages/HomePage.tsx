@@ -8,6 +8,7 @@ import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { FolderTree } from '../components/FolderTree'
+import { useFolderActions, useFolderMutations, type FolderActionKey } from '../components/FolderActions'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { TwoPanelLayout } from '../components/TwoPanelLayout'
 import { Skeleton } from '../components/Skeleton'
@@ -60,6 +61,9 @@ interface ContextMenuProps {
 
 function ContextMenu({ target, onRename, onMove, onPermissions, onDelete, onEdit, onDuplicate, onClose, canEdit, canDelete: canDeletePerm, canShare }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
+  // Folder items come from the shared action source (same list as the
+  // folder-tree sidebar menu); other resource types keep their own items.
+  const folderActs = useFolderActions({ can_edit: canEdit, can_delete: canDeletePerm, can_share: canShare })
   const showRename = target.type === 'folder' || target.type === 'notebook'
   const showDelete = target.type === 'folder' || target.type === 'notebook'
   const renameDisabled = !canEdit
@@ -83,6 +87,28 @@ function ContextMenu({ target, onRename, onMove, onPermissions, onDelete, onEdit
   }, [onClose])
 
   const disabledStyle = { opacity: 0.4, cursor: 'default' }
+
+  if (target.type === 'folder') {
+    const runFolderAction = (key: FolderActionKey) => {
+      if (key === 'rename') onRename({ type: 'folder', id: target.id, currentName: target.name })
+      else if (key === 'move') onMove({ type: target.type, id: target.id, name: target.name })
+      else if (key === 'permissions') onPermissions({ type: target.type, id: target.id, name: target.name })
+      else onDelete(target.type, target.id, target.name)
+      onClose()
+    }
+    return (
+      <div ref={ref} style={ms.menu}>
+        {folderActs.actions.map((a) => (
+          <button
+            key={a.key}
+            style={a.disabled ? { ...ms.item, ...(a.danger ? { color: 'var(--error)' } : {}), ...disabledStyle } : { ...ms.item, ...(a.danger ? { color: 'var(--error)' } : {}) }}
+            disabled={a.disabled}
+            onClick={a.disabled ? undefined : () => runFolderAction(a.key)}
+          >{a.label}</button>
+        ))}
+      </div>
+    )
+  }
 
   return (
     <div ref={ref} style={ms.menu}>
@@ -583,15 +609,12 @@ export function HomePage() {
     onError: (e: Error) => setError(e.message),
   })
 
-  const deleteFolder = useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/folders/${id}?force=true`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['folder-contents'] })
-      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
-      qc.invalidateQueries({ queryKey: ['folder-home'] })
-    },
+  const folderMutations = useFolderMutations({
     onError: (e: Error) => setError(e.message),
+    onRenamed: () => setRenaming(null),
   })
+  const deleteFolder = folderMutations.remove
+  const renameFolder = folderMutations.rename
 
   const deleteNotebook = useMutation({
     mutationFn: (id: string) => api.delete(`/api/v1/notebooks/${id}`),
@@ -599,18 +622,6 @@ export function HomePage() {
       qc.invalidateQueries({ queryKey: ['folder-contents'] })
       qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
       qc.invalidateQueries({ queryKey: ['folder-home'] })
-    },
-    onError: (e: Error) => setError(e.message),
-  })
-
-  const renameFolder = useMutation({
-    mutationFn: ({ id, name }: { id: string; name: string }) =>
-      api.put(`/api/v1/folders/${id}`, { name }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['folder-contents'] })
-      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
-      qc.invalidateQueries({ queryKey: ['folder-home'] })
-      setRenaming(null)
     },
     onError: (e: Error) => setError(e.message),
   })
@@ -844,6 +855,8 @@ export function HomePage() {
             selectedFolderId={folderID}
             onMoveFolder={handleMoveFolder}
             onPermissionsFolder={handlePermissionsFolder}
+            onRenameFolder={(f) => setRenaming({ type: 'folder', id: f.id, currentName: f.name })}
+            onDeleteFolder={(f) => handleDelete('folder', f.id, f.name)}
           />
         }
         rightPanel={

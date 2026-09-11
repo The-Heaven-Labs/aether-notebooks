@@ -485,6 +485,7 @@ func (s *Server) routes() {
 
 	// Agent stats routes
 	s.mux.Handle("GET /api/v1/agents/stats", authMW(RequireRole("admin")(http.HandlerFunc(ah.handleAgentStats))))
+	s.mux.Handle("POST /api/v1/agents/stats/rollup", authMW(RequireRole("admin")(http.HandlerFunc(ah.handleAgentStatsRollup))))
 	s.mux.Handle("GET /api/v1/agents/{id}/stats", authMW(RequireRole("admin")(http.HandlerFunc(ah.handleAgentStatsByAgent))))
 
 	// MOTD routes
