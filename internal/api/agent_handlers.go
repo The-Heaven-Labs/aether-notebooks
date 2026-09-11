@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
@@ -30,7 +31,7 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
 		SELECT a.id, a.org_id, a.name, a.description, a.model_config_id, a.subagent_model_config_id,
-			   a.system_prompt, a.skill_ids, a.tool_ids, a.all_builtin_tools, a.folder_id, a.max_turns, a.created_by, a.created_at, a.updated_at,
+			   a.system_prompt, a.skill_ids, a.tool_ids, a.all_builtin_tools, a.folder_id, a.max_turns, a.max_subagents, a.max_subagent_turns, a.created_by, a.created_at, a.updated_at,
 			   mc.default_params
 		FROM agents a
 		LEFT JOIN model_configs mc ON mc.id = a.model_config_id
@@ -48,7 +49,7 @@ func (h *agentHandlers) handleListAgents(w http.ResponseWriter, r *http.Request)
 		var desc, sysPrompt *string
 		var mcDefaultParams []byte
 		if err := rows.Scan(&a.ID, &a.OrgID, &a.Name, &desc, &a.ModelConfigID, &a.SubagentModelConfigID,
-			&sysPrompt, &a.SkillIDs, &a.ToolIDs, &a.AllBuiltinTools, &a.FolderID, &a.MaxTurns, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt,
+			&sysPrompt, &a.SkillIDs, &a.ToolIDs, &a.AllBuiltinTools, &a.FolderID, &a.MaxTurns, &a.MaxSubAgents, &a.MaxSubagentTurns, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt,
 			&mcDefaultParams); err != nil {
 			continue
 		}
@@ -370,10 +371,10 @@ func (h *agentHandlers) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 	var desc, sysPrompt *string
 	err = h.server.db.Pool.QueryRow(r.Context(), `
 		SELECT id, org_id, name, description, model_config_id, subagent_model_config_id,
-			   system_prompt, skill_ids, tool_ids, all_builtin_tools, folder_id, max_turns, created_by, created_at, updated_at
+			   system_prompt, skill_ids, tool_ids, all_builtin_tools, folder_id, max_turns, max_subagents, max_subagent_turns, created_by, created_at, updated_at
 		FROM agents WHERE id = $1 AND org_id = $2
 	`, agentID, claims.OrgID).Scan(&a.ID, &a.OrgID, &a.Name, &desc, &a.ModelConfigID, &a.SubagentModelConfigID,
-		&sysPrompt, &a.SkillIDs, &a.ToolIDs, &a.AllBuiltinTools, &a.FolderID, &a.MaxTurns, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt)
+		&sysPrompt, &a.SkillIDs, &a.ToolIDs, &a.AllBuiltinTools, &a.FolderID, &a.MaxTurns, &a.MaxSubAgents, &a.MaxSubagentTurns, &a.CreatedBy, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
@@ -948,35 +949,136 @@ func (h *agentHandlers) handleUpdateSessionTitle(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, map[string]any{"title": req.Title})
 }
 
+// AgentStatRow is one hourly (or daily-aggregated) usage bucket with
+// resolved names so the UI can filter without extra requests.
+type AgentStatRow struct {
+	BucketStart     time.Time `json:"bucket_start"`
+	AgentID         string    `json:"agent_id"`
+	AgentName       string    `json:"agent_name"`
+	UserID          string    `json:"user_id"`
+	UserName        string    `json:"user_name"`
+	UserEmail       string    `json:"user_email"`
+	SessionsCount   int64     `json:"sessions_count"`
+	MessagesCount   int64     `json:"messages_count"`
+	TokensInput     int64     `json:"tokens_input"`
+	TokensOutput    int64     `json:"tokens_output"`
+	TokensDirect    int64     `json:"tokens_direct"`
+	TokensSubagent  int64     `json:"tokens_subagent"`
+	ModelCalls      int64     `json:"model_calls"`
+	TotalDurationMs int64     `json:"total_duration_ms"`
+	EstCostUSD      float64   `json:"est_cost_usd"`
+}
+
+type agentStatsParams struct {
+	From        time.Time
+	To          time.Time
+	UserID      string
+	Granularity string // "hour" or "day"
+}
+
+func parseAgentStatsParams(r *http.Request) (agentStatsParams, error) {
+	q := r.URL.Query()
+	now := time.Now()
+	p := agentStatsParams{To: now, From: now.Add(-30 * 24 * time.Hour), Granularity: "day"}
+	if v := q.Get("from"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return p, fmt.Errorf("invalid from (use RFC3339)")
+		}
+		p.From = t
+	}
+	if v := q.Get("to"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return p, fmt.Errorf("invalid to (use RFC3339)")
+		}
+		p.To = t
+	}
+	if p.To.Before(p.From) {
+		return p, fmt.Errorf("to must not be before from")
+	}
+	p.UserID = q.Get("user_id")
+	switch g := q.Get("granularity"); g {
+	case "", "day":
+		p.Granularity = "day"
+	case "hour":
+		p.Granularity = "hour"
+	default:
+		return p, fmt.Errorf("invalid granularity (want hour|day)")
+	}
+	return p, nil
+}
+
+func (h *agentHandlers) queryAgentStats(ctx context.Context, orgID, agentID string, p agentStatsParams) ([]AgentStatRow, error) {
+	bucket := "h.bucket_start"
+	if p.Granularity == "day" {
+		bucket = "date_trunc('day', h.bucket_start)"
+	}
+	query := `
+		SELECT ` + bucket + `, h.agent_id, a.name, h.user_id, u.name, u.email,
+			SUM(h.sessions_count), SUM(h.messages_count),
+			SUM(h.tokens_input), SUM(h.tokens_output), SUM(h.tokens_direct), SUM(h.tokens_subagent),
+			SUM(h.model_calls), SUM(h.total_duration_ms), SUM(h.est_cost_usd)::float8
+		FROM agent_stats_hourly h
+		JOIN agents a ON a.id = h.agent_id
+		JOIN users u ON u.id = h.user_id
+		WHERE a.org_id = $1 AND h.bucket_start >= $2 AND h.bucket_start < $3`
+	args := []any{orgID, p.From, p.To}
+	if agentID != "" {
+		args = append(args, agentID)
+		query += fmt.Sprintf(" AND h.agent_id = $%d", len(args))
+	}
+	if p.UserID != "" {
+		args = append(args, p.UserID)
+		query += fmt.Sprintf(" AND h.user_id = $%d", len(args))
+	}
+	query += ` GROUP BY 1, 2, 3, 4, 5, 6 ORDER BY 1 DESC`
+
+	rows, err := h.server.db.Pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	stats := []AgentStatRow{}
+	for rows.Next() {
+		var s AgentStatRow
+		if err := rows.Scan(&s.BucketStart, &s.AgentID, &s.AgentName, &s.UserID, &s.UserName, &s.UserEmail,
+			&s.SessionsCount, &s.MessagesCount, &s.TokensInput, &s.TokensOutput, &s.TokensDirect, &s.TokensSubagent,
+			&s.ModelCalls, &s.TotalDurationMs, &s.EstCostUSD); err != nil {
+			return nil, err
+		}
+		stats = append(stats, s)
+	}
+	return stats, rows.Err()
+}
+
 // @Summary Get agent stats
-// @Description Get usage statistics for all agents in the organization
+// @Description Org-wide agent usage statistics from hourly rollups, with optional filters
 // @Tags agents
 // @Produce json
-// @Success 200 {array} models.AgentStatsDaily
+// @Param from query string false "Start (RFC3339, default now-30d)"
+// @Param to query string false "End (RFC3339, default now)"
+// @Param user_id query string false "Filter by user"
+// @Param agent_id query string false "Filter by agent"
+// @Param granularity query string false "hour or day (default day)"
+// @Success 200 {array} object
+// @Failure 400 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Security BearerAuth
 // @Router /agents/stats [get]
 func (h *agentHandlers) handleAgentStats(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
-	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT s.date, s.agent_id, s.user_id, s.sessions_count, s.messages_count, s.tokens_input, s.tokens_output
-		FROM agent_stats_daily s
-		JOIN agents a ON a.id = s.agent_id
-		WHERE a.org_id = $1 AND s.date >= NOW() - INTERVAL '30 days'
-		ORDER BY s.date DESC
-	`, claims.OrgID)
+	params, err := parseAgentStatsParams(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	stats, err := h.queryAgentStats(r.Context(), claims.OrgID, r.URL.Query().Get("agent_id"), params)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	defer rows.Close()
-
-	var stats []models.AgentStatsDaily
-	for rows.Next() {
-		var s models.AgentStatsDaily
-		rows.Scan(&s.Date, &s.AgentID, &s.UserID, &s.SessionsCount, &s.MessagesCount, &s.TokensInput, &s.TokensOutput)
-		stats = append(stats, s)
 	}
 
 	writeJSON(w, http.StatusOK, stats)
@@ -987,7 +1089,8 @@ func (h *agentHandlers) handleAgentStats(w http.ResponseWriter, r *http.Request)
 // @Tags agents
 // @Produce json
 // @Param id path string true "Agent ID"
-// @Success 200 {array} models.AgentStatsDaily
+// @Success 200 {array} object
+// @Failure 400 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Security BearerAuth
 // @Router /agents/{id}/stats [get]
@@ -995,27 +1098,42 @@ func (h *agentHandlers) handleAgentStatsByAgent(w http.ResponseWriter, r *http.R
 	agentID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
 
-	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT s.date, s.agent_id, s.user_id, s.sessions_count, s.messages_count, s.tokens_input, s.tokens_output
-		FROM agent_stats_daily s
-		JOIN agents a ON a.id = s.agent_id
-		WHERE a.id = $1 AND a.org_id = $2 AND s.date >= NOW() - INTERVAL '30 days'
-		ORDER BY s.date DESC
-	`, agentID, claims.OrgID)
+	params, err := parseAgentStatsParams(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	stats, err := h.queryAgentStats(r.Context(), claims.OrgID, agentID, params)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	defer rows.Close()
-
-	var stats []models.AgentStatsDaily
-	for rows.Next() {
-		var s models.AgentStatsDaily
-		rows.Scan(&s.Date, &s.AgentID, &s.UserID, &s.SessionsCount, &s.MessagesCount, &s.TokensInput, &s.TokensOutput)
-		stats = append(stats, s)
-	}
 
 	writeJSON(w, http.StatusOK, stats)
+}
+
+// @Summary Roll up agent stats now
+// @Description Synchronously roll up recent agent usage into hourly buckets (idempotent)
+// @Tags agents
+// @Produce json
+// @Success 200 {object} object
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /agents/stats/rollup [post]
+func (h *agentHandlers) handleAgentStatsRollup(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+
+	res, err := agent.NewStatsAggregator(h.server.db.Pool).RollupHourlyStats(r.Context(), time.Now().Add(-25*time.Hour))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.server.audit.Log(r.Context(), audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "agent_stats.rollup", ResourceType: "agent_stats",
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{"rolled_up": res})
 }
 
 func (h *agentHandlers) handleGetSubagentMessages(w http.ResponseWriter, r *http.Request) {

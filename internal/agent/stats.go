@@ -15,28 +15,94 @@ func NewStatsAggregator(pool *pgxpool.Pool) *StatsAggregator {
 	return &StatsAggregator{pool: pool}
 }
 
-func (sa *StatsAggregator) RollupDailyStats(ctx context.Context) error {
-	yesterday := time.Now().AddDate(0, 0, -1).Truncate(24 * time.Hour)
+// RollupHourlyStatsResult summarizes one hourly-rollup run.
+type RollupHourlyStatsResult struct {
+	BucketFrom time.Time `json:"bucket_from"`
+	BucketTo   time.Time `json:"bucket_to"`
+	Rows       int64     `json:"rows"`
+}
 
-	_, err := sa.pool.Exec(ctx, `
-		INSERT INTO agent_stats_daily (date, agent_id, user_id, sessions_count, messages_count, tokens_input, tokens_output)
+// RollupHourlyStats upserts per-hour usage buckets for all activity since the
+// given time. Each run covers the previous completed hour and the current
+// in-progress hour (and anything newer), so in-progress buckets self-correct
+// until the hour closes and repeat runs are idempotent.
+//
+// Sources: agent_messages (input/output/direct tokens, model calls, duration,
+// sessions) joined through agent_sessions, plus subagent_tasks (subagent
+// tokens, attributed to the triggering user). Cost uses the agent's CURRENT
+// model-config prices at rollup time — per-message price snapshots are out of
+// scope. agent_stats_daily is left untouched for history.
+func (sa *StatsAggregator) RollupHourlyStats(ctx context.Context, since time.Time) (*RollupHourlyStatsResult, error) {
+	tag, err := sa.pool.Exec(ctx, `
+		WITH msg AS (
+			SELECT date_trunc('hour', m.created_at) AS bucket,
+				s.agent_id AS agent_id,
+				s.user_id AS user_id,
+				COUNT(*) AS messages,
+				COUNT(DISTINCT s.id) AS sessions,
+				COALESCE(SUM(m.tokens_input), 0) AS tin,
+				COALESCE(SUM(m.tokens_output), 0) AS tout,
+				COALESCE(SUM(m.tokens_direct), 0) AS tdirect,
+				COALESCE(SUM(m.model_calls), 0) AS calls,
+				COALESCE(SUM(m.duration_ms), 0) AS dur
+			FROM agent_messages m
+			JOIN agent_sessions s ON s.id = m.session_id
+			WHERE m.created_at >= $1
+			GROUP BY 1, 2, 3
+		),
+		sub AS (
+			SELECT date_trunc('hour', COALESCE(st.completed_at, st.created_at)) AS bucket,
+				s.agent_id AS agent_id,
+				s.user_id AS user_id,
+				COALESCE(SUM(st.tokens_input), 0) + COALESCE(SUM(st.tokens_output), 0) AS tsub
+			FROM subagent_tasks st
+			JOIN agent_sessions s ON s.id = st.parent_session_id
+			WHERE COALESCE(st.completed_at, st.created_at) >= $1
+			GROUP BY 1, 2, 3
+		),
+		price AS (
+			SELECT a.id AS agent_id,
+				COALESCE(mc.price_per_input_token, 0) AS pin,
+				COALESCE(mc.price_per_output_token, 0) AS pout
+			FROM agents a
+			LEFT JOIN model_configs mc ON mc.id = a.model_config_id
+		)
+		INSERT INTO agent_stats_hourly
+			(bucket_start, agent_id, user_id, sessions_count, messages_count,
+			 tokens_input, tokens_output, tokens_direct, tokens_subagent,
+			 model_calls, total_duration_ms, est_cost_usd)
 		SELECT
-			$1 as date,
-			s.agent_id,
-			s.user_id,
-			COUNT(DISTINCT s.id) as sessions_count,
-			COUNT(m.id) as messages_count,
-			COALESCE(SUM(m.tokens_input), 0) as tokens_input,
-			COALESCE(SUM(m.tokens_output), 0) as tokens_output
-		FROM agent_sessions s
-		LEFT JOIN agent_messages m ON m.session_id = s.id
-		WHERE s.created_at::date = $1::date
-		GROUP BY s.agent_id, s.user_id
-		ON CONFLICT (date, agent_id, user_id) DO UPDATE SET
+			b.bucket, b.agent_id, b.user_id,
+			COALESCE(m.sessions, 0), COALESCE(m.messages, 0),
+			COALESCE(m.tin, 0), COALESCE(m.tout, 0), COALESCE(m.tdirect, 0),
+			COALESCE(s.tsub, 0), COALESCE(m.calls, 0), COALESCE(m.dur, 0),
+			COALESCE(m.tin, 0) * p.pin + COALESCE(m.tout, 0) * p.pout
+		FROM (
+			SELECT bucket, agent_id, user_id FROM msg
+			UNION
+			SELECT bucket, agent_id, user_id FROM sub
+		) b
+		LEFT JOIN msg m USING (bucket, agent_id, user_id)
+		LEFT JOIN sub s USING (bucket, agent_id, user_id)
+		LEFT JOIN price p ON p.agent_id = b.agent_id
+		ON CONFLICT (bucket_start, agent_id, user_id) DO UPDATE SET
 			sessions_count = EXCLUDED.sessions_count,
 			messages_count = EXCLUDED.messages_count,
 			tokens_input = EXCLUDED.tokens_input,
-			tokens_output = EXCLUDED.tokens_output
-	`, yesterday)
-	return err
+			tokens_output = EXCLUDED.tokens_output,
+			tokens_direct = EXCLUDED.tokens_direct,
+			tokens_subagent = EXCLUDED.tokens_subagent,
+			model_calls = EXCLUDED.model_calls,
+			total_duration_ms = EXCLUDED.total_duration_ms,
+			est_cost_usd = EXCLUDED.est_cost_usd
+	`, since)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	return &RollupHourlyStatsResult{
+		BucketFrom: since.UTC().Truncate(time.Hour),
+		BucketTo:   now.Truncate(time.Hour),
+		Rows:       tag.RowsAffected(),
+	}, nil
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Home, LayoutDashboard, Database, Users, UserCircle, ClipboardList, ChevronLeft, ChevronRight, Bot, Brain, Wrench, Puzzle, X, Settings, Zap, Trash2 } from 'lucide-react'
+import { Home, LayoutDashboard, Database, Users, UserCircle, ClipboardList, ChevronLeft, ChevronRight, Bot, Brain, Wrench, Puzzle, X, Settings, Zap, Trash2, Activity } from 'lucide-react'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useAuth } from '../hooks/useAuth'
 
@@ -11,6 +11,7 @@ const ALL_NAV_ITEMS = [
   { to: '/members',    title: 'Members',     icon: <UserCircle size={16} />,         desc: 'Organization members and role management' },
   { to: '/groups',     title: 'Groups',      icon: <Users size={16} />,              desc: 'Permission groups for access control' },
   { to: '/audit',      title: 'Audit',       icon: <ClipboardList size={16} />,      desc: 'Audit log of actions across the organization' },
+  { to: '/agents/stats', title: 'Stats',       icon: <Activity size={16} />,         desc: 'AI agent usage statistics and cost estimates' },
   { to: '/trash',      title: 'Trash',       icon: <Trash2 size={16} />,             desc: 'Recently deleted items — restore or permanently delete' },
   { to: '/admin',      title: 'Admin',       icon: <Settings size={16} />,           desc: 'Instance-wide settings, users, and SSO configuration' },
 ]
@@ -39,6 +40,7 @@ export function Sidebar() {
   const NAV_ITEMS = useMemo(() =>
     ALL_NAV_ITEMS.filter(item => {
       if (item.to === '/audit') return user?.role === 'admin'
+      if (item.to === '/agents/stats') return user?.role === 'admin'
       if (item.to === '/admin') return isPlatformAdmin
       return true
     }),

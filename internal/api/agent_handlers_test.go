@@ -398,3 +398,71 @@ func createMCPServer(t *testing.T, srv *api.Server, token string) string {
 	json.NewDecoder(rec.Body).Decode(&resp)
 	return resp["id"].(string)
 }
+
+// P1 regression: max_subagents/max_subagent_turns persist via PUT and must
+// come back on both GET paths (list + get). Previously the read handlers
+// never selected the columns, so the edit form fell back to defaults.
+func TestAgentSubagentLimitsRoundTrip(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("agent-limits-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Agent Limits Org")
+	mcID := createModelConfig(t, srv, token)
+
+	body, _ := json.Marshal(map[string]any{
+		"name":            "Limits Agent",
+		"model_config_id": mcID,
+	})
+	req := httptest.NewRequest("POST", "/api/v1/agents", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create agent: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created map[string]any
+	json.NewDecoder(rec.Body).Decode(&created)
+	agentID, _ := created["id"].(string)
+
+	// Defaults come back even before any update (DB defaults 5/20).
+	get := func() map[string]any {
+		t.Helper()
+		r := httptest.NewRequest("GET", "/api/v1/agents/"+agentID, nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+		srv.ServeHTTP(rr, r)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("get agent: expected 200, got %d: %s", rr.Code, rr.Body.String())
+		}
+		var a map[string]any
+		json.NewDecoder(rr.Body).Decode(&a)
+		return a
+	}
+	if got := get(); got["max_subagents"] != float64(5) || got["max_subagent_turns"] != float64(20) {
+		t.Fatalf("expected defaults 5/20, got %v", got)
+	}
+
+	upd, _ := json.Marshal(map[string]any{"max_subagents": 3, "max_subagent_turns": 7})
+	ureq := httptest.NewRequest("PUT", "/api/v1/agents/"+agentID, strings.NewReader(string(upd)))
+	ureq.Header.Set("Content-Type", "application/json")
+	ureq.Header.Set("Authorization", "Bearer "+token)
+	urec := httptest.NewRecorder()
+	srv.ServeHTTP(urec, ureq)
+	if urec.Code != http.StatusOK {
+		t.Fatalf("update agent: expected 200, got %d: %s", urec.Code, urec.Body.String())
+	}
+
+	if got := get(); got["max_subagents"] != float64(3) || got["max_subagent_turns"] != float64(7) {
+		t.Fatalf("GET must return updated values, got %v", got)
+	}
+
+	lreq := httptest.NewRequest("GET", "/api/v1/agents", nil)
+	lreq.Header.Set("Authorization", "Bearer "+token)
+	lrec := httptest.NewRecorder()
+	srv.ServeHTTP(lrec, lreq)
+	var agents []map[string]any
+	json.NewDecoder(lrec.Body).Decode(&agents)
+	if len(agents) != 1 || agents[0]["max_subagents"] != float64(3) || agents[0]["max_subagent_turns"] != float64(7) {
+		t.Fatalf("LIST must return updated values, got %v", agents)
+	}
+}

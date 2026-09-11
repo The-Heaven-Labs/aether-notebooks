@@ -78,9 +78,13 @@ definitions:
         type: array
       auto_sync_groups:
         type: boolean
+      callback_url:
+        type: string
       client_id:
         type: string
       created_at:
+        type: string
+      default_role:
         type: string
       discovery_url:
         type: string
@@ -97,6 +101,8 @@ definitions:
       name:
         type: string
       provider_type:
+        type: string
+      provisioning_mode:
         type: string
       scope:
         type: string
@@ -160,6 +166,9 @@ definitions:
     type: object
   models.Agent:
     properties:
+      all_builtin_tools:
+        description: 'Deprecated: UI-only legacy field, no longer read by the engine.'
+        type: boolean
       created_at:
         type: string
       created_by:
@@ -217,6 +226,11 @@ definitions:
     type: object
   models.AgentSession:
     properties:
+      admin_mode:
+        description: |-
+          AdminMode is a per-session transient flag derived from the X-AETHER-Admin-Mode
+          header at session creation / WebSocket connection time. It is not persisted.
+        type: boolean
       agent_id:
         type: string
       created_at:
@@ -231,23 +245,6 @@ definitions:
         type: string
       title:
         type: string
-      user_id:
-        type: string
-    type: object
-  models.AgentStatsDaily:
-    properties:
-      agent_id:
-        type: string
-      date:
-        type: string
-      messages_count:
-        type: integer
-      sessions_count:
-        type: integer
-      tokens_input:
-        type: integer
-      tokens_output:
-        type: integer
       user_id:
         type: string
     type: object
@@ -1214,8 +1211,14 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/models.AgentStatsDaily'
+              type: object
             type: array
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "500":
           description: Internal Server Error
           schema:
@@ -1229,7 +1232,29 @@ paths:
       - agents
   /agents/stats:
     get:
-      description: Get usage statistics for all agents in the organization
+      description: Org-wide agent usage statistics from hourly rollups, with optional
+        filters
+      parameters:
+      - description: Start (RFC3339, default now-30d)
+        in: query
+        name: from
+        type: string
+      - description: End (RFC3339, default now)
+        in: query
+        name: to
+        type: string
+      - description: Filter by user
+        in: query
+        name: user_id
+        type: string
+      - description: Filter by agent
+        in: query
+        name: agent_id
+        type: string
+      - description: hour or day (default day)
+        in: query
+        name: granularity
+        type: string
       produces:
       - application/json
       responses:
@@ -1237,8 +1262,14 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/models.AgentStatsDaily'
+              type: object
             type: array
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "500":
           description: Internal Server Error
           schema:
@@ -1248,6 +1279,27 @@ paths:
       security:
       - BearerAuth: []
       summary: Get agent stats
+      tags:
+      - agents
+  /agents/stats/rollup:
+    post:
+      description: Synchronously roll up recent agent usage into hourly buckets (idempotent)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Roll up agent stats now
       tags:
       - agents
   /api/v1/admin/orgs:

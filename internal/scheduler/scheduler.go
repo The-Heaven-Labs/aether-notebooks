@@ -10,19 +10,36 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/robfig/cron/v3"
+	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/database"
 )
 
 type RunFunc func(ctx context.Context, notebookID string, params map[string]string) error
 
 type Scheduler struct {
-	db      *database.DB
-	runFunc RunFunc
-	stop    chan struct{}
+	db            *database.DB
+	runFunc       RunFunc
+	stop          chan struct{}
+	statsInterval time.Duration
 }
 
 func New(db *database.DB, runFunc RunFunc) *Scheduler {
 	return &Scheduler{db: db, runFunc: runFunc, stop: make(chan struct{})}
+}
+
+// SetStatsRollupInterval configures how often agent usage is rolled up into
+// hourly buckets. Non-positive means the 1h default. (Env parsing in
+// internal/config floors user input at 5m; the setter takes values as-is so
+// tests can use short intervals.)
+func (s *Scheduler) SetStatsRollupInterval(d time.Duration) {
+	s.statsInterval = d
+}
+
+func (s *Scheduler) rollupInterval() time.Duration {
+	if s.statsInterval <= 0 {
+		return time.Hour
+	}
+	return s.statsInterval
 }
 
 func (s *Scheduler) Start() {
@@ -36,6 +53,8 @@ func (s *Scheduler) Stop() {
 func (s *Scheduler) loop() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
+	rollupTicker := time.NewTicker(s.rollupInterval())
+	defer rollupTicker.Stop()
 
 	for {
 		select {
@@ -43,6 +62,8 @@ func (s *Scheduler) loop() {
 			return
 		case <-ticker.C:
 			s.tick()
+		case <-rollupTicker.C:
+			s.rollupStats()
 		}
 	}
 }
@@ -55,7 +76,6 @@ func (s *Scheduler) tick() {
 		lockID := int64(989899)
 		_, err := s.db.Pool.Exec(ctx, "SELECT pg_advisory_lock($1)", lockID)
 		if err == nil {
-			s.runAgentStatsRollup(ctx)
 			s.purgeTrash(ctx)
 			s.purgeAuditLogs(ctx)
 			s.db.Pool.Exec(ctx, "SELECT pg_advisory_unlock($1)", lockID)
@@ -103,30 +123,20 @@ func NextRun(cronExpr string) (time.Time, error) {
 	return schedule.Next(time.Now()), nil
 }
 
-func (s *Scheduler) runAgentStatsRollup(ctx context.Context) {
-	yesterday := time.Now().AddDate(0, 0, -1).Truncate(24 * time.Hour)
+func (s *Scheduler) rollupStats() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	// Two-interval overlap: covers the previous completed hour and the current
+	// in-progress hour, healing a missed tick. Non-blocking lock so only one
+	// pod rolls up at a time.
+	var locked bool
+	if err := s.db.Pool.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", int64(989900)).Scan(&locked); err != nil || !locked {
+		return
+	}
+	defer s.db.Pool.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", int64(989900))
 
-	_, err := s.db.Pool.Exec(ctx, `
-		INSERT INTO agent_stats_daily (date, agent_id, user_id, sessions_count, messages_count, tokens_input, tokens_output)
-		SELECT
-			$1 as date,
-			s.agent_id,
-			s.user_id,
-			COUNT(DISTINCT s.id) as sessions_count,
-			COUNT(m.id) as messages_count,
-			COALESCE(SUM(m.tokens_input), 0) as tokens_input,
-			COALESCE(SUM(m.tokens_output), 0) as tokens_output
-		FROM agent_sessions s
-		LEFT JOIN agent_messages m ON m.session_id = s.id
-		WHERE s.created_at::date = $1::date
-		GROUP BY s.agent_id, s.user_id
-		ON CONFLICT (date, agent_id, user_id) DO UPDATE SET
-			sessions_count = EXCLUDED.sessions_count,
-			messages_count = EXCLUDED.messages_count,
-			tokens_input = EXCLUDED.tokens_input,
-			tokens_output = EXCLUDED.tokens_output
-	`, yesterday)
-	if err != nil {
+	since := time.Now().Add(-2 * s.rollupInterval())
+	if _, err := agent.NewStatsAggregator(s.db.Pool).RollupHourlyStats(ctx, since); err != nil {
 		slog.Warn("scheduler: agent stats rollup", "error", err)
 	}
 }

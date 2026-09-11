@@ -3,15 +3,18 @@ import { ChevronRight, ChevronDown, Folder as FolderIcon, FolderOpen } from 'luc
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Folder, FolderContents } from '../types'
+import { useFolderActions, type FolderActionKey } from './FolderActions'
 
 interface FolderTreeProps {
   onSelectFolder: (folderId: string | null) => void
   selectedFolderId: string | null
   onMoveFolder?: (folder: Folder) => void
   onPermissionsFolder?: (folder: Folder) => void
+  onRenameFolder?: (folder: Folder) => void
+  onDeleteFolder?: (folder: Folder) => void
 }
 
-export function FolderTree({ onSelectFolder, selectedFolderId, onMoveFolder, onPermissionsFolder }: FolderTreeProps) {
+export function FolderTree({ onSelectFolder, selectedFolderId, onMoveFolder, onPermissionsFolder, onRenameFolder, onDeleteFolder }: FolderTreeProps) {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     try {
       const saved = localStorage.getItem('aether_tree_expanded')
@@ -195,6 +198,8 @@ export function FolderTree({ onSelectFolder, selectedFolderId, onMoveFolder, onP
               depth={0}
               onMoveFolder={onMoveFolder}
               onPermissionsFolder={onPermissionsFolder}
+              onRenameFolder={onRenameFolder}
+              onDeleteFolder={onDeleteFolder}
               openMenuId={openMenuId}
               setOpenMenuId={setOpenMenuId}
               menuPos={menuPos}
@@ -230,6 +235,8 @@ export function FolderTree({ onSelectFolder, selectedFolderId, onMoveFolder, onP
               depth={0}
               onMoveFolder={onMoveFolder}
               onPermissionsFolder={onPermissionsFolder}
+              onRenameFolder={onRenameFolder}
+              onDeleteFolder={onDeleteFolder}
               openMenuId={openMenuId}
               setOpenMenuId={setOpenMenuId}
               menuPos={menuPos}
@@ -253,18 +260,28 @@ interface TreeNodeComponentProps {
   depth: number
   onMoveFolder?: (folder: Folder) => void
   onPermissionsFolder?: (folder: Folder) => void
+  onRenameFolder?: (folder: Folder) => void
+  onDeleteFolder?: (folder: Folder) => void
   openMenuId: string | null
   setOpenMenuId: (id: string | null) => void
   menuPos: { top: number; left: number } | null
   setMenuPos: (pos: { top: number; left: number } | null) => void
 }
 
-function TreeNodeComponent({ folder, children, childrenMap, expanded, onToggle, onSelect, selectedFolderId, depth, onMoveFolder, onPermissionsFolder, openMenuId, setOpenMenuId, menuPos, setMenuPos }: TreeNodeComponentProps) {
+function TreeNodeComponent({ folder, children, childrenMap, expanded, onToggle, onSelect, selectedFolderId, depth, onMoveFolder, onPermissionsFolder, onRenameFolder, onDeleteFolder, openMenuId, setOpenMenuId, menuPos, setMenuPos }: TreeNodeComponentProps) {
   const hasChildren = children.length > 0
   const isExpanded = expanded.has(folder.id)
   const isSelected = selectedFolderId === folder.id
   const isMenuOpen = openMenuId === folder.id
   const [isHovered, setIsHovered] = useState(false)
+  const { actions } = useFolderActions(folder as { can_edit?: boolean; can_delete?: boolean; can_share?: boolean })
+
+  const handlers: Partial<Record<FolderActionKey, (folder: Folder) => void>> = {
+    rename: onRenameFolder,
+    move: onMoveFolder,
+    permissions: onPermissionsFolder,
+    delete: onDeleteFolder,
+  }
 
   const toggleMenu = (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -277,15 +294,9 @@ function TreeNodeComponent({ folder, children, childrenMap, expanded, onToggle, 
     }
   }
 
-  const handleMoveFolder = (e: React.MouseEvent) => {
+  const handleAction = (key: FolderActionKey) => (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (onMoveFolder) { onMoveFolder(folder) }
-    setOpenMenuId(null)
-  }
-
-  const handlePermissionsFolder = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (onPermissionsFolder) { onPermissionsFolder(folder) }
+    handlers[key]?.(folder)
     setOpenMenuId(null)
   }
 
@@ -356,18 +367,19 @@ function TreeNodeComponent({ folder, children, childrenMap, expanded, onToggle, 
             zIndex: 1000,
           }}
         >
-          {onMoveFolder && (
+          {actions.filter((a) => handlers[a.key]).map((a) => (
             <button
-              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}
-              onClick={handleMoveFolder}
-            >Move to…</button>
-          )}
-          {onPermissionsFolder && (
-            <button
-              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}
-              onClick={handlePermissionsFolder}
-            >Permissions</button>
-          )}
+              key={a.key}
+              disabled={a.disabled}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left', padding: '7px 12px', background: 'none', border: 'none',
+                cursor: a.disabled ? 'default' : 'pointer', fontSize: 13,
+                color: a.danger ? 'var(--error)' : 'var(--text-primary)',
+                opacity: a.disabled ? 0.4 : 1,
+              }}
+              onClick={a.disabled ? undefined : handleAction(a.key)}
+            >{a.label}</button>
+          ))}
         </div>
       )}
       {isExpanded && hasChildren && children.map(child => (
@@ -383,6 +395,8 @@ function TreeNodeComponent({ folder, children, childrenMap, expanded, onToggle, 
           depth={depth + 1}
           onMoveFolder={onMoveFolder}
           onPermissionsFolder={onPermissionsFolder}
+          onRenameFolder={onRenameFolder}
+          onDeleteFolder={onDeleteFolder}
           openMenuId={openMenuId}
           setOpenMenuId={setOpenMenuId}
           menuPos={menuPos}
