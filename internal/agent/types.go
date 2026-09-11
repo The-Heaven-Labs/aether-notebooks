@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -50,6 +49,10 @@ type EngineEvent struct {
 	Question    string          `json:"question,omitempty"`
 	Options     any             `json:"options,omitempty"`
 	AllowCustom bool            `json:"allow_custom,omitempty"`
+	// Attempt/MaxAttempts/Error carry llm_retry progress (engine.go retry loop).
+	Attempt     int    `json:"attempt,omitempty"`
+	MaxAttempts int    `json:"max_attempts,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 
 type QuestionResult struct {
@@ -205,7 +208,8 @@ type ToolDef struct {
 		Description string `json:"description"`
 		Parameters  any    `json:"parameters"`
 	} `json:"function"`
-	Timeout         time.Duration
+	// NOTE: there is deliberately no timeout field. Tool timeouts are explicit
+	// per-call arguments (e.g. run_cell's timeout_ms), not registry defaults.
 	Handler         ToolHandler `json:"-"`
 	ConfirmRequired bool        `json:"-"`
 }
@@ -261,9 +265,6 @@ func NewToolRegistry() *ToolRegistry {
 }
 
 func (r *ToolRegistry) Register(def *ToolDef) {
-	if def.Timeout == 0 {
-		def.Timeout = 30 * time.Second
-	}
 	if def.Type == "" {
 		def.Type = "function"
 	}

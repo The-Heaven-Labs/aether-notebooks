@@ -161,6 +161,45 @@ func (s *SessionStore) GetMessages(ctx context.Context, sessionID string) ([]mod
 	return messages, nil
 }
 
+// UpdateMessageToolCall records a tool execution result on the matching tool
+// call of an already-persisted assistant message. This makes reconnect_sync
+// self-contained: the frontend can render completed tools without joining the
+// separate role='tool' result rows.
+func (s *SessionStore) UpdateMessageToolCall(ctx context.Context, messageID, callID string, result any, errMsg string, durationMs int) error {
+	var toolCallsJSON []byte
+	err := s.pool.QueryRow(ctx, `SELECT tool_calls FROM agent_messages WHERE id = $1`, messageID).Scan(&toolCallsJSON)
+	if err != nil {
+		return fmt.Errorf("load message tool calls: %w", err)
+	}
+	var calls []models.ToolCall
+	if len(toolCallsJSON) > 0 {
+		if err := json.Unmarshal(toolCallsJSON, &calls); err != nil {
+			return fmt.Errorf("decode tool calls: %w", err)
+		}
+	}
+	found := false
+	for i := range calls {
+		if calls[i].ID == callID {
+			calls[i].Result = result
+			if errMsg != "" {
+				calls[i].Error = &errMsg
+			}
+			calls[i].DurationMs = durationMs
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("tool call %s not found in message %s", callID, messageID)
+	}
+	updated, err := json.Marshal(calls)
+	if err != nil {
+		return fmt.Errorf("encode tool calls: %w", err)
+	}
+	_, err = s.pool.Exec(ctx, `UPDATE agent_messages SET tool_calls = $1 WHERE id = $2`, updated, messageID)
+	return err
+}
+
 func (s *SessionStore) GetMessageCount(ctx context.Context, sessionID string) (int, error) {
 	var count int
 	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM agent_messages WHERE session_id = $1`, sessionID).Scan(&count)

@@ -124,6 +124,8 @@ func TestAgentCreateCellWithPosition(t *testing.T) {
 		"type":        "code",
 		"source":      "SELECT 3",
 		"position":    1,
+		"title":       "Third cell",
+		"description": "Test cell at position 1",
 	})
 	result, err := createCellHandler(args, ctx)
 	if err != nil {
@@ -260,6 +262,8 @@ func TestAgentCreateCellWithConnectorID(t *testing.T) {
 		"type":         "code",
 		"source":       "SELECT 1",
 		"connector_id": connID,
+		"title":        "Connector cell",
+		"description":  "Test cell with connector",
 	})
 	result, err := createCellHandler(args, ctx)
 	if err != nil {
@@ -312,6 +316,8 @@ func TestAgentUpdateCellConnectorID(t *testing.T) {
 		"notebook_id": nbID,
 		"type":        "code",
 		"source":      "SELECT 1",
+		"title":       "Updatable cell",
+		"description": "Test cell for connector update",
 	})
 	createResult, err := createCellDef.Handler(createArgs, ctx)
 	if err != nil {
@@ -501,6 +507,8 @@ func TestAgentCreateCellAtEnd(t *testing.T) {
 		"notebook_id": nbID,
 		"type":        "code",
 		"source":      "SELECT 2",
+		"title":       "Second cell",
+		"description": "Test cell at end",
 	})
 	result, err := createCellHandler(args, ctx)
 	if err != nil {
@@ -533,6 +541,8 @@ func TestAgentMoveCell(t *testing.T) {
 			"type":        "code",
 			"source":      "SELECT " + fmt.Sprint(i),
 			"position":    i,
+			"title":       "Cell " + fmt.Sprint(i),
+			"description": "Test cell",
 		})
 		result, err := createCellHandler(args, ctx)
 		if err != nil {
@@ -1145,4 +1155,397 @@ func TestSeedBuiltinToolsIncludesParameterTools(t *testing.T) {
 		t.Fatalf("seed is not idempotent: %d before, %d after", countBefore, countAfter)
 	}
 	t.Logf("SeedBuiltinTools includes parameter tools and is idempotent (user %s)", userID)
+}
+
+func createTestPGConnector(t *testing.T, db *database.DB, orgID, userID string) (string, []byte) {
+	t.Helper()
+	connID := uuid.New().String()
+	now := time.Now()
+	cfg := models.ConnectorConfig{Host: "localhost", Port: 5432, User: "aether", Password: "aether_dev", Database: "aether"}
+	cfgJSON, _ := json.Marshal(cfg)
+	masterKey := crypto.DeriveKey("test-master-key-for-tests-only!")
+	configEncrypted, err := crypto.Encrypt(cfgJSON, masterKey)
+	if err != nil {
+		t.Fatalf("encrypt config: %v", err)
+	}
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted, created_by, created_at, updated_at)
+		VALUES ($1, $2, 'Test PG', 'postgres', $3, $4, $5, $5)
+	`, connID, orgID, configEncrypted, userID, now)
+	if err != nil {
+		t.Fatalf("create connector: %v", err)
+	}
+	return connID, masterKey
+}
+
+func createTestCellRow(t *testing.T, db *database.DB, nbID, connID, source string) string {
+	t.Helper()
+	cellID := uuid.New().String()
+	now := time.Now()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO cells (id, notebook_id, type, language, connector_id, source, position, "limit", created_at, updated_at)
+		VALUES ($1, $2, 'code', 'sql', $3, $4, 0, 1000, $5, $5)
+	`, cellID, nbID, connID, source, now)
+	if err != nil {
+		t.Fatalf("create cell: %v", err)
+	}
+	return cellID
+}
+
+func TestAgentRunCellReturnsInlineResults(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	connID, masterKey := createTestPGConnector(t, db, orgID, userID)
+	cellID := createTestCellRow(t, db, nbID, connID, "SELECT 1 AS x, 2 AS y")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	runCellDef, _ := reg.Get("run_cell")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	ctx.MasterKey = masterKey
+
+	args, _ := json.Marshal(map[string]any{"cell_id": cellID})
+	result, err := runCellDef.Handler(args, ctx)
+	if err != nil {
+		t.Fatalf("run cell: %v", err)
+	}
+	m := result.(map[string]any)
+	if m["status"] != "completed" {
+		t.Fatalf("expected completed, got %v", m)
+	}
+	cols, ok := m["column_names"].([]string)
+	if !ok || len(cols) != 2 || cols[0] != "x" || cols[1] != "y" {
+		t.Fatalf("bad column_names: %v", m["column_names"])
+	}
+	rows, ok := m["data"].([][]interface{})
+	if !ok || len(rows) != 1 {
+		t.Fatalf("bad data preview: %v", m["data"])
+	}
+	if truncated, _ := m["truncated"].(bool); truncated {
+		t.Fatalf("single row must not be truncated: %v", m)
+	}
+}
+
+func TestAgentRunCellTruncatesInlineResults(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	connID, masterKey := createTestPGConnector(t, db, orgID, userID)
+	cellID := createTestCellRow(t, db, nbID, connID, "SELECT generate_series(1,60) AS n")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	runCellDef, _ := reg.Get("run_cell")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	ctx.MasterKey = masterKey
+
+	args, _ := json.Marshal(map[string]any{"cell_id": cellID})
+	result, err := runCellDef.Handler(args, ctx)
+	if err != nil {
+		t.Fatalf("run cell: %v", err)
+	}
+	m := result.(map[string]any)
+	if m["rows"] != 60 {
+		t.Fatalf("expected rows=60, got %v", m["rows"])
+	}
+	if data, ok := m["data"].([][]interface{}); !ok || len(data) != 50 {
+		t.Fatalf("expected 50-row preview, got %v rows", len(data))
+	}
+	if truncated, _ := m["truncated"].(bool); !truncated {
+		t.Fatal("expected truncated=true")
+	}
+}
+
+func TestAgentRunCellSkippedReturnsPreview(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	connID, masterKey := createTestPGConnector(t, db, orgID, userID)
+	cellID := createTestCellRow(t, db, nbID, connID, "SELECT 42 AS answer")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	runCellDef, _ := reg.Get("run_cell")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	ctx.MasterKey = masterKey
+
+	args, _ := json.Marshal(map[string]any{"cell_id": cellID})
+	if _, err := runCellDef.Handler(args, ctx); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	result, err := runCellDef.Handler(args, ctx)
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	m := result.(map[string]any)
+	if m["status"] != "skipped" {
+		t.Fatalf("expected skipped, got %v", m)
+	}
+	cols, ok := m["column_names"].([]string)
+	if !ok || len(cols) != 1 || cols[0] != "answer" {
+		t.Fatalf("skipped path missing preview columns: %v", m)
+	}
+	if m["data"] == nil {
+		t.Fatalf("skipped path missing data preview: %v", m)
+	}
+}
+
+func TestAgentRunCellTimeout(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	connID, masterKey := createTestPGConnector(t, db, orgID, userID)
+	cellID := createTestCellRow(t, db, nbID, connID, "SELECT pg_sleep(2)")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	runCellDef, _ := reg.Get("run_cell")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	ctx.MasterKey = masterKey
+
+	start := time.Now()
+	args, _ := json.Marshal(map[string]any{"cell_id": cellID, "timeout_ms": 300})
+	result, err := runCellDef.Handler(args, ctx)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("timeout must be a result, not a Go error: %v", err)
+	}
+	m := result.(map[string]any)
+	if m["status"] != "error" {
+		t.Fatalf("expected error status, got %v", m)
+	}
+	if timedOut, _ := m["timed_out"].(bool); !timedOut {
+		t.Fatalf("expected timed_out=true, got %v", m)
+	}
+	if elapsed > 90*time.Second {
+		t.Fatalf("timeout did not bound execution: %v", elapsed)
+	}
+
+	// Cell shows the error output.
+	var outputs []byte
+	if err := db.Pool.QueryRow(context.Background(), `SELECT outputs FROM cells WHERE id=$1`, cellID).Scan(&outputs); err != nil {
+		t.Fatalf("query outputs: %v", err)
+	}
+	var parsed []map[string]any
+	if err := json.Unmarshal(outputs, &parsed); err != nil || len(parsed) == 0 || parsed[0]["type"] != "error" {
+		t.Fatalf("expected persisted error output, got %s", string(outputs))
+	}
+}
+
+func TestAgentCreateCellRequiresTitleAndDescription(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	createCellDef, _ := reg.Get("create_cell")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+
+	for name, extra := range map[string]map[string]any{
+		"missing title":       {"description": "d"},
+		"missing description": {"title": "t"},
+		"blank title":         {"title": "   ", "description": "d"},
+		"blank description":   {"title": "t", "description": "  "},
+	} {
+		base := map[string]any{"notebook_id": nbID, "type": "code", "source": "SELECT 1"}
+		for k, v := range extra {
+			base[k] = v
+		}
+		args, _ := json.Marshal(base)
+		if _, err := createCellDef.Handler(args, ctx); err == nil {
+			t.Fatalf("%s: expected tool error", name)
+		}
+	}
+	var count int
+	if err := db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM cells WHERE notebook_id=$1`, nbID).Scan(&count); err != nil {
+		t.Fatalf("count cells: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("rejected creates must not INSERT, found %d cells", count)
+	}
+}
+
+func TestAgentCreateCellPersistsTitleDescription(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	createCellDef, _ := reg.Get("create_cell")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	var broadcasts []map[string]any
+	ctx.BroadcastFunc = func(notebookID string, msg any) {
+		if m, ok := msg.(map[string]any); ok {
+			broadcasts = append(broadcasts, m)
+		}
+	}
+
+	args, _ := json.Marshal(map[string]any{
+		"notebook_id": nbID, "type": "code", "source": "SELECT 1",
+		"title": "Daily orders", "description": "GMV by region",
+	})
+	result, err := createCellDef.Handler(args, ctx)
+	if err != nil {
+		t.Fatalf("create cell: %v", err)
+	}
+	cellID := result.(map[string]any)["cell_id"].(string)
+
+	var title, desc string
+	if err := db.Pool.QueryRow(context.Background(), `SELECT title, description FROM cells WHERE id=$1`, cellID).Scan(&title, &desc); err != nil {
+		t.Fatalf("query cell: %v", err)
+	}
+	if title != "Daily orders" || desc != "GMV by region" {
+		t.Fatalf("title/description not persisted: %q / %q", title, desc)
+	}
+	if len(broadcasts) != 1 {
+		t.Fatalf("expected 1 broadcast, got %d", len(broadcasts))
+	}
+	cell, _ := broadcasts[0]["cell"].(map[string]any)
+	if cell["title"] != "Daily orders" || cell["description"] != "GMV by region" {
+		t.Fatalf("broadcast missing title/description: %v", cell)
+	}
+}
+
+func TestAgentCreateCellRunTrue(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	connID, masterKey := createTestPGConnector(t, db, orgID, userID)
+	_, err := db.Pool.Exec(context.Background(), `UPDATE notebooks SET connector_id=$1 WHERE id=$2`, connID, nbID)
+	if err != nil {
+		t.Fatalf("set notebook connector: %v", err)
+	}
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	createCellDef, _ := reg.Get("create_cell")
+	var events []agent.EngineEvent
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	ctx.MasterKey = masterKey
+	ctx.Events = &events
+	var broadcasts []map[string]any
+	ctx.BroadcastFunc = func(notebookID string, msg any) {
+		if m, ok := msg.(map[string]any); ok {
+			broadcasts = append(broadcasts, m)
+		}
+	}
+
+	args, _ := json.Marshal(map[string]any{
+		"notebook_id": nbID, "type": "code", "source": "SELECT 7 AS lucky",
+		"title": "Lucky", "description": "inline run test", "run": true,
+	})
+	result, err := createCellDef.Handler(args, ctx)
+	if err != nil {
+		t.Fatalf("create+run: %v", err)
+	}
+	m := result.(map[string]any)
+	if m["run_status"] != "completed" {
+		t.Fatalf("expected run_status=completed, got %v", m)
+	}
+	if _, ok := m["column_names"]; !ok {
+		t.Fatalf("merged result missing inline preview: %v", m)
+	}
+	cellID := m["cell_id"].(string)
+
+	// Outputs persisted.
+	var outputs []byte
+	if err := db.Pool.QueryRow(context.Background(), `SELECT outputs FROM cells WHERE id=$1`, cellID).Scan(&outputs); err != nil {
+		t.Fatalf("query outputs: %v", err)
+	}
+	if string(outputs) == "null" || string(outputs) == "[]" || len(outputs) == 0 {
+		t.Fatalf("expected persisted outputs, got %s", string(outputs))
+	}
+
+	// Lifecycle events: cell_created then cell_output.
+	var created, output bool
+	for _, e := range events {
+		if e.Type == "cell_created" {
+			created = true
+		}
+		if e.Type == "cell_output" && created {
+			output = true
+		}
+	}
+	if !created || !output {
+		t.Fatalf("expected cell_created then cell_output events, got %+v", events)
+	}
+	var sawCreating, sawOutput bool
+	for _, b := range broadcasts {
+		if b["type"] == "cell_executing" {
+			sawCreating = true
+		}
+		if b["type"] == "cell_output" {
+			sawOutput = true
+		}
+	}
+	if !sawCreating || !sawOutput {
+		t.Fatalf("expected cell_executing + cell_output broadcasts, got %v", broadcasts)
+	}
+}
+
+func TestAgentCreateCellRunTrueTextCellFails(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	createCellDef, _ := reg.Get("create_cell")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+
+	args, _ := json.Marshal(map[string]any{
+		"notebook_id": nbID, "type": "text", "source": "# hi",
+		"title": "Note", "description": "doc", "run": true,
+	})
+	if _, err := createCellDef.Handler(args, ctx); err == nil {
+		t.Fatal("expected hard error for run=true on text cell")
+	}
+	var count int
+	if err := db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM cells WHERE notebook_id=$1`, nbID).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Fatal("text run=true must fail before INSERT")
+	}
+}
+
+func TestAgentCreateCellRunTrueFailureKeepsCell(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	connID, masterKey := createTestPGConnector(t, db, orgID, userID)
+	_, err := db.Pool.Exec(context.Background(), `UPDATE notebooks SET connector_id=$1 WHERE id=$2`, connID, nbID)
+	if err != nil {
+		t.Fatalf("set notebook connector: %v", err)
+	}
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	createCellDef, _ := reg.Get("create_cell")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	ctx.MasterKey = masterKey
+
+	args, _ := json.Marshal(map[string]any{
+		"notebook_id": nbID, "type": "code", "source": "SELECT * FROM nonexistent_table_xyz",
+		"title": "Broken", "description": "bad query", "run": true,
+	})
+	result, err := createCellDef.Handler(args, ctx)
+	if err != nil {
+		t.Fatalf("execution failure must not fail the create: %v", err)
+	}
+	m := result.(map[string]any)
+	if m["run_status"] != "error" {
+		t.Fatalf("expected run_status=error, got %v", m)
+	}
+	if _, ok := m["error"]; !ok {
+		t.Fatalf("expected error detail, got %v", m)
+	}
+	cellID := m["cell_id"].(string)
+	var count int
+	if err := db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM cells WHERE id=$1`, cellID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("cell must still exist, count=%d err=%v", count, err)
+	}
 }

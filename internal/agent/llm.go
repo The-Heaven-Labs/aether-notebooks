@@ -155,11 +155,17 @@ func NewLLMClient(baseURL, model string, apiKey []byte, defaultParams map[string
 		model:         model,
 		apiKey:        apiKey,
 		defaultParams: defaultParams,
-		httpClient: &http.Client{
-			Timeout: 120 * time.Second,
-		},
+		// No blanket http.Client.Timeout: these are non-streaming calls whose
+		// full generation (queue + reasoning + body) routinely exceeds a small
+		// cap. Timeouts are applied per-request below instead.
+		httpClient: &http.Client{},
 	}
 }
+
+// llmRequestTimeout bounds a full non-streaming generation. It must cover
+// queue time plus the entire response body — not a safeguard against slow
+// models, just against hung connections.
+const llmRequestTimeout = 10 * time.Minute
 
 func (c *LLMClient) Chat(ctx context.Context, messages []ChatMessage, tools []OpenAITool, masterKey []byte) (*ChatResponse, error) {
 	extra := make(map[string]any)
@@ -188,6 +194,11 @@ func (c *LLMClient) Chat(ctx context.Context, messages []ChatMessage, tools []Op
 	if err != nil {
 		return nil, fmt.Errorf("decrypt api key: %w", err)
 	}
+
+	// Bound the whole call (retries included) while still honoring the
+	// caller's cancellation.
+	ctx, cancel := context.WithTimeout(ctx, llmRequestTimeout)
+	defer cancel()
 
 	const maxRetries = 2
 	const baseDelay = 500 * time.Millisecond
