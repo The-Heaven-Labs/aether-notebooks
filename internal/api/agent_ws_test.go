@@ -1,11 +1,13 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -357,5 +359,230 @@ func TestAgentWSReconnectReplaysBuffer(t *testing.T) {
 	msgs, _ := syncMsg["messages"].([]any)
 	if len(msgs) == 0 {
 		t.Fatalf("reconnect_sync must return persisted history, got %v", syncMsg)
+	}
+}
+
+func mockLLMWithCapture(t *testing.T, bodies []string, captured *[]map[string]any) *httptest.Server {
+	t.Helper()
+	var n int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var reqBody map[string]any
+		json.NewDecoder(r.Body).Decode(&reqBody)
+		*captured = append(*captured, reqBody)
+		i := n
+		if i >= len(bodies) {
+			i = len(bodies) - 1
+		}
+		n++
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, bodies[i])
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func builtinToolID(t *testing.T, srv *api.Server, email, handler string) string {
+	t.Helper()
+	var orgID string
+	err := srv.DB().Pool.QueryRow(context.Background(),
+		`SELECT org_id FROM org_members WHERE user_id = (SELECT id FROM users WHERE email=$1)`, email).Scan(&orgID)
+	if err != nil {
+		t.Fatalf("lookup org: %v", err)
+	}
+	var toolID string
+	err = srv.DB().Pool.QueryRow(context.Background(),
+		`SELECT id FROM tools WHERE org_id=$1 AND config->>'handler_name'=$2`, orgID, handler).Scan(&toolID)
+	if err != nil {
+		t.Fatalf("lookup tool %s: %v", handler, err)
+	}
+	return toolID
+}
+
+func createAgentWithTools(t *testing.T, srv *api.Server, token, modelConfigID string, toolIDs []string) string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"name":            "Steer Agent",
+		"model_config_id": modelConfigID,
+		"description":     "steering test agent",
+		"tool_ids":        toolIDs,
+	})
+	req := httptest.NewRequest("POST", "/api/v1/agents", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != 201 {
+		t.Fatalf("createAgent failed: %d %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(rec.Body).Decode(&resp)
+	id, ok := resp["id"].(string)
+	if !ok {
+		t.Fatalf("createAgent returned no id: %v", resp)
+	}
+	return id
+}
+
+// wsCollector reads every message on conn in the background so tests can wait
+// for specific types without splitting the stream across readers.
+type wsCollector struct {
+	t    *testing.T
+	conn *websocket.Conn
+	mu   sync.Mutex
+	msgs []map[string]any
+}
+
+func collectWS(t *testing.T, conn *websocket.Conn) *wsCollector {
+	t.Helper()
+	c := &wsCollector{t: t, conn: conn}
+	go func() {
+		for {
+			_, data, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var m map[string]any
+			if err := json.Unmarshal(data, &m); err != nil {
+				continue
+			}
+			c.mu.Lock()
+			c.msgs = append(c.msgs, m)
+			c.mu.Unlock()
+		}
+	}()
+	return c
+}
+
+func (c *wsCollector) waitFor(typ string) map[string]any {
+	c.t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		for _, m := range c.msgs {
+			if m["type"] == typ {
+				c.mu.Unlock()
+				return m
+			}
+		}
+		c.mu.Unlock()
+		time.Sleep(50 * time.Millisecond)
+	}
+	c.t.Fatalf("timed out waiting for %q", typ)
+	return nil
+}
+
+func (c *wsCollector) count(typ string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, m := range c.msgs {
+		if m["type"] == typ {
+			n++
+		}
+	}
+	return n
+}
+
+// A message sent while a turn is blocked must be steered into the running
+// turn (steering_accepted + steering event, folded into the next LLM call) —
+// never silently dropped, and never run as a second concurrent turn.
+func TestAgentWSSteeringAcceptedWhileBusy(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	questionBody := `{"id":"x","model":"gpt-4","choices":[{"message":{"tool_calls":[{"id":"call-q1","type":"function","function":{"name":"ask_question","arguments":"{\"question\":\"pick one\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`
+	finalBody := `{"id":"x","model":"gpt-4","choices":[{"message":{"content":"steered done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":60,"completion_tokens":5,"total_tokens":65}}`
+	var captured []map[string]any
+	llm := mockLLMWithCapture(t, []string{questionBody, finalBody}, &captured)
+	defer llm.Close()
+
+	email := fmt.Sprintf("ws-steer-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "WS Steer Org")
+	nbID := createNotebook(t, srv, token, "WS Steer NB")
+	mcID := createModelConfigWithURL(t, srv, token, llm.URL)
+	askID := builtinToolID(t, srv, email, "ask_question")
+	agentID := createAgentWithTools(t, srv, token, mcID, []string{askID})
+	sessionID := createAgentSession(t, srv, token, agentID, nbID)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/ws/agents/" + sessionID + "?token=" + token
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial agent ws: %v", err)
+	}
+	defer conn.Close()
+	col := collectWS(t, conn)
+
+	if err := conn.WriteJSON(map[string]string{"type": "message", "content": "start"}); err != nil {
+		t.Fatalf("write message: %v", err)
+	}
+	// Wait until the turn blocks on the question dialog.
+	if q := col.waitFor("question"); q["question"] == nil {
+		t.Fatalf("expected question event, got %v", q)
+	}
+
+	// Steer while busy: must be accepted, not dropped.
+	if err := conn.WriteJSON(map[string]string{"type": "message", "content": "actually pick blue"}); err != nil {
+		t.Fatalf("write steer: %v", err)
+	}
+	col.waitFor("steering_accepted")
+
+	// Answer the question so the turn completes.
+	if err := conn.WriteJSON(map[string]string{"type": "question_answer", "answer": "blue"}); err != nil {
+		t.Fatalf("write answer: %v", err)
+	}
+	doneMsg := col.waitFor("done")
+	data, _ := doneMsg["data"].(map[string]any)
+	if got, _ := data["content"].(string); got != "steered done" {
+		t.Fatalf("unexpected done content: %v", doneMsg)
+	}
+
+	// Exactly 2 LLM calls = one turn: no second concurrent turn ran, and the
+	// steered message reached the model's next call.
+	if len(captured) != 2 {
+		t.Fatalf("expected exactly 2 LLM calls (one turn), got %d", len(captured))
+	}
+	msgs, _ := captured[1]["messages"].([]any)
+	var sawSteer bool
+	for _, m := range msgs {
+		mm, _ := m.(map[string]any)
+		if mm["role"] == "user" && mm["content"] == "actually pick blue" {
+			sawSteer = true
+		}
+	}
+	if !sawSteer {
+		t.Fatalf("second LLM call missing steered message: %v", captured[1]["messages"])
+	}
+
+	// The steering event must reach the transcript stream.
+	deadline := time.Now().Add(5 * time.Second)
+	sawSteeringEvent := false
+	for time.Now().Before(deadline) {
+		col.mu.Lock()
+		for _, m := range col.msgs {
+			if m["type"] == "steering" && m["content"] == "actually pick blue" {
+				sawSteeringEvent = true
+				break
+			}
+		}
+		col.mu.Unlock()
+		if sawSteeringEvent {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !sawSteeringEvent {
+		t.Fatal("expected steering stream event with the steered content")
+	}
+	if n := col.count("question"); n != 1 {
+		t.Fatalf("expected exactly 1 question (single turn), got %d", n)
+	}
+
+	var count int
+	err = srv.DB().Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM agent_messages WHERE session_id=$1 AND role='user' AND content='actually pick blue'`,
+		sessionID).Scan(&count)
+	if err != nil || count != 1 {
+		t.Fatalf("steered message persisted != once: count=%d err=%v", count, err)
 	}
 }

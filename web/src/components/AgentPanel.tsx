@@ -6,7 +6,7 @@ import rehypeHighlight from 'rehype-highlight'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, getToken } from '../api/client'
 import type { Agent, AgentTaskItem, ModelConfig, TokenBreakdown, WSMessage } from '../types/agent'
-import { mapServerMessagesToChat, applyToolResult, oldestPendingToolAgeMs } from '../utils/agentTranscript'
+import { mapServerMessagesToChat, applyToolResult, oldestPendingToolAgeMs, applySteeringMessage } from '../utils/agentTranscript'
 import { AgentMessageImages } from './AgentMessageImages'
 import { PanelHeader } from './PanelHeader'
 import { SessionHistory } from './SessionHistory'
@@ -406,6 +406,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const [showSlashPicker, setShowSlashPicker] = useState(false)
   const [copied, setCopied] = useState(false)
   const [pendingMessages, setPendingMessages] = useState<string[]>([])
+  // Tracks socket liveness for the backlog drain (refs don't trigger effects).
+  const [wsConnected, setWsConnected] = useState(false)
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
   const pendingImagesRef = useRef<PendingImage[]>([])
   pendingImagesRef.current = pendingImages
@@ -705,6 +707,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     setRetryNotice(null)
 
     ws.onopen = () => {
+        setWsConnected(true)
         const e = reasoningEffortRef.current
         if (e) { ws.send(JSON.stringify({ type: 'set_reasoning_effort', reasoning_effort: e })) }
         if (pageContext) { ws.send(JSON.stringify({ type: 'set_page_context', page_context: { type: pageContext.type, id: pageContext.id || '', title: pageContext.title || '' } })) }
@@ -762,6 +765,27 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           case 'llm_retry': {
             const r = msg as { attempt?: number; max_attempts?: number; error?: string }
             setRetryNotice({ attempt: r.attempt ?? 0, max: r.max_attempts ?? 0, error: r.error ?? '' })
+            break
+          }
+          case 'steering': {
+            // The engine folded a mid-turn follow-up into the running turn.
+            // Sender already rendered it optimistically (deduped here); other
+            // viewers sharing the session append it in stream order.
+            const content = (msg as { content?: string }).content ?? ''
+            if (content) setMessages((prev) => applySteeringMessage(prev, content))
+            break
+          }
+          case 'steering_accepted':
+            // Server took the follow-up into the running turn. Streaming state
+            // already reflects this; nothing to render.
+            setIsStreaming(true)
+            if (!streamingStartedAt.current) streamingStartedAt.current = ts()
+            break
+          case 'steering_busy': {
+            // Mailbox full: hold for the backlog drain (already rendered
+            // optimistically at send time — queue without re-appending).
+            const content = (msg as { content?: string }).content ?? ''
+            if (content) setPendingMessages((prev) => (prev.includes(content) ? prev : [...prev, content]))
             break
           }
           case 'cell_created':
@@ -903,6 +927,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       }
 
     ws.onclose = () => {
+      setWsConnected(false)
       if (reconnectTimerRef.current) return
       wsRef.current = null
       if (reconnectAttemptsRef.current < 5) {
@@ -980,6 +1005,14 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     }
 
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      if (!skipQueue) {
+        // Offline fallback: queue for the drain effect, which sends once the
+        // socket is open. (Previously the message was dropped here.)
+        setPendingMessages((prev) => [...prev, text])
+        setMessages((prev) => [...prev, { role: 'user', content: text, created_at: ts() }])
+        setError('Not connected. Message queued — will send on reconnect.')
+        return
+      }
       setError('Not connected. Attempting to reconnect...')
       return
     }
@@ -996,14 +1029,20 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       return
     }
 
-    if (!skipQueue && (isStreaming || pendingMessages.length > 0)) {
+    // Socket is open: send immediately. When idle this starts a new turn;
+    // while streaming the server steers it into the running turn instead of
+    // queueing (the old behavior held it until done). A backlog (offline or
+    // NACK overflow) keeps FIFO order via the queue below.
+    if (!skipQueue && pendingMessages.length > 0) {
       setPendingMessages((prev) => [...prev, text])
       setMessages((prev) => [...prev, { role: 'user', content: text, created_at: ts() }])
       return
     }
 
-    // Collect pending image IDs
-    const images = pendingImagesRef.current.filter(p => p.id && !p.uploading).map(p => p.id)
+    // Collect pending image IDs on idle sends only — steering is text-only, so
+    // images stay in the composer while a turn is running instead of being
+    // silently dropped by the server.
+    const images = !isStreaming ? pendingImagesRef.current.filter(p => p.id && !p.uploading).map(p => p.id) : []
     if (images.length > 0) {
       // Clean up blob URLs
       pendingImagesRef.current.forEach(p => URL.revokeObjectURL(p.blobUrl))
@@ -1147,19 +1186,26 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     }
   }, [messages, tasks, _sessionId, selectedAgent])
 
+  // Offline/NACK backlog drain. Fires whenever the socket is open — including
+  // while streaming (the send is steered into the running turn). The streaming
+  // state reset below applies only when starting from idle: wiping partial
+  // stream text mid-turn would lose the final message.
   useEffect(() => {
-    if (isStreaming || pendingMessages.length === 0 || processingRef.current) return
+    if (pendingMessages.length === 0 || processingRef.current) return
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
 
     processingRef.current = true
     const next = pendingMessages[0]
+    const wasIdle = !isStreaming
     const timer = setTimeout(() => {
       wsRef.current?.send(JSON.stringify({ type: 'message', content: next }))
       setPendingMessages((prev) => prev.slice(1))
-      setIsStreaming(true)
-      streamingStartedAt.current = ts()
-      streamingTextRef.current = ''
-      setCurrentStreamingText('')
+      if (wasIdle) {
+        setIsStreaming(true)
+        streamingStartedAt.current = ts()
+        streamingTextRef.current = ''
+        setCurrentStreamingText('')
+      }
       processingRef.current = false
     }, 100)
 
@@ -1167,7 +1213,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       clearTimeout(timer)
       processingRef.current = false
     }
-  }, [isStreaming, pendingMessages])
+  }, [isStreaming, pendingMessages, wsConnected])
 
   useEffect(() => {
     if (selectedAgent) {

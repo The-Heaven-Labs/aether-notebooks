@@ -166,3 +166,15 @@ export function oldestPendingToolAgeMs(messages: TranscriptMessage[], nowMs: num
   }
   return oldest
 }
+
+// applySteeringMessage folds an engine steering event into the transcript.
+// The sender already appended the text optimistically at send time, and
+// reconnect_sync is authoritative — so this is a no-op when an identical user
+// message is already present (prevents live duplicates), and appends in stream
+// order otherwise (this is how other viewers sharing the session see it).
+export function applySteeringMessage(messages: TranscriptMessage[], content: string): TranscriptMessage[] {
+  for (const m of messages) {
+    if (m.role === 'user' && m.content === content) return messages
+  }
+  return [...messages, { role: 'user', content, created_at: new Date().toISOString() }]
+}

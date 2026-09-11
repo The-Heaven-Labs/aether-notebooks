@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mapServerMessagesToChat, applyToolResult, oldestPendingToolAgeMs } from '../utils/agentTranscript'
+import { mapServerMessagesToChat, applyToolResult, oldestPendingToolAgeMs, applySteeringMessage } from '../utils/agentTranscript'
 
 const callId = 'call-1'
 
@@ -130,5 +130,28 @@ describe('oldestPendingToolAgeMs', () => {
       { role: 'tool', content: 'b', created_at: '2026-09-11T00:00:00Z' },
     ]
     expect(oldestPendingToolAgeMs(msgs, now)).toBe(120000)
+  })
+})
+
+describe('applySteeringMessage', () => {
+  it('appends steered text for viewers without an optimistic entry', () => {
+    const msgs = [{ role: 'assistant', content: 'working on it' }]
+    const out = applySteeringMessage(msgs, 'actually use the other table')
+    expect(out).toHaveLength(2)
+    expect(out[1]).toMatchObject({ role: 'user', content: 'actually use the other table' })
+  })
+
+  it('dedupes against the sender optimistic entry', () => {
+    const msgs = [
+      { role: 'user', content: 'actually use the other table' },
+      { role: 'tool', content: 'run_cell' },
+    ]
+    expect(applySteeringMessage(msgs, 'actually use the other table')).toBe(msgs)
+  })
+
+  it('does not drop distinct follow-ups', () => {
+    const msgs = [{ role: 'user', content: 'first steer' }]
+    const out = applySteeringMessage(msgs, 'second steer')
+    expect(out).toHaveLength(2)
   })
 })

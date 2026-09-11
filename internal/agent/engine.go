@@ -38,6 +38,7 @@ type Engine struct {
 	questionPending    sync.Map // sessionID -> chan string
 	pageContextMap     sync.Map // sessionID -> map[string]string
 	sessionModelConfig sync.Map // sessionID -> modelConfigID string
+	steeringChans      sync.Map // sessionID -> chan string (follow-ups sent mid-turn)
 	frontendURL        string
 	publicURL          string
 	streams            *StreamManager
@@ -153,6 +154,58 @@ func (e *Engine) ResolveQuestion(sessionID string, answer string) {
 	}
 	if ch, ok := v.(chan string); ok {
 		ch <- answer
+	}
+}
+
+// steeringMailboxSize bounds per-session follow-up buffering so a runaway
+// client cannot grow memory. When full, the WS handler NACKs (steering_busy)
+// and the client holds the message in its offline queue instead.
+const steeringMailboxSize = 16
+
+// SteeringChan registers (or returns) the steering mailbox for a session.
+// Follow-up messages sent while a turn is running land here instead of being
+// dropped, and the turn loop folds them in at the next turn boundary.
+func (e *Engine) SteeringChan(sessionID string) chan string {
+	ch := make(chan string, steeringMailboxSize)
+	actual, _ := e.steeringChans.LoadOrStore(sessionID, ch)
+	return actual.(chan string)
+}
+
+// DrainSteering returns all pending steering messages FIFO and clears the
+// mailbox. Nil when empty.
+func (e *Engine) DrainSteering(sessionID string) []string {
+	v, ok := e.steeringChans.Load(sessionID)
+	if !ok {
+		return nil
+	}
+	ch := v.(chan string)
+	var msgs []string
+	for {
+		select {
+		case m := <-ch:
+			msgs = append(msgs, m)
+		default:
+			return msgs
+		}
+	}
+}
+
+// applySteering folds one steering message into the running turn. It runs
+// only at turn boundaries (top of the turn loop): inserting a user message in
+// the middle of an assistant(tool_calls) → tool result batch would violate
+// provider message ordering and fail the next LLM call. The message becomes
+// LLM-visible history, durable log, and a live stream event together.
+func (e *Engine) applySteering(sessionID string, chatMsgs *[]ChatMessage, steer string, onEvent func(EngineEvent)) {
+	*chatMsgs = append(*chatMsgs, ChatMessage{Role: "user", Content: steer})
+	e.session.AppendMessage(context.Background(), &models.AgentMessage{
+		ID:        uuid.New().String(),
+		SessionID: sessionID,
+		Role:      "user",
+		Content:   steer,
+		CreatedAt: time.Now(),
+	})
+	if onEvent != nil {
+		onEvent(EngineEvent{Type: "steering", Content: steer})
 	}
 }
 
@@ -758,6 +811,13 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		turnStart := time.Now()
 		slog.Debug("engine: calling LLM", "session_id", sessionID, "turn", turn, "msgs", len(chatMsgs), "tools", len(toolsList))
 		chatMsgs = sanitizeChatMessages(chatMsgs)
+		// Steering checkpoint: fold in follow-ups that arrived while we were
+		// busy (executing tools, streaming). Boundary-only by design — see
+		// applySteering. This is what makes steering land in the next LLM
+		// call instead of waiting for the whole turn to finish.
+		for _, steer := range e.DrainSteering(sessionID) {
+			e.applySteering(sessionID, &chatMsgs, steer, onEvent)
+		}
 		llmStart := time.Now()
 		resp, err := llmClient.Chat(ctx, chatMsgs, toolsList, masterKey)
 		if err != nil {
