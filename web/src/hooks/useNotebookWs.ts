@@ -2,6 +2,14 @@ import { useEffect, useRef, useCallback } from 'react'
 import { getToken } from '../api/client'
 import { getWsUrl } from '../config'
 
+// Scroll policy for run start: agent-initiated runs scroll into view (the
+// viewer is not necessarily positioned at the cell), while human self-runs do
+// not force a scroll (the runner is already looking at the cell). Locally
+// initiated runs (pendingExec) never scroll.
+export function shouldFlashExecutingCell(userEmail: string | undefined, pendingExec: Set<string>, cellId: string): boolean {
+  return userEmail === 'agent@aether' && !pendingExec.has(cellId)
+}
+
 export function useNotebookWs(
   notebookId: string | undefined,
   onCellOutput?: (cellId: string, outputs: Array<{ type: string; data: unknown }>, userEmail?: string, totalTimeMs?: number) => void,
@@ -10,7 +18,7 @@ export function useNotebookWs(
   onCellCreated?: (cell: import('../types').Cell, userEmail?: string) => void,
   onCellDeleted?: (cellId: string, userEmail?: string) => void,
   onNotebookRefresh?: (reason?: string) => void,
-  onCellExecuting?: (cellId: string, startedAt?: string) => void,
+  onCellExecuting?: (cellId: string, startedAt?: string, userEmail?: string) => void,
   onSync?: (data: { running_cells?: Array<{ cell_id: string; started_at: string }> }) => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null)
@@ -66,7 +74,7 @@ export function useNotebookWs(
         } else if (msg.type === 'notebook_refresh' && onNotebookRefreshRef.current) {
           onNotebookRefreshRef.current(msg.reason)
         } else if (msg.type === 'cell_executing' && onCellExecutingRef.current) {
-          onCellExecutingRef.current(msg.cell_id, msg.started_at)
+          onCellExecutingRef.current(msg.cell_id, msg.started_at, msg.user_email)
         } else if (msg.type === 'sync' && onSyncRef.current) {
           onSyncRef.current(msg)
         }

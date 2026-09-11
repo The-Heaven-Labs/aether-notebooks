@@ -26,6 +26,10 @@ type Engine struct {
 	pool               *pgxpool.Pool
 	mu                 sync.Mutex
 	BroadcastFunc      func(notebookID string, msg any)
+	SetRunningFunc     func(cellID, notebookID string, startedAt time.Time)
+	UnsetRunningFunc   func(cellID string)
+	SetCancelFunc      func(cellID string, cancel context.CancelFunc)
+	DeleteCancelFunc   func(cellID string)
 	toolAllowedDomains []string
 	tokenCounter       *TokenCounter
 	store              storage.Storage
@@ -1010,6 +1014,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				MasterKey:     masterKey,
 				OnEvent:       onEvent,
 				BroadcastFunc: e.BroadcastFunc,
+				// Running-state/cancel hooks propagate like BroadcastFunc.
+				SetRunningFunc:   e.SetRunningFunc,
+				UnsetRunningFunc: e.UnsetRunningFunc,
+				SetCancelFunc:    e.SetCancelFunc,
+				DeleteCancelFunc: e.DeleteCancelFunc,
 				QuestionFunc: func(question string, options any, allowCustom bool) (string, error) {
 					ch := make(chan string, 1)
 					e.SetQuestionPending(sessionID, ch)

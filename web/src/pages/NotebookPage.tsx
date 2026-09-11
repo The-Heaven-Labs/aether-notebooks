@@ -24,7 +24,7 @@ import { NotebookHistoryPanel } from '../components/NotebookHistoryPanel'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
-import { useNotebookWs } from '../hooks/useNotebookWs'
+import { useNotebookWs, shouldFlashExecutingCell } from '../hooks/useNotebookWs'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { ShareModal } from '../components/ShareModal'
@@ -331,8 +331,13 @@ export function NotebookPage() {
     )
   }, [id, qc]), useCallback(() => {
     qc.invalidateQueries({ queryKey: ['notebook', id] })
-  }, [id, qc]), useCallback((cellId: string, startedAt?: string) => {
+  }, [id, qc]), useCallback((cellId: string, startedAt?: string, userEmail?: string) => {
     setRunningCells((prev) => ({ ...prev, [cellId]: startedAt ? new Date(startedAt).getTime() : Date.now() }))
+    // Bring agent-initiated runs into view at start (mirrors the
+    // cell-metadata policy); human runners are already at the cell.
+    if (shouldFlashExecutingCell(userEmail, pendingExecRef.current, cellId)) {
+      flashCell(cellId)
+    }
   }, []), useCallback((data: { running_cells?: Array<{ cell_id: string; started_at: string }> }) => {
     const cells = data.running_cells
     if (cells?.length) {
