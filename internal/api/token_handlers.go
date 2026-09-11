@@ -40,8 +40,10 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate token: aether_tok_ + 32 random bytes hex-encoded
-	rawBytes := make([]byte, 32)
+	// Generate token: aether_tok_ + 28 random bytes hex-encoded (11 + 56 = 67 bytes).
+	// Must stay <= 72 bytes: bcrypt (used to hash the token for storage) rejects
+	// longer inputs with ErrPasswordTooLong.
+	rawBytes := make([]byte, 28)
 	if _, err := rand.Read(rawBytes); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to generate token")
 		return
