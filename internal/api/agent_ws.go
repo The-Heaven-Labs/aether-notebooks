@@ -48,6 +48,16 @@ type WSErrorResponse struct {
 
 var _ = (*websocket.Conn)(nil)
 
+// WebSocket liveness: server pings every wsPingPeriod; a client that misses
+// pong responses for wsPongWait is declared dead so its subscriber channel
+// stops accumulating dropped events. Every write carries a short deadline so a
+// half-open connection cannot wedge the writer goroutine forever.
+const (
+	wsPingPeriod = 25 * time.Second
+	wsPongWait   = 60 * time.Second
+	wsWriteWait  = 10 * time.Second
+)
+
 // @Summary Agent WebSocket
 // @Description WebSocket endpoint for real-time agent chat
 // @Tags agents
@@ -91,15 +101,49 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	// Keepalive: dead (half-open) connections are closed deterministically
+	// instead of wedging the writer and filling the stream subscriber channel.
+	conn.SetReadDeadline(time.Now().Add(wsPongWait))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(wsPongWait))
+		return nil
+	})
+
 	// Use a background context so in-flight processing isn't cancelled when the
 	// WebSocket disconnects (e.g. page navigation). The processing continues and
 	// the final result is stored in the DB for the next reconnect to pick up.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// Deliberately deadline-free: per-message budgets are set where messages are
+	// processed. A deadline here would poison every future message once the
+	// connection outlives it (all failing instantly with context deadline
+	// exceeded until the page is refreshed).
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	writeChan := make(chan any, 256)
 	var wg sync.WaitGroup
 	var processWg sync.WaitGroup
+
+	// writeJSON bounds every control write so a dead connection fails fast.
+	writeJSON := func(v any) error {
+		conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
+		return conn.WriteJSON(v)
+	}
+
+	// writeStreamEvent forwards a sequenced stream event, injecting its seq
+	// into the wire payload (additive "seq" field — old clients ignore it) so
+	// reconnecting clients can drop replayed duplicates.
+	writeStreamEvent := func(ev agent.SequencedEvent) error {
+		raw, err := json.Marshal(ev.Msg)
+		if err != nil {
+			return writeJSON(ev.Msg)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return writeJSON(ev.Msg)
+		}
+		m["seq"] = ev.Seq
+		return writeJSON(m)
+	}
 
 	// Subscribe to the shared session stream with catch-up buffer. The buffer
 	// contains events from any in-flight ProcessMessage that was running when
@@ -107,7 +151,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	// frontend, giving the user a live-streaming experience for the part of
 	// the response they missed. The reconnect_sync (DB query) runs in parallel
 	// and replaces messages with the authoritative state, preventing duplicates.
-	subChan, unsubscribe := s.agentEngine.SubscribeSession(sessionID, 512, true)
+	subChan, unsubscribe := s.agentEngine.SubscribeSession(sessionID, 512, false)
 
 	// Track cancel function for current message processing
 	var mu sync.Mutex
@@ -128,7 +172,10 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	// Writer goroutine reads from both the control channel (writeChan) and the
 	// shared session stream (subChan). The session stream carries real-time
 	// tokens/events from in-flight processing; writeChan carries control messages
-	// (slash results, reconnect_sync, errors, etc.).
+	// (slash results, reconnect_sync, errors, etc.). A ping ticker keeps
+	// half-open connections from lingering invisibly (see wsPingPeriod).
+	pingTicker := time.NewTicker(wsPingPeriod)
+	defer pingTicker.Stop()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -140,7 +187,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					wc = nil
 					continue
 				}
-				if err := conn.WriteJSON(out); err != nil {
+				if err := writeJSON(out); err != nil {
 					slog.Debug("ws: write error, writer exiting", "error", err)
 					return
 				}
@@ -149,8 +196,14 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					sc = nil
 					continue
 				}
-				if err := conn.WriteJSON(out); err != nil {
+				if err := writeStreamEvent(out); err != nil {
 					slog.Debug("ws: write error, writer exiting", "error", err)
+					return
+				}
+			case <-pingTicker.C:
+				conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					slog.Debug("ws: ping error, writer exiting", "error", err)
 					return
 				}
 			}
@@ -191,7 +244,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 				// responses cause the frontend to lose older messages since it
 				// does a full replacement, not an append.
 				rows, err := s.db.Pool.Query(ctx, `
-					SELECT id, role, content, tool_calls, reasoning_content, image_ids, COALESCE(duration_ms,0), COALESCE(tokens_direct,0), created_at FROM agent_messages
+					SELECT id, role, content, tool_calls, reasoning_content, image_ids, COALESCE(duration_ms,0), COALESCE(tokens_direct,0), created_at, tool_call_id FROM agent_messages
 					WHERE session_id = $1 ORDER BY created_at
 				`, currentSessionID)
 				if err == nil {
@@ -199,10 +252,11 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					if messages != nil {
 						_, running := s.sessionCancels.Load(currentSessionID)
 						safeSend(struct {
-							Type     string                `json:"type"`
-							Messages []models.AgentMessage `json:"messages"`
-							Running  bool                  `json:"running"`
-						}{Type: "reconnect_sync", Messages: messages, Running: running})
+							Type      string                `json:"type"`
+							Messages  []models.AgentMessage `json:"messages"`
+							Running   bool                  `json:"running"`
+							ServerSeq uint64                `json:"server_seq"`
+						}{Type: "reconnect_sync", Messages: messages, Running: running, ServerSeq: s.agentEngine.StreamLastSeq(currentSessionID)})
 					}
 				}
 				continue
@@ -272,7 +326,10 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 				processWg.Add(1)
 				go func(content string, images []string, sid string) {
 					defer processWg.Done()
-					msgCtx, msgCancel := context.WithCancel(ctx)
+					// Per-message deadline: a long-lived connection must not
+					// poison future messages once the connection-level budget
+					// would have expired. Each message gets a fresh 30 minutes.
+					msgCtx, msgCancel := context.WithTimeout(context.Background(), 30*time.Minute)
 					mu.Lock()
 					currentCancel = msgCancel
 					mu.Unlock()
@@ -282,7 +339,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					// Stream events are published to the SHARED session stream so that
 					// any WebSocket connection (including a new one that reconnects after
 					// page navigation) receives the real-time output.
-					_, reasoning, _, events, tokBrk, err := s.agentEngine.ProcessMessage(msgCtx, sid, content, images, nil, s.masterKey, capturedPageCtx,
+					finalText, reasoning, _, events, tokBrk, err := s.agentEngine.ProcessMessage(msgCtx, sid, content, images, nil, s.masterKey, capturedPageCtx,
 						func(token string) {
 							s.agentEngine.PublishSessionEvent(sid, WSResponse{Type: "token", Data: token})
 						},
@@ -293,21 +350,23 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 							s.agentEngine.PublishSessionEvent(sid, struct {
 								Type       string `json:"type"`
 								Tool       string `json:"tool"`
+								ToolCallID string `json:"tool_call_id"`
 								Params     string `json:"params"`
 								Reasoning  string `json:"reasoning,omitempty"`
 								DurationMs int    `json:"duration_ms"`
-							}{Type: "tool_call", Tool: toolName, Params: args, Reasoning: reasoning, DurationMs: durationMs})
+							}{Type: "tool_call", Tool: toolName, ToolCallID: toolID, Params: args, Reasoning: reasoning, DurationMs: durationMs})
 						},
-						func(toolName, params, result, errMsg string, durationMs int, tokensDirect int) {
+						func(toolName, toolID, params, result, errMsg string, durationMs int, tokensDirect int) {
 							s.agentEngine.PublishSessionEvent(sid, struct {
 								Type         string `json:"type"`
 								Tool         string `json:"tool"`
+								ToolCallID   string `json:"tool_call_id"`
 								Params       string `json:"params"`
 								Result       string `json:"result"`
 								Error        string `json:"error,omitempty"`
 								DurationMs   int    `json:"duration_ms"`
 								TokensDirect int    `json:"tokens_direct"`
-							}{Type: "tool_result", Tool: toolName, Params: params, Result: result, Error: errMsg, DurationMs: durationMs, TokensDirect: tokensDirect})
+							}{Type: "tool_result", Tool: toolName, ToolCallID: toolID, Params: params, Result: result, Error: errMsg, DurationMs: durationMs, TokensDirect: tokensDirect})
 						},
 						func(evt agent.EngineEvent) {
 							switch evt.Type {
@@ -346,6 +405,13 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 									Type   string                `json:"type"`
 									Tokens *agent.TokenBreakdown `json:"tokens"`
 								}{Type: "token_update", Tokens: evt.Tokens})
+							case "llm_retry":
+								s.agentEngine.PublishSessionEvent(sid, struct {
+									Type        string `json:"type"`
+									Attempt     int    `json:"attempt"`
+									MaxAttempts int    `json:"max_attempts"`
+									Error       string `json:"error,omitempty"`
+								}{Type: "llm_retry", Attempt: evt.Attempt, MaxAttempts: evt.MaxAttempts, Error: evt.Error})
 							case "context_compacted":
 								s.agentEngine.PublishSessionEvent(sid, struct {
 									Type    string                `json:"type"`
@@ -378,7 +444,9 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					}
 
 					_ = events
-					s.agentEngine.PublishSessionEvent(sid, WSResponse{Type: "done", Data: map[string]any{"content": "", "reasoning": reasoning, "tokens": tokBrk}})
+					// done carries the final content so a client that reconnected
+					// mid-stream (and missed the tokens) still renders the message.
+					s.agentEngine.PublishSessionEvent(sid, WSResponse{Type: "done", Data: map[string]any{"content": finalText, "reasoning": reasoning, "tokens": tokBrk}})
 					slog.Debug("ws: message done", "session_id", sid, "reasoning_len", len(reasoning))
 				}(msg.Content, msg.Images, currentSessionID)
 			} else if msg.Type == "slash_command" {
@@ -424,7 +492,8 @@ func scanAgentMessages(rows interface {
 		var toolCallsJSON []byte
 		var reasoning *string
 		var imageIDs []string
-		rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &reasoning, &imageIDs, &m.DurationMs, &m.TokensDirect, &m.CreatedAt)
+		var toolCallID *string
+		rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &reasoning, &imageIDs, &m.DurationMs, &m.TokensDirect, &m.CreatedAt, &toolCallID)
 		if content != nil {
 			m.Content = *content
 		}
@@ -434,6 +503,7 @@ func scanAgentMessages(rows interface {
 		if toolCallsJSON != nil {
 			json.Unmarshal(toolCallsJSON, &m.ToolCalls)
 		}
+		m.ToolCallID = toolCallID
 		m.ImageIDs = imageIDs
 		messages = append(messages, m)
 	}

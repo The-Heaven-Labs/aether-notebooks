@@ -78,8 +78,8 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "create_cell",
-			Description: "Create a new cell. Use type 'code' with language 'sql' for database queries, or type 'text' with language 'markdown' for documentation and notes.",
-			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"type":{"type":"string","enum":["code","text"],"description":"Cell type: 'code' for executable queries, 'text' for markdown documentation"},"language":{"type":"string","enum":["sql","markdown"],"description":"Cell language. Defaults to 'sql' for code cells, 'markdown' for text cells. Currently only SQL and markdown are supported."},"source":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell. Required for code cells if the notebook has no default connector."},"position":{"type":"integer"}},"required":["notebook_id","type"]}`,
+			Description: "Create a new cell. ALWAYS provide a concise title and a description of what the query does (extra detail can go in SQL comments). Use type 'code' with language 'sql' for database queries, or type 'text' with language 'markdown' for documentation and notes. For SQL cells that should produce results right away, set run=true to execute immediately after creation — the result includes inline query results (same shape as run_cell: column_names, data preview, truncated) and shows a running state in the notebook while executing. Optional timeout_ms (max 600000, only with run=true) bounds the execution.",
+			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"type":{"type":"string","enum":["code","text"],"description":"Cell type: 'code' for executable queries, 'text' for markdown documentation"},"language":{"type":"string","enum":["sql","markdown"],"description":"Cell language. Defaults to 'sql' for code cells, 'markdown' for text cells. Currently only SQL and markdown are supported."},"title":{"type":"string","description":"Short name of what this cell does (e.g. 'Daily orders GMV by region')"},"description":{"type":"string","description":"What this query is for, data source assumptions, and caveats. Detail can also live as SQL comments in source."},"source":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell. Required for code cells if the notebook has no default connector."},"position":{"type":"integer"},"run":{"type":"boolean","description":"Set to true to execute the cell immediately after creating it (same behavior and result shape as run_cell, including inline results and running-state UI)"},"timeout_ms":{"type":"integer","description":"Optional max execution time in milliseconds when run=true (max 600000). Ignored when run is not true."}},"required":["notebook_id","type","title","description"]}`,
 		},
 		Handler:         makeCreateCellHandler(db),
 		ConfirmRequired: true,
@@ -106,8 +106,8 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "run_cell",
-			Description: "Execute a code cell's SQL query against the database connector. Only works on cells with type 'code' and language 'sql'. Returns tabular results. Skips re-running if cell already has results (use force=true to override). Use for SELECT, SHOW, DESCRIBE queries.",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (from list_cells output, not the position number)"},"force":{"type":"boolean","description":"Set to true to re-run even if the cell already has results"}},"required":["cell_id"]}`,
+			Description: "Execute a code cell's SQL query against the database connector and RETURN THE RESULTS INLINE (column_names + data preview, up to 50 rows; 'truncated': true means more rows exist and read_cell can fetch them). Only works on cells with type 'code' and language 'sql'. Skips re-running if the cell already has results (use force=true to override). Optional timeout_ms (max 600000) aborts the query and returns status:'error' with timed_out:true; without it the query runs until the session context expires.",
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (from list_cells output, not the position number)"},"force":{"type":"boolean","description":"Set to true to re-run even if the cell already has results"},"timeout_ms":{"type":"integer","description":"Optional max execution time in milliseconds (max 600000). On expiry the cell gets an error output and the result has timed_out:true — shorten the query or increase the limit instead of retrying blindly."}},"required":["cell_id"]}`,
 		},
 		Handler:         makeRunCellHandler(db),
 		ConfirmRequired: true,
@@ -161,7 +161,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "execute_sql",
-			Description: "Run an ad-hoc SQL query on a database connector (30s timeout). Use this for quick queries only. For long-running queries, use create_cell + run_cell instead. Returns up to 1000 rows. For SELECT, SHOW, DESCRIBE queries.",
+			Description: "Run an ad-hoc SQL query on a database connector (30s timeout). Use this for quick queries only. For long-running queries, use create_cell with run=true instead. Returns up to 1000 rows. For SELECT, SHOW, DESCRIBE queries.",
 			Parameters:  `{"type":"object","properties":{"connector_id":{"type":"string","description":"ID of the connector to query"},"query":{"type":"string","description":"The SQL query to execute"},"limit":{"type":"integer","description":"Max rows to return (default 1000)"}},"required":["connector_id","query"]}`,
 		},
 		Handler:         makeExecuteSQLHandler(db),
@@ -429,9 +429,13 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 			NotebookID  string `json:"notebook_id"`
 			Type        string `json:"type"`
 			Language    string `json:"language"`
+			Title       string `json:"title"`
+			Description string `json:"description"`
 			Source      string `json:"source"`
 			ConnectorID string `json:"connector_id"`
 			Position    int    `json:"position"`
+			Run         bool   `json:"run"`
+			TimeoutMs   int    `json:"timeout_ms"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -443,6 +447,24 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 
 		if err := ctx.CheckPermission("notebook", req.NotebookID, "edit"); err != nil {
 			return nil, err
+		}
+
+		// Documentation is part of creation: reject before any INSERT.
+		req.Title = strings.TrimSpace(req.Title)
+		req.Description = strings.TrimSpace(req.Description)
+		if req.Title == "" {
+			return nil, fmt.Errorf("title is required: provide a short name of what this cell does")
+		}
+		if req.Description == "" {
+			return nil, fmt.Errorf("description is required: describe what the query does, its data source assumptions, and caveats")
+		}
+		// Truncate to the title column width instead of failing the INSERT.
+		if len([]rune(req.Title)) > 255 {
+			req.Title = string([]rune(req.Title)[:255])
+		}
+
+		if req.Run && req.Type != "code" {
+			return nil, fmt.Errorf("run=true requires a code cell; text cells cannot be executed")
 		}
 
 		cellID := uuid.New().String()
@@ -488,9 +510,9 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 
 		now := time.Now()
 		_, err := db.Exec(ctx.Context, `
-			INSERT INTO cells (id, notebook_id, type, language, connector_id, source, position, "limit", created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, 1000, $8, $8)
-		`, cellID, req.NotebookID, req.Type, language, connID, req.Source, position, now)
+			INSERT INTO cells (id, notebook_id, type, language, connector_id, source, title, description, position, "limit", created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1000, $10, $10)
+		`, cellID, req.NotebookID, req.Type, language, connID, req.Source, req.Title, req.Description, position, now)
 		if err != nil {
 			return nil, fmt.Errorf("create cell: %w", err)
 		}
@@ -509,6 +531,8 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 					"type":           req.Type,
 					"language":       language,
 					"source":         req.Source,
+					"title":          req.Title,
+					"description":    req.Description,
 					"outputs":        []models.Output{},
 					"source_visible": true,
 					"outputs_hidden": false,
@@ -522,7 +546,30 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 			})
 		}
 
-		return map[string]any{"cell_id": cellID, "position": position + 1}, nil
+		base := map[string]any{"cell_id": cellID, "position": position + 1, "title": req.Title}
+		if !req.Run {
+			return base, nil
+		}
+
+		// run=true: execute immediately with the exact run_cell lifecycle.
+		// The cell already exists — execution failure must not fail the create.
+		runRes, err := executeCell(ctx, db, req.NotebookID, cellID, false, req.TimeoutMs)
+		if err != nil {
+			base["run_status"] = "error"
+			base["error"] = err.Error()
+			return base, nil
+		}
+		for k, v := range runRes {
+			if k == "cell_id" {
+				continue
+			}
+			if k == "status" {
+				base["run_status"] = v
+				continue
+			}
+			base[k] = v
+		}
+		return base, nil
 	}
 }
 
@@ -595,11 +642,10 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 
 func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
-		startTime := time.Now()
-
 		var req struct {
-			CellID string `json:"cell_id"`
-			Force  bool   `json:"force"`
+			CellID    string `json:"cell_id"`
+			Force     bool   `json:"force"`
+			TimeoutMs int    `json:"timeout_ms"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -612,126 +658,246 @@ func makeRunCellHandler(db *pgxpool.Pool) ToolHandler {
 		if err := ctx.CheckPermission("notebook", resolved.NotebookID, "run"); err != nil {
 			return nil, err
 		}
-		notebookID := resolved.NotebookID
-		cellID := resolved.ID
 
-		// Check if cell already has results
-		if !req.Force {
-			var hasOutputs bool
-			db.QueryRow(ctx.Context, `SELECT outputs IS NOT NULL AND outputs != '[]'::jsonb FROM cells WHERE id = $1`, cellID).Scan(&hasOutputs)
-			if hasOutputs {
-				return map[string]any{"cell_id": cellID, "status": "skipped", "reason": "cell already has results, use force=true to re-run"}, nil
+		return executeCell(ctx, db, resolved.NotebookID, resolved.ID, req.Force, req.TimeoutMs)
+	}
+}
+
+// runCellMaxRows caps the inline data preview returned to the agent. Full
+// results always land in the cell outputs; the agent fetches the rest with
+// read_cell when truncated=true.
+const runCellMaxRows = 50
+
+// maxToolTimeoutMs is the ceiling for run_cell/create_cell timeout_ms (10 min).
+const maxToolTimeoutMs = 600000
+
+// previewResult extracts an inline preview from an execution result.
+func previewResult(result *executor.ResultSet, maxRows int) (columnNames []string, data [][]interface{}, truncated bool) {
+	if result == nil {
+		return nil, nil, false
+	}
+	columnNames = make([]string, 0, len(result.Columns))
+	for _, col := range result.Columns {
+		columnNames = append(columnNames, col.Name)
+	}
+	if len(result.Rows) > maxRows {
+		return columnNames, result.Rows[:maxRows], true
+	}
+	return columnNames, result.Rows, false
+}
+
+// previewStoredOutputs extracts an inline preview from already-persisted cell
+// outputs (used by the skipped path so the agent still sees data).
+func previewStoredOutputs(outputsJSON []byte, maxRows int) (columnNames []string, data []any, truncated bool, ok bool) {
+	var outputs []models.Output
+	if err := json.Unmarshal(outputsJSON, &outputs); err != nil {
+		return nil, nil, false, false
+	}
+	for _, out := range outputs {
+		if out.Type != "table" {
+			continue
+		}
+		raw, err := json.Marshal(out.Data)
+		if err != nil {
+			continue
+		}
+		var rs struct {
+			Columns []struct {
+				Name string `json:"name"`
+			} `json:"columns"`
+			Rows []any `json:"rows"`
+		}
+		if err := json.Unmarshal(raw, &rs); err != nil {
+			continue
+		}
+		columnNames = make([]string, 0, len(rs.Columns))
+		for _, col := range rs.Columns {
+			columnNames = append(columnNames, col.Name)
+		}
+		if len(rs.Rows) > maxRows {
+			return columnNames, rs.Rows[:maxRows], true, true
+		}
+		return columnNames, rs.Rows, false, true
+	}
+	return nil, nil, false, false
+}
+
+// executeCell runs a code cell's SQL query with the full run_cell lifecycle:
+// has-results skip check, connector resolution, running-state broadcast,
+// execution (optionally bounded by timeoutMs), output persistence, cell_output
+// broadcast, and an inline result preview. It is shared by run_cell and
+// create_cell(run=true) so both behave identically.
+func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, force bool, timeoutMs int) (map[string]any, error) {
+	startTime := time.Now()
+
+	if timeoutMs < 0 {
+		timeoutMs = 0
+	}
+	if timeoutMs > maxToolTimeoutMs {
+		timeoutMs = maxToolTimeoutMs
+	}
+
+	// Check if cell already has results
+	if !force {
+		var hasOutputs bool
+		db.QueryRow(ctx.Context, `SELECT outputs IS NOT NULL AND outputs != '[]'::jsonb FROM cells WHERE id = $1`, cellID).Scan(&hasOutputs)
+		if hasOutputs {
+			res := map[string]any{"cell_id": cellID, "status": "skipped", "reason": "cell already has results, use force=true to re-run"}
+			var outputsJSON []byte
+			if err := db.QueryRow(ctx.Context, `SELECT outputs FROM cells WHERE id = $1`, cellID).Scan(&outputsJSON); err == nil && len(outputsJSON) > 0 {
+				if cols, data, truncated, ok := previewStoredOutputs(outputsJSON, runCellMaxRows); ok {
+					res["column_names"] = cols
+					res["data"] = data
+					res["truncated"] = truncated
+				}
 			}
+			return res, nil
 		}
+	}
 
-		var cell struct {
-			ConnectorID *string `json:"connector_id"`
-			Language    string  `json:"language"`
-			Source      string  `json:"source"`
-			Limit       int     `json:"limit"`
+	var cell struct {
+		ConnectorID *string `json:"connector_id"`
+		Language    string  `json:"language"`
+		Source      string  `json:"source"`
+		Limit       int     `json:"limit"`
+	}
+	err := db.QueryRow(ctx.Context, `
+		SELECT connector_id, language, source, COALESCE("limit", 0) FROM cells WHERE id = $1
+	`, cellID).Scan(&cell.ConnectorID, &cell.Language, &cell.Source, &cell.Limit)
+	if err != nil {
+		return nil, fmt.Errorf("get cell: %w", err)
+	}
+
+	if cell.ConnectorID == nil || *cell.ConnectorID == "" {
+		var nbConnID *string
+		if err := db.QueryRow(ctx.Context, "SELECT connector_id FROM notebooks WHERE id = $1", notebookID).Scan(&nbConnID); err != nil && err != pgx.ErrNoRows {
+			return nil, fmt.Errorf("get notebook connector: %w", err)
 		}
-		err = db.QueryRow(ctx.Context, `
-			SELECT connector_id, language, source, COALESCE("limit", 0) FROM cells WHERE id = $1
-		`, cellID).Scan(&cell.ConnectorID, &cell.Language, &cell.Source, &cell.Limit)
-		if err != nil {
-			return nil, fmt.Errorf("get cell: %w", err)
+		if nbConnID != nil && *nbConnID != "" {
+			cell.ConnectorID = nbConnID
 		}
+	}
+	if cell.ConnectorID == nil || *cell.ConnectorID == "" {
+		return nil, fmt.Errorf("cell has no connector assigned; set one with create_cell or update_cell")
+	}
 
-		if cell.ConnectorID == nil || *cell.ConnectorID == "" {
-			var nbConnID *string
-			if err := db.QueryRow(ctx.Context, "SELECT connector_id FROM notebooks WHERE id = $1", notebookID).Scan(&nbConnID); err != nil && err != pgx.ErrNoRows {
-				return nil, fmt.Errorf("get notebook connector: %w", err)
-			}
-			if nbConnID != nil && *nbConnID != "" {
-				cell.ConnectorID = nbConnID
-			}
+	var connType models.ConnectorType
+	var configEnc []byte
+	err = db.QueryRow(ctx.Context,
+		`SELECT type, config_encrypted FROM connectors WHERE id = $1 AND org_id = $2`,
+		*cell.ConnectorID, ctx.OrgID,
+	).Scan(&connType, &configEnc)
+	if err != nil {
+		return nil, fmt.Errorf("get connector: %w", err)
+	}
+
+	if ctx.MasterKey == nil {
+		return nil, fmt.Errorf("master key not available")
+	}
+
+	plain, err := crypto.Decrypt(configEnc, ctx.MasterKey)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt credentials: %w", err)
+	}
+
+	driver, ok := executor.GetDriver(connType)
+	if !ok {
+		return nil, fmt.Errorf("unsupported connector type: %s", connType)
+	}
+	exec, err := driver.NewExecutor(plain)
+	if err != nil {
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	defer exec.Close()
+
+	// Running-state broadcast so every notebook viewer sees the badge while
+	// the query executes. Every path below emits cell_output, which clears it.
+	if ctx.BroadcastFunc != nil {
+		ctx.BroadcastFunc(notebookID, map[string]any{
+			"type":       "cell_executing",
+			"cell_id":    cellID,
+			"started_at": time.Now().UTC(),
+			"user_email": "agent@aether",
+		})
+	}
+
+	execCtx := ctx.Context
+	cancel := context.CancelFunc(func() {})
+	if timeoutMs > 0 {
+		execCtx, cancel = context.WithTimeout(ctx.Context, time.Duration(timeoutMs)*time.Millisecond)
+	}
+	defer cancel()
+
+	query := executor.ApplyLimit(cell.Source, cell.Limit)
+
+	result, err := exec.Execute(execCtx, query, nil, cell.Limit)
+	if err == nil && timeoutMs > 0 && execCtx.Err() == context.DeadlineExceeded {
+		// Some executors swallow cancellation and return an empty success —
+		// the deadline still expired, so treat it as a timeout.
+		err = execCtx.Err()
+	}
+	if err != nil {
+		errTotalTimeMs := time.Since(startTime).Milliseconds()
+		timedOut := timeoutMs > 0 && execCtx.Err() == context.DeadlineExceeded
+		errMsg := err.Error()
+		if timedOut {
+			errMsg = fmt.Sprintf("execution timed out after %dms", timeoutMs)
 		}
-		if cell.ConnectorID == nil || *cell.ConnectorID == "" {
-			return nil, fmt.Errorf("cell has no connector assigned; set one with create_cell or update_cell")
-		}
-
-		var connType models.ConnectorType
-		var configEnc []byte
-		err = db.QueryRow(ctx.Context,
-			`SELECT type, config_encrypted FROM connectors WHERE id = $1 AND org_id = $2`,
-			*cell.ConnectorID, ctx.OrgID,
-		).Scan(&connType, &configEnc)
-		if err != nil {
-			return nil, fmt.Errorf("get connector: %w", err)
-		}
-
-		if ctx.MasterKey == nil {
-			return nil, fmt.Errorf("master key not available")
-		}
-
-		plain, err := crypto.Decrypt(configEnc, ctx.MasterKey)
-		if err != nil {
-			return nil, fmt.Errorf("decrypt credentials: %w", err)
-		}
-
-		driver, ok := executor.GetDriver(connType)
-		if !ok {
-			return nil, fmt.Errorf("unsupported connector type: %s", connType)
-		}
-		exec, err := driver.NewExecutor(plain)
-		if err != nil {
-			return nil, fmt.Errorf("connect: %w", err)
-		}
-		defer exec.Close()
-
-		query := executor.ApplyLimit(cell.Source, cell.Limit)
-
-		result, err := exec.Execute(ctx.Context, query, nil, cell.Limit)
-		if err != nil {
-			errTotalTimeMs := time.Since(startTime).Milliseconds()
-			errOutput := models.Output{Type: "error", Data: map[string]string{"message": err.Error()}}
-			outJSON, _ := json.Marshal([]models.Output{errOutput})
-			db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, errTotalTimeMs, cellID)
-			ctx.EmitCellOutput(cellID, []models.Output{errOutput})
-			if ctx.BroadcastFunc != nil {
-				ctx.BroadcastFunc(notebookID, map[string]any{
-					"type":       "cell_output",
-					"cell_id":    cellID,
-					"outputs":    []models.Output{errOutput},
-					"user_email": "agent@aether",
-				})
-			}
-
-			return map[string]any{
-				"cell_id":       cellID,
-				"status":        "error",
-				"error":         err.Error(),
-				"total_time_ms": errTotalTimeMs,
-			}, nil
-		}
-
-		totalTimeMs := time.Since(startTime).Milliseconds()
-
-		tableOutput := models.Output{Type: "table", Data: result}
-		outputs := []models.Output{tableOutput}
-		outJSON, _ := json.Marshal(outputs)
-		db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, totalTimeMs, cellID)
-		ctx.EmitCellOutput(cellID, outputs)
+		errOutput := models.Output{Type: "error", Data: map[string]string{"message": errMsg}}
+		outJSON, _ := json.Marshal([]models.Output{errOutput})
+		db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, errTotalTimeMs, cellID)
+		ctx.EmitCellOutput(cellID, []models.Output{errOutput})
 		if ctx.BroadcastFunc != nil {
 			ctx.BroadcastFunc(notebookID, map[string]any{
-				"type":          "cell_output",
-				"cell_id":       cellID,
-				"outputs":       outputs,
-				"user_email":    "agent@aether",
-				"total_time_ms": totalTimeMs,
+				"type":       "cell_output",
+				"cell_id":    cellID,
+				"outputs":    []models.Output{errOutput},
+				"user_email": "agent@aether",
 			})
 		}
 
-		_ = ctx.AuditLog("cell.run", "cell", cellID)
-
-		return map[string]any{
+		res := map[string]any{
 			"cell_id":       cellID,
-			"status":        "completed",
-			"rows":          len(result.Rows),
-			"columns":       len(result.Columns),
-			"total_time_ms": totalTimeMs,
-		}, nil
+			"status":        "error",
+			"error":         errMsg,
+			"total_time_ms": errTotalTimeMs,
+		}
+		if timedOut {
+			res["timed_out"] = true
+		}
+		return res, nil
 	}
+
+	totalTimeMs := time.Since(startTime).Milliseconds()
+
+	tableOutput := models.Output{Type: "table", Data: result}
+	outputs := []models.Output{tableOutput}
+	outJSON, _ := json.Marshal(outputs)
+	db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, totalTimeMs, cellID)
+	ctx.EmitCellOutput(cellID, outputs)
+	if ctx.BroadcastFunc != nil {
+		ctx.BroadcastFunc(notebookID, map[string]any{
+			"type":          "cell_output",
+			"cell_id":       cellID,
+			"outputs":       outputs,
+			"user_email":    "agent@aether",
+			"total_time_ms": totalTimeMs,
+		})
+	}
+
+	_ = ctx.AuditLog("cell.run", "cell", cellID)
+
+	columnNames, data, truncated := previewResult(result, runCellMaxRows)
+	return map[string]any{
+		"cell_id":       cellID,
+		"status":        "completed",
+		"rows":          len(result.Rows),
+		"columns":       len(result.Columns),
+		"column_names":  columnNames,
+		"data":          data,
+		"truncated":     truncated,
+		"total_time_ms": totalTimeMs,
+	}, nil
 }
 
 func makeListCellsHandler(db *pgxpool.Pool) ToolHandler {

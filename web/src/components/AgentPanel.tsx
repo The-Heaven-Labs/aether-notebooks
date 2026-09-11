@@ -6,6 +6,7 @@ import rehypeHighlight from 'rehype-highlight'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, getToken } from '../api/client'
 import type { Agent, AgentTaskItem, ModelConfig, TokenBreakdown, WSMessage } from '../types/agent'
+import { mapServerMessagesToChat, applyToolResult, oldestPendingToolAgeMs } from '../utils/agentTranscript'
 import { AgentMessageImages } from './AgentMessageImages'
 import { PanelHeader } from './PanelHeader'
 import { SessionHistory } from './SessionHistory'
@@ -79,6 +80,7 @@ interface ChatMessage {
   reasoning?: string
   params?: string
   result?: string
+  tool_call_id?: string
   images?: string[]
   duration_ms?: number
   tokens_direct?: number
@@ -492,6 +494,31 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const processingRef = useRef(false)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const sessionReqIdRef = useRef(0)
+  // Last processed stream seq (F1): replayed/duplicated events with
+  // seq <= lastSeq are dropped. Jumped forward by reconnect_sync's server_seq.
+  const lastSeqRef = useRef(0)
+  // Throttles watchdog/resync-triggered reconnects (min interval between them).
+  const lastResyncRequestRef = useRef(0)
+  const [retryNotice, setRetryNotice] = useState<{ attempt: number; max: number; error: string } | null>(null)
+
+  // Sends a throttled `reconnect` to reconcile against the authoritative DB
+  // state (used by the resync marker and the staleness watchdog).
+  const requestResync = useCallback(() => {
+    const now = Date.now()
+    if (now - lastResyncRequestRef.current < 30000) return
+    lastResyncRequestRef.current = now
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'reconnect', last_message_id: '' }))
+    }
+  }, [])
+
+  // Staleness watchdog (F6): a result-less tool older than the largest
+  // plausible tool window means its tool_result was lost mid-connection —
+  // reconcile from the DB instead of spinning forever.
+  useEffect(() => {
+    const age = oldestPendingToolAgeMs(messages, Date.now())
+    if (age !== null && age > 120000) requestResync()
+  }, [messages, requestResync])
   const resizeRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const selectedAgentRef = useRef<Agent | null>(null)
@@ -674,6 +701,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     const ws = new WebSocket(WS_URL + sid + '?token=' + token + adminParam)
     wsRef.current = ws
     reconnectAttemptsRef.current = 0
+    lastSeqRef.current = 0
+    setRetryNotice(null)
 
     ws.onopen = () => {
         const e = reasoningEffortRef.current
@@ -687,16 +716,24 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
       ws.onmessage = (event) => {
         const msg: WSMessage = JSON.parse(event.data)
+        // Resumable stream (F1): drop replayed/duplicated events. reconnect_sync
+        // carries no seq and always applies; it jumps lastSeq forward instead.
+        const seq = (msg as { seq?: unknown }).seq
+        if (typeof seq === 'number') {
+          if (seq <= lastSeqRef.current) return
+          lastSeqRef.current = seq
+        }
         switch (msg.type) {
           case 'token':
             setIsStreaming(true)
+            setRetryNotice(null)
             if (!streamingStartedAt.current) streamingStartedAt.current = ts()
             setCurrentStreamingText((prev) => { const next = prev + msg.data; streamingTextRef.current = next; return next })
             break
           case 'reasoning':
             setIsStreaming(true); if (!streamingStartedAt.current) streamingStartedAt.current = ts(); appendStreamingReasoning(msg.data); break
           case 'tool_call':
-            setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'tool', content: msg.tool, params: msg.params, reasoning: msg.reasoning || streamingReasoningRef.current || undefined, duration_ms: msg.duration_ms, created_at: ts() }])
+            setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'tool', content: msg.tool, tool_call_id: (msg as { tool_call_id?: string }).tool_call_id, params: msg.params, reasoning: msg.reasoning || streamingReasoningRef.current || undefined, duration_ms: msg.duration_ms, created_at: ts() }])
             if (streamingReasoningRef.current) { needsCollapseRef.current = true; updateStreamingReasoning('') }
             break
           case 'tool_confirm_required':
@@ -710,42 +747,38 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             setPendingQuestion({ question: msg.question, options: msg.options, allowCustom: msg.allow_custom })
             break
           case 'tool_result':
-            setMessages((prev) => { const updated = [...prev]; for (let i = updated.length - 1; i >= 0; i--) { if (updated[i].role === 'tool' && updated[i].content === msg.tool) { updated[i] = { ...updated[i], params: msg.params, result: msg.error || msg.result, duration_ms: msg.duration_ms, tokens_direct: (msg as any).tokens_direct } as ChatMessage; break } }; return updated }); break
+            setMessages((prev) => applyToolResult(prev, {
+              tool: msg.tool,
+              tool_call_id: (msg as { tool_call_id?: string }).tool_call_id,
+              params: msg.params,
+              result: msg.result,
+              error: (msg as { error?: string }).error,
+              duration_ms: msg.duration_ms,
+              tokens_direct: (msg as { tokens_direct?: number }).tokens_direct,
+            })); break
+          case 'resync':
+            // Server dropped an event for this connection — reconcile now.
+            requestResync(); break
+          case 'llm_retry': {
+            const r = msg as { attempt?: number; max_attempts?: number; error?: string }
+            setRetryNotice({ attempt: r.attempt ?? 0, max: r.max_attempts ?? 0, error: r.error ?? '' })
+            break
+          }
           case 'cell_created':
             if (notebookId) queryClient.invalidateQueries({ queryKey: ['notebook', notebookId] }); scrollToCell(msg.cell_id); break
           case 'cell_output':
             if (notebookId) queryClient.setQueryData(['notebook', notebookId], (old: any) => old ? { ...old, cells: old.cells.map((c: any) => c.id === msg.cell_id ? { ...c, outputs: msg.outputs as any[] } : c) } : old); scrollToCell(msg.cell_id); break
           case 'cell_updated': scrollToCell(msg.cell_id); break
           case 'reconnect_sync': {
-            const _fn = (tc: any) => tc?.function || tc
-            const serverMsgs: ChatMessage[] = (msg.messages || []).map((m: any) => {
-              const base: ChatMessage = { id: m.id, role: m.role, content: m.content || '', reasoning: m.reasoning_content || undefined, images: m.image_ids?.length ? m.image_ids : undefined, created_at: m.created_at }
-              if (m.role === 'subagent') {
-                const tc = m.tool_calls?.[0]
-                base.content = m.content || ''
-                base.params = JSON.stringify({ goal: tc?.name || '', status: tc?.arguments?.status || 'completed', error: tc?.arguments?.error || '' })
-                base.result = tc?.arguments?.status === 'completed' || tc?.arguments?.status === 'failed' ? JSON.stringify(tc?.arguments?.result || tc?.arguments?.status) : undefined
-              } else if (m.tool_calls?.length) {
-                const tc = _fn(m.tool_calls[0])
-                base.content = tc.name || 'tool'
-                base.params = tc.arguments ? (typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments)) : undefined
-                base.result = m.tool_calls[0].result !== undefined ? JSON.stringify(m.tool_calls[0].result) : undefined
-                base.role = 'tool'
-                base.duration_ms = m.duration_ms
-              } else if (m.role === 'tool') {
-                base.result = m.content || ''
-                base.duration_ms = m.duration_ms
-              }
-              if (m.duration_ms) base.duration_ms = m.duration_ms
-              if (m.tokens_direct !== undefined) (base as any).tokens_direct = m.tokens_direct
-              if (m.role === 'compaction') {
-                (base as any).tokens_before = m.tokens_direct ? m.tokens_direct : undefined
-                base.content = m.content || ''
-              }
-              return base
-            })
+            // Authoritative DB state replaces the list. The mapping folds
+            // persisted tool results into their calls (F4) and the server_seq
+            // jumps the stream clock past anything already reconciled (F1).
+            const serverMsgs = mapServerMessagesToChat((msg as { messages?: any }).messages)
             if (serverMsgs.length > 0) setMessages(serverMsgs)
+            const serverSeq = (msg as { server_seq?: unknown }).server_seq
+            if (typeof serverSeq === 'number' && serverSeq > lastSeqRef.current) lastSeqRef.current = serverSeq
             streamingTextRef.current = ''; setCurrentStreamingText('')
+            setRetryNotice(null)
             const running = (msg as any).running
             setIsStreaming(!!running)
             if (running && !streamingStartedAt.current) streamingStartedAt.current = ts()
@@ -761,7 +794,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             break
           }
           case 'done': {
-            setIsStreaming(false); needsCollapseRef.current = false
+            setIsStreaming(false); needsCollapseRef.current = false; setRetryNotice(null)
             const tk = (msg as any).data?.tokens as TokenBreakdown | undefined
             const dm = tk?.duration_ms
             const finalText = streamingTextRef.current
@@ -835,8 +868,19 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               return [...prev, subagentMsg]
             }); break
           case 'error':
-            updateStreamingReasoning(''); setIsStreaming(false); needsCollapseRef.current = false
-            setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: 'Error: ' + msg.message, created_at: ts() }]); setTasks((prev) => prev.map((t) => t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t)); setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50); break
+            updateStreamingReasoning(''); setIsStreaming(false); needsCollapseRef.current = false; setRetryNotice(null)
+            // Keep any partially streamed text, then reconcile against the DB:
+            // the failure is persisted server-side and reconnect_sync is the
+            // truth (F7). Without this the panel dead-ends on a bare error.
+            setMessages((prev) => {
+              const next = [...prev]
+              if (streamingTextRef.current) {
+                next.push({ id: crypto.randomUUID(), role: 'assistant', content: streamingTextRef.current, created_at: ts() })
+                streamingTextRef.current = ''; setCurrentStreamingText('')
+              }
+              next.push({ id: crypto.randomUUID(), role: 'assistant', content: 'Error: ' + msg.message, created_at: ts() })
+              return next
+            }); setTasks((prev) => prev.map((t) => t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t)); requestResync(); setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50); break
           case 'cancelled':
             setIsStreaming(false); needsCollapseRef.current = false; setTasks((prev) => prev.map((t) => t.status === 'in_progress' ? { ...t, status: 'pending' as const } : t))
             const cancelledText = streamingTextRef.current; setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: cancelledText ? cancelledText + '\n\n*[Cancelled]*' : '*[Cancelled]*', created_at: ts() }]); streamingTextRef.current = ''; setCurrentStreamingText(''); updateStreamingReasoning(''); break
@@ -1610,6 +1654,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               </div>
             )}
             {error && <div style={styles.error}>{error}</div>}
+            {retryNotice && (
+              <div style={{ fontSize: 11, color: 'var(--warning, #f59e0b)', opacity: 0.9, margin: '4px 2px' }}>
+                Model call failed{retryNotice.error ? `: ${retryNotice.error.slice(0, 120)}` : ''} — retrying ({retryNotice.attempt}/{retryNotice.max || 3})…
+              </div>
+            )}
           </div>
 
           <div>

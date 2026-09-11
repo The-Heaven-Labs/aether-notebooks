@@ -301,7 +301,7 @@ func sanitizeChatMessages(msgs []ChatMessage) []ChatMessage {
 	return msgs
 }
 
-func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, imageIDs []string, tools []*ToolDef, masterKey []byte, capturedPageContext *PageContextInfo, onToken func(string), onReasoning func(string), onToolCall func(string, string, string, string, int), onToolResult func(string, string, string, string, int, int), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, *TokenBreakdown, error) {
+func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessage string, imageIDs []string, tools []*ToolDef, masterKey []byte, capturedPageContext *PageContextInfo, onToken func(string), onReasoning func(string), onToolCall func(string, string, string, string, int), onToolResult func(string, string, string, string, string, int, int), onEvent func(EngineEvent)) (string, string, []models.ToolCall, []EngineEvent, *TokenBreakdown, error) {
 	var events []EngineEvent
 	slog.Debug("engine: ProcessMessage start", "session_id", sessionID, "msg_len", len(userMessage), "image_count", len(imageIDs))
 
@@ -758,9 +758,35 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		resp, err := llmClient.Chat(ctx, chatMsgs, toolsList, masterKey)
 		if err != nil {
 			slog.Error("engine: LLM call failed", "session_id", sessionID, "turn", turn, "error", err, "elapsed_ms", time.Since(turnStart).Milliseconds())
+			// User cancel / deadline on our own context is not an LLM failure:
+			// bail out without retries and without persisting an error message.
+			if ctx.Err() != nil {
+				return "", "", nil, events, tokBrk, ctx.Err()
+			}
 			llmErrorCount++
 			if llmErrorCount >= 3 {
-				return "", "", nil, events, tokBrk, fmt.Errorf("llm call failed after 3 retries: %w", err)
+				terminalErr := fmt.Errorf("llm call failed after 3 retries: %w", err)
+				// Persist the failure so reconnect_sync keeps the transcript
+				// truthful — otherwise the error evaporates on refresh while the
+				// user's message sits unanswered.
+				_ = e.session.AppendMessage(context.Background(), &models.AgentMessage{
+					ID:        uuid.New().String(),
+					SessionID: sessionID,
+					Role:      "assistant",
+					Content:   "Error: " + terminalErr.Error(),
+					CreatedAt: time.Now(),
+				})
+				return "", "", nil, events, tokBrk, terminalErr
+			}
+			// Visible, patient retries: back off and tell the UI to show
+			// "retrying (n/3)" instead of a frozen spinner.
+			backoff := time.Duration(llmErrorCount) * time.Second
+			if onEvent != nil {
+				onEvent(EngineEvent{Type: "llm_retry", Attempt: llmErrorCount, MaxAttempts: 3, Error: err.Error()})
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(backoff):
 			}
 			continue
 		}
@@ -964,8 +990,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					TokensDirect: tokensDirect,
 					CreatedAt:    time.Now(),
 				})
+				e.recordToolCallResult(assistantMsgID, tc.ID, resultStr, "", 0)
 				if onToolResult != nil {
-					onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "", 0, tokensDirect)
+					onToolResult(tc.Function.Name, tc.ID, tc.Function.Arguments, resultStr, "", 0, tokensDirect)
 				}
 				continue
 			}
@@ -1034,8 +1061,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 							TokensDirect: tokensDirect,
 							CreatedAt:    time.Now(),
 						})
+						e.recordToolCallResult(assistantMsgID, tc.ID, resultStr, "", 0)
 						if onToolResult != nil {
-							onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "", 0, tokensDirect)
+							onToolResult(tc.Function.Name, tc.ID, tc.Function.Arguments, resultStr, "", 0, tokensDirect)
 						}
 						continue
 					}
@@ -1054,8 +1082,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 						TokensDirect: tokensDirect,
 						CreatedAt:    time.Now(),
 					})
+					e.recordToolCallResult(assistantMsgID, tc.ID, resultStr, "timeout", 0)
 					if onToolResult != nil {
-						onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "timeout", 0, tokensDirect)
+						onToolResult(tc.Function.Name, tc.ID, tc.Function.Arguments, resultStr, "timeout", 0, tokensDirect)
 					}
 					continue
 				}
@@ -1080,8 +1109,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					DurationMs:   toolDurationMs,
 					CreatedAt:    time.Now(),
 				})
+				e.recordToolCallResult(assistantMsgID, tc.ID, resultStr, err.Error(), toolDurationMs)
 				if onToolResult != nil {
-					onToolResult(tc.Function.Name, tc.Function.Arguments, "", err.Error(), toolDurationMs, tokensDirect)
+					onToolResult(tc.Function.Name, tc.ID, tc.Function.Arguments, "", err.Error(), toolDurationMs, tokensDirect)
 				}
 			} else {
 				resultJSON, _ := json.Marshal(result)
@@ -1100,8 +1130,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					DurationMs:   toolDurationMs,
 					CreatedAt:    time.Now(),
 				})
+				e.recordToolCallResult(assistantMsgID, tc.ID, result, "", toolDurationMs)
 				if onToolResult != nil {
-					onToolResult(tc.Function.Name, tc.Function.Arguments, resultStr, "", toolDurationMs, tokensDirect)
+					onToolResult(tc.Function.Name, tc.ID, tc.Function.Arguments, resultStr, "", toolDurationMs, tokensDirect)
 				}
 			}
 		}
@@ -1241,8 +1272,22 @@ func (e *Engine) PublishSessionEvent(sessionID string, msg any) {
 	e.streams.Publish(sessionID, msg)
 }
 
-func (e *Engine) SubscribeSession(sessionID string, bufSize int, skipBuffer bool) (chan any, func()) {
+// recordToolCallResult persists a tool execution result onto the matching tool
+// call of the already-stored assistant message (see SessionStore.
+// UpdateMessageToolCall). Failures are logged, never fatal to the turn.
+func (e *Engine) recordToolCallResult(assistantMsgID, callID string, result any, errMsg string, durationMs int) {
+	if err := e.session.UpdateMessageToolCall(context.Background(), assistantMsgID, callID, result, errMsg, durationMs); err != nil {
+		slog.Warn("engine: failed to record tool call result", "message_id", assistantMsgID, "call_id", callID, "error", err)
+	}
+}
+
+func (e *Engine) SubscribeSession(sessionID string, bufSize int, skipBuffer bool) (chan SequencedEvent, func()) {
 	return e.streams.Subscribe(sessionID, bufSize, skipBuffer)
+}
+
+// StreamLastSeq reports the highest event sequence published to a session.
+func (e *Engine) StreamLastSeq(sessionID string) uint64 {
+	return e.streams.LastSeq(sessionID)
 }
 
 func (e *Engine) SetFrontendURL(u string) {
