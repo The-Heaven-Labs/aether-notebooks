@@ -233,7 +233,7 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 
 	// Broadcast executing state and track in Hub (survives page refresh)
 	execStart := time.Now()
-	s.hub.Broadcast(nbID, map[string]any{"type": "cell_executing", "cell_id": cellID, "started_at": execStart})
+	s.hub.Broadcast(nbID, map[string]any{"type": "cell_executing", "cell_id": cellID, "started_at": execStart, "user_email": s.userEmail(bgCtx, claims.UserID)})
 	s.hub.SetRunning(cellID, nbID, execStart)
 
 	// Execute — respects cancellation and connector timeout

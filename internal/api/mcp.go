@@ -158,6 +158,10 @@ func (s *Server) handleMCPToolsCall(w http.ResponseWriter, req mcpJSONRPCRequest
 		BroadcastFunc: func(notebookID string, msg interface{}) {
 			s.hub.Broadcast(notebookID, msg)
 		},
+		SetRunningFunc:   s.hub.SetRunning,
+		UnsetRunningFunc: s.hub.UnsetRunning,
+		SetCancelFunc:    s.hub.SetCancelFunc,
+		DeleteCancelFunc: s.hub.DeleteCancelFunc,
 	}
 
 	result, err := def.Handler(params.Arguments, ctx)

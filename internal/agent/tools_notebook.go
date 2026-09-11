@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -810,30 +811,54 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 	}
 	defer exec.Close()
 
-	// Running-state broadcast so every notebook viewer sees the badge while
-	// the query executes. Every path below emits cell_output, which clears it.
+	// Signal start of execution to all notebook viewers: running badge plus
+	// scroll-at-start for agent runs (user_email). Every path below emits
+	// cell_output, which clears the badge. The skip path above returns before
+	// this point, so it correctly never flashes "running".
+	execStart := time.Now()
 	if ctx.BroadcastFunc != nil {
 		ctx.BroadcastFunc(notebookID, map[string]any{
 			"type":       "cell_executing",
 			"cell_id":    cellID,
-			"started_at": time.Now().UTC(),
+			"started_at": execStart,
 			"user_email": "agent@aether",
 		})
 	}
-
-	execCtx := ctx.Context
-	cancel := context.CancelFunc(func() {})
-	if timeoutMs > 0 {
-		execCtx, cancel = context.WithTimeout(ctx.Context, time.Duration(timeoutMs)*time.Millisecond)
+	if ctx.SetRunningFunc != nil {
+		ctx.SetRunningFunc(cellID, notebookID, execStart) // Hub + Redis → survives refresh
 	}
-	defer cancel()
+
+	// Cancellable execution context: powers the Cancel button via the hub
+	// (same lifecycle as user-triggered runs). The timeout nests inside.
+	execCtx, execCancel := context.WithCancel(ctx.Context)
+	defer execCancel()
+	if timeoutMs > 0 {
+		var timeoutCancel context.CancelFunc
+		execCtx, timeoutCancel = context.WithTimeout(execCtx, time.Duration(timeoutMs)*time.Millisecond)
+		defer timeoutCancel()
+	}
+	if ctx.SetCancelFunc != nil {
+		ctx.SetCancelFunc(cellID, execCancel)
+	}
+	// Clear running state on every path below (success, error, cancel).
+	clearRunning := func() {
+		if ctx.DeleteCancelFunc != nil {
+			ctx.DeleteCancelFunc(cellID)
+		}
+		if ctx.UnsetRunningFunc != nil {
+			ctx.UnsetRunningFunc(cellID)
+		}
+	}
 
 	query := executor.ApplyLimit(cell.Source, cell.Limit)
 
 	result, err := exec.Execute(execCtx, query, nil, cell.Limit)
-	if err == nil && timeoutMs > 0 && execCtx.Err() == context.DeadlineExceeded {
-		// Some executors swallow cancellation and return an empty success —
-		// the deadline still expired, so treat it as a timeout.
+	wasCancelled := execCtx.Err() != nil
+	clearRunning()
+	// Some drivers return empty results instead of context.Canceled when the
+	// query was cancelled mid-flight. Check if our context was cancelled
+	// (mirrors the user-triggered execute path).
+	if err == nil && wasCancelled && (result == nil || len(result.Rows) == 0) {
 		err = execCtx.Err()
 	}
 	if err != nil {
@@ -842,6 +867,8 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 		errMsg := err.Error()
 		if timedOut {
 			errMsg = fmt.Sprintf("execution timed out after %dms", timeoutMs)
+		} else if execCtx.Err() == context.Canceled || errors.Is(err, context.Canceled) {
+			errMsg = "Query cancelled"
 		}
 		errOutput := models.Output{Type: "error", Data: map[string]string{"message": errMsg}}
 		outJSON, _ := json.Marshal([]models.Output{errOutput})

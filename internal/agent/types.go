@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,6 +27,15 @@ type ToolContext struct {
 	MasterKey        []byte
 	OnEvent          func(EngineEvent)
 	BroadcastFunc    func(notebookID string, msg any)
+	// Running-state hooks wired to the notebook Hub (see internal/api/router.go
+	// and mcp.go). They let agent-driven cell runs participate in the same
+	// running/cancel lifecycle as user-triggered runs: badge, refresh-safe
+	// sync replay, and the Cancel endpoint. All hooks are optional — check for
+	// nil before use (bare contexts in tests and subagent runs leave them unset).
+	SetRunningFunc   func(cellID, notebookID string, startedAt time.Time)
+	UnsetRunningFunc func(cellID string)
+	SetCancelFunc    func(cellID string, cancel context.CancelFunc)
+	DeleteCancelFunc func(cellID string)
 	QuestionFunc     func(question string, options any, allowCustom bool) (string, error)
 }
 

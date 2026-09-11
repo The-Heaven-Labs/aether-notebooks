@@ -68,6 +68,13 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 	s.agentEngine.BroadcastFunc = func(notebookID string, msg any) {
 		s.hub.Broadcast(notebookID, msg)
 	}
+	// Running-state/cancel lifecycle for agent-driven cell runs (mirrors the
+	// user-triggered execute path so badges, refresh-safe sync, and the Cancel
+	// endpoint all work for agent runs).
+	s.agentEngine.SetRunningFunc = s.hub.SetRunning
+	s.agentEngine.UnsetRunningFunc = s.hub.UnsetRunning
+	s.agentEngine.SetCancelFunc = s.hub.SetCancelFunc
+	s.agentEngine.DeleteCancelFunc = s.hub.DeleteCancelFunc
 	s.subdomainMW = SubdomainMiddleware(s.db.Pool)
 	s.routes()
 	return s

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/the-heaven-labs/aether/internal/crypto"
 )
@@ -143,5 +144,80 @@ func TestProcessMessage_PersistsToolCallResults(t *testing.T) {
 	}
 	if calls[0].Result == nil {
 		t.Fatal("tool call result was not persisted on the assistant message")
+	}
+}
+
+// The engine must propagate running-state hooks into every ToolContext, the
+// same way BroadcastFunc is propagated.
+func TestProcessMessage_PropagatesRunningHooks(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	engine := newTestEngine(db)
+	engine.SetRunningFunc = func(cellID, notebookID string, startedAt time.Time) {}
+	engine.UnsetRunningFunc = func(cellID string) {}
+	engine.SetCancelFunc = func(cellID string, cancel context.CancelFunc) {}
+	engine.DeleteCancelFunc = func(cellID string) {}
+	engine.BroadcastFunc = func(notebookID string, msg any) {}
+
+	agentID := createTestAgentRow(t, db, orgID, userID, []string{})
+	nbID := createTestNotebook(t, db, orgID, userID)
+	sid := createTestSession(t, db, agentID, nbID, userID)
+
+	var sawBroadcast, sawSetRunning, sawUnsetRunning, sawSetCancel, sawDeleteCancel bool
+	probe := &ToolDef{
+		Type: "function",
+		Handler: func(args json.RawMessage, ctx *ToolContext) (any, error) {
+			sawBroadcast = ctx.BroadcastFunc != nil
+			sawSetRunning = ctx.SetRunningFunc != nil
+			sawUnsetRunning = ctx.UnsetRunningFunc != nil
+			sawSetCancel = ctx.SetCancelFunc != nil
+			sawDeleteCancel = ctx.DeleteCancelFunc != nil
+			return map[string]any{"ok": true}, nil
+		},
+	}
+	probe.Function.Name = "probe_hooks"
+	probe.Function.Parameters = `{"type":"object","properties":{}}`
+
+	masterKey := make([]byte, 32)
+	callID := "call-hooks-1"
+	responses := []ChatResponse{
+		{
+			Choices: []Choice{{
+				Message: ChatMessage{
+					ToolCalls: []ToolCall{{
+						ID:   callID,
+						Type: "function",
+						Function: struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						}{Name: "probe_hooks", Arguments: `{}`},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}},
+			Usage: Usage{PromptTokens: 10, CompletionTokens: 5},
+		},
+		{
+			Choices: []Choice{{
+				Message:      ChatMessage{Content: "done"},
+				FinishReason: "stop",
+			}},
+			Usage: Usage{PromptTokens: 10, CompletionTokens: 5},
+		},
+	}
+	var captured []map[string]any
+	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
+	defer srv.Close()
+	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.pool = db.Pool
+	engine.session = NewSessionStore(db.Pool)
+
+	if _, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "probe", nil, []*ToolDef{probe}, masterKey, nil, nil, nil, nil, nil, nil); err != nil {
+		t.Fatalf("ProcessMessage: %v", err)
+	}
+	if !sawBroadcast || !sawSetRunning || !sawUnsetRunning || !sawSetCancel || !sawDeleteCancel {
+		t.Fatalf("hooks not propagated: broadcast=%v setRunning=%v unsetRunning=%v setCancel=%v deleteCancel=%v",
+			sawBroadcast, sawSetRunning, sawUnsetRunning, sawSetCancel, sawDeleteCancel)
 	}
 }
