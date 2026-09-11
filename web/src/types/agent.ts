@@ -169,6 +169,9 @@ export type WSMessage =
   | { type: 'tool_confirm_required'; tool_name: string; tool_args: string; current_source?: string }
   | { type: 'resync'; seq?: number }
   | { type: 'llm_retry'; attempt?: number; max_attempts?: number; error?: string; seq?: number }
+  | { type: 'steering'; content: string; seq?: number }
+  | { type: 'steering_accepted'; seq?: number }
+  | { type: 'steering_busy'; content: string; seq?: number }
   | { type: 'question'; question: string; options?: Array<{ title: string; description?: string } | string>; allow_custom: boolean }
   | { type: 'token_update'; tokens: TokenBreakdown }
   | { type: 'context_compacted'; summary: string; tokens?: TokenBreakdown }

@@ -307,12 +307,31 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 
 			if msg.Type == "message" {
 				mu.Lock()
-				if processing {
-					mu.Unlock()
-					continue // drop message if already processing
-				}
-				processing = true
+				busy := processing
 				sid := currentSessionID
+				mu.Unlock()
+
+				if busy {
+					// A turn is running: deliver the follow-up into it instead
+					// of dropping it. The engine folds it in at the next turn
+					// boundary and announces it on the stream.
+					select {
+					case s.agentEngine.SteeringChan(sid) <- msg.Content:
+						s.agentEngine.PublishSessionEvent(sid, WSResponse{Type: "steering_accepted"})
+					default:
+						// Mailbox full (16 deep): NACK so the client holds the
+						// message in its offline queue and retries later.
+						// Content is echoed back for the re-queue.
+						s.agentEngine.PublishSessionEvent(sid, struct {
+							Type    string `json:"type"`
+							Content string `json:"content"`
+						}{Type: "steering_busy", Content: msg.Content})
+					}
+					continue
+				}
+
+				mu.Lock()
+				processing = true
 				mu.Unlock()
 
 				slog.Info("ws: processing message", "session_id", sid, "content_len", len(msg.Content), "image_count", len(msg.Images))
@@ -412,6 +431,11 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 									MaxAttempts int    `json:"max_attempts"`
 									Error       string `json:"error,omitempty"`
 								}{Type: "llm_retry", Attempt: evt.Attempt, MaxAttempts: evt.MaxAttempts, Error: evt.Error})
+							case "steering":
+								s.agentEngine.PublishSessionEvent(sid, struct {
+									Type    string `json:"type"`
+									Content string `json:"content"`
+								}{Type: "steering", Content: evt.Content})
 							case "context_compacted":
 								s.agentEngine.PublishSessionEvent(sid, struct {
 									Type    string                `json:"type"`

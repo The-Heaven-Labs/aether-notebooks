@@ -63,6 +63,8 @@ type EngineEvent struct {
 	Attempt     int    `json:"attempt,omitempty"`
 	MaxAttempts int    `json:"max_attempts,omitempty"`
 	Error       string `json:"error,omitempty"`
+	// Content carries free-text event payloads (steering messages).
+	Content string `json:"content,omitempty"`
 }
 
 type QuestionResult struct {
