@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -213,6 +214,13 @@ type ToolResult struct {
 
 type ToolHandler func(args json.RawMessage, ctx *ToolContext) (any, error)
 
+// DefaultToolTimeout applies when a tool declares Timeout == 0 (e.g. a
+// custom test tool). Tools should normally declare an explicit budget.
+const DefaultToolTimeout = 120 * time.Second
+
+// NoTimeout marks interactive/long-running tools that must not be wrapped.
+const NoTimeout = -1 * time.Second
+
 type ToolDef struct {
 	Type     string `json:"type"`
 	Function struct {
@@ -220,10 +228,40 @@ type ToolDef struct {
 		Description string `json:"description"`
 		Parameters  any    `json:"parameters"`
 	} `json:"function"`
-	// NOTE: there is deliberately no timeout field. Tool timeouts are explicit
-	// per-call arguments (e.g. run_cell's timeout_ms), not registry defaults.
 	Handler         ToolHandler `json:"-"`
 	ConfirmRequired bool        `json:"-"`
+	// Timeout is the default execution budget. 0 falls back to
+	// DefaultToolTimeout; NoTimeout (-1) disables wrapping.
+	Timeout time.Duration `json:"-"`
+	// TimeoutFromArgs overrides Timeout when the caller supplied one
+	// (e.g. run_cell's timeout_ms).
+	TimeoutFromArgs func(json.RawMessage) (time.Duration, bool) `json:"-"`
+}
+
+// Execute runs the handler under the effective timeout and normalizes
+// wrapper-caused deadline errors.
+func (t *ToolDef) Execute(args json.RawMessage, tc *ToolContext) (any, error) {
+	timeout := t.Timeout
+	if t.TimeoutFromArgs != nil {
+		if d, ok := t.TimeoutFromArgs(args); ok {
+			timeout = d
+		}
+	}
+	if timeout == 0 {
+		timeout = DefaultToolTimeout
+	}
+	if timeout < 0 {
+		return t.Handler(args, tc)
+	}
+	runCtx, cancel := context.WithTimeout(tc.Context, timeout)
+	defer cancel()
+	copy := *tc
+	copy.Context = runCtx
+	result, err := t.Handler(args, &copy)
+	if err != nil && errors.Is(runCtx.Err(), context.DeadlineExceeded) && tc.Context.Err() == nil {
+		return result, fmt.Errorf("tool %q timed out after %s", t.Function.Name, timeout)
+	}
+	return result, err
 }
 
 func normalizeToolParams(params map[string]any) map[string]any {
