@@ -241,23 +241,23 @@ type ToolDef struct {
 // Execute runs the handler under the effective timeout and normalizes
 // wrapper-caused deadline errors.
 func (t *ToolDef) Execute(args json.RawMessage, tc *ToolContext) (any, error) {
+	if t.Timeout < 0 {
+		return t.Handler(args, tc)
+	}
 	timeout := t.Timeout
 	if t.TimeoutFromArgs != nil {
-		if d, ok := t.TimeoutFromArgs(args); ok {
+		if d, ok := t.TimeoutFromArgs(args); ok && d > 0 {
 			timeout = d
 		}
 	}
 	if timeout == 0 {
 		timeout = DefaultToolTimeout
 	}
-	if timeout < 0 {
-		return t.Handler(args, tc)
-	}
 	runCtx, cancel := context.WithTimeout(tc.Context, timeout)
 	defer cancel()
-	copy := *tc
-	copy.Context = runCtx
-	result, err := t.Handler(args, &copy)
+	tcCopy := *tc
+	tcCopy.Context = runCtx
+	result, err := t.Handler(args, &tcCopy)
 	if err != nil && errors.Is(runCtx.Err(), context.DeadlineExceeded) && tc.Context.Err() == nil {
 		return result, fmt.Errorf("tool %q timed out after %s", t.Function.Name, timeout)
 	}
