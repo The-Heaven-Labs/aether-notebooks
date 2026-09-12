@@ -46,6 +46,7 @@ func mcpResultText(t *testing.T, resp map[string]any) string {
 // The MCP path builds its own ToolContext — it must populate the running-state
 // hooks so agent-driven runs behave identically off the MCP channel.
 func TestMCPToolsCallRunCell(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
 	email := fmt.Sprintf("mcp-run-%d@example.com", time.Now().UnixNano())
 	token := registerAndGetToken(t, srv, email, "MCP Run Org")
@@ -69,6 +70,7 @@ func TestMCPToolsCallRunCell(t *testing.T) {
 // Cancelling an MCP-driven run via the cell Cancel endpoint aborts the query,
 // proving the MCP ToolContext registers its cancel func on the Hub.
 func TestMCPToolsCallRunCellCancel(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
 	email := fmt.Sprintf("mcp-cancel-%d@example.com", time.Now().UnixNano())
 	token := registerAndGetToken(t, srv, email, "MCP Cancel Org")
@@ -118,6 +120,7 @@ func TestMCPToolsCallRunCellCancel(t *testing.T) {
 // MCP dispatch must honor ToolDef.Timeout: a hanging probe is cut off by
 // Execute and the timeout error flows into the isError envelope.
 func TestMCPToolsCallToolTimeout(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
 	email := fmt.Sprintf("mcp-timeout-%d@example.com", time.Now().UnixNano())
 	token := registerAndGetToken(t, srv, email, "MCP Timeout Org")
