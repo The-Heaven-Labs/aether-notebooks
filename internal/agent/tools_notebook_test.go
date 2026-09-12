@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -1323,6 +1324,95 @@ func TestAgentRunCellTimeout(t *testing.T) {
 	}
 
 	// Cell shows the error output.
+	var outputs []byte
+	if err := db.Pool.QueryRow(context.Background(), `SELECT outputs FROM cells WHERE id=$1`, cellID).Scan(&outputs); err != nil {
+		t.Fatalf("query outputs: %v", err)
+	}
+	var parsed []map[string]any
+	if err := json.Unmarshal(outputs, &parsed); err != nil || len(parsed) == 0 || parsed[0]["type"] != "error" {
+		t.Fatalf("expected persisted error output, got %s", string(outputs))
+	}
+}
+
+func TestAgentRunCellConnectorTimeout(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	connID, masterKey := createTestPGConnector(t, db, orgID, userID)
+	if _, err := db.Pool.Exec(context.Background(), `UPDATE connectors SET timeout_seconds=1 WHERE id=$1`, connID); err != nil {
+		t.Fatalf("set connector timeout: %v", err)
+	}
+	cellID := createTestCellRow(t, db, nbID, connID, "SELECT pg_sleep(5)")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	runCellDef, _ := reg.Get("run_cell")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	ctx.MasterKey = masterKey
+
+	start := time.Now()
+	args, _ := json.Marshal(map[string]any{"cell_id": cellID})
+	result, err := runCellDef.Execute(args, ctx)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("connector timeout must be a result, not a Go error: %v", err)
+	}
+	m := result.(map[string]any)
+	if m["status"] != "error" {
+		t.Fatalf("expected error status, got %v", m)
+	}
+	if timedOut, _ := m["timed_out"].(bool); !timedOut {
+		t.Fatalf("expected timed_out=true, got %v", m)
+	}
+	if msg, _ := m["error"].(string); !strings.Contains(msg, "execution timed out after 1000ms") {
+		t.Fatalf("expected 1000ms connector timeout message, got %q", msg)
+	}
+	if elapsed > 4*time.Second {
+		t.Fatalf("connector timeout did not bound execution: %v", elapsed)
+	}
+
+	var outputs []byte
+	if err := db.Pool.QueryRow(context.Background(), `SELECT outputs FROM cells WHERE id=$1`, cellID).Scan(&outputs); err != nil {
+		t.Fatalf("query outputs: %v", err)
+	}
+	var parsed []map[string]any
+	if err := json.Unmarshal(outputs, &parsed); err != nil || len(parsed) == 0 || parsed[0]["type"] != "error" {
+		t.Fatalf("expected persisted error output, got %s", string(outputs))
+	}
+}
+
+func TestAgentRunCellWrapperDeadlineMarksTimedOut(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	connID, masterKey := createTestPGConnector(t, db, orgID, userID)
+	cellID := createTestCellRow(t, db, nbID, connID, "SELECT pg_sleep(5)")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	runCellDef, _ := reg.Get("run_cell")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	ctx.MasterKey = masterKey
+	shortCtx, cancel := context.WithTimeout(ctx.Context, time.Second)
+	defer cancel()
+	ctx.Context = shortCtx
+
+	args, _ := json.Marshal(map[string]any{"cell_id": cellID})
+	result, err := runCellDef.Execute(args, ctx)
+	if err != nil {
+		t.Fatalf("wrapper deadline must be a result, not a Go error: %v", err)
+	}
+	m := result.(map[string]any)
+	if m["status"] != "error" {
+		t.Fatalf("expected error status, got %v", m)
+	}
+	if timedOut, _ := m["timed_out"].(bool); !timedOut {
+		t.Fatalf("expected timed_out=true for a wrapper deadline, got %v", m)
+	}
+	if msg, _ := m["error"].(string); msg == "Query cancelled" {
+		t.Fatalf("deadline must not be reported as a cancel: %q", msg)
+	}
+
 	var outputs []byte
 	if err := db.Pool.QueryRow(context.Background(), `SELECT outputs FROM cells WHERE id=$1`, cellID).Scan(&outputs); err != nil {
 		t.Fatalf("query outputs: %v", err)

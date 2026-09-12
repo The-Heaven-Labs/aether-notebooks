@@ -84,7 +84,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		}{
 			Name:        "create_cell",
 			Description: "Create a new cell. ALWAYS provide a concise title and a description of what the query does (extra detail can go in SQL comments). Use type 'code' with language 'sql' for database queries, or type 'text' with language 'markdown' for documentation and notes. For SQL cells that should produce results right away, set run=true to execute immediately after creation — the result includes inline query results (same shape as run_cell: column_names, data preview, truncated) and shows a running state in the notebook while executing. Optional timeout_ms (max 600000, only with run=true) bounds the execution.",
-			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"type":{"type":"string","enum":["code","text"],"description":"Cell type: 'code' for executable queries, 'text' for markdown documentation"},"language":{"type":"string","enum":["sql","markdown"],"description":"Cell language. Defaults to 'sql' for code cells, 'markdown' for text cells. Currently only SQL and markdown are supported."},"title":{"type":"string","description":"Short name of what this cell does (e.g. 'Daily orders GMV by region')"},"description":{"type":"string","description":"What this query is for, data source assumptions, and caveats. Detail can also live as SQL comments in source."},"source":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell. Required for code cells if the notebook has no default connector."},"position":{"type":"integer"},"run":{"type":"boolean","description":"Set to true to execute the cell immediately after creating it (same behavior and result shape as run_cell, including inline results and running-state UI)"},"timeout_ms":{"type":"integer","description":"Optional max execution time in milliseconds when run=true (max 600000). Ignored when run is not true."}},"required":["notebook_id","type","title","description"]}`,
+			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"type":{"type":"string","enum":["code","text"],"description":"Cell type: 'code' for executable queries, 'text' for markdown documentation"},"language":{"type":"string","enum":["sql","markdown"],"description":"Cell language. Defaults to 'sql' for code cells, 'markdown' for text cells. Currently only SQL and markdown are supported."},"title":{"type":"string","description":"Short name of what this cell does (e.g. 'Daily orders GMV by region')"},"description":{"type":"string","description":"What this query is for, data source assumptions, and caveats. Detail can also live as SQL comments in source."},"source":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell. Required for code cells if the notebook has no default connector."},"position":{"type":"integer"},"run":{"type":"boolean","description":"Set to true to execute the cell immediately after creating it (same behavior and result shape as run_cell, including inline results and running-state UI)"},"timeout_ms":{"type":"integer","description":"Optional max execution time in milliseconds when run=true (max 600000; without it the connector's timeout_seconds applies, 5 minutes when unset). Ignored when run is not true."}},"required":["notebook_id","type","title","description"]}`,
 		},
 		Handler:         makeCreateCellHandler(db),
 		ConfirmRequired: true,
@@ -114,7 +114,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "run_cell",
-			Description: "Execute a code cell's SQL query against the database connector and RETURN THE RESULTS INLINE (column_names + data preview, up to 50 rows; 'truncated': true means more rows exist and read_cell can fetch them). Only works on cells with type 'code' and language 'sql'. Skips re-running if the cell already has results (use force=true to override). Optional timeout_ms (max 600000) aborts the query and returns status:'error' with timed_out:true; without it the query runs until the session context expires.",
+			Description: "Execute a code cell's SQL query against the database connector and RETURN THE RESULTS INLINE (column_names + data preview, up to 50 rows; 'truncated': true means more rows exist and read_cell can fetch them). Only works on cells with type 'code' and language 'sql'. Skips re-running if the cell already has results (use force=true to override). Optional timeout_ms (max 600000) aborts the query and returns status:'error' with timed_out:true; without it the connector's timeout_seconds applies (5 minutes when unset).",
 			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (from list_cells output, not the position number)"},"force":{"type":"boolean","description":"Set to true to re-run even if the cell already has results"},"timeout_ms":{"type":"integer","description":"Optional max execution time in milliseconds (max 600000). On expiry the cell gets an error output and the result has timed_out:true — shorten the query or increase the limit instead of retrying blindly."}},"required":["cell_id"]}`,
 		},
 		Handler:         makeRunCellHandler(db),
@@ -174,8 +174,8 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "execute_sql",
-			Description: "Run an ad-hoc SQL query on a database connector (30s timeout). Use this for quick queries only. For long-running queries, use create_cell with run=true instead. Returns up to 1000 rows. For SELECT, SHOW, DESCRIBE queries.",
-			Parameters:  `{"type":"object","properties":{"connector_id":{"type":"string","description":"ID of the connector to query"},"query":{"type":"string","description":"The SQL query to execute"},"limit":{"type":"integer","description":"Max rows to return (default 1000)"}},"required":["connector_id","query"]}`,
+			Description: "Run an ad-hoc SQL query on a database connector (30s timeout). Use this for quick queries only. For long-running queries, use create_cell with run=true instead. Returns up to 10000 rows (default 1000, override with limit). For SELECT, SHOW, DESCRIBE queries.",
+			Parameters:  `{"type":"object","properties":{"connector_id":{"type":"string","description":"ID of the connector to query"},"query":{"type":"string","description":"The SQL query to execute"},"limit":{"type":"integer","description":"Max rows to return (default 1000, max 10000)"}},"required":["connector_id","query"]}`,
 		},
 		Handler:         makeExecuteSQLHandler(db),
 		ConfirmRequired: true,
@@ -693,6 +693,10 @@ const runCellMaxRows = 50
 // maxToolTimeoutMs is the ceiling for run_cell/create_cell timeout_ms (10 min).
 const maxToolTimeoutMs = 600000
 
+// defaultCellTimeoutMs bounds cell execution when neither timeout_ms nor the
+// connector's timeout_seconds provides a budget (5 minutes).
+const defaultCellTimeoutMs = 300000
+
 // timeoutMsFromArgs reads run_cell/create_cell's timeout_ms argument as a
 // per-call budget, clamped to maxToolTimeoutMs. It reports false when the
 // argument is absent, zero, negative, or unparseable so the declared default
@@ -837,12 +841,26 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 
 	var connType models.ConnectorType
 	var configEnc []byte
+	var connectorTimeoutSeconds int
 	err = db.QueryRow(ctx.Context,
-		`SELECT type, config_encrypted FROM connectors WHERE id = $1 AND org_id = $2`,
+		`SELECT type, config_encrypted, timeout_seconds FROM connectors WHERE id = $1 AND org_id = $2`,
 		*cell.ConnectorID, ctx.OrgID,
-	).Scan(&connType, &configEnc)
+	).Scan(&connType, &configEnc, &connectorTimeoutSeconds)
 	if err != nil {
 		return nil, fmt.Errorf("get connector: %w", err)
+	}
+
+	// timeout_ms wins when supplied; otherwise the connector's timeout_seconds
+	// applies, falling back to the default budget.
+	if timeoutMs <= 0 {
+		if connectorTimeoutSeconds > 0 {
+			timeoutMs = connectorTimeoutSeconds * 1000
+		} else {
+			timeoutMs = defaultCellTimeoutMs
+		}
+	}
+	if timeoutMs > maxToolTimeoutMs {
+		timeoutMs = maxToolTimeoutMs
 	}
 
 	if ctx.MasterKey == nil {
@@ -905,6 +923,19 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 
 	query := executor.ApplyLimit(cell.Source, cell.Limit)
 
+	// Persisting outputs outlives the execution budget: when a wrapper deadline
+	// (ctx.Context) fired, fall back to a short background context so the
+	// error output still lands on the cell (mirrors the user-triggered path).
+	persistOutputs := func(outJSON []byte, durationMs int64) {
+		persistCtx := ctx.Context
+		if persistCtx.Err() != nil {
+			var cancel context.CancelFunc
+			persistCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+		}
+		db.Exec(persistCtx, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, durationMs, cellID)
+	}
+
 	result, err := exec.Execute(execCtx, query, nil, cell.Limit)
 	wasCancelled := execCtx.Err() != nil
 	clearRunning()
@@ -916,16 +947,25 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 	}
 	if err != nil {
 		errTotalTimeMs := time.Since(startTime).Milliseconds()
-		timedOut := timeoutMs > 0 && execCtx.Err() == context.DeadlineExceeded
+		// Deadlines may come from the handler's own timer or from an enclosing
+		// ToolContext deadline (e.g. ToolDef.Execute's wrapper). Cancellation
+		// takes precedence so a genuine cancel is never reported as a timeout.
+		timedOut := errors.Is(execCtx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Context.Err(), context.DeadlineExceeded)
+		cancelled := errors.Is(execCtx.Err(), context.Canceled) || errors.Is(err, context.Canceled)
 		errMsg := err.Error()
-		if timedOut {
-			errMsg = fmt.Sprintf("execution timed out after %dms", timeoutMs)
-		} else if execCtx.Err() == context.Canceled || errors.Is(err, context.Canceled) {
+		switch {
+		case cancelled:
 			errMsg = "Query cancelled"
+		case timedOut:
+			budgetMs := timeoutMs
+			if errors.Is(ctx.Context.Err(), context.DeadlineExceeded) {
+				budgetMs = int(errTotalTimeMs)
+			}
+			errMsg = fmt.Sprintf("execution timed out after %dms", budgetMs)
 		}
 		errOutput := models.Output{Type: "error", Data: map[string]string{"message": errMsg}}
 		outJSON, _ := json.Marshal([]models.Output{errOutput})
-		db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, errTotalTimeMs, cellID)
+		persistOutputs(outJSON, errTotalTimeMs)
 		ctx.EmitCellOutput(cellID, []models.Output{errOutput})
 		if ctx.BroadcastFunc != nil {
 			ctx.BroadcastFunc(notebookID, map[string]any{
@@ -953,7 +993,7 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 	tableOutput := models.Output{Type: "table", Data: result}
 	outputs := []models.Output{tableOutput}
 	outJSON, _ := json.Marshal(outputs)
-	db.Exec(ctx.Context, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, totalTimeMs, cellID)
+	persistOutputs(outJSON, totalTimeMs)
 	ctx.EmitCellOutput(cellID, outputs)
 	if ctx.BroadcastFunc != nil {
 		ctx.BroadcastFunc(notebookID, map[string]any{

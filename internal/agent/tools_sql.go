@@ -58,12 +58,31 @@ func makeSQLQueryToolDef(t *models.Tool, pool *pgxpool.Pool) (*ToolDef, error) {
 				}
 			}
 
-			return executeAgentSQL(ctx.Context, pool, connectorID, query, strParams, ctx.MasterKey, ctx.OrgID)
+			return executeAgentSQL(ctx.Context, pool, connectorID, query, strParams, ctx.MasterKey, ctx.OrgID, defaultSQLRowLimit)
 		},
 	}, nil
 }
 
-func executeAgentSQL(ctx context.Context, pool *pgxpool.Pool, connectorID, query string, params map[string]string, masterKey []byte, orgID string) (any, error) {
+const (
+	// defaultSQLRowLimit applies to ad-hoc SQL when no limit is requested.
+	defaultSQLRowLimit = 1000
+	// maxSQLRowLimit caps the rows an ad-hoc SQL query can return.
+	maxSQLRowLimit = 10000
+)
+
+// clampSQLRowLimit normalizes a requested row limit: non-positive values fall
+// back to defaultSQLRowLimit and values above maxSQLRowLimit are capped.
+func clampSQLRowLimit(limit int) int {
+	if limit <= 0 {
+		return defaultSQLRowLimit
+	}
+	if limit > maxSQLRowLimit {
+		return maxSQLRowLimit
+	}
+	return limit
+}
+
+func executeAgentSQL(ctx context.Context, pool *pgxpool.Pool, connectorID, query string, params map[string]string, masterKey []byte, orgID string, limit int) (any, error) {
 	var connType string
 	var configEnc []byte
 	err := pool.QueryRow(ctx,
@@ -92,7 +111,7 @@ func executeAgentSQL(ctx context.Context, pool *pgxpool.Pool, connectorID, query
 	c, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	result, err := exec.Execute(c, query, params, 1000)
+	result, err := exec.Execute(c, query, params, clampSQLRowLimit(limit))
 	if err != nil {
 		return nil, fmt.Errorf("execute: %w", err)
 	}
@@ -121,15 +140,11 @@ func makeExecuteSQLHandler(pool *pgxpool.Pool) ToolHandler {
 			return nil, err
 		}
 
-		if req.Limit <= 0 {
-			req.Limit = 1000
-		}
-
 		if !isReadOnlyQuery(req.Query) {
 			return nil, fmt.Errorf("only read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are allowed")
 		}
 
-		result, err := executeAgentSQL(ctx.Context, pool, req.ConnectorID, req.Query, nil, ctx.MasterKey, ctx.OrgID)
+		result, err := executeAgentSQL(ctx.Context, pool, req.ConnectorID, req.Query, nil, ctx.MasterKey, ctx.OrgID, req.Limit)
 		if err != nil {
 			return nil, err
 		}
