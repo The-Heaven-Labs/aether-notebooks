@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/database"
 	"github.com/the-heaven-labs/aether/internal/models"
@@ -61,11 +62,12 @@ func createEngineTestOrgAndUser(t *testing.T, db *database.DB) (orgID, userID st
 
 func newTestEngine(db *database.DB) *Engine {
 	engine := &Engine{
-		registry:     NewToolRegistry(),
-		pool:         db.Pool,
-		tokenCounter: NewTokenCounter(),
-		streams:      NewStreamManager(),
-		session:      NewSessionStore(db.Pool),
+		registry:           NewToolRegistry(),
+		pool:               db.Pool,
+		tokenCounter:       NewTokenCounter(),
+		streams:            NewStreamManager(),
+		session:            NewSessionStore(db.Pool),
+		toolTimeoutDefault: DefaultToolTimeout,
 	}
 	RegisterNotebookTools(engine.registry, db.Pool)
 	RegisterAgentTools(engine.registry, db.Pool, engine)
@@ -281,6 +283,100 @@ func TestEngineLoadAgentToolDefs_AdminModeIrrelevant(t *testing.T) {
 	if len(defs) != 2 {
 		t.Fatalf("expected 2 tools, got %d: %v", len(defs), names)
 	}
+}
+
+func TestEngineLoadAgentToolDefs_TimeoutOverride(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, _ := createEngineTestOrgAndUser(t, db)
+	SeedBuiltinTools(context.Background(), db.Pool, orgID)
+	engine := newTestEngine(db)
+
+	toolIDs := seededToolIDs(t, db, orgID, "list_notebook_parameters")
+	regDef, ok := engine.registry.Get("list_notebook_parameters")
+	require.True(t, ok, "registry must contain list_notebook_parameters")
+	registryTimeoutBefore := regDef.Timeout
+
+	var toolID string
+	err := db.Pool.QueryRow(context.Background(),
+		`SELECT id FROM tools WHERE org_id=$1 AND name='list_notebook_parameters'`, orgID).Scan(&toolID)
+	require.NoError(t, err)
+
+	_, err = db.Pool.Exec(context.Background(),
+		`UPDATE tools SET config = config || '{"timeout_ms": 5000}'::jsonb WHERE id=$1`, toolID)
+	require.NoError(t, err)
+
+	agent := models.Agent{ID: uuid.New().String(), OrgID: orgID, ToolIDs: toolIDs}
+	defs := engine.loadAgentToolDefs(context.Background(), agent)
+	require.Len(t, defs, 1)
+	require.Equal(t, 5*time.Second, defs[0].Timeout, "per-tool timeout_ms must apply to the resolved def")
+	require.NotSame(t, regDef, defs[0], "resolveToolDef must clone the shared registry def")
+	require.Equal(t, registryTimeoutBefore, regDef.Timeout, "registry def must not be mutated")
+}
+
+func TestResolveToolDef_TimeoutPrecedence(t *testing.T) {
+	engine := &Engine{registry: NewToolRegistry(), toolTimeoutDefault: 90 * time.Second}
+	probe := &ToolDef{Timeout: 30 * time.Second}
+	probe.Function.Name = "probe"
+	engine.registry.Register(probe)
+
+	// Registry budget beats the engine-wide fallback.
+	got, err := engine.resolveToolDef(&models.Tool{
+		Name:   "probe",
+		Type:   models.ToolTypeBuiltin,
+		Config: models.JSONMap{"handler_name": "probe"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 30*time.Second, got.Timeout)
+
+	// Per-tool config beats the registry budget without mutating it.
+	got, err = engine.resolveToolDef(&models.Tool{
+		Name:   "probe",
+		Type:   models.ToolTypeBuiltin,
+		Config: models.JSONMap{"handler_name": "probe", "timeout_ms": float64(4000)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 4*time.Second, got.Timeout)
+	require.Equal(t, 30*time.Second, probe.Timeout, "registry def must not be mutated")
+
+	// No registry budget → engine-wide fallback.
+	unbudgeted := &ToolDef{}
+	unbudgeted.Function.Name = "unbudgeted"
+	engine.registry.Register(unbudgeted)
+	got, err = engine.resolveToolDef(&models.Tool{
+		Name:   "unbudgeted",
+		Type:   models.ToolTypeBuiltin,
+		Config: models.JSONMap{"handler_name": "unbudgeted"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 90*time.Second, got.Timeout)
+}
+
+func TestResolveToolDef_DynamicToolTimeout(t *testing.T) {
+	engine := &Engine{registry: NewToolRegistry(), toolTimeoutDefault: 45 * time.Second}
+
+	webhook, err := engine.resolveToolDef(&models.Tool{
+		Name:   "notify",
+		Type:   models.ToolTypeWebhook,
+		Config: models.JSONMap{"url": "https://example.com/hook", "timeout_ms": float64(2500)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2500*time.Millisecond, webhook.Timeout)
+
+	webhookFallback, err := engine.resolveToolDef(&models.Tool{
+		Name:   "notify",
+		Type:   models.ToolTypeWebhook,
+		Config: models.JSONMap{"url": "https://example.com/hook"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 45*time.Second, webhookFallback.Timeout)
+
+	sqlTool, err := engine.resolveToolDef(&models.Tool{
+		Name:   "slow_query",
+		Type:   models.ToolTypeSQLQuery,
+		Config: models.JSONMap{"connector_id": "abc", "query": "SELECT 1", "timeout_ms": float64(7000)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 7*time.Second, sqlTool.Timeout)
 }
 
 func TestSeedBuiltinTools_ACLDoesNotGrantUseToEveryone(t *testing.T) {

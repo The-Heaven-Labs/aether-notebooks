@@ -31,6 +31,7 @@ type Engine struct {
 	SetCancelFunc      func(cellID string, cancel context.CancelFunc)
 	DeleteCancelFunc   func(cellID string)
 	toolAllowedDomains []string
+	toolTimeoutDefault time.Duration
 	tokenCounter       *TokenCounter
 	store              storage.Storage
 	reasoningEffort    sync.Map // sessionID -> string
@@ -211,11 +212,12 @@ func (e *Engine) applySteering(sessionID string, chatMsgs *[]ChatMessage, steer 
 
 func NewEngine(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client) *Engine {
 	engine := &Engine{
-		registry:     NewToolRegistry(),
-		session:      NewSessionStore(pool),
-		pool:         pool,
-		tokenCounter: NewTokenCounter(),
-		streams:      NewStreamManager(),
+		registry:           NewToolRegistry(),
+		session:            NewSessionStore(pool),
+		pool:               pool,
+		tokenCounter:       NewTokenCounter(),
+		streams:            NewStreamManager(),
+		toolTimeoutDefault: DefaultToolTimeout,
 	}
 
 	RegisterNotebookTools(engine.registry, pool)
@@ -1275,17 +1277,42 @@ func (e *Engine) resolveToolDef(t *models.Tool) (*ToolDef, error) {
 		if handlerName == "" {
 			return nil, fmt.Errorf("builtin tool missing handler_name")
 		}
-		def, ok := e.registry.Get(handlerName)
+		def0, ok := e.registry.Get(handlerName)
 		if !ok {
 			return nil, fmt.Errorf("builtin handler not found: %s", handlerName)
 		}
-		return def, nil
+		// Registry defs are shared across orgs and sessions — clone before
+		// applying per-tool overrides so the shared pointer stays untouched.
+		def := *def0
+		applyToolTimeout(&def, t.Config, e.toolTimeoutDefault)
+		return &def, nil
 	case models.ToolTypeWebhook:
-		return makeWebhookToolDef(t, e.toolAllowedDomains)
+		def, err := makeWebhookToolDef(t, e.toolAllowedDomains)
+		if err != nil {
+			return nil, err
+		}
+		applyToolTimeout(def, t.Config, e.toolTimeoutDefault)
+		return def, nil
 	case models.ToolTypeSQLQuery:
-		return makeSQLQueryToolDef(t, e.pool)
+		def, err := makeSQLQueryToolDef(t, e.pool)
+		if err != nil {
+			return nil, err
+		}
+		applyToolTimeout(def, t.Config, e.toolTimeoutDefault)
+		return def, nil
 	default:
 		return nil, fmt.Errorf("unknown tool type: %s", t.Type)
+	}
+}
+
+// applyToolTimeout applies a per-tool tools.config.timeout_ms override to a
+// freshly built ToolDef. When no override is present, a def that declares no
+// budget of its own inherits the engine-wide default.
+func applyToolTimeout(def *ToolDef, cfg models.JSONMap, fallback time.Duration) {
+	if ms, ok := cfg["timeout_ms"].(float64); ok && ms > 0 {
+		def.Timeout = time.Duration(ms) * time.Millisecond
+	} else if def.Timeout == 0 {
+		def.Timeout = fallback
 	}
 }
 
@@ -1335,6 +1362,12 @@ func (e *Engine) defaultSubagentLLM(ctx context.Context, pool *pgxpool.Pool, age
 
 func (e *Engine) SetToolAllowedDomains(domains []string) {
 	e.toolAllowedDomains = domains
+}
+
+// SetToolTimeoutDefault sets the fallback execution budget for tools that
+// declare no timeout of their own.
+func (e *Engine) SetToolTimeoutDefault(d time.Duration) {
+	e.toolTimeoutDefault = d
 }
 
 func (e *Engine) PublishSessionEvent(sessionID string, msg any) {
