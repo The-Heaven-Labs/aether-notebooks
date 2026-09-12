@@ -1423,6 +1423,65 @@ func TestAgentRunCellWrapperDeadlineMarksTimedOut(t *testing.T) {
 	}
 }
 
+func TestAgentRunCellCancelBeatsParentDeadline(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	connID, masterKey := createTestPGConnector(t, db, orgID, userID)
+	cellID := createTestCellRow(t, db, nbID, connID, "SELECT pg_sleep(5)")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	runCellDef, _ := reg.Get("run_cell")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	ctx.MasterKey = masterKey
+
+	cancelSeen := make(chan context.CancelFunc, 1)
+	ctx.SetCancelFunc = func(_ string, cancel context.CancelFunc) { cancelSeen <- cancel }
+
+	parentCtx, parentCancel := context.WithTimeout(ctx.Context, 2*time.Second)
+	defer parentCancel()
+	ctx.Context = parentCtx
+	// Hold the handler between the cancel and the error classification until
+	// the parent deadline expires, so execCtx is cancelled while ctx.Context is
+	// deadline-exceeded at classification time.
+	ctx.DeleteCancelFunc = func(string) { <-parentCtx.Done() }
+
+	type outcome struct {
+		result any
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		args, _ := json.Marshal(map[string]any{"cell_id": cellID})
+		result, err := runCellDef.Execute(args, ctx)
+		done <- outcome{result, err}
+	}()
+
+	select {
+	case cancel := <-cancelSeen:
+		cancel()
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancel func was never registered")
+	}
+
+	select {
+	case out := <-done:
+		if out.err != nil {
+			t.Fatalf("cancel must be a result, not a Go error: %v", out.err)
+		}
+		m := out.result.(map[string]any)
+		if m["status"] != "error" || m["error"] != "Query cancelled" {
+			t.Fatalf("expected Query cancelled, got %v", m)
+		}
+		if timedOut, _ := m["timed_out"].(bool); timedOut {
+			t.Fatalf("cancelled run must not be marked timed_out: %v", m)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("run did not finish after cancel")
+	}
+}
+
 func TestAgentCreateCellRequiresTitleAndDescription(t *testing.T) {
 	db := setupTestDB(t)
 	orgID, userID := createTestOrgAndUser(t, db.Pool)

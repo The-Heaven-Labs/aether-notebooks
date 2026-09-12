@@ -956,8 +956,9 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 		// ToolContext deadline (e.g. ToolDef.Execute's wrapper). A context
 		// cancellation takes precedence so a genuine cancel is never reported
 		// as a timeout, even if the driver wrapped context.Canceled.
-		timedOut := errors.Is(execCtx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Context.Err(), context.DeadlineExceeded)
 		cancelled := errors.Is(execCtx.Err(), context.Canceled)
+		timedOut := !cancelled &&
+			(errors.Is(execCtx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Context.Err(), context.DeadlineExceeded))
 		errMsg := err.Error()
 		switch {
 		case cancelled:
