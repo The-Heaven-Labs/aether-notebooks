@@ -391,7 +391,7 @@ func TestResolveToolDef_DynamicToolTimeout(t *testing.T) {
 		Config: models.JSONMap{"url": "https://example.com/hook"},
 	})
 	require.NoError(t, err)
-	require.Equal(t, 45*time.Second, webhookFallback.Timeout)
+	require.Equal(t, 30*time.Second, webhookFallback.Timeout, "webhook defs declare their own 30s default")
 
 	sqlTool, err := engine.resolveToolDef(&models.Tool{
 		Name:   "slow_query",

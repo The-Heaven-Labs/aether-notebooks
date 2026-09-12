@@ -32,6 +32,7 @@ func makeSQLQueryToolDef(t *models.Tool, pool *pgxpool.Pool) (*ToolDef, error) {
 			Parameters:  t.Schema,
 		},
 		ConfirmRequired: t.RequireConfirmation,
+		Timeout:         30 * time.Second,
 		Handler: func(args json.RawMessage, ctx *ToolContext) (any, error) {
 			var llmParams map[string]any
 			if len(args) > 0 {

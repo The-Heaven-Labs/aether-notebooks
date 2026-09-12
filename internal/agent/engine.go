@@ -723,6 +723,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 							Parameters:  "{}",
 						},
 						Handler: makeMCPToolListHandlerHTTP(ms.Command),
+						Timeout: 30 * time.Second,
 					},
 					&ToolDef{
 						Type: "function",
@@ -736,6 +737,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 							Parameters:  `{"type":"object","properties":{"tool":{"type":"string"},"arguments":{"type":"object"}},"required":["tool"]}`,
 						},
 						Handler: makeMCPToolCallHandlerHTTP(ms.Command),
+						Timeout: 60 * time.Second,
 					},
 				)
 			}

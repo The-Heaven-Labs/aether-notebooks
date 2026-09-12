@@ -20,6 +20,7 @@ func RegisterPlatformTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"folder_id":{"type":"string","description":"Filter by parent folder ID"},"search":{"type":"string","description":"Filter by name (case-insensitive)"}}}`,
 		},
 		Handler: makeListNotebooksHandler(db),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -33,6 +34,7 @@ func RegisterPlatformTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"search":{"type":"string","description":"Filter by name (case-insensitive)"}}}`,
 		},
 		Handler: makeListConnectorsHandler(db),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -46,6 +48,7 @@ func RegisterPlatformTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"parent_id":{"type":"string","description":"Parent folder ID. Omit to list root folders."}}}`,
 		},
 		Handler: makeListFoldersHandler(db),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -59,6 +62,7 @@ func RegisterPlatformTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{}}`,
 		},
 		Handler: makeGetFolderTreeHandler(db),
+		Timeout: 30 * time.Second,
 	})
 }
 

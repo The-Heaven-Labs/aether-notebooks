@@ -54,6 +54,7 @@ func makeWebhookToolDef(t *models.Tool, allowedDomains []string) (*ToolDef, erro
 			Parameters:  t.Schema,
 		},
 		ConfirmRequired: t.RequireConfirmation,
+		Timeout:         30 * time.Second,
 		Handler: func(args json.RawMessage, ctx *ToolContext) (any, error) {
 			var params map[string]any
 			if len(args) > 0 {

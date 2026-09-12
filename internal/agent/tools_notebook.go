@@ -29,6 +29,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"title":{"type":"string","description":"Notebook title"},"description":{"type":"string","description":"Optional description"},"folder_id":{"type":"string","description":"Optional parent folder ID to place this notebook in"}},"required":["title"]}`,
 		},
 		Handler: makeCreateNotebookHandler(db),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -43,6 +44,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		},
 		Handler:         makeDeleteNotebookHandler(db),
 		ConfirmRequired: true,
+		Timeout:         15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -57,6 +59,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		},
 		Handler:         makeUpdateNotebookHandler(db),
 		ConfirmRequired: true,
+		Timeout:         15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -70,6 +73,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (from list_cells output, not the positional number)"}},"required":["cell_id"]}`,
 		},
 		Handler: makeReadCellHandler(db),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -84,6 +88,8 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		},
 		Handler:         makeCreateCellHandler(db),
 		ConfirmRequired: true,
+		Timeout:         10 * time.Minute,
+		TimeoutFromArgs: timeoutMsFromArgs,
 	})
 
 	reg.Register(&ToolDef{
@@ -98,6 +104,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		},
 		Handler:         makeUpdateCellHandler(db),
 		ConfirmRequired: true,
+		Timeout:         30 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -112,6 +119,8 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		},
 		Handler:         makeRunCellHandler(db),
 		ConfirmRequired: true,
+		Timeout:         10 * time.Minute,
+		TimeoutFromArgs: timeoutMsFromArgs,
 	})
 
 	reg.Register(&ToolDef{
@@ -125,6 +134,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"}},"required":["notebook_id"]}`,
 		},
 		Handler: makeListCellsHandler(db),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -139,6 +149,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		},
 		Handler:         makeMoveCellHandler(db),
 		ConfirmRequired: true,
+		Timeout:         15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -153,6 +164,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		},
 		Handler:         makeSwapCellsHandler(db),
 		ConfirmRequired: true,
+		Timeout:         15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -167,6 +179,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		},
 		Handler:         makeExecuteSQLHandler(db),
 		ConfirmRequired: true,
+		Timeout:         30 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -180,6 +193,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"connector_id":{"type":"string","description":"ID of the connector to explore"}},"required":["connector_id"]}`,
 		},
 		Handler: makeExploreSchemaHandler(db),
+		Timeout: 60 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -194,6 +208,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		},
 		Handler:         makeDeleteCellHandler(db),
 		ConfirmRequired: true,
+		Timeout:         15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -207,6 +222,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string","description":"The notebook ID to read"},"max_cells":{"type":"integer","description":"Maximum number of cells to return (default 50)"},"include_outputs":{"type":"boolean","description":"Include cell outputs (default false, truncates to first 10 rows if true)"}},"required":["notebook_id"]}`,
 		},
 		Handler: makeGetNotebookContextHandler(db),
+		Timeout: 30 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -220,6 +236,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string","description":"Notebook ID (defaults to current)"},"name":{"type":"string","description":"A descriptive name for this snapshot"}},"required":["name"]}`,
 		},
 		Handler: makeCreateSnapshotHandler(db),
+		Timeout: 60 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -233,6 +250,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string","description":"Notebook ID (defaults to current)"}},"required":[]}`,
 		},
 		Handler: makeListSnapshotsHandler(db),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -246,6 +264,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"snapshot_id":{"type":"string","description":"ID of the snapshot to restore to"}},"required":["snapshot_id"]}`,
 		},
 		Handler: makeRestoreSnapshotHandler(db),
+		Timeout: 60 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -259,6 +278,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string","description":"The notebook ID (defaults to the current notebook if omitted)"}},"required":[]}`,
 		},
 		Handler: makeListNotebookParametersHandler(db),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -273,6 +293,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		},
 		Handler:         makeSetNotebookParametersHandler(db),
 		ConfirmRequired: true,
+		Timeout:         15 * time.Second,
 	})
 }
 
@@ -671,6 +692,26 @@ const runCellMaxRows = 50
 
 // maxToolTimeoutMs is the ceiling for run_cell/create_cell timeout_ms (10 min).
 const maxToolTimeoutMs = 600000
+
+// timeoutMsFromArgs reads run_cell/create_cell's timeout_ms argument as a
+// per-call budget, clamped to maxToolTimeoutMs. It reports false when the
+// argument is absent, zero, negative, or unparseable so the declared default
+// applies instead.
+func timeoutMsFromArgs(args json.RawMessage) (time.Duration, bool) {
+	var req struct {
+		TimeoutMs int `json:"timeout_ms"`
+	}
+	if err := json.Unmarshal(args, &req); err != nil {
+		return 0, false
+	}
+	if req.TimeoutMs <= 0 {
+		return 0, false
+	}
+	if req.TimeoutMs > maxToolTimeoutMs {
+		req.TimeoutMs = maxToolTimeoutMs
+	}
+	return time.Duration(req.TimeoutMs) * time.Millisecond, true
+}
 
 // previewResult extracts an inline preview from an execution result.
 func previewResult(result *executor.ResultSet, maxRows int) (columnNames []string, data [][]interface{}, truncated bool) {
