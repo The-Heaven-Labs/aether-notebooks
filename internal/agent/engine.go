@@ -1333,7 +1333,12 @@ func toolTimeoutFromConfig(cfg models.JSONMap) (time.Duration, bool) {
 	if !(ms > 0 && ms <= maxMs) {
 		return 0, false
 	}
-	return time.Duration(ms) * time.Millisecond, true
+	d := time.Duration(ms) * time.Millisecond
+	if d <= 0 {
+		// Sub-millisecond values truncate to zero; keep integer-ms semantics.
+		return 0, false
+	}
+	return d, true
 }
 
 func (e *Engine) GetRegistry() *ToolRegistry {

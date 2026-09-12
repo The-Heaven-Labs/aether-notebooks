@@ -152,6 +152,10 @@ func (p *PostgresExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
 		tableMap[key].Columns = append(tableMap[key].Columns, ColumnInfo{Name: col, Type: dtype, Description: comment})
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("schema rows: %w", err)
+	}
+
 	tables := make([]TableInfo, 0, len(tableOrder))
 	for _, key := range tableOrder {
 		tables = append(tables, *tableMap[key])

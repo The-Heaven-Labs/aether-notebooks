@@ -1411,6 +1411,14 @@ func TestAgentRunCellWrapperDeadlineMarksTimedOut(t *testing.T) {
 	}
 	if msg, _ := m["error"].(string); !strings.Contains(msg, "timed out") {
 		t.Fatalf("expected a timeout message for a wrapper deadline, got %q", msg)
+	} else {
+		var gotMs int
+		if _, err := fmt.Sscanf(msg, "execution timed out after %dms", &gotMs); err != nil {
+			t.Fatalf("unparseable timeout message %q: %v", msg, err)
+		}
+		if gotMs <= 0 || gotMs > 1500 {
+			t.Fatalf("expected the ~1s wrapper budget in the message, got %q", msg)
+		}
 	}
 
 	var outputs []byte

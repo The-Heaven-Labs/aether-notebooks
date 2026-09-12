@@ -416,6 +416,7 @@ func TestResolveToolDef_TimeoutConfigValueForms(t *testing.T) {
 		{"json.Number", json.Number("4000"), 4 * time.Second},
 		{"zero ignored", float64(0), 30 * time.Second},
 		{"negative ignored", float64(-1), 30 * time.Second},
+		{"sub-millisecond ignored", float64(0.5), 30 * time.Second},
 		{"NaN ignored", math.NaN(), 30 * time.Second},
 		{"overflow ignored", float64(math.MaxInt64), 30 * time.Second},
 	} {
@@ -436,7 +437,7 @@ func TestResolveToolDef_TimeoutConfigValueForms(t *testing.T) {
 	unbudgeted := &ToolDef{}
 	unbudgeted.Function.Name = "unbudgeted"
 	engine.registry.Register(unbudgeted)
-	for _, raw := range []any{float64(0), float64(-1), math.NaN(), float64(math.MaxInt64)} {
+	for _, raw := range []any{float64(0), float64(-1), float64(0.5), math.NaN(), float64(math.MaxInt64)} {
 		got, err := engine.resolveToolDef(&models.Tool{
 			Name:   "unbudgeted",
 			Type:   models.ToolTypeBuiltin,

@@ -964,7 +964,11 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 		case cancelled:
 			errMsg = "Query cancelled"
 		case timedOut:
-			errMsg = fmt.Sprintf("execution timed out after %dms", timeoutMs)
+			budgetMs := timeoutMs
+			if errors.Is(ctx.Context.Err(), context.DeadlineExceeded) {
+				budgetMs = int(time.Since(execStart).Milliseconds())
+			}
+			errMsg = fmt.Sprintf("execution timed out after %dms", budgetMs)
 		case errors.Is(err, context.Canceled):
 			errMsg = "Query cancelled"
 		}
