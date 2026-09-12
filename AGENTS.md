@@ -124,6 +124,7 @@ task db:reset          # Drop + recreate dev DB (data loss!)
 | `AETHER_S3_SECRET_KEY` | no | — | S3 secret key |
 | `AETHER_MAX_ATTACHMENT_BYTES` | no | `10485760` | Maximum attachment file size in bytes |
 | `AETHER_AGENT_STATS_ROLLUP_INTERVAL` | no | `1h` | Agent usage hourly-rollup cadence (Go duration, floor `5m`) |
+| `AETHER_AGENT_TOOL_TIMEOUT_DEFAULT` | no | `120s` | Global fallback timeout for agent tools that declare no explicit budget (Go duration, floor 1s). |
 | `AETHER_TOOL_ALLOWED_DOMAINS` | no | — | Comma-separated list of allowed domains for webhook tools |
 | `AETHER_DISABLE_REGISTRATION` | no | `false` | If set to `true`, disables new user registration |
 
@@ -274,6 +275,8 @@ In dev, `Taskfile.yml` sets `AETHER_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com`
 **SQL executor LIMIT behavior**: When a cell has a `limit` value > 0 and the query doesn't already contain `LIMIT`, the executor trims any trailing semicolon before appending ` LIMIT N`. This prevents `SELECT 1; LIMIT 1000` (broken) vs `SELECT 1 LIMIT 1000` (correct).
 
 **CodeMirror caret/cursor in dark theme**: The caret color is set globally via CSS at the `.cm-editor` and `.cm-editor .cm-content` level using `caret-color: var(--text-primary) !important` in `theme.css`. The CodeMirror `EditorView.theme()` extension should NOT set `caretColor` inline (inline values get `!important` injected by CodeMirror and override stylesheet rules). Use only `borderLeftColor` in the theme extension; use the stylesheet for `caret-color`.
+
+**Agent tool timeouts**: Every builtin declares `ToolDef.Timeout`; interactive tools (`ask_question`) and `spawn_subagents` declare `NoTimeout`. Precedence: per-call arg (e.g. `run_cell`'s `timeout_ms`) → `tools.config.timeout_ms` DB override → registry default → `AETHER_AGENT_TOOL_TIMEOUT_DEFAULT`. All four dispatch paths use `ToolDef.Execute`; timeouts surface as `tool "<name>" timed out after <duration>`. `execute_sql`/`sql_query` are fixed at 30s by design (light exploration); use `run_cell`/`create_cell(run=true)` for long queries (connector `timeout_seconds`, default 5m, arg cap 10m).
 
 ## OIDC / SSO
 

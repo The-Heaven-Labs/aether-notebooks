@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -159,17 +158,9 @@ func TestProcessMessage_ToolTimeoutSurfaced(t *testing.T) {
 	nbID := createTestNotebook(t, db, orgID, userID)
 	sid := createTestSession(t, db, agentID, nbID, userID)
 
-	probe := &ToolDef{Timeout: 50 * time.Millisecond}
+	probe := &ToolDef{Timeout: 50 * time.Millisecond, Handler: probeTimeoutHandler()}
 	probe.Function.Name = "probe_timeout"
 	probe.Function.Parameters = `{"type":"object","properties":{}}`
-	probe.Handler = func(_ json.RawMessage, tc *ToolContext) (any, error) {
-		select {
-		case <-tc.Context.Done():
-			return nil, tc.Context.Err()
-		case <-time.After(2 * time.Second):
-			return nil, fmt.Errorf("probe: tool context never cancelled")
-		}
-	}
 
 	masterKey := make([]byte, 32)
 	callID := uuid.New().String()

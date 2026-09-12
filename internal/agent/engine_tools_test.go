@@ -958,8 +958,8 @@ func TestEndToEnd_AdminModeDoesNotBypassToolIDs(t *testing.T) {
 }
 
 // probeTimeoutHandler hangs until the tool context is cancelled, exercising the
-// ToolDef.Execute deadline. The fallback keeps the test finite before the
-// dispatch sites are routed through Execute.
+// ToolDef.Execute deadline. The fallback keeps a regression where Execute is
+// bypassed from hanging the suite.
 func probeTimeoutHandler() ToolHandler {
 	return func(_ json.RawMessage, tc *ToolContext) (any, error) {
 		select {
