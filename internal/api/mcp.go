@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/auth"
@@ -34,10 +36,33 @@ type mcpTool struct {
 	InputSchema interface{} `json:"inputSchema"`
 }
 
+const mcpLatestProtocolVersion = "2026-07-28"
+
+var mcpSupportedProtocolVersions = []string{"2025-06-18", "2025-11-25", "2026-07-28"}
+
+func mcpSupportsProtocolVersion(v string) bool {
+	for _, supported := range mcpSupportedProtocolVersions {
+		if supported == v {
+			return true
+		}
+	}
+	return false
+}
+
 // handleMCP serves the MCP (Model Context Protocol) endpoint over HTTP.
 // Authenticated via Bearer token (personal access token or JWT).
 func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
+
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Error("mcp handler panic", "panic", rec)
+			writeJSON(w, http.StatusInternalServerError, mcpJSONRPCResponse{
+				JSONRPC: "2.0", ID: nil,
+				Error: &mcpError{Code: -32603, Message: "Internal error"},
+			})
+		}
+	}()
 
 	var req mcpJSONRPCRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -56,9 +81,34 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch req.Method {
-	case "initialize":
+	if req.Method == "initialize" {
 		s.handleMCPInitialize(w, req)
+		return
+	}
+
+	// MCP clients send the negotiated version on every request after
+	// initialize. Reject unknown versions; a missing header is accepted for
+	// older clients.
+	if v := r.Header.Get("MCP-Protocol-Version"); v != "" && !mcpSupportsProtocolVersion(v) {
+		writeJSON(w, http.StatusBadRequest, mcpJSONRPCResponse{
+			JSONRPC: "2.0", ID: req.ID,
+			Error: &mcpError{Code: -32600, Message: "Unsupported MCP-Protocol-Version: " + v},
+		})
+		return
+	}
+
+	// JSON-RPC notifications carry no id and expect an empty 202 response.
+	if strings.HasPrefix(req.Method, "notifications/") {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
+	switch req.Method {
+	case "ping":
+		writeJSON(w, http.StatusOK, mcpJSONRPCResponse{
+			JSONRPC: "2.0", ID: req.ID,
+			Result: map[string]interface{}{},
+		})
 	case "tools/list":
 		s.handleMCPToolsList(w, req, claims)
 	case "tools/call":
@@ -83,10 +133,20 @@ func (s *Server) handleMCPInitialize(w http.ResponseWriter, req mcpJSONRPCReques
 		json.Unmarshal(req.Params, &params)
 	}
 
+	protocolVersion := mcpLatestProtocolVersion
+	if mcpSupportsProtocolVersion(params.ProtocolVersion) {
+		protocolVersion = params.ProtocolVersion
+	}
+
+	serverVersion := s.version
+	if serverVersion == "" {
+		serverVersion = "dev"
+	}
+
 	writeJSON(w, http.StatusOK, mcpJSONRPCResponse{
 		JSONRPC: "2.0", ID: req.ID,
 		Result: map[string]interface{}{
-			"protocolVersion": "2025-06-18",
+			"protocolVersion": protocolVersion,
 			"capabilities": map[string]interface{}{
 				"tools": map[string]interface{}{
 					"listChanged": false,
@@ -94,7 +154,7 @@ func (s *Server) handleMCPInitialize(w http.ResponseWriter, req mcpJSONRPCReques
 			},
 			"serverInfo": map[string]interface{}{
 				"name":    "aether",
-				"version": "1.0.0",
+				"version": serverVersion,
 			},
 		},
 	})
