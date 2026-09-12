@@ -88,8 +88,8 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		},
 		Handler:         makeCreateCellHandler(db),
 		ConfirmRequired: true,
-		Timeout:         10 * time.Minute,
-		TimeoutFromArgs: timeoutMsFromArgs,
+		Timeout:         maxToolTimeoutMs * time.Millisecond,
+		TimeoutFromArgs: createCellTimeoutFromArgs,
 	})
 
 	reg.Register(&ToolDef{
@@ -119,7 +119,7 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		},
 		Handler:         makeRunCellHandler(db),
 		ConfirmRequired: true,
-		Timeout:         10 * time.Minute,
+		Timeout:         maxToolTimeoutMs * time.Millisecond,
 		TimeoutFromArgs: timeoutMsFromArgs,
 	})
 
@@ -711,6 +711,18 @@ func timeoutMsFromArgs(args json.RawMessage) (time.Duration, bool) {
 		req.TimeoutMs = maxToolTimeoutMs
 	}
 	return time.Duration(req.TimeoutMs) * time.Millisecond, true
+}
+
+// createCellTimeoutFromArgs applies create_cell's timeout_ms only when
+// run=true; the schema documents the argument as ignored otherwise.
+func createCellTimeoutFromArgs(args json.RawMessage) (time.Duration, bool) {
+	var req struct {
+		Run bool `json:"run"`
+	}
+	if err := json.Unmarshal(args, &req); err != nil || !req.Run {
+		return 0, false
+	}
+	return timeoutMsFromArgs(args)
 }
 
 // previewResult extracts an inline preview from an execution result.

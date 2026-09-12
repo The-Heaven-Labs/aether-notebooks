@@ -70,11 +70,7 @@ func newTestEngine(db *database.DB) *Engine {
 		session:            NewSessionStore(db.Pool),
 		toolTimeoutDefault: DefaultToolTimeout,
 	}
-	RegisterNotebookTools(engine.registry, db.Pool)
-	RegisterAgentTools(engine.registry, db.Pool, engine)
-	RegisterPlatformTools(engine.registry, db.Pool)
-	RegisterChartTools(engine.registry, db.Pool)
-	RegisterManageTools(engine.registry, db.Pool)
+	registerBuiltinTools(engine, db.Pool)
 	return engine
 }
 

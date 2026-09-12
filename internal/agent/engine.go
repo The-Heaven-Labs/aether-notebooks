@@ -211,6 +211,16 @@ func (e *Engine) applySteering(sessionID string, chatMsgs *[]ChatMessage, steer 
 	}
 }
 
+// registerBuiltinTools wires the built-in tool groups into an engine's
+// registry. NewEngine and tests share it so their catalogs cannot drift.
+func registerBuiltinTools(engine *Engine, pool *pgxpool.Pool) {
+	RegisterNotebookTools(engine.registry, pool)
+	RegisterAgentTools(engine.registry, pool, engine)
+	RegisterPlatformTools(engine.registry, pool)
+	RegisterChartTools(engine.registry, pool)
+	RegisterManageTools(engine.registry, pool)
+}
+
 func NewEngine(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client) *Engine {
 	engine := &Engine{
 		registry:           NewToolRegistry(),
@@ -221,11 +231,7 @@ func NewEngine(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client) *Engi
 		toolTimeoutDefault: DefaultToolTimeout,
 	}
 
-	RegisterNotebookTools(engine.registry, pool)
-	RegisterAgentTools(engine.registry, pool, engine)
-	RegisterPlatformTools(engine.registry, pool)
-	RegisterChartTools(engine.registry, pool)
-	RegisterManageTools(engine.registry, pool)
+	registerBuiltinTools(engine, pool)
 
 	// Seed built-in tools for all orgs
 	orgRows, err := pool.Query(ctx, `SELECT id FROM orgs`)
@@ -711,34 +717,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			}
 			if ms.Type == "http" {
 				allTools = append(allTools,
-					&ToolDef{
-						Type: "function",
-						Function: struct {
-							Name        string `json:"name"`
-							Description string `json:"description"`
-							Parameters  any    `json:"parameters"`
-						}{
-							Name:        ms.Name + "_list_tools",
-							Description: fmt.Sprintf("List available tools from MCP server %s", ms.Name),
-							Parameters:  "{}",
-						},
-						Handler: makeMCPToolListHandlerHTTP(ms.Command),
-						Timeout: 30 * time.Second,
-					},
-					&ToolDef{
-						Type: "function",
-						Function: struct {
-							Name        string `json:"name"`
-							Description string `json:"description"`
-							Parameters  any    `json:"parameters"`
-						}{
-							Name:        ms.Name + "_call_tool",
-							Description: fmt.Sprintf("Call a tool on MCP server %s", ms.Name),
-							Parameters:  `{"type":"object","properties":{"tool":{"type":"string"},"arguments":{"type":"object"}},"required":["tool"]}`,
-						},
-						Handler: makeMCPToolCallHandlerHTTP(ms.Command),
-						Timeout: 60 * time.Second,
-					},
+					mcpListToolDef(ms.Name, makeMCPToolListHandlerHTTP(ms.Command)),
+					mcpCallToolDef(ms.Name, makeMCPToolCallHandlerHTTP(ms.Command)),
 				)
 			}
 		}
@@ -1814,4 +1794,30 @@ func asLink(base, path string) string {
 		return fmt.Sprintf("`%s%s`", base, path)
 	}
 	return fmt.Sprintf("`%s` (relative path, prefix with app hostname)", example)
+}
+
+// mcpListToolDef builds the dynamic <server>_list_tools def.
+func mcpListToolDef(serverName string, handler ToolHandler) *ToolDef {
+	def := &ToolDef{
+		Type:    "function",
+		Handler: handler,
+		Timeout: 30 * time.Second,
+	}
+	def.Function.Name = serverName + "_list_tools"
+	def.Function.Description = fmt.Sprintf("List available tools from MCP server %s", serverName)
+	def.Function.Parameters = "{}"
+	return def
+}
+
+// mcpCallToolDef builds the dynamic <server>_call_tool def.
+func mcpCallToolDef(serverName string, handler ToolHandler) *ToolDef {
+	def := &ToolDef{
+		Type:    "function",
+		Handler: handler,
+		Timeout: 60 * time.Second,
+	}
+	def.Function.Name = serverName + "_call_tool"
+	def.Function.Description = fmt.Sprintf("Call a tool on MCP server %s", serverName)
+	def.Function.Parameters = `{"type":"object","properties":{"tool":{"type":"string"},"arguments":{"type":"object"}},"required":["tool"]}`
+	return def
 }
