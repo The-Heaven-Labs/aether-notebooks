@@ -6,6 +6,10 @@ Aether exposes its built-in agent tools over the Model Context Protocol (MCP) at
 {AETHER_PUBLIC_URL}/api/v1/mcp
 ```
 
+`AETHER_PUBLIC_URL` is your instance's public base URL — substitute it wherever
+the examples below show `https://aether.example.com` (for a local dev stack,
+`http://localhost:8088`).
+
 The endpoint speaks MCP JSON-RPC over Streamable HTTP: `POST` only, plain JSON
 responses, no SSE stream, no sessions. On an org subdomain (e.g.
 `https://org1.aether.example.com/api/v1/mcp`) the token's org must match the
@@ -13,7 +17,7 @@ subdomain, otherwise the request is rejected.
 
 Supported protocol versions are `2025-06-18`, `2025-11-25`, and `2026-07-28`.
 Clients that send the `MCP-Protocol-Version` header must use one of these;
-unsupported values are rejected with JSON-RPC `-32600`.
+unsupported values are rejected with HTTP `400` and JSON-RPC `-32600`.
 
 ## 1. Create a personal access token
 
@@ -32,6 +36,10 @@ Related CLI commands: `aether tokens list` and `aether tokens delete <id>`.
 ## 2. Configure your harness
 
 ### opencode
+
+The snippet goes in `opencode.json` at the project root or
+`~/.config/opencode/opencode.json`; merge it into an existing `mcp` block if
+present.
 
 ```jsonc
 {
@@ -57,16 +65,22 @@ claude mcp add --transport http aether https://aether.example.com/api/v1/mcp \
 ## 3. Verify with curl
 
 ```bash
+export AETHER_TOKEN=aether_tok_REPLACE_ME
+
 curl -s https://aether.example.com/api/v1/mcp \
   -H "Authorization: Bearer $AETHER_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq '.result.tools[].name'
 ```
 
+This prints the 45 exposed tool names. To verify from a harness instead, run
+`claude mcp list`.
+
 ## Exposed tools
 
 The endpoint exposes a fixed allowlist (new internal tools are not exposed
-automatically). The current catalog (45 tools):
+automatically). The list is defined by `mcpToolAllowlist` in
+`internal/api/mcp.go`. The current catalog (45 tools):
 
 **Notebooks, cells & SQL** (19)
 
@@ -103,11 +117,20 @@ Interactive and agent-session tools (`ask_question`, `spawn_subagents`,
 ## Permissions and errors
 
 - Calls run as the token's user; ACLs are enforced per tool call.
+- Tools that normally require interactive confirmation inside Aether (e.g.
+  `update_cell`, `delete_cell`) execute immediately over MCP — Aether does not
+  prompt; approval is the harness's responsibility.
 - Tool execution failures return `result.isError = true` with a text message.
 - Unknown tools return JSON-RPC `-32602`.
 - Missing/expired/revoked tokens return HTTP `401` with
   `WWW-Authenticate: Bearer realm="aether"`.
 - `GET`/`DELETE` return `405` (no SSE, no sessions).
+
+## Known limitations
+
+- Per-tool `tools.config.timeout_ms` admin overrides do not apply to MCP calls;
+  tools use their registry default timeout.
+- Long-running tools produce no progress output until they return.
 
 ## Security
 
