@@ -349,6 +349,28 @@ func TestResolveToolDef_TimeoutPrecedence(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 90*time.Second, got.Timeout)
+
+	// NoTimeout skips every override layer, including per-tool config.
+	interactive := &ToolDef{Timeout: NoTimeout}
+	interactive.Function.Name = "interactive"
+	engine.registry.Register(interactive)
+	got, err = engine.resolveToolDef(&models.Tool{
+		Name:   "interactive",
+		Type:   models.ToolTypeBuiltin,
+		Config: models.JSONMap{"handler_name": "interactive", "timeout_ms": float64(5000)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, NoTimeout, got.Timeout, "config override must not clobber NoTimeout")
+	require.Equal(t, NoTimeout, interactive.Timeout, "registry def must not be mutated")
+
+	got, err = engine.resolveToolDef(&models.Tool{
+		Name:   "interactive",
+		Type:   models.ToolTypeBuiltin,
+		Config: models.JSONMap{"handler_name": "interactive"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, NoTimeout, got.Timeout, "engine fallback must not clobber NoTimeout")
+	require.Equal(t, NoTimeout, interactive.Timeout, "registry def must not be mutated")
 }
 
 func TestResolveToolDef_DynamicToolTimeout(t *testing.T) {

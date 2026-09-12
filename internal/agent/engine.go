@@ -1306,9 +1306,13 @@ func (e *Engine) resolveToolDef(t *models.Tool) (*ToolDef, error) {
 }
 
 // applyToolTimeout applies a per-tool tools.config.timeout_ms override to a
-// freshly built ToolDef. When no override is present, a def that declares no
-// budget of its own inherits the engine-wide default.
+// freshly built ToolDef. NoTimeout defs are never wrapped, so every override
+// layer is skipped for them. When no override is present, a def that declares
+// no budget of its own inherits the engine-wide default.
 func applyToolTimeout(def *ToolDef, cfg models.JSONMap, fallback time.Duration) {
+	if def.Timeout < 0 {
+		return
+	}
 	if ms, ok := cfg["timeout_ms"].(float64); ok && ms > 0 {
 		def.Timeout = time.Duration(ms) * time.Millisecond
 	} else if def.Timeout == 0 {
