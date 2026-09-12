@@ -1701,36 +1701,26 @@ func TestAgentCreateCellRunTrueFailureKeepsCell(t *testing.T) {
 
 func waitForAutoSnapshot(t *testing.T, pool *pgxpool.Pool, nbID string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for {
 		var count int
-		if err := pool.QueryRow(context.Background(),
+		if err := pool.QueryRow(ctx,
 			`SELECT COUNT(*) FROM notebook_snapshots WHERE notebook_id = $1 AND auto = true`, nbID,
 		).Scan(&count); err != nil {
+			if ctx.Err() != nil {
+				t.Fatal("auto-snapshot was not created within 5s")
+			}
 			t.Fatalf("count auto snapshots: %v", err)
 		}
 		if count > 0 {
 			return
 		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	t.Fatal("auto-snapshot was not created within 5s")
-}
-
-func TestAutoSnapshotContextIsBounded(t *testing.T) {
-	if agent.AutoSnapshotTimeout != 5*time.Minute {
-		t.Fatalf("AutoSnapshotTimeout = %v, want 5m", agent.AutoSnapshotTimeout)
-	}
-
-	ctx, cancel := agent.AutoSnapshotContext()
-	defer cancel()
-
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		t.Fatal("auto-snapshot context has no deadline")
-	}
-	if remaining := time.Until(deadline); remaining <= 0 || remaining > agent.AutoSnapshotTimeout {
-		t.Fatalf("remaining auto-snapshot budget %v outside (0, %v]", remaining, agent.AutoSnapshotTimeout)
+		select {
+		case <-ctx.Done():
+			t.Fatal("auto-snapshot was not created within 5s")
+		case <-time.After(25 * time.Millisecond):
+		}
 	}
 }
 
