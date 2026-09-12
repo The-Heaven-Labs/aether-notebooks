@@ -1409,8 +1409,8 @@ func TestAgentRunCellWrapperDeadlineMarksTimedOut(t *testing.T) {
 	if timedOut, _ := m["timed_out"].(bool); !timedOut {
 		t.Fatalf("expected timed_out=true for a wrapper deadline, got %v", m)
 	}
-	if msg, _ := m["error"].(string); msg == "Query cancelled" {
-		t.Fatalf("deadline must not be reported as a cancel: %q", msg)
+	if msg, _ := m["error"].(string); !strings.Contains(msg, "timed out") {
+		t.Fatalf("expected a timeout message for a wrapper deadline, got %q", msg)
 	}
 
 	var outputs []byte

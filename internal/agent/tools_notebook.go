@@ -697,6 +697,27 @@ const maxToolTimeoutMs = 600000
 // connector's timeout_seconds provides a budget (5 minutes).
 const defaultCellTimeoutMs = 300000
 
+// persistFallbackTimeout bounds output persistence when the execution context
+// already ended (e.g. the Execute wrapper's deadline fired).
+const persistFallbackTimeout = 5 * time.Second
+
+// cellTimeoutMs resolves the effective cell execution budget: an explicit
+// timeout_ms wins, then the connector's timeout_seconds, then the 5-minute
+// default; every budget is capped at maxToolTimeoutMs.
+func cellTimeoutMs(timeoutMs, connectorSeconds int) int {
+	if timeoutMs <= 0 {
+		if connectorSeconds > 0 {
+			timeoutMs = connectorSeconds * 1000
+		} else {
+			timeoutMs = defaultCellTimeoutMs
+		}
+	}
+	if timeoutMs > maxToolTimeoutMs {
+		timeoutMs = maxToolTimeoutMs
+	}
+	return timeoutMs
+}
+
 // timeoutMsFromArgs reads run_cell/create_cell's timeout_ms argument as a
 // per-call budget, clamped to maxToolTimeoutMs. It reports false when the
 // argument is absent, zero, negative, or unparseable so the declared default
@@ -788,13 +809,6 @@ func previewStoredOutputs(outputsJSON []byte, maxRows int) (columnNames []string
 func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, force bool, timeoutMs int) (map[string]any, error) {
 	startTime := time.Now()
 
-	if timeoutMs < 0 {
-		timeoutMs = 0
-	}
-	if timeoutMs > maxToolTimeoutMs {
-		timeoutMs = maxToolTimeoutMs
-	}
-
 	// Check if cell already has results
 	if !force {
 		var hasOutputs bool
@@ -852,16 +866,7 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 
 	// timeout_ms wins when supplied; otherwise the connector's timeout_seconds
 	// applies, falling back to the default budget.
-	if timeoutMs <= 0 {
-		if connectorTimeoutSeconds > 0 {
-			timeoutMs = connectorTimeoutSeconds * 1000
-		} else {
-			timeoutMs = defaultCellTimeoutMs
-		}
-	}
-	if timeoutMs > maxToolTimeoutMs {
-		timeoutMs = maxToolTimeoutMs
-	}
+	timeoutMs = cellTimeoutMs(timeoutMs, connectorTimeoutSeconds)
 
 	if ctx.MasterKey == nil {
 		return nil, fmt.Errorf("master key not available")
@@ -930,7 +935,7 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 		persistCtx := ctx.Context
 		if persistCtx.Err() != nil {
 			var cancel context.CancelFunc
-			persistCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+			persistCtx, cancel = context.WithTimeout(context.Background(), persistFallbackTimeout)
 			defer cancel()
 		}
 		db.Exec(persistCtx, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, durationMs, cellID)
@@ -948,20 +953,19 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 	if err != nil {
 		errTotalTimeMs := time.Since(startTime).Milliseconds()
 		// Deadlines may come from the handler's own timer or from an enclosing
-		// ToolContext deadline (e.g. ToolDef.Execute's wrapper). Cancellation
-		// takes precedence so a genuine cancel is never reported as a timeout.
+		// ToolContext deadline (e.g. ToolDef.Execute's wrapper). A context
+		// cancellation takes precedence so a genuine cancel is never reported
+		// as a timeout, even if the driver wrapped context.Canceled.
 		timedOut := errors.Is(execCtx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Context.Err(), context.DeadlineExceeded)
-		cancelled := errors.Is(execCtx.Err(), context.Canceled) || errors.Is(err, context.Canceled)
+		cancelled := errors.Is(execCtx.Err(), context.Canceled)
 		errMsg := err.Error()
 		switch {
 		case cancelled:
 			errMsg = "Query cancelled"
 		case timedOut:
-			budgetMs := timeoutMs
-			if errors.Is(ctx.Context.Err(), context.DeadlineExceeded) {
-				budgetMs = int(errTotalTimeMs)
-			}
-			errMsg = fmt.Sprintf("execution timed out after %dms", budgetMs)
+			errMsg = fmt.Sprintf("execution timed out after %dms", timeoutMs)
+		case errors.Is(err, context.Canceled):
+			errMsg = "Query cancelled"
 		}
 		errOutput := models.Output{Type: "error", Data: map[string]string{"message": errMsg}}
 		outJSON, _ := json.Marshal([]models.Output{errOutput})

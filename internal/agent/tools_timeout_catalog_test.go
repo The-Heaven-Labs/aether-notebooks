@@ -82,6 +82,27 @@ func TestTimeoutMsFromArgs(t *testing.T) {
 	}
 }
 
+func TestCellTimeoutMs(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		timeoutMs        int
+		connectorSeconds int
+		want             int
+	}{
+		{"explicit wins over connector", 500, 30, 500},
+		{"zero explicit uses connector", 0, 2, 2000},
+		{"negative explicit uses connector", -1, 2, 2000},
+		{"zero both uses default", 0, 0, defaultCellTimeoutMs},
+		{"negative both uses default", -5, 0, defaultCellTimeoutMs},
+		{"connector capped", 0, 900, maxToolTimeoutMs},
+		{"explicit capped", 900000, 30, maxToolTimeoutMs},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, cellTimeoutMs(tc.timeoutMs, tc.connectorSeconds))
+		})
+	}
+}
+
 func TestCreateCellTimeoutFromArgs(t *testing.T) {
 	for _, tc := range []struct {
 		name string
