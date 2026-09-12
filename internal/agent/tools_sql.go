@@ -108,10 +108,7 @@ func executeAgentSQL(ctx context.Context, pool *pgxpool.Pool, connectorID, query
 	}
 	defer exec.Close()
 
-	c, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	result, err := exec.Execute(c, query, params, clampSQLRowLimit(limit))
+	result, err := exec.Execute(ctx, query, params, clampSQLRowLimit(limit))
 	if err != nil {
 		return nil, fmt.Errorf("execute: %w", err)
 	}

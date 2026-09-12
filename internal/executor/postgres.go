@@ -92,6 +92,10 @@ func (p *PostgresExecutor) Execute(ctx context.Context, query string, params map
 		count++
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+
 	if resultRows == nil {
 		resultRows = [][]interface{}{}
 	}

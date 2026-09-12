@@ -66,8 +66,10 @@ func TestExecuteSQLHandlerThreadsLimit(t *testing.T) {
 	connID, masterKey := createSQLTestPGConnector(t, db, orgID, userID)
 
 	handler := makeExecuteSQLHandler(db.Pool)
+	runCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	ctx := &ToolContext{
-		Context:   context.Background(),
+		Context:   runCtx,
 		UserID:    userID,
 		OrgID:     orgID,
 		OrgRole:   "admin",
@@ -99,5 +101,45 @@ func TestExecuteSQLHandlerThreadsLimit(t *testing.T) {
 			"limit":        1000000,
 		})
 		require.Len(t, rs.Rows, 10000)
+	})
+}
+
+func TestExecuteSQLToolBudgetGovernsAdHocSQL(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	connID, masterKey := createSQLTestPGConnector(t, db, orgID, userID)
+
+	ctx := &ToolContext{
+		Context:   context.Background(),
+		UserID:    userID,
+		OrgID:     orgID,
+		OrgRole:   "admin",
+		DB:        db.Pool,
+		MasterKey: masterKey,
+	}
+
+	t.Run("execute_sql", func(t *testing.T) {
+		def := &ToolDef{Timeout: 200 * time.Millisecond, Handler: makeExecuteSQLHandler(db.Pool)}
+		def.Function.Name = "execute_sql"
+		args, err := json.Marshal(map[string]any{
+			"connector_id": connID,
+			"query":        "SELECT pg_sleep(2)",
+		})
+		require.NoError(t, err)
+		_, err = def.Execute(args, ctx)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), `tool "execute_sql" timed out after 200ms`)
+	})
+
+	t.Run("sql_query", func(t *testing.T) {
+		def, err := makeSQLQueryToolDef(&models.Tool{
+			Name:   "sql_query",
+			Config: models.JSONMap{"connector_id": connID, "query": "SELECT pg_sleep(2)"},
+		}, db.Pool)
+		require.NoError(t, err)
+		def.Timeout = 200 * time.Millisecond
+		_, err = def.Execute(json.RawMessage(`{}`), ctx)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), `tool "sql_query" timed out after 200ms`)
 	})
 }
