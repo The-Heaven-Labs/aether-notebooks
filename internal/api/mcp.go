@@ -221,3 +221,13 @@ func resolveMCPSchema(params interface{}) map[string]interface{} {
 	}
 	return map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
 }
+
+// handleMCPNoStream answers non-POST methods on the MCP endpoint. Aether does
+// not offer the optional SSE stream or sessions from the Streamable HTTP
+// transport, so GET/DELETE return 405 as permitted by the MCP spec.
+func handleMCPNoStream(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Allow", "POST")
+	writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
+		"error": "method not allowed: Aether's MCP endpoint is POST-only (no SSE stream or sessions)",
+	})
+}

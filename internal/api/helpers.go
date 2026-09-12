@@ -12,6 +12,9 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
+	if status == http.StatusUnauthorized {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="aether"`)
+	}
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
