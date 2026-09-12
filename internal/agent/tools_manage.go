@@ -28,6 +28,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"title":{"type":"string"},"folder_id":{"type":"string","description":"Optional parent folder"}},"required":["title"]}`,
 		},
 		Handler: makeCreateDashboardHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -41,6 +42,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{}}`,
 		},
 		Handler: makeListDashboardsHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -54,6 +56,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"}},"required":["dashboard_id"]}`,
 		},
 		Handler: makeDeleteDashboardHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -67,6 +70,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"notebook_id":{"type":"string"},"cell_id":{"type":"string"},"type":{"type":"string","enum":["chart","table","metric","text"],"description":"Widget type — use 'chart' for cells with chart config, 'table' for table output"},"row":{"type":"number","description":"Row position (0-based)"},"col":{"type":"number","description":"Column position (0-based)"},"width":{"type":"number","description":"Widget width in columns (default 6)"},"height":{"type":"number","description":"Widget height in rows (default 4)"}},"required":["dashboard_id","notebook_id","cell_id","type"]}`,
 		},
 		Handler: makeCreateDashboardWidgetHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	// Schedule tools
@@ -81,6 +85,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"cron_expression":{"type":"string","description":"Cron expression like '0 9 * * 1-5' (every weekday at 9am)"}},"required":["notebook_id","cron_expression"]}`,
 		},
 		Handler: makeCreateScheduleHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -94,6 +99,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"widget_id":{"type":"string"},"dashboard_id":{"type":"string"},"row":{"type":"number"},"col":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"type":{"type":"string","enum":["chart","table","text"]}},"required":["widget_id","dashboard_id"]}`,
 		},
 		Handler: makeUpdateDashboardWidgetHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -107,6 +113,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"}},"required":["dashboard_id"]}`,
 		},
 		Handler: makeGetDashboardHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -120,6 +127,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"widget_id":{"type":"string"},"dashboard_id":{"type":"string"}},"required":["widget_id","dashboard_id"]}`,
 		},
 		Handler: makeDeleteDashboardWidgetHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -133,6 +141,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"title":{"type":"string"},"grid_cols":{"type":"number","description":"Number of columns in the grid layout (default 12)"}},"required":["dashboard_id"]}`,
 		},
 		Handler: makeUpdateDashboardHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -146,6 +155,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"}},"required":["dashboard_id"]}`,
 		},
 		Handler: makeShareDashboardHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	// Schedule tools
@@ -160,6 +170,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"schedule_id":{"type":"string"}},"required":["schedule_id"]}`,
 		},
 		Handler: makeDeleteScheduleHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	// Permission tools
@@ -174,6 +185,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"resource_type":{"type":"string","enum":["notebook","dashboard","connector","folder"]},"resource_id":{"type":"string"}},"required":["resource_type","resource_id"]}`,
 		},
 		Handler: makeReadPermissionsHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -187,6 +199,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"resource_type":{"type":"string","enum":["notebook","dashboard","connector","folder"]},"resource_id":{"type":"string"},"entries":{"type":"array","items":{"type":"object","properties":{"subject_type":{"type":"string","enum":["user","group","everyone"]},"subject_id":{"type":"string","description":"User or group ID. Omit for 'everyone'."},"actions":{"type":"array","items":{"type":"string"}}}}}},"required":["resource_type","resource_id","entries"]}`,
 		},
 		Handler: makeUpdatePermissionsHandler(pool),
+		Timeout: 30 * time.Second,
 	})
 
 	// Export / Import tools
@@ -201,6 +214,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"}},"required":["notebook_id"]}`,
 		},
 		Handler: makeExportNotebookHandler(pool),
+		Timeout: 60 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -214,6 +228,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"title":{"type":"string","description":"Title for the imported notebook"},"ipynb_json":{"type":"string","description":"The full .ipynb JSON string"},"folder_id":{"type":"string","description":"Optional parent folder ID"}},"required":["title","ipynb_json"]}`,
 		},
 		Handler: makeImportNotebookHandler(pool),
+		Timeout: 120 * time.Second,
 	})
 }
 

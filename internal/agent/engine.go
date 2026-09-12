@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,7 @@ type Engine struct {
 	SetCancelFunc      func(cellID string, cancel context.CancelFunc)
 	DeleteCancelFunc   func(cellID string)
 	toolAllowedDomains []string
+	toolTimeoutDefault time.Duration
 	tokenCounter       *TokenCounter
 	store              storage.Storage
 	reasoningEffort    sync.Map // sessionID -> string
@@ -209,20 +211,27 @@ func (e *Engine) applySteering(sessionID string, chatMsgs *[]ChatMessage, steer 
 	}
 }
 
-func NewEngine(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client) *Engine {
-	engine := &Engine{
-		registry:     NewToolRegistry(),
-		session:      NewSessionStore(pool),
-		pool:         pool,
-		tokenCounter: NewTokenCounter(),
-		streams:      NewStreamManager(),
-	}
-
+// registerBuiltinTools wires the built-in tool groups into an engine's
+// registry. NewEngine and tests share it so their catalogs cannot drift.
+func registerBuiltinTools(engine *Engine, pool *pgxpool.Pool) {
 	RegisterNotebookTools(engine.registry, pool)
 	RegisterAgentTools(engine.registry, pool, engine)
 	RegisterPlatformTools(engine.registry, pool)
 	RegisterChartTools(engine.registry, pool)
 	RegisterManageTools(engine.registry, pool)
+}
+
+func NewEngine(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client) *Engine {
+	engine := &Engine{
+		registry:           NewToolRegistry(),
+		session:            NewSessionStore(pool),
+		pool:               pool,
+		tokenCounter:       NewTokenCounter(),
+		streams:            NewStreamManager(),
+		toolTimeoutDefault: DefaultToolTimeout,
+	}
+
+	registerBuiltinTools(engine, pool)
 
 	// Seed built-in tools for all orgs
 	orgRows, err := pool.Query(ctx, `SELECT id FROM orgs`)
@@ -708,32 +717,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			}
 			if ms.Type == "http" {
 				allTools = append(allTools,
-					&ToolDef{
-						Type: "function",
-						Function: struct {
-							Name        string `json:"name"`
-							Description string `json:"description"`
-							Parameters  any    `json:"parameters"`
-						}{
-							Name:        ms.Name + "_list_tools",
-							Description: fmt.Sprintf("List available tools from MCP server %s", ms.Name),
-							Parameters:  "{}",
-						},
-						Handler: makeMCPToolListHandlerHTTP(ms.Command),
-					},
-					&ToolDef{
-						Type: "function",
-						Function: struct {
-							Name        string `json:"name"`
-							Description string `json:"description"`
-							Parameters  any    `json:"parameters"`
-						}{
-							Name:        ms.Name + "_call_tool",
-							Description: fmt.Sprintf("Call a tool on MCP server %s", ms.Name),
-							Parameters:  `{"type":"object","properties":{"tool":{"type":"string"},"arguments":{"type":"object"}},"required":["tool"]}`,
-						},
-						Handler: makeMCPToolCallHandlerHTTP(ms.Command),
-					},
+					mcpListToolDef(ms.Name, makeMCPToolListHandlerHTTP(ms.Command)),
+					mcpCallToolDef(ms.Name, makeMCPToolCallHandlerHTTP(ms.Command)),
 				)
 			}
 		}
@@ -1160,7 +1145,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			}
 
 			toolStart := time.Now()
-			result, err := toolDef.Handler([]byte(tc.Function.Arguments), toolCtx)
+			result, err := toolDef.Execute([]byte(tc.Function.Arguments), toolCtx)
 			toolDurationMs := int(time.Since(toolStart).Milliseconds())
 			if err != nil {
 				resultStr := fmt.Sprintf("error: %s", err.Error())
@@ -1275,18 +1260,85 @@ func (e *Engine) resolveToolDef(t *models.Tool) (*ToolDef, error) {
 		if handlerName == "" {
 			return nil, fmt.Errorf("builtin tool missing handler_name")
 		}
-		def, ok := e.registry.Get(handlerName)
+		def0, ok := e.registry.Get(handlerName)
 		if !ok {
 			return nil, fmt.Errorf("builtin handler not found: %s", handlerName)
 		}
-		return def, nil
+		// Registry defs are shared across orgs and sessions — clone before
+		// applying per-tool overrides so the shared pointer stays untouched.
+		def := *def0
+		applyToolTimeout(&def, t.Config, e.toolTimeoutDefault)
+		return &def, nil
 	case models.ToolTypeWebhook:
-		return makeWebhookToolDef(t, e.toolAllowedDomains)
+		def, err := makeWebhookToolDef(t, e.toolAllowedDomains)
+		if err != nil {
+			return nil, err
+		}
+		applyToolTimeout(def, t.Config, e.toolTimeoutDefault)
+		return def, nil
 	case models.ToolTypeSQLQuery:
-		return makeSQLQueryToolDef(t, e.pool)
+		def, err := makeSQLQueryToolDef(t, e.pool)
+		if err != nil {
+			return nil, err
+		}
+		applyToolTimeout(def, t.Config, e.toolTimeoutDefault)
+		return def, nil
 	default:
 		return nil, fmt.Errorf("unknown tool type: %s", t.Type)
 	}
+}
+
+// applyToolTimeout applies a per-tool tools.config.timeout_ms override to a
+// freshly built ToolDef. NoTimeout defs are never wrapped, so every override
+// layer is skipped for them. When no override is present, a def that declares
+// no budget of its own inherits the engine-wide default.
+func applyToolTimeout(def *ToolDef, cfg models.JSONMap, fallback time.Duration) {
+	if def.Timeout < 0 {
+		return
+	}
+	if d, ok := toolTimeoutFromConfig(cfg); ok {
+		def.Timeout = d
+	} else if def.Timeout == 0 {
+		def.Timeout = fallback
+	}
+}
+
+// toolTimeoutFromConfig extracts a positive per-tool timeout override from
+// tools.config. JSON decode yields float64, but integer and json.Number forms
+// are accepted too. Non-positive and overflow-sized values are ignored rather
+// than wrapped into a negative (NoTimeout-like) budget.
+func toolTimeoutFromConfig(cfg models.JSONMap) (time.Duration, bool) {
+	v, ok := cfg["timeout_ms"]
+	if !ok {
+		return 0, false
+	}
+	var ms float64
+	switch n := v.(type) {
+	case float64:
+		ms = n
+	case int:
+		ms = float64(n)
+	case int64:
+		ms = float64(n)
+	case json.Number:
+		f, err := n.Float64()
+		if err != nil {
+			return 0, false
+		}
+		ms = f
+	default:
+		return 0, false
+	}
+	const maxMs = float64(math.MaxInt64 / int64(time.Millisecond))
+	if !(ms > 0 && ms <= maxMs) {
+		return 0, false
+	}
+	d := time.Duration(ms) * time.Millisecond
+	if d <= 0 {
+		// Sub-millisecond values truncate to zero; keep integer-ms semantics.
+		return 0, false
+	}
+	return d, true
 }
 
 func (e *Engine) GetRegistry() *ToolRegistry {
@@ -1335,6 +1387,16 @@ func (e *Engine) defaultSubagentLLM(ctx context.Context, pool *pgxpool.Pool, age
 
 func (e *Engine) SetToolAllowedDomains(domains []string) {
 	e.toolAllowedDomains = domains
+}
+
+// SetToolTimeoutDefault sets the fallback execution budget for tools that
+// declare no timeout of their own. Non-positive values are ignored so callers
+// cannot accidentally disable tool timeouts.
+func (e *Engine) SetToolTimeoutDefault(d time.Duration) {
+	if d <= 0 {
+		d = DefaultToolTimeout
+	}
+	e.toolTimeoutDefault = d
 }
 
 func (e *Engine) PublishSessionEvent(sessionID string, msg any) {
@@ -1737,4 +1799,30 @@ func asLink(base, path string) string {
 		return fmt.Sprintf("`%s%s`", base, path)
 	}
 	return fmt.Sprintf("`%s` (relative path, prefix with app hostname)", example)
+}
+
+// mcpListToolDef builds the dynamic <server>_list_tools def.
+func mcpListToolDef(serverName string, handler ToolHandler) *ToolDef {
+	def := &ToolDef{
+		Type:    "function",
+		Handler: handler,
+		Timeout: 30 * time.Second,
+	}
+	def.Function.Name = serverName + "_list_tools"
+	def.Function.Description = fmt.Sprintf("List available tools from MCP server %s", serverName)
+	def.Function.Parameters = "{}"
+	return def
+}
+
+// mcpCallToolDef builds the dynamic <server>_call_tool def.
+func mcpCallToolDef(serverName string, handler ToolHandler) *ToolDef {
+	def := &ToolDef{
+		Type:    "function",
+		Handler: handler,
+		Timeout: 60 * time.Second,
+	}
+	def.Function.Name = serverName + "_call_tool"
+	def.Function.Description = fmt.Sprintf("Call a tool on MCP server %s", serverName)
+	def.Function.Parameters = `{"type":"object","properties":{"tool":{"type":"string"},"arguments":{"type":"object"}},"required":["tool"]}`
+	return def
 }

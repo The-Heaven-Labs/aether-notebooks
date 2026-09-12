@@ -34,6 +34,7 @@ func RegisterMCPTools(reg *ToolRegistry, servers []*MCPClient) {
 					Parameters:  "{}",
 				},
 				Handler: makeMCPToolListHandler(srv),
+				Timeout: 30 * time.Second,
 			})
 			reg.Register(&ToolDef{
 				Function: struct {
@@ -46,6 +47,7 @@ func RegisterMCPTools(reg *ToolRegistry, servers []*MCPClient) {
 					Parameters:  `{"type":"object","properties":{"tool":{"type":"string"},"arguments":{"type":"object"}},"required":["tool"]}`,
 				},
 				Handler: makeMCPToolCallHandler(srv),
+				Timeout: 60 * time.Second,
 			})
 		}
 	}

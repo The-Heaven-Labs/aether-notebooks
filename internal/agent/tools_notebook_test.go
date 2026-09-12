@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -1333,6 +1334,162 @@ func TestAgentRunCellTimeout(t *testing.T) {
 	}
 }
 
+func TestAgentRunCellConnectorTimeout(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	connID, masterKey := createTestPGConnector(t, db, orgID, userID)
+	if _, err := db.Pool.Exec(context.Background(), `UPDATE connectors SET timeout_seconds=1 WHERE id=$1`, connID); err != nil {
+		t.Fatalf("set connector timeout: %v", err)
+	}
+	cellID := createTestCellRow(t, db, nbID, connID, "SELECT pg_sleep(5)")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	runCellDef, _ := reg.Get("run_cell")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	ctx.MasterKey = masterKey
+
+	start := time.Now()
+	args, _ := json.Marshal(map[string]any{"cell_id": cellID})
+	result, err := runCellDef.Execute(args, ctx)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("connector timeout must be a result, not a Go error: %v", err)
+	}
+	m := result.(map[string]any)
+	if m["status"] != "error" {
+		t.Fatalf("expected error status, got %v", m)
+	}
+	if timedOut, _ := m["timed_out"].(bool); !timedOut {
+		t.Fatalf("expected timed_out=true, got %v", m)
+	}
+	if msg, _ := m["error"].(string); !strings.Contains(msg, "execution timed out after 1000ms") {
+		t.Fatalf("expected 1000ms connector timeout message, got %q", msg)
+	}
+	if elapsed > 4*time.Second {
+		t.Fatalf("connector timeout did not bound execution: %v", elapsed)
+	}
+
+	var outputs []byte
+	if err := db.Pool.QueryRow(context.Background(), `SELECT outputs FROM cells WHERE id=$1`, cellID).Scan(&outputs); err != nil {
+		t.Fatalf("query outputs: %v", err)
+	}
+	var parsed []map[string]any
+	if err := json.Unmarshal(outputs, &parsed); err != nil || len(parsed) == 0 || parsed[0]["type"] != "error" {
+		t.Fatalf("expected persisted error output, got %s", string(outputs))
+	}
+}
+
+func TestAgentRunCellWrapperDeadlineMarksTimedOut(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	connID, masterKey := createTestPGConnector(t, db, orgID, userID)
+	cellID := createTestCellRow(t, db, nbID, connID, "SELECT pg_sleep(5)")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	runCellDef, _ := reg.Get("run_cell")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	ctx.MasterKey = masterKey
+	shortCtx, cancel := context.WithTimeout(ctx.Context, time.Second)
+	defer cancel()
+	ctx.Context = shortCtx
+
+	args, _ := json.Marshal(map[string]any{"cell_id": cellID})
+	result, err := runCellDef.Execute(args, ctx)
+	if err != nil {
+		t.Fatalf("wrapper deadline must be a result, not a Go error: %v", err)
+	}
+	m := result.(map[string]any)
+	if m["status"] != "error" {
+		t.Fatalf("expected error status, got %v", m)
+	}
+	if timedOut, _ := m["timed_out"].(bool); !timedOut {
+		t.Fatalf("expected timed_out=true for a wrapper deadline, got %v", m)
+	}
+	if msg, _ := m["error"].(string); !strings.Contains(msg, "timed out") {
+		t.Fatalf("expected a timeout message for a wrapper deadline, got %q", msg)
+	} else {
+		var gotMs int
+		if _, err := fmt.Sscanf(msg, "execution timed out after %dms", &gotMs); err != nil {
+			t.Fatalf("unparseable timeout message %q: %v", msg, err)
+		}
+		if gotMs <= 0 || gotMs > 1500 {
+			t.Fatalf("expected the ~1s wrapper budget in the message, got %q", msg)
+		}
+	}
+
+	var outputs []byte
+	if err := db.Pool.QueryRow(context.Background(), `SELECT outputs FROM cells WHERE id=$1`, cellID).Scan(&outputs); err != nil {
+		t.Fatalf("query outputs: %v", err)
+	}
+	var parsed []map[string]any
+	if err := json.Unmarshal(outputs, &parsed); err != nil || len(parsed) == 0 || parsed[0]["type"] != "error" {
+		t.Fatalf("expected persisted error output, got %s", string(outputs))
+	}
+}
+
+func TestAgentRunCellCancelBeatsParentDeadline(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	connID, masterKey := createTestPGConnector(t, db, orgID, userID)
+	cellID := createTestCellRow(t, db, nbID, connID, "SELECT pg_sleep(5)")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	runCellDef, _ := reg.Get("run_cell")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	ctx.MasterKey = masterKey
+
+	cancelSeen := make(chan context.CancelFunc, 1)
+	ctx.SetCancelFunc = func(_ string, cancel context.CancelFunc) { cancelSeen <- cancel }
+
+	parentCtx, parentCancel := context.WithTimeout(ctx.Context, 2*time.Second)
+	defer parentCancel()
+	ctx.Context = parentCtx
+	// Hold the handler between the cancel and the error classification until
+	// the parent deadline expires, so execCtx is cancelled while ctx.Context is
+	// deadline-exceeded at classification time.
+	ctx.DeleteCancelFunc = func(string) { <-parentCtx.Done() }
+
+	type outcome struct {
+		result any
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		args, _ := json.Marshal(map[string]any{"cell_id": cellID})
+		result, err := runCellDef.Execute(args, ctx)
+		done <- outcome{result, err}
+	}()
+
+	select {
+	case cancel := <-cancelSeen:
+		cancel()
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancel func was never registered")
+	}
+
+	select {
+	case out := <-done:
+		if out.err != nil {
+			t.Fatalf("cancel must be a result, not a Go error: %v", out.err)
+		}
+		m := out.result.(map[string]any)
+		if m["status"] != "error" || m["error"] != "Query cancelled" {
+			t.Fatalf("expected Query cancelled, got %v", m)
+		}
+		if timedOut, _ := m["timed_out"].(bool); timedOut {
+			t.Fatalf("cancelled run must not be marked timed_out: %v", m)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("run did not finish after cancel")
+	}
+}
+
 func TestAgentCreateCellRequiresTitleAndDescription(t *testing.T) {
 	db := setupTestDB(t)
 	orgID, userID := createTestOrgAndUser(t, db.Pool)
@@ -1548,4 +1705,69 @@ func TestAgentCreateCellRunTrueFailureKeepsCell(t *testing.T) {
 	if err := db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM cells WHERE id=$1`, cellID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("cell must still exist, count=%d err=%v", count, err)
 	}
+}
+
+func waitForAutoSnapshot(t *testing.T, pool *pgxpool.Pool, nbID string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for {
+		var count int
+		if err := pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM notebook_snapshots WHERE notebook_id = $1 AND auto = true`, nbID,
+		).Scan(&count); err != nil {
+			if ctx.Err() != nil {
+				t.Fatal("auto-snapshot was not created within 5s")
+			}
+			t.Fatalf("count auto snapshots: %v", err)
+		}
+		if count > 0 {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("auto-snapshot was not created within 5s")
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+}
+
+func TestSpawnAutoSnapshotCreatesSnapshot(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+
+	agent.SpawnAutoSnapshot(db.Pool, nbID, userID, orgID)
+
+	waitForAutoSnapshot(t, db.Pool, nbID)
+}
+
+func TestAgentDeleteCellSpawnsAutoSnapshot(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+
+	cellID := uuid.New().String()
+	now := time.Now()
+	if _, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO cells (id, notebook_id, type, language, source, position, created_at, updated_at)
+		VALUES ($1, $2, 'code', 'sql', 'SELECT 1', 0, $3, $3)
+	`, cellID, nbID, now); err != nil {
+		t.Fatalf("create cell: %v", err)
+	}
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	def, ok := reg.Get("delete_cell")
+	if !ok {
+		t.Fatal("delete_cell tool not found")
+	}
+
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	args, _ := json.Marshal(map[string]any{"cell_id": cellID})
+	if _, err := def.Handler(args, ctx); err != nil {
+		t.Fatalf("delete cell: %v", err)
+	}
+
+	waitForAutoSnapshot(t, db.Pool, nbID)
 }

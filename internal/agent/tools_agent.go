@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,6 +22,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Parameters:  `{"type":"object","properties":{},"required":[]}`,
 		},
 		Handler: makeListSkillsHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -34,6 +36,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Parameters:  `{"type":"object","properties":{"name":{"type":"string","description":"Name of the skill to load"}},"required":["name"]}`,
 		},
 		Handler: makeLoadSkillHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -47,6 +50,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Parameters:  `{"type":"object","properties":{"name":{"type":"string"},"description":{"type":"string"},"system_prompt":{"type":"string"},"skill_ids":{"type":"array","items":{"type":"string"}}}}`,
 		},
 		Handler: makeUpdateAgentHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -60,6 +64,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Parameters:  `{"type":"object","properties":{"name":{"type":"string"},"description":{"type":"string"},"system_prompt":{"type":"string"}},"required":["name","system_prompt"]}`,
 		},
 		Handler: makeCreateSkillHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -73,6 +78,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Parameters:  `{"type":"object","properties":{},"required":[]}`,
 		},
 		Handler: makeListAgentsHandler(pool),
+		Timeout: 30 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -86,6 +92,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Parameters:  `{"type":"object","properties":{"tasks":{"type":"array","description":"List of independent sub-tasks to execute in parallel","minItems":1,"maxItems":5,"items":{"type":"object","properties":{"id":{"type":"string","description":"Short unique identifier for this sub-task (e.g. 'explore_schema', 'build_query', 'research_api')"},"goal":{"type":"string","description":"Clear, specific instruction for the sub-agent. Include what data to query, what to build, or what question to answer."},"agent_id":{"type":"string","description":"Optional agent ID (UUID) or agent name to use for this sub-task. Omit to use the current agent. Use list_agents to discover available agents."}},"required":["id","goal"]}}},"required":["tasks"]}`,
 		},
 		Handler: makeSpawnSubagentsHandler(pool, engine),
+		Timeout: NoTimeout,
 	})
 
 	reg.Register(&ToolDef{
@@ -99,6 +106,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Parameters:  `{"type":"object","properties":{"skill_id":{"type":"string"},"name":{"type":"string"},"system_prompt":{"type":"string"}},"required":["skill_id"]}`,
 		},
 		Handler: makeUpdateSkillHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -112,6 +120,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Parameters:  `{"type":"object","properties":{"tasks":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string","description":"Short unique identifier for the task"},"description":{"type":"string","description":"What needs to be done"}},"required":["id","description"]}}},"required":["tasks"]}`,
 		},
 		Handler: makeCreateTasksHandler(),
+		Timeout: 5 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -125,6 +134,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Parameters:  `{"type":"object","properties":{"task_id":{"type":"string"},"status":{"type":"string","enum":["pending","in_progress","done"]}},"required":["task_id","status"]}`,
 		},
 		Handler: makeUpdateTaskHandler(),
+		Timeout: 5 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -138,6 +148,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Parameters:  `{"type":"object","properties":{}}`,
 		},
 		Handler: makeGetTasksHandler(),
+		Timeout: 5 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -151,6 +162,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Parameters:  `{"type":"object","properties":{"task_ids":{"type":"array","items":{"type":"string"},"description":"List of subagent task IDs to check"}},"required":["task_ids"]}`,
 		},
 		Handler: makeGetSubagentResultsHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -163,6 +175,7 @@ func RegisterAgentTools(reg *ToolRegistry, pool *pgxpool.Pool, engine *Engine) {
 			Description: "Ask the user a question and wait for their response. Use this when you need a decision, clarification, or input from the user to proceed. You can provide multiple choice options for the user to pick from, or leave it open-ended.",
 			Parameters:  `{"type":"object","properties":{"question":{"type":"string","description":"The question to ask the user"},"options":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string","description":"The option title/label"},"description":{"type":"string","description":"Optional subtitle or explanation for the option"}},"required":["title"]},"description":"Optional multiple choice options for the user to choose from"},"allow_custom":{"type":"boolean","description":"Whether to allow the user to type a custom answer (default: true)"}},"required":["question"]}`,
 		},
+		Timeout: NoTimeout,
 		Handler: func(args json.RawMessage, ctx *ToolContext) (any, error) {
 			var req struct {
 				Question    string            `json:"question"`

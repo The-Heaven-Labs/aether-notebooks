@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 )
 
@@ -144,6 +145,88 @@ func TestProcessMessage_PersistsToolCallResults(t *testing.T) {
 	}
 	if calls[0].Result == nil {
 		t.Fatal("tool call result was not persisted on the assistant message")
+	}
+}
+
+// A tool that exceeds its declared budget must surface the normalized timeout
+// error both to the model (tool message) and to reconnect_sync (tool_calls).
+func TestProcessMessage_ToolTimeoutSurfaced(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	engine := newTestEngine(db)
+	agentID := createTestAgentRow(t, db, orgID, userID, []string{})
+	nbID := createTestNotebook(t, db, orgID, userID)
+	sid := createTestSession(t, db, agentID, nbID, userID)
+
+	probe := &ToolDef{Timeout: 50 * time.Millisecond, Handler: probeTimeoutHandler()}
+	probe.Function.Name = "probe_timeout"
+	probe.Function.Parameters = `{"type":"object","properties":{}}`
+
+	masterKey := make([]byte, 32)
+	callID := uuid.New().String()
+	responses := []ChatResponse{
+		{
+			Choices: []Choice{{
+				Message: ChatMessage{
+					ToolCalls: []ToolCall{{
+						ID:   callID,
+						Type: "function",
+						Function: struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						}{Name: "probe_timeout", Arguments: `{}`},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}},
+			Usage: Usage{PromptTokens: 10, CompletionTokens: 5},
+		},
+		{
+			Choices: []Choice{{
+				Message:      ChatMessage{Content: "done"},
+				FinishReason: "stop",
+			}},
+			Usage: Usage{PromptTokens: 10, CompletionTokens: 5},
+		},
+	}
+	var captured []map[string]any
+	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
+	defer srv.Close()
+	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.pool = db.Pool
+	engine.session = NewSessionStore(db.Pool)
+
+	if _, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "run probe", nil, []*ToolDef{probe}, masterKey, nil, nil, nil, nil, nil, nil); err != nil {
+		t.Fatalf("ProcessMessage: %v", err)
+	}
+
+	var content string
+	err := db.Pool.QueryRow(context.Background(),
+		`SELECT content FROM agent_messages WHERE session_id=$1 AND role='tool' ORDER BY created_at DESC LIMIT 1`,
+		sid).Scan(&content)
+	if err != nil {
+		t.Fatalf("query tool message: %v", err)
+	}
+	if !strings.Contains(content, `tool "probe_timeout" timed out after 50ms`) {
+		t.Fatalf("tool message missing timeout text: %q", content)
+	}
+
+	var toolCallsJSON []byte
+	err = db.Pool.QueryRow(context.Background(),
+		`SELECT tool_calls FROM agent_messages WHERE session_id=$1 AND role='assistant' AND tool_calls IS NOT NULL ORDER BY created_at LIMIT 1`,
+		sid).Scan(&toolCallsJSON)
+	if err != nil {
+		t.Fatalf("query assistant tool calls: %v", err)
+	}
+	var calls []struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(toolCallsJSON, &calls); err != nil {
+		t.Fatalf("decode tool calls: %v", err)
+	}
+	if len(calls) != 1 || !strings.Contains(calls[0].Error, "timed out after 50ms") {
+		t.Fatalf("tool call error missing timeout text: %v", calls)
 	}
 }
 

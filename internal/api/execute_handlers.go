@@ -254,8 +254,11 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		// Check if the query was cancelled by the user
 		errMsg := err.Error()
 		isCancelled := errors.Is(err, context.Canceled) || strings.Contains(errMsg, "context canceled") || strings.Contains(errMsg, "cancelled")
-		if isCancelled {
+		switch {
+		case isCancelled:
 			errMsg = "Query cancelled"
+		case errors.Is(err, context.DeadlineExceeded) || strings.Contains(errMsg, "context deadline exceeded"):
+			errMsg = "Query timed out"
 		}
 		// Store error output
 		errTotalTime := time.Since(startTime).Milliseconds()

@@ -164,7 +164,7 @@ func (s *Server) handleMCPToolsCall(w http.ResponseWriter, req mcpJSONRPCRequest
 		DeleteCancelFunc: s.hub.DeleteCancelFunc,
 	}
 
-	result, err := def.Handler(params.Arguments, ctx)
+	result, err := def.Execute(params.Arguments, ctx)
 	if err != nil {
 		writeJSON(w, http.StatusOK, mcpJSONRPCResponse{
 			JSONRPC: "2.0", ID: req.ID,

@@ -3,6 +3,7 @@ package executor_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
@@ -38,6 +39,42 @@ func TestPostgresExecutor(t *testing.T) {
 	}
 	if len(result.Rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(result.Rows))
+	}
+}
+
+// TestPostgresExecutorConnectTimeout verifies that connecting to a blackholed
+// host fails within the executor's connect budget instead of hanging for the
+// pgx default (2 minutes). 192.0.2.0/24 (TEST-NET-1) is reserved and unroutable.
+func TestPostgresExecutorConnectTimeout(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping connect timeout test in short mode")
+	}
+
+	cfg := models.ConnectorConfig{
+		Host: "192.0.2.1", Port: 5432,
+		User: "aether", Password: "aether_dev", Database: "aether",
+	}
+
+	start := time.Now()
+	done := make(chan error, 1)
+	go func() {
+		pg, err := executor.NewPostgresExecutor(cfg)
+		if pg != nil {
+			pg.Close()
+		}
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected error connecting to blackholed host, got nil")
+		}
+		if elapsed := time.Since(start); elapsed > 12*time.Second {
+			t.Fatalf("connect took %v, want <= 12s", elapsed)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("NewPostgresExecutor blocked for 15s on a blackholed host (unbounded connect)")
 	}
 }
 

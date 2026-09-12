@@ -99,3 +99,41 @@ func TestStatsRollupIntervalInvalid(t *testing.T) {
 		t.Error("expected error for invalid duration, got nil")
 	}
 }
+
+func TestAgentToolTimeoutDefault(t *testing.T) {
+	os.Unsetenv("AETHER_AGENT_TOOL_TIMEOUT_DEFAULT")
+	cfg, err := LoadMigrateOnly()
+	if err != nil {
+		t.Fatalf("LoadMigrateOnly() failed: %v", err)
+	}
+	if cfg.AgentToolTimeoutDefault.String() != "2m0s" {
+		t.Errorf("expected default 2m, got %v", cfg.AgentToolTimeoutDefault)
+	}
+}
+
+func TestAgentToolTimeoutCustomAndFloor(t *testing.T) {
+	for raw, want := range map[string]string{
+		"45s":   "45s",
+		"5m":    "5m0s",
+		"500ms": "1s", // below floor → raised
+		"-3s":   "1s",
+	} {
+		os.Setenv("AETHER_AGENT_TOOL_TIMEOUT_DEFAULT", raw)
+		cfg, err := LoadMigrateOnly()
+		if err != nil {
+			t.Fatalf("LoadMigrateOnly() failed for %q: %v", raw, err)
+		}
+		if cfg.AgentToolTimeoutDefault.String() != want {
+			t.Errorf("for %q: expected %s, got %v", raw, want, cfg.AgentToolTimeoutDefault)
+		}
+		os.Unsetenv("AETHER_AGENT_TOOL_TIMEOUT_DEFAULT")
+	}
+}
+
+func TestAgentToolTimeoutInvalid(t *testing.T) {
+	os.Setenv("AETHER_AGENT_TOOL_TIMEOUT_DEFAULT", "not-a-duration")
+	defer os.Unsetenv("AETHER_AGENT_TOOL_TIMEOUT_DEFAULT")
+	if _, err := LoadMigrateOnly(); err == nil {
+		t.Error("expected error for invalid duration, got nil")
+	}
+}

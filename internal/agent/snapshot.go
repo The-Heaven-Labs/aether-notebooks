@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -85,22 +86,49 @@ func CreateNotebookSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, orgID
 	return &snap, nil
 }
 
+// AutoSnapshotTimeout bounds background auto-snapshot work. Snapshots must
+// outlive the destructive tool call that triggers them, but not run forever.
+const AutoSnapshotTimeout = 5 * time.Minute
+
+// autoSnapshotContext returns a context detached from any caller (so the
+// snapshot can outlive the tool call) yet bounded by AutoSnapshotTimeout.
+func autoSnapshotContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), AutoSnapshotTimeout)
+}
+
+// SpawnAutoSnapshot runs EnsureAutoSnapshot in the background under a bounded,
+// detached context so a slow snapshot cannot linger past its budget.
+func SpawnAutoSnapshot(pool *pgxpool.Pool, nbID, userID, orgID string) {
+	go func() {
+		ctx, cancel := autoSnapshotContext()
+		defer cancel()
+		if err := EnsureAutoSnapshot(ctx, pool, nbID, userID, orgID); err != nil {
+			slog.Warn("auto-snapshot failed", "notebook_id", nbID, "error", err)
+		}
+	}()
+}
+
 // EnsureAutoSnapshot creates an auto-snapshot if none has been created in the last 5 minutes.
-func EnsureAutoSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, userID, orgID string) {
+func EnsureAutoSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, userID, orgID string) error {
 	var recentAuto bool
-	pool.QueryRow(ctx,
+	if err := pool.QueryRow(ctx,
 		`SELECT EXISTS(
 			SELECT 1 FROM notebook_snapshots ns
 			JOIN notebooks n ON n.id = ns.notebook_id
 			WHERE ns.notebook_id=$1 AND ns.auto=true AND n.org_id=$2 AND ns.created_at > NOW() - INTERVAL '5 minutes'
 		)`, nbID, orgID,
-	).Scan(&recentAuto)
+	).Scan(&recentAuto); err != nil {
+		return fmt.Errorf("check recent auto-snapshot: %w", err)
+	}
 	if recentAuto {
-		return
+		return nil
 	}
 
 	name := "Auto-save " + time.Now().Format("2006-01-02 15:04")
-	CreateNotebookSnapshot(ctx, pool, nbID, orgID, name, userID, true)
+	if _, err := CreateNotebookSnapshot(ctx, pool, nbID, orgID, name, userID, true); err != nil {
+		return fmt.Errorf("create auto-snapshot: %w", err)
+	}
+	return nil
 }
 
 // RestoreNotebookSnapshot restores a notebook to the state captured in a snapshot.

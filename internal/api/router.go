@@ -128,6 +128,12 @@ func (s *Server) SetToolAllowedDomains(domains []string) {
 	s.agentEngine.SetToolAllowedDomains(domains)
 }
 
+// SetToolTimeoutDefault sets the fallback execution budget for agent tools
+// that declare no timeout of their own.
+func (s *Server) SetToolTimeoutDefault(d time.Duration) {
+	s.agentEngine.SetToolTimeoutDefault(d)
+}
+
 // SetOIDCHostRewrite configures host rewriting for OIDC discovery requests.
 // Used in Docker dev setups where the API container reaches Keycloak via
 // a different hostname than what's in the discovery URL.

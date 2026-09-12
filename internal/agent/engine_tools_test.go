@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/database"
 	"github.com/the-heaven-labs/aether/internal/models"
@@ -61,17 +64,14 @@ func createEngineTestOrgAndUser(t *testing.T, db *database.DB) (orgID, userID st
 
 func newTestEngine(db *database.DB) *Engine {
 	engine := &Engine{
-		registry:     NewToolRegistry(),
-		pool:         db.Pool,
-		tokenCounter: NewTokenCounter(),
-		streams:      NewStreamManager(),
-		session:      NewSessionStore(db.Pool),
+		registry:           NewToolRegistry(),
+		pool:               db.Pool,
+		tokenCounter:       NewTokenCounter(),
+		streams:            NewStreamManager(),
+		session:            NewSessionStore(db.Pool),
+		toolTimeoutDefault: DefaultToolTimeout,
 	}
-	RegisterNotebookTools(engine.registry, db.Pool)
-	RegisterAgentTools(engine.registry, db.Pool, engine)
-	RegisterPlatformTools(engine.registry, db.Pool)
-	RegisterChartTools(engine.registry, db.Pool)
-	RegisterManageTools(engine.registry, db.Pool)
+	registerBuiltinTools(engine, db.Pool)
 	return engine
 }
 
@@ -280,6 +280,190 @@ func TestEngineLoadAgentToolDefs_AdminModeIrrelevant(t *testing.T) {
 	}
 	if len(defs) != 2 {
 		t.Fatalf("expected 2 tools, got %d: %v", len(defs), names)
+	}
+}
+
+func TestEngineLoadAgentToolDefs_TimeoutOverride(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, _ := createEngineTestOrgAndUser(t, db)
+	SeedBuiltinTools(context.Background(), db.Pool, orgID)
+	engine := newTestEngine(db)
+
+	toolIDs := seededToolIDs(t, db, orgID, "list_notebook_parameters")
+	regDef, ok := engine.registry.Get("list_notebook_parameters")
+	require.True(t, ok, "registry must contain list_notebook_parameters")
+	registryTimeoutBefore := regDef.Timeout
+
+	var toolID string
+	err := db.Pool.QueryRow(context.Background(),
+		`SELECT id FROM tools WHERE org_id=$1 AND name='list_notebook_parameters'`, orgID).Scan(&toolID)
+	require.NoError(t, err)
+
+	_, err = db.Pool.Exec(context.Background(),
+		`UPDATE tools SET config = config || '{"timeout_ms": 5000}'::jsonb WHERE id=$1`, toolID)
+	require.NoError(t, err)
+
+	agent := models.Agent{ID: uuid.New().String(), OrgID: orgID, ToolIDs: toolIDs}
+	defs := engine.loadAgentToolDefs(context.Background(), agent)
+	require.Len(t, defs, 1)
+	require.Equal(t, 5*time.Second, defs[0].Timeout, "per-tool timeout_ms must apply to the resolved def")
+	require.NotSame(t, regDef, defs[0], "resolveToolDef must clone the shared registry def")
+	require.Equal(t, registryTimeoutBefore, regDef.Timeout, "registry def must not be mutated")
+}
+
+func TestResolveToolDef_TimeoutPrecedence(t *testing.T) {
+	engine := &Engine{registry: NewToolRegistry(), toolTimeoutDefault: 90 * time.Second}
+	probe := &ToolDef{Timeout: 30 * time.Second}
+	probe.Function.Name = "probe"
+	engine.registry.Register(probe)
+
+	// Registry budget beats the engine-wide fallback.
+	got, err := engine.resolveToolDef(&models.Tool{
+		Name:   "probe",
+		Type:   models.ToolTypeBuiltin,
+		Config: models.JSONMap{"handler_name": "probe"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 30*time.Second, got.Timeout)
+
+	// Per-tool config beats the registry budget without mutating it.
+	got, err = engine.resolveToolDef(&models.Tool{
+		Name:   "probe",
+		Type:   models.ToolTypeBuiltin,
+		Config: models.JSONMap{"handler_name": "probe", "timeout_ms": float64(4000)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 4*time.Second, got.Timeout)
+	require.Equal(t, 30*time.Second, probe.Timeout, "registry def must not be mutated")
+
+	// No registry budget → engine-wide fallback.
+	unbudgeted := &ToolDef{}
+	unbudgeted.Function.Name = "unbudgeted"
+	engine.registry.Register(unbudgeted)
+	got, err = engine.resolveToolDef(&models.Tool{
+		Name:   "unbudgeted",
+		Type:   models.ToolTypeBuiltin,
+		Config: models.JSONMap{"handler_name": "unbudgeted"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 90*time.Second, got.Timeout)
+
+	// NoTimeout skips every override layer, including per-tool config.
+	interactive := &ToolDef{Timeout: NoTimeout}
+	interactive.Function.Name = "interactive"
+	engine.registry.Register(interactive)
+	got, err = engine.resolveToolDef(&models.Tool{
+		Name:   "interactive",
+		Type:   models.ToolTypeBuiltin,
+		Config: models.JSONMap{"handler_name": "interactive", "timeout_ms": float64(5000)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, NoTimeout, got.Timeout, "config override must not clobber NoTimeout")
+	require.Equal(t, NoTimeout, interactive.Timeout, "registry def must not be mutated")
+
+	got, err = engine.resolveToolDef(&models.Tool{
+		Name:   "interactive",
+		Type:   models.ToolTypeBuiltin,
+		Config: models.JSONMap{"handler_name": "interactive"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, NoTimeout, got.Timeout, "engine fallback must not clobber NoTimeout")
+	require.Equal(t, NoTimeout, interactive.Timeout, "registry def must not be mutated")
+}
+
+func TestResolveToolDef_DynamicToolTimeout(t *testing.T) {
+	engine := &Engine{registry: NewToolRegistry(), toolTimeoutDefault: 45 * time.Second}
+
+	webhook, err := engine.resolveToolDef(&models.Tool{
+		Name:   "notify",
+		Type:   models.ToolTypeWebhook,
+		Config: models.JSONMap{"url": "https://example.com/hook", "timeout_ms": float64(2500)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2500*time.Millisecond, webhook.Timeout)
+
+	webhookFallback, err := engine.resolveToolDef(&models.Tool{
+		Name:   "notify",
+		Type:   models.ToolTypeWebhook,
+		Config: models.JSONMap{"url": "https://example.com/hook"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 30*time.Second, webhookFallback.Timeout, "webhook defs declare their own 30s default")
+
+	sqlTool, err := engine.resolveToolDef(&models.Tool{
+		Name:   "slow_query",
+		Type:   models.ToolTypeSQLQuery,
+		Config: models.JSONMap{"connector_id": "abc", "query": "SELECT 1", "timeout_ms": float64(7000)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 7*time.Second, sqlTool.Timeout)
+}
+
+func TestResolveToolDef_TimeoutConfigValueForms(t *testing.T) {
+	engine := &Engine{registry: NewToolRegistry(), toolTimeoutDefault: 90 * time.Second}
+	probe := &ToolDef{Timeout: 30 * time.Second}
+	probe.Function.Name = "probe"
+	engine.registry.Register(probe)
+
+	for _, tc := range []struct {
+		name string
+		raw  any
+		want time.Duration
+	}{
+		{"float64", float64(4000), 4 * time.Second},
+		{"int", 4000, 4 * time.Second},
+		{"int64", int64(4000), 4 * time.Second},
+		{"json.Number", json.Number("4000"), 4 * time.Second},
+		{"zero ignored", float64(0), 30 * time.Second},
+		{"negative ignored", float64(-1), 30 * time.Second},
+		{"sub-millisecond ignored", float64(0.5), 30 * time.Second},
+		{"NaN ignored", math.NaN(), 30 * time.Second},
+		{"overflow ignored", float64(math.MaxInt64), 30 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := engine.resolveToolDef(&models.Tool{
+				Name:   "probe",
+				Type:   models.ToolTypeBuiltin,
+				Config: models.JSONMap{"handler_name": "probe", "timeout_ms": tc.raw},
+			})
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got.Timeout)
+			require.Positive(t, got.Timeout, "resolved timeout must never wrap negative")
+		})
+	}
+	require.Equal(t, 30*time.Second, probe.Timeout, "registry def must not be mutated")
+
+	// Invalid values on an unbudgeted def fall back to the engine default.
+	unbudgeted := &ToolDef{}
+	unbudgeted.Function.Name = "unbudgeted"
+	engine.registry.Register(unbudgeted)
+	for _, raw := range []any{float64(0), float64(-1), float64(0.5), math.NaN(), float64(math.MaxInt64)} {
+		got, err := engine.resolveToolDef(&models.Tool{
+			Name:   "unbudgeted",
+			Type:   models.ToolTypeBuiltin,
+			Config: models.JSONMap{"handler_name": "unbudgeted", "timeout_ms": raw},
+		})
+		require.NoError(t, err)
+		require.Equal(t, 90*time.Second, got.Timeout)
+		require.Positive(t, got.Timeout, "resolved timeout must never wrap negative")
+	}
+}
+
+func TestSetToolTimeoutDefault_NonPositiveFallsBack(t *testing.T) {
+	for _, d := range []time.Duration{0, -5 * time.Second} {
+		engine := &Engine{registry: NewToolRegistry()}
+		engine.SetToolTimeoutDefault(d)
+
+		probe := &ToolDef{}
+		probe.Function.Name = "probe"
+		engine.registry.Register(probe)
+		got, err := engine.resolveToolDef(&models.Tool{
+			Name:   "probe",
+			Type:   models.ToolTypeBuiltin,
+			Config: models.JSONMap{"handler_name": "probe"},
+		})
+		require.NoError(t, err)
+		require.Equal(t, DefaultToolTimeout, got.Timeout)
 	}
 }
 
@@ -772,4 +956,154 @@ func TestEndToEnd_AdminModeDoesNotBypassToolIDs(t *testing.T) {
 	if !found {
 		t.Fatalf("AdminMode should NOT bypass tool_ids: expected rejection for execute_sql")
 	}
+}
+
+// probeTimeoutHandler hangs until the tool context is cancelled, exercising the
+// ToolDef.Execute deadline. The fallback keeps a regression where Execute is
+// bypassed from hanging the suite.
+func probeTimeoutHandler() ToolHandler {
+	return func(_ json.RawMessage, tc *ToolContext) (any, error) {
+		select {
+		case <-tc.Context.Done():
+			return nil, tc.Context.Err()
+		case <-time.After(2 * time.Second):
+			return nil, fmt.Errorf("probe: tool context never cancelled")
+		}
+	}
+}
+
+// Subagent tool dispatch must honor ToolDef.Timeout: a hanging probe is cut off
+// by Execute and its normalized error lands in the persisted subagent message.
+func TestRunSubagentLoop_ToolTimeoutSurfaced(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	engine := newTestEngine(db)
+
+	agentID := createTestAgentRow(t, db, orgID, userID, []string{})
+	nbID := createTestNotebook(t, db, orgID, userID)
+	sid := createTestSession(t, db, agentID, nbID, userID)
+
+	taskID := uuid.New().String()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO subagent_tasks (id, parent_session_id, goal, status, created_at)
+		VALUES ($1, $2, $3, 'queued', NOW())
+	`, taskID, sid, "probe timeout")
+	require.NoError(t, err)
+
+	probe := &ToolDef{Timeout: 50 * time.Millisecond, Handler: probeTimeoutHandler()}
+	probe.Function.Name = "probe_subagent_timeout"
+	probe.Function.Parameters = `{"type":"object","properties":{}}`
+	engine.registry.Register(probe)
+
+	masterKey := make([]byte, 32)
+	callID := uuid.New().String()
+	responses := []ChatResponse{
+		{
+			Choices: []Choice{{
+				Message: ChatMessage{
+					ToolCalls: []ToolCall{{
+						ID:   callID,
+						Type: "function",
+						Function: struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						}{Name: "probe_subagent_timeout", Arguments: `{}`},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}},
+			Usage: Usage{PromptTokens: 10, CompletionTokens: 5},
+		},
+		{
+			Choices: []Choice{{
+				Message:      ChatMessage{Content: "done"},
+				FinishReason: "stop",
+			}},
+			Usage: Usage{PromptTokens: 10, CompletionTokens: 5},
+		},
+	}
+	var captured []map[string]any
+	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
+	defer srv.Close()
+	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
+	llm := NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{})
+
+	res := engine.runSubagentLoop(context.Background(), sid, taskID, "probe timeout", userID, orgID, "admin", masterKey, llm, []*ToolDef{probe}, 3)
+	require.Equal(t, "completed", res.Status)
+
+	var content string
+	err = db.Pool.QueryRow(context.Background(),
+		`SELECT content FROM subagent_messages WHERE subagent_task_id=$1 AND role='tool' ORDER BY created_at LIMIT 1`,
+		taskID).Scan(&content)
+	require.NoError(t, err)
+	var stored struct {
+		Name   string `json:"name"`
+		Result string `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(content), &stored))
+	require.Equal(t, "probe_subagent_timeout", stored.Name)
+	require.Contains(t, stored.Result, `tool "probe_subagent_timeout" timed out after 50ms`)
+}
+
+// The legacy runSubagent path dispatches through the same registry; its tool
+// result (fed back to the model) must carry the normalized timeout error too.
+func TestRunSubagent_ToolTimeoutSurfaced(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	engine := newTestEngine(db)
+
+	agentID := createTestAgentRow(t, db, orgID, userID, []string{})
+	nbID := createTestNotebook(t, db, orgID, userID)
+	sid := createTestSession(t, db, agentID, nbID, userID)
+
+	probe := &ToolDef{Timeout: 50 * time.Millisecond, Handler: probeTimeoutHandler()}
+	probe.Function.Name = "probe_legacy_timeout"
+	probe.Function.Parameters = `{"type":"object","properties":{}}`
+	engine.registry.Register(probe)
+
+	masterKey := make([]byte, 32)
+	responses := []ChatResponse{
+		{
+			Choices: []Choice{{
+				Message: ChatMessage{
+					ToolCalls: []ToolCall{{
+						ID:   uuid.New().String(),
+						Type: "function",
+						Function: struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						}{Name: "probe_legacy_timeout", Arguments: `{}`},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}},
+			Usage: Usage{PromptTokens: 10, CompletionTokens: 5},
+		},
+		{
+			Choices: []Choice{{
+				Message:      ChatMessage{Content: "done"},
+				FinishReason: "stop",
+			}},
+			Usage: Usage{PromptTokens: 10, CompletionTokens: 5},
+		},
+	}
+	var captured []map[string]any
+	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
+	defer srv.Close()
+	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+
+	res := engine.runSubagent(context.Background(), sid, SubagentTaskConfig{Goal: "probe legacy timeout"}, userID, orgID, masterKey)
+	require.Equal(t, "completed", res.Status)
+
+	require.GreaterOrEqual(t, len(captured), 2)
+	msgs, _ := captured[1]["messages"].([]any)
+	var toolResult string
+	for _, m := range msgs {
+		mm, _ := m.(map[string]any)
+		if mm["role"] == "tool" {
+			toolResult, _ = mm["content"].(string)
+		}
+	}
+	require.Contains(t, toolResult, `tool "probe_legacy_timeout" timed out after 50ms`)
 }
