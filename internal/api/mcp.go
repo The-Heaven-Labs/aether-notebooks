@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/auth"
@@ -52,60 +53,65 @@ func mcpSupportsProtocolVersion(v string) bool {
 // mcpToolAllowlist is the curated catalog exposed over MCP. It is deliberately
 // an allowlist: adding a tool to the registry must never expose it externally
 // until it is added here and covered by TestMCPToolsListMatchesAllowlist.
-var mcpToolAllowlist = map[string]struct{}{
-	// Notebooks, cells & SQL
-	"create_notebook":          {},
-	"delete_notebook":          {},
-	"update_notebook":          {},
-	"read_cell":                {},
-	"create_cell":              {},
-	"update_cell":              {},
-	"run_cell":                 {},
-	"list_cells":               {},
-	"move_cell":                {},
-	"swap_cells":               {},
-	"execute_sql":              {},
-	"explore_schema":           {},
-	"delete_cell":              {},
-	"get_notebook_context":     {},
-	"create_snapshot":          {},
-	"list_snapshots":           {},
-	"restore_snapshot":         {},
-	"list_notebook_parameters": {},
-	"set_notebook_parameters":  {},
-	// Dashboards, schedules, permissions & import/export
-	"create_dashboard":        {},
-	"list_dashboards":         {},
-	"get_dashboard":           {},
-	"update_dashboard":        {},
-	"delete_dashboard":        {},
-	"create_dashboard_widget": {},
-	"update_dashboard_widget": {},
-	"delete_dashboard_widget": {},
-	"create_schedule":         {},
-	"delete_schedule":         {},
-	"share_dashboard":         {},
-	"read_permissions":        {},
-	"update_permissions":      {},
-	"export_notebook":         {},
-	"import_notebook":         {},
-	// Skills & agents (read/authoring only)
-	"list_skills":  {},
-	"load_skill":   {},
-	"create_skill": {},
-	"update_skill": {},
-	"list_agents":  {},
-	// Platform reads
-	"list_notebooks":  {},
-	"list_connectors": {},
-	"list_folders":    {},
-	"get_folder_tree": {},
-	// Charts
-	"create_chart": {},
-	"update_chart": {},
-}
+var (
+	mcpAllowlistMu   sync.RWMutex
+	mcpToolAllowlist = map[string]struct{}{
+		// Notebooks, cells & SQL
+		"create_notebook":          {},
+		"delete_notebook":          {},
+		"update_notebook":          {},
+		"read_cell":                {},
+		"create_cell":              {},
+		"update_cell":              {},
+		"run_cell":                 {},
+		"list_cells":               {},
+		"move_cell":                {},
+		"swap_cells":               {},
+		"execute_sql":              {},
+		"explore_schema":           {},
+		"delete_cell":              {},
+		"get_notebook_context":     {},
+		"create_snapshot":          {},
+		"list_snapshots":           {},
+		"restore_snapshot":         {},
+		"list_notebook_parameters": {},
+		"set_notebook_parameters":  {},
+		// Dashboards, schedules, permissions & import/export
+		"create_dashboard":        {},
+		"list_dashboards":         {},
+		"get_dashboard":           {},
+		"update_dashboard":        {},
+		"delete_dashboard":        {},
+		"create_dashboard_widget": {},
+		"update_dashboard_widget": {},
+		"delete_dashboard_widget": {},
+		"create_schedule":         {},
+		"delete_schedule":         {},
+		"share_dashboard":         {},
+		"read_permissions":        {},
+		"update_permissions":      {},
+		"export_notebook":         {},
+		"import_notebook":         {},
+		// Skills & agents (read/authoring only)
+		"list_skills":  {},
+		"load_skill":   {},
+		"create_skill": {},
+		"update_skill": {},
+		"list_agents":  {},
+		// Platform reads
+		"list_notebooks":  {},
+		"list_connectors": {},
+		"list_folders":    {},
+		"get_folder_tree": {},
+		// Charts
+		"create_chart": {},
+		"update_chart": {},
+	}
+)
 
 func mcpToolAllowed(name string) bool {
+	mcpAllowlistMu.RLock()
+	defer mcpAllowlistMu.RUnlock()
 	_, ok := mcpToolAllowlist[name]
 	return ok
 }
