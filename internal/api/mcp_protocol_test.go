@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"testing"
 	"time"
 
@@ -132,6 +133,8 @@ func TestMCPPanicIsRecovered(t *testing.T) {
 		panic("boom")
 	}
 	srv.RegisterToolForTest(probe)
+	srv.SetMCPToolAllowedForTest("probe_mcp_panic", true)
+	t.Cleanup(func() { srv.SetMCPToolAllowedForTest("probe_mcp_panic", false) })
 
 	code, resp, _ := doMCPRequest(t, srv, token, "tools/call", map[string]any{
 		"name": "probe_mcp_panic", "arguments": map[string]any{},
@@ -140,4 +143,55 @@ func TestMCPPanicIsRecovered(t *testing.T) {
 	errObj, _ := resp["error"].(map[string]any)
 	require.NotNil(t, errObj, "expected JSON-RPC error body, got %v", resp)
 	require.Equal(t, float64(-32603), errObj["code"])
+}
+
+func TestMCPToolsListMatchesAllowlist(t *testing.T) {
+	srv := setupTestServer(t)
+	token, err := testJWT.Issue(testUserID, testOrgID, "admin")
+	require.NoError(t, err)
+
+	code, resp, _ := doMCPRequest(t, srv, token, "tools/list", nil)
+	require.Equal(t, http.StatusOK, code)
+	result, _ := resp["result"].(map[string]any)
+	require.NotNil(t, result)
+	tools, _ := result["tools"].([]any)
+
+	got := make([]string, 0, len(tools))
+	for _, raw := range tools {
+		m, _ := raw.(map[string]any)
+		name, _ := m["name"].(string)
+		got = append(got, name)
+	}
+	expected := srv.MCPToolAllowlistForTest()
+	sort.Strings(got)
+	sort.Strings(expected)
+	require.Equal(t, expected, got, "tools/list must match the allowlist exactly (renames or missing definitions will show as diffs)")
+}
+
+func TestMCPUnlistedToolIsNotExposedOrCallable(t *testing.T) {
+	srv := setupTestServer(t)
+	token, err := testJWT.Issue(testUserID, testOrgID, "admin")
+	require.NoError(t, err)
+
+	probe := &agent.ToolDef{Timeout: time.Second}
+	probe.Function.Name = "probe_mcp_unlisted"
+	probe.Function.Parameters = `{"type":"object","properties":{}}`
+	probe.Handler = func(_ json.RawMessage, _ *agent.ToolContext) (any, error) {
+		return map[string]any{"ran": true}, nil
+	}
+	srv.RegisterToolForTest(probe)
+
+	_, resp, _ := doMCPRequest(t, srv, token, "tools/list", nil)
+	result, _ := resp["result"].(map[string]any)
+	for _, raw := range result["tools"].([]any) {
+		m, _ := raw.(map[string]any)
+		require.NotEqual(t, "probe_mcp_unlisted", m["name"])
+	}
+
+	_, resp, _ = doMCPRequest(t, srv, token, "tools/call", map[string]any{
+		"name": "probe_mcp_unlisted", "arguments": map[string]any{},
+	})
+	errObj, _ := resp["error"].(map[string]any)
+	require.NotNil(t, errObj, "unlisted tool must be rejected, got %v", resp)
+	require.Equal(t, float64(-32602), errObj["code"])
 }

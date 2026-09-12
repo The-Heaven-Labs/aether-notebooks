@@ -49,6 +49,67 @@ func mcpSupportsProtocolVersion(v string) bool {
 	return false
 }
 
+// mcpToolAllowlist is the curated catalog exposed over MCP. It is deliberately
+// an allowlist: adding a tool to the registry must never expose it externally
+// until it is added here and covered by TestMCPToolsListMatchesAllowlist.
+var mcpToolAllowlist = map[string]struct{}{
+	// Notebooks, cells & SQL
+	"create_notebook":          {},
+	"delete_notebook":          {},
+	"update_notebook":          {},
+	"read_cell":                {},
+	"create_cell":              {},
+	"update_cell":              {},
+	"run_cell":                 {},
+	"list_cells":               {},
+	"move_cell":                {},
+	"swap_cells":               {},
+	"execute_sql":              {},
+	"explore_schema":           {},
+	"delete_cell":              {},
+	"get_notebook_context":     {},
+	"create_snapshot":          {},
+	"list_snapshots":           {},
+	"restore_snapshot":         {},
+	"list_notebook_parameters": {},
+	"set_notebook_parameters":  {},
+	// Dashboards, schedules, permissions & import/export
+	"create_dashboard":        {},
+	"list_dashboards":         {},
+	"get_dashboard":           {},
+	"update_dashboard":        {},
+	"delete_dashboard":        {},
+	"create_dashboard_widget": {},
+	"update_dashboard_widget": {},
+	"delete_dashboard_widget": {},
+	"create_schedule":         {},
+	"delete_schedule":         {},
+	"share_dashboard":         {},
+	"read_permissions":        {},
+	"update_permissions":      {},
+	"export_notebook":         {},
+	"import_notebook":         {},
+	// Skills & agents (read/authoring only)
+	"list_skills":  {},
+	"load_skill":   {},
+	"create_skill": {},
+	"update_skill": {},
+	"list_agents":  {},
+	// Platform reads
+	"list_notebooks":  {},
+	"list_connectors": {},
+	"list_folders":    {},
+	"get_folder_tree": {},
+	// Charts
+	"create_chart": {},
+	"update_chart": {},
+}
+
+func mcpToolAllowed(name string) bool {
+	_, ok := mcpToolAllowlist[name]
+	return ok
+}
+
 // handleMCP serves the MCP (Model Context Protocol) endpoint over HTTP.
 // Authenticated via Bearer token (personal access token or JWT).
 func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
@@ -166,7 +227,7 @@ func (s *Server) handleMCPToolsList(w http.ResponseWriter, req mcpJSONRPCRequest
 
 	tools := make([]mcpTool, 0, len(defs))
 	for _, d := range defs {
-		if d.Function.Name == "" {
+		if d.Function.Name == "" || !mcpToolAllowed(d.Function.Name) {
 			continue
 		}
 		schema := resolveMCPSchema(d.Function.Parameters)
@@ -194,6 +255,14 @@ func (s *Server) handleMCPToolsCall(w http.ResponseWriter, req mcpJSONRPCRequest
 		writeJSON(w, http.StatusOK, mcpJSONRPCResponse{
 			JSONRPC: "2.0", ID: req.ID,
 			Error: &mcpError{Code: -32602, Message: "Invalid tool call params"},
+		})
+		return
+	}
+
+	if !mcpToolAllowed(params.Name) {
+		writeJSON(w, http.StatusOK, mcpJSONRPCResponse{
+			JSONRPC: "2.0", ID: req.ID,
+			Error: &mcpError{Code: -32602, Message: "Tool not available over MCP: " + params.Name},
 		})
 		return
 	}

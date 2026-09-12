@@ -134,6 +134,8 @@ func TestMCPToolsCallToolTimeout(t *testing.T) {
 		}
 	}
 	srv.RegisterToolForTest(probe)
+	srv.SetMCPToolAllowedForTest("probe_mcp_timeout", true)
+	t.Cleanup(func() { srv.SetMCPToolAllowedForTest("probe_mcp_timeout", false) })
 
 	code, resp := mcpToolsCall(t, srv, token, "probe_mcp_timeout", map[string]any{})
 	if code != 200 {
