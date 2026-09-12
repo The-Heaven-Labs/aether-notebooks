@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -1313,11 +1314,44 @@ func applyToolTimeout(def *ToolDef, cfg models.JSONMap, fallback time.Duration) 
 	if def.Timeout < 0 {
 		return
 	}
-	if ms, ok := cfg["timeout_ms"].(float64); ok && ms > 0 {
-		def.Timeout = time.Duration(ms) * time.Millisecond
+	if d, ok := toolTimeoutFromConfig(cfg); ok {
+		def.Timeout = d
 	} else if def.Timeout == 0 {
 		def.Timeout = fallback
 	}
+}
+
+// toolTimeoutFromConfig extracts a positive per-tool timeout override from
+// tools.config. JSON decode yields float64, but integer and json.Number forms
+// are accepted too. Non-positive and overflow-sized values are ignored rather
+// than wrapped into a negative (NoTimeout-like) budget.
+func toolTimeoutFromConfig(cfg models.JSONMap) (time.Duration, bool) {
+	v, ok := cfg["timeout_ms"]
+	if !ok {
+		return 0, false
+	}
+	var ms float64
+	switch n := v.(type) {
+	case float64:
+		ms = n
+	case int:
+		ms = float64(n)
+	case int64:
+		ms = float64(n)
+	case json.Number:
+		f, err := n.Float64()
+		if err != nil {
+			return 0, false
+		}
+		ms = f
+	default:
+		return 0, false
+	}
+	const maxMs = float64(math.MaxInt64 / int64(time.Millisecond))
+	if !(ms > 0 && ms <= maxMs) {
+		return 0, false
+	}
+	return time.Duration(ms) * time.Millisecond, true
 }
 
 func (e *Engine) GetRegistry() *ToolRegistry {
@@ -1369,8 +1403,12 @@ func (e *Engine) SetToolAllowedDomains(domains []string) {
 }
 
 // SetToolTimeoutDefault sets the fallback execution budget for tools that
-// declare no timeout of their own.
+// declare no timeout of their own. Non-positive values are ignored so callers
+// cannot accidentally disable tool timeouts.
 func (e *Engine) SetToolTimeoutDefault(d time.Duration) {
+	if d <= 0 {
+		d = DefaultToolTimeout
+	}
 	e.toolTimeoutDefault = d
 }
 

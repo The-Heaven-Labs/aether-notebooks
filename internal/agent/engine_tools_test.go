@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -399,6 +400,73 @@ func TestResolveToolDef_DynamicToolTimeout(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 7*time.Second, sqlTool.Timeout)
+}
+
+func TestResolveToolDef_TimeoutConfigValueForms(t *testing.T) {
+	engine := &Engine{registry: NewToolRegistry(), toolTimeoutDefault: 90 * time.Second}
+	probe := &ToolDef{Timeout: 30 * time.Second}
+	probe.Function.Name = "probe"
+	engine.registry.Register(probe)
+
+	for _, tc := range []struct {
+		name string
+		raw  any
+		want time.Duration
+	}{
+		{"float64", float64(4000), 4 * time.Second},
+		{"int", 4000, 4 * time.Second},
+		{"int64", int64(4000), 4 * time.Second},
+		{"json.Number", json.Number("4000"), 4 * time.Second},
+		{"zero ignored", float64(0), 30 * time.Second},
+		{"negative ignored", float64(-1), 30 * time.Second},
+		{"NaN ignored", math.NaN(), 30 * time.Second},
+		{"overflow ignored", float64(math.MaxInt64), 30 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := engine.resolveToolDef(&models.Tool{
+				Name:   "probe",
+				Type:   models.ToolTypeBuiltin,
+				Config: models.JSONMap{"handler_name": "probe", "timeout_ms": tc.raw},
+			})
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got.Timeout)
+			require.Positive(t, got.Timeout, "resolved timeout must never wrap negative")
+		})
+	}
+	require.Equal(t, 30*time.Second, probe.Timeout, "registry def must not be mutated")
+
+	// Invalid values on an unbudgeted def fall back to the engine default.
+	unbudgeted := &ToolDef{}
+	unbudgeted.Function.Name = "unbudgeted"
+	engine.registry.Register(unbudgeted)
+	for _, raw := range []any{float64(0), float64(-1), math.NaN(), float64(math.MaxInt64)} {
+		got, err := engine.resolveToolDef(&models.Tool{
+			Name:   "unbudgeted",
+			Type:   models.ToolTypeBuiltin,
+			Config: models.JSONMap{"handler_name": "unbudgeted", "timeout_ms": raw},
+		})
+		require.NoError(t, err)
+		require.Equal(t, 90*time.Second, got.Timeout)
+		require.Positive(t, got.Timeout, "resolved timeout must never wrap negative")
+	}
+}
+
+func TestSetToolTimeoutDefault_NonPositiveFallsBack(t *testing.T) {
+	for _, d := range []time.Duration{0, -5 * time.Second} {
+		engine := &Engine{registry: NewToolRegistry()}
+		engine.SetToolTimeoutDefault(d)
+
+		probe := &ToolDef{}
+		probe.Function.Name = "probe"
+		engine.registry.Register(probe)
+		got, err := engine.resolveToolDef(&models.Tool{
+			Name:   "probe",
+			Type:   models.ToolTypeBuiltin,
+			Config: models.JSONMap{"handler_name": "probe"},
+		})
+		require.NoError(t, err)
+		require.Equal(t, DefaultToolTimeout, got.Timeout)
+	}
 }
 
 func TestSeedBuiltinTools_ACLDoesNotGrantUseToEveryone(t *testing.T) {
