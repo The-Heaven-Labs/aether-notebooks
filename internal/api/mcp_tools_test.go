@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/the-heaven-labs/aether/internal/agent"
 )
 
 func mcpToolsCall(t *testing.T, srv http.Handler, token, tool string, args map[string]any) (int, map[string]any) {
@@ -110,5 +112,38 @@ func TestMCPToolsCallRunCellCancel(t *testing.T) {
 		}
 	case <-time.After(25 * time.Second):
 		t.Fatal("MCP run did not finish after cancel")
+	}
+}
+
+// MCP dispatch must honor ToolDef.Timeout: a hanging probe is cut off by
+// Execute and the timeout error flows into the isError envelope.
+func TestMCPToolsCallToolTimeout(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("mcp-timeout-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "MCP Timeout Org")
+
+	probe := &agent.ToolDef{Timeout: 50 * time.Millisecond}
+	probe.Function.Name = "probe_mcp_timeout"
+	probe.Function.Parameters = `{"type":"object","properties":{}}`
+	probe.Handler = func(_ json.RawMessage, tc *agent.ToolContext) (any, error) {
+		select {
+		case <-tc.Context.Done():
+			return nil, tc.Context.Err()
+		case <-time.After(2 * time.Second):
+			return nil, fmt.Errorf("probe: tool context never cancelled")
+		}
+	}
+	srv.RegisterToolForTest(probe)
+
+	code, resp := mcpToolsCall(t, srv, token, "probe_mcp_timeout", map[string]any{})
+	if code != 200 {
+		t.Fatalf("tools/call: expected 200, got %d: %v", code, resp)
+	}
+	result, _ := resp["result"].(map[string]any)
+	if result == nil || result["isError"] != true {
+		t.Fatalf("expected isError envelope, got %v", resp)
+	}
+	if text := mcpResultText(t, resp); !strings.Contains(text, `tool "probe_mcp_timeout" timed out after 50ms`) {
+		t.Fatalf("expected timeout text, got %q", text)
 	}
 }

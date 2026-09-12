@@ -1145,7 +1145,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			}
 
 			toolStart := time.Now()
-			result, err := toolDef.Handler([]byte(tc.Function.Arguments), toolCtx)
+			result, err := toolDef.Execute([]byte(tc.Function.Arguments), toolCtx)
 			toolDurationMs := int(time.Since(toolStart).Milliseconds())
 			if err != nil {
 				resultStr := fmt.Sprintf("error: %s", err.Error())

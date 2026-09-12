@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -954,4 +955,154 @@ func TestEndToEnd_AdminModeDoesNotBypassToolIDs(t *testing.T) {
 	if !found {
 		t.Fatalf("AdminMode should NOT bypass tool_ids: expected rejection for execute_sql")
 	}
+}
+
+// probeTimeoutHandler hangs until the tool context is cancelled, exercising the
+// ToolDef.Execute deadline. The fallback keeps the test finite before the
+// dispatch sites are routed through Execute.
+func probeTimeoutHandler() ToolHandler {
+	return func(_ json.RawMessage, tc *ToolContext) (any, error) {
+		select {
+		case <-tc.Context.Done():
+			return nil, tc.Context.Err()
+		case <-time.After(2 * time.Second):
+			return nil, fmt.Errorf("probe: tool context never cancelled")
+		}
+	}
+}
+
+// Subagent tool dispatch must honor ToolDef.Timeout: a hanging probe is cut off
+// by Execute and its normalized error lands in the persisted subagent message.
+func TestRunSubagentLoop_ToolTimeoutSurfaced(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	engine := newTestEngine(db)
+
+	agentID := createTestAgentRow(t, db, orgID, userID, []string{})
+	nbID := createTestNotebook(t, db, orgID, userID)
+	sid := createTestSession(t, db, agentID, nbID, userID)
+
+	taskID := uuid.New().String()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO subagent_tasks (id, parent_session_id, goal, status, created_at)
+		VALUES ($1, $2, $3, 'queued', NOW())
+	`, taskID, sid, "probe timeout")
+	require.NoError(t, err)
+
+	probe := &ToolDef{Timeout: 50 * time.Millisecond, Handler: probeTimeoutHandler()}
+	probe.Function.Name = "probe_subagent_timeout"
+	probe.Function.Parameters = `{"type":"object","properties":{}}`
+	engine.registry.Register(probe)
+
+	masterKey := make([]byte, 32)
+	callID := uuid.New().String()
+	responses := []ChatResponse{
+		{
+			Choices: []Choice{{
+				Message: ChatMessage{
+					ToolCalls: []ToolCall{{
+						ID:   callID,
+						Type: "function",
+						Function: struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						}{Name: "probe_subagent_timeout", Arguments: `{}`},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}},
+			Usage: Usage{PromptTokens: 10, CompletionTokens: 5},
+		},
+		{
+			Choices: []Choice{{
+				Message:      ChatMessage{Content: "done"},
+				FinishReason: "stop",
+			}},
+			Usage: Usage{PromptTokens: 10, CompletionTokens: 5},
+		},
+	}
+	var captured []map[string]any
+	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
+	defer srv.Close()
+	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
+	llm := NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{})
+
+	res := engine.runSubagentLoop(context.Background(), sid, taskID, "probe timeout", userID, orgID, "admin", masterKey, llm, []*ToolDef{probe}, 3)
+	require.Equal(t, "completed", res.Status)
+
+	var content string
+	err = db.Pool.QueryRow(context.Background(),
+		`SELECT content FROM subagent_messages WHERE subagent_task_id=$1 AND role='tool' ORDER BY created_at LIMIT 1`,
+		taskID).Scan(&content)
+	require.NoError(t, err)
+	var stored struct {
+		Name   string `json:"name"`
+		Result string `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(content), &stored))
+	require.Equal(t, "probe_subagent_timeout", stored.Name)
+	require.Contains(t, stored.Result, `tool "probe_subagent_timeout" timed out after 50ms`)
+}
+
+// The legacy runSubagent path dispatches through the same registry; its tool
+// result (fed back to the model) must carry the normalized timeout error too.
+func TestRunSubagent_ToolTimeoutSurfaced(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	engine := newTestEngine(db)
+
+	agentID := createTestAgentRow(t, db, orgID, userID, []string{})
+	nbID := createTestNotebook(t, db, orgID, userID)
+	sid := createTestSession(t, db, agentID, nbID, userID)
+
+	probe := &ToolDef{Timeout: 50 * time.Millisecond, Handler: probeTimeoutHandler()}
+	probe.Function.Name = "probe_legacy_timeout"
+	probe.Function.Parameters = `{"type":"object","properties":{}}`
+	engine.registry.Register(probe)
+
+	masterKey := make([]byte, 32)
+	responses := []ChatResponse{
+		{
+			Choices: []Choice{{
+				Message: ChatMessage{
+					ToolCalls: []ToolCall{{
+						ID:   uuid.New().String(),
+						Type: "function",
+						Function: struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						}{Name: "probe_legacy_timeout", Arguments: `{}`},
+					}},
+				},
+				FinishReason: "tool_calls",
+			}},
+			Usage: Usage{PromptTokens: 10, CompletionTokens: 5},
+		},
+		{
+			Choices: []Choice{{
+				Message:      ChatMessage{Content: "done"},
+				FinishReason: "stop",
+			}},
+			Usage: Usage{PromptTokens: 10, CompletionTokens: 5},
+		},
+	}
+	var captured []map[string]any
+	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
+	defer srv.Close()
+	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+
+	res := engine.runSubagent(context.Background(), sid, SubagentTaskConfig{Goal: "probe legacy timeout"}, userID, orgID, masterKey)
+	require.Equal(t, "completed", res.Status)
+
+	require.GreaterOrEqual(t, len(captured), 2)
+	msgs, _ := captured[1]["messages"].([]any)
+	var toolResult string
+	for _, m := range msgs {
+		mm, _ := m.(map[string]any)
+		if mm["role"] == "tool" {
+			toolResult, _ = mm["content"].(string)
+		}
+	}
+	require.Contains(t, toolResult, `tool "probe_legacy_timeout" timed out after 50ms`)
 }

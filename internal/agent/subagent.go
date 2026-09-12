@@ -120,7 +120,7 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 				continue
 			}
 
-			result, err := toolDef.Handler(json.RawMessage(tc.Function.Arguments), &ToolContext{
+			result, err := toolDef.Execute(json.RawMessage(tc.Function.Arguments), &ToolContext{
 				Context:    ctx,
 				UserID:     parentUserID,
 				OrgID:      parentOrgID,
@@ -404,7 +404,7 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 			}
 
 			toolStart := time.Now()
-			result, err := toolDef.Handler(json.RawMessage(tc.Function.Arguments), &ToolContext{
+			result, err := toolDef.Execute(json.RawMessage(tc.Function.Arguments), &ToolContext{
 				Context:    ctx,
 				UserID:     parentUserID,
 				OrgID:      parentOrgID,
