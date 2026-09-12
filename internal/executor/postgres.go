@@ -3,10 +3,15 @@ package executor
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
+
+// postgresConnectTimeout bounds pool creation and the initial ping so an
+// unreachable (e.g. blackholed) host cannot hang a tool indefinitely.
+const postgresConnectTimeout = 10 * time.Second
 
 // normalizeValue converts pgx native types that JSON-marshal poorly into
 // friendlier representations (e.g. [16]byte UUID → "xxxxxxxx-xxxx-…").
@@ -33,11 +38,20 @@ func NewPostgresExecutor(cfg models.ConnectorConfig) (*PostgresExecutor, error) 
 		dsn += "?sslmode=disable"
 	}
 
-	pool, err := pgxpool.New(context.Background(), dsn)
+	poolCfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse dsn: %w", err)
+	}
+	poolCfg.ConnConfig.ConnectTimeout = postgresConnectTimeout
+
+	ctx, cancel := context.WithTimeout(context.Background(), postgresConnectTimeout)
+	defer cancel()
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}
-	if err := pool.Ping(context.Background()); err != nil {
+	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}

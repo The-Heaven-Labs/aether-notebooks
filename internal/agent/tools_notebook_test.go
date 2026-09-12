@@ -1698,3 +1698,78 @@ func TestAgentCreateCellRunTrueFailureKeepsCell(t *testing.T) {
 		t.Fatalf("cell must still exist, count=%d err=%v", count, err)
 	}
 }
+
+func waitForAutoSnapshot(t *testing.T, pool *pgxpool.Pool, nbID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var count int
+		if err := pool.QueryRow(context.Background(),
+			`SELECT COUNT(*) FROM notebook_snapshots WHERE notebook_id = $1 AND auto = true`, nbID,
+		).Scan(&count); err != nil {
+			t.Fatalf("count auto snapshots: %v", err)
+		}
+		if count > 0 {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("auto-snapshot was not created within 5s")
+}
+
+func TestAutoSnapshotContextIsBounded(t *testing.T) {
+	if agent.AutoSnapshotTimeout != 5*time.Minute {
+		t.Fatalf("AutoSnapshotTimeout = %v, want 5m", agent.AutoSnapshotTimeout)
+	}
+
+	ctx, cancel := agent.AutoSnapshotContext()
+	defer cancel()
+
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("auto-snapshot context has no deadline")
+	}
+	if remaining := time.Until(deadline); remaining <= 0 || remaining > agent.AutoSnapshotTimeout {
+		t.Fatalf("remaining auto-snapshot budget %v outside (0, %v]", remaining, agent.AutoSnapshotTimeout)
+	}
+}
+
+func TestSpawnAutoSnapshotCreatesSnapshot(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+
+	agent.SpawnAutoSnapshot(db.Pool, nbID, userID, orgID)
+
+	waitForAutoSnapshot(t, db.Pool, nbID)
+}
+
+func TestAgentDeleteCellSpawnsAutoSnapshot(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+
+	cellID := uuid.New().String()
+	now := time.Now()
+	if _, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO cells (id, notebook_id, type, language, source, position, created_at, updated_at)
+		VALUES ($1, $2, 'code', 'sql', 'SELECT 1', 0, $3, $3)
+	`, cellID, nbID, now); err != nil {
+		t.Fatalf("create cell: %v", err)
+	}
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	def, ok := reg.Get("delete_cell")
+	if !ok {
+		t.Fatal("delete_cell tool not found")
+	}
+
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	args, _ := json.Marshal(map[string]any{"cell_id": cellID})
+	if _, err := def.Handler(args, ctx); err != nil {
+		t.Fatalf("delete cell: %v", err)
+	}
+
+	waitForAutoSnapshot(t, db.Pool, nbID)
+}

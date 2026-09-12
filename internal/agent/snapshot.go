@@ -85,6 +85,26 @@ func CreateNotebookSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, orgID
 	return &snap, nil
 }
 
+// AutoSnapshotTimeout bounds background auto-snapshot work. Snapshots must
+// outlive the destructive tool call that triggers them, but not run forever.
+const AutoSnapshotTimeout = 5 * time.Minute
+
+// AutoSnapshotContext returns a context detached from any caller (so the
+// snapshot can outlive the tool call) yet bounded by AutoSnapshotTimeout.
+func AutoSnapshotContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), AutoSnapshotTimeout)
+}
+
+// SpawnAutoSnapshot runs EnsureAutoSnapshot in the background under a bounded,
+// detached context so a slow snapshot cannot linger past its budget.
+func SpawnAutoSnapshot(pool *pgxpool.Pool, nbID, userID, orgID string) {
+	go func() {
+		ctx, cancel := AutoSnapshotContext()
+		defer cancel()
+		EnsureAutoSnapshot(ctx, pool, nbID, userID, orgID)
+	}()
+}
+
 // EnsureAutoSnapshot creates an auto-snapshot if none has been created in the last 5 minutes.
 func EnsureAutoSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, userID, orgID string) {
 	var recentAuto bool
