@@ -138,6 +138,22 @@ describe('sankey panel', () => {
     // Node color pickers keyed on node names
     expect(screen.getByText('Node colors')).toBeInTheDocument()
   })
+
+  it('toggles Legend in emitted config', () => {
+    const onChange = vi.fn()
+    render(
+      <SankeyChartModule.ConfigPanel
+        config={{ chartType: 'sankey', xAxis: 'src', yAxis: ['dst', 'v'] } as never}
+        columns={['src', 'dst', 'v']}
+        onChange={onChange}
+        data={data}
+      />,
+    )
+    const legend = screen.getByLabelText('Legend')
+    expect(legend).toBeChecked()
+    fireEvent.click(legend)
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ showLegend: false }))
+  })
 })
 
 describe('tree panel', () => {
@@ -221,6 +237,26 @@ describe('histogram and funnel panels', () => {
     expect(screen.getByLabelText('Skip empty stages')).toBeInTheDocument()
     fireEvent.click(screen.getByLabelText('Skip empty stages'))
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ skipEmpty: false }))
+  })
+
+  it('funnel toggles Legend in emitted config', () => {
+    const onChange = vi.fn()
+    render(
+      <FunnelChartModule.ConfigPanel
+        config={{ chartType: 'funnel' } as never}
+        columns={['stage', 'v']}
+        onChange={onChange}
+      />,
+    )
+    const legend = screen.getByLabelText('Legend')
+    expect(legend).toBeChecked()
+    fireEvent.click(legend)
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ showLegend: false }))
+  })
+
+  it('funnel and sankey ship legends enabled by default', () => {
+    expect(FunnelChartModule.defaultConfig.showLegend).toBe(true)
+    expect(SankeyChartModule.defaultConfig.showLegend).toBe(true)
   })
 })
 

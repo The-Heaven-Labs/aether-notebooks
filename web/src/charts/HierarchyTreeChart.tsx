@@ -126,6 +126,7 @@ function HierarchyTreeComponent({ data, config }: ChartProps) {
   const rightMargin = isHorizontal ? 20 : 8
   const bottomMargin = isHorizontal ? '8%' : (hasMetrics ? '30%' : '12%')
 
+  // No legend by design: nodes are labeled directly on the tree.
   const option = useMemo(() => ({
     tooltip: {
       trigger: 'item' as const,

@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, getTooltipStyle, getContrastTextColor, useChartColors, useRowsAsObjects, ChartTypeSelect, CHART_COLORS } from './common'
+import { EChartsContainer, getTooltipStyle, getContrastTextColor, useChartColors, useRowsAsObjects, ChartTypeSelect, CHART_COLORS, buildLegend, LEGEND_COLUMN_WIDTH } from './common'
 import { ConfigHint } from './ConfigHint'
 
 function FunnelChartComponent({ data, config }: ChartProps) {
@@ -11,6 +11,7 @@ function FunnelChartComponent({ data, config }: ChartProps) {
   const valueCol = config.valueColumn || config.yAxis?.[0] || data.columns[1]?.name || ''
 
   const option = useMemo(() => {
+    const legendShown = config.showLegend !== false
     const funnelData = chartData
       .map((d, i) => {
         const bgColor = config.seriesColors?.[String(d[categoryCol] ?? '')] ?? CHART_COLORS[i % CHART_COLORS.length]
@@ -33,12 +34,13 @@ function FunnelChartComponent({ data, config }: ChartProps) {
         text: config.title, left: 'center', top: 8,
         textStyle: { fontSize: 14, color: colors.text },
       } : undefined,
+      legend: buildLegend({ title: config.title, showLegend: config.showLegend }, colors),
       series: [{
         type: 'funnel' as const,
         top: config.title ? 48 : 8,
         bottom: 8,
-        left: '15%',
-        right: '15%',
+        left: '10%',
+        right: legendShown ? LEGEND_COLUMN_WIDTH : '10%',
         minSize: '15%',
         maxSize: '100%',
         gap: 2,
@@ -57,7 +59,7 @@ function FunnelChartComponent({ data, config }: ChartProps) {
         data: funnelData,
       }],
     }
-  }, [chartData, categoryCol, valueCol, config.title, config.skipEmpty, config.funnelSort, config.showLabels, config.suffix, config.seriesColors, colors])
+  }, [chartData, categoryCol, valueCol, config.title, config.skipEmpty, config.funnelSort, config.showLabels, config.showLegend, config.suffix, config.seriesColors, colors])
 
   return <EChartsContainer option={option} />
 }
@@ -145,6 +147,14 @@ function FunnelConfigPanel({ config, columns, onChange, data }: ConfigPanelProps
       <label style={styles.checkbox}>
         <input
           type="checkbox"
+          checked={config.showLegend ?? true}
+          onChange={e => onChange({ ...config, showLegend: e.target.checked })}
+        />
+        Legend
+      </label>
+      <label style={styles.checkbox}>
+        <input
+          type="checkbox"
           checked={config.skipEmpty ?? true}
           onChange={e => onChange({ ...config, skipEmpty: e.target.checked })}
         />
@@ -197,7 +207,7 @@ const s: Record<string, React.CSSProperties> = {
 export const FunnelChartModule: ChartModule = {
   Component: FunnelChartComponent,
   ConfigPanel: FunnelConfigPanel,
-  defaultConfig: { chartType: 'funnel', showLabels: true, funnelSort: 'descending', skipEmpty: true },
+  defaultConfig: { chartType: 'funnel', showLabels: true, showLegend: true, funnelSort: 'descending', skipEmpty: true },
   detectColumns: (columns) => ({
     xAxis: columns[0]?.name,
     categoryColumn: columns[0]?.name,

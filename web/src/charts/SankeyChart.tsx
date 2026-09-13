@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, getTooltipStyle, useChartColors, CHART_COLORS, useRowsAsObjects, ChartTypeSelect } from './common'
+import { EChartsContainer, getTooltipStyle, useChartColors, CHART_COLORS, useRowsAsObjects, ChartTypeSelect, buildLegend, LEGEND_COLUMN_WIDTH } from './common'
 import { ConfigHint } from './ConfigHint'
 
 function SankeyChartComponent({ data, config }: ChartProps) {
@@ -74,41 +74,49 @@ function SankeyChartComponent({ data, config }: ChartProps) {
     }
   }, [chartData, sourceCol, targetCol, valueCol, config.seriesColors])
 
-  const option = useMemo(() => ({
-    tooltip: {
-      trigger: 'item' as const,
-      ...getTooltipStyle(),
-      formatter: (p: any) => {
-        if (p.dataType === 'edge') {
-          return `${p.data.source} → ${p.data.target}: ${p.data.value}`
-        }
-        return `${p.name}`
+  const option = useMemo(() => {
+    const legendShown = config.showLegend !== false
+    return {
+      tooltip: {
+        trigger: 'item' as const,
+        ...getTooltipStyle(),
+        formatter: (p: any) => {
+          if (p.dataType === 'edge') {
+            return `${p.data.source} → ${p.data.target}: ${p.data.value}`
+          }
+          return `${p.name}`
+        },
       },
-    },
-    title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
-    series: [{
-      type: 'sankey' as const,
-      layoutIterations: 32,
-      nodeAlign: config.nodeAlign ?? 'justify',
-      nodeWidth: config.nodeWidth ?? 20,
-      nodeGap: config.nodeGap ?? 12,
-      roam: true,
-      data: nodes,
-      links,
-      lineStyle: {
-        color: 'gradient' as const,
-        curveness: 0.5,
-        opacity: 0.4,
-      },
-      label: {
-        fontSize: 11,
-        color: colors.text,
-      },
-      emphasis: {
-        focus: 'adjacency' as const,
-      },
-    }],
-  }), [nodes, links, colors, config.title, config.nodeWidth, config.nodeGap, config.nodeAlign])
+      title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
+      legend: buildLegend({ title: config.title, showLegend: config.showLegend }, colors),
+      series: [{
+        type: 'sankey' as const,
+        layoutIterations: 32,
+        nodeAlign: config.nodeAlign ?? 'justify',
+        nodeWidth: config.nodeWidth ?? 20,
+        nodeGap: config.nodeGap ?? 12,
+        left: 8,
+        top: config.title ? 40 : 8,
+        right: legendShown ? LEGEND_COLUMN_WIDTH : 16,
+        bottom: 8,
+        roam: true,
+        data: nodes,
+        links,
+        lineStyle: {
+          color: 'gradient' as const,
+          curveness: 0.5,
+          opacity: 0.4,
+        },
+        label: {
+          fontSize: 11,
+          color: colors.text,
+        },
+        emphasis: {
+          focus: 'adjacency' as const,
+        },
+      }],
+    }
+  }, [nodes, links, colors, config.title, config.showLegend, config.nodeWidth, config.nodeGap, config.nodeAlign])
 
   return <EChartsContainer option={option} showReset />
 }
@@ -228,6 +236,14 @@ function SankeyConfigPanel({ config, columns, onChange, data }: ConfigPanelProps
           <option value="right">Right</option>
         </select>
       </div>
+      <label style={styles.checkbox}>
+        <input
+          type="checkbox"
+          checked={config.showLegend ?? true}
+          onChange={e => onChange({ ...config, showLegend: e.target.checked })}
+        />
+        Legend
+      </label>
       {nodeNames.length > 0 && (
         <div style={styles.section}>
           <div style={styles.sectionLabel}>Node colors</div>
@@ -265,6 +281,7 @@ const styles: Record<string, React.CSSProperties> = {
   sectionLabel: { fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 },
   select: { fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4 },
   input: { fontSize: 12, padding: '4px 8px', background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border)', borderRadius: 4 },
+  checkbox: { fontSize: 12, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 4 },
   colorRow: { display: 'flex', gap: 8, flexWrap: 'wrap' },
   colorLabel: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, fontSize: 10, color: 'var(--text-muted)' },
   colorInput: { width: 24, height: 24, padding: 0, border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', background: 'transparent' },
@@ -274,7 +291,7 @@ const styles: Record<string, React.CSSProperties> = {
 export const SankeyChartModule: ChartModule = {
   Component: SankeyChartComponent,
   ConfigPanel: SankeyConfigPanel,
-  defaultConfig: { chartType: 'sankey', showLegend: false, showGrid: false, showLabels: false },
+  defaultConfig: { chartType: 'sankey', showLegend: true, showGrid: false, showLabels: false },
   detectColumns: (columns) => ({
     xAxis: columns[0]?.name,
     yAxis: columns.slice(1, 3).map(c => c.name),

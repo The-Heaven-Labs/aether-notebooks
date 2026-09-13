@@ -31,6 +31,7 @@ function HeatmapChartComponent({ data, config }: ChartProps) {
   const yCol = config.yAxisColumn || data.columns[1]?.name || xCol
   const valueCol = config.valueColumn || config.yAxis?.[0] || data.columns[2]?.name || data.columns[1]?.name || ''
 
+  // No legend by design: intensity is conveyed by visualMap.
   const option = useMemo(() => {
     const xValues = [...new Set(chartData.map(d => String(d[xCol] ?? '')))].slice(0, 50)
     const yValues = [...new Set(chartData.map(d => String(d[yCol] ?? '')))].slice(0, 50)
