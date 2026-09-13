@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
 import type { ChartConfig } from '../charts/types'
-import { mergeWidgetChartConfig, hasWidgetOverride, WIDGET_OVERRIDE_FLAG } from '../charts/widgetChartConfig'
+import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '../charts/widgetChartConfig'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { OutputRenderer } from '../components/OutputRenderer'
@@ -181,7 +181,7 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, onE
   const handleChartConfigChange = useCallback((config: ChartConfig) => {
     if (!dashboardId) return
     api.put(`/api/v1/dashboards/${dashboardId}/widgets/${widget.id}`, {
-      config: { ...config, [WIDGET_OVERRIDE_FLAG]: true },
+      config: withWidgetOverride(config),
     }).then(() => {
       qc.invalidateQueries({ queryKey: ['dashboard', dashboardId] })
     })

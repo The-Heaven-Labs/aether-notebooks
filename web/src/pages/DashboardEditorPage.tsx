@@ -6,7 +6,8 @@ import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
-import { mergeWidgetChartConfig, hasWidgetOverride, WIDGET_OVERRIDE_FLAG } from '../charts/widgetChartConfig'
+import type { ChartConfig } from '../charts/types'
+import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '../charts/widgetChartConfig'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { GridLayout } from 'react-grid-layout'
@@ -43,7 +44,7 @@ function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width:
   return { row: maxBottom, col: 0, width: 6, height: 8 }
 }
 
-function WidgetContent({ widget, onConfigSave, onConfigReset }: { widget: Widget; onConfigSave: (widgetId: string, config: Record<string, unknown>) => void; onConfigReset: (widgetId: string) => void }) {
+function WidgetContent({ widget, onConfigSave, onConfigReset }: { widget: Widget; onConfigSave: (widgetId: string, config: ChartConfig) => void; onConfigReset: (widgetId: string) => void }) {
   const { data: notebook, isLoading } = useQuery({
     queryKey: ['notebook', widget.notebook_id],
     queryFn: () => api.get<NotebookWithCells>(`/api/v1/notebooks/${widget.notebook_id}`),
@@ -74,7 +75,7 @@ function WidgetContent({ widget, onConfigSave, onConfigReset }: { widget: Widget
       outputs={cell.outputs}
       fixedView={fixedView}
       chartConfig={chartConfig}
-      onChartConfigChange={(config) => onConfigSave(widget.id, config as unknown as Record<string, unknown>)}
+      onChartConfigChange={(config) => onConfigSave(widget.id, config)}
       chartConfigOverridden={chartOverridden}
       onChartConfigReset={() => onConfigReset(widget.id)}
     />
@@ -217,9 +218,9 @@ const markSaved = useCallback(() => {
   })
 
   const saveWidgetConfig = useMutation({
-    mutationFn: ({ widgetId, config }: { widgetId: string; config: Record<string, unknown> }) =>
+    mutationFn: ({ widgetId, config }: { widgetId: string; config: ChartConfig }) =>
       api.put(`/api/v1/dashboards/${id}/widgets/${widgetId}`, {
-        config: { ...config, [WIDGET_OVERRIDE_FLAG]: true },
+        config: withWidgetOverride(config),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboard', id] }),
     onError: (err: Error) => setMutationError(err.message),

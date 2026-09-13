@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest'
-import { mergeWidgetChartConfig, hasWidgetOverride, WIDGET_OVERRIDE_FLAG } from '../charts/widgetChartConfig'
+import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride, WIDGET_OVERRIDE_FLAG } from '../charts/widgetChartConfig'
 
 test('unflagged widget config is ignored', () => {
   const merged = mergeWidgetChartConfig(
@@ -18,6 +18,13 @@ test('flagged widget overrides win', () => {
   expect(merged.chartType).toBe('bar')
   expect(merged.title).toBe('dashboard title')
   expect(merged.showLegend).toBe(true)
+})
+
+test('withWidgetOverride marks the config without losing fields', () => {
+  const marked = withWidgetOverride({ chartType: 'bar', lineWidth: 3 }) as unknown as Record<string, unknown>
+  expect(marked[WIDGET_OVERRIDE_FLAG]).toBe(true)
+  expect(marked.chartType).toBe('bar')
+  expect(marked.lineWidth).toBe(3)
 })
 
 test('hasWidgetOverride is strict', () => {
