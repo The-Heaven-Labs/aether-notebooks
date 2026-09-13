@@ -98,17 +98,39 @@ type Agent struct {
 }
 
 type AgentSession struct {
-	ID         string     `json:"id"`
-	AgentID    string     `json:"agent_id"`
-	NotebookID string     `json:"notebook_id"`
-	UserID     string     `json:"user_id"`
-	MaxTurns   int        `json:"max_turns"`
-	Title      *string    `json:"title,omitempty"`
-	EndedAt    *time.Time `json:"ended_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
+	ID                  string     `json:"id"`
+	AgentID             string     `json:"agent_id"`
+	NotebookID          string     `json:"notebook_id"`
+	UserID              string     `json:"user_id"`
+	MaxTurns            int        `json:"max_turns"`
+	Title               *string    `json:"title,omitempty"`
+	EndedAt             *time.Time `json:"ended_at,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	ContextTokens       int64      `json:"context_tokens"`
+	ContextWindow       int        `json:"context_window"`
+	TotalInput          int64      `json:"total_input"`
+	TotalOutput         int64      `json:"total_output"`
+	TotalReasoning      int64      `json:"total_reasoning"`
+	TotalCacheRead      int64      `json:"total_cache_read"`
+	TotalModelCalls     int        `json:"total_model_calls"`
+	TotalSubagentInput  int64      `json:"total_subagent_input"`
+	TotalSubagentOutput int64      `json:"total_subagent_output"`
 	// AdminMode is a per-session transient flag derived from the X-AETHER-Admin-Mode
 	// header at session creation / WebSocket connection time. It is not persisted.
 	AdminMode bool `json:"admin_mode,omitempty"`
+}
+
+// SessionUsage is a compaction-aware snapshot of a session's token accounting.
+type SessionUsage struct {
+	Input          int64 `json:"input"`
+	Output         int64 `json:"output"`
+	Reasoning      int64 `json:"reasoning"`
+	CacheRead      int64 `json:"cache_read"`
+	ModelCalls     int   `json:"model_calls"`
+	SubagentInput  int64 `json:"subagent_input"`
+	SubagentOutput int64 `json:"subagent_output"`
+	ContextTokens  int64 `json:"context_tokens"`
+	ContextWindow  int   `json:"context_window"`
 }
 
 type ToolCall struct {
@@ -132,6 +154,7 @@ type AgentMessage struct {
 	TokensOutput     int        `json:"tokens_output,omitempty"`
 	TokensReasoning  int        `json:"tokens_reasoning,omitempty"`
 	TokensDirect     int        `json:"tokens_direct,omitempty"`
+	TokensAfter      *int       `json:"tokens_after,omitempty"`
 	ModelCalls       int        `json:"model_calls,omitempty"`
 	DurationMs       int        `json:"duration_ms,omitempty"`
 	ImageIDs         []string   `json:"image_ids,omitempty"`

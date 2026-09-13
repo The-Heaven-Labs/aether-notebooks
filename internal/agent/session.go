@@ -124,8 +124,8 @@ func (s *SessionStore) AppendMessage(ctx context.Context, msg *models.AgentMessa
 
 func (s *SessionStore) GetMessages(ctx context.Context, sessionID string) ([]models.AgentMessage, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, session_id, role, content, tool_call_id, tool_calls, reasoning_content, COALESCE(tokens_input,0), COALESCE(tokens_output,0), COALESCE(tokens_direct,0), COALESCE(model_calls,0), COALESCE(duration_ms,0), image_ids, created_at
-		FROM agent_messages WHERE session_id = $1 ORDER BY created_at ASC
+		SELECT id, session_id, role, content, tool_call_id, tool_calls, reasoning_content, COALESCE(tokens_input,0), COALESCE(tokens_output,0), COALESCE(tokens_direct,0), tokens_after, COALESCE(model_calls,0), COALESCE(duration_ms,0), image_ids, created_at
+		FROM agent_messages WHERE session_id = $1 ORDER BY created_at ASC, id ASC
 	`, sessionID)
 	if err != nil {
 		return nil, err
@@ -140,7 +140,8 @@ func (s *SessionStore) GetMessages(ctx context.Context, sessionID string) ([]mod
 		var toolCallsJSON []byte
 		var reasoningContent *string
 		var imageIDs []string
-		err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &content, &toolCallID, &toolCallsJSON, &reasoningContent, &msg.TokensInput, &msg.TokensOutput, &msg.TokensDirect, &msg.ModelCalls, &msg.DurationMs, &imageIDs, &msg.CreatedAt)
+		var tokensAfter *int
+		err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &content, &toolCallID, &toolCallsJSON, &reasoningContent, &msg.TokensInput, &msg.TokensOutput, &msg.TokensDirect, &tokensAfter, &msg.ModelCalls, &msg.DurationMs, &imageIDs, &msg.CreatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -151,6 +152,7 @@ func (s *SessionStore) GetMessages(ctx context.Context, sessionID string) ([]mod
 			msg.ReasoningContent = *reasoningContent
 		}
 		msg.ToolCallID = toolCallID
+		msg.TokensAfter = tokensAfter
 		msg.ImageIDs = imageIDs
 		if toolCallsJSON != nil {
 			json.Unmarshal(toolCallsJSON, &msg.ToolCalls)
