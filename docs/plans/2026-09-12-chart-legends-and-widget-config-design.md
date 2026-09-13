@@ -43,7 +43,12 @@ All line references were re-verified against the current tree (base `80f7bf45`),
 - **D4 — Timeline and map honor `showLegend`** through `buildLegend`, and their geometry
   reserves the right column only when the legend is actually rendered. Map's
   `defaultConfig.showLegend` flips to `true` (consistent with every other legend-capable
-  chart); its geo/series box shrinks to leave room.
+  chart); its geo box is anchored left (`left: 0`) rather than set to `right: <column>`:
+  ECharts geo defaults `left` to `'center'`, so a right inset alone re-centers and collapses
+  the map (measured: the 638px-wide map box at 1200px shrinks to 450px when only
+  `right: 150` is set). The left anchor
+  preserves the previous map size and aspect ratio; at very narrow widget widths (<~650px)
+  the zoomed map can still reach under the legend column, which browser verification checks.
 - **D5 — Funnel and sankey get legends** using the same right-column scroll helper, a
   config-panel Legend checkbox, and `showLegend: true` defaults. Their plot boxes shrink to
   reserve the column.
