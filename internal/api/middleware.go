@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-heaven-labs/aether/internal/auth"
+	"github.com/the-heaven-labs/aether/internal/crypto"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -36,7 +38,7 @@ func adminModeFromContext(ctx context.Context) bool {
 }
 
 // AuthMiddleware validates JWT tokens and sets user claims in the request context.
-func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool) func(http.Handler) http.Handler {
+func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := ""
@@ -55,7 +57,7 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool) func(http.Handle
 
 			// Check if this is a personal access token (starts with aether_tok_)
 			if strings.HasPrefix(token, "aether_tok_") {
-				validateAPIToken(w, r, next, pool, token)
+				validateAPIToken(w, r, next, pool, masterKey, token)
 				return
 			}
 
@@ -87,26 +89,58 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool) func(http.Handle
 }
 
 // validateAPIToken checks a personal access token against the api_tokens table.
-func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler, pool *pgxpool.Pool, token string) {
+// Tokens created after the lookup-hash migration are found with a single indexed
+// query; older rows fall back to a bcrypt scan over un-backfilled rows and are
+// backfilled on first successful match.
+func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler, pool *pgxpool.Pool, masterKey []byte, token string) {
 	subdomainOrg := OrgIDFromContext(r.Context())
-	var rows pgx.Rows
-	var err error
+	lookupHash := crypto.TokenLookupHash(masterKey, token)
+
+	query := `SELECT id, user_id, org_id, expires_at FROM api_tokens WHERE token_lookup_hash = $1`
+	args := []any{lookupHash}
 	if subdomainOrg != "" {
-		rows, err = pool.Query(r.Context(),
-			`SELECT id, user_id, org_id, token_hash, expires_at FROM api_tokens WHERE org_id = $1`, subdomainOrg)
-	} else {
-		rows, err = pool.Query(r.Context(),
-			`SELECT id, user_id, org_id, token_hash, expires_at FROM api_tokens`)
+		query += ` AND org_id = $2`
+		args = append(args, subdomainOrg)
 	}
+
+	var id, userID, orgID string
+	var expiresAt *time.Time
+	err := pool.QueryRow(r.Context(), query, args...).Scan(&id, &userID, &orgID, &expiresAt)
+	if err == nil {
+		completeAPITokenAuth(w, r, next, pool, id, userID, orgID, expiresAt)
+		return
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "auth error")
+		return
+	}
+
+	validateLegacyAPIToken(w, r, next, pool, token, lookupHash, subdomainOrg)
+}
+
+// validateLegacyAPIToken bcrypt-verifies tokens that have no lookup hash yet
+// (created before the migration), backfilling the matched row so subsequent
+// requests take the fast path. Rows are matched by lookup hash as well as NULL
+// so a concurrent first use that backfilled the row after the fast path missed
+// it still authenticates.
+func validateLegacyAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler, pool *pgxpool.Pool, token, lookupHash, subdomainOrg string) {
+	query := `SELECT id, user_id, org_id, token_hash, expires_at FROM api_tokens WHERE (token_lookup_hash = $1 OR token_lookup_hash IS NULL)`
+	args := []any{lookupHash}
+	if subdomainOrg != "" {
+		query += ` AND org_id = $2`
+		args = append(args, subdomainOrg)
+	}
+	rows, err := pool.Query(r.Context(), query, args...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "auth error")
 		return
 	}
-	defer rows.Close()
 
+	var id, userID, orgID string
+	var expiresAt *time.Time
+	matched := false
 	for rows.Next() {
-		var id, userID, orgID, hash string
-		var expiresAt *time.Time
+		var hash string
 		if err := rows.Scan(&id, &userID, &orgID, &hash, &expiresAt); err != nil {
 			continue
 		}
@@ -114,50 +148,62 @@ func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler,
 			continue
 		}
 		if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(token)); err == nil {
-			// Token valid — look up role
-			var role string
-			pool.QueryRow(r.Context(),
-				`SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2`,
-				orgID, userID).Scan(&role)
-			if role == "" {
-				role = "member"
-			}
-
-			claims := &auth.Claims{
-				UserID: userID,
-				OrgID:  orgID,
-				Role:   role,
-			}
-
-			// Validate subdomain org matches API token org when both are present.
-			// Platform admins operate at the instance level — override their org
-			// to the subdomain org so they see the correct org's data.
-			if subdomainOrg := OrgIDFromContext(r.Context()); subdomainOrg != "" && subdomainOrg != orgID {
-				if claims.IsPlatformAdmin {
-					orgID = subdomainOrg
-					claims.OrgID = subdomainOrg
-				} else {
-					writeError(w, http.StatusForbidden, "organization mismatch between subdomain and token")
-					return
-				}
-			}
-
-			ctx := context.WithValue(r.Context(), claimsKey, claims)
-			adminMode := r.Header.Get("X-AETHER-Admin-Mode") == "true" || r.URL.Query().Get("admin_mode") == "true"
-			ctx = context.WithValue(ctx, adminModeKey, adminMode)
-
-			// Update last_used_at in background
-			go func() {
-				bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				pool.Exec(bgCtx, `UPDATE api_tokens SET last_used_at = NOW() WHERE id = $1`, id)
-			}()
-
-			next.ServeHTTP(w, r.WithContext(ctx))
-			return
+			matched = true
+			break
 		}
 	}
-	writeError(w, http.StatusUnauthorized, "invalid or expired API token")
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "auth error")
+		return
+	}
+	if !matched {
+		writeError(w, http.StatusUnauthorized, "invalid or expired API token")
+		return
+	}
+
+	if _, err := pool.Exec(r.Context(),
+		`UPDATE api_tokens SET token_lookup_hash = $1 WHERE id = $2 AND token_lookup_hash IS NULL`,
+		lookupHash, id); err != nil {
+		slog.Debug("PAT lookup hash backfill failed", "token_id", id, "error", err)
+	}
+	completeAPITokenAuth(w, r, next, pool, id, userID, orgID, expiresAt)
+}
+
+// completeAPITokenAuth finishes a successful token match: expiry check, role
+// lookup, claims context, and last-used bookkeeping.
+func completeAPITokenAuth(w http.ResponseWriter, r *http.Request, next http.Handler, pool *pgxpool.Pool, id, userID, orgID string, expiresAt *time.Time) {
+	if expiresAt != nil && expiresAt.Before(time.Now()) {
+		writeError(w, http.StatusUnauthorized, "invalid or expired API token")
+		return
+	}
+
+	var role string
+	pool.QueryRow(r.Context(),
+		`SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2`,
+		orgID, userID).Scan(&role)
+	if role == "" {
+		role = "member"
+	}
+
+	claims := &auth.Claims{
+		UserID: userID,
+		OrgID:  orgID,
+		Role:   role,
+	}
+
+	ctx := context.WithValue(r.Context(), claimsKey, claims)
+	adminMode := r.Header.Get("X-AETHER-Admin-Mode") == "true" || r.URL.Query().Get("admin_mode") == "true"
+	ctx = context.WithValue(ctx, adminModeKey, adminMode)
+
+	// Update last_used_at in background
+	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		pool.Exec(bgCtx, `UPDATE api_tokens SET last_used_at = NOW() WHERE id = $1`, id)
+	}()
+
+	next.ServeHTTP(w, r.WithContext(ctx))
 }
 
 // SubdomainMiddleware resolves the organization from the request's host subdomain and sets the org context.

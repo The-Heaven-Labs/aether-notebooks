@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/the-heaven-labs/aether/internal/crypto"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -56,6 +57,7 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to hash token")
 		return
 	}
+	lookupHash := crypto.TokenLookupHash(s.masterKey, rawToken)
 
 	ctx := r.Context()
 	var id string
@@ -70,8 +72,8 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err = s.db.Pool.QueryRow(ctx,
-		`INSERT INTO api_tokens (user_id, org_id, name, token_hash, expires_at) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		claims.UserID, claims.OrgID, req.Name, string(hash), expiresAt,
+		`INSERT INTO api_tokens (user_id, org_id, name, token_hash, token_lookup_hash, expires_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+		claims.UserID, claims.OrgID, req.Name, string(hash), lookupHash, expiresAt,
 	).Scan(&id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create token")

@@ -169,7 +169,7 @@ func (s *Server) MasterKey() []byte {
 }
 
 func (s *Server) routes() {
-	authMW := AuthMiddleware(s.jwt, s.db.Pool)
+	authMW := AuthMiddleware(s.jwt, s.db.Pool, s.masterKey)
 
 	// Public routes
 	s.mux.HandleFunc("GET /health", s.handleHealth)
@@ -481,6 +481,10 @@ func (s *Server) routes() {
 
 	// MCP protocol endpoint (exposes built-in tools via Model Context Protocol)
 	s.mux.Handle("POST /api/v1/mcp", authMW(http.HandlerFunc(s.handleMCP)))
+	// Streamable HTTP clients probe GET for an SSE stream; Aether has none.
+	// Register explicit 405s so the SPA catch-all never answers these.
+	s.mux.Handle("GET /api/v1/mcp", http.HandlerFunc(handleMCPNoStream))
+	s.mux.Handle("DELETE /api/v1/mcp", http.HandlerFunc(handleMCPNoStream))
 
 	// Agent session attachment routes (vision support)
 	s.mux.Handle("POST /api/v1/agent-sessions/{session_id}/attachments", authMW(http.HandlerFunc(s.handleUploadAgentAttachment)))

@@ -14,7 +14,7 @@ import (
 
 func TestAuthMiddleware(t *testing.T) {
 	issuer := auth.NewJWTIssuer("test-secret", 15*time.Minute)
-	mw := api.AuthMiddleware(issuer, nil)
+	mw := api.AuthMiddleware(issuer, nil, nil)
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims := api.ClaimsFromContext(r.Context())
@@ -38,7 +38,7 @@ func TestAuthMiddleware(t *testing.T) {
 
 func TestAuthMiddlewareNoToken(t *testing.T) {
 	issuer := auth.NewJWTIssuer("test-secret", 15*time.Minute)
-	mw := api.AuthMiddleware(issuer, nil)
+	mw := api.AuthMiddleware(issuer, nil, nil)
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("should not reach handler")
