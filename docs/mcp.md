@@ -136,5 +136,8 @@ Interactive and agent-session tools (`ask_question`, `spawn_subagents`,
 
 - Treat a PAT like your password: don't share it, set an expiry, and revoke it
   (delete the token) when a harness no longer needs it.
+- Tokens are stored as an HMAC-SHA-256 lookup hash plus bcrypt; because the
+  lookup key derives from `AETHER_MASTER_KEY`, rotating that key invalidates
+  existing personal access tokens.
 - OAuth 2.1 onboarding (browser consent, no manual token) is planned but not in
   this phase; harnesses must be configured with the static header today.
