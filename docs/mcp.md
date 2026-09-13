@@ -139,6 +139,6 @@ Interactive and agent-session tools (`ask_question`, `spawn_subagents`,
 - Tokens are stored as an HMAC-SHA-256 lookup hash plus bcrypt; because the
   lookup key derives from `AETHER_MASTER_KEY`, rotating that key invalidates
   tokens that carry a lookup hash. Tokens created before the lookup migration
-  keep working via bcrypt until their first use.
+  keep working via bcrypt and are transparently migrated on first use.
 - OAuth 2.1 onboarding (browser consent, no manual token) is planned but not in
   this phase; harnesses must be configured with the static header today.

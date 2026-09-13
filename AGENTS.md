@@ -106,7 +106,7 @@ task db:reset          # Drop + recreate dev DB (data loss!)
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|---|
-| `AETHER_MASTER_KEY` | **yes** | — | AES key for encrypting connector credentials; also keys the HMAC lookup hash for personal access tokens. Rotating it invalidates PATs that already carry a lookup hash (legacy bcrypt-only tokens keep working until first use). |
+| `AETHER_MASTER_KEY` | **yes** | — | AES key for encrypting connector credentials; also keys the HMAC lookup hash for personal access tokens. Rotating it invalidates PATs that already carry a lookup hash (legacy bcrypt-only tokens keep working and are transparently migrated on first use). |
 | `AETHER_JWT_SECRET` | **yes** | — | JWT signing secret |
 | `AETHER_DATABASE_URL` | no | `postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable` | |
 | `AETHER_REDIS_URL` | no | `redis://localhost:6379` | |
