@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useCallback } from 'react'
 import * as echarts from 'echarts/core'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, ChartTypeSelect } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, ChartTypeSelect, buildLegend } from './common'
 import { ConfigHint } from './ConfigHint'
 import { useGroupValues } from './AxisConfigPanel'
 
@@ -177,6 +177,7 @@ function MapChartComponent({ data, config }: ChartProps) {
     if (allPts.length === 0) return {}
 
     const dark = document.documentElement.getAttribute('data-theme') === 'dark'
+    const legendShown = hasGroupBy && config.showLegend !== false
 
     if (!geoReady || !mapRegistered) {
       if (isChoropleth) {
@@ -199,6 +200,7 @@ function MapChartComponent({ data, config }: ChartProps) {
       roam: true,
       zoom: 1.2,
       center: [10, 20] as [number, number],
+      ...(legendShown ? { left: 0 } : {}),
       itemStyle: {
         areaColor: dark ? '#3d3d3d' : '#f0f0f0',
         borderColor: dark ? '#555' : '#d0d0d0',
@@ -299,7 +301,7 @@ function MapChartComponent({ data, config }: ChartProps) {
       tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: tooltipFmt },
       title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
       color: seriesColors,
-      legend: hasGroupBy ? { show: true, top: config.title ? 32 : 0, textStyle: { fontSize: 11, color: colors.textMuted } } : { show: false },
+      legend: legendShown ? buildLegend({ title: config.title, showLegend: config.showLegend }, colors) : { show: false },
       geo,
       series: builtSeries,
     }
@@ -550,7 +552,7 @@ const styles: Record<string, React.CSSProperties> = {
 export const MapChartModule: ChartModule = {
   Component: MapChartComponent,
   ConfigPanel: MapConfigPanel,
-  defaultConfig: { chartType: 'map', showLabels: false, showLegend: false, showGrid: false },
+  defaultConfig: { chartType: 'map', showLabels: false, showLegend: true, showGrid: false },
   detectColumns: (columns) => {
     const hasLat = columns.some(c => /^lat/i.test(c.name))
     const hasLon = columns.some(c => /^lon/i.test(c.name) || /^lng/i.test(c.name))

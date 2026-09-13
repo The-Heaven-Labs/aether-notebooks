@@ -9,7 +9,7 @@ import {
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { ResultSet } from '../types'
-import type { MarkLineConfig } from './types'
+import type { ChartConfig, MarkLineConfig } from './types'
 
 // Register only what we use
 echarts.use([
@@ -497,6 +497,36 @@ export function getAxisStyle(showGrid?: boolean) {
     axisTick: { show: false },
     axisLabel: { fontSize: 11, color: c.textMuted },
     splitLine: { show: showGrid !== false, lineStyle: { color: c.border, type: 'dashed' as const } },
+  }
+}
+
+// Right-hand plot inset reserved for the docked legend column. Must cover the
+// legend's own `right: 10` offset plus its measured item/page content (~150px).
+export const LEGEND_COLUMN_WIDTH = 160
+
+// Explicit height is required for scroll paging: without it ECharts derives an
+// auto height and the pager renders but pages to an empty view. The percentages
+// keep the legend box on-canvas even for the smallest dashboard widgets
+// (title case: 30 + 0.50H <= H for the ~69px chart area of a 4-row widget).
+export function buildLegend(
+  config: Pick<ChartConfig, 'title' | 'showLegend'>,
+  colors: ReturnType<typeof getChartColors>,
+): Record<string, unknown> {
+  if (config.showLegend === false) return { show: false }
+  return {
+    type: 'scroll',
+    orient: 'vertical' as const,
+    right: 10,
+    top: config.title ? 30 : 8,
+    height: config.title ? '50%' : '85%',
+    align: 'auto',
+    itemWidth: 14,
+    itemHeight: 10,
+    textStyle: { fontSize: 11, color: colors.textMuted },
+    pageIconSize: 10,
+    pageIconColor: colors.textMuted,
+    pageIconInactiveColor: colors.border,
+    pageTextStyle: { color: colors.textMuted, fontSize: 10 },
   }
 }
 

@@ -40,6 +40,7 @@ function HistogramChartComponent({ data, config }: ChartProps) {
   const valueCol = config.valueColumn || config.yAxis?.[0] || data.columns[0]?.name || ''
   const binCount = config.binCount ?? Math.min(20, Math.max(5, Math.ceil(Math.sqrt(chartData.length))))
 
+  // No legend by design: a histogram is a single derived series.
   const option = useMemo(() => {
     const values = chartData
       .map(d => Number(d[valueCol]))

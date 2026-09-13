@@ -18,6 +18,7 @@ function getColor(skipEmpty?: boolean): string {
   return skipEmpty ? 'var(--text-muted)' : 'var(--text-primary)'
 }
 
+// No legend by design: a single scalar has no series.
 function BigNumberComponent({ data, config }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerHeight, setContainerHeight] = useState(200)

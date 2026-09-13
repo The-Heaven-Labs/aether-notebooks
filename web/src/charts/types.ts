@@ -116,21 +116,21 @@ export interface ConfigPanelProps {
  *   } : undefined,
  *
  *   legend: config.showLegend !== false ? {
- *     top: config.title ? 32 : 0,
- *     textStyle: { fontSize: 11, color: colors.textMuted }
- *   } : undefined,
+ *     type: 'scroll', orient: 'vertical', right: 10,
+ *     top: config.title ? 40 : 8, ...   // use buildLegend() from common.tsx
+ *   } : { show: false },
  *
  *   grid: {
- *     top: config.title ? 56 : config.showLegend !== false ? 30 : 8,
- *     right: 16, bottom: config.dataZoom ? 32 : 8, left: 16,
- *     containLabel: true,
+ *     top: config.title ? 56 : 8,
+ *     right: config.showLegend !== false ? <LEGEND_COLUMN_WIDTH> : 16,   // legend column
+ *     bottom: config.dataZoom ? 32 : 8, left: 16, containLabel: true,
  *   }
  *
- * For chart types without a grid (pie, sankey, map geo), adjust the
- * series center/top position to sit below the title+legend stack:
+ * Grid-less charts (pie/donut) keep the legend right-docked and shift
+ * center/position instead; legends never sit above the plot.
  *
- *   pie center: [x, config.title ? '58%' : '50%']
- *   tree series top: config.title ? '16%' : '8%'
+ * For chart types that require additional layout (timeline), reserve the
+ * same right-hand legend column when the legend is shown.
  */
 export interface ChartModule {
   Component: React.FC<ChartProps>

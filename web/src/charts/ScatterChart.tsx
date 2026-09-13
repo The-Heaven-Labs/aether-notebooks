@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns, buildMarkLineSeries } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns, buildMarkLineSeries, buildLegend, LEGEND_COLUMN_WIDTH } from './common'
 import { AxisConfigPanel } from './AxisConfigPanel'
 
 function ScatterChartComponent({ data, config }: ChartProps) {
@@ -67,13 +67,14 @@ function ScatterChartComponent({ data, config }: ChartProps) {
       }
     }
 
+    const legendShown = config.showLegend !== false && (hasGroupBy ? series.length > 1 : yAxes.length > 1)
     const baseXAxis = { type: 'value' as const, name: xAxis, ...getAxisStyle(config.showGrid) }
 
     return {
       tooltip: { ...getTooltipStyle() },
       title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
-      legend: config.showLegend !== false && (hasGroupBy ? series.length > 1 : yAxes.length > 1) ? { show: true, top: config.title ? 32 : 0, textStyle: { fontSize: 11, color: colors.textMuted } } : { show: false },
-      grid: { top: config.title ? 56 : config.showLegend !== false && (hasGroupBy ? series.length > 1 : yAxes.length > 1) ? 30 : 8, right: 16, bottom: 32, left: 16, containLabel: true },
+      legend: legendShown ? buildLegend({ title: config.title, showLegend: config.showLegend }, colors) : { show: false },
+      grid: { top: config.title ? 56 : 8, right: legendShown ? LEGEND_COLUMN_WIDTH : 16, bottom: 32, left: 16, containLabel: true },
       visualMap: config.colorColumn ? {
         dimension: 2,
         min: 0,

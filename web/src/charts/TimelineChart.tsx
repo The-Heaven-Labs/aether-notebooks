@@ -1,6 +1,6 @@
 import { useMemo, useCallback } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, isTimeType, ChartTypeSelect } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, isTimeType, ChartTypeSelect, buildLegend, LEGEND_COLUMN_WIDTH } from './common'
 import { ConfigHint } from './ConfigHint'
 
 function detectTimeColumns(columns: { name: string; type?: string }[]): string[] {
@@ -30,6 +30,8 @@ function TimelineChartComponent({ data, config }: ChartProps) {
       : ['Events']
   }, [chartData, groupByCol])
 
+  const legendShown = groups.length > 1 && config.showLegend !== false
+
   const isRangeMode = !!endTimeCol
 
   const truncateLabel = useCallback((label: unknown): string => {
@@ -53,8 +55,8 @@ function TimelineChartComponent({ data, config }: ChartProps) {
         option: {
           tooltip: { ...getTooltipStyle(), trigger: 'axis' as const },
           title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
-          legend: groups.length > 1 ? { top: config.title ? 30 : 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
-          grid: { top: config.title ? (groups.length > 1 ? 56 : 46) : groups.length > 1 ? 30 : 12, right: 16, bottom: 16, left: 16, containLabel: true },
+          legend: legendShown ? buildLegend({ title: config.title, showLegend: config.showLegend }, colors) : undefined,
+          grid: { top: config.title ? 46 : 12, right: legendShown ? LEGEND_COLUMN_WIDTH : 16, bottom: 16, left: 16, containLabel: true },
           xAxis: { type: 'time' as const, ...getAxisStyle() },
           yAxis: { type: 'category' as const, data: groups, inverse: true, ...getAxisStyle(), splitLine: { show: config.showGrid !== false } },
           dataZoom: [{
@@ -114,12 +116,10 @@ function TimelineChartComponent({ data, config }: ChartProps) {
 
     const gridTop = singleGroup
       ? (config.title ? 76 : 50)
-      : config.title
-        ? (groups.length > 1 ? 66 : 46)
-        : (groups.length > 1 ? 40 : 12)
+      : (config.title ? 46 : 12)
     const gridConfig = singleGroup
       ? { top: gridTop, right: 16, bottom: 60, left: 16 }
-      : { top: gridTop, right: 16, bottom: 16, left: 16, containLabel: true }
+      : { top: gridTop, right: legendShown ? LEGEND_COLUMN_WIDTH : 16, bottom: 16, left: 16, containLabel: true }
 
     const dataZoomConfig = [
       { type: 'inside' as const, xAxisIndex: 0 },
@@ -178,7 +178,7 @@ function TimelineChartComponent({ data, config }: ChartProps) {
           },
         },
         title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
-        legend: groups.length > 1 ? { top: config.title ? 30 : 0, textStyle: { fontSize: 11, color: colors.textMuted } } : undefined,
+        legend: legendShown ? buildLegend({ title: config.title, showLegend: config.showLegend }, colors) : undefined,
         grid: gridConfig,
         xAxis: { type: 'time' as const, ...getAxisStyle() },
         ...yAxisConfig,
@@ -240,7 +240,7 @@ function TimelineChartComponent({ data, config }: ChartProps) {
       },
       height: chartHeight,
     }
-  }, [chartData, groups, isRangeMode, showLabels, timeCol, endTimeCol, labelCol, groupByCol, config.title, config.seriesColors, config.showConnectors, config.showTimeDeltas, config.showGrid, config.hideLabelOverlap, colors, truncateLabel])
+  }, [chartData, groups, isRangeMode, showLabels, timeCol, endTimeCol, labelCol, groupByCol, config.title, config.seriesColors, config.showConnectors, config.showTimeDeltas, config.showGrid, config.hideLabelOverlap, config.showLegend, legendShown, colors, truncateLabel])
 
   return <EChartsContainer option={option} height={height} notMerge showReset />
 }

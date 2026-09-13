@@ -7,7 +7,7 @@ import { api } from '../api/client'
 import { Skeleton } from '../components/Skeleton'
 import { OutputRenderer } from '../components/OutputRenderer'
 import type { Dashboard, Widget, Output } from '../types'
-import type { ChartConfig } from '../charts'
+import { mergeWidgetChartConfig } from '../charts/widgetChartConfig'
 
 interface DashboardWithWidgets extends Dashboard {
   widgets: Widget[]
@@ -89,7 +89,7 @@ export function PublicDashboardPage() {
 
               const isChart = widget.type === 'chart'
               const fixedView = isChart ? 'chart' : 'table'
-              const chartConfig = { ...(cellData.metadata?.chart || {}), ...(widget.config || {}) } as ChartConfig | undefined
+              const chartConfig = mergeWidgetChartConfig(cellData.metadata?.chart, widget.config)
 
               return (
                 <div key={widget.id} style={{

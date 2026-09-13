@@ -12,9 +12,10 @@ interface ChartConfigModalProps {
   groupValues: string[]
   onSave: (config: ChartConfig) => void
   onClose: () => void
+  onResetToNotebook?: () => void
 }
 
-export function ChartConfigModal({ config, columns, data, groupValues, onSave, onClose }: ChartConfigModalProps) {
+export function ChartConfigModal({ config, columns, data, groupValues, onSave, onClose, onResetToNotebook }: ChartConfigModalProps) {
   const [workingConfig, setWorkingConfig] = useState<ChartConfig>(() => {
     const cloned = deepCloneConfig(config)
     // Auto-detect column mappings on first open if config has no explicit columns set
@@ -113,6 +114,15 @@ export function ChartConfigModal({ config, columns, data, groupValues, onSave, o
           <div style={styles.header}>
             <span style={styles.headerTitle}>Chart Configuration</span>
             <div style={styles.headerActions}>
+              {onResetToNotebook && (
+                <button
+                  style={styles.resetBtn}
+                  onClick={() => { onResetToNotebook(); onClose() }}
+                  title="Use the notebook's chart config again"
+                >
+                  Reset to notebook
+                </button>
+              )}
               <button style={styles.saveBtn} onClick={handleSave} title="Save changes">
                 <Save size={14} /> Save
               </button>
@@ -180,6 +190,11 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12, padding: '5px 12px',
     background: 'var(--accent)', color: '#fff',
     border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 500,
+  },
+  resetBtn: {
+    fontSize: 11, padding: '4px 10px', background: 'transparent',
+    color: 'var(--text-muted)', border: '1px solid var(--border)',
+    borderRadius: 4, cursor: 'pointer',
   },
   cancelBtn: {
     display: 'flex', alignItems: 'center', justifyContent: 'center',

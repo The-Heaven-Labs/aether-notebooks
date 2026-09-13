@@ -74,6 +74,8 @@ function SankeyChartComponent({ data, config }: ChartProps) {
     }
   }, [chartData, sourceCol, targetCol, valueCol, config.seriesColors])
 
+  // No legend by design: ECharts sankey does not implement
+  // legendVisualProvider, so legend items cannot be rendered (6.1.0).
   const option = useMemo(() => ({
     tooltip: {
       trigger: 'item' as const,
@@ -274,7 +276,7 @@ const styles: Record<string, React.CSSProperties> = {
 export const SankeyChartModule: ChartModule = {
   Component: SankeyChartComponent,
   ConfigPanel: SankeyConfigPanel,
-  defaultConfig: { chartType: 'sankey', showLegend: false, showGrid: false, showLabels: false },
+  defaultConfig: { chartType: 'sankey', showGrid: false, showLabels: false },
   detectColumns: (columns) => ({
     xAxis: columns[0]?.name,
     yAxis: columns.slice(1, 3).map(c => c.name),

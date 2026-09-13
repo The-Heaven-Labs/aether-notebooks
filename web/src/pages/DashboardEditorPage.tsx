@@ -7,6 +7,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
 import type { ChartConfig } from '../charts/types'
+import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '../charts/widgetChartConfig'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { GridLayout } from 'react-grid-layout'
@@ -43,7 +44,7 @@ function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width:
   return { row: maxBottom, col: 0, width: 6, height: 8 }
 }
 
-function WidgetContent({ widget, onConfigSave }: { widget: Widget; onConfigSave: (widgetId: string, config: Record<string, unknown>) => void }) {
+function WidgetContent({ widget, onConfigSave, onConfigReset }: { widget: Widget; onConfigSave: (widgetId: string, config: ChartConfig) => void; onConfigReset: (widgetId: string) => void }) {
   const { data: notebook, isLoading } = useQuery({
     queryKey: ['notebook', widget.notebook_id],
     queryFn: () => api.get<NotebookWithCells>(`/api/v1/notebooks/${widget.notebook_id}`),
@@ -67,13 +68,16 @@ function WidgetContent({ widget, onConfigSave }: { widget: Widget; onConfigSave:
     return <div style={widgetContentStyles.empty}>No results yet — run the notebook first</div>
   }
   const fixedView = widget.type === 'chart' ? 'chart' : 'table'
-  const chartConfig = { ...(cell.metadata?.chart as object || {}), ...(widget.config as object || {}) } as ChartConfig
+  const chartConfig = mergeWidgetChartConfig(cell.metadata?.chart, widget.config)
+  const chartOverridden = hasWidgetOverride(widget.config)
   return (
     <OutputRenderer
       outputs={cell.outputs}
       fixedView={fixedView}
       chartConfig={chartConfig}
-      onChartConfigChange={(config) => onConfigSave(widget.id, config as unknown as Record<string, unknown>)}
+      onChartConfigChange={(config) => onConfigSave(widget.id, config)}
+      chartConfigOverridden={chartOverridden}
+      onChartConfigReset={() => onConfigReset(widget.id)}
     />
   )
 }
@@ -214,8 +218,17 @@ const markSaved = useCallback(() => {
   })
 
   const saveWidgetConfig = useMutation({
-    mutationFn: ({ widgetId, config }: { widgetId: string; config: Record<string, unknown> }) =>
-      api.put(`/api/v1/dashboards/${id}/widgets/${widgetId}`, { config }),
+    mutationFn: ({ widgetId, config }: { widgetId: string; config: ChartConfig }) =>
+      api.put(`/api/v1/dashboards/${id}/widgets/${widgetId}`, {
+        config: withWidgetOverride(config),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboard', id] }),
+    onError: (err: Error) => setMutationError(err.message),
+  })
+
+  const resetWidgetConfig = useMutation({
+    mutationFn: (widgetId: string) =>
+      api.put(`/api/v1/dashboards/${id}/widgets/${widgetId}`, { config: {} }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboard', id] }),
     onError: (err: Error) => setMutationError(err.message),
   })
@@ -500,7 +513,7 @@ const markSaved = useCallback(() => {
                 >
                   <X size={12} />
                 </button>
-                <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} />
+                <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} onConfigReset={(widgetId) => resetWidgetConfig.mutate(widgetId)} />
               </div>
             ))}
           </div>
@@ -552,7 +565,7 @@ const markSaved = useCallback(() => {
                     >
                       <X size={12} />
                     </button>
-                    <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} />
+                    <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} onConfigReset={(widgetId) => resetWidgetConfig.mutate(widgetId)} />
                   </div>
                 </div>
               ))}
