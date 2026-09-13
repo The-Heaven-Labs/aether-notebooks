@@ -35,6 +35,9 @@ func TestCreateToken_StoresLookupHash(t *testing.T) {
 	require.Equal(t, http.StatusCreated, code, "create token: %v", resp)
 	raw := resp["token"].(string)
 	id := resp["id"].(string)
+	t.Cleanup(func() {
+		srv.DB().Pool.Exec(context.Background(), `DELETE FROM api_tokens WHERE id = $1`, id)
+	})
 
 	var lookup *string
 	require.NoError(t, srv.DB().Pool.QueryRow(context.Background(),
@@ -99,6 +102,9 @@ func TestAPIToken_FastPathSkipsBcrypt(t *testing.T) {
 	require.Equal(t, http.StatusCreated, code, "create token: %v", resp)
 	raw := resp["token"].(string)
 	id := resp["id"].(string)
+	t.Cleanup(func() {
+		srv.DB().Pool.Exec(context.Background(), `DELETE FROM api_tokens WHERE id = $1`, id)
+	})
 
 	otherHash, err := bcrypt.GenerateFromPassword([]byte("a-different-token"), bcrypt.DefaultCost)
 	require.NoError(t, err)
