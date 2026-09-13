@@ -83,12 +83,23 @@ func TestMigrateAgentUsageColumns(t *testing.T) {
 		if err != nil || n != 1 {
 			t.Fatalf("agent_messages.%s missing (n=%d err=%v)", col, n, err)
 		}
+		var nullable string
+		err = db.Pool.QueryRow(ctx, `SELECT is_nullable FROM information_schema.columns WHERE table_name='agent_messages' AND column_name=$1`, col).Scan(&nullable)
+		if err != nil || nullable != "YES" {
+			t.Fatalf("agent_messages.%s should be nullable (nullable=%q err=%v)", col, nullable, err)
+		}
 	}
 	for _, col := range []string{"context_tokens", "context_window", "total_input", "total_output", "total_reasoning", "total_cache_read", "total_model_calls", "total_subagent_input", "total_subagent_output"} {
 		var n int
 		err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM information_schema.columns WHERE table_name='agent_sessions' AND column_name=$1`, col).Scan(&n)
 		if err != nil || n != 1 {
 			t.Fatalf("agent_sessions.%s missing (n=%d err=%v)", col, n, err)
+		}
+		var nullable string
+		var def *string
+		err = db.Pool.QueryRow(ctx, `SELECT is_nullable, column_default FROM information_schema.columns WHERE table_name='agent_sessions' AND column_name=$1`, col).Scan(&nullable, &def)
+		if err != nil || nullable != "NO" || def == nil || *def != "0" {
+			t.Fatalf("agent_sessions.%s should be NOT NULL DEFAULT 0 (nullable=%q default=%v err=%v)", col, nullable, def, err)
 		}
 	}
 }

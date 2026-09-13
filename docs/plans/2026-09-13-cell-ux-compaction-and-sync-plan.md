@@ -819,6 +819,7 @@ git commit -m "fix(sync): omit unchanged source, carry agent timestamps, resync 
 
 **Files:**
 - Modify: `internal/agent/engine.go:250-304` (compactChatHistory), `:590-644` (history rebuild), `:884-909` (trigger/persist/emit)
+- Modify: `internal/agent/session.go` (`AppendMessage` binds `TokensAfter`)
 - Test: `internal/agent/engine_chat_ux_test.go`
 
 **Step 1: Write the failing tests**

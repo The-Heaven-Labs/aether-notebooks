@@ -116,9 +116,9 @@ func (s *SessionStore) AppendMessage(ctx context.Context, msg *models.AgentMessa
 		imageIDs = []string{}
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO agent_messages (id, session_id, role, content, tool_call_id, tool_calls, reasoning_content, tokens_input, tokens_output, tokens_direct, model_calls, duration_ms, image_ids, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-	`, msg.ID, msg.SessionID, msg.Role, msg.Content, msg.ToolCallID, toolCallsJSON, msg.ReasoningContent, msg.TokensInput, msg.TokensOutput, msg.TokensDirect, msg.ModelCalls, msg.DurationMs, imageIDs, msg.CreatedAt)
+		INSERT INTO agent_messages (id, session_id, role, content, tool_call_id, tool_calls, reasoning_content, tokens_input, tokens_output, tokens_direct, tokens_after, model_calls, duration_ms, image_ids, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+	`, msg.ID, msg.SessionID, msg.Role, msg.Content, msg.ToolCallID, toolCallsJSON, msg.ReasoningContent, msg.TokensInput, msg.TokensOutput, msg.TokensDirect, msg.TokensAfter, msg.ModelCalls, msg.DurationMs, imageIDs, msg.CreatedAt)
 	return err
 }
 
