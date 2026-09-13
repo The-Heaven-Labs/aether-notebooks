@@ -49,11 +49,15 @@ All line references were re-verified against the current tree (base `80f7bf45`),
   `right: 150` is set). The left anchor
   preserves the previous map size and aspect ratio; at very narrow widget widths (<~650px)
   the zoomed map can still reach under the legend column, which browser verification checks.
-- **D5 — Funnel and sankey get legends** using the same right-column scroll helper, a
-  config-panel Legend checkbox, and `showLegend: true` defaults. Their plot boxes shrink to
-  reserve the column.
-- **D6 — Charts without legends stay that way**, each with a one-line "no legend by design"
-  comment: histogram (single series), hierarchy_tree (nodes), heatmap (visualMap), big_number.
+- **D5 — Funnel gets a legend; sankey is no-legend by design.** Funnel uses the same
+  right-column scroll helper, a config-panel Legend checkbox, and a `showLegend: true` default;
+  its plot box shrinks to reserve the column. Sankey cannot: ECharts 6.1.0 sankey has no
+  `legendVisualProvider`, so a native legend renders zero items (`legend.data` only logs
+  "series not exists" warnings). Custom DOM legends or dummy series were rejected as hacks, so
+  sankey keeps its auto layout and documents the limitation instead.
+- **D6 — Charts without legends stay that way**, each with a "no legend by design" comment:
+  histogram (single series), hierarchy_tree (nodes), heatmap (visualMap), big_number (single
+  scalar), sankey (ECharts 6.1.0 has no `legendVisualProvider`).
 - **D7 — `cells.metadata.chart` is the source of truth for chart appearance.**
   `widgets.config` holds only explicit per-widget overrides for chart widgets.
   - Creation stops snapshotting (`config = '{}'`).
@@ -79,7 +83,7 @@ All line references were re-verified against the current tree (base `80f7bf45`),
 | Legend helper + convention | `web/src/charts/common.tsx`, `web/src/charts/types.ts` |
 | Axis + scatter + pie | `web/src/charts/{Bar,Line,Area,Scatter,Pie}Chart.tsx` |
 | Timeline + map | `web/src/charts/{Timeline,Map}Chart.tsx` |
-| Funnel + sankey | `web/src/charts/{Funnel,Sankey}Chart.tsx` |
+| Funnel legend; sankey no-legend | `web/src/charts/{Funnel,Sankey}Chart.tsx` |
 | No-legend comments | `web/src/charts/{Histogram,HierarchyTreeChart,HeatmapChart,BigNumber}.tsx` |
 | Widget creation | `internal/agent/tools_manage.go` (+ test) |
 | Widget merge + flag | new `web/src/charts/widgetChartConfig.ts`, `web/src/pages/{Dashboard,DashboardEditor,PublicDashboard}Page.tsx` |
@@ -89,11 +93,13 @@ All line references were re-verified against the current tree (base `80f7bf45`),
 ## Testing
 
 - Unit: `buildLegend` (scroll/vertical/show:false/title offset), merge helper (unflagged
-  ignores widget, flagged wins, flag stripped, normalization applied), funnel/sankey panel
-  toggles, backend "create widget does not snapshot cell config".
+  ignores widget, flagged wins, flag stripped, normalization applied), funnel panel toggle
+  (sankey has no legend toggle by design), backend "create widget does not snapshot cell
+  config".
 - Browser (agent-browser): 40+ series area/bar/pie (page arrows appear, plot respected, no
-  clipped items), legend-off widens the plot, funnel/sankey legends, timeline/map toggles,
-  dashboard edit → flag → notebook edit stays overridden → reset converges, light/dark.
+  clipped items), legend-off widens the plot, funnel legend (sankey has none by design),
+  timeline/map toggles, dashboard edit → flag → notebook edit stays overridden → reset
+  converges, light/dark.
 - `npm run test:run`, `npx tsc --noEmit`, `npm run build`, `npm run lint`, `task check`.
 
 ## Out of scope

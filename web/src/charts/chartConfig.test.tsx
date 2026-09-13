@@ -139,7 +139,7 @@ describe('sankey panel', () => {
     expect(screen.getByText('Node colors')).toBeInTheDocument()
   })
 
-  it('toggles Legend in emitted config', () => {
+  it('has no legend toggle (ECharts sankey cannot render legend items)', () => {
     const onChange = vi.fn()
     render(
       <SankeyChartModule.ConfigPanel
@@ -149,10 +149,7 @@ describe('sankey panel', () => {
         data={data}
       />,
     )
-    const legend = screen.getByLabelText('Legend')
-    expect(legend).toBeChecked()
-    fireEvent.click(legend)
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ showLegend: false }))
+    expect(screen.queryByLabelText('Legend')).toBeNull()
   })
 })
 
@@ -254,9 +251,8 @@ describe('histogram and funnel panels', () => {
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ showLegend: false }))
   })
 
-  it('funnel and sankey ship legends enabled by default', () => {
+  it('funnel ships its legend enabled by default', () => {
     expect(FunnelChartModule.defaultConfig.showLegend).toBe(true)
-    expect(SankeyChartModule.defaultConfig.showLegend).toBe(true)
   })
 })
 
