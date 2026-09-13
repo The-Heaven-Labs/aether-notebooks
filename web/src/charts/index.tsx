@@ -12,9 +12,11 @@ interface ChartViewProps {
   output?: { type: string; data?: ResultSet; config?: Partial<ChartConfig> }
   rs?: ResultSet
   onConfigChange?: (config: ChartConfig) => void
+  chartConfigOverridden?: boolean
+  onChartConfigReset?: () => void
 }
 
-export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
+export function ChartView({ output, rs, onConfigChange, chartConfigOverridden, onChartConfigReset }: ChartViewProps) {
   const data = output?.data ?? (rs ? { columns: rs.columns, rows: rs.rows } : undefined)
   const columns = data?.columns?.map(c => c.name) ?? []
 
@@ -95,6 +97,7 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
                 groupValues={groupValues}
                 onSave={handleSaveConfig}
                 onClose={() => setShowConfig(false)}
+                onResetToNotebook={chartConfigOverridden ? onChartConfigReset : undefined}
               />
             )}
           </div>
@@ -123,6 +126,7 @@ export function ChartView({ output, rs, onConfigChange }: ChartViewProps) {
               groupValues={groupValues}
               onSave={handleSaveConfig}
               onClose={() => setShowConfig(false)}
+              onResetToNotebook={chartConfigOverridden ? onChartConfigReset : undefined}
             />
           )}
         </div>

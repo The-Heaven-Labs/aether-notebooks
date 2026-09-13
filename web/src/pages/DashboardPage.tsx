@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
 import type { ChartConfig } from '../charts/types'
+import { mergeWidgetChartConfig, hasWidgetOverride, WIDGET_OVERRIDE_FLAG } from '../charts/widgetChartConfig'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { OutputRenderer } from '../components/OutputRenderer'
@@ -179,7 +180,16 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, onE
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const handleChartConfigChange = useCallback((config: ChartConfig) => {
     if (!dashboardId) return
-    api.put(`/api/v1/dashboards/${dashboardId}/widgets/${widget.id}`, { config }).then(() => {
+    api.put(`/api/v1/dashboards/${dashboardId}/widgets/${widget.id}`, {
+      config: { ...config, [WIDGET_OVERRIDE_FLAG]: true },
+    }).then(() => {
+      qc.invalidateQueries({ queryKey: ['dashboard', dashboardId] })
+    })
+  }, [dashboardId, widget.id, qc])
+
+  const handleChartConfigReset = useCallback(() => {
+    if (!dashboardId) return
+    api.put(`/api/v1/dashboards/${dashboardId}/widgets/${widget.id}`, { config: {} }).then(() => {
       qc.invalidateQueries({ queryKey: ['dashboard', dashboardId] })
     })
   }, [dashboardId, widget.id, qc])
@@ -260,7 +270,8 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, onE
     )
   }
   const fixedView = widget.type === 'chart' ? 'chart' : 'table'
-  const chartConfig = { ...((cell as any).metadata?.chart as object || {}), ...(widget.config as object || {}) } as ChartConfig
+  const chartConfig = mergeWidgetChartConfig((cell as any).metadata?.chart, widget.config)
+  const chartOverridden = hasWidgetOverride(widget.config)
   const updatedAt = (cell as any).updated_at
   const durationMs = (cell as any).duration_ms
   const footerExtra = (
@@ -304,7 +315,7 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, onE
   )
   return (
     <>
-      <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} onChartConfigChange={handleChartConfigChange} footerExtra={footerExtra} />
+      <OutputRenderer outputs={cell.outputs} fixedView={fixedView} chartConfig={chartConfig} onChartConfigChange={handleChartConfigChange} chartConfigOverridden={chartOverridden} onChartConfigReset={handleChartConfigReset} footerExtra={footerExtra} />
     </>
   )
 }
