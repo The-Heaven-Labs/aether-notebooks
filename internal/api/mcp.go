@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -121,17 +122,18 @@ func mcpToolAllowed(name string) bool {
 func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
+	var req mcpJSONRPCRequest
+
 	defer func() {
 		if rec := recover(); rec != nil {
-			slog.Error("mcp handler panic", "panic", rec)
+			slog.Error("mcp handler panic", "panic", rec, "stack", string(debug.Stack()))
 			writeJSON(w, http.StatusInternalServerError, mcpJSONRPCResponse{
-				JSONRPC: "2.0", ID: nil,
+				JSONRPC: "2.0", ID: req.ID,
 				Error: &mcpError{Code: -32603, Message: "Internal error"},
 			})
 		}
 	}()
 
-	var req mcpJSONRPCRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, mcpJSONRPCResponse{
 			JSONRPC: "2.0", ID: nil,
@@ -263,6 +265,10 @@ func (s *Server) handleMCPToolsCall(w http.ResponseWriter, req mcpJSONRPCRequest
 			Error: &mcpError{Code: -32602, Message: "Invalid tool call params"},
 		})
 		return
+	}
+
+	if params.Arguments == nil {
+		params.Arguments = json.RawMessage("{}")
 	}
 
 	if !mcpToolAllowed(params.Name) {
