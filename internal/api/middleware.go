@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -117,13 +118,16 @@ func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler,
 	validateLegacyAPIToken(w, r, next, pool, token, lookupHash, subdomainOrg)
 }
 
-// validateLegacyAPIToken bcrypt-scans tokens created before lookup hashes were
-// stored, backfilling the matched row so subsequent requests take the fast path.
+// validateLegacyAPIToken bcrypt-verifies tokens that have no lookup hash yet
+// (created before the migration), backfilling the matched row so subsequent
+// requests take the fast path. Rows are matched by lookup hash as well as NULL
+// so a concurrent first use that backfilled the row after the fast path missed
+// it still authenticates.
 func validateLegacyAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler, pool *pgxpool.Pool, token, lookupHash, subdomainOrg string) {
-	query := `SELECT id, user_id, org_id, token_hash, expires_at FROM api_tokens WHERE token_lookup_hash IS NULL`
-	var args []any
+	query := `SELECT id, user_id, org_id, token_hash, expires_at FROM api_tokens WHERE (token_lookup_hash = $1 OR token_lookup_hash IS NULL)`
+	args := []any{lookupHash}
 	if subdomainOrg != "" {
-		query += ` AND org_id = $1`
+		query += ` AND org_id = $2`
 		args = append(args, subdomainOrg)
 	}
 	rows, err := pool.Query(r.Context(), query, args...)
@@ -158,7 +162,11 @@ func validateLegacyAPIToken(w http.ResponseWriter, r *http.Request, next http.Ha
 		return
 	}
 
-	pool.Exec(r.Context(), `UPDATE api_tokens SET token_lookup_hash = $1 WHERE id = $2`, lookupHash, id)
+	if _, err := pool.Exec(r.Context(),
+		`UPDATE api_tokens SET token_lookup_hash = $1 WHERE id = $2 AND token_lookup_hash IS NULL`,
+		lookupHash, id); err != nil {
+		slog.Debug("PAT lookup hash backfill failed", "token_id", id, "error", err)
+	}
 	completeAPITokenAuth(w, r, next, pool, id, userID, orgID, expiresAt)
 }
 
