@@ -504,6 +504,9 @@ export function getAxisStyle(showGrid?: boolean) {
 // legend's own `right: 10` offset plus its measured item/page content (~150px).
 export const LEGEND_COLUMN_WIDTH = 160
 
+// Explicit height is required for scroll paging: without it ECharts derives an
+// auto height and the pager renders but pages to an empty view. The percentages
+// leave room for the title offset and stay inside the canvas on short widgets.
 export function buildLegend(
   config: Pick<ChartConfig, 'title' | 'showLegend'>,
   colors: ReturnType<typeof getChartColors>,
@@ -514,7 +517,7 @@ export function buildLegend(
     orient: 'vertical' as const,
     right: 10,
     top: config.title ? 40 : 8,
-    bottom: 8,
+    height: config.title ? '70%' : '85%',
     align: 'auto',
     itemWidth: 14,
     itemHeight: 10,

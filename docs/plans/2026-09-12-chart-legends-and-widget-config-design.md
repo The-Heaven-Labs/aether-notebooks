@@ -32,8 +32,8 @@ All line references were re-verified against the current tree (base `80f7bf45`),
 
 - **D1 — Native paging legend, right-docked.** One `buildLegend(config, colors)` helper in
   `charts/common.tsx` produces `type:'scroll'`, `orient:'vertical'`, `right:10`,
-  `top: title?40:8`, `bottom:8` (ECharts derives the box height from `top`/`bottom`; a fixed
-  `height:'80%'` would make ECharts ignore `bottom` and overflow short widgets), themed page icons/text. No custom DOM
+  `top: title?40:8`, explicit `height: title?'70%':'85%'` (required for paging: without an
+  explicit height ECharts pages to an empty view; the percentages stay inside short widgets), themed page icons/text. No custom DOM
   legend, no horizontal top bands. When `showLegend === false` it returns `{ show: false }`.
 - **D2 — Axis charts reserve a right column.** `grid.right: showLegend ? 150 : 16` and
   `grid.top: title ? 56 : 8` for bar/line/area; scatter uses the same but only when its
