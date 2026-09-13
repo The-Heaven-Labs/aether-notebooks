@@ -14,10 +14,9 @@ import (
 )
 
 // create_dashboard_widget must not snapshot the cell's metadata.chart into
-// widgets.config: every dashboard surface merges the cell config first and the
-// widget config second, so a creation-time copy would permanently shadow later
-// notebook chart-config edits. widgets.config holds only explicit per-widget
-// overrides flagged with config_edited_from_dashboard.
+// widgets.config: a creation-time copy would shadow later notebook chart-config
+// edits on any surface that merges widget config. widgets.config holds only
+// explicit per-widget overrides flagged with config_edited_from_dashboard.
 func TestCreateDashboardWidgetDoesNotSnapshotCellChartConfig(t *testing.T) {
 	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
