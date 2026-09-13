@@ -44,6 +44,7 @@ export function normalizeChartConfig(raw: unknown): ChartConfig | undefined {
     decimalPlaces: obj.decimalPlaces as number | undefined,
     barWidth: obj.barWidth as string | undefined,
     barCategoryGap: obj.barCategoryGap as string | undefined,
+    lineWidth: obj.lineWidth as number | undefined,
     barMode: (barMode ?? obj.barMode) as 'grouped' | 'stacked' | 'horizontal' | undefined,
     smooth: obj.smooth as boolean | undefined,
     connectNulls: obj.connectNulls as boolean | undefined,
