@@ -506,7 +506,8 @@ export const LEGEND_COLUMN_WIDTH = 160
 
 // Explicit height is required for scroll paging: without it ECharts derives an
 // auto height and the pager renders but pages to an empty view. The percentages
-// leave room for the title offset and stay inside the canvas on short widgets.
+// keep the legend box on-canvas even for the smallest dashboard widgets
+// (title case: 30 + 0.50H <= H for the ~69px chart area of a 4-row widget).
 export function buildLegend(
   config: Pick<ChartConfig, 'title' | 'showLegend'>,
   colors: ReturnType<typeof getChartColors>,
@@ -516,8 +517,8 @@ export function buildLegend(
     type: 'scroll',
     orient: 'vertical' as const,
     right: 10,
-    top: config.title ? 40 : 8,
-    height: config.title ? '70%' : '85%',
+    top: config.title ? 30 : 8,
+    height: config.title ? '50%' : '85%',
     align: 'auto',
     itemWidth: 14,
     itemHeight: 10,

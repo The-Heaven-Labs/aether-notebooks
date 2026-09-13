@@ -19,8 +19,8 @@ test('legend is a vertical scroll pager docked right', () => {
 
 test('legend drops below a title band and shrinks its box', () => {
   const legend = buildLegend({ title: 'Orders' }, colors) as Record<string, unknown>
-  expect(legend.top).toBe(40)
-  expect(legend.height).toBe('70%')
+  expect(legend.top).toBe(30)
+  expect(legend.height).toBe('50%')
 })
 
 test('scrolling legend is themed', () => {

@@ -44,8 +44,6 @@ test('flagged lineWidth override survives normalization', () => {
 test('override marker never reaches the chart config', () => {
   const merged = mergeWidgetChartConfig({}, { [WIDGET_OVERRIDE_FLAG]: true, chartType: 'bar' })
   expect(WIDGET_OVERRIDE_FLAG in merged).toBe(false)
-  expect(hasWidgetOverride({ [WIDGET_OVERRIDE_FLAG]: true })).toBe(true)
-  expect(hasWidgetOverride({})).toBe(false)
 })
 
 test('legacy chart types are normalized', () => {

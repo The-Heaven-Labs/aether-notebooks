@@ -129,7 +129,7 @@ export interface ConfigPanelProps {
  * Grid-less charts (pie/donut) keep the legend right-docked and shift
  * center/position instead; legends never sit above the plot.
  *
- * For chart types that require additional layout (timeline/tree), reserve the
+ * For chart types that require additional layout (timeline), reserve the
  * same right-hand legend column when the legend is shown.
  */
 export interface ChartModule {

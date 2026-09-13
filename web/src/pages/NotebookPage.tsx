@@ -889,7 +889,8 @@ export function NotebookPage() {
       cell_id: cellId,
       type: widgetType,
       layout,
-      config: chartMeta ?? {},
+      // Chart widgets render the cell config; never snapshot it into the widget.
+      config: {},
     })
     setAddToDashboardCellId(null)
     setAddToDashboardToast(`Added to "${dash.title}"`)
