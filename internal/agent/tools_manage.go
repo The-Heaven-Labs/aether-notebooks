@@ -324,13 +324,11 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("invalid layout: %w", err)
 		}
 
-		// Copy the cell's chart config into widget config as fallback
-		var cellChart json.RawMessage
-		pool.QueryRow(ctx.Context, `SELECT metadata->'chart' FROM cells WHERE id = $1`, req.CellID).Scan(&cellChart)
+		// Chart widgets render the notebook cell's metadata.chart; widgets.config
+		// holds only explicit per-widget overrides flagged with
+		// config_edited_from_dashboard. Never snapshot the cell config here — a
+		// creation-time copy would shadow later notebook edits.
 		widgetConfig := json.RawMessage(`{}`)
-		if cellChart != nil && len(cellChart) > 0 && string(cellChart) != "null" {
-			widgetConfig = cellChart
-		}
 
 		id := uuid.New().String()
 		now := time.Now()
