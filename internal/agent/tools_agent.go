@@ -380,11 +380,19 @@ func makeCreateSkillHandler(pool *pgxpool.Pool) ToolHandler {
 
 		skillID := uuid.New().String()
 
-		_, err := pool.Exec(ctx.Context, `
-			INSERT INTO skills (id, org_id, name, description, system_prompt, created_by, created_at, updated_at)
-			SELECT $1, org_id, $2, $3, $4, $5, NOW(), NOW()
-			FROM agents WHERE id = (SELECT agent_id FROM agent_sessions WHERE id = $6)
-		`, skillID, req.Name, req.Description, req.SystemPrompt, ctx.UserID, ctx.SessionID)
+		var err error
+		if ctx.SessionID == "" {
+			_, err = pool.Exec(ctx.Context, `
+				INSERT INTO skills (id, org_id, name, description, system_prompt, created_by, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+			`, skillID, ctx.OrgID, req.Name, req.Description, req.SystemPrompt, ctx.UserID)
+		} else {
+			_, err = pool.Exec(ctx.Context, `
+				INSERT INTO skills (id, org_id, name, description, system_prompt, created_by, created_at, updated_at)
+				SELECT $1, org_id, $2, $3, $4, $5, NOW(), NOW()
+				FROM agents WHERE id = (SELECT agent_id FROM agent_sessions WHERE id = $6)
+			`, skillID, req.Name, req.Description, req.SystemPrompt, ctx.UserID, ctx.SessionID)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("create skill: %w", err)
 		}

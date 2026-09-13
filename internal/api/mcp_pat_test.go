@@ -120,6 +120,57 @@ func TestMCPPATWrongOrgSubdomainRejected(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, rec.Code, "PAT must not cross orgs: %s", rec.Body.String())
 }
 
+// create_skill previously inserted org_id by joining through agent_sessions,
+// which MCP never sets. Without a session the subquery cast the empty session
+// id to uuid and the tool failed with a raw 22P02 error. It must insert
+// directly into the caller's org and remain editable by the same PAT.
+func TestMCPCreateSkillWithoutSession(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	email := fmt.Sprintf("mcp-skill-%d@example.com", time.Now().UnixNano())
+	jwt := registerAndGetToken(t, srv, email, "MCP Skill Org")
+
+	code, tokResp := doCreateToken(t, srv, jwt, "mcp-skill-pat", "")
+	require.Equal(t, http.StatusCreated, code, "create PAT: %v", tokResp)
+	pat := tokResp["token"].(string)
+
+	code, resp, _ := doMCPRequest(t, srv, pat, "tools/call", map[string]any{
+		"name": "create_skill",
+		"arguments": map[string]any{
+			"name": "MCP skill", "description": "d", "system_prompt": "p",
+		},
+	})
+	require.Equal(t, http.StatusOK, code, "create_skill: %v", resp)
+	result, _ := resp["result"].(map[string]any)
+	require.NotEqual(t, true, result["isError"], "create_skill must not fail over MCP: %v", resp)
+
+	var created map[string]any
+	require.NoError(t, json.Unmarshal([]byte(mcpResultText(t, resp)), &created))
+	skillID, _ := created["skill_id"].(string)
+	require.NotEmpty(t, skillID, "create_skill result: %v", created)
+
+	var skillOrgID string
+	require.NoError(t, db.Pool.QueryRow(ctx, `SELECT org_id FROM skills WHERE id = $1`, skillID).Scan(&skillOrgID))
+	var userOrgID string
+	require.NoError(t, db.Pool.QueryRow(ctx, `
+		SELECT om.org_id FROM org_members om
+		JOIN users u ON u.id = om.user_id
+		WHERE u.email = $1`, email).Scan(&userOrgID))
+	require.Equal(t, userOrgID, skillOrgID, "skill must belong to the PAT caller's org")
+
+	code, resp, _ = doMCPRequest(t, srv, pat, "tools/call", map[string]any{
+		"name":      "update_skill",
+		"arguments": map[string]any{"skill_id": skillID, "name": "renamed"},
+	})
+	require.Equal(t, http.StatusOK, code, "update_skill: %v", resp)
+	result, _ = resp["result"].(map[string]any)
+	require.NotEqual(t, true, result["isError"], "update_skill must succeed: %v", resp)
+	require.Contains(t, mcpResultText(t, resp), skillID)
+}
+
 // A non-admin PAT with no ACL grant must be denied by the tool's permission
 // check instead of silently running through the MCP channel.
 func TestMCPPermissionDeniedForNonAdmin(t *testing.T) {
