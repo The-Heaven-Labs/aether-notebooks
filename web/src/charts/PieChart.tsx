@@ -58,7 +58,7 @@ function PieChartComponent({ data, config }: ChartProps) {
   const option = useMemo(() => ({
     tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: '{b}: {c} ({d}%)' },
     title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
-    legend: buildLegend(config, colors),
+    legend: buildLegend({ title: config.title, showLegend: config.showLegend }, colors),
     series: [{
       type: 'pie' as const,
       radius: isDonut ? ['40%', '70%'] as [string, string] : ['0%', '70%'] as [string, string],

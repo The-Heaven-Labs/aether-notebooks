@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns, buildMarkLineSeries, buildLegend } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns, buildMarkLineSeries, buildLegend, LEGEND_COLUMN_WIDTH } from './common'
 import { AxisConfigPanel } from './AxisConfigPanel'
 
 function ScatterChartComponent({ data, config }: ChartProps) {
@@ -73,8 +73,8 @@ function ScatterChartComponent({ data, config }: ChartProps) {
     return {
       tooltip: { ...getTooltipStyle() },
       title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
-      legend: legendShown ? buildLegend(config, colors) : { show: false },
-      grid: { top: config.title ? 56 : 8, right: legendShown ? 150 : 16, bottom: 32, left: 16, containLabel: true },
+      legend: legendShown ? buildLegend({ title: config.title, showLegend: config.showLegend }, colors) : { show: false },
+      grid: { top: config.title ? 56 : 8, right: legendShown ? LEGEND_COLUMN_WIDTH : 16, bottom: 32, left: 16, containLabel: true },
       visualMap: config.colorColumn ? {
         dimension: 2,
         min: 0,

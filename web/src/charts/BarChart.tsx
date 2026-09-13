@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, useAxisColumns, useGroupBySeries, detectAxisColumns, buildMarkLineSeries, buildLegend } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, useAxisColumns, useGroupBySeries, detectAxisColumns, buildMarkLineSeries, buildLegend, LEGEND_COLUMN_WIDTH } from './common'
 import { AxisConfigPanel } from './AxisConfigPanel'
 
 function BarChartComponent({ data, config }: ChartProps) {
@@ -48,8 +48,8 @@ function BarChartComponent({ data, config }: ChartProps) {
 
     const legendShown = config.showLegend !== false
     const grid = isHorizontal
-      ? { top: config.title ? 56 : 8, right: legendShown ? 150 : 16, bottom: config.dataZoom ? 42 : 8, left: 16, containLabel: true }
-      : { top: config.title ? 56 : 8, right: legendShown ? 150 : 16, bottom: config.dataZoom ? 32 : 8, left: 16, containLabel: true }
+      ? { top: config.title ? 56 : 8, right: legendShown ? LEGEND_COLUMN_WIDTH : 16, bottom: config.dataZoom ? 42 : 8, left: 16, containLabel: true }
+      : { top: config.title ? 56 : 8, right: legendShown ? LEGEND_COLUMN_WIDTH : 16, bottom: config.dataZoom ? 32 : 8, left: 16, containLabel: true }
 
     const catAxis = { type: 'category' as const, data: effectiveXData, ...getAxisStyle(config.showGrid) }
     const valAxis = { type: config.logScale ? 'log' as const : 'value' as const, ...getAxisStyle(config.showGrid) }
@@ -57,7 +57,7 @@ function BarChartComponent({ data, config }: ChartProps) {
     return {
       tooltip: { trigger: isHorizontal ? 'axis' as const : 'axis' as const, axisPointer: isHorizontal ? { type: 'shadow' as const } : undefined, ...getTooltipStyle() },
       title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
-      legend: buildLegend(config, colors),
+      legend: buildLegend({ title: config.title, showLegend: config.showLegend }, colors),
       grid,
       dataZoom: config.dataZoom ? [
         { type: 'inside' as const, start: 0, end: 100, ...(isHorizontal ? { yAxisIndex: 0 } : {}) },

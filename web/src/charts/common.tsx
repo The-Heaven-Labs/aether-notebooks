@@ -500,6 +500,9 @@ export function getAxisStyle(showGrid?: boolean) {
   }
 }
 
+// Right-hand plot inset reserved for the docked legend column.
+export const LEGEND_COLUMN_WIDTH = 150
+
 export function buildLegend(
   config: Pick<ChartConfig, 'title' | 'showLegend'>,
   colors: ReturnType<typeof getChartColors>,
