@@ -9,7 +9,7 @@ import {
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { ResultSet } from '../types'
-import type { MarkLineConfig } from './types'
+import type { ChartConfig, MarkLineConfig } from './types'
 
 // Register only what we use
 echarts.use([
@@ -497,6 +497,29 @@ export function getAxisStyle(showGrid?: boolean) {
     axisTick: { show: false },
     axisLabel: { fontSize: 11, color: c.textMuted },
     splitLine: { show: showGrid !== false, lineStyle: { color: c.border, type: 'dashed' as const } },
+  }
+}
+
+export function buildLegend(
+  config: Pick<ChartConfig, 'title' | 'showLegend'>,
+  colors: ReturnType<typeof getChartColors>,
+): Record<string, unknown> {
+  if (config.showLegend === false) return { show: false }
+  return {
+    type: 'scroll',
+    orient: 'vertical' as const,
+    right: 10,
+    top: config.title ? 40 : 8,
+    bottom: 8,
+    height: '80%',
+    align: 'auto',
+    itemWidth: 14,
+    itemHeight: 10,
+    textStyle: { fontSize: 11, color: colors.textMuted },
+    pageIconSize: 10,
+    pageIconColor: colors.textMuted,
+    pageIconInactiveColor: colors.border,
+    pageTextStyle: { color: colors.textMuted, fontSize: 10 },
   }
 }
 
