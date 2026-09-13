@@ -39,3 +39,22 @@ func TestDecryptWrongKey(t *testing.T) {
 		t.Fatal("expected error decrypting with wrong key")
 	}
 }
+
+func TestTokenLookupHash(t *testing.T) {
+	key := crypto.DeriveKey("test-master-key-that-is-long-enough-32")
+	token := "aether_tok_0123456789abcdef0123456789abcdef0123456789abcdef01234567"
+
+	first := crypto.TokenLookupHash(key, token)
+	if len(first) != 64 {
+		t.Fatalf("expected 64 hex chars, got %d (%q)", len(first), first)
+	}
+	if second := crypto.TokenLookupHash(key, token); second != first {
+		t.Fatalf("expected deterministic hash, got %q and %q", first, second)
+	}
+	if other := crypto.TokenLookupHash(key, token+"x"); other == first {
+		t.Fatal("different tokens must produce different hashes")
+	}
+	if otherKey := crypto.TokenLookupHash(crypto.DeriveKey("another-master-key-long-enough-32"), token); otherKey == first {
+		t.Fatal("different keys must produce different hashes")
+	}
+}
