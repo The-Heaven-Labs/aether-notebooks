@@ -14,7 +14,6 @@ test('legend is a vertical scroll pager docked right', () => {
   expect(legend.right).toBe(10)
   expect(legend.top).toBe(8)
   expect(legend.bottom).toBe(8)
-  expect(legend.height).toBe('80%')
   expect((legend.textStyle as Record<string, unknown>).color).toBe(colors.textMuted)
 })
 

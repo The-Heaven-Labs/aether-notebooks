@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, useAxisColumns, useGroupBySeries, detectAxisColumns, buildMarkLineSeries } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, useAxisColumns, useGroupBySeries, detectAxisColumns, buildMarkLineSeries, buildLegend } from './common'
 import { AxisConfigPanel } from './AxisConfigPanel'
 
 function LineChartComponent({ data, config }: ChartProps) {
@@ -48,8 +48,8 @@ function LineChartComponent({ data, config }: ChartProps) {
     return {
       tooltip: { trigger: 'axis' as const, ...getTooltipStyle() },
       title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
-      legend: config.showLegend !== false ? { show: true, top: config.title ? 32 : 0, textStyle: { fontSize: 11, color: colors.textMuted } } : { show: false },
-      grid: { top: config.title ? 56 : config.showLegend !== false ? 30 : 8, right: 16, bottom: config.dataZoom ? 32 : 8, left: 16, containLabel: true },
+      legend: buildLegend(config, colors),
+      grid: { top: config.title ? 56 : 8, right: config.showLegend !== false ? 150 : 16, bottom: config.dataZoom ? 32 : 8, left: 16, containLabel: true },
       dataZoom: config.dataZoom ? [
         { type: 'inside' as const, start: 0, end: 100 },
         { type: 'slider' as const, start: 0, end: 100, bottom: 8, height: 20, borderColor: colors.border, textStyle: { fontSize: 10, color: colors.textMuted } },

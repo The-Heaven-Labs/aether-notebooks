@@ -123,7 +123,7 @@ export interface ConfigPanelProps {
  *   grid: {
  *     top: config.title ? 56 : 8,
  *     right: config.showLegend !== false ? 150 : 16,   // legend column
- *     bottom: dataZoom ? 32 : 8, left: 16, containLabel: true,
+ *     bottom: config.dataZoom ? 32 : 8, left: 16, containLabel: true,
  *   }
  *
  * Grid-less charts (pie/donut) keep the legend right-docked and shift

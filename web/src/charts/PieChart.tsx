@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps, ChartConfig } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getContrastTextColor, useChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns, ChartTypeSelect } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getContrastTextColor, useChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns, ChartTypeSelect, buildLegend } from './common'
 import { ConfigHint } from './ConfigHint'
 
 // Label plumbing shared by the option builder below (and unit-tested):
@@ -58,7 +58,7 @@ function PieChartComponent({ data, config }: ChartProps) {
   const option = useMemo(() => ({
     tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: '{b}: {c} ({d}%)' },
     title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
-    legend: config.showLegend !== false ? { show: true, orient: 'vertical' as const, right: 10, top: config.title ? 36 : 'center', textStyle: { fontSize: 11, color: colors.textMuted } } : { show: false },
+    legend: buildLegend(config, colors),
     series: [{
       type: 'pie' as const,
       radius: isDonut ? ['40%', '70%'] as [string, string] : ['0%', '70%'] as [string, string],

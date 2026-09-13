@@ -511,7 +511,6 @@ export function buildLegend(
     right: 10,
     top: config.title ? 40 : 8,
     bottom: 8,
-    height: '80%',
     align: 'auto',
     itemWidth: 14,
     itemHeight: 10,
