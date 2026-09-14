@@ -159,6 +159,11 @@ func (e *Engine) ResolveQuestion(sessionID string, answer string) {
 	}
 }
 
+// noInteractiveUserAnswer is fed to ask_question in sessions flagged
+// auto_answer_questions. It tells the agent no human is reachable so it can
+// proceed on its own, without fabricating a choice the user never made.
+const noInteractiveUserAnswer = "No interactive user is available in this session. Proceed using your best judgment, or stop and explain what input you needed."
+
 // steeringMailboxSize bounds per-session follow-up buffering so a runaway
 // client cannot grow memory. When full, the WS handler NACKs (steering_busy)
 // and the client holds the message in its offline queue instead.
@@ -1067,6 +1072,13 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				QuestionFunc: func(question string, options any, allowCustom bool) (string, error) {
 					ch := make(chan string, 1)
 					e.SetQuestionPending(sessionID, ch)
+					// Headless/API session: answer immediately so the select below
+					// receives a response instead of blocking until ctx deadline.
+					// Deliberately reports the absence of a user rather than
+					// picking an option — the agent decides how to proceed.
+					if session.AutoAnswerQuestions {
+						e.ResolveQuestion(sessionID, noInteractiveUserAnswer)
+					}
 					if onEvent != nil {
 						onEvent(EngineEvent{
 							Type:        "question",
@@ -1087,6 +1099,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			if toolDef.ConfirmRequired && onEvent != nil {
 				ch := make(chan ToolConfirmResult, 1)
 				e.SetToolConfirm(sessionID, ch)
+				if session.AutoApproveTools {
+					e.ResolveToolConfirm(sessionID, true, tc.Function.Name)
+				}
 				eventArgs := tc.Function.Arguments
 				var currentSource string
 				if tc.Function.Name == "update_cell" {
@@ -1603,7 +1618,7 @@ func (e *Engine) summarizeAndNewSession(ctx context.Context, sessionID string, m
 	}
 
 	// 3. Create a new session
-	newSession, err := e.session.CreateSession(ctx, oldSession.AgentID, oldSession.NotebookID, oldSession.UserID, oldSession.MaxTurns, nil, oldSession.AdminMode)
+	newSession, err := e.session.CreateSession(ctx, oldSession.AgentID, oldSession.NotebookID, oldSession.UserID, oldSession.MaxTurns, nil, oldSession.AdminMode, oldSession.AutoApproveTools, oldSession.AutoAnswerQuestions)
 	if err != nil {
 		return nil, fmt.Errorf("create new session: %w", err)
 	}
