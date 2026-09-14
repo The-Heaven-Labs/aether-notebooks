@@ -307,7 +307,7 @@ func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsg
 		return compactionResult{Messages: chatMsgs}
 	}
 
-	compacted := make([]ChatMessage, 0, keepEnd+8)
+	compacted := make([]ChatMessage, 0, keepEnd+compactionKeepTail)
 	compacted = append(compacted, chatMsgs[0])
 	compacted = append(compacted, ChatMessage{
 		Role:    "system",
@@ -642,16 +642,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		}
 	}
 
+	var compactionSummary string
 	for i, m := range messages {
 		if i < start {
 			continue
 		}
 		if m.Role == "compaction" {
 			if i == boundary {
-				chatMsgs = append(chatMsgs, ChatMessage{
-					Role:    "system",
-					Content: "The following is a summary of earlier conversation history:\n\n" + m.Content + "\n\n(older context was compacted to stay within context window limits)",
-				})
+				compactionSummary = "The following is a summary of earlier conversation history:\n\n" + m.Content + "\n\n(older context was compacted to stay within context window limits)"
 			}
 			continue
 		}
@@ -705,6 +703,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		} else {
 			chatMsgs = append(chatMsgs, ChatMessage{Role: m.Role, Content: m.Content})
 		}
+	}
+	// The summary covers history older than the retained tail, so it belongs
+	// immediately after the main system prompt.
+	if compactionSummary != "" {
+		withSummary := make([]ChatMessage, 0, len(chatMsgs)+1)
+		withSummary = append(withSummary, chatMsgs[0], ChatMessage{Role: "system", Content: compactionSummary})
+		withSummary = append(withSummary, chatMsgs[1:]...)
+		chatMsgs = withSummary
 	}
 	chatMsgs = sanitizeChatMessages(chatMsgs)
 

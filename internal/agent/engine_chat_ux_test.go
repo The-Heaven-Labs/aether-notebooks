@@ -439,6 +439,11 @@ func TestCompactionEmitsEventAndPersists(t *testing.T) {
 	if summaryCount != 1 {
 		t.Fatalf("expected exactly one injected summary, got %d: %v", summaryCount, msgs2)
 	}
+	second2, _ := msgs2[1].(map[string]any)
+	second2Content, _ := second2["content"].(string)
+	if second2["role"] != "system" || !strings.Contains(second2Content, "summary of old messages") {
+		t.Fatalf("second message should be the injected summary, got %v", second2)
+	}
 }
 
 // TestCompactionIsDurableAcrossTurns verifies the persisted compaction row acts
@@ -499,6 +504,18 @@ func TestCompactionIsDurableAcrossTurns(t *testing.T) {
 	}
 	if n := strings.Count(rawStr, "durable summary"); n != 1 {
 		t.Fatalf("expected exactly one injected summary, got %d: %s", n, rawStr)
+	}
+	second, _ := msgs[1].(map[string]any)
+	secondContent, _ := second["content"].(string)
+	if second["role"] != "system" || !strings.Contains(secondContent, "durable summary") {
+		t.Fatalf("second message should be the injected summary, got %v", second)
+	}
+	idxTool := capturedMessageIndex(msgs, "PRECOMPACT-TOOL-RESULT")
+	idxQuestion := capturedMessageIndex(msgs, "PRECOMPACT-TURN1-QUESTION")
+	idxAnswer := capturedMessageIndex(msgs, "main answer")
+	idxNext := capturedMessageIndex(msgs, "second turn")
+	if !(1 < idxTool && idxTool < idxQuestion && idxQuestion < idxAnswer && idxAnswer < idxNext) {
+		t.Fatalf("unexpected message order: summary=1 tool=%d question=%d answer=%d next=%d", idxTool, idxQuestion, idxAnswer, idxNext)
 	}
 	for _, want := range []string{
 		"PRECOMPACT-TURN1-QUESTION",
@@ -612,6 +629,24 @@ func TestCompactionLatestBoundaryWins(t *testing.T) {
 	}
 	if strings.Contains(rawStr, "summary number 1") {
 		t.Fatalf("superseded summary re-injected: %s", rawStr)
+	}
+	msgs, _ := captured[0]["messages"].([]any)
+	if len(msgs) < 2 {
+		t.Fatalf("expected at least 2 messages on the third turn, got %v", captured[0]["messages"])
+	}
+	second, _ := msgs[1].(map[string]any)
+	secondContent, _ := second["content"].(string)
+	if second["role"] != "system" || !strings.Contains(secondContent, "summary number 2") {
+		t.Fatalf("second message should be the latest summary, got %v", second)
+	}
+	idxH := capturedMessageIndex(msgs, "HIST-h")
+	idxL := capturedMessageIndex(msgs, "HIST-l")
+	idxQuestion := capturedMessageIndex(msgs, "PRECOMPACT-QUESTION")
+	idxTool := capturedMessageIndex(msgs, "tool not available: not_a_real_tool")
+	idxAnswer := capturedMessageIndex(msgs, "latest answer")
+	idxNext := capturedMessageIndex(msgs, "third turn")
+	if !(1 < idxH && idxH < idxL && idxL < idxQuestion && idxQuestion < idxTool && idxTool < idxAnswer && idxAnswer < idxNext) {
+		t.Fatalf("unexpected message order: summary=1 h=%d l=%d question=%d tool=%d answer=%d next=%d", idxH, idxL, idxQuestion, idxTool, idxAnswer, idxNext)
 	}
 	for _, want := range []string{
 		"HIST-h",
@@ -780,4 +815,15 @@ func newCompactionScriptedServer(t *testing.T, mainPromptTokens int, summary str
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
+}
+
+func capturedMessageIndex(msgs []any, needle string) int {
+	for i, raw := range msgs {
+		m, _ := raw.(map[string]any)
+		content, _ := m["content"].(string)
+		if strings.Contains(content, needle) {
+			return i
+		}
+	}
+	return -1
 }
