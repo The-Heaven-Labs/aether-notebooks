@@ -32,6 +32,11 @@ export interface NotebookCollab {
 }
 export const collabCache = new Map<string, NotebookCollab>()
 
+/** Non-creating lookup: returns the shared collab entry only if one exists. */
+export function peekCollab(notebookId: string): NotebookCollab | undefined {
+  return collabCache.get(notebookId)
+}
+
 export function getOrCreateCollab(notebookId: string): NotebookCollab {
   const existing = collabCache.get(notebookId)
   if (existing) { existing.refCount++; return existing }
@@ -319,17 +324,25 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
     const attachCollab = () => {
       const editorContent = view.state.doc.toString()
       const yjsContent = ytext.toString()
-      const ySyncConfig = new YSyncConfig(ytext, collab.provider.awareness)
-      if (yjsContent.length === 0 || yjsContent !== editorContent) {
-        // Sync editor content into Yjs (database is authoritative), using the
-        // same config as origin so yCollab's observer ignores this change.
+      // Seed Yjs from the database-backed editor only when the shared doc is
+      // empty. Otherwise Yjs wins: the shared text is applied to the editor
+      // below, which is what fixes the stale-update race (an agent update can
+      // land in Yjs before the provider has synced).
+      if (ytext.length === 0 && editorContent.length > 0) {
+        const ySyncConfig = new YSyncConfig(ytext, collab.provider.awareness)
         collab.doc.transact(() => {
-          if (ytext.length > 0) ytext.delete(0, ytext.length)
           ytext.insert(0, editorContent)
         }, ySyncConfig)
+      } else if (yjsContent !== editorContent) {
+        // Apply the shared text to the editor before activating yCollab so
+        // this programmatic change is not echoed back into the shared doc.
+        view.dispatch({
+          changes: { from: 0, to: editorContent.length, insert: yjsContent },
+        })
       }
       // Activate yCollab with our config last (overrides yCollab's internal one)
       // so the observer's origin guard matches our transact origin above.
+      const ySyncConfig = new YSyncConfig(ytext, collab.provider.awareness)
       view.dispatch({ effects: compartment.reconfigure([
         yCollab(ytext, collab.provider.awareness, { undoManager: false }),
         ySyncFacet.of(ySyncConfig),
@@ -360,7 +373,10 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
   useEffect(() => {
     if (cell.source !== lastSourceRef.current && cell.source !== undefined) {
       lastSourceRef.current = cell.source
-      const collab = getOrCreateCollab(notebookId)
+      // Never create a provider here: if none exists the editor mounts later
+      // and attachCollab seeds Yjs from the cell source.
+      const collab = peekCollab(notebookId)
+      if (!collab) return
       const ytext = collab.doc.getText(`cell:${cell.id}`)
       if (ytext.toString() !== cell.source) {
         collab.doc.transact(() => {

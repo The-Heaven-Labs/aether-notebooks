@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { Suspense } from 'react'
+import * as Y from 'yjs'
 import { ResizableImage } from './MarkdownCell'
-import { Cell } from './Cell'
+import { Cell, collabCache, type NotebookCollab } from './Cell'
 import type { Cell as CellType } from '../types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -536,5 +537,114 @@ describe('row limit select', () => {
     expect(select.value).toBe('null')
     expect(screen.queryByRole('option', { name: /^LIMIT 250$/ })).toBeNull()
     expect(screen.getByRole('option', { name: 'Unlimited' })).toBeTruthy()
+  })
+})
+
+// ── Yjs attach race (P7) ───────────────────────────────────────────────────────
+
+describe('CodeEditorView Yjs attach race', () => {
+  const notebookId = 'nb-race'
+  const cellId = 'cell-race'
+
+  type SyncedListener = (payload: { state: boolean }) => void
+
+  function makeCodeCell(source: string): CellType {
+    return {
+      id: cellId,
+      notebook_id: notebookId,
+      type: 'code',
+      language: 'sql',
+      source,
+      outputs: [],
+      position: 0,
+      created_at: '',
+      updated_at: '',
+      source_visible: true,
+      cell_collapsed: false,
+    }
+  }
+
+  function cellElement(cell: CellType) {
+    return (
+      <Cell
+        cell={cell}
+        connectors={[]}
+        notebookId={notebookId}
+        onRun={vi.fn()}
+        onDelete={vi.fn()}
+        onSourceChange={vi.fn()}
+        onAssignConnector={vi.fn()}
+      />
+    )
+  }
+
+  // Fake collab provider registered in the module-level registry so no real
+  // HocuspocusProvider/WebSocket is created. `sync()` emits the provider's
+  // 'synced' event the same way the real provider does.
+  function registerFakeCollab() {
+    const doc = new Y.Doc()
+    const syncedListeners = new Set<SyncedListener>()
+    const entry: NotebookCollab = {
+      doc,
+      provider: {
+        awareness: null,
+        on: (event: string, cb: SyncedListener) => {
+          if (event === 'synced') syncedListeners.add(cb)
+        },
+        off: (event: string, cb: SyncedListener) => {
+          if (event === 'synced') syncedListeners.delete(cb)
+        },
+        destroy: () => {},
+      } as unknown as NotebookCollab['provider'],
+      refCount: 1,
+      synced: false,
+    }
+    collabCache.set(notebookId, entry)
+    return {
+      entry,
+      ytext: doc.getText(`cell:${cellId}`),
+      sync: () => {
+        entry.synced = true
+        syncedListeners.forEach((cb) => cb({ state: true }))
+      },
+    }
+  }
+
+  afterEach(() => {
+    collabCache.delete(notebookId)
+  })
+
+  it('keeps a pre-sync Yjs update and applies it to the editor on sync', async () => {
+    const fake = registerFakeCollab()
+    const { container, rerender } = render(cellElement(makeCodeCell('SELECT old')))
+    await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
+
+    // Agent update_cell arrives while the provider is still syncing: the
+    // external-source effect writes the new text into Yjs and advances
+    // lastSourceRef, leaving the editor buffer stale.
+    rerender(cellElement(makeCodeCell('SELECT new')))
+    await waitFor(() => expect(fake.ytext.toString()).toBe('SELECT new'))
+
+    act(() => { fake.sync() })
+
+    await waitFor(() => {
+      expect(container.querySelector('.cm-content')?.textContent).toBe('SELECT new')
+    })
+    expect(fake.ytext.toString()).toBe('SELECT new')
+  })
+
+  it('does not clobber a non-empty Yjs doc with the stale editor buffer on sync', async () => {
+    const fake = registerFakeCollab()
+    fake.ytext.insert(0, 'SELECT new')
+
+    const { container } = render(cellElement(makeCodeCell('SELECT old')))
+    await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
+
+    act(() => { fake.sync() })
+
+    await waitFor(() => {
+      expect(container.querySelector('.cm-content')?.textContent).toBe('SELECT new')
+    })
+    expect(fake.ytext.toString()).toBe('SELECT new')
   })
 })
