@@ -251,12 +251,14 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					messages := scanAgentMessages(rows)
 					if messages != nil {
 						_, running := s.sessionCancels.Load(currentSessionID)
+						sessionUsage, _ := s.agentEngine.SessionStore().GetUsage(ctx, currentSessionID)
 						safeSend(struct {
-							Type      string                `json:"type"`
-							Messages  []models.AgentMessage `json:"messages"`
-							Running   bool                  `json:"running"`
-							ServerSeq uint64                `json:"server_seq"`
-						}{Type: "reconnect_sync", Messages: messages, Running: running, ServerSeq: s.agentEngine.StreamLastSeq(currentSessionID)})
+							Type         string                `json:"type"`
+							Messages     []models.AgentMessage `json:"messages"`
+							Running      bool                  `json:"running"`
+							ServerSeq    uint64                `json:"server_seq"`
+							SessionUsage *models.SessionUsage  `json:"session_usage,omitempty"`
+						}{Type: "reconnect_sync", Messages: messages, Running: running, ServerSeq: s.agentEngine.StreamLastSeq(currentSessionID), SessionUsage: sessionUsage})
 					}
 				}
 				continue
@@ -421,9 +423,10 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 								}{Type: "tool_confirm_required", ToolName: evt.ToolName, ToolArgs: evt.ToolArgs, CurrentSource: evt.Source})
 							case "token_update":
 								s.agentEngine.PublishSessionEvent(sid, struct {
-									Type   string                `json:"type"`
-									Tokens *agent.TokenBreakdown `json:"tokens"`
-								}{Type: "token_update", Tokens: evt.Tokens})
+									Type         string                `json:"type"`
+									Tokens       *agent.TokenBreakdown `json:"tokens"`
+									SessionUsage *models.SessionUsage  `json:"session_usage,omitempty"`
+								}{Type: "token_update", Tokens: evt.Tokens, SessionUsage: evt.SessionUsage})
 							case "llm_retry":
 								s.agentEngine.PublishSessionEvent(sid, struct {
 									Type        string `json:"type"`
@@ -470,7 +473,13 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					_ = events
 					// done carries the final content so a client that reconnected
 					// mid-stream (and missed the tokens) still renders the message.
-					s.agentEngine.PublishSessionEvent(sid, WSResponse{Type: "done", Data: map[string]any{"content": finalText, "reasoning": reasoning, "tokens": tokBrk}})
+					// session_usage restores the server-authoritative token meter.
+					doneUsage, usageErr := s.agentEngine.SessionStore().GetUsage(context.Background(), sid)
+					if usageErr != nil {
+						slog.Warn("ws: get session usage", "session_id", sid, "error", usageErr)
+						doneUsage = nil
+					}
+					s.agentEngine.PublishSessionEvent(sid, WSResponse{Type: "done", Data: map[string]any{"content": finalText, "reasoning": reasoning, "tokens": tokBrk, "session_usage": doneUsage}})
 					slog.Debug("ws: message done", "session_id", sid, "reasoning_len", len(reasoning))
 				}(msg.Content, msg.Images, currentSessionID)
 			} else if msg.Type == "slash_command" {

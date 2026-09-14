@@ -404,6 +404,13 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		return "", "", nil, events, nil, fmt.Errorf("get session: %w", err)
 	}
 
+	// Live snapshot of the persisted session totals; updated per call and
+	// emitted on token_update so clients never have to reconstruct it.
+	usage, _ := e.session.GetUsage(ctx, sessionID)
+	if usage == nil {
+		usage = &models.SessionUsage{}
+	}
+
 	var agent models.Agent
 	var systemPrompt string
 	var skillIDs []byte
@@ -925,15 +932,34 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		modelCalls++
 		apiInputTotal += resp.Usage.PromptTokens
 		tokBrk.Output += resp.Usage.CompletionTokens
+		reasoningTokens := 0
 		if resp.Usage.CompletionTokensDetails != nil {
-			tokBrk.Reasoning += resp.Usage.CompletionTokensDetails.ReasoningTokens
+			reasoningTokens = resp.Usage.CompletionTokensDetails.ReasoningTokens
+			tokBrk.Reasoning += reasoningTokens
 		}
+		cacheRead := 0
 		if resp.Usage.PromptTokensDetails != nil {
-			tokBrk.CacheRead += resp.Usage.PromptTokensDetails.CachedTokens
+			cacheRead = resp.Usage.PromptTokensDetails.CachedTokens
+			tokBrk.CacheRead += cacheRead
 		}
+
+		usageDelta := SessionUsageDelta{
+			Input:         int64(resp.Usage.PromptTokens),
+			Output:        int64(resp.Usage.CompletionTokens),
+			Reasoning:     int64(reasoningTokens),
+			CacheRead:     int64(cacheRead),
+			ModelCalls:    1,
+			ContextTokens: int64(resp.Usage.PromptTokens),
+			ContextWindow: contextWindow,
+		}
+		if err := e.session.AddUsage(ctx, sessionID, usageDelta); err != nil {
+			slog.Warn("engine: persist session usage", "session_id", sessionID, "error", err)
+		}
+		applyUsageDelta(usage, usageDelta)
 
 		currentContextTokens := resp.Usage.PromptTokens
 		if onEvent != nil {
+			usageSnapshot := *usage
 			onEvent(EngineEvent{
 				Type: "token_update",
 				Tokens: &TokenBreakdown{
@@ -951,6 +977,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					ToolResults:     estimatedToolResults,
 					ContextCurrent:  currentContextTokens,
 				},
+				SessionUsage: &usageSnapshot,
 			})
 		}
 
@@ -961,6 +988,15 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			if result.Summary != "" && len(result.Messages) < len(chatMsgs) {
 				afterEstimate := e.tokenCounter.CountMessages(result.Messages, modelName)
 				chatMsgs = result.Messages
+				compactionDelta := SessionUsageDelta{
+					Input:      int64(result.PromptTokens),
+					Output:     int64(result.CompletionTokens),
+					ModelCalls: 1,
+				}
+				if err := e.session.AddUsage(ctx, sessionID, compactionDelta); err != nil {
+					slog.Warn("engine: persist compaction usage", "session_id", sessionID, "error", err)
+				}
+				applyUsageDelta(usage, compactionDelta)
 				slog.Info("context compaction triggered", "session_id", sessionID, "tokens", beforeCtx, "context_window", contextWindow, "tokens_after", afterEstimate, "kept_tail", result.KeptCount, "summary_prompt_tokens", result.PromptTokens, "summary_completion_tokens", result.CompletionTokens)
 				// Persist compaction divider for reconnect_sync
 				compactionMsg := &models.AgentMessage{

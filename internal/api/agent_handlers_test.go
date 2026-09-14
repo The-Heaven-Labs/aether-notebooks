@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/api"
 )
 
@@ -355,6 +357,67 @@ func TestAgentSessionCRUD(t *testing.T) {
 		json.NewDecoder(rec.Body).Decode(&sessions)
 		if len(sessions) != 1 {
 			t.Fatalf("expected 1 session, got %d", len(sessions))
+		}
+	})
+}
+
+func TestAgentSessionUsageEndpoint(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("agent-usage-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Agent Usage Org")
+	mcID := createModelConfig(t, srv, token)
+	agentID := createAgent(t, srv, token, mcID)
+	nbID := createNotebook(t, srv, token, "Usage NB")
+	sessionID := createAgentSession(t, srv, token, agentID, nbID)
+
+	store := agent.NewSessionStore(srv.DB().Pool)
+	ctx := context.Background()
+	if err := store.AddUsage(ctx, sessionID, agent.SessionUsageDelta{Input: 100, Output: 20, ModelCalls: 1, ContextTokens: 120, ContextWindow: 128000}); err != nil {
+		t.Fatalf("add usage: %v", err)
+	}
+	if err := store.AddUsage(ctx, sessionID, agent.SessionUsageDelta{Input: 50, Output: 5, ModelCalls: 1, ContextTokens: 90}); err != nil {
+		t.Fatalf("add usage: %v", err)
+	}
+
+	t.Run("returns accumulated usage", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/agents/sessions/"+sessionID+"/usage", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("usage: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var u map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&u); err != nil {
+			t.Fatalf("decode usage: %v", err)
+		}
+		if u["input"] != float64(150) || u["output"] != float64(25) || u["model_calls"] != float64(2) {
+			t.Fatalf("usage = %v", u)
+		}
+		if u["context_tokens"] != float64(90) || u["context_window"] != float64(128000) {
+			t.Fatalf("context = %v", u)
+		}
+	})
+
+	t.Run("unknown session", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/agents/sessions/"+uuid.NewString()+"/usage", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("unknown session: expected 404, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("other org denied", func(t *testing.T) {
+		otherEmail := fmt.Sprintf("agent-usage-other-%d@example.com", time.Now().UnixNano())
+		otherToken := registerAndGetToken(t, srv, otherEmail, "Agent Usage Other Org")
+		req := httptest.NewRequest("GET", "/api/v1/agents/sessions/"+sessionID+"/usage", nil)
+		req.Header.Set("Authorization", "Bearer "+otherToken)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("other org: expected 403, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 }

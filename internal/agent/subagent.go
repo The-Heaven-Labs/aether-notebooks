@@ -248,6 +248,20 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 				WHERE id = $5
 			`, status, resultJSON, result.TokensIn, result.TokensOut, tid)
 
+			// Subagent tokens accrue to the parent session's totals (they are
+			// displayed separately from the main-thread usage).
+			if err := e.session.AddUsage(ctx, parentSessionID, SessionUsageDelta{
+				SubagentInput:  int64(result.TokensIn),
+				SubagentOutput: int64(result.TokensOut),
+				ModelCalls:     1,
+			}); err != nil {
+				slog.Warn("RunQueuedTasks: persist subagent usage", "session_id", parentSessionID, "task_id", tid, "error", err)
+			}
+			sessionUsage, usageErr := e.session.GetUsage(ctx, parentSessionID)
+			if usageErr != nil {
+				slog.Warn("RunQueuedTasks: get session usage", "session_id", parentSessionID, "error", usageErr)
+			}
+
 			subagentDuration := int(time.Since(subagentStart).Milliseconds())
 			completionEvent := map[string]any{
 				"type":          "subagent_status",
@@ -259,6 +273,7 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 				"duration_ms":   subagentDuration,
 				"tokens_input":  result.TokensIn,
 				"tokens_output": result.TokensOut,
+				"session_usage": sessionUsage,
 			}
 			if broadcastFn != nil {
 				broadcastFn(notebookID, completionEvent)

@@ -895,6 +895,42 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, messages)
 }
 
+// @Summary Get session usage
+// @Description Get the accumulated token usage for a given session
+// @Tags agents
+// @Produce json
+// @Param id path string true "Session ID"
+// @Success 200 {object} models.SessionUsage
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /agents/sessions/{id}/usage [get]
+func (h *agentHandlers) handleGetSessionUsage(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+	claims := ClaimsFromContext(r.Context())
+
+	var agentID string
+	err := h.server.db.Pool.QueryRow(r.Context(), `
+		SELECT agent_id FROM agent_sessions WHERE id = $1
+	`, sessionID).Scan(&agentID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+
+	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "view")
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
+	usage, err := h.server.agentEngine.SessionStore().GetUsage(r.Context(), sessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, usage)
+}
+
 // @Summary Update session title
 // @Description Update the title of an agent session
 // @Tags agents

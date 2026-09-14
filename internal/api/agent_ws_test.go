@@ -406,6 +406,70 @@ func TestAgentWSToolCallIDAndDoneContent(t *testing.T) {
 	}
 }
 
+// token_update, done and reconnect_sync must all carry the session_usage
+// snapshot so a reloaded panel can restore the meter without recomputing it.
+func TestAgentWSSessionUsageEvents(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	finalBody := `{"id":"x","model":"gpt-4","choices":[{"message":{"content":"hello world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":120,"completion_tokens":10,"total_tokens":130}}`
+	llm := mockLLMResponses(t, []string{finalBody})
+	defer llm.Close()
+
+	email := fmt.Sprintf("ws-usage-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "WS Usage Org")
+	nbID := createNotebook(t, srv, token, "WS Usage NB")
+	mcID := createModelConfigWithURL(t, srv, token, llm.URL)
+	agentID := createAgent(t, srv, token, mcID)
+	sessionID := createAgentSession(t, srv, token, agentID, nbID)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/ws/agents/" + sessionID + "?token=" + token
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial agent ws: %v", err)
+	}
+	defer conn.Close()
+
+	if err := conn.WriteJSON(map[string]string{"type": "message", "content": "hi"}); err != nil {
+		t.Fatalf("write message: %v", err)
+	}
+
+	found := readWSUntil(t, conn, map[string]bool{"token_update": true, "done": true})
+
+	eventUsage, _ := found["token_update"]["session_usage"].(map[string]any)
+	if eventUsage == nil {
+		t.Fatalf("token_update missing session_usage: %v", found["token_update"])
+	}
+	if eventUsage["input"] != float64(120) || eventUsage["output"] != float64(10) {
+		t.Fatalf("token_update session_usage = %v", eventUsage)
+	}
+	if eventUsage["model_calls"] != float64(1) || eventUsage["context_tokens"] != float64(120) || eventUsage["context_window"] != float64(128000) {
+		t.Fatalf("token_update session_usage counters = %v", eventUsage)
+	}
+
+	doneData, _ := found["done"]["data"].(map[string]any)
+	doneUsage, _ := doneData["session_usage"].(map[string]any)
+	if doneUsage == nil {
+		t.Fatalf("done missing session_usage: %v", found["done"])
+	}
+	if doneUsage["input"] != float64(120) || doneUsage["model_calls"] != float64(1) {
+		t.Fatalf("done session_usage = %v", doneUsage)
+	}
+
+	if err := conn.WriteJSON(map[string]string{"type": "reconnect", "last_message_id": ""}); err != nil {
+		t.Fatalf("write reconnect: %v", err)
+	}
+	sync := readWSUntil(t, conn, map[string]bool{"reconnect_sync": true})["reconnect_sync"]
+	syncUsage, _ := sync["session_usage"].(map[string]any)
+	if syncUsage == nil {
+		t.Fatalf("reconnect_sync missing session_usage: %v", sync)
+	}
+	if syncUsage["input"] != float64(120) || syncUsage["output"] != float64(10) || syncUsage["model_calls"] != float64(1) {
+		t.Fatalf("reconnect_sync session_usage = %v", syncUsage)
+	}
+}
+
 // Reconnect replays the stream buffer (with seq) and reconnect_sync reports
 // server_seq for reconciliation.
 func TestAgentWSReconnectReplaysBuffer(t *testing.T) {
