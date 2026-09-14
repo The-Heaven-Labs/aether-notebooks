@@ -244,7 +244,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 				// responses cause the frontend to lose older messages since it
 				// does a full replacement, not an append.
 				rows, err := s.db.Pool.Query(ctx, `
-					SELECT id, role, content, tool_calls, reasoning_content, image_ids, COALESCE(duration_ms,0), COALESCE(tokens_direct,0), created_at, tool_call_id FROM agent_messages
+					SELECT id, role, content, tool_calls, reasoning_content, image_ids, COALESCE(duration_ms,0), COALESCE(tokens_direct,0), COALESCE(tokens_after,0), created_at, tool_call_id FROM agent_messages
 					WHERE session_id = $1 ORDER BY created_at
 				`, currentSessionID)
 				if err == nil {
@@ -517,7 +517,8 @@ func scanAgentMessages(rows interface {
 		var reasoning *string
 		var imageIDs []string
 		var toolCallID *string
-		rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &reasoning, &imageIDs, &m.DurationMs, &m.TokensDirect, &m.CreatedAt, &toolCallID)
+		var tokensAfter int
+		rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &reasoning, &imageIDs, &m.DurationMs, &m.TokensDirect, &tokensAfter, &m.CreatedAt, &toolCallID)
 		if content != nil {
 			m.Content = *content
 		}
@@ -529,6 +530,9 @@ func scanAgentMessages(rows interface {
 		}
 		m.ToolCallID = toolCallID
 		m.ImageIDs = imageIDs
+		if tokensAfter > 0 {
+			m.TokensAfter = &tokensAfter
+		}
 		messages = append(messages, m)
 	}
 	rows.Close()

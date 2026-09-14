@@ -106,6 +106,7 @@ export function mapServerMessagesToChat(serverMsgs: any[] | null | undefined): T
     } else {
       if (m.role === 'compaction') {
         if ((m as any).tokens_direct) base.tokens_before = (m as any).tokens_direct
+        if (m.tokens_after) base.tokens_after = m.tokens_after
         base.content = m.content || ''
       }
       out.push(base)

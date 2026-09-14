@@ -180,6 +180,80 @@ func TestAgentWSReconnect(t *testing.T) {
 	}
 }
 
+// A persisted compaction row must carry its real before/after token counts
+// through reconnect_sync and the REST messages endpoint, so the divider keeps
+// its numbers after a reload.
+func TestAgentWSReconnectCompactionTokens(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	email := fmt.Sprintf("ws-compaction-tokens-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "WS Compaction Tokens Org")
+	nbID := createNotebook(t, srv, token, "WS Compaction Tokens NB")
+	mcID := createModelConfig(t, srv, token)
+	agentID := createAgent(t, srv, token, mcID)
+	sessionID := createAgentSession(t, srv, token, agentID, nbID)
+
+	if _, err := srv.DB().Pool.Exec(context.Background(), `
+		INSERT INTO agent_messages (session_id, role, content, tokens_direct, tokens_after, duration_ms, created_at)
+		VALUES ($1, 'compaction', 'earlier context summary', 1200, 400, 0, NOW())
+	`, sessionID); err != nil {
+		t.Fatalf("insert compaction message: %v", err)
+	}
+
+	assertCounts := func(t *testing.T, msg map[string]any) {
+		t.Helper()
+		if got, _ := msg["tokens_direct"].(float64); got != 1200 {
+			t.Fatalf("tokens_direct = %v, want 1200 (%v)", msg["tokens_direct"], msg)
+		}
+		if got, _ := msg["tokens_after"].(float64); got != 400 {
+			t.Fatalf("tokens_after = %v, want 400 (%v)", msg["tokens_after"], msg)
+		}
+	}
+
+	t.Run("reconnect_sync", func(t *testing.T) {
+		wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/ws/agents/" + sessionID + "?token=" + token
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+		if err != nil {
+			t.Fatalf("dial agent ws: %v", err)
+		}
+		defer conn.Close()
+
+		if err := conn.WriteJSON(map[string]string{"type": "reconnect", "last_message_id": ""}); err != nil {
+			t.Fatalf("write reconnect: %v", err)
+		}
+		found := readWSUntil(t, conn, map[string]bool{"reconnect_sync": true})
+		msgs, _ := found["reconnect_sync"]["messages"].([]any)
+		if len(msgs) != 1 {
+			t.Fatalf("messages = %v, want the single compaction row", found["reconnect_sync"]["messages"])
+		}
+		msg, _ := msgs[0].(map[string]any)
+		if msg["role"] != "compaction" {
+			t.Fatalf("role = %v, want compaction", msg["role"])
+		}
+		assertCounts(t, msg)
+	})
+
+	t.Run("messages endpoint", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/sessions/"+sessionID+"/messages", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("messages: %d %s", rec.Code, rec.Body.String())
+		}
+		var msgs []map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&msgs); err != nil {
+			t.Fatalf("decode messages: %v", err)
+		}
+		if len(msgs) != 1 {
+			t.Fatalf("messages = %v, want the single compaction row", msgs)
+		}
+		assertCounts(t, msgs[0])
+	})
+}
+
 func createModelConfigWithURL(t *testing.T, srv *api.Server, token, baseURL string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{

@@ -102,14 +102,14 @@ function formatTokens(n: number): string {
   return String(n)
 }
 
-function CompactionDivider({ msg, fmtTime }: { msg: ChatMessage; fmtTime: (iso?: string) => string }) {
+export function CompactionDivider({ msg, fmtTime }: { msg: ChatMessage; fmtTime: (iso?: string) => string }) {
   const [open, setOpen] = useState(false)
   return (
     <div style={{ ...styles.message, background: 'var(--bg-elevated)', border: '1px dashed var(--border)', borderRadius: 6, padding: '8px 10px', fontSize: 11 }}>
       <div onClick={() => setOpen(o => !o)} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, userSelect: 'none' }}>
         <span>{open ? '▼' : '▶'} ⚙ Context compacted</span>
         {msg.tokens_before !== undefined && msg.tokens_after !== undefined ? (
-          <span style={{ opacity: 0.6, fontSize: 10 }}>{msg.tokens_before?.toLocaleString()} → {msg.tokens_after?.toLocaleString()} tokens</span>
+          <span style={{ opacity: 0.6, fontSize: 10 }}>{formatTokens(msg.tokens_before)} → {formatTokens(msg.tokens_after)} (~)</span>
         ) : null}
         <span style={{ marginLeft: 'auto', opacity: 0.5, fontSize: 10 }}>{fmtTime(msg.created_at)}</span>
       </div>

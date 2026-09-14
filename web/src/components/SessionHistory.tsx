@@ -32,6 +32,11 @@ interface SessionHistoryProps {
   onResumeSession: (session: SessionSummary) => void
 }
 
+function truncateSummary(content: string | undefined, max = 400): string {
+  if (!content) return ''
+  return content.length > max ? `${content.slice(0, max).trimEnd()}…` : content
+}
+
 export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHistoryProps) {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [selectedSession, setSelectedSession] = useState<SessionSummary | null>(null)
@@ -96,13 +101,20 @@ export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHist
             <div style={styles.loadingText}>No messages</div>
           ) : (
             messages.map((msg) => (
-              <div key={msg.id} style={{
-                ...styles.historyMessage,
-                ...(msg.role === 'user' ? styles.userBubble : msg.role === 'assistant' ? styles.assistantBubble : styles.toolBubble),
-              }}>
-                {msg.image_ids && msg.image_ids.length > 0 && <AgentMessageImages images={msg.image_ids} />}
-                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={chatMarkdownComponents}>{msg.content || (msg.tool_calls ? 'Tool calls' : '(empty)')}</ReactMarkdown>
-              </div>
+              msg.role === 'compaction' ? (
+                <div key={msg.id} style={{ ...styles.historyMessage, ...styles.compactionBubble }}>
+                  <div style={styles.compactionLabel}>⚙ Context compacted</div>
+                  <div style={styles.compactionSummary}>{truncateSummary(msg.content)}</div>
+                </div>
+              ) : (
+                <div key={msg.id} style={{
+                  ...styles.historyMessage,
+                  ...(msg.role === 'user' ? styles.userBubble : msg.role === 'assistant' ? styles.assistantBubble : styles.toolBubble),
+                }}>
+                  {msg.image_ids && msg.image_ids.length > 0 && <AgentMessageImages images={msg.image_ids} />}
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={chatMarkdownComponents}>{msg.content || (msg.tool_calls ? 'Tool calls' : '(empty)')}</ReactMarkdown>
+                </div>
+              )
             ))
           )}
         </div>
@@ -248,6 +260,12 @@ const styles: Record<string, React.CSSProperties> = {
   userBubble: { background: 'var(--accent)', color: 'white', alignSelf: 'flex-end' },
   assistantBubble: { background: 'var(--bg-secondary)', color: 'var(--text-primary)', alignSelf: 'flex-start' },
   toolBubble: { background: 'rgba(var(--accent-rgb, 59, 130, 246), 0.1)', color: 'var(--text-secondary)', alignSelf: 'flex-start', fontSize: 11 },
+  compactionBubble: {
+    background: 'var(--bg-elevated)', color: 'var(--text-secondary)', alignSelf: 'stretch',
+    border: '1px dashed var(--border)', fontSize: 12,
+  },
+  compactionLabel: { fontWeight: 600, opacity: 0.8, marginBottom: 4 },
+  compactionSummary: { whiteSpace: 'pre-wrap' as const, opacity: 0.9 },
   loadingText: { textAlign: 'center', padding: 20, color: 'var(--text-muted)', fontSize: 13 },
   error: { padding: '8px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--error, #ef4444)', borderRadius: 6, color: 'var(--error, #ef4444)', fontSize: 13, margin: 8 },
 }

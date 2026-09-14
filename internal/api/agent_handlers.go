@@ -825,7 +825,7 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 	}
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT id, role, content, tool_calls, tool_call_id, reasoning_content, image_ids, tokens_input, tokens_output, duration_ms, created_at
+		SELECT id, role, content, tool_calls, tool_call_id, reasoning_content, image_ids, tokens_input, tokens_output, COALESCE(tokens_direct,0), COALESCE(tokens_after,0), duration_ms, created_at
 		FROM agent_messages WHERE session_id = $1 ORDER BY created_at ASC
 	`, sessionID)
 	if err != nil {
@@ -844,17 +844,20 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 		var reasoning *string
 		var imageIDs []string
 		var tokensInput, tokensOutput *int
+		var tokensDirect, tokensAfter int
 		var durationMs int
 		var createdAt time.Time
-		if err := rows.Scan(&id, &role, &content, &toolCalls, &toolCallID, &reasoning, &imageIDs, &tokensInput, &tokensOutput, &durationMs, &createdAt); err != nil {
+		if err := rows.Scan(&id, &role, &content, &toolCalls, &toolCallID, &reasoning, &imageIDs, &tokensInput, &tokensOutput, &tokensDirect, &tokensAfter, &durationMs, &createdAt); err != nil {
 			slog.Error("get session messages scan failed", "session_id", sessionID, "error", err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		msg := map[string]any{
-			"id":         id,
-			"role":       role,
-			"created_at": createdAt,
+			"id":            id,
+			"role":          role,
+			"tokens_direct": tokensDirect,
+			"tokens_after":  tokensAfter,
+			"created_at":    createdAt,
 		}
 		if content != nil {
 			msg["content"] = *content
