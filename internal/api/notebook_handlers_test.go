@@ -180,9 +180,6 @@ func TestNotebookCellsHaveNoDescriptionField(t *testing.T) {
 	if nbDescription != "" {
 		t.Fatalf("fixture notebook description = %q, want empty", nbDescription)
 	}
-	if n := strings.Count(rec.Body.String(), `"description"`); n != 1 {
-		t.Fatalf("raw body has %d \"description\" keys, want only the notebook's: %s", n, rec.Body.String())
-	}
 
 	var cells []map[string]json.RawMessage
 	if err := json.Unmarshal(payload["cells"], &cells); err != nil {

@@ -103,3 +103,38 @@ func TestMigrateAgentUsageColumns(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrateDropsCellsDescription(t *testing.T) {
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+	}
+
+	db, err := database.Connect(context.Background(), dsn, "")
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	var n int
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM information_schema.columns WHERE table_name='cells' AND column_name='description'`).Scan(&n); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("cells.description still exists after migrations")
+	}
+
+	var applied int
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version='098_drop_cells_description'`).Scan(&applied); err != nil {
+		t.Fatalf("schema_migrations query: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("V098 not recorded (count=%d)", applied)
+	}
+}

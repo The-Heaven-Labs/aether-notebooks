@@ -185,6 +185,15 @@ Evidence: relay fetches/PUTs `/internal/yjs/{id}` with no `Authorization` (401),
   - P5/P6: scripted long session (small `context_window` + threshold on a dev model config) → divider shows real before → after, meter shows current context, hover totals update without a new user message; reconnect restores.
 - P1/P3: Go tool tests + `read_cell`/REST responses; quick browser check that cells still render/limit select works after the migration.
 
+## Deployment notes
+
+- **V098 is destructive and not backward compatible.** It drops `cells.description` irreversibly, and the *old* binary still selects/returns that column. Do **not** run `--migrate-only` or a standalone migration job ahead of a rolling deploy — applying it first would break every not-yet-upgraded instance's cell queries. All API instances must be upgraded together; a single-instance restart is safe (the `DROP COLUMN` takes a brief `ACCESS EXCLUSIVE` lock on `cells`).
+- **Breaking surfaces to repeat in the PR body / release notes:**
+  - `cells.description` column dropped — existing cell descriptions are permanently lost (approved breaking change).
+  - REST cell JSON no longer contains `description`; a still-sent `description` argument is silently ignored.
+  - CLI `Cell` JSON no longer contains `description`.
+  - MCP / agent `read_cell` output no longer returns `description`.
+
 ## Risks & mitigations
 
 - **Durable compaction changes prompt content** (model sees summary instead of full history). Mitigation: boundary sanitization reuses `sanitizeChatMessages`; tests assert exact message sets; `/summarize` untouched.
