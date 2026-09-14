@@ -1729,6 +1729,10 @@ func TestCreateCellLimit(t *testing.T) {
 			broadcasts = append(broadcasts, m)
 		}
 	}
+	broadcastCell := func() map[string]any {
+		cell, _ := broadcasts[len(broadcasts)-1]["cell"].(map[string]any)
+		return cell
+	}
 
 	create := func(extra map[string]any) (map[string]any, error) {
 		args := map[string]any{"notebook_id": nbID, "type": "code", "source": "SELECT 1", "title": "T"}
@@ -1759,6 +1763,9 @@ func TestCreateCellLimit(t *testing.T) {
 	if res["limit"] != 1000 {
 		t.Fatalf("result limit = %v, want 1000", res["limit"])
 	}
+	if got := broadcastCell()["limit"]; got != 1000 {
+		t.Fatalf("default broadcast limit = %v, want 1000", got)
+	}
 
 	// explicit
 	res, err = create(map[string]any{"limit": 250})
@@ -1767,6 +1774,9 @@ func TestCreateCellLimit(t *testing.T) {
 	}
 	if res["limit"] != 250 {
 		t.Fatalf("result limit = %v, want 250", res["limit"])
+	}
+	if got := broadcastCell()["limit"]; got != 250 {
+		t.Fatalf("explicit broadcast limit = %v, want 250", got)
 	}
 
 	// zero -> unlimited (NULL)
@@ -1781,6 +1791,9 @@ func TestCreateCellLimit(t *testing.T) {
 	if limit != nil {
 		t.Fatalf("zero limit = %v, want NULL", *limit)
 	}
+	if got := broadcastCell()["limit"]; got != nil {
+		t.Fatalf("zero broadcast limit = %v, want null", got)
+	}
 
 	// negative -> tool error, no insert
 	if _, err := create(map[string]any{"limit": -1}); err == nil {
@@ -1790,11 +1803,6 @@ func TestCreateCellLimit(t *testing.T) {
 	_ = db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM cells WHERE notebook_id=$1`, nbID).Scan(&count)
 	if count != 3 {
 		t.Fatalf("cells = %d, want 3", count)
-	}
-	// broadcast carries the effective limit
-	last := broadcasts[len(broadcasts)-1]["cell"].(map[string]any)
-	if last["limit"] == nil {
-		t.Fatalf("broadcast missing limit: %v", last)
 	}
 }
 
