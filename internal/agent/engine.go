@@ -250,16 +250,17 @@ func NewEngine(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client) *Engi
 // compactChatHistory replaces older conversation history with an LLM-generated summary
 // when the token count approaches the context window limit.
 // It keeps the system prompt (index 0) and the last 8 messages, summarizing everything in between.
-// Returns the compacted messages and the summary text (empty if no compaction).
-func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsgs []ChatMessage, masterKey []byte, sessionID string) ([]ChatMessage, string) {
+// Returns the compacted messages, the summary text (empty if no compaction), and the
+// summarization call's prompt/completion token usage.
+func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsgs []ChatMessage, masterKey []byte, sessionID string) ([]ChatMessage, string, int, int) {
 	if len(chatMsgs) <= 10 {
-		return chatMsgs, ""
+		return chatMsgs, "", 0, 0
 	}
 
 	// Keep system message (index 0) and last 8 messages (recent context + current turn)
 	keepEnd := len(chatMsgs) - 8
 	if keepEnd <= 1 {
-		return chatMsgs, ""
+		return chatMsgs, "", 0, 0
 	}
 
 	oldMsgs := chatMsgs[1:keepEnd]
@@ -280,7 +281,7 @@ func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsg
 	}, nil, masterKey)
 	if err != nil {
 		slog.Warn("compaction summarization failed", "session_id", sessionID, "error", err)
-		return chatMsgs, ""
+		return chatMsgs, "", 0, 0
 	}
 
 	summary := ""
@@ -288,7 +289,7 @@ func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsg
 		summary = resp.Choices[0].Message.Content
 	}
 	if summary == "" {
-		return chatMsgs, ""
+		return chatMsgs, "", 0, 0
 	}
 
 	compacted := make([]ChatMessage, 0, keepEnd+8)
@@ -300,7 +301,7 @@ func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsg
 	compacted = append(compacted, chatMsgs[keepEnd:]...)
 
 	slog.Info("context compaction completed", "session_id", sessionID, "old_msgs", len(oldMsgs), "new_msgs", len(compacted))
-	return compacted, summary
+	return compacted, summary, resp.Usage.PromptTokens, resp.Usage.CompletionTokens
 }
 
 // sanitizeChatMessages ensures every assistant message with tool_calls has
@@ -587,8 +588,26 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		}
 	}
 
+	// The latest persisted compaction row is a durable boundary: everything
+	// before it was summarized into that row, so rebuilding history starts
+	// there and injects the summary as a system message.
+	boundary := -1
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "compaction" {
+			boundary = i
+			break
+		}
+	}
+
 	for i, m := range messages {
+		if i < boundary {
+			continue
+		}
 		if m.Role == "compaction" {
+			chatMsgs = append(chatMsgs, ChatMessage{
+				Role:    "system",
+				Content: "The following is a summary of earlier conversation history:\n\n" + m.Content + "\n\n(older context was compacted to stay within context window limits)",
+			})
 			continue
 		}
 		if m.Role == "assistant" {
@@ -884,10 +903,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		// Auto-compact if approaching context window limit (use current context, not cumulative)
 		if compactionThreshold > 0 && currentContextTokens > 0 && currentContextTokens > contextWindow*compactionThreshold/100 && len(chatMsgs) > 10 {
 			beforeCtx := currentContextTokens
-			compacted, summary := e.compactChatHistory(ctx, llmClient, chatMsgs, masterKey, sessionID)
+			compacted, summary, promptTokens, completionTokens := e.compactChatHistory(ctx, llmClient, chatMsgs, masterKey, sessionID)
 			if summary != "" && len(compacted) < len(chatMsgs) {
+				afterEstimate := e.tokenCounter.CountMessages(compacted, modelName)
 				chatMsgs = compacted
-				slog.Info("context compaction triggered", "session_id", sessionID, "tokens", beforeCtx, "context_window", contextWindow)
+				slog.Info("context compaction triggered", "session_id", sessionID, "tokens", beforeCtx, "context_window", contextWindow, "tokens_after", afterEstimate, "summary_prompt_tokens", promptTokens, "summary_completion_tokens", completionTokens)
 				// Persist compaction divider for reconnect_sync
 				compactionMsg := &models.AgentMessage{
 					ID:           uuid.New().String(),
@@ -895,13 +915,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					Role:         "compaction",
 					Content:      summary,
 					TokensDirect: beforeCtx,
+					TokensAfter:  &afterEstimate,
 					CreatedAt:    time.Now(),
 				}
 				_ = e.session.AppendMessage(ctx, compactionMsg)
 				if onEvent != nil {
 					onEvent(EngineEvent{
 						Type:    "context_compacted",
-						Tokens:  &TokenBreakdown{Input: beforeCtx, ContextCurrent: beforeCtx},
+						Tokens:  &TokenBreakdown{Input: beforeCtx, ContextCurrent: afterEstimate},
 						Summary: summary,
 					})
 				}
