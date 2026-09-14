@@ -131,10 +131,10 @@ func TestMigrateDropsCellsDescription(t *testing.T) {
 	}
 
 	var applied int
-	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version='098_drop_cells_description'`).Scan(&applied); err != nil {
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version='100_drop_cells_description'`).Scan(&applied); err != nil {
 		t.Fatalf("schema_migrations query: %v", err)
 	}
 	if applied != 1 {
-		t.Fatalf("V098 not recorded (count=%d)", applied)
+		t.Fatalf("V100 not recorded (count=%d)", applied)
 	}
 }

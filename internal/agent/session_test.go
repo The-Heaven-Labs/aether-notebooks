@@ -31,7 +31,7 @@ func TestSessionStoreTokensAfterRoundTrip(t *testing.T) {
 
 	store := agent.NewSessionStore(db.Pool)
 	ctx := context.Background()
-	session, err := store.CreateSession(ctx, agentID, nbID, userID, 10, nil)
+	session, err := store.CreateSession(ctx, agentID, nbID, userID, 10, nil, false, false, false)
 	require.NoError(t, err)
 
 	base := time.Now()
@@ -70,7 +70,7 @@ func TestSessionStoreGetMessagesOrderByIDAsc(t *testing.T) {
 
 	store := agent.NewSessionStore(db.Pool)
 	ctx := context.Background()
-	session, err := store.CreateSession(ctx, agentID, nbID, userID, 10, nil)
+	session, err := store.CreateSession(ctx, agentID, nbID, userID, 10, nil, false, false, false)
 	require.NoError(t, err)
 
 	// Canonical UUID text ordering matches Postgres uuid comparison, so keep

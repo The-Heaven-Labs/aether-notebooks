@@ -30,8 +30,8 @@ Seven independent problems reported after the chart/legend and MCP work. All wer
 
 ### Migrations
 
-- `V098__drop_cells_description.sql` — `ALTER TABLE cells DROP COLUMN IF EXISTS description;`
-- `V099__agent_usage.sql` — `agent_messages.tokens_after INT` (nullable) plus `agent_sessions` columns: `context_tokens INT`, `context_window INT`, `total_input BIGINT`, `total_output BIGINT`, `total_reasoning BIGINT`, `total_cache_read BIGINT`, `total_model_calls INT`, `total_subagent_input BIGINT`, `total_subagent_output BIGINT` (all `NOT NULL DEFAULT 0`).
+- `V100__drop_cells_description.sql` — `ALTER TABLE cells DROP COLUMN IF EXISTS description;`
+- `V101__agent_usage.sql` — `agent_messages.tokens_after INT` (nullable) plus `agent_sessions` columns: `context_tokens INT`, `context_window INT`, `total_input BIGINT`, `total_output BIGINT`, `total_reasoning BIGINT`, `total_cache_read BIGINT`, `total_model_calls INT`, `total_subagent_input BIGINT`, `total_subagent_output BIGINT` (all `NOT NULL DEFAULT 0`).
 
 Migration directory is `internal/database/migrations/` (embedded; AGENTS.md's `migrations/` path is stale). V097 is the current head.
 
@@ -76,7 +76,7 @@ Migration directory is `internal/database/migrations/` (embedded; AGENTS.md's `m
 
 **Design (full removal)**
 
-- Migration `V098` drops `cells.description`.
+- Migration `V100` drops `cells.description`.
 - Remove from `models.Cell` and `models.SnapshotCell`.
 - Remove every cell-path SELECT/INSERT/UPDATE/RETURNING/scan: `internal/api/cell_handlers.go` (create/update/duplicate), `internal/api/cell_history.go:220-225`, `internal/api/notebook_handlers.go` (create-with-cells, get notebook, clone), `internal/agent/snapshot.go` (capture + restore).
 - Agent tools: delete `description` from `create_cell` (schema, required list, validation, INSERT, broadcast), `update_cell` (schema, SQL), and `read_cell` (struct, SELECT, output map).
@@ -117,7 +117,7 @@ Migration directory is `internal/database/migrations/` (embedded; AGENTS.md's `m
 
 **Design**
 
-- **Boundary semantics:** on rebuild, find the latest non-empty compaction row deterministically (`created_at, id`; add the id tiebreaker to `GetMessages`), inject its summary as a system message immediately after the main system prompt, and rewind to the start of the tail it kept (`kept_count`, V100; `8` for legacy rows) so the prompt is summary, then the unsummarized tail, then post-boundary messages. Older compaction rows inside the window are superseded and skipped; messages before the window are summarized away. Existing `sanitizeChatMessages` (`engine.go:309-368`, already called at `:645`) heals tool-call pairing at the cut.
+- **Boundary semantics:** on rebuild, find the latest non-empty compaction row deterministically (`created_at, id`; add the id tiebreaker to `GetMessages`), inject its summary as a system message immediately after the main system prompt, and rewind to the start of the tail it kept (`kept_count`, V102; `8` for legacy rows) so the prompt is summary, then the unsummarized tail, then post-boundary messages. Older compaction rows inside the window are superseded and skipped; messages before the window are summarized away. Existing `sanitizeChatMessages` (`engine.go:309-368`, already called at `:645`) heals tool-call pairing at the cut.
 - **Truthful counts:** `compactChatHistory` returns the summarization usage and computes `after := tokenCounter.CountMessages(compacted)`. The compaction row stores `tokens_direct = before` (existing) and `tokens_after = after` (new column). The live event sends `{Input: before, ContextCurrent: after}`.
 - **Plumbing:** messages endpoint and `reconnect_sync` return `tokens_direct` and `tokens_after`; `agentTranscript.ts` maps both; the divider renders `before → after (~)`; `SessionHistory` renders compaction as the same summary block instead of a generic tool bubble.
 - `/summarize` stays a session fork.
@@ -133,7 +133,7 @@ Migration directory is `internal/database/migrations/` (embedded; AGENTS.md's `m
 
 **Design**
 
-- Persisted session usage (V099 columns listed above), maintained by the engine:
+- Persisted session usage (V101 columns listed above), maintained by the engine:
   - after every LLM call: add that call's prompt/completion/reasoning/cached tokens, `model_calls += 1`, set `context_tokens = resp.Usage.PromptTokens`;
   - after the summarization call: same (compaction is part of session cost);
   - on subagent completion: add `subagent_tasks.tokens_input/output` to the parent session's `total_subagent_*`.
@@ -177,7 +177,7 @@ Evidence: relay fetches/PUTs `/internal/yjs/{id}` with no `Authorization` (401),
 
 - Go: `AETHER_RATE_LIMIT_REGISTER=500 go test ./... -count=1 -timeout 30m` (real Postgres; `task check` times out under load).
 - Frontend: `cd web && npx tsc -p tsconfig.app.json --noEmit && npm run test:run && npm run build` (`npx tsc --noEmit` is a no-op).
-- Migrations run at server startup; verify V098/V099 apply cleanly on a populated dev DB.
+- Migrations run at server startup; verify V100/V101 apply cleanly on a populated dev DB.
 - Browser (agent-browser + image analyzer, dev stack at `:8088`, `nova@heaven-labs.com`/`nova123`):
   - P2: trigger an agent create (run=true) → cell scrolls/highlights on create and on completion; chat input keeps focus.
   - P4: select part of a value in the detail view → Ctrl+C copies the selection; no selection → whole value; leaving the view restores normal shortcuts.
@@ -187,7 +187,7 @@ Evidence: relay fetches/PUTs `/internal/yjs/{id}` with no `Authorization` (401),
 
 ## Deployment notes
 
-- **V098 is destructive and not backward compatible.** It drops `cells.description` irreversibly, and the *old* binary still selects/returns that column. Do **not** run `--migrate-only` or a standalone migration job ahead of a rolling deploy — applying it first would break every not-yet-upgraded instance's cell queries. All API instances must be upgraded together; a single-instance restart is safe (the `DROP COLUMN` takes a brief `ACCESS EXCLUSIVE` lock on `cells`).
+- **V100 is destructive and not backward compatible.** It drops `cells.description` irreversibly, and the *old* binary still selects/returns that column. Do **not** run `--migrate-only` or a standalone migration job ahead of a rolling deploy — applying it first would break every not-yet-upgraded instance's cell queries. All API instances must be upgraded together; a single-instance restart is safe (the `DROP COLUMN` takes a brief `ACCESS EXCLUSIVE` lock on `cells`).
 - **Breaking surfaces to repeat in the PR body / release notes:**
   - `cells.description` column dropped — existing cell descriptions are permanently lost (approved breaking change).
   - REST cell JSON no longer contains `description`; a still-sent `description` argument is silently ignored.
@@ -204,7 +204,7 @@ Evidence: relay fetches/PUTs `/internal/yjs/{id}` with no `Authorization` (401),
 
 ## Implementation order (input for the plan)
 
-1. Migrations V098/V099 + models.
+1. Migrations V100/V101 + models.
 2. P3 removal sweep (Go + web) with tests.
 3. P1 limit parameter with tests.
 4. P4 copy handler + global reset with tests.

@@ -22,7 +22,7 @@ func TestSessionUsageAccumulates(t *testing.T) {
 
 	store := agent.NewSessionStore(db.Pool)
 	ctx := context.Background()
-	session, err := store.CreateSession(ctx, agentID, nbID, userID, 10, nil)
+	session, err := store.CreateSession(ctx, agentID, nbID, userID, 10, nil, false, false, false)
 	require.NoError(t, err)
 
 	require.NoError(t, store.AddUsage(ctx, session.ID, agent.SessionUsageDelta{
@@ -80,7 +80,7 @@ func TestProcessMessagePersistsSessionUsage(t *testing.T) {
 	require.NoError(t, err)
 
 	store := agent.NewSessionStore(db.Pool)
-	session, err := store.CreateSession(ctx, agentID, nbID, userID, 10, nil)
+	session, err := store.CreateSession(ctx, agentID, nbID, userID, 10, nil, false, false, false)
 	require.NoError(t, err)
 
 	engine := agent.NewEngine(ctx, db.Pool, nil)
@@ -165,7 +165,7 @@ func TestProcessMessagePersistsCompactionUsage(t *testing.T) {
 	require.NoError(t, err)
 
 	store := agent.NewSessionStore(db.Pool)
-	session, err := store.CreateSession(ctx, agentID, nbID, userID, 10, nil)
+	session, err := store.CreateSession(ctx, agentID, nbID, userID, 10, nil, false, false, false)
 	require.NoError(t, err)
 
 	for i := 0; i < 12; i++ {

@@ -348,6 +348,19 @@ The `ToolDef` struct has a `ConfirmRequired bool` field. When set, the backend s
 
 The confirm flow: backend → `tool_confirm_required` event → frontend shows dialog → user approves/denies → frontend sends `tool_confirm` → backend executes or skips the tool.
 
+### Headless sessions (`auto_approve_tools` / `auto_answer_questions`)
+
+Both are columns on `agent_sessions`, set only at session creation via `POST /agents/{id}/session`, and default to `false`. They exist because a session with no interactive client otherwise blocks until the context deadline — the backend emits its event and waits on a channel nobody is listening to.
+
+| Flag | Effect when `true` |
+|---|---|
+| `auto_approve_tools` | Engine resolves `tool_confirm_required` itself, approving the call |
+| `auto_answer_questions` | Engine resolves `ask_question` itself, answering that no interactive user is reachable — it does **not** pick one of the offered options |
+
+They are independent: approving a tool the agent already chose is a far smaller step than proceeding with no human input at all, so setting one never implies the other. Forked sessions (`summarizeAndNewSession`) inherit both from the parent.
+
+**These are unrelated to the frontend's "Auto-Approve" checkbox**, which is ephemeral React state (`autoConfirmTool`, defaults to `true`) that replies to the WS event from the browser. The browser never sends these flags, so UI-created sessions persist `false` for both. Do not wire the checkbox to these columns — it would turn a resettable, default-on UI preference into a durable database bit.
+
 ## DB Migration
 
 Agent updates (`agent_updated_at`) now also update the local cell cache via WebSocket broadcast when `user_email` is `agent@aether`. This ensures cell content changes made by the agent appear without requiring a page refresh.

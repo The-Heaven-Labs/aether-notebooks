@@ -21,20 +21,18 @@ func NewSessionStore(pool *pgxpool.Pool) *SessionStore {
 	return &SessionStore{pool: pool}
 }
 
-func (s *SessionStore) CreateSession(ctx context.Context, agentID, notebookID, userID string, maxTurns int, title *string, adminMode ...bool) (*models.AgentSession, error) {
-	var am bool
-	if len(adminMode) > 0 {
-		am = adminMode[0]
-	}
+func (s *SessionStore) CreateSession(ctx context.Context, agentID, notebookID, userID string, maxTurns int, title *string, adminMode, autoApproveTools, autoAnswerQuestions bool) (*models.AgentSession, error) {
 	session := &models.AgentSession{
-		ID:         uuid.New().String(),
-		AgentID:    agentID,
-		NotebookID: notebookID,
-		UserID:     userID,
-		MaxTurns:   maxTurns,
-		Title:      title,
-		CreatedAt:  time.Now(),
-		AdminMode:  am,
+		ID:                  uuid.New().String(),
+		AgentID:             agentID,
+		NotebookID:          notebookID,
+		UserID:              userID,
+		MaxTurns:            maxTurns,
+		Title:               title,
+		CreatedAt:           time.Now(),
+		AdminMode:           adminMode,
+		AutoApproveTools:    autoApproveTools,
+		AutoAnswerQuestions: autoAnswerQuestions,
 	}
 
 	var nbID *string
@@ -42,13 +40,13 @@ func (s *SessionStore) CreateSession(ctx context.Context, agentID, notebookID, u
 		nbID = &session.NotebookID
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, title, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, session.ID, session.AgentID, nbID, session.UserID, session.MaxTurns, session.Title, session.CreatedAt)
+		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, title, created_at, auto_approve_tools, auto_answer_questions)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, session.ID, session.AgentID, nbID, session.UserID, session.MaxTurns, session.Title, session.CreatedAt, session.AutoApproveTools, session.AutoAnswerQuestions)
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
 	}
-	if am {
+	if adminMode {
 		s.adminModes.Store(session.ID, true)
 	}
 
@@ -81,10 +79,12 @@ func (s *SessionStore) GetSession(ctx context.Context, sessionID string) (*model
 	var notebookID *string
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, agent_id, notebook_id, user_id, max_turns, ended_at, title, created_at,
+			auto_approve_tools, auto_answer_questions,
 			context_tokens, context_window, total_input, total_output, total_reasoning,
 			total_cache_read, total_model_calls, total_subagent_input, total_subagent_output
 		FROM agent_sessions WHERE id = $1
 	`, sessionID).Scan(&session.ID, &session.AgentID, &notebookID, &session.UserID, &session.MaxTurns, &endedAt, &title, &session.CreatedAt,
+		&session.AutoApproveTools, &session.AutoAnswerQuestions,
 		&session.ContextTokens, &session.ContextWindow, &session.TotalInput, &session.TotalOutput, &session.TotalReasoning,
 		&session.TotalCacheRead, &session.TotalModelCalls, &session.TotalSubagentInput, &session.TotalSubagentOutput)
 	if err != nil {

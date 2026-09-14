@@ -4,7 +4,7 @@
 
 **Goal:** Fix all seven items of `IMPROVEMENTS.md` (create_cell limit, focus new agent cells, remove cell description, detail-view Ctrl+C, durable+visible compaction, session-aware token meter, stale `update_cell` display) in one PR on `feat/cell-ux-compaction-and-sync`.
 
-**Architecture:** Go API/engine changes carry new migration columns (`V098`, `V099`); compaction becomes a durable context boundary and session usage becomes server-authoritative. The frontend gets a selection-aware copy handler, an agent-focus queue, a Yjs attach fix, and a context-first token meter. All wire changes are additive JSON.
+**Architecture:** Go API/engine changes carry new migration columns (`V100`, `V101`); compaction becomes a durable context boundary and session usage becomes server-authoritative. The frontend gets a selection-aware copy handler, an agent-focus queue, a Yjs attach fix, and a context-first token meter. All wire changes are additive JSON.
 
 **Tech Stack:** Go 1.x (`net/http`, pgx), React 18 + TypeScript + Vitest/RTL, Yjs (`yCollab`), Postgres migrations embedded in `internal/database/migrations/`.
 
@@ -19,10 +19,10 @@
 
 ---
 
-## Task 1: V099 migration + agent models + message ordering
+## Task 1: V101 migration + agent models + message ordering
 
 **Files:**
-- Create: `internal/database/migrations/V099__agent_usage.sql`
+- Create: `internal/database/migrations/V101__agent_usage.sql`
 - Modify: `internal/models/agent.go` (AgentMessage ~:131-136, AgentSession ~:100-112)
 - Modify: `internal/agent/session.go` (~:125-145 GetMessages)
 - Test: `internal/database/database_test.go` (extend `TestMigrate`)
@@ -60,7 +60,7 @@ Expected: FAIL — columns missing.
 
 **Step 3: Add the migration**
 
-Create `internal/database/migrations/V099__agent_usage.sql`:
+Create `internal/database/migrations/V101__agent_usage.sql`:
 
 ```sql
 ALTER TABLE agent_messages ADD COLUMN IF NOT EXISTS tokens_after INT;
@@ -128,7 +128,7 @@ Expected: PASS (existing agent tests unaffected).
 **Step 7: Commit**
 
 ```bash
-git add internal/database/migrations/V099__agent_usage.sql internal/models/agent.go internal/agent/session.go internal/database/database_test.go
+git add internal/database/migrations/V101__agent_usage.sql internal/models/agent.go internal/agent/session.go internal/database/database_test.go
 git commit -m "feat(db): add agent session usage and compaction-after token columns"
 ```
 
@@ -208,10 +208,10 @@ git commit -m "refactor(cells): remove unused cell description from models, API 
 
 ---
 
-## Task 3: V098 migration + CLI/web description cleanup
+## Task 3: V100 migration + CLI/web description cleanup
 
 **Files:**
-- Create: `internal/database/migrations/V098__drop_cells_description.sql`
+- Create: `internal/database/migrations/V100__drop_cells_description.sql`
 - Modify: `internal/cli/types.go:41`
 - Modify: `web/src/hooks/useNotebookWs.ts:64`
 - Test: `internal/api/notebook_handlers_test.go` (add a shape assertion)
@@ -239,13 +239,13 @@ Expected: PASS (column still exists but nothing selects it). Keep the test as a 
 
 **Step 3: Add the drop migration**
 
-Create `internal/database/migrations/V098__drop_cells_description.sql`:
+Create `internal/database/migrations/V100__drop_cells_description.sql`:
 
 ```sql
 ALTER TABLE cells DROP COLUMN IF EXISTS description;
 ```
 
-Note: migration numbers must be unique; V098/V099 are free at implementation time (current head V097). If another migration lands first, renumber to the next free numbers.
+Note: migration numbers must be unique; V100/V101 are free after main's V100/V101 (auto-approve/auto-answer). If another migration lands first, renumber to the next free numbers.
 
 **Step 4: Remove remaining consumers**
 
@@ -266,7 +266,7 @@ Expected: `0`. Then `curl -s -o /dev/null -w '%{http_code}\n' localhost:8088/hea
 Run: `go test ./internal/api/ ./internal/database/ -count=1`
 
 ```bash
-git add internal/database/migrations/V098__drop_cells_description.sql internal/cli/types.go web/src/hooks/useNotebookWs.ts internal/api/notebook_handlers_test.go
+git add internal/database/migrations/V100__drop_cells_description.sql internal/cli/types.go web/src/hooks/useNotebookWs.ts internal/api/notebook_handlers_test.go
 git commit -m "refactor(cells)!: drop unused cells.description column"
 ```
 
@@ -1135,7 +1135,7 @@ Expected: all green. `go mod tidy` must produce no diff.
 docker compose -f docker-compose.dev.yml restart api
 docker exec aether-postgres psql -U aether -d aether -tAc "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 2"
 ```
-Expected: V098/V099 applied; API healthy.
+Expected: V100/V101 applied; API healthy.
 
 **Step 3: Browser sweep (agent-browser + image analyzer)**
 

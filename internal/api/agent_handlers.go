@@ -610,9 +610,11 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 	}
 
 	var req struct {
-		NotebookID string  `json:"notebook_id"`
-		MaxTurns   int     `json:"max_turns"`
-		Title      *string `json:"title"`
+		NotebookID          string  `json:"notebook_id"`
+		MaxTurns            int     `json:"max_turns"`
+		Title               *string `json:"title"`
+		AutoApproveTools    bool    `json:"auto_approve_tools"`
+		AutoAnswerQuestions bool    `json:"auto_answer_questions"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -645,9 +647,9 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 		notebookID = &req.NotebookID
 	}
 	_, err = h.server.db.Pool.Exec(r.Context(), `
-		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, title, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW())
-	`, sessionID, agentID, notebookID, claims.UserID, req.MaxTurns, req.Title)
+		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, title, created_at, auto_approve_tools, auto_answer_questions)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8)
+	`, sessionID, agentID, notebookID, claims.UserID, req.MaxTurns, req.Title, req.AutoApproveTools, req.AutoAnswerQuestions)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -674,8 +676,10 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 	})
 
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"session_id":     sessionID,
-		"context_window": contextWindow,
+		"session_id":            sessionID,
+		"context_window":        contextWindow,
+		"auto_approve_tools":    req.AutoApproveTools,
+		"auto_answer_questions": req.AutoAnswerQuestions,
 	})
 }
 
