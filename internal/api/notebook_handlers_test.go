@@ -150,6 +150,49 @@ func TestNotebookConnectorID(t *testing.T) {
 	}
 }
 
+func TestNotebookCellsHaveNoDescriptionField(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("nb-nodesc-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "NoDesc Org")
+
+	nbID := createNotebook(t, srv, token, "No Cell Description NB")
+	createCell(t, srv, token, nbID, "sql", "SELECT 1", "")
+
+	req := httptest.NewRequest("GET", "/api/v1/notebooks/"+nbID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get notebook: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode notebook: %v", err)
+	}
+
+	// The notebook itself still serializes its description field; the fixture
+	// leaves it empty so any extra "description" key could only come from a cell.
+	var nbDescription string
+	if err := json.Unmarshal(payload["description"], &nbDescription); err != nil {
+		t.Fatalf("decode notebook description: %v", err)
+	}
+	if nbDescription != "" {
+		t.Fatalf("fixture notebook description = %q, want empty", nbDescription)
+	}
+
+	var cells []map[string]json.RawMessage
+	if err := json.Unmarshal(payload["cells"], &cells); err != nil {
+		t.Fatalf("decode cells: %v", err)
+	}
+	if len(cells) != 1 {
+		t.Fatalf("cells = %d, want 1", len(cells))
+	}
+	if _, ok := cells[0]["description"]; ok {
+		t.Fatalf("cell JSON must not contain a description key: %s", rec.Body.String())
+	}
+}
+
 func TestNotebookCRUD(t *testing.T) {
 	srv := setupTestServer(t)
 

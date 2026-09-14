@@ -131,13 +131,13 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 			 VALUES ($1, $2, $3, $4, $5, '[]')
 			 RETURNING id, notebook_id, position, type, language, connector_id, source, outputs,
 			           source_visible, outputs_hidden, cell_collapsed, slide_break, parameters,
-			           COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), "limit",
+			           COALESCE(title,''), COALESCE(slug,''), "limit",
 			           COALESCE(metadata, '{}'), created_at, updated_at`,
 			nb.ID, i, cell.Type, lang, cell.Source,
 		).Scan(&inserted.ID, &inserted.NotebookID, &inserted.Position, &inserted.Type,
 			&cellLang, &cellConnID, &inserted.Source, &cellOutputs,
 			&inserted.SourceVisible, &inserted.OutputsHidden, &inserted.CellCollapsed, &inserted.SlideBreak, &cellParams,
-			&inserted.Title, &inserted.Description, &inserted.Slug, &inserted.Limit,
+			&inserted.Title, &inserted.Slug, &inserted.Limit,
 			&inserted.Metadata, &inserted.CreatedAt, &inserted.UpdatedAt)
 		if err != nil {
 			continue
@@ -285,7 +285,7 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 
 	cellRows, err := s.db.Pool.Query(ctx,
 		`SELECT id, notebook_id, position, type, language, connector_id, source, outputs,
-		        source_visible, outputs_hidden, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), "limit",
+		        source_visible, outputs_hidden, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(slug,''), "limit",
 		        COALESCE(metadata, '{}'), duration_ms, created_at, updated_at, agent_updated_at
 		 FROM cells WHERE notebook_id = $1 ORDER BY position ASC`,
 		nbID,
@@ -305,7 +305,7 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 		var durationMs *int
 		var agentUpdatedAt *time.Time
 		if err := cellRows.Scan(&c.ID, &c.NotebookID, &c.Position, &c.Type, &lang, &connID, &c.Source, &outputs,
-			&c.SourceVisible, &c.OutputsHidden, &c.CellCollapsed, &c.SlideBreak, &cellParams, &c.Title, &c.Description, &c.Slug, &cellLimit,
+			&c.SourceVisible, &c.OutputsHidden, &c.CellCollapsed, &c.SlideBreak, &cellParams, &c.Title, &c.Slug, &cellLimit,
 			&c.Metadata, &durationMs, &c.CreatedAt, &c.UpdatedAt, &agentUpdatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan cell failed")
 			return
@@ -949,7 +949,7 @@ func (s *Server) handleCloneNotebook(w http.ResponseWriter, r *http.Request) {
 
 	cellRows, err := s.db.Pool.Query(ctx,
 		`SELECT type, language, connector_id, source, source_visible, outputs_hidden,
-		        cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''),
+		        cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(slug,''),
 		        "limit", COALESCE(metadata, '{}')
 		 FROM cells WHERE notebook_id = $1 ORDER BY position ASC`,
 		sourceID,
@@ -964,14 +964,14 @@ func (s *Server) handleCloneNotebook(w http.ResponseWriter, r *http.Request) {
 	pos := 0
 	for cellRows.Next() {
 		var cellType, source string
-		var lang, connID, title, desc, slug *string
+		var lang, connID, title, slug *string
 		var sourceVisible, outputsHidden, cellCollapsed, slideBreak bool
 		var cellParams, metadata []byte
 		var limit *int
 
 		if err := cellRows.Scan(&cellType, &lang, &connID, &source,
 			&sourceVisible, &outputsHidden, &cellCollapsed, &slideBreak, &cellParams,
-			&title, &desc, &slug, &limit, &metadata); err != nil {
+			&title, &slug, &limit, &metadata); err != nil {
 			continue
 		}
 
@@ -981,19 +981,19 @@ func (s *Server) handleCloneNotebook(w http.ResponseWriter, r *http.Request) {
 		err = s.db.Pool.QueryRow(ctx,
 			`INSERT INTO cells (notebook_id, position, type, language, connector_id, source, outputs,
 			                  source_visible, outputs_hidden, cell_collapsed, slide_break, parameters,
-			                  title, description, slug, "limit", metadata)
-			 VALUES ($1,$2,$3,$4,$5,$6,'[]',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+			                  title, slug, "limit", metadata)
+			 VALUES ($1,$2,$3,$4,$5,$6,'[]',$7,$8,$9,$10,$11,$12,$13,$14,$15)
 			 RETURNING id, notebook_id, position, type, language, connector_id, source, outputs,
 			           source_visible, outputs_hidden, cell_collapsed, slide_break, parameters,
-			           COALESCE(title,''), COALESCE(description,''), COALESCE(slug,''), "limit",
+			           COALESCE(title,''), COALESCE(slug,''), "limit",
 			           COALESCE(metadata, '{}'), created_at, updated_at`,
 			newNB.ID, pos, cellType, lang, connID, source,
 			sourceVisible, outputsHidden, cellCollapsed, slideBreak, cellParams,
-			title, desc, slug, limit, metadata,
+			title, slug, limit, metadata,
 		).Scan(&newCell.ID, &newCell.NotebookID, &newCell.Position, &newCell.Type,
 			&lang, &connID, &newCell.Source, &newCell.Outputs,
 			&newCell.SourceVisible, &newCell.OutputsHidden, &newCell.CellCollapsed, &newCell.SlideBreak, &newParams,
-			&newCell.Title, &newCell.Description, &newCell.Slug, &newLimit,
+			&newCell.Title, &newCell.Slug, &newLimit,
 			&newCell.Metadata, &newCell.CreatedAt, &newCell.UpdatedAt)
 		if err != nil {
 			continue

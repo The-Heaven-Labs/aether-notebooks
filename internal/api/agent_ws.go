@@ -244,19 +244,21 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 				// responses cause the frontend to lose older messages since it
 				// does a full replacement, not an append.
 				rows, err := s.db.Pool.Query(ctx, `
-					SELECT id, role, content, tool_calls, reasoning_content, image_ids, COALESCE(duration_ms,0), COALESCE(tokens_direct,0), created_at, tool_call_id FROM agent_messages
-					WHERE session_id = $1 ORDER BY created_at
+					SELECT id, role, content, tool_calls, reasoning_content, image_ids, COALESCE(duration_ms,0), COALESCE(tokens_direct,0), COALESCE(tokens_after,0), created_at, tool_call_id FROM agent_messages
+					WHERE session_id = $1 ORDER BY created_at, id
 				`, currentSessionID)
 				if err == nil {
 					messages := scanAgentMessages(rows)
 					if messages != nil {
 						_, running := s.sessionCancels.Load(currentSessionID)
+						sessionUsage, _ := s.agentEngine.SessionStore().GetUsage(ctx, currentSessionID)
 						safeSend(struct {
-							Type      string                `json:"type"`
-							Messages  []models.AgentMessage `json:"messages"`
-							Running   bool                  `json:"running"`
-							ServerSeq uint64                `json:"server_seq"`
-						}{Type: "reconnect_sync", Messages: messages, Running: running, ServerSeq: s.agentEngine.StreamLastSeq(currentSessionID)})
+							Type         string                `json:"type"`
+							Messages     []models.AgentMessage `json:"messages"`
+							Running      bool                  `json:"running"`
+							ServerSeq    uint64                `json:"server_seq"`
+							SessionUsage *models.SessionUsage  `json:"session_usage,omitempty"`
+						}{Type: "reconnect_sync", Messages: messages, Running: running, ServerSeq: s.agentEngine.StreamLastSeq(currentSessionID), SessionUsage: sessionUsage})
 					}
 				}
 				continue
@@ -421,9 +423,10 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 								}{Type: "tool_confirm_required", ToolName: evt.ToolName, ToolArgs: evt.ToolArgs, CurrentSource: evt.Source})
 							case "token_update":
 								s.agentEngine.PublishSessionEvent(sid, struct {
-									Type   string                `json:"type"`
-									Tokens *agent.TokenBreakdown `json:"tokens"`
-								}{Type: "token_update", Tokens: evt.Tokens})
+									Type         string                `json:"type"`
+									Tokens       *agent.TokenBreakdown `json:"tokens"`
+									SessionUsage *models.SessionUsage  `json:"session_usage,omitempty"`
+								}{Type: "token_update", Tokens: evt.Tokens, SessionUsage: evt.SessionUsage})
 							case "llm_retry":
 								s.agentEngine.PublishSessionEvent(sid, struct {
 									Type        string `json:"type"`
@@ -470,7 +473,15 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					_ = events
 					// done carries the final content so a client that reconnected
 					// mid-stream (and missed the tokens) still renders the message.
-					s.agentEngine.PublishSessionEvent(sid, WSResponse{Type: "done", Data: map[string]any{"content": finalText, "reasoning": reasoning, "tokens": tokBrk}})
+					// session_usage restores the server-authoritative token meter.
+					doneUsageCtx, doneUsageCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					doneUsage, usageErr := s.agentEngine.SessionStore().GetUsage(doneUsageCtx, sid)
+					doneUsageCancel()
+					if usageErr != nil {
+						slog.Warn("ws: get session usage", "session_id", sid, "error", usageErr)
+						doneUsage = nil
+					}
+					s.agentEngine.PublishSessionEvent(sid, WSResponse{Type: "done", Data: map[string]any{"content": finalText, "reasoning": reasoning, "tokens": tokBrk, "session_usage": doneUsage}})
 					slog.Debug("ws: message done", "session_id", sid, "reasoning_len", len(reasoning))
 				}(msg.Content, msg.Images, currentSessionID)
 			} else if msg.Type == "slash_command" {
@@ -517,7 +528,8 @@ func scanAgentMessages(rows interface {
 		var reasoning *string
 		var imageIDs []string
 		var toolCallID *string
-		rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &reasoning, &imageIDs, &m.DurationMs, &m.TokensDirect, &m.CreatedAt, &toolCallID)
+		var tokensAfter int
+		rows.Scan(&m.ID, &m.Role, &content, &toolCallsJSON, &reasoning, &imageIDs, &m.DurationMs, &m.TokensDirect, &tokensAfter, &m.CreatedAt, &toolCallID)
 		if content != nil {
 			m.Content = *content
 		}
@@ -529,6 +541,9 @@ func scanAgentMessages(rows interface {
 		}
 		m.ToolCallID = toolCallID
 		m.ImageIDs = imageIDs
+		if tokensAfter > 0 {
+			m.TokensAfter = &tokensAfter
+		}
 		messages = append(messages, m)
 	}
 	rows.Close()

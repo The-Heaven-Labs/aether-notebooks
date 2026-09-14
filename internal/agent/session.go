@@ -78,9 +78,15 @@ func (s *SessionStore) GetSession(ctx context.Context, sessionID string) (*model
 	var title *string
 	var notebookID *string
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, agent_id, notebook_id, user_id, max_turns, ended_at, title, created_at, auto_approve_tools, auto_answer_questions
+		SELECT id, agent_id, notebook_id, user_id, max_turns, ended_at, title, created_at,
+			auto_approve_tools, auto_answer_questions,
+			context_tokens, context_window, total_input, total_output, total_reasoning,
+			total_cache_read, total_model_calls, total_subagent_input, total_subagent_output
 		FROM agent_sessions WHERE id = $1
-	`, sessionID).Scan(&session.ID, &session.AgentID, &notebookID, &session.UserID, &session.MaxTurns, &endedAt, &title, &session.CreatedAt, &session.AutoApproveTools, &session.AutoAnswerQuestions)
+	`, sessionID).Scan(&session.ID, &session.AgentID, &notebookID, &session.UserID, &session.MaxTurns, &endedAt, &title, &session.CreatedAt,
+		&session.AutoApproveTools, &session.AutoAnswerQuestions,
+		&session.ContextTokens, &session.ContextWindow, &session.TotalInput, &session.TotalOutput, &session.TotalReasoning,
+		&session.TotalCacheRead, &session.TotalModelCalls, &session.TotalSubagentInput, &session.TotalSubagentOutput)
 	if err != nil {
 		return nil, fmt.Errorf("get session: %w", err)
 	}
@@ -114,16 +120,16 @@ func (s *SessionStore) AppendMessage(ctx context.Context, msg *models.AgentMessa
 		imageIDs = []string{}
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO agent_messages (id, session_id, role, content, tool_call_id, tool_calls, reasoning_content, tokens_input, tokens_output, tokens_direct, model_calls, duration_ms, image_ids, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-	`, msg.ID, msg.SessionID, msg.Role, msg.Content, msg.ToolCallID, toolCallsJSON, msg.ReasoningContent, msg.TokensInput, msg.TokensOutput, msg.TokensDirect, msg.ModelCalls, msg.DurationMs, imageIDs, msg.CreatedAt)
+		INSERT INTO agent_messages (id, session_id, role, content, tool_call_id, tool_calls, reasoning_content, tokens_input, tokens_output, tokens_direct, tokens_after, kept_count, model_calls, duration_ms, image_ids, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+	`, msg.ID, msg.SessionID, msg.Role, msg.Content, msg.ToolCallID, toolCallsJSON, msg.ReasoningContent, msg.TokensInput, msg.TokensOutput, msg.TokensDirect, msg.TokensAfter, msg.KeptCount, msg.ModelCalls, msg.DurationMs, imageIDs, msg.CreatedAt)
 	return err
 }
 
 func (s *SessionStore) GetMessages(ctx context.Context, sessionID string) ([]models.AgentMessage, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, session_id, role, content, tool_call_id, tool_calls, reasoning_content, COALESCE(tokens_input,0), COALESCE(tokens_output,0), COALESCE(tokens_direct,0), COALESCE(model_calls,0), COALESCE(duration_ms,0), image_ids, created_at
-		FROM agent_messages WHERE session_id = $1 ORDER BY created_at ASC
+		SELECT id, session_id, role, content, tool_call_id, tool_calls, reasoning_content, COALESCE(tokens_input,0), COALESCE(tokens_output,0), COALESCE(tokens_direct,0), tokens_after, kept_count, COALESCE(model_calls,0), COALESCE(duration_ms,0), image_ids, created_at
+		FROM agent_messages WHERE session_id = $1 ORDER BY created_at ASC, id ASC
 	`, sessionID)
 	if err != nil {
 		return nil, err
@@ -138,7 +144,9 @@ func (s *SessionStore) GetMessages(ctx context.Context, sessionID string) ([]mod
 		var toolCallsJSON []byte
 		var reasoningContent *string
 		var imageIDs []string
-		err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &content, &toolCallID, &toolCallsJSON, &reasoningContent, &msg.TokensInput, &msg.TokensOutput, &msg.TokensDirect, &msg.ModelCalls, &msg.DurationMs, &imageIDs, &msg.CreatedAt)
+		var tokensAfter *int
+		var keptCount *int
+		err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &content, &toolCallID, &toolCallsJSON, &reasoningContent, &msg.TokensInput, &msg.TokensOutput, &msg.TokensDirect, &tokensAfter, &keptCount, &msg.ModelCalls, &msg.DurationMs, &imageIDs, &msg.CreatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -149,6 +157,8 @@ func (s *SessionStore) GetMessages(ctx context.Context, sessionID string) ([]mod
 			msg.ReasoningContent = *reasoningContent
 		}
 		msg.ToolCallID = toolCallID
+		msg.TokensAfter = tokensAfter
+		msg.KeptCount = keptCount
 		msg.ImageIDs = imageIDs
 		if toolCallsJSON != nil {
 			json.Unmarshal(toolCallsJSON, &msg.ToolCalls)
@@ -260,4 +270,65 @@ func (s *SessionStore) UpdateTitle(ctx context.Context, sessionID string, title 
 		return fmt.Errorf("update title: %w", err)
 	}
 	return nil
+}
+
+// SessionUsageDelta is the per-call token accounting added to a session's
+// running totals. ContextTokens/ContextWindow are point-in-time snapshots:
+// values > 0 replace the stored context, 0 leaves it untouched.
+type SessionUsageDelta struct {
+	Input, Output, Reasoning, CacheRead int64
+	ModelCalls                          int
+	SubagentInput, SubagentOutput       int64
+	ContextTokens                       int64
+	ContextWindow                       int
+}
+
+// AddUsage accumulates a token delta into the session's persisted usage totals.
+func (s *SessionStore) AddUsage(ctx context.Context, sessionID string, d SessionUsageDelta) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE agent_sessions SET
+			total_input = total_input + $2,
+			total_output = total_output + $3,
+			total_reasoning = total_reasoning + $4,
+			total_cache_read = total_cache_read + $5,
+			total_model_calls = total_model_calls + $6,
+			total_subagent_input = total_subagent_input + $7,
+			total_subagent_output = total_subagent_output + $8,
+			context_tokens = CASE WHEN $9 > 0 THEN $9 ELSE context_tokens END,
+			context_window = CASE WHEN $10 > 0 THEN $10 ELSE context_window END
+		WHERE id = $1`,
+		sessionID, d.Input, d.Output, d.Reasoning, d.CacheRead, d.ModelCalls, d.SubagentInput, d.SubagentOutput, d.ContextTokens, d.ContextWindow)
+	return err
+}
+
+// GetUsage returns the session's accumulated usage snapshot.
+func (s *SessionStore) GetUsage(ctx context.Context, sessionID string) (*models.SessionUsage, error) {
+	var u models.SessionUsage
+	err := s.pool.QueryRow(ctx, `
+		SELECT total_input, total_output, total_reasoning, total_cache_read, total_model_calls,
+		       total_subagent_input, total_subagent_output, context_tokens, context_window
+		FROM agent_sessions WHERE id = $1`, sessionID).
+		Scan(&u.Input, &u.Output, &u.Reasoning, &u.CacheRead, &u.ModelCalls, &u.SubagentInput, &u.SubagentOutput, &u.ContextTokens, &u.ContextWindow)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// applyUsageDelta folds a delta into an in-memory snapshot with the same
+// semantics as AddUsage, so live event payloads match persisted totals.
+func applyUsageDelta(u *models.SessionUsage, d SessionUsageDelta) {
+	u.Input += d.Input
+	u.Output += d.Output
+	u.Reasoning += d.Reasoning
+	u.CacheRead += d.CacheRead
+	u.ModelCalls += d.ModelCalls
+	u.SubagentInput += d.SubagentInput
+	u.SubagentOutput += d.SubagentOutput
+	if d.ContextTokens > 0 {
+		u.ContextTokens = d.ContextTokens
+	}
+	if d.ContextWindow > 0 {
+		u.ContextWindow = d.ContextWindow
+	}
 }

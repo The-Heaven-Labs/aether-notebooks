@@ -15,6 +15,8 @@ import type { Notebook, Cell, Output, Connector, Parameter, CellVersion, Noteboo
 import type { ChartConfig } from '../charts'
 import { Cell as NotebookCell, focusCellEditorEnd, collabCache, updateCellScroll, type NotebookCollab } from '../components/Cell'
 import { focusMarkdownCell } from '../utils/editorFocus'
+import { createFlashQueue, isAgentOrigin, resolveAgentAwareFlash, type FlashQueue } from '../utils/agentFocus'
+import { clearDirtyForSyncedCells, mergeServerCell, saveDelayFor } from '../utils/mergeCells'
 import { ParametersBar } from '../components/ParametersBar'
 import { SchemaBrowser } from '../components/SchemaBrowser'
 import { SchedulesPanel } from '../components/SchedulesPanel'
@@ -231,6 +233,8 @@ export function NotebookPage() {
   const [isEditingCell, setIsEditingCell] = useState(false)
   const autoFocusCellRef = useRef(false)
   const pendingExecRef = useRef(new Set<string>())
+  const dirtyCellsRef = useRef(new Set<string>())
+  const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const [historyCell, setHistoryCell] = useState<string | null>(null)
   const [historyVersions, setHistoryVersions] = useState<CellVersion[]>([])
   // Drag-and-drop sensors
@@ -263,6 +267,16 @@ export function NotebookPage() {
       }
     }, 50)
   }
+  const flashCellRef = useRef<(cellId: string) => void>(noop)
+  useEffect(() => {
+    flashCellRef.current = flashCell
+  })
+  const agentFlashRef = useRef<FlashQueue | null>(null)
+  useEffect(() => {
+    const queue = createFlashQueue((cellId) => flashCellRef.current(cellId))
+    agentFlashRef.current = queue
+    return () => queue.cancel()
+  }, [])
   const shouldScroll = useCallback((userEmail?: string) => {
     return following && userEmail === following.email
   }, [following])
@@ -278,23 +292,36 @@ export function NotebookPage() {
       return next
     })
     setCellRunAt((prev) => ({ ...prev, [cellId]: new Date() }))
-    if (!pendingExecRef.current.has(cellId) && shouldScroll(userEmail)) {
-      flashCell(cellId)
+    if (!pendingExecRef.current.has(cellId)) {
+      const action = resolveAgentAwareFlash({ userEmail, followsUser: !!shouldScroll(userEmail) })
+      if (action === 'queue') {
+        agentFlashRef.current?.push(cellId)
+      } else if (action === 'flash') {
+        flashCell(cellId)
+      }
     }
   }, [shouldScroll]), useCallback((cellId: string, metadata: Record<string, unknown>, userEmail?: string) => {
     setLocalCells((prev) =>
       prev.map((c) => (c.id === cellId ? { ...c, metadata } : c)),
     )
-    if (!pendingExecRef.current.has(cellId) && (userEmail === 'agent@aether' || shouldScroll(userEmail))) {
+    if (!pendingExecRef.current.has(cellId) && (isAgentOrigin(userEmail) || shouldScroll(userEmail))) {
       flashCell(cellId)
     }
   }, [shouldScroll]), useCallback((cellId: string, updates: Record<string, unknown>, userEmail?: string) => {
     // cell_updated event received — apply broadcast fields to local cache
     // Skip source for regular users (Yjs is source of truth), but apply
     // it for agent updates since Yjs may not be synced in real-time.
-    const isAgent = userEmail === 'agent@aether'
+    const isAgent = isAgentOrigin(userEmail)
     const { source: _source, ...rest } = updates as Record<string, unknown> & { source?: unknown }
     const payload = isAgent ? (updates as Record<string, unknown>) : rest
+    // An agent write of the source supersedes any pending human autosave:
+    // clear the dirty flag and its debounce timer so neither can resurrect
+    // the stale local text in a later merge.
+    if (isAgent && typeof updates.source === 'string') {
+      dirtyCellsRef.current.delete(cellId)
+      clearTimeout(saveTimers.current[cellId])
+      delete saveTimers.current[cellId]
+    }
     if (Object.keys(payload).length > 0) {
       setLocalCells((prev) =>
         prev.map((c) => c.id === cellId ? { ...c, ...payload } as Cell : c),
@@ -321,7 +348,11 @@ export function NotebookPage() {
       )
       return { ...old, cells: [...shifted, cell].sort((a, b) => a.position - b.position) }
     })
-    if (!pendingExecRef.current.has(cell.id) && shouldScroll(userEmail)) {
+    const action = resolveAgentAwareFlash({ userEmail, followsUser: !!shouldScroll(userEmail) })
+    if (action === 'queue') {
+      agentFlashRef.current?.push(cell.id)
+      setFocusedCellId(cell.id)
+    } else if (action === 'flash' && !pendingExecRef.current.has(cell.id)) {
       flashCell(cell.id)
     }
   }, [id, qc, shouldScroll]), useCallback((cellId: string) => {
@@ -347,7 +378,10 @@ export function NotebookPage() {
         return next
       })
     }
-  }, []))
+  }, []), useCallback(() => {
+    // A dropped notebook socket may have missed cell updates while offline.
+    qc.invalidateQueries({ queryKey: ['notebook', id] })
+  }, [id, qc]))
 
   // Scroll to cell from URL hash (#cell-{id})
   useEffect(() => {
@@ -551,26 +585,21 @@ export function NotebookPage() {
     }
     // Always sync localCells with notebook data (for agent updates)
     if (notebook) {
+      // Equal sources mean nothing is unsaved here — drop stale dirty flags so
+      // they cannot keep an outdated local source alive across refetches.
+      dirtyCellsRef.current = clearDirtyForSyncedCells(dirtyCellsRef.current, localCellsRef.current, notebook.cells)
       setLocalCells(prev => {
-        let changed = false
-        const merged = notebook.cells.map(nbCell => {
-          const local = prev.find(c => c.id === nbCell.id)
-          if (local && local.source === nbCell.source) {
-            if (pendingExecRef.current.has(nbCell.id)) {
-              return local
-            }
-            return { ...local, outputs: nbCell.outputs, metrics: nbCell.metrics }
-          }
-          changed = true
-          const cell = local
-            ? { ...nbCell, source: local.source, outputs: pendingExecRef.current.has(nbCell.id) ? local.outputs : nbCell.outputs }
-            : { ...nbCell }
-          // Derive display metrics from persisted duration_ms
-          if (cell.duration_ms != null && !cell.metrics) {
-            cell.metrics = { connect_time_ms: 0, query_time_ms: 0, render_time_ms: 0, total_time_ms: cell.duration_ms }
-          }
-          return cell
-        })
+        const merged = notebook.cells.map(nbCell =>
+          mergeServerCell(
+            prev.find(c => c.id === nbCell.id),
+            nbCell,
+            {
+              pendingExec: pendingExecRef.current.has(nbCell.id),
+              dirty: dirtyCellsRef.current.has(nbCell.id),
+            },
+          ),
+        )
+        const changed = merged.length !== prev.length || merged.some((c, i) => c !== prev[i])
         return changed ? merged : prev
       })
     }
@@ -801,12 +830,16 @@ export function NotebookPage() {
     qc.invalidateQueries({ queryKey: ['notebook', id] })
   }, [id, qc])
 
-  const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
-
   const saveCellSource = useCallback(async (cellId: string, source: string) => {
     setCellSaveState((prev) => ({ ...prev, [cellId]: { saving: true, savedAt: prev[cellId]?.savedAt ?? null, error: null } }))
     try {
       await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { source })
+      // Only clear the dirty flag if no newer edit landed while the save was
+      // in flight; otherwise the unsaved text must keep winning the merge.
+      const current = localCellsRef.current.find(c => c.id === cellId)
+      if (!current || current.source === source) {
+        dirtyCellsRef.current.delete(cellId)
+      }
       setCellSaveState((prev) => ({ ...prev, [cellId]: { saving: false, savedAt: new Date(), error: null } }))
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Save failed'
@@ -815,30 +848,26 @@ export function NotebookPage() {
   }, [id])
 
   const updateSource = useCallback((cellId: string, source: string) => {
+    const current = localCellsRef.current.find(c => c.id === cellId)
+    // If source is the same as what we already have, skip (no save needed)
+    if (current && current.source === source) return
+
+    dirtyCellsRef.current.add(cellId)
     setLocalCells((prev) => {
       const cell = prev.find(c => c.id === cellId)
-      // If source is the same as what we already have, skip (no save needed)
       if (cell && cell.source === source) return prev
       return prev.map((c) => (c.id === cellId ? { ...c, source } : c))
     })
 
-    // Check if agent just updated this cell — suppress auto-save
-    const cells = localCellsRef.current
-    const cell = cells.find(c => c.id === cellId)
-    if (cell?.agent_updated_at) {
-      const elapsed = Date.now() - new Date(cell.agent_updated_at).getTime()
-      if (elapsed < 5000) {
-        // Agent update is recent (< 5s), don't trigger auto-save
-        // The agent already updated Yjs, no need to save again
-        return
-      }
-    }
-
-    // Normal auto-save flow
+    // Defer — never drop — the save while a recent agent update suppresses
+    // autosave; a user keystroke in that window must still be persisted.
     clearTimeout(saveTimers.current[cellId])
     saveTimers.current[cellId] = setTimeout(() => {
+      const latest = localCellsRef.current.find(c => c.id === cellId)
+      // Superseded by a newer edit or agent update — its own timer handles it.
+      if (latest && latest.source !== source) return
       saveCellSource(cellId, source)
-    }, 1500)
+    }, saveDelayFor(current?.agent_updated_at, Date.now()))
   }, [saveCellSource])
 
   const assignConnector = useCallback(async (cellId: string, connectorId: string) => {

@@ -47,19 +47,22 @@ type AgentTask struct {
 }
 
 type EngineEvent struct {
-	Type        string          `json:"type"`
-	CellID      string          `json:"cell_id,omitempty"`
-	Position    int             `json:"position,omitempty"`
-	Source      string          `json:"source,omitempty"`
-	Tasks       []AgentTask     `json:"tasks,omitempty"`
-	Outputs     any             `json:"outputs,omitempty"`
-	ToolName    string          `json:"tool_name,omitempty"`
-	ToolArgs    string          `json:"tool_args,omitempty"`
-	Tokens      *TokenBreakdown `json:"tokens,omitempty"`
-	Summary     string          `json:"summary,omitempty"`
-	Question    string          `json:"question,omitempty"`
-	Options     any             `json:"options,omitempty"`
-	AllowCustom bool            `json:"allow_custom,omitempty"`
+	Type     string          `json:"type"`
+	CellID   string          `json:"cell_id,omitempty"`
+	Position int             `json:"position,omitempty"`
+	Source   string          `json:"source,omitempty"`
+	Tasks    []AgentTask     `json:"tasks,omitempty"`
+	Outputs  any             `json:"outputs,omitempty"`
+	ToolName string          `json:"tool_name,omitempty"`
+	ToolArgs string          `json:"tool_args,omitempty"`
+	Tokens   *TokenBreakdown `json:"tokens,omitempty"`
+	// SessionUsage is the compaction-aware running snapshot of the session's
+	// token accounting, attached to token_update events.
+	SessionUsage *models.SessionUsage `json:"session_usage,omitempty"`
+	Summary      string               `json:"summary,omitempty"`
+	Question     string               `json:"question,omitempty"`
+	Options      any                  `json:"options,omitempty"`
+	AllowCustom  bool                 `json:"allow_custom,omitempty"`
 	// Attempt/MaxAttempts/Error carry llm_retry progress (engine.go retry loop).
 	Attempt     int    `json:"attempt,omitempty"`
 	MaxAttempts int    `json:"max_attempts,omitempty"`

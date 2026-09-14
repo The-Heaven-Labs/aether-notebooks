@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/database"
@@ -126,7 +127,6 @@ func TestAgentCreateCellWithPosition(t *testing.T) {
 		"source":      "SELECT 3",
 		"position":    1,
 		"title":       "Third cell",
-		"description": "Test cell at position 1",
 	})
 	result, err := createCellHandler(args, ctx)
 	if err != nil {
@@ -264,7 +264,6 @@ func TestAgentCreateCellWithConnectorID(t *testing.T) {
 		"source":       "SELECT 1",
 		"connector_id": connID,
 		"title":        "Connector cell",
-		"description":  "Test cell with connector",
 	})
 	result, err := createCellHandler(args, ctx)
 	if err != nil {
@@ -318,7 +317,6 @@ func TestAgentUpdateCellConnectorID(t *testing.T) {
 		"type":        "code",
 		"source":      "SELECT 1",
 		"title":       "Updatable cell",
-		"description": "Test cell for connector update",
 	})
 	createResult, err := createCellDef.Handler(createArgs, ctx)
 	if err != nil {
@@ -509,7 +507,6 @@ func TestAgentCreateCellAtEnd(t *testing.T) {
 		"type":        "code",
 		"source":      "SELECT 2",
 		"title":       "Second cell",
-		"description": "Test cell at end",
 	})
 	result, err := createCellHandler(args, ctx)
 	if err != nil {
@@ -543,7 +540,6 @@ func TestAgentMoveCell(t *testing.T) {
 			"source":      "SELECT " + fmt.Sprint(i),
 			"position":    i,
 			"title":       "Cell " + fmt.Sprint(i),
-			"description": "Test cell",
 		})
 		result, err := createCellHandler(args, ctx)
 		if err != nil {
@@ -1490,7 +1486,7 @@ func TestAgentRunCellCancelBeatsParentDeadline(t *testing.T) {
 	}
 }
 
-func TestAgentCreateCellRequiresTitleAndDescription(t *testing.T) {
+func TestAgentCreateCellRequiresTitle(t *testing.T) {
 	db := setupTestDB(t)
 	orgID, userID := createTestOrgAndUser(t, db.Pool)
 	nbID := createTestNotebook(t, db.Pool, orgID, userID)
@@ -1501,10 +1497,8 @@ func TestAgentCreateCellRequiresTitleAndDescription(t *testing.T) {
 	ctx := setupToolContext(t, db, orgID, userID, nbID)
 
 	for name, extra := range map[string]map[string]any{
-		"missing title":       {"description": "d"},
-		"missing description": {"title": "t"},
-		"blank title":         {"title": "   ", "description": "d"},
-		"blank description":   {"title": "t", "description": "  "},
+		"missing title": {},
+		"blank title":   {"title": "   "},
 	} {
 		base := map[string]any{"notebook_id": nbID, "type": "code", "source": "SELECT 1"}
 		for k, v := range extra {
@@ -1522,9 +1516,23 @@ func TestAgentCreateCellRequiresTitleAndDescription(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("rejected creates must not INSERT, found %d cells", count)
 	}
+
+	// A create with only a title (no description) must succeed.
+	args, _ := json.Marshal(map[string]any{
+		"notebook_id": nbID, "type": "code", "source": "SELECT 1", "title": "Title only",
+	})
+	if _, err := createCellDef.Handler(args, ctx); err != nil {
+		t.Fatalf("create with title only: %v", err)
+	}
+	if err := db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM cells WHERE notebook_id=$1`, nbID).Scan(&count); err != nil {
+		t.Fatalf("count cells: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 created cell, got %d", count)
+	}
 }
 
-func TestAgentCreateCellPersistsTitleDescription(t *testing.T) {
+func TestAgentCreateCellPersistsTitle(t *testing.T) {
 	db := setupTestDB(t)
 	orgID, userID := createTestOrgAndUser(t, db.Pool)
 	nbID := createTestNotebook(t, db.Pool, orgID, userID)
@@ -1542,7 +1550,7 @@ func TestAgentCreateCellPersistsTitleDescription(t *testing.T) {
 
 	args, _ := json.Marshal(map[string]any{
 		"notebook_id": nbID, "type": "code", "source": "SELECT 1",
-		"title": "Daily orders", "description": "GMV by region",
+		"title": "Daily orders",
 	})
 	result, err := createCellDef.Handler(args, ctx)
 	if err != nil {
@@ -1550,19 +1558,19 @@ func TestAgentCreateCellPersistsTitleDescription(t *testing.T) {
 	}
 	cellID := result.(map[string]any)["cell_id"].(string)
 
-	var title, desc string
-	if err := db.Pool.QueryRow(context.Background(), `SELECT title, description FROM cells WHERE id=$1`, cellID).Scan(&title, &desc); err != nil {
+	var title string
+	if err := db.Pool.QueryRow(context.Background(), `SELECT title FROM cells WHERE id=$1`, cellID).Scan(&title); err != nil {
 		t.Fatalf("query cell: %v", err)
 	}
-	if title != "Daily orders" || desc != "GMV by region" {
-		t.Fatalf("title/description not persisted: %q / %q", title, desc)
+	if title != "Daily orders" {
+		t.Fatalf("title not persisted: %q", title)
 	}
 	if len(broadcasts) != 1 {
 		t.Fatalf("expected 1 broadcast, got %d", len(broadcasts))
 	}
 	cell, _ := broadcasts[0]["cell"].(map[string]any)
-	if cell["title"] != "Daily orders" || cell["description"] != "GMV by region" {
-		t.Fatalf("broadcast missing title/description: %v", cell)
+	if cell["title"] != "Daily orders" {
+		t.Fatalf("broadcast missing title: %v", cell)
 	}
 }
 
@@ -1592,7 +1600,7 @@ func TestAgentCreateCellRunTrue(t *testing.T) {
 
 	args, _ := json.Marshal(map[string]any{
 		"notebook_id": nbID, "type": "code", "source": "SELECT 7 AS lucky",
-		"title": "Lucky", "description": "inline run test", "run": true,
+		"title": "Lucky", "run": true,
 	})
 	result, err := createCellDef.Handler(args, ctx)
 	if err != nil {
@@ -1655,7 +1663,7 @@ func TestAgentCreateCellRunTrueTextCellFails(t *testing.T) {
 
 	args, _ := json.Marshal(map[string]any{
 		"notebook_id": nbID, "type": "text", "source": "# hi",
-		"title": "Note", "description": "doc", "run": true,
+		"title": "Note", "run": true,
 	})
 	if _, err := createCellDef.Handler(args, ctx); err == nil {
 		t.Fatal("expected hard error for run=true on text cell")
@@ -1687,7 +1695,7 @@ func TestAgentCreateCellRunTrueFailureKeepsCell(t *testing.T) {
 
 	args, _ := json.Marshal(map[string]any{
 		"notebook_id": nbID, "type": "code", "source": "SELECT * FROM nonexistent_table_xyz",
-		"title": "Broken", "description": "bad query", "run": true,
+		"title": "Broken", "run": true,
 	})
 	result, err := createCellDef.Handler(args, ctx)
 	if err != nil {
@@ -1704,6 +1712,159 @@ func TestAgentCreateCellRunTrueFailureKeepsCell(t *testing.T) {
 	var count int
 	if err := db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM cells WHERE id=$1`, cellID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("cell must still exist, count=%d err=%v", count, err)
+	}
+}
+
+func TestCreateCellLimit(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	createCellDef, _ := reg.Get("create_cell")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	var broadcasts []map[string]any
+	ctx.BroadcastFunc = func(notebookID string, msg any) {
+		if m, ok := msg.(map[string]any); ok {
+			broadcasts = append(broadcasts, m)
+		}
+	}
+	broadcastCell := func(n int) map[string]any {
+		require.Len(t, broadcasts, n)
+		cell, _ := broadcasts[n-1]["cell"].(map[string]any)
+		return cell
+	}
+
+	create := func(extra map[string]any) (map[string]any, error) {
+		args := map[string]any{"notebook_id": nbID, "type": "code", "source": "SELECT 1", "title": "T"}
+		for k, v := range extra {
+			args[k] = v
+		}
+		b, _ := json.Marshal(args)
+		res, err := createCellDef.Handler(b, ctx)
+		if err != nil {
+			return nil, err
+		}
+		return res.(map[string]any), nil
+	}
+
+	// default -> 1000
+	res, err := create(nil)
+	if err != nil {
+		t.Fatalf("default create: %v", err)
+	}
+	cellID := res["cell_id"].(string)
+	var limit *int
+	if err := db.Pool.QueryRow(context.Background(), `SELECT "limit" FROM cells WHERE id=$1`, cellID).Scan(&limit); err != nil {
+		t.Fatalf("query limit: %v", err)
+	}
+	if limit == nil || *limit != 1000 {
+		t.Fatalf("default limit = %v, want 1000", limit)
+	}
+	if res["limit"] != 1000 {
+		t.Fatalf("result limit = %v, want 1000", res["limit"])
+	}
+	if got := broadcastCell(1)["limit"]; got != 1000 {
+		t.Fatalf("default broadcast limit = %v, want 1000", got)
+	}
+
+	// explicit
+	res, err = create(map[string]any{"limit": 250})
+	if err != nil {
+		t.Fatalf("explicit create: %v", err)
+	}
+	cellID = res["cell_id"].(string)
+	if err := db.Pool.QueryRow(context.Background(), `SELECT "limit" FROM cells WHERE id=$1`, cellID).Scan(&limit); err != nil {
+		t.Fatalf("query explicit limit: %v", err)
+	}
+	if limit == nil || *limit != 250 {
+		t.Fatalf("explicit limit = %v, want 250", limit)
+	}
+	if res["limit"] != 250 {
+		t.Fatalf("result limit = %v, want 250", res["limit"])
+	}
+	if got := broadcastCell(2)["limit"]; got != 250 {
+		t.Fatalf("explicit broadcast limit = %v, want 250", got)
+	}
+
+	// zero -> unlimited (NULL)
+	res, err = create(map[string]any{"limit": 0})
+	if err != nil {
+		t.Fatalf("zero create: %v", err)
+	}
+	cellID = res["cell_id"].(string)
+	if err := db.Pool.QueryRow(context.Background(), `SELECT "limit" FROM cells WHERE id=$1`, cellID).Scan(&limit); err != nil {
+		t.Fatalf("query unlimited: %v", err)
+	}
+	if limit != nil {
+		t.Fatalf("zero limit = %v, want NULL", *limit)
+	}
+	if got := broadcastCell(3)["limit"]; got != nil {
+		t.Fatalf("zero broadcast limit = %v, want null", got)
+	}
+
+	// negative -> tool error, no insert, no broadcast
+	if _, err := create(map[string]any{"limit": -1}); err == nil {
+		t.Fatal("negative limit must error")
+	}
+	require.Len(t, broadcasts, 3)
+	var count int
+	_ = db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM cells WHERE notebook_id=$1`, nbID).Scan(&count)
+	if count != 3 {
+		t.Fatalf("cells = %d, want 3", count)
+	}
+}
+
+func TestUpdateCellBroadcastOmitsUnchangedSource(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	cellID := createTestCellForYjs(t, db.Pool, nbID, "sql", "SELECT 1")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	updateDef, ok := reg.Get("update_cell")
+	if !ok {
+		t.Fatal("update_cell tool not found")
+	}
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	var last map[string]any
+	ctx.BroadcastFunc = func(notebookID string, msg any) {
+		if m, ok := msg.(map[string]any); ok {
+			last = m
+		}
+	}
+
+	// title-only update must not include source
+	args, _ := json.Marshal(map[string]any{"cell_id": cellID, "title": "Renamed"})
+	if _, err := updateDef.Handler(args, ctx); err != nil {
+		t.Fatalf("update title: %v", err)
+	}
+	if last == nil || last["type"] != "cell_updated" {
+		t.Fatalf("expected cell_updated broadcast, got %v", last)
+	}
+	if _, hasSource := last["source"]; hasSource {
+		t.Fatalf("title-only update must omit source, got %v", last["source"])
+	}
+	if last["agent_updated_at"] == nil || last["updated_at"] == nil {
+		t.Fatalf("broadcast missing timestamps: %v", last)
+	}
+	var dbSource string
+	if err := db.Pool.QueryRow(context.Background(), `SELECT source FROM cells WHERE id=$1`, cellID).Scan(&dbSource); err != nil {
+		t.Fatalf("query source: %v", err)
+	}
+	if dbSource != "SELECT 1" {
+		t.Fatalf("title-only update must not clear source, got %q", dbSource)
+	}
+
+	// source update includes it
+	args, _ = json.Marshal(map[string]any{"cell_id": cellID, "source": "SELECT 2"})
+	if _, err := updateDef.Handler(args, ctx); err != nil {
+		t.Fatalf("update source: %v", err)
+	}
+	if last["source"] != "SELECT 2" {
+		t.Fatalf("source update must include source, got %v", last["source"])
 	}
 }
 

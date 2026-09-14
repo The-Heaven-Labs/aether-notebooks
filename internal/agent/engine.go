@@ -252,19 +252,37 @@ func NewEngine(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client) *Engi
 	return engine
 }
 
+// compactionKeepTail is the default number of tail messages kept out of a
+// compaction summary. Persisted as kept_count so a durable rebuild can retain
+// the same tail; it is also the fallback for rows written before kept_count.
+const compactionKeepTail = 8
+
+type compactionResult struct {
+	Messages         []ChatMessage
+	Summary          string
+	PromptTokens     int
+	CompletionTokens int
+	ReasoningTokens  int
+	CachedTokens     int
+	// KeptCount is the number of tail messages intentionally kept out of the summary.
+	KeptCount int
+}
+
 // compactChatHistory replaces older conversation history with an LLM-generated summary
 // when the token count approaches the context window limit.
-// It keeps the system prompt (index 0) and the last 8 messages, summarizing everything in between.
-// Returns the compacted messages and the summary text (empty if no compaction).
-func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsgs []ChatMessage, masterKey []byte, sessionID string) ([]ChatMessage, string) {
+// It keeps the system prompt (index 0) and the last compactionKeepTail messages,
+// summarizing everything in between. Returns the compacted messages, the summary
+// text (empty if no compaction), the summarization call's usage, and how many tail
+// messages were kept out of the summary.
+func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsgs []ChatMessage, masterKey []byte, sessionID string) compactionResult {
 	if len(chatMsgs) <= 10 {
-		return chatMsgs, ""
+		return compactionResult{Messages: chatMsgs}
 	}
 
-	// Keep system message (index 0) and last 8 messages (recent context + current turn)
-	keepEnd := len(chatMsgs) - 8
+	// Keep system message (index 0) and last compactionKeepTail messages (recent context + current turn)
+	keepEnd := len(chatMsgs) - compactionKeepTail
 	if keepEnd <= 1 {
-		return chatMsgs, ""
+		return compactionResult{Messages: chatMsgs}
 	}
 
 	oldMsgs := chatMsgs[1:keepEnd]
@@ -285,7 +303,7 @@ func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsg
 	}, nil, masterKey)
 	if err != nil {
 		slog.Warn("compaction summarization failed", "session_id", sessionID, "error", err)
-		return chatMsgs, ""
+		return compactionResult{Messages: chatMsgs}
 	}
 
 	summary := ""
@@ -293,10 +311,10 @@ func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsg
 		summary = resp.Choices[0].Message.Content
 	}
 	if summary == "" {
-		return chatMsgs, ""
+		return compactionResult{Messages: chatMsgs}
 	}
 
-	compacted := make([]ChatMessage, 0, keepEnd+8)
+	compacted := make([]ChatMessage, 0, keepEnd+compactionKeepTail)
 	compacted = append(compacted, chatMsgs[0])
 	compacted = append(compacted, ChatMessage{
 		Role:    "system",
@@ -305,7 +323,23 @@ func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsg
 	compacted = append(compacted, chatMsgs[keepEnd:]...)
 
 	slog.Info("context compaction completed", "session_id", sessionID, "old_msgs", len(oldMsgs), "new_msgs", len(compacted))
-	return compacted, summary
+	reasoningTokens := 0
+	if resp.Usage.CompletionTokensDetails != nil {
+		reasoningTokens = resp.Usage.CompletionTokensDetails.ReasoningTokens
+	}
+	cachedTokens := 0
+	if resp.Usage.PromptTokensDetails != nil {
+		cachedTokens = resp.Usage.PromptTokensDetails.CachedTokens
+	}
+	return compactionResult{
+		Messages:         compacted,
+		Summary:          summary,
+		PromptTokens:     resp.Usage.PromptTokens,
+		CompletionTokens: resp.Usage.CompletionTokens,
+		ReasoningTokens:  reasoningTokens,
+		CachedTokens:     cachedTokens,
+		KeptCount:        len(chatMsgs) - keepEnd,
+	}
 }
 
 // sanitizeChatMessages ensures every assistant message with tool_calls has
@@ -385,6 +419,16 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	if err != nil {
 		slog.Error("engine: get session failed", "session_id", sessionID, "error", err)
 		return "", "", nil, events, nil, fmt.Errorf("get session: %w", err)
+	}
+
+	// Live snapshot of the persisted session totals; updated per call and
+	// emitted on token_update so clients never have to reconstruct it.
+	usage, usageErr := e.session.GetUsage(ctx, sessionID)
+	if usageErr != nil {
+		slog.Warn("engine: load session usage", "session_id", sessionID, "error", usageErr)
+	}
+	if usage == nil {
+		usage = &models.SessionUsage{}
 	}
 
 	var agent models.Agent
@@ -579,6 +623,36 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	} else {
 		chatMsgs = append(chatMsgs, ChatMessage{Role: "system", Content: notebookCtx + skillCatalogStr + pageContextStr})
 	}
+	// The latest non-empty persisted compaction row is the durable boundary:
+	// its summary replaces everything before it except the tail the compaction
+	// explicitly kept (kept_count). Compaction rows inside the retained window
+	// are superseded and skipped during rebuild.
+	boundary := -1
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "compaction" && messages[i].Content != "" {
+			boundary = i
+			break
+		}
+	}
+	kept := compactionKeepTail
+	if boundary >= 0 && messages[boundary].KeptCount != nil && *messages[boundary].KeptCount > 0 {
+		kept = *messages[boundary].KeptCount
+	}
+	// Walk back until `kept` non-compaction rows are retained; superseded
+	// compaction rows do not count so they cannot displace a real tail message.
+	start := 0
+	if boundary >= 0 {
+		start = boundary
+		retained := 0
+		for i := boundary - 1; i >= 0 && retained < kept; i-- {
+			if messages[i].Role == "compaction" {
+				continue
+			}
+			retained++
+			start = i
+		}
+	}
+
 	// Pre-fetch image data URIs for historical messages that have image IDs
 	type histImages struct {
 		ids  []string
@@ -586,14 +660,24 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	}
 	histImageMap := make(map[int]*histImages)
 	for i, m := range messages {
+		if i < start {
+			continue
+		}
 		if m.Role == "user" && len(m.ImageIDs) > 0 {
 			uris, _ := e.FetchImageDataURIs(ctx, m.ImageIDs)
 			histImageMap[i] = &histImages{ids: m.ImageIDs, uris: uris}
 		}
 	}
 
+	var compactionSummary string
 	for i, m := range messages {
+		if i < start {
+			continue
+		}
 		if m.Role == "compaction" {
+			if i == boundary {
+				compactionSummary = "The following is a summary of earlier conversation history:\n\n" + m.Content + "\n\n(older context was compacted to stay within context window limits)"
+			}
 			continue
 		}
 		if m.Role == "assistant" {
@@ -646,6 +730,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		} else {
 			chatMsgs = append(chatMsgs, ChatMessage{Role: m.Role, Content: m.Content})
 		}
+	}
+	// The summary covers history older than the retained tail, so it belongs
+	// immediately after the main system prompt.
+	if compactionSummary != "" {
+		withSummary := make([]ChatMessage, 0, len(chatMsgs)+1)
+		withSummary = append(withSummary, chatMsgs[0], ChatMessage{Role: "system", Content: compactionSummary})
+		withSummary = append(withSummary, chatMsgs[1:]...)
+		chatMsgs = withSummary
 	}
 	chatMsgs = sanitizeChatMessages(chatMsgs)
 
@@ -750,7 +842,10 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	sysContent := systemPrompt + notebookCtx + skillCatalogStr
 	sysTokens := e.tokenCounter.CountText(sysContent, modelName)
 	chatMsgsForCount := make([]ChatMessage, 0)
-	for _, m := range messages {
+	for i, m := range messages {
+		if i < start {
+			continue
+		}
 		msg := ChatMessage{Role: m.Role, Content: m.Content}
 		if m.ReasoningContent != "" {
 			msg.ReasoningContent = m.ReasoningContent
@@ -857,15 +952,34 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		modelCalls++
 		apiInputTotal += resp.Usage.PromptTokens
 		tokBrk.Output += resp.Usage.CompletionTokens
+		reasoningTokens := 0
 		if resp.Usage.CompletionTokensDetails != nil {
-			tokBrk.Reasoning += resp.Usage.CompletionTokensDetails.ReasoningTokens
+			reasoningTokens = resp.Usage.CompletionTokensDetails.ReasoningTokens
+			tokBrk.Reasoning += reasoningTokens
 		}
+		cacheRead := 0
 		if resp.Usage.PromptTokensDetails != nil {
-			tokBrk.CacheRead += resp.Usage.PromptTokensDetails.CachedTokens
+			cacheRead = resp.Usage.PromptTokensDetails.CachedTokens
+			tokBrk.CacheRead += cacheRead
 		}
+
+		usageDelta := SessionUsageDelta{
+			Input:         int64(resp.Usage.PromptTokens),
+			Output:        int64(resp.Usage.CompletionTokens),
+			Reasoning:     int64(reasoningTokens),
+			CacheRead:     int64(cacheRead),
+			ModelCalls:    1,
+			ContextTokens: int64(resp.Usage.PromptTokens),
+			ContextWindow: contextWindow,
+		}
+		if err := e.session.AddUsage(ctx, sessionID, usageDelta); err != nil {
+			slog.Warn("engine: persist session usage", "session_id", sessionID, "error", err)
+		}
+		applyUsageDelta(usage, usageDelta)
 
 		currentContextTokens := resp.Usage.PromptTokens
 		if onEvent != nil {
+			usageSnapshot := *usage
 			onEvent(EngineEvent{
 				Type: "token_update",
 				Tokens: &TokenBreakdown{
@@ -883,31 +997,48 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					ToolResults:     estimatedToolResults,
 					ContextCurrent:  currentContextTokens,
 				},
+				SessionUsage: &usageSnapshot,
 			})
 		}
 
 		// Auto-compact if approaching context window limit (use current context, not cumulative)
 		if compactionThreshold > 0 && currentContextTokens > 0 && currentContextTokens > contextWindow*compactionThreshold/100 && len(chatMsgs) > 10 {
 			beforeCtx := currentContextTokens
-			compacted, summary := e.compactChatHistory(ctx, llmClient, chatMsgs, masterKey, sessionID)
-			if summary != "" && len(compacted) < len(chatMsgs) {
-				chatMsgs = compacted
-				slog.Info("context compaction triggered", "session_id", sessionID, "tokens", beforeCtx, "context_window", contextWindow)
+			result := e.compactChatHistory(ctx, llmClient, chatMsgs, masterKey, sessionID)
+			if result.Summary != "" && len(result.Messages) < len(chatMsgs) {
+				afterEstimate := e.tokenCounter.CountMessages(result.Messages, modelName)
+				chatMsgs = result.Messages
+				compactionDelta := SessionUsageDelta{
+					Input:         int64(result.PromptTokens),
+					Output:        int64(result.CompletionTokens),
+					Reasoning:     int64(result.ReasoningTokens),
+					CacheRead:     int64(result.CachedTokens),
+					ModelCalls:    1,
+					ContextTokens: int64(afterEstimate),
+					ContextWindow: contextWindow,
+				}
+				if err := e.session.AddUsage(ctx, sessionID, compactionDelta); err != nil {
+					slog.Warn("engine: persist compaction usage", "session_id", sessionID, "error", err)
+				}
+				applyUsageDelta(usage, compactionDelta)
+				slog.Info("context compaction triggered", "session_id", sessionID, "tokens", beforeCtx, "context_window", contextWindow, "tokens_after", afterEstimate, "kept_tail", result.KeptCount, "summary_prompt_tokens", result.PromptTokens, "summary_completion_tokens", result.CompletionTokens)
 				// Persist compaction divider for reconnect_sync
 				compactionMsg := &models.AgentMessage{
 					ID:           uuid.New().String(),
 					SessionID:    sessionID,
 					Role:         "compaction",
-					Content:      summary,
+					Content:      result.Summary,
 					TokensDirect: beforeCtx,
+					TokensAfter:  &afterEstimate,
+					KeptCount:    &result.KeptCount,
 					CreatedAt:    time.Now(),
 				}
 				_ = e.session.AppendMessage(ctx, compactionMsg)
 				if onEvent != nil {
 					onEvent(EngineEvent{
 						Type:    "context_compacted",
-						Tokens:  &TokenBreakdown{Input: beforeCtx, ContextCurrent: beforeCtx},
-						Summary: summary,
+						Tokens:  &TokenBreakdown{Input: beforeCtx, ContextCurrent: afterEstimate},
+						Summary: result.Summary,
 					})
 				}
 			}
@@ -1204,6 +1335,16 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					onToolResult(tc.Function.Name, tc.ID, tc.Function.Arguments, resultStr, "", toolDurationMs, tokensDirect)
 				}
 			}
+		}
+
+		// Synchronous tools (spawn_subagents) can accrue usage to the session
+		// from inside their handler. Refresh the in-memory snapshot so the next
+		// token_update/done does not regress below the subagent_status events
+		// already sent to the client.
+		if refreshed, err := e.session.GetUsage(ctx, sessionID); err != nil {
+			slog.Warn("engine: refresh session usage snapshot", "session_id", sessionID, "error", err)
+		} else if refreshed != nil {
+			*usage = *refreshed
 		}
 
 		slog.Debug("engine: turn complete", "session_id", sessionID, "turn", turn, "llm_ms", llmElapsed, "total_ms", time.Since(turnStart).Milliseconds())

@@ -741,6 +741,49 @@ const docTemplate = `{
                 }
             }
         },
+        "/agents/sessions/{id}/usage": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get the accumulated token usage for a given session",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Get session usage",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.SessionUsage"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/agents/stats": {
             "get": {
                 "security": [
@@ -8480,6 +8523,12 @@ const docTemplate = `{
                     "description": "AutoApproveTools makes the engine resolve tool_confirm_required itself\ninstead of waiting on a client, so headless/API sessions don't hang.",
                     "type": "boolean"
                 },
+                "context_tokens": {
+                    "type": "integer"
+                },
+                "context_window": {
+                    "type": "integer"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -8497,6 +8546,27 @@ const docTemplate = `{
                 },
                 "title": {
                     "type": "string"
+                },
+                "total_cache_read": {
+                    "type": "integer"
+                },
+                "total_input": {
+                    "type": "integer"
+                },
+                "total_model_calls": {
+                    "type": "integer"
+                },
+                "total_output": {
+                    "type": "integer"
+                },
+                "total_reasoning": {
+                    "type": "integer"
+                },
+                "total_subagent_input": {
+                    "type": "integer"
+                },
+                "total_subagent_output": {
+                    "type": "integer"
                 },
                 "user_id": {
                     "type": "string"
@@ -8782,6 +8852,38 @@ const docTemplate = `{
                 },
                 "type": {
                     "type": "string"
+                }
+            }
+        },
+        "models.SessionUsage": {
+            "type": "object",
+            "properties": {
+                "cache_read": {
+                    "type": "integer"
+                },
+                "context_tokens": {
+                    "type": "integer"
+                },
+                "context_window": {
+                    "type": "integer"
+                },
+                "input": {
+                    "type": "integer"
+                },
+                "model_calls": {
+                    "type": "integer"
+                },
+                "output": {
+                    "type": "integer"
+                },
+                "reasoning": {
+                    "type": "integer"
+                },
+                "subagent_input": {
+                    "type": "integer"
+                },
+                "subagent_output": {
+                    "type": "integer"
                 }
             }
         },

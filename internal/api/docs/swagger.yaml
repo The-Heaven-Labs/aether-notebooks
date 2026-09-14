@@ -244,6 +244,10 @@ definitions:
           AutoApproveTools makes the engine resolve tool_confirm_required itself
           instead of waiting on a client, so headless/API sessions don't hang.
         type: boolean
+      context_tokens:
+        type: integer
+      context_window:
+        type: integer
       created_at:
         type: string
       ended_at:
@@ -256,6 +260,20 @@ definitions:
         type: string
       title:
         type: string
+      total_cache_read:
+        type: integer
+      total_input:
+        type: integer
+      total_model_calls:
+        type: integer
+      total_output:
+        type: integer
+      total_reasoning:
+        type: integer
+      total_subagent_input:
+        type: integer
+      total_subagent_output:
+        type: integer
       user_id:
         type: string
     type: object
@@ -445,6 +463,27 @@ definitions:
         type: string
       type:
         type: string
+    type: object
+  models.SessionUsage:
+    properties:
+      cache_read:
+        type: integer
+      context_tokens:
+        type: integer
+      context_window:
+        type: integer
+      input:
+        type: integer
+      model_calls:
+        type: integer
+      output:
+        type: integer
+      reasoning:
+        type: integer
+      subagent_input:
+        type: integer
+      subagent_output:
+        type: integer
     type: object
   models.Skill:
     properties:
@@ -1239,6 +1278,33 @@ paths:
       security:
       - BearerAuth: []
       summary: Get agent stats by agent
+      tags:
+      - agents
+  /agents/sessions/{id}/usage:
+    get:
+      description: Get the accumulated token usage for a given session
+      parameters:
+      - description: Session ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.SessionUsage'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get session usage
       tags:
       - agents
   /agents/stats:

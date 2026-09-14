@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, getToken } from '../api/client'
-import type { Agent, AgentTaskItem, ModelConfig, TokenBreakdown, WSMessage } from '../types/agent'
+import type { Agent, AgentTaskItem, ModelConfig, SessionUsage, TokenBreakdown, WSMessage } from '../types/agent'
 import { mapServerMessagesToChat, applyToolResult, oldestPendingToolAgeMs, applySteeringMessage } from '../utils/agentTranscript'
 import { AgentMessageImages } from './AgentMessageImages'
 import { PanelHeader } from './PanelHeader'
@@ -102,14 +102,51 @@ function formatTokens(n: number): string {
   return String(n)
 }
 
-function CompactionDivider({ msg, fmtTime }: { msg: ChatMessage; fmtTime: (iso?: string) => string }) {
+// mergeTokenBreakdown applies a server token breakdown (token_update / done)
+// over the previous state with replace semantics: fields carried by the event
+// win, absent fields keep their previous value. `done` therefore never adds the
+// turn cumulative on top of the last `token_update` (which already reported it),
+// and an absent context_current in `done` survives.
+export function mergeTokenBreakdown(prev: TokenBreakdown | null, tokens?: TokenBreakdown | null): TokenBreakdown | null {
+  if (!tokens) return prev
+  return {
+    input: tokens.input ?? prev?.input ?? 0,
+    output: tokens.output ?? prev?.output ?? 0,
+    reasoning: tokens.reasoning ?? prev?.reasoning ?? 0,
+    cache_read: tokens.cache_read ?? prev?.cache_read ?? 0,
+    model_calls: tokens.model_calls ?? prev?.model_calls ?? 0,
+    system_prompt: tokens.system_prompt ?? prev?.system_prompt ?? 0,
+    skill_override: tokens.skill_override ?? prev?.skill_override ?? 0,
+    history: tokens.history ?? prev?.history ?? 0,
+    user_message: tokens.user_message ?? prev?.user_message ?? 0,
+    tool_definitions: tokens.tool_definitions ?? prev?.tool_definitions ?? 0,
+    tool_calls: tokens.tool_calls ?? prev?.tool_calls ?? 0,
+    tool_results: tokens.tool_results ?? prev?.tool_results ?? 0,
+    context_current: tokens.context_current ?? prev?.context_current,
+    duration_ms: tokens.duration_ms ?? prev?.duration_ms,
+  }
+}
+
+// contextPercent is the context-first meter: how full the model's context
+// window is right now, not cumulative session input+output.
+export function contextPercent(
+  totalTokens: TokenBreakdown | null | undefined,
+  sessionUsage: SessionUsage | null | undefined,
+  contextWindow: number,
+): number {
+  const current = totalTokens?.context_current ?? sessionUsage?.context_tokens ?? 0
+  const window = contextWindow || sessionUsage?.context_window || 1
+  return (current / window) * 100
+}
+
+export function CompactionDivider({ msg, fmtTime }: { msg: ChatMessage; fmtTime: (iso?: string) => string }) {
   const [open, setOpen] = useState(false)
   return (
     <div style={{ ...styles.message, background: 'var(--bg-elevated)', border: '1px dashed var(--border)', borderRadius: 6, padding: '8px 10px', fontSize: 11 }}>
       <div onClick={() => setOpen(o => !o)} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, userSelect: 'none' }}>
         <span>{open ? '▼' : '▶'} ⚙ Context compacted</span>
         {msg.tokens_before !== undefined && msg.tokens_after !== undefined ? (
-          <span style={{ opacity: 0.6, fontSize: 10 }}>{msg.tokens_before?.toLocaleString()} → {msg.tokens_after?.toLocaleString()} tokens</span>
+          <span style={{ opacity: 0.6, fontSize: 10 }}>{formatTokens(msg.tokens_before)} → {formatTokens(msg.tokens_after)} (~)</span>
         ) : null}
         <span style={{ marginLeft: 'auto', opacity: 0.5, fontSize: 10 }}>{fmtTime(msg.created_at)}</span>
       </div>
@@ -117,6 +154,214 @@ function CompactionDivider({ msg, fmtTime }: { msg: ChatMessage; fmtTime: (iso?:
         <div style={{ marginTop: 6, whiteSpace: 'pre-wrap', fontSize: 11, opacity: 0.9 }}>{msg.content}</div>
       )}
     </div>
+  )
+}
+
+export function TokenUsageMeter({ totalTokens, sessionUsage, contextWindow, hasCompacted, modelConfigs, modelConfigId, messages }: {
+  totalTokens: TokenBreakdown | null
+  sessionUsage: SessionUsage | null
+  contextWindow: number
+  hasCompacted: boolean
+  modelConfigs: ModelConfig[]
+  modelConfigId: string
+  messages: ChatMessage[]
+}) {
+  const [showTokenDetails, setShowTokenDetails] = useState(false)
+  if (!totalTokens && !sessionUsage) return null
+
+  const costFmt = (compute: (mc: ModelConfig) => number): string => {
+    const mc = modelConfigs.find(m => m.id === modelConfigId)
+    if (!mc || (!mc.price_per_input_token && !mc.price_per_output_token)) return ''
+    const c = compute(mc)
+    if (c <= 0) return ''
+    return `$${c.toFixed(c < 0.01 ? 6 : 4)}`
+  }
+
+  const sessionIn = sessionUsage?.input ?? totalTokens?.input ?? 0
+  const sessionOut = sessionUsage?.output ?? totalTokens?.output ?? 0
+  const sessionCache = sessionUsage?.cache_read ?? totalTokens?.cache_read ?? 0
+  const subagentIn = sessionUsage?.subagent_input ?? 0
+  const subagentOut = sessionUsage?.subagent_output ?? 0
+  const sessionTotal = sessionIn + sessionOut + subagentIn + subagentOut
+  const windowSize = contextWindow || sessionUsage?.context_window || 0
+  const currentContext = totalTokens?.context_current ?? sessionUsage?.context_tokens ?? 0
+  const percent = Math.round(contextPercent(totalTokens, sessionUsage, contextWindow))
+
+  return (
+    <span style={{ position: 'relative' }}>
+      <span
+        onClick={() => setShowTokenDetails(v => !v)}
+        style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8, whiteSpace: 'nowrap', cursor: 'pointer', borderBottom: '1px dashed var(--text-muted)' }}
+      >
+        {(sessionIn + subagentIn).toLocaleString()}↑ / {(sessionOut + subagentOut).toLocaleString()}↓
+        {(() => {
+          const mc = modelConfigs.find(m => m.id === modelConfigId)
+          if (!mc || (!mc.price_per_input_token && !mc.price_per_output_token)) return null
+          const cost = ((sessionIn + subagentIn) * mc.price_per_input_token + (sessionOut + subagentOut) * mc.price_per_output_token + sessionCache * mc.price_per_cache_read_token) / 1000000
+          return <span style={{ marginLeft: 6, opacity: 0.7, fontSize: 10 }}>${cost < 0.01 ? cost.toFixed(6) : cost.toFixed(4)}</span>
+        })()}
+        {windowSize > 0 && (
+          <span style={{ marginLeft: 6, opacity: 0.6 }}>
+            ({percent}%){hasCompacted ? ' ⚙' : ''}
+          </span>
+        )}
+      </span>
+      {showTokenDetails && (
+        <>
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 999 }}
+            onClick={() => setShowTokenDetails(false)}
+          />
+          <div style={{
+            position: 'absolute', top: '100%', right: 0, zIndex: 1000,
+            background: 'var(--bg-primary)', border: '1px solid var(--border)',
+            borderRadius: 8, padding: 12, minWidth: 280, marginTop: 4,
+            fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+          }}>
+            <div style={{ fontWeight: 600, marginBottom: 8, color: 'var(--text-primary)' }}>Token Usage</div>
+
+            {sessionUsage && (
+              <div style={{ marginBottom: 4 }}>
+                <div style={{ color: 'var(--text-muted)', fontSize: 10, marginBottom: 4 }}>This session</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 4 }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Input</span>
+                  <span>{sessionUsage.input.toLocaleString()} <span style={{ fontSize: 10, opacity: 0.6 }}>{costFmt(mc => mc.price_per_input_token * sessionUsage.input / 1000000)}</span></span>
+                </div>
+                {sessionUsage.cache_read > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2, paddingLeft: 16 }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Cache read</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{sessionUsage.cache_read.toLocaleString()} <span style={{ fontSize: 10, opacity: 0.6 }}>{costFmt(mc => mc.price_per_cache_read_token * sessionUsage.cache_read / 1000000)}</span></span>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 4 }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Output</span>
+                  <span>{sessionUsage.output.toLocaleString()} <span style={{ fontSize: 10, opacity: 0.6 }}>{costFmt(mc => mc.price_per_output_token * sessionUsage.output / 1000000)}</span></span>
+                </div>
+                {sessionUsage.reasoning > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 4, paddingLeft: 16 }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Reasoning</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{sessionUsage.reasoning.toLocaleString()}</span>
+                  </div>
+                )}
+
+                {(sessionUsage.subagent_input > 0 || sessionUsage.subagent_output > 0) && (
+                  <div style={{ borderTop: '1px solid var(--border)', margin: '6px 0', paddingTop: 6 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
+                      <span style={{ color: 'var(--text-secondary)', fontSize: 11 }}>Subagent Input</span>
+                      <span style={{ fontSize: 11 }}>{sessionUsage.subagent_input.toLocaleString()}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24 }}>
+                      <span style={{ color: 'var(--text-secondary)', fontSize: 11 }}>Subagent Output</span>
+                      <span style={{ fontSize: 11 }}>{sessionUsage.subagent_output.toLocaleString()}</span>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ borderTop: '1px solid var(--border)', margin: '6px 0', paddingTop: 6, display: 'flex', justifyContent: 'space-between', gap: 24 }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Total</span>
+                  <span style={{ fontWeight: 600 }}>{(() => {
+                    const mc = modelConfigs.find(m => m.id === modelConfigId)
+                    const cost = mc && (mc.price_per_input_token || mc.price_per_output_token)
+                      ? ((sessionIn + subagentIn) * mc.price_per_input_token + (sessionOut + subagentOut) * mc.price_per_output_token + sessionCache * mc.price_per_cache_read_token) / 1000000
+                      : null
+                    return sessionTotal.toLocaleString() + (cost !== null ? `  $${cost < 0.01 ? cost.toFixed(6) : cost.toFixed(4)}` : '')
+                  })()}</span>
+                </div>
+                {sessionUsage.model_calls > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, color: 'var(--text-muted)', fontSize: 11, marginTop: 4 }}>
+                    <span>Model calls</span>
+                    <span>{sessionUsage.model_calls}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {windowSize > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, color: 'var(--text-muted)', fontSize: 11, marginTop: 4 }}>
+                <span>Current context</span>
+                <span>{currentContext.toLocaleString()} / {windowSize.toLocaleString()} ({percent}%)</span>
+              </div>
+            )}
+            {hasCompacted && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, fontSize: 10, color: 'var(--accent)' }}>
+                <span>⚙ Compacted</span>
+                <span style={{ opacity: 0.6, fontSize: 9 }}>context was summarized</span>
+              </div>
+            )}
+
+            {totalTokens && (totalTokens.system_prompt > 0 || totalTokens.tool_definitions > 0 || totalTokens.history > 0) && (
+              <div style={{ borderTop: '1px dashed var(--border)', margin: '6px 0', paddingTop: 6 }}>
+                <div style={{ color: 'var(--text-muted)', fontSize: 10, marginBottom: 4 }}>Estimated (tiktoken)</div>
+                {totalTokens.system_prompt > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>System prompt</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.system_prompt.toLocaleString()}</span>
+                  </div>
+                )}
+                {totalTokens.skill_override > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Skill override</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.skill_override.toLocaleString()}</span>
+                  </div>
+                )}
+                {totalTokens.history > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>History</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.history.toLocaleString()}</span>
+                  </div>
+                )}
+                {totalTokens.user_message > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>User message</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.user_message.toLocaleString()}</span>
+                  </div>
+                )}
+                {totalTokens.tool_definitions > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Tool definitions</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.tool_definitions.toLocaleString()}</span>
+                  </div>
+                )}
+                {totalTokens.tool_calls > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Tool calls</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.tool_calls.toLocaleString()}</span>
+                  </div>
+                )}
+                {totalTokens.tool_results > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Tool results</span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.tool_results.toLocaleString()}</span>
+                  </div>
+                )}
+                {(() => {
+                  const byTool: Record<string, number> = {}
+                  for (const m of messages) {
+                    if (m.tokens_direct && m.content) {
+                      const name = m.content.split(' ')[0] || m.content
+                      byTool[name] = (byTool[name] || 0) + m.tokens_direct
+                    }
+                  }
+                  const entries = Object.entries(byTool).sort((a, b) => b[1] - a[1])
+                  if (entries.length === 0) return null
+                  return (
+                    <div style={{ marginTop: 8, borderTop: '1px dashed var(--border)', paddingTop: 6 }}>
+                      <div style={{ color: 'var(--text-muted)', fontSize: 10, marginBottom: 4 }}>Tool I/O (direct)</div>
+                      {entries.map(([name, tok]) => (
+                        <div key={name} style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
+                          <span style={{ color: 'var(--text-muted)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>{name}</span>
+                          <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{tok.toLocaleString()} <span style={{ fontSize: 9, opacity: 0.6 }}>{tok >= 1000 ? (tok/1000).toFixed(1)+'k' : ''}</span></span>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })()}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </span>
   )
 }
 
@@ -262,6 +507,8 @@ interface AgentChatState {
   tasks?: AgentTaskItem[]
   totalTokens?: TokenBreakdown
   contextWindow?: number
+  sessionUsage?: SessionUsage | null
+  hasCompacted?: boolean
   lastMessageId?: string
   modelConfigId?: string
 }
@@ -290,6 +537,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const [elapsed, setElapsed] = useState(0)
   const [thinkingOpen, setThinkingOpen] = useState(true)
   const [totalTokens, setTotalTokens] = useState<TokenBreakdown | null>(null)
+  const [sessionUsage, setSessionUsage] = useState<SessionUsage | null>(null)
   const [subagentView, setSubagentView] = useState<string | null>(() => {
     try { return localStorage.getItem('aether:subagentView') } catch { return null }
   })
@@ -360,15 +608,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const ts = () => new Date().toISOString()
   const formatElapsed = (s: number) => s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
 
-  const costFmt = (compute: (mc: ModelConfig) => number): string => {
-    const mc = modelConfigs.find(m => m.id === modelConfigId)
-    if (!mc || (!mc.price_per_input_token && !mc.price_per_output_token)) return ''
-    const c = compute(mc)
-    if (c <= 0) return ''
-    return `$${c.toFixed(c < 0.01 ? 6 : 4)}`
-  }
   const [contextWindow, setContextWindow] = useState<number>(0)
-  const [showTokenDetails, setShowTokenDetails] = useState(false)
   const [reasoningEffort, setReasoningEffort] = useState('')
   const [modelConfigs, setModelConfigs] = useState<ModelConfig[]>([])
   const [modelConfigId, setModelConfigId] = useState('')
@@ -628,6 +868,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           setTasks(savedState.tasks || [])
           if (savedState.totalTokens) setTotalTokens(savedState.totalTokens)
           if (savedState.contextWindow) setContextWindow(savedState.contextWindow)
+          if (savedState.sessionUsage) setSessionUsage(savedState.sessionUsage)
+          if (savedState.hasCompacted) setHasCompacted(true)
           forceScrollRef.current = true
           connectWebSocket(savedState.sessionId)
           return
@@ -677,10 +919,10 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     return null
   }
 
-  const saveChatState = (agentId: string, sessionId: string, msgs: ChatMessage[], tks?: AgentTaskItem[], tok?: TokenBreakdown, cw?: number) => {
+  const saveChatState = (agentId: string, sessionId: string, msgs: ChatMessage[], tks?: AgentTaskItem[], tok?: TokenBreakdown, cw?: number, usage?: SessionUsage | null, compacted?: boolean) => {
     try {
       const lastId = msgs.length > 0 ? msgs[msgs.length - 1].id : undefined
-      localStorage.setItem(chatStateKey, JSON.stringify({ agentId, sessionId, messages: msgs, tasks: tks, totalTokens: tok, contextWindow: cw, lastMessageId: lastId, modelConfigId: modelConfigIdRef.current || undefined }))
+      localStorage.setItem(chatStateKey, JSON.stringify({ agentId, sessionId, messages: msgs, tasks: tks, totalTokens: tok, contextWindow: cw, sessionUsage: usage ?? null, hasCompacted: !!compacted, lastMessageId: lastId, modelConfigId: modelConfigIdRef.current || undefined }))
     } catch { /* ignore */ }
   }
 
@@ -689,9 +931,45 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     try { localStorage.removeItem(DRAFT_KEY) } catch {}
     setSubagentTokens({})
     setHasCompacted(false)
+    setSessionUsage(null)
   }
 
-  const connectWebSocket = useCallback((sid: string) => {
+  // Session switches must not leak the previous session's context: the meter
+  // would otherwise show a stale percent/window until the first token_update
+  // (context_current outranks the freshly seeded session_usage.context_tokens).
+  const resetMeterState = useCallback(() => {
+    setTotalTokens(null)
+    setContextWindow(0)
+    setSessionUsage(null)
+    setHasCompacted(false)
+  }, [])
+
+  // The server's session usage snapshot is authoritative (it survives
+  // compaction and subagents). A null/missing snapshot means "keep previous".
+  const applyServerUsage = useCallback((usage?: SessionUsage | null) => {
+    if (!usage) return
+    setSessionUsage(usage)
+    if (usage.context_window > 0) setContextWindow(usage.context_window)
+  }, [])
+
+  // Seed the meter from the REST snapshot when resuming/attaching to a session;
+  // the live token_update/done events keep it fresh afterwards. Failures are
+  // silent — the WS stream will correct any stale value.
+  const loadSessionUsage = useCallback((sid: string) => {
+    api.get<SessionUsage>(`/api/v1/agents/sessions/${sid}/usage`)
+      .then((usage) => {
+        if (!usage || sessionIdRef.current !== sid) return
+        // An empty session snapshot would render a visible 0↑ / 0↓ meter.
+        const hasData = usage.context_window > 0 || usage.context_tokens > 0 ||
+          usage.input > 0 || usage.output > 0 || usage.model_calls > 0 ||
+          usage.subagent_input > 0 || usage.subagent_output > 0
+        if (!hasData) return
+        applyServerUsage(usage)
+      })
+      .catch(() => { /* live WS will refresh */ })
+  }, [applyServerUsage])
+
+  const connectWebSocket = useCallback((sid: string, opts?: { seedUsage?: boolean }) => {
     // Close any existing connection, suppressing its reconnect logic
     if (wsRef.current) {
       reconnectTimerRef.current = setTimeout(() => {}, 0)
@@ -705,6 +983,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     reconnectAttemptsRef.current = 0
     lastSeqRef.current = 0
     setRetryNotice(null)
+    // Brand-new sessions start empty (their first token_update carries usage),
+    // so skip the REST seed and keep the meter hidden until there is data.
+    if (opts?.seedUsage !== false) loadSessionUsage(sid)
 
     ws.onopen = () => {
         setWsConnected(true)
@@ -799,6 +1080,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             // jumps the stream clock past anything already reconciled (F1).
             const serverMsgs = mapServerMessagesToChat((msg as { messages?: any }).messages)
             if (serverMsgs.length > 0) setMessages(serverMsgs)
+            if (serverMsgs.some((m) => m.role === 'compaction')) setHasCompacted(true)
             const serverSeq = (msg as { server_seq?: unknown }).server_seq
             if (typeof serverSeq === 'number' && serverSeq > lastSeqRef.current) lastSeqRef.current = serverSeq
             streamingTextRef.current = ''; setCurrentStreamingText('')
@@ -806,6 +1088,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             const running = (msg as any).running
             setIsStreaming(!!running)
             if (running && !streamingStartedAt.current) streamingStartedAt.current = ts()
+            applyServerUsage(msg.session_usage)
             break
           }
           case 'context_compacted': {
@@ -814,6 +1097,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             const before = tokens?.input ?? 0
             const after = tokens?.context_current
             setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'compaction', content: summary, tokens_before: before, tokens_after: after, created_at: ts() }])
+            // token_update fired before the compaction check and `done` carries
+            // no context_current, so without this the headline keeps showing the
+            // pre-compaction prompt size. Patch only the after-count: the rest
+            // of the event's breakdown describes the summarization call.
+            setTotalTokens(prev => prev ? { ...prev, context_current: tokens?.context_current ?? prev.context_current } : prev)
             setHasCompacted(true)
             break
           }
@@ -826,7 +1114,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             updateStreamingReasoning('')
             if (finalText) { setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: finalText, reasoning: finalReasoning, duration_ms: dm, created_at: ts() }]); streamingTextRef.current = ''; setCurrentStreamingText('') }
             else if (msg.data && 'content' in msg.data && msg.data.content) { setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: (msg.data as any).content, reasoning: finalReasoning, duration_ms: dm, created_at: ts() }]) }
-            if (tk && typeof tk.input === 'number') setTotalTokens(prev => ({ input: (prev?.input || 0) + tk.input, output: (prev?.output || 0) + tk.output, reasoning: (prev?.reasoning || 0) + (tk.reasoning || 0), cache_read: (prev?.cache_read || 0) + (tk.cache_read || 0), model_calls: (prev?.model_calls || 0) + (tk.model_calls || 0), system_prompt: (prev?.system_prompt || 0) + (tk.system_prompt || 0), skill_override: (prev?.skill_override || 0) + (tk.skill_override || 0), history: (prev?.history || 0) + (tk.history || 0), user_message: (prev?.user_message || 0) + (tk.user_message || 0), tool_definitions: (prev?.tool_definitions || 0) + (tk.tool_definitions || 0), tool_calls: (prev?.tool_calls || 0) + (tk.tool_calls || 0), tool_results: (prev?.tool_results || 0) + (tk.tool_results || 0), subagent_input: prev?.subagent_input, subagent_output: prev?.subagent_output }))
+            if (tk) setTotalTokens(prev => mergeTokenBreakdown(prev, tk))
+            applyServerUsage(msg.data?.session_usage)
             setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50); break
           }
           case 'subagent_message':
@@ -858,23 +1147,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           case 'subagent_status':
             if (msg.tokens_input || msg.tokens_output) {
               setSubagentTokens(prev => ({ ...prev, [msg.task_id]: { input: msg.tokens_input || 0, output: msg.tokens_output || 0 } }))
-              setTotalTokens(prev => ({
-                input: prev?.input || 0,
-                output: prev?.output || 0,
-                reasoning: prev?.reasoning || 0,
-                cache_read: prev?.cache_read || 0,
-                model_calls: (prev?.model_calls || 0) + 1,
-                system_prompt: prev?.system_prompt || 0,
-                skill_override: prev?.skill_override || 0,
-                history: prev?.history || 0,
-                user_message: prev?.user_message || 0,
-                tool_definitions: prev?.tool_definitions || 0,
-                tool_calls: prev?.tool_calls || 0,
-                tool_results: prev?.tool_results || 0,
-                subagent_input: (prev?.subagent_input || 0) + (msg.tokens_input || 0),
-                subagent_output: (prev?.subagent_output || 0) + (msg.tokens_output || 0),
-              }))
             }
+            applyServerUsage(msg.session_usage)
             setMessages((prev) => {
               const existing = prev.findIndex(m => m.role === 'subagent' && m.content === msg.task_id)
               const subagentMsg: ChatMessage = {
@@ -920,7 +1194,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             break
           
           case 'token_update':
-            setTotalTokens(prev => { const t = msg.tokens as any; return { input: t?.input ?? (prev?.input || 0), output: t?.output ?? (prev?.output || 0), reasoning: t?.reasoning ?? (prev?.reasoning || 0), cache_read: t?.cache_read ?? (prev?.cache_read || 0), model_calls: t?.model_calls ?? (prev?.model_calls || 0), system_prompt: t?.system_prompt ?? (prev?.system_prompt || 0), skill_override: t?.skill_override ?? (prev?.skill_override || 0), history: t?.history ?? (prev?.history || 0), user_message: t?.user_message ?? (prev?.user_message || 0), tool_definitions: t?.tool_definitions ?? (prev?.tool_definitions || 0), tool_calls: t?.tool_calls ?? (prev?.tool_calls || 0), tool_results: t?.tool_results ?? (prev?.tool_results || 0), context_current: t?.context_current ?? (prev as any)?.context_current, subagent_input: prev?.subagent_input, subagent_output: prev?.subagent_output } as TokenBreakdown }); break
+            setTotalTokens(prev => mergeTokenBreakdown(prev, msg.tokens))
+            applyServerUsage(msg.session_usage)
+            break
           case 'tasks_updated':
             setTasks((prev) => { const inc = msg.data as AgentTaskItem[]; const m = [...prev]; for (const t of inc) { const idx = m.findIndex((x) => x.id === t.id); if (idx >= 0) m[idx] = { ...m[idx], ...t, ...(t.description ? {} : { description: m[idx].description }) }; else m.push(t) }; return m }); break
         }
@@ -941,7 +1217,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     }
 
     ws.onerror = () => { setError('WebSocket connection failed'); setIsStreaming(false) }
-  }, [notebookId, queryClient, scrollToCell])
+  }, [notebookId, queryClient, scrollToCell, loadSessionUsage])
 
   const startSession = async (agent: Agent) => {
     const reqId = ++sessionReqIdRef.current
@@ -957,10 +1233,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       localStorage.setItem(LAST_AGENT_KEY, agent.id)
       setMessages([])
       setTasks([])
-      setTotalTokens(null)
-      setHasCompacted(false)
+      resetMeterState()
       setContextWindow(res.context_window ?? 0)
-      connectWebSocket(res.session_id)
+      connectWebSocket(res.session_id, { seedUsage: false })
     } catch {
       if (reqId !== sessionReqIdRef.current) return
       setError('Failed to start session')
@@ -972,8 +1247,10 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     setSessionTitle(null)
     setMessages([])
     setTasks([])
-    setHasCompacted(false)
-    connectWebSocket(sessionID)
+    resetMeterState()
+    // The fork starts with an empty summary-only context; its first
+    // token_update carries the server usage, so skip the REST seed.
+    connectWebSocket(sessionID, { seedUsage: false })
   }
 
   const closeWS = () => {
@@ -1177,11 +1454,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
   useEffect(() => {
     if (_sessionId && selectedAgent && messages.length > 0 && !chatClearedRef.current) {
-      saveChatState(selectedAgent.id, _sessionId, messages, tasks, totalTokens || undefined, contextWindow)
+      saveChatState(selectedAgent.id, _sessionId, messages, tasks, totalTokens || undefined, contextWindow, sessionUsage, hasCompacted)
     }
     return () => {
       if (_sessionId && selectedAgent && messages.length > 0 && !chatClearedRef.current) {
-        saveChatState(selectedAgent.id, _sessionId, messages, tasks, totalTokens || undefined, contextWindow)
+        saveChatState(selectedAgent.id, _sessionId, messages, tasks, totalTokens || undefined, contextWindow, sessionUsage, hasCompacted)
       }
     }
   }, [messages, tasks, _sessionId, selectedAgent])
@@ -1344,18 +1621,12 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             closeWS()
             setSessionId(session.id)
             setShowHistory(false)
+            resetMeterState()
             try {
-              const msgs = await api.get<Array<{ id: string; role: string; content: string; reasoning_content?: string; image_ids?: string[]; duration_ms?: number; created_at?: string }>>(`/api/v1/sessions/${session.id}/messages`)
-              const formatted = msgs.map((m) => ({
-                id: m.id,
-                role: m.role,
-                content: m.content || '',
-                reasoning: m.reasoning_content,
-                images: m.image_ids?.length ? m.image_ids : undefined,
-                duration_ms: m.duration_ms,
-                created_at: m.created_at,
-              }))
+              const msgs = await api.get<Array<{ id: string; role: string; content: string; reasoning_content?: string; image_ids?: string[]; duration_ms?: number; tokens_direct?: number; tokens_after?: number; created_at?: string }>>(`/api/v1/sessions/${session.id}/messages`)
+              const formatted = mapServerMessagesToChat(msgs)
               setMessages(formatted)
+              if (formatted.some((m) => m.role === 'compaction')) setHasCompacted(true)
               if (selectedAgent) {
                 saveChatState(selectedAgent.id, session.id, formatted, undefined)
               }
@@ -1480,194 +1751,15 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             >
               {copied ? <Check size={14} style={{ color: 'var(--success, #10b981)' }} /> : <Copy size={14} />}
             </button>
-            {totalTokens && (
-              <span style={{ position: 'relative' }}>
-                <span
-                  onClick={() => setShowTokenDetails(v => !v)}
-                  style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8, whiteSpace: 'nowrap', cursor: 'pointer', borderBottom: '1px dashed var(--text-muted)' }}
-                >
-                  {(() => {
-                    const si = totalTokens.subagent_input || 0
-                    const so = totalTokens.subagent_output || 0
-                    const allIn = totalTokens.input + si
-                    const allOut = totalTokens.output + so
-                    return <>{allIn.toLocaleString()}↑ / {allOut.toLocaleString()}↓</>
-                  })()}
-                  {(() => {
-                    const mc = modelConfigs.find(m => m.id === modelConfigId)
-                    if (!mc || (!mc.price_per_input_token && !mc.price_per_output_token)) return null
-                    const si = totalTokens.subagent_input || 0
-                    const so = totalTokens.subagent_output || 0
-                    const cost = ((totalTokens.input + si) * mc.price_per_input_token + (totalTokens.output + so) * mc.price_per_output_token + (totalTokens.cache_read ?? 0) * mc.price_per_cache_read_token) / 1000000
-                    return <span style={{ marginLeft: 6, opacity: 0.7, fontSize: 10 }}>${cost < 0.01 ? cost.toFixed(6) : cost.toFixed(4)}</span>
-                  })()}
-                  {contextWindow > 0 && (
-                    <span style={{ marginLeft: 6, opacity: 0.6 }}>
-                      ({Math.round((totalTokens.input + totalTokens.output) / contextWindow * 100)}%){hasCompacted ? ' ⚙' : ''}
-                    </span>
-                  )}
-                </span>
-                {showTokenDetails && (
-                  <>
-                    <div
-                      style={{ position: 'fixed', inset: 0, zIndex: 999 }}
-                      onClick={() => setShowTokenDetails(false)}
-                    />
-                    <div style={{
-                      position: 'absolute', top: '100%', right: 0, zIndex: 1000,
-                      background: 'var(--bg-primary)', border: '1px solid var(--border)',
-                      borderRadius: 8, padding: 12, minWidth: 280, marginTop: 4,
-                      fontSize: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                    }}>
-                      <div style={{ fontWeight: 600, marginBottom: 8, color: 'var(--text-primary)' }}>Token Usage</div>
-
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 4 }}>
-                        <span style={{ color: 'var(--text-secondary)' }}>Input</span>
-                        <span>{totalTokens.input.toLocaleString()} <span style={{ fontSize: 10, opacity: 0.6 }}>{costFmt(mc => mc.price_per_input_token * totalTokens.input / 1000000)}</span></span>
-                      </div>
-                      {totalTokens.cache_read > 0 && (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2, paddingLeft: 16 }}>
-                          <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Cache read</span>
-                          <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.cache_read.toLocaleString()} <span style={{ fontSize: 10, opacity: 0.6 }}>{costFmt(mc => mc.price_per_cache_read_token * totalTokens.cache_read / 1000000)}</span></span>
-                        </div>
-                      )}
-
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 4 }}>
-                        <span style={{ color: 'var(--text-secondary)' }}>Output</span>
-                        <span>{totalTokens.output.toLocaleString()} <span style={{ fontSize: 10, opacity: 0.6 }}>{costFmt(mc => mc.price_per_output_token * totalTokens.output / 1000000)}</span></span>
-                      </div>
-                      {totalTokens.reasoning > 0 && (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 4, paddingLeft: 16 }}>
-                          <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Reasoning</span>
-                          <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.reasoning.toLocaleString()}</span>
-                        </div>
-                      )}
-
-                      {totalTokens.subagent_input ? (
-                        <div style={{ borderTop: '1px solid var(--border)', margin: '6px 0', paddingTop: 6 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
-                            <span style={{ color: 'var(--text-secondary)', fontSize: 11 }}>Subagent Input</span>
-                            <span style={{ fontSize: 11 }}>{totalTokens.subagent_input.toLocaleString()}</span>
-                          </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24 }}>
-                            <span style={{ color: 'var(--text-secondary)', fontSize: 11 }}>Subagent Output</span>
-                            <span style={{ fontSize: 11 }}>{totalTokens.subagent_output?.toLocaleString()}</span>
-                          </div>
-                        </div>
-                      ) : null}
-
-                      <div style={{ borderTop: '1px solid var(--border)', margin: '6px 0', paddingTop: 6, display: 'flex', justifyContent: 'space-between', gap: 24 }}>
-                        <span style={{ color: 'var(--text-secondary)' }}>Total</span>
-                        <span style={{ fontWeight: 600 }}>{(() => {
-                          const si = totalTokens.subagent_input || 0
-                          const so = totalTokens.subagent_output || 0
-                          const total = totalTokens.input + totalTokens.output + si + so
-                          const mc = modelConfigs.find(m => m.id === modelConfigId)
-                          const cost = mc && (mc.price_per_input_token || mc.price_per_output_token)
-                            ? ((totalTokens.input + si) * mc.price_per_input_token + (totalTokens.output + so) * mc.price_per_output_token + (totalTokens.cache_read || 0) * mc.price_per_cache_read_token) / 1000000
-                            : null
-                          return total.toLocaleString() + (cost !== null ? `  $${cost < 0.01 ? cost.toFixed(6) : cost.toFixed(4)}` : '')
-                        })()}</span>
-                      </div>
-                      {totalTokens.model_calls > 0 && (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, color: 'var(--text-muted)', fontSize: 11, marginTop: 4 }}>
-                          <span>Model calls</span>
-                          <span>{totalTokens.model_calls}</span>
-                        </div>
-                      )}
-                      {contextWindow > 0 && (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, color: 'var(--text-muted)', fontSize: 11 }}>
-                          <span>Context window</span>
-                          <span>{contextWindow.toLocaleString()} ({Math.round((totalTokens.input + totalTokens.output) / contextWindow * 100)}%)</span>
-                        </div>
-                      )}
-                      {(totalTokens as any).context_current !== undefined && (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, color: 'var(--text-secondary)', fontSize: 11, marginTop: 2 }}>
-                          <span>Context <span style={{ fontSize: 10, opacity: 0.6 }}>(current)</span></span>
-                          <span>{(totalTokens as any).context_current.toLocaleString()} / {contextWindow.toLocaleString()} ({contextWindow ? Math.round((totalTokens as any).context_current / contextWindow * 100) : 0}%)</span>
-                        </div>
-                      )}
-                      {hasCompacted && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, fontSize: 10, color: 'var(--accent)' }}>
-                          <span>⚙ Compacted</span>
-                          <span style={{ opacity: 0.6, fontSize: 9 }}>context was summarized</span>
-                        </div>
-                      )}
-
-                      {(totalTokens.system_prompt > 0 || totalTokens.tool_definitions > 0 || totalTokens.history > 0) && (
-                        <div style={{ borderTop: '1px dashed var(--border)', margin: '6px 0', paddingTop: 6 }}>
-                          <div style={{ color: 'var(--text-muted)', fontSize: 10, marginBottom: 4 }}>Estimated (tiktoken)</div>
-                          {totalTokens.system_prompt > 0 && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
-                              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>System prompt</span>
-                              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.system_prompt.toLocaleString()}</span>
-                            </div>
-                          )}
-                          {totalTokens.skill_override > 0 && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
-                              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Skill override</span>
-                              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.skill_override.toLocaleString()}</span>
-                            </div>
-                          )}
-                          {totalTokens.history > 0 && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
-                              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>History</span>
-                              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.history.toLocaleString()}</span>
-                            </div>
-                          )}
-                          {totalTokens.user_message > 0 && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
-                              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>User message</span>
-                              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.user_message.toLocaleString()}</span>
-                            </div>
-                          )}
-                          {totalTokens.tool_definitions > 0 && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
-                              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Tool definitions</span>
-                              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.tool_definitions.toLocaleString()}</span>
-                            </div>
-                          )}
-                          {totalTokens.tool_calls > 0 && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
-                              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Tool calls</span>
-                              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.tool_calls.toLocaleString()}</span>
-                            </div>
-                          )}
-                          {totalTokens.tool_results > 0 && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
-                              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Tool results</span>
-                              <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{totalTokens.tool_results.toLocaleString()}</span>
-                            </div>
-                          )}
-                          {(() => {
-                            const byTool: Record<string, number> = {}
-                            for (const m of messages) {
-                              if (m.tokens_direct && m.content) {
-                                const name = m.content.split(' ')[0] || m.content
-                                byTool[name] = (byTool[name] || 0) + m.tokens_direct
-                              }
-                            }
-                            const entries = Object.entries(byTool).sort((a, b) => b[1] - a[1])
-                            if (entries.length === 0) return null
-                            return (
-                              <div style={{ marginTop: 8, borderTop: '1px dashed var(--border)', paddingTop: 6 }}>
-                                <div style={{ color: 'var(--text-muted)', fontSize: 10, marginBottom: 4 }}>Tool I/O (direct)</div>
-                                {entries.map(([name, tok]) => (
-                                  <div key={name} style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 2 }}>
-                                    <span style={{ color: 'var(--text-muted)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>{name}</span>
-                                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{tok.toLocaleString()} <span style={{ fontSize: 9, opacity: 0.6 }}>{tok >= 1000 ? (tok/1000).toFixed(1)+'k' : ''}</span></span>
-                                  </div>
-                                ))}
-                              </div>
-                            )
-                          })()}
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </span>
-            )}
+            <TokenUsageMeter
+              totalTokens={totalTokens}
+              sessionUsage={sessionUsage}
+              contextWindow={contextWindow}
+              hasCompacted={hasCompacted}
+              modelConfigs={modelConfigs}
+              modelConfigId={modelConfigId}
+              messages={messages}
+            />
           </div>
 
           <TaskList tasks={tasks} />

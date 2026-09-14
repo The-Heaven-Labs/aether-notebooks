@@ -81,6 +81,39 @@ describe('mapServerMessagesToChat', () => {
     ])
     expect(msgs.map((m) => m.content)).toEqual(['hi', 'hello'])
   })
+
+  it('maps compaction rows to before/after token counts', () => {
+    const msgs = mapServerMessagesToChat([
+      {
+        id: 'c1',
+        role: 'compaction',
+        content: 'summary of earlier turns',
+        tokens_direct: 1200,
+        tokens_after: 400,
+        created_at: '2026-09-11T00:00:02Z',
+      },
+    ])
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].role).toBe('compaction')
+    expect(msgs[0].tokens_before).toBe(1200)
+    expect(msgs[0].tokens_after).toBe(400)
+    expect(msgs[0].content).toBe('summary of earlier turns')
+  })
+
+  it('treats a zero tokens_after as absent (legacy compaction rows)', () => {
+    const msgs = mapServerMessagesToChat([
+      {
+        id: 'c-legacy',
+        role: 'compaction',
+        content: 'legacy summary',
+        tokens_direct: 900,
+        tokens_after: 0,
+        created_at: '2026-09-11T00:00:03Z',
+      },
+    ])
+    expect(msgs[0].tokens_before).toBe(900)
+    expect(msgs[0].tokens_after).toBeUndefined()
+  })
 })
 
 describe('applyToolResult', () => {

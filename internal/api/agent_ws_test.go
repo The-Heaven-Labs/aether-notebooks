@@ -180,6 +180,119 @@ func TestAgentWSReconnect(t *testing.T) {
 	}
 }
 
+// findMessageByContent locates a decoded message row by its content. It
+// accepts both []any (websocket payloads) and []map[string]any (REST payloads).
+func findMessageByContent[T any](t *testing.T, msgs []T, content string) map[string]any {
+	t.Helper()
+	for _, raw := range msgs {
+		m, _ := any(raw).(map[string]any)
+		if m["content"] == content {
+			return m
+		}
+	}
+	t.Fatalf("message %q not found in %v", content, msgs)
+	return nil
+}
+
+// A persisted compaction row must carry its real before/after token counts
+// through reconnect_sync and the REST messages endpoint, so the divider keeps
+// its numbers after a reload. Legacy rows (NULL tokens_after and NULL
+// duration_ms) and non-compaction rows must stay safe: NULL duration_ms is
+// coalesced, and a missing tokens_after is never synthesized into a count.
+func TestAgentWSReconnectCompactionTokens(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	email := fmt.Sprintf("ws-compaction-tokens-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "WS Compaction Tokens Org")
+	nbID := createNotebook(t, srv, token, "WS Compaction Tokens NB")
+	mcID := createModelConfig(t, srv, token)
+	agentID := createAgent(t, srv, token, mcID)
+	sessionID := createAgentSession(t, srv, token, agentID, nbID)
+
+	// The legacy compaction row and the user row have NULL duration_ms — the
+	// messages endpoint used to 500 on those scans.
+	if _, err := srv.DB().Pool.Exec(context.Background(), `
+		INSERT INTO agent_messages (session_id, role, content, tokens_direct, tokens_after, duration_ms, created_at) VALUES
+			($1, 'compaction', 'legacy context summary', 900, NULL, NULL, NOW() - INTERVAL '2 minutes'),
+			($1, 'user', 'hello', 0, NULL, NULL, NOW() - INTERVAL '1 minute'),
+			($1, 'compaction', 'earlier context summary', 1200, 400, 0, NOW())
+	`, sessionID); err != nil {
+		t.Fatalf("insert messages: %v", err)
+	}
+
+	assertCurrentCounts := func(t *testing.T, msg map[string]any) {
+		t.Helper()
+		if got, _ := msg["tokens_direct"].(float64); got != 1200 {
+			t.Fatalf("tokens_direct = %v, want 1200 (%v)", msg["tokens_direct"], msg)
+		}
+		if got, _ := msg["tokens_after"].(float64); got != 400 {
+			t.Fatalf("tokens_after = %v, want 400 (%v)", msg["tokens_after"], msg)
+		}
+	}
+
+	t.Run("reconnect_sync", func(t *testing.T) {
+		wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/ws/agents/" + sessionID + "?token=" + token
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+		if err != nil {
+			t.Fatalf("dial agent ws: %v", err)
+		}
+		defer conn.Close()
+
+		if err := conn.WriteJSON(map[string]string{"type": "reconnect", "last_message_id": ""}); err != nil {
+			t.Fatalf("write reconnect: %v", err)
+		}
+		found := readWSUntil(t, conn, map[string]bool{"reconnect_sync": true})
+		msgs, _ := found["reconnect_sync"]["messages"].([]any)
+		if len(msgs) != 3 {
+			t.Fatalf("messages = %v, want 3 rows", found["reconnect_sync"]["messages"])
+		}
+		assertCurrentCounts(t, findMessageByContent(t, msgs, "earlier context summary"))
+
+		legacy := findMessageByContent(t, msgs, "legacy context summary")
+		if got, _ := legacy["tokens_direct"].(float64); got != 900 {
+			t.Fatalf("legacy tokens_direct = %v, want 900 (%v)", legacy["tokens_direct"], legacy)
+		}
+		if _, has := legacy["tokens_after"]; has {
+			t.Fatalf("legacy row must omit tokens_after, got %v", legacy)
+		}
+
+		user := findMessageByContent(t, msgs, "hello")
+		if _, has := user["tokens_after"]; has {
+			t.Fatalf("non-compaction row must omit tokens_after, got %v", user)
+		}
+	})
+
+	t.Run("messages endpoint", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/sessions/"+sessionID+"/messages", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("messages: %d %s", rec.Code, rec.Body.String())
+		}
+		var msgs []map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&msgs); err != nil {
+			t.Fatalf("decode messages: %v", err)
+		}
+		if len(msgs) != 3 {
+			t.Fatalf("messages = %v, want 3 rows", msgs)
+		}
+		assertCurrentCounts(t, findMessageByContent(t, msgs, "earlier context summary"))
+
+		legacy := findMessageByContent(t, msgs, "legacy context summary")
+		if got, _ := legacy["tokens_direct"].(float64); got != 900 {
+			t.Fatalf("legacy tokens_direct = %v, want 900 (%v)", legacy["tokens_direct"], legacy)
+		}
+		// The wire carries 0 for the NULL tokens_after; the frontend mapper
+		// treats 0 as absent so the divider falls back to no counts.
+		if got, _ := legacy["tokens_after"].(float64); got != 0 {
+			t.Fatalf("legacy tokens_after = %v, want 0 (%v)", legacy["tokens_after"], legacy)
+		}
+	})
+}
+
 func createModelConfigWithURL(t *testing.T, srv *api.Server, token, baseURL string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{
@@ -290,6 +403,70 @@ func TestAgentWSToolCallIDAndDoneContent(t *testing.T) {
 	}
 	if _, ok := found["done"]["seq"]; !ok {
 		t.Fatalf("stream events must carry seq: %v", found["done"])
+	}
+}
+
+// token_update, done and reconnect_sync must all carry the session_usage
+// snapshot so a reloaded panel can restore the meter without recomputing it.
+func TestAgentWSSessionUsageEvents(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	finalBody := `{"id":"x","model":"gpt-4","choices":[{"message":{"content":"hello world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":120,"completion_tokens":10,"total_tokens":130}}`
+	llm := mockLLMResponses(t, []string{finalBody})
+	defer llm.Close()
+
+	email := fmt.Sprintf("ws-usage-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "WS Usage Org")
+	nbID := createNotebook(t, srv, token, "WS Usage NB")
+	mcID := createModelConfigWithURL(t, srv, token, llm.URL)
+	agentID := createAgent(t, srv, token, mcID)
+	sessionID := createAgentSession(t, srv, token, agentID, nbID)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/ws/agents/" + sessionID + "?token=" + token
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial agent ws: %v", err)
+	}
+	defer conn.Close()
+
+	if err := conn.WriteJSON(map[string]string{"type": "message", "content": "hi"}); err != nil {
+		t.Fatalf("write message: %v", err)
+	}
+
+	found := readWSUntil(t, conn, map[string]bool{"token_update": true, "done": true})
+
+	eventUsage, _ := found["token_update"]["session_usage"].(map[string]any)
+	if eventUsage == nil {
+		t.Fatalf("token_update missing session_usage: %v", found["token_update"])
+	}
+	if eventUsage["input"] != float64(120) || eventUsage["output"] != float64(10) {
+		t.Fatalf("token_update session_usage = %v", eventUsage)
+	}
+	if eventUsage["model_calls"] != float64(1) || eventUsage["context_tokens"] != float64(120) || eventUsage["context_window"] != float64(128000) {
+		t.Fatalf("token_update session_usage counters = %v", eventUsage)
+	}
+
+	doneData, _ := found["done"]["data"].(map[string]any)
+	doneUsage, _ := doneData["session_usage"].(map[string]any)
+	if doneUsage == nil {
+		t.Fatalf("done missing session_usage: %v", found["done"])
+	}
+	if doneUsage["input"] != float64(120) || doneUsage["model_calls"] != float64(1) {
+		t.Fatalf("done session_usage = %v", doneUsage)
+	}
+
+	if err := conn.WriteJSON(map[string]string{"type": "reconnect", "last_message_id": ""}); err != nil {
+		t.Fatalf("write reconnect: %v", err)
+	}
+	sync := readWSUntil(t, conn, map[string]bool{"reconnect_sync": true})["reconnect_sync"]
+	syncUsage, _ := sync["session_usage"].(map[string]any)
+	if syncUsage == nil {
+		t.Fatalf("reconnect_sync missing session_usage: %v", sync)
+	}
+	if syncUsage["input"] != float64(120) || syncUsage["output"] != float64(10) || syncUsage["model_calls"] != float64(1) {
+		t.Fatalf("reconnect_sync session_usage = %v", syncUsage)
 	}
 }
 

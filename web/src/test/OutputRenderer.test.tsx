@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
-import { OutputRenderer } from '../components/OutputRenderer'
+import { OutputRenderer, isAnyDetailActive } from '../components/OutputRenderer'
 import type { Output } from '../types'
 
 const makeTableOutput = (colType: string): Output => ({
@@ -158,5 +158,120 @@ describe('TableOutput virtualization', () => {
     await waitFor(() => expect(screen.getByLabelText('Copy value')).toBeDefined())
     const pre = container.querySelector('pre')
     expect(pre?.textContent).toBe(longValue)
+  })
+})
+
+// ── Detail panel copy behavior ────────────────────────────────────────────────
+
+describe('TableOutput detail copy', () => {
+  const fullValue = 'detail-value-'.repeat(4)
+
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 300 })
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 800 })
+  })
+  afterEach(() => {
+    delete (HTMLElement.prototype as { offsetHeight?: unknown }).offsetHeight
+    delete (HTMLElement.prototype as { offsetWidth?: unknown }).offsetWidth
+    delete (navigator as { clipboard?: unknown }).clipboard
+    window.getSelection()?.removeAllRanges()
+  })
+
+  function renderOpenDetail(cellId: string) {
+    const { container, unmount } = render(
+      <OutputRenderer
+        outputs={[{ type: 'table', data: { columns: [{ name: 'val', type: 'string' }], rows: [[fullValue]] } }]}
+        cellId={cellId}
+      />
+    )
+    const td = container.querySelector('td[data-row="0"][data-col="0"]')!
+    fireEvent.click(td)
+    return { container, unmount }
+  }
+
+  function stubClipboardWriteText() {
+    const writeText = vi.fn(() => Promise.resolve())
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    return writeText
+  }
+
+  function dispatchCtrlC(): KeyboardEvent {
+    const event = new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, cancelable: true, bubbles: true })
+    window.dispatchEvent(event)
+    return event
+  }
+
+  function dispatchCopy(target: EventTarget = document): { event: Event; data: Record<string, string> } {
+    const data: Record<string, string> = {}
+    const event = new Event('copy', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', {
+      value: { setData: (k: string, v: string) => { data[k] = v } },
+    })
+    target.dispatchEvent(event)
+    return { event, data }
+  }
+
+  it('copies the user selection instead of the whole value', async () => {
+    const { container } = renderOpenDetail('cell-copy-selection')
+    await waitFor(() => expect(screen.getByLabelText('Copy value')).toBeDefined())
+    const pre = container.querySelector('pre')!
+    const sel = window.getSelection()!
+    const range = document.createRange()
+    range.selectNodeContents(pre.firstChild!)
+    sel.removeAllRanges()
+    sel.addRange(range)
+    expect(sel.isCollapsed).toBe(false)
+    expect(sel.toString()).toBe(fullValue)
+
+    const { event, data } = dispatchCopy()
+    expect(event.defaultPrevented).toBe(false)
+    expect(data['text/plain']).toBeUndefined()
+  })
+
+  it('copies the whole value when nothing is selected', async () => {
+    renderOpenDetail('cell-copy-whole')
+    await waitFor(() => expect(screen.getByLabelText('Copy value')).toBeDefined())
+    window.getSelection()!.removeAllRanges()
+
+    const { event, data } = dispatchCopy()
+    expect(event.defaultPrevented).toBe(true)
+    expect(data['text/plain']).toBe(fullValue)
+  })
+
+  it('resets the global detail state when the open panel unmounts', async () => {
+    const { unmount } = renderOpenDetail('cell-unmount-global')
+    await waitFor(() => expect(screen.getByLabelText('Copy value')).toBeDefined())
+    expect(isAnyDetailActive()).toBe(true)
+    unmount()
+    expect(isAnyDetailActive()).toBe(false)
+  })
+
+  it('does not intercept Ctrl+C keydown while a selection exists', async () => {
+    const writeText = stubClipboardWriteText()
+    const { container } = renderOpenDetail('cell-keydown-selection')
+    await waitFor(() => expect(screen.getByLabelText('Copy value')).toBeDefined())
+    const pre = container.querySelector('pre')!
+    const sel = window.getSelection()!
+    const range = document.createRange()
+    range.selectNodeContents(pre.firstChild!)
+    sel.removeAllRanges()
+    sel.addRange(range)
+    expect(sel.isCollapsed).toBe(false)
+    expect(sel.toString()).toBe(fullValue)
+
+    const event = dispatchCtrlC()
+    expect(event.defaultPrevented).toBe(false)
+    expect(writeText).not.toHaveBeenCalled()
+  })
+
+  it('does not write the whole value on Ctrl+C keydown with no selection', async () => {
+    const writeText = stubClipboardWriteText()
+    renderOpenDetail('cell-keydown-no-selection')
+    await waitFor(() => expect(screen.getByLabelText('Copy value')).toBeDefined())
+    window.getSelection()!.removeAllRanges()
+
+    const event = dispatchCtrlC()
+    expect(event.defaultPrevented).toBe(false)
+    expect(writeText).not.toHaveBeenCalled()
   })
 })

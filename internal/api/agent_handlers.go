@@ -829,8 +829,8 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 	}
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT id, role, content, tool_calls, tool_call_id, reasoning_content, image_ids, tokens_input, tokens_output, duration_ms, created_at
-		FROM agent_messages WHERE session_id = $1 ORDER BY created_at ASC
+		SELECT id, role, content, tool_calls, tool_call_id, reasoning_content, image_ids, tokens_input, tokens_output, COALESCE(tokens_direct,0), COALESCE(tokens_after,0), COALESCE(duration_ms,0), created_at
+		FROM agent_messages WHERE session_id = $1 ORDER BY created_at ASC, id ASC
 	`, sessionID)
 	if err != nil {
 		slog.Error("get session messages query failed", "session_id", sessionID, "error", err)
@@ -848,17 +848,20 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 		var reasoning *string
 		var imageIDs []string
 		var tokensInput, tokensOutput *int
+		var tokensDirect, tokensAfter int
 		var durationMs int
 		var createdAt time.Time
-		if err := rows.Scan(&id, &role, &content, &toolCalls, &toolCallID, &reasoning, &imageIDs, &tokensInput, &tokensOutput, &durationMs, &createdAt); err != nil {
+		if err := rows.Scan(&id, &role, &content, &toolCalls, &toolCallID, &reasoning, &imageIDs, &tokensInput, &tokensOutput, &tokensDirect, &tokensAfter, &durationMs, &createdAt); err != nil {
 			slog.Error("get session messages scan failed", "session_id", sessionID, "error", err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		msg := map[string]any{
-			"id":         id,
-			"role":       role,
-			"created_at": createdAt,
+			"id":            id,
+			"role":          role,
+			"tokens_direct": tokensDirect,
+			"tokens_after":  tokensAfter,
+			"created_at":    createdAt,
 		}
 		if content != nil {
 			msg["content"] = *content
@@ -894,6 +897,42 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 	}
 
 	writeJSON(w, http.StatusOK, messages)
+}
+
+// @Summary Get session usage
+// @Description Get the accumulated token usage for a given session
+// @Tags agents
+// @Produce json
+// @Param id path string true "Session ID"
+// @Success 200 {object} models.SessionUsage
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /agents/sessions/{id}/usage [get]
+func (h *agentHandlers) handleGetSessionUsage(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+	claims := ClaimsFromContext(r.Context())
+
+	var agentID string
+	err := h.server.db.Pool.QueryRow(r.Context(), `
+		SELECT agent_id FROM agent_sessions WHERE id = $1
+	`, sessionID).Scan(&agentID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+
+	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "view")
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
+	usage, err := h.server.agentEngine.SessionStore().GetUsage(r.Context(), sessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, usage)
 }
 
 // @Summary Update session title

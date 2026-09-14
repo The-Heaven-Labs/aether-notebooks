@@ -534,20 +534,28 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
       if (e.key === 'ArrowUp') { e.preventDefault(); navigateDetail(-1, 0) }
       if (e.key === 'ArrowRight') { e.preventDefault(); navigateDetail(0, 1) }
       if (e.key === 'ArrowLeft') { e.preventDefault(); navigateDetail(0, -1) }
-      if (e.key === 'c' && (e.ctrlKey || e.metaKey)) {
-        const active = document.activeElement
-        if (active?.closest('.cm-editor') ||
-            active?.tagName === 'INPUT' ||
-            active?.tagName === 'TEXTAREA') {
-          return
-        }
-        e.preventDefault()
-        copyDetail()
-      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [detail, isDetailActive, navigateDetail, copyDetail])
+  }, [detail, isDetailActive, navigateDetail, closeDetail])
+
+  useEffect(() => {
+    if (!detail || !isDetailActive) return
+    const onCopy = (e: ClipboardEvent) => {
+      const target = e.target instanceof HTMLElement ? e.target : null
+      if (target?.closest('.cm-editor') || target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return
+      const sel = window.getSelection()
+      if (sel && !sel.isCollapsed && sel.toString().length > 0) return
+      e.preventDefault()
+      e.clipboardData?.setData('text/plain', detail.value)
+    }
+    document.addEventListener('copy', onCopy)
+    return () => document.removeEventListener('copy', onCopy)
+  }, [detail, isDetailActive])
+
+  useEffect(() => () => {
+    if (activeDetailCellId === cellId) setActiveDetailCell(null)
+  }, [cellId])
 
   return (
     <div style={{ ...styles.tableSection, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>

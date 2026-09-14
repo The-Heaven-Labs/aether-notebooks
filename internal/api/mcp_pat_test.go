@@ -41,7 +41,7 @@ func TestMCPEndToEndWithPAT(t *testing.T) {
 		"name": "create_cell",
 		"arguments": map[string]any{
 			"notebook_id": nbID, "type": "code", "language": "sql",
-			"title": "One", "description": "test cell",
+			"title":  "One",
 			"source": "SELECT 1 AS x", "connector_id": connID,
 		},
 	})

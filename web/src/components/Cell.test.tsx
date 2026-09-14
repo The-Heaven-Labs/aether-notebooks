@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { Suspense } from 'react'
+import * as Y from 'yjs'
 import { ResizableImage } from './MarkdownCell'
-import { Cell } from './Cell'
+import { Cell, collabCache, type NotebookCollab } from './Cell'
 import type { Cell as CellType } from '../types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -487,5 +488,230 @@ describe('MarkdownView image resize', () => {
         expect.stringContaining('width="400"')
       )
     })
+  })
+})
+
+// ── Row limit select ──────────────────────────────────────────────────────────
+
+describe('row limit select', () => {
+  function renderCodeCell(limit: number | null) {
+    const cell: CellType = {
+      id: 'cell-limit',
+      notebook_id: 'nb-1',
+      type: 'code',
+      language: 'sql',
+      source: 'SELECT 1',
+      outputs: [],
+      position: 0,
+      created_at: '',
+      updated_at: '',
+      source_visible: true,
+      cell_collapsed: false,
+      limit,
+    }
+    return render(
+      <Suspense fallback={null}>
+        <Cell
+          cell={cell}
+          connectors={[]}
+          notebookId="nb-1"
+          onRun={vi.fn()}
+          onDelete={vi.fn()}
+          onSourceChange={vi.fn()}
+          onAssignConnector={vi.fn()}
+        />
+      </Suspense>
+    )
+  }
+
+  it('renders a synthetic LIMIT option for arbitrary limits', () => {
+    const { container } = renderCodeCell(250)
+    const select = container.querySelector('select')!
+    expect(select.value).toBe('250')
+    expect(screen.getByRole('option', { name: 'LIMIT 250' })).toBeTruthy()
+  })
+
+  it('shows Unlimited without a synthetic option when limit is null', () => {
+    const { container } = renderCodeCell(null)
+    const select = container.querySelector('select')!
+    expect(select.value).toBe('null')
+    expect(screen.queryByRole('option', { name: /^LIMIT 250$/ })).toBeNull()
+    expect(screen.getByRole('option', { name: 'Unlimited' })).toBeTruthy()
+  })
+})
+
+// ── Yjs attach race (P7) ───────────────────────────────────────────────────────
+
+describe('CodeEditorView Yjs attach race', () => {
+  const notebookId = 'nb-race'
+  const cellId = 'cell-race'
+
+  type SyncedListener = (payload: { state: boolean }) => void
+
+  function makeCodeCell(source: string): CellType {
+    return {
+      id: cellId,
+      notebook_id: notebookId,
+      type: 'code',
+      language: 'sql',
+      source,
+      outputs: [],
+      position: 0,
+      created_at: '',
+      updated_at: '',
+      source_visible: true,
+      cell_collapsed: false,
+    }
+  }
+
+  function cellElement(
+    cell: CellType,
+    onSourceChange: (cellId: string, source: string) => void = vi.fn(),
+  ) {
+    return (
+      <Cell
+        cell={cell}
+        connectors={[]}
+        notebookId={notebookId}
+        onRun={vi.fn()}
+        onDelete={vi.fn()}
+        onSourceChange={onSourceChange}
+        onAssignConnector={vi.fn()}
+      />
+    )
+  }
+
+  // Fake collab provider registered in the module-level registry so no real
+  // HocuspocusProvider/WebSocket is created. `sync()` emits the provider's
+  // 'synced' event the same way the real provider does.
+  function registerFakeCollab() {
+    const doc = new Y.Doc()
+    const syncedListeners = new Set<SyncedListener>()
+    const entry: NotebookCollab = {
+      doc,
+      provider: {
+        awareness: null,
+        on: (event: string, cb: SyncedListener) => {
+          if (event === 'synced') syncedListeners.add(cb)
+        },
+        off: (event: string, cb: SyncedListener) => {
+          if (event === 'synced') syncedListeners.delete(cb)
+        },
+        destroy: () => {},
+      } as unknown as NotebookCollab['provider'],
+      refCount: 1,
+      synced: false,
+    }
+    collabCache.set(notebookId, entry)
+    return {
+      entry,
+      ytext: doc.getText(`cell:${cellId}`),
+      sync: () => {
+        entry.synced = true
+        syncedListeners.forEach((cb) => cb({ state: true }))
+      },
+    }
+  }
+
+  afterEach(() => {
+    collabCache.delete(notebookId)
+  })
+
+  it('keeps a pre-sync Yjs update and applies it to the editor on sync', async () => {
+    const fake = registerFakeCollab()
+    const { container, rerender } = render(cellElement(makeCodeCell('SELECT old')))
+    await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
+
+    // Agent update_cell arrives while the provider is still syncing: the
+    // external-source effect writes the new text into Yjs and advances
+    // lastSourceRef, leaving the editor buffer stale.
+    rerender(cellElement(makeCodeCell('SELECT new')))
+    await waitFor(() => expect(fake.ytext.toString()).toBe('SELECT new'))
+
+    act(() => { fake.sync() })
+
+    await waitFor(() => {
+      expect(container.querySelector('.cm-content')?.textContent).toBe('SELECT new')
+    })
+    expect(fake.ytext.toString()).toBe('SELECT new')
+  })
+
+  it('does not clobber a non-empty Yjs doc with the stale editor buffer on sync', async () => {
+    const fake = registerFakeCollab()
+    fake.ytext.insert(0, 'SELECT new')
+
+    const { container } = render(cellElement(makeCodeCell('SELECT old')))
+    await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
+
+    act(() => { fake.sync() })
+
+    await waitFor(() => {
+      expect(container.querySelector('.cm-content')?.textContent).toBe('SELECT new')
+    })
+    expect(fake.ytext.toString()).toBe('SELECT new')
+  })
+
+  it('applies non-empty Yjs content to an empty editor buffer on sync', async () => {
+    const fake = registerFakeCollab()
+    fake.ytext.insert(0, 'SELECT new')
+
+    const { container } = render(cellElement(makeCodeCell('')))
+    await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
+
+    act(() => { fake.sync() })
+
+    await waitFor(() => {
+      expect(container.querySelector('.cm-content')?.textContent).toBe('SELECT new')
+    })
+    expect(fake.ytext.toString()).toBe('SELECT new')
+  })
+
+  it('does not duplicate content when the synced event fires repeatedly', async () => {
+    const fake = registerFakeCollab()
+    fake.ytext.insert(0, 'SELECT new')
+
+    const { container } = render(cellElement(makeCodeCell('SELECT old')))
+    await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
+
+    act(() => { fake.sync() })
+    await waitFor(() => {
+      expect(container.querySelector('.cm-content')?.textContent).toBe('SELECT new')
+    })
+
+    act(() => { fake.sync() })
+    await waitFor(() => {
+      expect(container.querySelector('.cm-content')?.textContent).toBe('SELECT new')
+    })
+    expect(fake.ytext.toString()).toBe('SELECT new')
+  })
+
+  it('does not autosave the stale editor buffer when Yjs wins on attach', async () => {
+    const fake = registerFakeCollab()
+    fake.ytext.insert(0, 'SELECT new')
+    const onSourceChange = vi.fn()
+
+    const { container } = render(cellElement(makeCodeCell('SELECT old'), onSourceChange))
+    await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
+
+    act(() => { fake.sync() })
+
+    await waitFor(() => {
+      expect(container.querySelector('.cm-content')?.textContent).toBe('SELECT new')
+    })
+    expect(onSourceChange).not.toHaveBeenCalledWith(cellId, 'SELECT old')
+    expect(onSourceChange).not.toHaveBeenCalled()
+  })
+
+  it('external-source effect does not create a provider when none exists', async () => {
+    registerFakeCollab()
+    const { container, rerender } = render(cellElement(makeCodeCell('SELECT old')))
+    await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
+
+    collabCache.delete(notebookId)
+    expect(collabCache.size).toBe(0)
+
+    rerender(cellElement(makeCodeCell('SELECT new')))
+
+    await waitFor(() => expect(collabCache.size).toBe(0))
   })
 })

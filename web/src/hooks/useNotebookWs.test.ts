@@ -7,6 +7,7 @@ vi.mock('../api/client', () => ({ getToken: () => 'test-token' }))
 class MockWebSocket {
   static instances: MockWebSocket[] = []
   url: string
+  onopen: (() => void) | null = null
   onmessage: ((e: { data: string }) => void) | null = null
   onclose: (() => void) | null = null
   onerror: (() => void) | null = null
@@ -53,6 +54,126 @@ async function renderExecutingHook(onCellExecuting: (cellId: string, startedAt?:
   })
   return hook
 }
+
+async function renderUpdatedHook(onCellUpdated: (cellId: string, updates: Record<string, unknown>, userEmail?: string) => void) {
+  const hook = renderHook(() =>
+    useNotebookWs('nb-1', undefined, undefined, onCellUpdated),
+  )
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 10))
+  })
+  return hook
+}
+
+describe('useNotebookWs cell_updated', () => {
+  it('passes agent_updated_at and updated_at through the whitelist', async () => {
+    const spy = vi.fn()
+    const { unmount } = await renderUpdatedHook(spy)
+    emit(lastSocket(), {
+      type: 'cell_updated',
+      cell_id: 'c1',
+      agent_updated_at: '2026-09-14T00:00:00Z',
+      updated_at: '2026-09-14T00:00:01Z',
+      user_email: 'agent@aether',
+    })
+    expect(spy).toHaveBeenCalledWith(
+      'c1',
+      { agent_updated_at: '2026-09-14T00:00:00Z', updated_at: '2026-09-14T00:00:01Z' },
+      'agent@aether',
+    )
+    unmount()
+  })
+
+  it('forwards a title-only update without a source key', async () => {
+    const spy = vi.fn()
+    const { unmount } = await renderUpdatedHook(spy)
+    emit(lastSocket(), {
+      type: 'cell_updated',
+      cell_id: 'c1',
+      title: 'Renamed',
+      agent_updated_at: '2026-09-14T00:00:00Z',
+      updated_at: '2026-09-14T00:00:01Z',
+      user_email: 'agent@aether',
+    })
+    const updates = spy.mock.calls[0][1] as Record<string, unknown>
+    expect(updates).toEqual({
+      title: 'Renamed',
+      agent_updated_at: '2026-09-14T00:00:00Z',
+      updated_at: '2026-09-14T00:00:01Z',
+    })
+    expect('source' in updates).toBe(false)
+    unmount()
+  })
+
+  it('drops keys outside the whitelist', async () => {
+    const spy = vi.fn()
+    const { unmount } = await renderUpdatedHook(spy)
+    emit(lastSocket(), {
+      type: 'cell_updated',
+      cell_id: 'c1',
+      source: 'SELECT 1',
+      unknown_field: 'nope',
+      user_email: 'agent@aether',
+    })
+    expect(spy).toHaveBeenCalledWith('c1', { source: 'SELECT 1' }, 'agent@aether')
+    unmount()
+  })
+})
+
+describe('useNotebookWs reconnect', () => {
+  it('calls onReconnect on the second open only', async () => {
+    vi.useFakeTimers()
+    try {
+      const onReconnect = vi.fn()
+      const { unmount } = renderHook(() =>
+        useNotebookWs('nb-1', undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, onReconnect),
+      )
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10)
+      })
+      const first = lastSocket()
+      act(() => first.onopen?.())
+      expect(onReconnect).not.toHaveBeenCalled()
+
+      // Drop the socket; the hook reconnects after 3 seconds.
+      act(() => first.close())
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+      const second = lastSocket()
+      expect(second).not.toBe(first)
+      expect(onReconnect).not.toHaveBeenCalled()
+
+      act(() => second.onopen?.())
+      expect(onReconnect).toHaveBeenCalledTimes(1)
+      unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not call onReconnect when switching notebooks', async () => {
+    const onReconnect = vi.fn()
+    const hook = renderHook(
+      ({ nb }: { nb: string }) =>
+        useNotebookWs(nb, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, onReconnect),
+      { initialProps: { nb: 'nb-1' } },
+    )
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+    act(() => lastSocket().onopen?.())
+    expect(onReconnect).not.toHaveBeenCalled()
+
+    hook.rerender({ nb: 'nb-2' })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+    act(() => lastSocket().onopen?.())
+    expect(onReconnect).not.toHaveBeenCalled()
+    hook.unmount()
+  })
+})
 
 describe('useNotebookWs cell_executing', () => {
   it('threads user_email through to onCellExecuting', async () => {
