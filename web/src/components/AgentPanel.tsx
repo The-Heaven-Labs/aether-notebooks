@@ -934,6 +934,16 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     setSessionUsage(null)
   }
 
+  // Session switches must not leak the previous session's context: the meter
+  // would otherwise show a stale percent/window until the first token_update
+  // (context_current outranks the freshly seeded session_usage.context_tokens).
+  const resetMeterState = useCallback(() => {
+    setTotalTokens(null)
+    setContextWindow(0)
+    setSessionUsage(null)
+    setHasCompacted(false)
+  }, [])
+
   // The server's session usage snapshot is authoritative (it survives
   // compaction and subagents). A null/missing snapshot means "keep previous".
   const applyServerUsage = useCallback((usage?: SessionUsage | null) => {
@@ -947,7 +957,15 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   // silent — the WS stream will correct any stale value.
   const loadSessionUsage = useCallback((sid: string) => {
     api.get<SessionUsage>(`/api/v1/agents/sessions/${sid}/usage`)
-      .then((usage) => { if (sessionIdRef.current === sid) applyServerUsage(usage) })
+      .then((usage) => {
+        if (!usage || sessionIdRef.current !== sid) return
+        // An empty session snapshot would render a visible 0↑ / 0↓ meter.
+        const hasData = usage.context_window > 0 || usage.context_tokens > 0 ||
+          usage.input > 0 || usage.output > 0 || usage.model_calls > 0 ||
+          usage.subagent_input > 0 || usage.subagent_output > 0
+        if (!hasData) return
+        applyServerUsage(usage)
+      })
       .catch(() => { /* live WS will refresh */ })
   }, [applyServerUsage])
 
@@ -1078,6 +1096,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             const before = tokens?.input ?? 0
             const after = tokens?.context_current
             setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'compaction', content: summary, tokens_before: before, tokens_after: after, created_at: ts() }])
+            // token_update fired before the compaction check and `done` carries
+            // no context_current, so without this the headline keeps showing the
+            // pre-compaction prompt size. Patch only the after-count: the rest
+            // of the event's breakdown describes the summarization call.
+            setTotalTokens(prev => prev ? { ...prev, context_current: tokens?.context_current ?? prev.context_current } : prev)
             setHasCompacted(true)
             break
           }
@@ -1124,6 +1147,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             if (msg.tokens_input || msg.tokens_output) {
               setSubagentTokens(prev => ({ ...prev, [msg.task_id]: { input: msg.tokens_input || 0, output: msg.tokens_output || 0 } }))
             }
+            applyServerUsage(msg.session_usage)
             setMessages((prev) => {
               const existing = prev.findIndex(m => m.role === 'subagent' && m.content === msg.task_id)
               const subagentMsg: ChatMessage = {
@@ -1208,9 +1232,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       localStorage.setItem(LAST_AGENT_KEY, agent.id)
       setMessages([])
       setTasks([])
-      setTotalTokens(null)
-      setSessionUsage(null)
-      setHasCompacted(false)
+      resetMeterState()
       setContextWindow(res.context_window ?? 0)
       connectWebSocket(res.session_id, { seedUsage: false })
     } catch {
@@ -1224,9 +1246,10 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     setSessionTitle(null)
     setMessages([])
     setTasks([])
-    setSessionUsage(null)
-    setHasCompacted(false)
-    connectWebSocket(sessionID)
+    resetMeterState()
+    // The fork starts with an empty summary-only context; its first
+    // token_update carries the server usage, so skip the REST seed.
+    connectWebSocket(sessionID, { seedUsage: false })
   }
 
   const closeWS = () => {
@@ -1597,6 +1620,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             closeWS()
             setSessionId(session.id)
             setShowHistory(false)
+            resetMeterState()
             try {
               const msgs = await api.get<Array<{ id: string; role: string; content: string; reasoning_content?: string; image_ids?: string[]; duration_ms?: number; tokens_direct?: number; tokens_after?: number; created_at?: string }>>(`/api/v1/sessions/${session.id}/messages`)
               const formatted = mapServerMessagesToChat(msgs)

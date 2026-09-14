@@ -211,4 +211,99 @@ describe('AgentPanel context-first token meter', () => {
     await waitFor(() => expect(screen.getByText(/800↑ \/ 80↓/)).toBeInTheDocument())
     expect(screen.getByText(/\(25%\)/)).toBeInTheDocument()
   })
+
+  it('applies the compaction after-count to the current-context percent', async () => {
+    seedSession(savedStateWithTokens(baseTokens({ input: 100, output: 10, context_current: 500 }), 1000))
+    const ws = await renderPanel()
+    expect(screen.getByText(/\(50%\)/)).toBeInTheDocument()
+
+    emit(ws, {
+      type: 'context_compacted',
+      summary: 'earlier context',
+      tokens: baseTokens({ input: 500, context_current: 100 }),
+    })
+
+    await waitFor(() => expect(screen.getByText(/\(10%\)/)).toBeInTheDocument())
+    expect(screen.queryByText(/\(50%\)/)).toBeNull()
+  })
+
+  it('clears the previous session meter when resuming another session', async () => {
+    server.use(
+      http.get('/api/v1/agents/:agentId/sessions', () =>
+        HttpResponse.json([
+          {
+            id: 's2',
+            created_at: '2026-09-13T00:00:00Z',
+            first_message: 'older session',
+            message_count: 3,
+            notebook_id: 'nb-1',
+            title: null,
+          },
+        ]),
+      ),
+      http.get('/api/v1/sessions/:sessionId/messages', () => HttpResponse.json([])),
+      http.get('/api/v1/agents/sessions/:id/usage', ({ params }) => {
+        if (params.id !== 's2') return new HttpResponse(null, { status: 404 })
+        return HttpResponse.json({
+          ...ZERO_USAGE,
+          input: 400,
+          output: 40,
+          model_calls: 1,
+          context_tokens: 400,
+          context_window: 2000,
+        })
+      }),
+    )
+    seedSession(savedStateWithTokens(baseTokens({ input: 100, output: 10, context_current: 500 }), 1000))
+    await renderPanel()
+    expect(screen.getByText(/\(50%\)/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTitle('View chat history'))
+    fireEvent.click(await screen.findByRole('button', { name: /older session/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /resume/i }))
+
+    await waitFor(() => expect(screen.getByText(/\(20%\)/)).toBeInTheDocument())
+    expect(screen.queryByText(/\(50%\)/)).toBeNull()
+  })
+
+  it('clears the meter state when forking a session with /summarize', async () => {
+    seedSession(savedStateWithTokens(baseTokens({ input: 100, output: 10, context_current: 500 }), 1000))
+    const ws = await renderPanel()
+    expect(screen.getByText(/\(50%\)/)).toBeInTheDocument()
+
+    emit(ws, { type: 'slash_result', command: 'summarize', data: { session_id: 's3', summary: 'condensed' } })
+
+    await waitFor(() => expect(screen.queryByText(/\(50%\)/)).toBeNull())
+    expect(screen.queryByText(/↑/)).toBeNull()
+  })
+
+  it('applies session_usage from subagent_status to the hover rows', async () => {
+    seedSession(savedStateWithTokens(baseTokens({ input: 1, output: 1 }), 1000))
+    const ws = await renderPanel()
+
+    emit(ws, {
+      type: 'subagent_status',
+      task_id: 't1',
+      status: 'completed',
+      tokens_input: 10,
+      tokens_output: 5,
+      session_usage: {
+        input: 1111,
+        output: 222,
+        reasoning: 3,
+        cache_read: 4,
+        model_calls: 5,
+        subagent_input: 66,
+        subagent_output: 7,
+        context_tokens: 500,
+        context_window: 1000,
+      },
+    })
+
+    fireEvent.click(await screen.findByText(/↑/))
+    expect(rowValue('Input')).toContain((1111).toLocaleString())
+    expect(rowValue('Output')).toContain('222')
+    expect(rowValue('Subagent Input')).toContain('66')
+    expect(rowValue('Model calls')).toContain('5')
+  })
 })
