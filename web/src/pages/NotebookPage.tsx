@@ -16,6 +16,7 @@ import type { ChartConfig } from '../charts'
 import { Cell as NotebookCell, focusCellEditorEnd, collabCache, updateCellScroll, type NotebookCollab } from '../components/Cell'
 import { focusMarkdownCell } from '../utils/editorFocus'
 import { createFlashQueue, isAgentOrigin, resolveAgentAwareFlash, type FlashQueue } from '../utils/agentFocus'
+import { mergeServerCell, saveDelayFor } from '../utils/mergeCells'
 import { ParametersBar } from '../components/ParametersBar'
 import { SchemaBrowser } from '../components/SchemaBrowser'
 import { SchedulesPanel } from '../components/SchedulesPanel'
@@ -232,6 +233,7 @@ export function NotebookPage() {
   const [isEditingCell, setIsEditingCell] = useState(false)
   const autoFocusCellRef = useRef(false)
   const pendingExecRef = useRef(new Set<string>())
+  const dirtyCellsRef = useRef(new Set<string>())
   const [historyCell, setHistoryCell] = useState<string | null>(null)
   const [historyVersions, setHistoryVersions] = useState<CellVersion[]>([])
   // Drag-and-drop sensors
@@ -575,25 +577,17 @@ export function NotebookPage() {
     // Always sync localCells with notebook data (for agent updates)
     if (notebook) {
       setLocalCells(prev => {
-        let changed = false
-        const merged = notebook.cells.map(nbCell => {
-          const local = prev.find(c => c.id === nbCell.id)
-          if (local && local.source === nbCell.source) {
-            if (pendingExecRef.current.has(nbCell.id)) {
-              return local
-            }
-            return { ...local, outputs: nbCell.outputs, metrics: nbCell.metrics }
-          }
-          changed = true
-          const cell = local
-            ? { ...nbCell, source: local.source, outputs: pendingExecRef.current.has(nbCell.id) ? local.outputs : nbCell.outputs }
-            : { ...nbCell }
-          // Derive display metrics from persisted duration_ms
-          if (cell.duration_ms != null && !cell.metrics) {
-            cell.metrics = { connect_time_ms: 0, query_time_ms: 0, render_time_ms: 0, total_time_ms: cell.duration_ms }
-          }
-          return cell
-        })
+        const merged = notebook.cells.map(nbCell =>
+          mergeServerCell(
+            prev.find(c => c.id === nbCell.id),
+            nbCell,
+            {
+              pendingExec: pendingExecRef.current.has(nbCell.id),
+              dirty: dirtyCellsRef.current.has(nbCell.id),
+            },
+          ),
+        )
+        const changed = merged.length !== prev.length || merged.some((c, i) => c !== prev[i])
         return changed ? merged : prev
       })
     }
@@ -830,6 +824,12 @@ export function NotebookPage() {
     setCellSaveState((prev) => ({ ...prev, [cellId]: { saving: true, savedAt: prev[cellId]?.savedAt ?? null, error: null } }))
     try {
       await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { source })
+      // Only clear the dirty flag if no newer edit landed while the save was
+      // in flight; otherwise the unsaved text must keep winning the merge.
+      const current = localCellsRef.current.find(c => c.id === cellId)
+      if (!current || current.source === source) {
+        dirtyCellsRef.current.delete(cellId)
+      }
       setCellSaveState((prev) => ({ ...prev, [cellId]: { saving: false, savedAt: new Date(), error: null } }))
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Save failed'
@@ -838,30 +838,26 @@ export function NotebookPage() {
   }, [id])
 
   const updateSource = useCallback((cellId: string, source: string) => {
+    const current = localCellsRef.current.find(c => c.id === cellId)
+    // If source is the same as what we already have, skip (no save needed)
+    if (current && current.source === source) return
+
+    dirtyCellsRef.current.add(cellId)
     setLocalCells((prev) => {
       const cell = prev.find(c => c.id === cellId)
-      // If source is the same as what we already have, skip (no save needed)
       if (cell && cell.source === source) return prev
       return prev.map((c) => (c.id === cellId ? { ...c, source } : c))
     })
 
-    // Check if agent just updated this cell — suppress auto-save
-    const cells = localCellsRef.current
-    const cell = cells.find(c => c.id === cellId)
-    if (cell?.agent_updated_at) {
-      const elapsed = Date.now() - new Date(cell.agent_updated_at).getTime()
-      if (elapsed < 5000) {
-        // Agent update is recent (< 5s), don't trigger auto-save
-        // The agent already updated Yjs, no need to save again
-        return
-      }
-    }
-
-    // Normal auto-save flow
+    // Defer — never drop — the save while a recent agent update suppresses
+    // autosave; a user keystroke in that window must still be persisted.
     clearTimeout(saveTimers.current[cellId])
     saveTimers.current[cellId] = setTimeout(() => {
+      const latest = localCellsRef.current.find(c => c.id === cellId)
+      // Superseded by a newer edit or agent update — its own timer handles it.
+      if (latest && latest.source !== source) return
       saveCellSource(cellId, source)
-    }, 1500)
+    }, saveDelayFor(current?.agent_updated_at, Date.now()))
   }, [saveCellSource])
 
   const assignConnector = useCallback(async (cellId: string, connectorId: string) => {

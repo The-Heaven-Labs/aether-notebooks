@@ -659,8 +659,8 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 		ctx.EmitCellUpdated(cellID, src)
 
 		// Broadcast to all notebook viewers via WebSocket. Only include source
-		// when it actually changed — a title-only update must not blank the
-		// editor by broadcasting an empty source.
+		// when it was provided and non-empty — a title-only update must not
+		// blank the editor by broadcasting an empty source.
 		if ctx.BroadcastFunc != nil {
 			msg := map[string]any{
 				"type":             "cell_updated",

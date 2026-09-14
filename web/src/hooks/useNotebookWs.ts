@@ -126,6 +126,8 @@ export function useNotebookWs(
         wsRef.current.close()
         wsRef.current = null
       }
+      // A notebook switch is a fresh connection, not a reconnect.
+      everConnectedRef.current = false
     }
   }, [connect])
 }

@@ -151,6 +151,28 @@ describe('useNotebookWs reconnect', () => {
       vi.useRealTimers()
     }
   })
+
+  it('does not call onReconnect when switching notebooks', async () => {
+    const onReconnect = vi.fn()
+    const hook = renderHook(
+      ({ nb }: { nb: string }) =>
+        useNotebookWs(nb, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, onReconnect),
+      { initialProps: { nb: 'nb-1' } },
+    )
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+    act(() => lastSocket().onopen?.())
+    expect(onReconnect).not.toHaveBeenCalled()
+
+    hook.rerender({ nb: 'nb-2' })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+    act(() => lastSocket().onopen?.())
+    expect(onReconnect).not.toHaveBeenCalled()
+    hook.unmount()
+  })
 })
 
 describe('useNotebookWs cell_executing', () => {
