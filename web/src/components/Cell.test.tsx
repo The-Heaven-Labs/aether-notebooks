@@ -564,7 +564,10 @@ describe('CodeEditorView Yjs attach race', () => {
     }
   }
 
-  function cellElement(cell: CellType) {
+  function cellElement(
+    cell: CellType,
+    onSourceChange: (cellId: string, source: string) => void = vi.fn(),
+  ) {
     return (
       <Cell
         cell={cell}
@@ -572,7 +575,7 @@ describe('CodeEditorView Yjs attach race', () => {
         notebookId={notebookId}
         onRun={vi.fn()}
         onDelete={vi.fn()}
-        onSourceChange={vi.fn()}
+        onSourceChange={onSourceChange}
         onAssignConnector={vi.fn()}
       />
     )
@@ -646,5 +649,69 @@ describe('CodeEditorView Yjs attach race', () => {
       expect(container.querySelector('.cm-content')?.textContent).toBe('SELECT new')
     })
     expect(fake.ytext.toString()).toBe('SELECT new')
+  })
+
+  it('applies non-empty Yjs content to an empty editor buffer on sync', async () => {
+    const fake = registerFakeCollab()
+    fake.ytext.insert(0, 'SELECT new')
+
+    const { container } = render(cellElement(makeCodeCell('')))
+    await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
+
+    act(() => { fake.sync() })
+
+    await waitFor(() => {
+      expect(container.querySelector('.cm-content')?.textContent).toBe('SELECT new')
+    })
+    expect(fake.ytext.toString()).toBe('SELECT new')
+  })
+
+  it('does not duplicate content when the synced event fires repeatedly', async () => {
+    const fake = registerFakeCollab()
+    fake.ytext.insert(0, 'SELECT new')
+
+    const { container } = render(cellElement(makeCodeCell('SELECT old')))
+    await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
+
+    act(() => { fake.sync() })
+    await waitFor(() => {
+      expect(container.querySelector('.cm-content')?.textContent).toBe('SELECT new')
+    })
+
+    act(() => { fake.sync() })
+    await waitFor(() => {
+      expect(container.querySelector('.cm-content')?.textContent).toBe('SELECT new')
+    })
+    expect(fake.ytext.toString()).toBe('SELECT new')
+  })
+
+  it('does not autosave the stale editor buffer when Yjs wins on attach', async () => {
+    const fake = registerFakeCollab()
+    fake.ytext.insert(0, 'SELECT new')
+    const onSourceChange = vi.fn()
+
+    const { container } = render(cellElement(makeCodeCell('SELECT old'), onSourceChange))
+    await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
+
+    act(() => { fake.sync() })
+
+    await waitFor(() => {
+      expect(container.querySelector('.cm-content')?.textContent).toBe('SELECT new')
+    })
+    expect(onSourceChange).not.toHaveBeenCalledWith(cellId, 'SELECT old')
+    expect(onSourceChange).not.toHaveBeenCalled()
+  })
+
+  it('external-source effect does not create a provider when none exists', async () => {
+    registerFakeCollab()
+    const { container, rerender } = render(cellElement(makeCodeCell('SELECT old')))
+    await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
+
+    collabCache.delete(notebookId)
+    expect(collabCache.size).toBe(0)
+
+    rerender(cellElement(makeCodeCell('SELECT new')))
+
+    await waitFor(() => expect(collabCache.size).toBe(0))
   })
 })

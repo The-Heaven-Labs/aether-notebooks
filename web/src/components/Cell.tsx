@@ -223,6 +223,9 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
   onEditStartRef.current = onEditStart
   onEditEndRef.current = onEditEnd
   const collabCompartment = useRef(new Compartment())
+  // True only while attachCollab pushes Yjs content into the editor, so the
+  // programmatic change is never treated as a user edit (and never autosaved).
+  const applyingYjsRef = useRef(false)
 
   useEffect(() => {
     if (!editorRef.current) return
@@ -303,7 +306,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
           }),
           compartment.of([]),
           EditorView.updateListener.of((update) => {
-            if (update.docChanged) onSourceChangeRef.current(cell.id, update.state.doc.toString())
+            if (update.docChanged && !applyingYjsRef.current) onSourceChangeRef.current(cell.id, update.state.doc.toString())
             if (update.focusChanged) {
               updateCellFocus(notebookId, update.view.hasFocus ? cell.id : null)
             }
@@ -324,25 +327,33 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
     const attachCollab = () => {
       const editorContent = view.state.doc.toString()
       const yjsContent = ytext.toString()
+      // Single config instance: the seed transaction origin and the ySync facet
+      // must be identical so the observer's origin guard ignores the seed change.
+      const ySyncConfig = new YSyncConfig(ytext, collab.provider.awareness)
       // Seed Yjs from the database-backed editor only when the shared doc is
       // empty. Otherwise Yjs wins: the shared text is applied to the editor
       // below, which is what fixes the stale-update race (an agent update can
       // land in Yjs before the provider has synced).
       if (ytext.length === 0 && editorContent.length > 0) {
-        const ySyncConfig = new YSyncConfig(ytext, collab.provider.awareness)
         collab.doc.transact(() => {
           ytext.insert(0, editorContent)
         }, ySyncConfig)
       } else if (yjsContent !== editorContent) {
         // Apply the shared text to the editor before activating yCollab so
-        // this programmatic change is not echoed back into the shared doc.
-        view.dispatch({
-          changes: { from: 0, to: editorContent.length, insert: yjsContent },
-        })
+        // this programmatic change is not echoed back into the shared doc, and
+        // suppress onSourceChange so a stale shared doc can never be
+        // autosaved over fresher database content.
+        applyingYjsRef.current = true
+        try {
+          view.dispatch({
+            changes: { from: 0, to: editorContent.length, insert: yjsContent },
+          })
+        } finally {
+          applyingYjsRef.current = false
+        }
       }
       // Activate yCollab with our config last (overrides yCollab's internal one)
       // so the observer's origin guard matches our transact origin above.
-      const ySyncConfig = new YSyncConfig(ytext, collab.provider.awareness)
       view.dispatch({ effects: compartment.reconfigure([
         yCollab(ytext, collab.provider.awareness, { undoManager: false }),
         ySyncFacet.of(ySyncConfig),
