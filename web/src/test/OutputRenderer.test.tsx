@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { OutputRenderer, isAnyDetailActive } from '../components/OutputRenderer'
 import type { Output } from '../types'
@@ -173,6 +173,7 @@ describe('TableOutput detail copy', () => {
   afterEach(() => {
     delete (HTMLElement.prototype as { offsetHeight?: unknown }).offsetHeight
     delete (HTMLElement.prototype as { offsetWidth?: unknown }).offsetWidth
+    delete (navigator as { clipboard?: unknown }).clipboard
     window.getSelection()?.removeAllRanges()
   })
 
@@ -186,6 +187,18 @@ describe('TableOutput detail copy', () => {
     const td = container.querySelector('td[data-row="0"][data-col="0"]')!
     fireEvent.click(td)
     return { container, unmount }
+  }
+
+  function stubClipboardWriteText() {
+    const writeText = vi.fn(() => Promise.resolve())
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    return writeText
+  }
+
+  function dispatchCtrlC(): KeyboardEvent {
+    const event = new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, cancelable: true, bubbles: true })
+    window.dispatchEvent(event)
+    return event
   }
 
   function dispatchCopy(target: EventTarget = document): { event: Event; data: Record<string, string> } {
@@ -231,5 +244,34 @@ describe('TableOutput detail copy', () => {
     expect(isAnyDetailActive()).toBe(true)
     unmount()
     expect(isAnyDetailActive()).toBe(false)
+  })
+
+  it('does not intercept Ctrl+C keydown while a selection exists', async () => {
+    const writeText = stubClipboardWriteText()
+    const { container } = renderOpenDetail('cell-keydown-selection')
+    await waitFor(() => expect(screen.getByLabelText('Copy value')).toBeDefined())
+    const pre = container.querySelector('pre')!
+    const sel = window.getSelection()!
+    const range = document.createRange()
+    range.selectNodeContents(pre.firstChild!)
+    sel.removeAllRanges()
+    sel.addRange(range)
+    expect(sel.isCollapsed).toBe(false)
+    expect(sel.toString()).toBe(fullValue)
+
+    const event = dispatchCtrlC()
+    expect(event.defaultPrevented).toBe(false)
+    expect(writeText).not.toHaveBeenCalled()
+  })
+
+  it('does not write the whole value on Ctrl+C keydown with no selection', async () => {
+    const writeText = stubClipboardWriteText()
+    renderOpenDetail('cell-keydown-no-selection')
+    await waitFor(() => expect(screen.getByLabelText('Copy value')).toBeDefined())
+    window.getSelection()!.removeAllRanges()
+
+    const event = dispatchCtrlC()
+    expect(event.defaultPrevented).toBe(false)
+    expect(writeText).not.toHaveBeenCalled()
   })
 })
