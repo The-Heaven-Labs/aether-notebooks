@@ -83,8 +83,8 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "create_cell",
-			Description: "Create a new cell. ALWAYS provide a concise title (extra detail can go in SQL comments). Use type 'code' with language 'sql' for database queries, or type 'text' with language 'markdown' for documentation and notes. For SQL cells that should produce results right away, set run=true to execute immediately after creation — the result includes inline query results (same shape as run_cell: column_names, data preview, truncated) and shows a running state in the notebook while executing. Optional timeout_ms (max 600000, only with run=true) bounds the execution.",
-			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"type":{"type":"string","enum":["code","text"],"description":"Cell type: 'code' for executable queries, 'text' for markdown documentation"},"language":{"type":"string","enum":["sql","markdown"],"description":"Cell language. Defaults to 'sql' for code cells, 'markdown' for text cells. Currently only SQL and markdown are supported."},"title":{"type":"string","description":"Short name of what this cell does (e.g. 'Daily orders GMV by region')"},"source":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell. Required for code cells if the notebook has no default connector."},"position":{"type":"integer"},"run":{"type":"boolean","description":"Set to true to execute the cell immediately after creating it (same behavior and result shape as run_cell, including inline results and running-state UI)"},"timeout_ms":{"type":"integer","description":"Optional max execution time in milliseconds when run=true (max 600000; without it the connector's timeout_seconds applies, 5 minutes when unset). Ignored when run is not true."}},"required":["notebook_id","type","title"]}`,
+			Description: "Create a new cell. ALWAYS provide a concise title (extra detail can go in SQL comments). Use type 'code' with language 'sql' for database queries, or type 'text' with language 'markdown' for documentation and notes. For SQL cells that should produce results right away, set run=true to execute immediately after creation — the result includes inline query results (same shape as run_cell: column_names, data preview, truncated) and shows a running state in the notebook while executing. Optional limit caps the rows the cell returns when run (default 1000, 0 = unlimited). Optional timeout_ms (max 600000, only with run=true) bounds the execution.",
+			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"type":{"type":"string","enum":["code","text"],"description":"Cell type: 'code' for executable queries, 'text' for markdown documentation"},"language":{"type":"string","enum":["sql","markdown"],"description":"Cell language. Defaults to 'sql' for code cells, 'markdown' for text cells. Currently only SQL and markdown are supported."},"title":{"type":"string","description":"Short name of what this cell does (e.g. 'Daily orders GMV by region')"},"source":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell. Required for code cells if the notebook has no default connector."},"position":{"type":"integer"},"limit":{"type":"integer","description":"Row limit for SQL results (default 1000, 0 = unlimited)"},"run":{"type":"boolean","description":"Set to true to execute the cell immediately after creating it (same behavior and result shape as run_cell, including inline results and running-state UI)"},"timeout_ms":{"type":"integer","description":"Optional max execution time in milliseconds when run=true (max 600000; without it the connector's timeout_seconds applies, 5 minutes when unset). Ignored when run is not true."}},"required":["notebook_id","type","title"]}`,
 		},
 		Handler:         makeCreateCellHandler(db),
 		ConfirmRequired: true,
@@ -453,6 +453,7 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 			Source      string `json:"source"`
 			ConnectorID string `json:"connector_id"`
 			Position    int    `json:"position"`
+			Limit       *int   `json:"limit"`
 			Run         bool   `json:"run"`
 			TimeoutMs   int    `json:"timeout_ms"`
 		}
@@ -476,6 +477,14 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 		// Truncate to the title column width instead of failing the INSERT.
 		if len([]rune(req.Title)) > 255 {
 			req.Title = string([]rune(req.Title)[:255])
+		}
+
+		limit := 1000
+		if req.Limit != nil {
+			if *req.Limit < 0 {
+				return nil, fmt.Errorf("limit must be >= 0 (0 = unlimited)")
+			}
+			limit = *req.Limit
 		}
 
 		if req.Run && req.Type != "code" {
@@ -523,11 +532,16 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 			connID = &req.ConnectorID
 		}
 
+		var limitArg any
+		if limit > 0 {
+			limitArg = limit
+		}
+
 		now := time.Now()
 		_, err := db.Exec(ctx.Context, `
 			INSERT INTO cells (id, notebook_id, type, language, connector_id, source, title, position, "limit", created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1000, $9, $9)
-		`, cellID, req.NotebookID, req.Type, language, connID, req.Source, req.Title, position, now)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+		`, cellID, req.NotebookID, req.Type, language, connID, req.Source, req.Title, position, limitArg, now)
 		if err != nil {
 			return nil, fmt.Errorf("create cell: %w", err)
 		}
@@ -554,13 +568,13 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 					"slide_break":    false,
 					"created_at":     now,
 					"updated_at":     now,
-					"limit":          1000,
+					"limit":          limit,
 				},
 				"user_email": "agent@aether",
 			})
 		}
 
-		base := map[string]any{"cell_id": cellID, "position": position + 1, "title": req.Title}
+		base := map[string]any{"cell_id": cellID, "position": position + 1, "title": req.Title, "limit": limit}
 		if !req.Run {
 			return base, nil
 		}

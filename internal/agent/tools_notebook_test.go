@@ -1714,6 +1714,90 @@ func TestAgentCreateCellRunTrueFailureKeepsCell(t *testing.T) {
 	}
 }
 
+func TestCreateCellLimit(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	createCellDef, _ := reg.Get("create_cell")
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	var broadcasts []map[string]any
+	ctx.BroadcastFunc = func(notebookID string, msg any) {
+		if m, ok := msg.(map[string]any); ok {
+			broadcasts = append(broadcasts, m)
+		}
+	}
+
+	create := func(extra map[string]any) (map[string]any, error) {
+		args := map[string]any{"notebook_id": nbID, "type": "code", "source": "SELECT 1", "title": "T"}
+		for k, v := range extra {
+			args[k] = v
+		}
+		b, _ := json.Marshal(args)
+		res, err := createCellDef.Handler(b, ctx)
+		if err != nil {
+			return nil, err
+		}
+		return res.(map[string]any), nil
+	}
+
+	// default -> 1000
+	res, err := create(nil)
+	if err != nil {
+		t.Fatalf("default create: %v", err)
+	}
+	cellID := res["cell_id"].(string)
+	var limit *int
+	if err := db.Pool.QueryRow(context.Background(), `SELECT "limit" FROM cells WHERE id=$1`, cellID).Scan(&limit); err != nil {
+		t.Fatalf("query limit: %v", err)
+	}
+	if limit == nil || *limit != 1000 {
+		t.Fatalf("default limit = %v, want 1000", limit)
+	}
+	if res["limit"] != 1000 {
+		t.Fatalf("result limit = %v, want 1000", res["limit"])
+	}
+
+	// explicit
+	res, err = create(map[string]any{"limit": 250})
+	if err != nil {
+		t.Fatalf("explicit create: %v", err)
+	}
+	if res["limit"] != 250 {
+		t.Fatalf("result limit = %v, want 250", res["limit"])
+	}
+
+	// zero -> unlimited (NULL)
+	res, err = create(map[string]any{"limit": 0})
+	if err != nil {
+		t.Fatalf("zero create: %v", err)
+	}
+	cellID = res["cell_id"].(string)
+	if err := db.Pool.QueryRow(context.Background(), `SELECT "limit" FROM cells WHERE id=$1`, cellID).Scan(&limit); err != nil {
+		t.Fatalf("query unlimited: %v", err)
+	}
+	if limit != nil {
+		t.Fatalf("zero limit = %v, want NULL", *limit)
+	}
+
+	// negative -> tool error, no insert
+	if _, err := create(map[string]any{"limit": -1}); err == nil {
+		t.Fatal("negative limit must error")
+	}
+	var count int
+	_ = db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM cells WHERE notebook_id=$1`, nbID).Scan(&count)
+	if count != 3 {
+		t.Fatalf("cells = %d, want 3", count)
+	}
+	// broadcast carries the effective limit
+	last := broadcasts[len(broadcasts)-1]["cell"].(map[string]any)
+	if last["limit"] == nil {
+		t.Fatalf("broadcast missing limit: %v", last)
+	}
+}
+
 func waitForAutoSnapshot(t *testing.T, pool *pgxpool.Pool, nbID string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
