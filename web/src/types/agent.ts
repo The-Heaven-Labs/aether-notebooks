@@ -149,6 +149,18 @@ export interface TokenBreakdown {
   duration_ms?: number
 }
 
+export interface SessionUsage {
+  input: number
+  output: number
+  reasoning: number
+  cache_read: number
+  model_calls: number
+  subagent_input: number
+  subagent_output: number
+  context_tokens: number
+  context_window: number
+}
+
 export type WSMessage =
   | { type: 'token'; data: string; seq?: number }
   | { type: 'reasoning'; data: string; seq?: number }
@@ -160,11 +172,11 @@ export type WSMessage =
   | { type: 'subagent_progress'; tasks: SubagentTask[] }
   | { type: 'subagent_status'; task_id: string; status: string; goal?: string; result?: unknown; error?: string; duration_ms?: number; tokens_input?: number; tokens_output?: number }
   | { type: 'subagent_message'; task_id: string; role: string; content: string; result?: string; tool_call_id?: string; tool_calls?: any; reasoning_content?: string; duration_ms?: number }
-  | { type: 'done'; tokens?: TokenBreakdown; data?: { content?: string; reasoning?: string; tokens?: TokenBreakdown }; seq?: number }
+  | { type: 'done'; tokens?: TokenBreakdown; data?: { content?: string; reasoning?: string; tokens?: TokenBreakdown; session_usage?: SessionUsage | null }; seq?: number }
   | { type: 'error'; message: string }
   | { type: 'slash_result'; command: string; data: unknown }
   | { type: 'backpressure_warning'; dropped_tokens: number }
-  | { type: 'reconnect_sync'; messages: AgentMessage[] | null; running?: boolean; server_seq?: number }
+  | { type: 'reconnect_sync'; messages: AgentMessage[] | null; running?: boolean; server_seq?: number; session_usage?: SessionUsage | null }
   | { type: 'tasks_updated'; data: AgentTaskItem[] }
   | { type: 'tool_confirm_required'; tool_name: string; tool_args: string; current_source?: string }
   | { type: 'resync'; seq?: number }
@@ -173,6 +185,6 @@ export type WSMessage =
   | { type: 'steering_accepted'; seq?: number }
   | { type: 'steering_busy'; content: string; seq?: number }
   | { type: 'question'; question: string; options?: Array<{ title: string; description?: string } | string>; allow_custom: boolean }
-  | { type: 'token_update'; tokens: TokenBreakdown }
+  | { type: 'token_update'; tokens: TokenBreakdown; session_usage?: SessionUsage | null }
   | { type: 'context_compacted'; summary: string; tokens?: TokenBreakdown }
   | { type: 'cancelled' }
