@@ -262,6 +262,8 @@ type compactionResult struct {
 	Summary          string
 	PromptTokens     int
 	CompletionTokens int
+	ReasoningTokens  int
+	CachedTokens     int
 	// KeptCount is the number of tail messages intentionally kept out of the summary.
 	KeptCount int
 }
@@ -321,11 +323,21 @@ func (e *Engine) compactChatHistory(ctx context.Context, llm *LLMClient, chatMsg
 	compacted = append(compacted, chatMsgs[keepEnd:]...)
 
 	slog.Info("context compaction completed", "session_id", sessionID, "old_msgs", len(oldMsgs), "new_msgs", len(compacted))
+	reasoningTokens := 0
+	if resp.Usage.CompletionTokensDetails != nil {
+		reasoningTokens = resp.Usage.CompletionTokensDetails.ReasoningTokens
+	}
+	cachedTokens := 0
+	if resp.Usage.PromptTokensDetails != nil {
+		cachedTokens = resp.Usage.PromptTokensDetails.CachedTokens
+	}
 	return compactionResult{
 		Messages:         compacted,
 		Summary:          summary,
 		PromptTokens:     resp.Usage.PromptTokens,
 		CompletionTokens: resp.Usage.CompletionTokens,
+		ReasoningTokens:  reasoningTokens,
+		CachedTokens:     cachedTokens,
 		KeptCount:        len(chatMsgs) - keepEnd,
 	}
 }
@@ -999,6 +1011,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				compactionDelta := SessionUsageDelta{
 					Input:         int64(result.PromptTokens),
 					Output:        int64(result.CompletionTokens),
+					Reasoning:     int64(result.ReasoningTokens),
+					CacheRead:     int64(result.CachedTokens),
 					ModelCalls:    1,
 					ContextTokens: int64(afterEstimate),
 					ContextWindow: contextWindow,

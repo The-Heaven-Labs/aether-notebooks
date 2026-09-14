@@ -245,7 +245,7 @@ Create `internal/database/migrations/V100__drop_cells_description.sql`:
 ALTER TABLE cells DROP COLUMN IF EXISTS description;
 ```
 
-Note: migration numbers must be unique; V100/V101 are free after main's V100/V101 (auto-approve/auto-answer). If another migration lands first, renumber to the next free numbers.
+Note: migration numbers must be unique; V100/V101 are free after main's V098/V099 (auto-approve/auto-answer). If another migration lands first, renumber to the next free numbers.
 
 **Step 4: Remove remaining consumers**
 

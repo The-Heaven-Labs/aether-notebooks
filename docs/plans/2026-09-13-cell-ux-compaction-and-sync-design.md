@@ -32,8 +32,9 @@ Seven independent problems reported after the chart/legend and MCP work. All wer
 
 - `V100__drop_cells_description.sql` — `ALTER TABLE cells DROP COLUMN IF EXISTS description;`
 - `V101__agent_usage.sql` — `agent_messages.tokens_after INT` (nullable) plus `agent_sessions` columns: `context_tokens INT`, `context_window INT`, `total_input BIGINT`, `total_output BIGINT`, `total_reasoning BIGINT`, `total_cache_read BIGINT`, `total_model_calls INT`, `total_subagent_input BIGINT`, `total_subagent_output BIGINT` (all `NOT NULL DEFAULT 0`).
+- `V102__agent_message_kept_count.sql` — `agent_messages.kept_count INT` (nullable): how many tail messages a compaction kept out of the summary, so the durable rebuild retains them alongside the injected summary.
 
-Migration directory is `internal/database/migrations/` (embedded; AGENTS.md's `migrations/` path is stale). V097 is the current head.
+Migration directory is `internal/database/migrations/` (embedded; AGENTS.md's `migrations/` path is stale). V102 is the current head.
 
 ---
 

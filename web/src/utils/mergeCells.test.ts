@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Cell } from '../types'
-import { mergeServerCell, saveDelayFor, withDurationMetrics } from './mergeCells'
+import { clearDirtyForSyncedCells, mergeServerCell, saveDelayFor, withDurationMetrics } from './mergeCells'
 
 function cell(overrides: Partial<Cell> = {}): Cell {
   return {
@@ -78,6 +78,48 @@ describe('withDurationMetrics', () => {
     const metrics = { connect_time_ms: 1, query_time_ms: 2, render_time_ms: 3, total_time_ms: 6 }
     const input = cell({ duration_ms: 6, metrics })
     expect(withDurationMetrics(input)).toBe(input)
+  })
+})
+
+describe('clearDirtyForSyncedCells', () => {
+  it('clears dirty for a cell whose local and server sources are equal', () => {
+    const dirty = new Set(['cell-1'])
+    const next = clearDirtyForSyncedCells(
+      dirty,
+      [cell({ id: 'cell-1', source: 'SELECT 1' })],
+      [cell({ id: 'cell-1', source: 'SELECT 1' })],
+    )
+    expect(next.has('cell-1')).toBe(false)
+  })
+
+  it('keeps dirty when the local and server sources differ', () => {
+    const next = clearDirtyForSyncedCells(
+      new Set(['cell-1']),
+      [cell({ id: 'cell-1', source: 'SELECT unsaved' })],
+      [cell({ id: 'cell-1', source: 'SELECT 2' })],
+    )
+    expect(next.has('cell-1')).toBe(true)
+  })
+
+  it('keeps dirty when there is no local copy', () => {
+    const next = clearDirtyForSyncedCells(
+      new Set(['cell-1']),
+      [],
+      [cell({ id: 'cell-1', source: 'SELECT 2' })],
+    )
+    expect(next.has('cell-1')).toBe(true)
+  })
+
+  it('leaves unrelated ids untouched and does not mutate the input set', () => {
+    const dirty = new Set(['cell-1', 'other'])
+    const next = clearDirtyForSyncedCells(
+      dirty,
+      [cell({ id: 'cell-1', source: 'SELECT 1' })],
+      [cell({ id: 'cell-1', source: 'SELECT 1' })],
+    )
+    expect(next.has('cell-1')).toBe(false)
+    expect(next.has('other')).toBe(true)
+    expect(dirty.has('cell-1')).toBe(true)
   })
 })
 

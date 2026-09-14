@@ -227,6 +227,34 @@ describe('AgentPanel context-first token meter', () => {
     expect(screen.queryByText(/\(50%\)/)).toBeNull()
   })
 
+  it('shows the ⚙ indicator when reconnect_sync carries a compaction message', async () => {
+    seedSession(savedStateWithTokens(baseTokens({ input: 100, output: 10, context_current: 500 }), 1000))
+    const ws = await renderPanel()
+
+    emit(ws, {
+      type: 'reconnect_sync',
+      messages: [
+        { id: 'm1', role: 'user', content: 'hello', created_at: '2026-09-14T00:00:00Z' },
+        { id: 'm2', role: 'compaction', content: 'summary', tokens_direct: 900, tokens_after: 100, created_at: '2026-09-14T00:01:00Z' },
+      ],
+    })
+
+    await waitFor(() => expect(screen.getByText(/\(50%\) ⚙/)).toBeInTheDocument())
+  })
+
+  it('does not show the ⚙ indicator when reconnect_sync has no compaction message', async () => {
+    seedSession(savedStateWithTokens(baseTokens({ input: 100, output: 10, context_current: 500 }), 1000))
+    const ws = await renderPanel()
+
+    emit(ws, {
+      type: 'reconnect_sync',
+      messages: [{ id: 'm1', role: 'user', content: 'hello', created_at: '2026-09-14T00:00:00Z' }],
+    })
+
+    await waitFor(() => expect(screen.getByText(/\(50%\)/)).toBeInTheDocument())
+    expect(screen.queryByText(/⚙/)).toBeNull()
+  })
+
   it('clears the previous session meter when resuming another session', async () => {
     server.use(
       http.get('/api/v1/agents/:agentId/sessions', () =>

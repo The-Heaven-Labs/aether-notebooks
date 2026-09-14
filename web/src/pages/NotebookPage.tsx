@@ -16,7 +16,7 @@ import type { ChartConfig } from '../charts'
 import { Cell as NotebookCell, focusCellEditorEnd, collabCache, updateCellScroll, type NotebookCollab } from '../components/Cell'
 import { focusMarkdownCell } from '../utils/editorFocus'
 import { createFlashQueue, isAgentOrigin, resolveAgentAwareFlash, type FlashQueue } from '../utils/agentFocus'
-import { mergeServerCell, saveDelayFor } from '../utils/mergeCells'
+import { clearDirtyForSyncedCells, mergeServerCell, saveDelayFor } from '../utils/mergeCells'
 import { ParametersBar } from '../components/ParametersBar'
 import { SchemaBrowser } from '../components/SchemaBrowser'
 import { SchedulesPanel } from '../components/SchedulesPanel'
@@ -234,6 +234,7 @@ export function NotebookPage() {
   const autoFocusCellRef = useRef(false)
   const pendingExecRef = useRef(new Set<string>())
   const dirtyCellsRef = useRef(new Set<string>())
+  const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const [historyCell, setHistoryCell] = useState<string | null>(null)
   const [historyVersions, setHistoryVersions] = useState<CellVersion[]>([])
   // Drag-and-drop sensors
@@ -313,6 +314,14 @@ export function NotebookPage() {
     const isAgent = isAgentOrigin(userEmail)
     const { source: _source, ...rest } = updates as Record<string, unknown> & { source?: unknown }
     const payload = isAgent ? (updates as Record<string, unknown>) : rest
+    // An agent write of the source supersedes any pending human autosave:
+    // clear the dirty flag and its debounce timer so neither can resurrect
+    // the stale local text in a later merge.
+    if (isAgent && typeof updates.source === 'string') {
+      dirtyCellsRef.current.delete(cellId)
+      clearTimeout(saveTimers.current[cellId])
+      delete saveTimers.current[cellId]
+    }
     if (Object.keys(payload).length > 0) {
       setLocalCells((prev) =>
         prev.map((c) => c.id === cellId ? { ...c, ...payload } as Cell : c),
@@ -576,6 +585,9 @@ export function NotebookPage() {
     }
     // Always sync localCells with notebook data (for agent updates)
     if (notebook) {
+      // Equal sources mean nothing is unsaved here — drop stale dirty flags so
+      // they cannot keep an outdated local source alive across refetches.
+      dirtyCellsRef.current = clearDirtyForSyncedCells(dirtyCellsRef.current, localCellsRef.current, notebook.cells)
       setLocalCells(prev => {
         const merged = notebook.cells.map(nbCell =>
           mergeServerCell(
@@ -817,8 +829,6 @@ export function NotebookPage() {
     // Reload the notebook data
     qc.invalidateQueries({ queryKey: ['notebook', id] })
   }, [id, qc])
-
-  const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
   const saveCellSource = useCallback(async (cellId: string, source: string) => {
     setCellSaveState((prev) => ({ ...prev, [cellId]: { saving: true, savedAt: prev[cellId]?.savedAt ?? null, error: null } }))

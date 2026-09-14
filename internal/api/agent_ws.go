@@ -245,7 +245,7 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 				// does a full replacement, not an append.
 				rows, err := s.db.Pool.Query(ctx, `
 					SELECT id, role, content, tool_calls, reasoning_content, image_ids, COALESCE(duration_ms,0), COALESCE(tokens_direct,0), COALESCE(tokens_after,0), created_at, tool_call_id FROM agent_messages
-					WHERE session_id = $1 ORDER BY created_at
+					WHERE session_id = $1 ORDER BY created_at, id
 				`, currentSessionID)
 				if err == nil {
 					messages := scanAgentMessages(rows)

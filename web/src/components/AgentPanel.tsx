@@ -1080,6 +1080,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             // jumps the stream clock past anything already reconciled (F1).
             const serverMsgs = mapServerMessagesToChat((msg as { messages?: any }).messages)
             if (serverMsgs.length > 0) setMessages(serverMsgs)
+            if (serverMsgs.some((m) => m.role === 'compaction')) setHasCompacted(true)
             const serverSeq = (msg as { server_seq?: unknown }).server_seq
             if (typeof serverSeq === 'number' && serverSeq > lastSeqRef.current) lastSeqRef.current = serverSeq
             streamingTextRef.current = ''; setCurrentStreamingText('')
@@ -1625,6 +1626,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
               const msgs = await api.get<Array<{ id: string; role: string; content: string; reasoning_content?: string; image_ids?: string[]; duration_ms?: number; tokens_direct?: number; tokens_after?: number; created_at?: string }>>(`/api/v1/sessions/${session.id}/messages`)
               const formatted = mapServerMessagesToChat(msgs)
               setMessages(formatted)
+              if (formatted.some((m) => m.role === 'compaction')) setHasCompacted(true)
               if (selectedAgent) {
                 saveChatState(selectedAgent.id, session.id, formatted, undefined)
               }

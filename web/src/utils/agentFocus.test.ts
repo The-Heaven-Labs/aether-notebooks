@@ -68,35 +68,6 @@ describe('createFlashQueue', () => {
     expect(flash).toHaveBeenCalledWith('a')
   })
 
-  it('flush runs the pending flash immediately and clears it', () => {
-    const flash = vi.fn()
-    const q = createFlashQueue(flash, 250)
-    q.push('a')
-    q.flush()
-    expect(flash).toHaveBeenCalledWith('a')
-    vi.advanceTimersByTime(250)
-    expect(flash).toHaveBeenCalledTimes(1)
-  })
-
-  it('flush with nothing pending does nothing', () => {
-    const flash = vi.fn()
-    const q = createFlashQueue(flash, 250)
-    q.flush()
-    vi.advanceTimersByTime(250)
-    expect(flash).not.toHaveBeenCalled()
-  })
-
-  it('flush fires the pending flash only once', () => {
-    const flash = vi.fn()
-    const q = createFlashQueue(flash, 250)
-    q.push('a')
-    q.flush()
-    q.flush()
-    vi.advanceTimersByTime(250)
-    expect(flash).toHaveBeenCalledTimes(1)
-    expect(flash).toHaveBeenCalledWith('a')
-  })
-
   it('cancel clears the pending flash without firing', () => {
     const flash = vi.fn()
     const q = createFlashQueue(flash, 250)

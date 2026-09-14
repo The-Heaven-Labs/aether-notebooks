@@ -154,7 +154,13 @@ func TestProcessMessagePersistsCompactionUsage(t *testing.T) {
 		},
 		{
 			Choices: []agent.Choice{{Message: agent.ChatMessage{Content: "summary"}, FinishReason: "stop"}},
-			Usage:   agent.Usage{PromptTokens: 20, CompletionTokens: 10, TotalTokens: 30},
+			Usage: agent.Usage{
+				PromptTokens:            20,
+				CompletionTokens:        10,
+				TotalTokens:             30,
+				PromptTokensDetails:     &agent.PromptTokensDetails{CachedTokens: 3},
+				CompletionTokensDetails: &agent.CompletionTokensDetails{ReasoningTokens: 7},
+			},
 		},
 	})
 	env := setupUsageTestEnv(t, srv.URL, `{"compaction_threshold":50}`, 1000)
@@ -182,11 +188,15 @@ func TestProcessMessagePersistsCompactionUsage(t *testing.T) {
 	}
 	require.True(t, compacted, "expected a context_compacted event")
 
-	// The main call (800/10) plus the summarization call (20/10).
+	// The main call (800/10) plus the summarization call (20/10). The
+	// summarization call's reasoning/cache details must accrue too — dropping
+	// them would undercount the session totals.
 	u, err := env.store.GetUsage(ctx, env.sessionID)
 	require.NoError(t, err)
 	require.Equal(t, int64(820), u.Input)
 	require.Equal(t, int64(20), u.Output)
+	require.Equal(t, int64(7), u.Reasoning)
+	require.Equal(t, int64(3), u.CacheRead)
 	require.Equal(t, 2, u.ModelCalls)
 
 	// The compaction delta must persist the post-compaction context estimate,

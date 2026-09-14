@@ -35,6 +35,18 @@ export function withDurationMetrics(cell: Cell): Cell {
   return cell
 }
 
+// clearDirtyForSyncedCells removes cells from the dirty set whose local and
+// server sources agree: an identical source means there is nothing unsaved, so
+// a stale dirty flag must not keep resurrecting the local copy in merges.
+export function clearDirtyForSyncedCells(dirty: Set<string>, locals: Cell[], servers: Cell[]): Set<string> {
+  const next = new Set(dirty)
+  for (const s of servers) {
+    const l = locals.find(c => c.id === s.id)
+    if (l && l.source === s.source) next.delete(s.id)
+  }
+  return next
+}
+
 // saveDelayFor returns the autosave debounce delay. While the agent updated the
 // cell recently (< suppressWindowMs) the save is deferred until the suppression
 // window closes instead of being dropped.

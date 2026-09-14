@@ -11,7 +11,6 @@ export function resolveAgentAwareFlash(opts: { userEmail?: string | null; follow
 
 export interface FlashQueue {
   push(cellId: string): void
-  flush(): void
   cancel(): void
 }
 
@@ -29,10 +28,6 @@ export function createFlashQueue(flash: (cellId: string) => void, delayMs = 250)
       pending = cellId
       if (timer) clearTimeout(timer)
       timer = setTimeout(run, delayMs)
-    },
-    flush() {
-      if (timer) clearTimeout(timer)
-      run()
     },
     cancel() {
       if (timer) clearTimeout(timer)
