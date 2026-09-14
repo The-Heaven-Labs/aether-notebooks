@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
-import { OutputRenderer } from '../components/OutputRenderer'
+import { OutputRenderer, isAnyDetailActive } from '../components/OutputRenderer'
 import type { Output } from '../types'
 
 const makeTableOutput = (colType: string): Output => ({
@@ -158,5 +158,78 @@ describe('TableOutput virtualization', () => {
     await waitFor(() => expect(screen.getByLabelText('Copy value')).toBeDefined())
     const pre = container.querySelector('pre')
     expect(pre?.textContent).toBe(longValue)
+  })
+})
+
+// ── Detail panel copy behavior ────────────────────────────────────────────────
+
+describe('TableOutput detail copy', () => {
+  const fullValue = 'detail-value-'.repeat(4)
+
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 300 })
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 800 })
+  })
+  afterEach(() => {
+    delete (HTMLElement.prototype as { offsetHeight?: unknown }).offsetHeight
+    delete (HTMLElement.prototype as { offsetWidth?: unknown }).offsetWidth
+    window.getSelection()?.removeAllRanges()
+  })
+
+  function renderOpenDetail(cellId: string) {
+    const { container, unmount } = render(
+      <OutputRenderer
+        outputs={[{ type: 'table', data: { columns: [{ name: 'val', type: 'string' }], rows: [[fullValue]] } }]}
+        cellId={cellId}
+      />
+    )
+    const td = container.querySelector('td[data-row="0"][data-col="0"]')!
+    fireEvent.click(td)
+    return { container, unmount }
+  }
+
+  function dispatchCopy(target: EventTarget = document): { event: Event; data: Record<string, string> } {
+    const data: Record<string, string> = {}
+    const event = new Event('copy', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', {
+      value: { setData: (k: string, v: string) => { data[k] = v } },
+    })
+    target.dispatchEvent(event)
+    return { event, data }
+  }
+
+  it('copies the user selection instead of the whole value', async () => {
+    const { container } = renderOpenDetail('cell-copy-selection')
+    await waitFor(() => expect(screen.getByLabelText('Copy value')).toBeDefined())
+    const pre = container.querySelector('pre')!
+    const sel = window.getSelection()!
+    const range = document.createRange()
+    range.selectNodeContents(pre.firstChild!)
+    sel.removeAllRanges()
+    sel.addRange(range)
+    expect(sel.isCollapsed).toBe(false)
+    expect(sel.toString()).toBe(fullValue)
+
+    const { event, data } = dispatchCopy()
+    expect(event.defaultPrevented).toBe(false)
+    expect(data['text/plain']).toBeUndefined()
+  })
+
+  it('copies the whole value when nothing is selected', async () => {
+    renderOpenDetail('cell-copy-whole')
+    await waitFor(() => expect(screen.getByLabelText('Copy value')).toBeDefined())
+    window.getSelection()!.removeAllRanges()
+
+    const { event, data } = dispatchCopy()
+    expect(event.defaultPrevented).toBe(true)
+    expect(data['text/plain']).toBe(fullValue)
+  })
+
+  it('resets the global detail state when the open panel unmounts', async () => {
+    const { unmount } = renderOpenDetail('cell-unmount-global')
+    await waitFor(() => expect(screen.getByLabelText('Copy value')).toBeDefined())
+    expect(isAnyDetailActive()).toBe(true)
+    unmount()
+    expect(isAnyDetailActive()).toBe(false)
   })
 })
