@@ -474,7 +474,9 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					// done carries the final content so a client that reconnected
 					// mid-stream (and missed the tokens) still renders the message.
 					// session_usage restores the server-authoritative token meter.
-					doneUsage, usageErr := s.agentEngine.SessionStore().GetUsage(context.Background(), sid)
+					doneUsageCtx, doneUsageCancel := context.WithTimeout(context.Background(), 5*time.Second)
+					doneUsage, usageErr := s.agentEngine.SessionStore().GetUsage(doneUsageCtx, sid)
+					doneUsageCancel()
 					if usageErr != nil {
 						slog.Warn("ws: get session usage", "session_id", sid, "error", usageErr)
 						doneUsage = nil

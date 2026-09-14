@@ -411,7 +411,10 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 
 	// Live snapshot of the persisted session totals; updated per call and
 	// emitted on token_update so clients never have to reconstruct it.
-	usage, _ := e.session.GetUsage(ctx, sessionID)
+	usage, usageErr := e.session.GetUsage(ctx, sessionID)
+	if usageErr != nil {
+		slog.Warn("engine: load session usage", "session_id", sessionID, "error", usageErr)
+	}
 	if usage == nil {
 		usage = &models.SessionUsage{}
 	}
@@ -994,9 +997,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				afterEstimate := e.tokenCounter.CountMessages(result.Messages, modelName)
 				chatMsgs = result.Messages
 				compactionDelta := SessionUsageDelta{
-					Input:      int64(result.PromptTokens),
-					Output:     int64(result.CompletionTokens),
-					ModelCalls: 1,
+					Input:         int64(result.PromptTokens),
+					Output:        int64(result.CompletionTokens),
+					ModelCalls:    1,
+					ContextTokens: int64(afterEstimate),
+					ContextWindow: contextWindow,
 				}
 				if err := e.session.AddUsage(ctx, sessionID, compactionDelta); err != nil {
 					slog.Warn("engine: persist compaction usage", "session_id", sessionID, "error", err)
@@ -1316,6 +1321,16 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					onToolResult(tc.Function.Name, tc.ID, tc.Function.Arguments, resultStr, "", toolDurationMs, tokensDirect)
 				}
 			}
+		}
+
+		// Synchronous tools (spawn_subagents) can accrue usage to the session
+		// from inside their handler. Refresh the in-memory snapshot so the next
+		// token_update/done does not regress below the subagent_status events
+		// already sent to the client.
+		if refreshed, err := e.session.GetUsage(ctx, sessionID); err != nil {
+			slog.Warn("engine: refresh session usage snapshot", "session_id", sessionID, "error", err)
+		} else if refreshed != nil {
+			*usage = *refreshed
 		}
 
 		slog.Debug("engine: turn complete", "session_id", sessionID, "turn", turn, "llm_ms", llmElapsed, "total_ms", time.Since(turnStart).Milliseconds())
