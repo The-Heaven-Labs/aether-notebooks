@@ -117,13 +117,13 @@ Migration directory is `internal/database/migrations/` (embedded; AGENTS.md's `m
 
 **Design**
 
-- **Boundary semantics:** on rebuild, find the latest compaction row deterministically (`created_at, id`; add the id tiebreaker to `GetMessages`), inject its summary as a system message immediately after the main system prompt, and start history from that row. Older compaction rows are skipped. Existing `sanitizeChatMessages` (`engine.go:309-368`, already called at `:645`) heals tool-call pairing at the cut.
+- **Boundary semantics:** on rebuild, find the latest non-empty compaction row deterministically (`created_at, id`; add the id tiebreaker to `GetMessages`), inject its summary as a system message at that row, and rewind to the start of the tail it kept (`kept_count`, V100; `8` for legacy rows) so the unsummarized tail and post-boundary messages are re-sent. Older compaction rows inside the window are superseded and skipped; messages before the window are summarized away. Existing `sanitizeChatMessages` (`engine.go:309-368`, already called at `:645`) heals tool-call pairing at the cut.
 - **Truthful counts:** `compactChatHistory` returns the summarization usage and computes `after := tokenCounter.CountMessages(compacted)`. The compaction row stores `tokens_direct = before` (existing) and `tokens_after = after` (new column). The live event sends `{Input: before, ContextCurrent: after}`.
 - **Plumbing:** messages endpoint and `reconnect_sync` return `tokens_direct` and `tokens_after`; `agentTranscript.ts` maps both; the divider renders `before → after (~)`; `SessionHistory` renders compaction as the same summary block instead of a generic tool bubble.
 - `/summarize` stays a session fork.
 - Summarization usage is added to session totals (P6).
 
-**Tests:** update `TestCompactionEmitsEventAndPersists` expectations (durability + after-counts, exactly two system messages, no pre-boundary messages); new unit test that a second `ProcessMessage` sends summary + post-boundary messages only; divider rendering with after-counts from live and mapped rows.
+**Tests:** update `TestCompactionEmitsEventAndPersists` expectations (durability + after-counts, exactly one injected summary, summarized prefix absent, kept tail retained); new unit tests that a second `ProcessMessage` sends summary + retained tail + post-boundary messages and that back-to-back compactions inject only the latest summary; divider rendering with after-counts from live and mapped rows.
 
 ---
 

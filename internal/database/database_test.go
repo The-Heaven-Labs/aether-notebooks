@@ -77,7 +77,7 @@ func TestMigrateAgentUsageColumns(t *testing.T) {
 
 	ctx := context.Background()
 
-	for _, col := range []string{"tokens_after"} {
+	for _, col := range []string{"tokens_after", "kept_count"} {
 		var n int
 		err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM information_schema.columns WHERE table_name='agent_messages' AND column_name=$1`, col).Scan(&n)
 		if err != nil || n != 1 {

@@ -413,23 +413,38 @@ func TestCompactionEmitsEventAndPersists(t *testing.T) {
 		t.Fatalf("expected 1 LLM call on the second turn, got %d", len(captured2))
 	}
 	raw2, _ := json.Marshal(captured2[0])
-	if strings.Contains(string(raw2), `"msg `) {
-		t.Fatalf("second turn re-sent pre-compaction history: %s", raw2)
+	rawStr2 := string(raw2)
+	for _, gone := range []string{`"msg a"`, `"msg b"`, `"msg c"`, `"msg d"`, `"msg e"`} {
+		if strings.Contains(rawStr2, gone) {
+			t.Fatalf("summarized message %s re-sent on the second turn: %s", gone, rawStr2)
+		}
+	}
+	for _, want := range []string{`"msg f"`, `"msg l"`, "trigger"} {
+		if !strings.Contains(rawStr2, want) {
+			t.Fatalf("retained tail message %s missing on the second turn: %s", want, rawStr2)
+		}
 	}
 	msgs2, _ := captured2[0]["messages"].([]any)
 	if len(msgs2) < 2 {
 		t.Fatalf("expected at least 2 messages on the second turn, got %v", captured2[0]["messages"])
 	}
-	summaryMsg, _ := msgs2[1].(map[string]any)
-	summaryContent, _ = summaryMsg["content"].(string)
-	if summaryMsg["role"] != "system" || !strings.Contains(summaryContent, "summary of old messages") {
-		t.Fatalf("second message should be the injected summary, got %v", summaryMsg)
+	summaryCount := 0
+	for _, raw := range msgs2 {
+		summaryMsg, _ := raw.(map[string]any)
+		summaryContent, _ := summaryMsg["content"].(string)
+		if summaryMsg["role"] == "system" && strings.Contains(summaryContent, "summary of old messages") {
+			summaryCount++
+		}
+	}
+	if summaryCount != 1 {
+		t.Fatalf("expected exactly one injected summary, got %d: %v", summaryCount, msgs2)
 	}
 }
 
 // TestCompactionIsDurableAcrossTurns verifies the persisted compaction row acts
-// as a durable history boundary: the next turn starts with the injected summary
-// and never re-sends pre-compaction messages.
+// as a durable history boundary: the next turn re-sends the unsummarized tail,
+// injects the summary exactly once, drops the summarized prefix, and keeps the
+// post-boundary exchange.
 func TestCompactionIsDurableAcrossTurns(t *testing.T) {
 	env := setupCompactionTestEnv(t, 100, 10)
 	for i := 0; i < 5; i++ {
@@ -453,7 +468,7 @@ func TestCompactionIsDurableAcrossTurns(t *testing.T) {
 	srv := newCompactionScriptedServer(t, 80, "durable summary")
 	defer srv.Close()
 	env.useServer(t, srv, 10)
-	if _, _, _, _, _, err := env.engine.ProcessMessage(context.Background(), env.sid, "first turn", nil, nil, env.masterKey, nil, nil, nil, nil, nil, nil); err != nil {
+	if _, _, _, _, _, err := env.engine.ProcessMessage(context.Background(), env.sid, "PRECOMPACT-TURN1-QUESTION", nil, nil, env.masterKey, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("first ProcessMessage: %v", err)
 	}
 
@@ -472,9 +487,7 @@ func TestCompactionIsDurableAcrossTurns(t *testing.T) {
 		t.Fatalf("expected exactly 1 LLM call on the second turn, got %d", len(captured))
 	}
 	raw, _ := json.Marshal(captured[0])
-	if strings.Contains(string(raw), "PRECOMPACT-") {
-		t.Fatalf("second turn re-sent pre-compaction history: %s", raw)
-	}
+	rawStr := string(raw)
 	msgs, _ := captured[0]["messages"].([]any)
 	if len(msgs) < 2 {
 		t.Fatalf("expected at least 2 messages on the second turn, got %v", captured[0]["messages"])
@@ -484,10 +497,140 @@ func TestCompactionIsDurableAcrossTurns(t *testing.T) {
 	if first["role"] != "system" || !strings.Contains(firstContent, "you are helpful") {
 		t.Fatalf("first message should be the system prompt, got %v", first)
 	}
-	second, _ := msgs[1].(map[string]any)
-	secondContent, _ := second["content"].(string)
-	if second["role"] != "system" || !strings.Contains(secondContent, "durable summary") {
-		t.Fatalf("second message should be the injected compaction summary, got %v", second)
+	if n := strings.Count(rawStr, "durable summary"); n != 1 {
+		t.Fatalf("expected exactly one injected summary, got %d: %s", n, rawStr)
+	}
+	for _, want := range []string{
+		"PRECOMPACT-TURN1-QUESTION",
+		"main answer",
+		"PRECOMPACT-ASSISTANT-c",
+		"PRECOMPACT-USER-d",
+		"PRECOMPACT-ASSISTANT-d",
+		"PRECOMPACT-USER-e",
+		"PRECOMPACT-ASSISTANT-e",
+		"PRECOMPACT-TOOL-RESULT",
+	} {
+		if !strings.Contains(rawStr, want) {
+			t.Fatalf("retained tail message %q missing from second turn: %s", want, rawStr)
+		}
+	}
+	for _, gone := range []string{
+		"PRECOMPACT-USER-a",
+		"PRECOMPACT-ASSISTANT-a",
+		"PRECOMPACT-USER-b",
+		"PRECOMPACT-ASSISTANT-b",
+		"PRECOMPACT-USER-c",
+	} {
+		if strings.Contains(rawStr, gone) {
+			t.Fatalf("summarized prefix message %q re-sent on second turn: %s", gone, rawStr)
+		}
+	}
+}
+
+// TestCompactionLatestBoundaryWins drives two compactions and verifies that only
+// the latest summary is injected while the tail kept before the latest boundary
+// is retained.
+func TestCompactionLatestBoundaryWins(t *testing.T) {
+	env := setupCompactionTestEnv(t, 100, 10)
+	for i := 0; i < 12; i++ {
+		env.addHistory(t, "user", "HIST-"+string(rune('a'+i)))
+	}
+
+	mainCalls := 0
+	summaryCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req ChatRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		isSummary := false
+		for _, m := range req.Messages {
+			if strings.Contains(m.Content, "Summarize the following") {
+				isSummary = true
+				break
+			}
+		}
+		var resp ChatResponse
+		if isSummary {
+			summaryCalls++
+			resp = ChatResponse{
+				Choices: []Choice{{Message: ChatMessage{Content: "summary number " + strconv.Itoa(summaryCalls)}, FinishReason: "stop"}},
+				Usage:   Usage{PromptTokens: 20, CompletionTokens: 10},
+			}
+		} else {
+			mainCalls++
+			if mainCalls == 1 {
+				resp = ChatResponse{
+					Choices: []Choice{{
+						Message: ChatMessage{ToolCalls: []ToolCall{{
+							ID:   uuid.New().String(),
+							Type: "function",
+							Function: struct {
+								Name      string `json:"name"`
+								Arguments string `json:"arguments"`
+							}{Name: "not_a_real_tool", Arguments: "{}"},
+						}}},
+						FinishReason: "tool_calls",
+					}},
+					Usage: Usage{PromptTokens: 80, CompletionTokens: 10},
+				}
+			} else {
+				resp = ChatResponse{
+					Choices: []Choice{{Message: ChatMessage{Content: "latest answer"}, FinishReason: "stop"}},
+					Usage:   Usage{PromptTokens: 80, CompletionTokens: 10},
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+	env.useServer(t, srv, 10)
+	if _, _, _, _, _, err := env.engine.ProcessMessage(context.Background(), env.sid, "PRECOMPACT-QUESTION", nil, nil, env.masterKey, nil, nil, nil, nil, nil, nil); err != nil {
+		t.Fatalf("first ProcessMessage: %v", err)
+	}
+	if mainCalls != 2 || summaryCalls != 2 {
+		t.Fatalf("expected 2 main + 2 summary calls, got %d + %d", mainCalls, summaryCalls)
+	}
+
+	responses := []ChatResponse{
+		{Choices: []Choice{{Message: ChatMessage{Content: "next answer"}, FinishReason: "stop"}}, Usage: Usage{PromptTokens: 5, CompletionTokens: 5}},
+	}
+	var captured []map[string]any
+	srv2 := newMockLLMServerWithCapture(t, env.masterKey, responses, &captured)
+	defer srv2.Close()
+	env.useServer(t, srv2, 10)
+	if _, _, _, _, _, err := env.engine.ProcessMessage(context.Background(), env.sid, "third turn", nil, nil, env.masterKey, nil, nil, nil, nil, nil, nil); err != nil {
+		t.Fatalf("second ProcessMessage: %v", err)
+	}
+
+	if len(captured) != 1 {
+		t.Fatalf("expected exactly 1 LLM call on the third turn, got %d", len(captured))
+	}
+	raw, _ := json.Marshal(captured[0])
+	rawStr := string(raw)
+	if n := strings.Count(rawStr, "summary number 2"); n != 1 {
+		t.Fatalf("expected exactly one latest summary, got %d: %s", n, rawStr)
+	}
+	if strings.Contains(rawStr, "summary number 1") {
+		t.Fatalf("superseded summary re-injected: %s", rawStr)
+	}
+	for _, want := range []string{
+		"HIST-h",
+		"HIST-i",
+		"HIST-j",
+		"HIST-k",
+		"HIST-l",
+		"PRECOMPACT-QUESTION",
+		"tool not available: not_a_real_tool",
+		"latest answer",
+	} {
+		if !strings.Contains(rawStr, want) {
+			t.Fatalf("retained tail message %q missing from third turn: %s", want, rawStr)
+		}
+	}
+	for _, gone := range []string{"HIST-a", "HIST-f", "HIST-g"} {
+		if strings.Contains(rawStr, gone) {
+			t.Fatalf("summarized message %q re-sent on third turn: %s", gone, rawStr)
+		}
 	}
 }
 
@@ -510,10 +653,11 @@ func TestCompactionEventAndRowCarryAfterTokens(t *testing.T) {
 
 	var tokensDirect int
 	var tokensAfter *int
+	var keptCount *int
 	err := env.db.Pool.QueryRow(context.Background(), `
-		SELECT tokens_direct, tokens_after FROM agent_messages
+		SELECT tokens_direct, tokens_after, kept_count FROM agent_messages
 		WHERE session_id=$1 AND role='compaction'
-	`, env.sid).Scan(&tokensDirect, &tokensAfter)
+	`, env.sid).Scan(&tokensDirect, &tokensAfter, &keptCount)
 	if err != nil {
 		t.Fatalf("query compaction row: %v", err)
 	}
@@ -522,6 +666,9 @@ func TestCompactionEventAndRowCarryAfterTokens(t *testing.T) {
 	}
 	if tokensAfter == nil || *tokensAfter <= 0 {
 		t.Fatalf("compaction row tokens_after = %v, want non-nil and > 0", tokensAfter)
+	}
+	if keptCount == nil || *keptCount <= 0 {
+		t.Fatalf("compaction row kept_count = %v, want non-nil and > 0", keptCount)
 	}
 
 	found := false
