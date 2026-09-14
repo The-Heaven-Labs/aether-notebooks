@@ -2,9 +2,17 @@ export function isAgentOrigin(userEmail?: string | null): boolean {
   return userEmail === 'agent@aether'
 }
 
+export type FlashAction = 'queue' | 'flash' | 'none'
+
+export function resolveAgentAwareFlash(opts: { userEmail?: string | null; followsUser: boolean }): FlashAction {
+  if (isAgentOrigin(opts.userEmail)) return 'queue'
+  return opts.followsUser ? 'flash' : 'none'
+}
+
 export interface FlashQueue {
   push(cellId: string): void
   flush(): void
+  cancel(): void
 }
 
 export function createFlashQueue(flash: (cellId: string) => void, delayMs = 250): FlashQueue {
@@ -25,6 +33,11 @@ export function createFlashQueue(flash: (cellId: string) => void, delayMs = 250)
     flush() {
       if (timer) clearTimeout(timer)
       run()
+    },
+    cancel() {
+      if (timer) clearTimeout(timer)
+      timer = null
+      pending = null
     },
   }
 }

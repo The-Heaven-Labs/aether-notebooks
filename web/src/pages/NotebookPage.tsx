@@ -15,7 +15,7 @@ import type { Notebook, Cell, Output, Connector, Parameter, CellVersion, Noteboo
 import type { ChartConfig } from '../charts'
 import { Cell as NotebookCell, focusCellEditorEnd, collabCache, updateCellScroll, type NotebookCollab } from '../components/Cell'
 import { focusMarkdownCell } from '../utils/editorFocus'
-import { createFlashQueue, isAgentOrigin } from '../utils/agentFocus'
+import { createFlashQueue, isAgentOrigin, resolveAgentAwareFlash, type FlashQueue } from '../utils/agentFocus'
 import { ParametersBar } from '../components/ParametersBar'
 import { SchemaBrowser } from '../components/SchemaBrowser'
 import { SchedulesPanel } from '../components/SchedulesPanel'
@@ -268,11 +268,11 @@ export function NotebookPage() {
   useEffect(() => {
     flashCellRef.current = flashCell
   })
-  const agentFlashRef = useRef<ReturnType<typeof createFlashQueue> | null>(null)
+  const agentFlashRef = useRef<FlashQueue | null>(null)
   useEffect(() => {
     const queue = createFlashQueue((cellId) => flashCellRef.current(cellId))
     agentFlashRef.current = queue
-    return () => queue.flush()
+    return () => queue.cancel()
   }, [])
   const shouldScroll = useCallback((userEmail?: string) => {
     return following && userEmail === following.email
@@ -290,9 +290,10 @@ export function NotebookPage() {
     })
     setCellRunAt((prev) => ({ ...prev, [cellId]: new Date() }))
     if (!pendingExecRef.current.has(cellId)) {
-      if (isAgentOrigin(userEmail)) {
+      const action = resolveAgentAwareFlash({ userEmail, followsUser: !!shouldScroll(userEmail) })
+      if (action === 'queue') {
         agentFlashRef.current?.push(cellId)
-      } else if (shouldScroll(userEmail)) {
+      } else if (action === 'flash') {
         flashCell(cellId)
       }
     }
@@ -300,14 +301,14 @@ export function NotebookPage() {
     setLocalCells((prev) =>
       prev.map((c) => (c.id === cellId ? { ...c, metadata } : c)),
     )
-    if (!pendingExecRef.current.has(cellId) && (userEmail === 'agent@aether' || shouldScroll(userEmail))) {
+    if (!pendingExecRef.current.has(cellId) && (isAgentOrigin(userEmail) || shouldScroll(userEmail))) {
       flashCell(cellId)
     }
   }, [shouldScroll]), useCallback((cellId: string, updates: Record<string, unknown>, userEmail?: string) => {
     // cell_updated event received — apply broadcast fields to local cache
     // Skip source for regular users (Yjs is source of truth), but apply
     // it for agent updates since Yjs may not be synced in real-time.
-    const isAgent = userEmail === 'agent@aether'
+    const isAgent = isAgentOrigin(userEmail)
     const { source: _source, ...rest } = updates as Record<string, unknown> & { source?: unknown }
     const payload = isAgent ? (updates as Record<string, unknown>) : rest
     if (Object.keys(payload).length > 0) {
@@ -336,10 +337,11 @@ export function NotebookPage() {
       )
       return { ...old, cells: [...shifted, cell].sort((a, b) => a.position - b.position) }
     })
-    if (isAgentOrigin(userEmail)) {
+    const action = resolveAgentAwareFlash({ userEmail, followsUser: !!shouldScroll(userEmail) })
+    if (action === 'queue') {
       agentFlashRef.current?.push(cell.id)
       setFocusedCellId(cell.id)
-    } else if (!pendingExecRef.current.has(cell.id) && shouldScroll(userEmail)) {
+    } else if (action === 'flash' && !pendingExecRef.current.has(cell.id)) {
       flashCell(cell.id)
     }
   }, [id, qc, shouldScroll]), useCallback((cellId: string) => {
