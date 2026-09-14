@@ -83,8 +83,8 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "create_cell",
-			Description: "Create a new cell. ALWAYS provide a concise title and a description of what the query does (extra detail can go in SQL comments). Use type 'code' with language 'sql' for database queries, or type 'text' with language 'markdown' for documentation and notes. For SQL cells that should produce results right away, set run=true to execute immediately after creation — the result includes inline query results (same shape as run_cell: column_names, data preview, truncated) and shows a running state in the notebook while executing. Optional timeout_ms (max 600000, only with run=true) bounds the execution.",
-			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"type":{"type":"string","enum":["code","text"],"description":"Cell type: 'code' for executable queries, 'text' for markdown documentation"},"language":{"type":"string","enum":["sql","markdown"],"description":"Cell language. Defaults to 'sql' for code cells, 'markdown' for text cells. Currently only SQL and markdown are supported."},"title":{"type":"string","description":"Short name of what this cell does (e.g. 'Daily orders GMV by region')"},"description":{"type":"string","description":"What this query is for, data source assumptions, and caveats. Detail can also live as SQL comments in source."},"source":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell. Required for code cells if the notebook has no default connector."},"position":{"type":"integer"},"run":{"type":"boolean","description":"Set to true to execute the cell immediately after creating it (same behavior and result shape as run_cell, including inline results and running-state UI)"},"timeout_ms":{"type":"integer","description":"Optional max execution time in milliseconds when run=true (max 600000; without it the connector's timeout_seconds applies, 5 minutes when unset). Ignored when run is not true."}},"required":["notebook_id","type","title","description"]}`,
+			Description: "Create a new cell. ALWAYS provide a concise title (extra detail can go in SQL comments). Use type 'code' with language 'sql' for database queries, or type 'text' with language 'markdown' for documentation and notes. For SQL cells that should produce results right away, set run=true to execute immediately after creation — the result includes inline query results (same shape as run_cell: column_names, data preview, truncated) and shows a running state in the notebook while executing. Optional timeout_ms (max 600000, only with run=true) bounds the execution.",
+			Parameters:  `{"type":"object","properties":{"notebook_id":{"type":"string"},"type":{"type":"string","enum":["code","text"],"description":"Cell type: 'code' for executable queries, 'text' for markdown documentation"},"language":{"type":"string","enum":["sql","markdown"],"description":"Cell language. Defaults to 'sql' for code cells, 'markdown' for text cells. Currently only SQL and markdown are supported."},"title":{"type":"string","description":"Short name of what this cell does (e.g. 'Daily orders GMV by region')"},"source":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell. Required for code cells if the notebook has no default connector."},"position":{"type":"integer"},"run":{"type":"boolean","description":"Set to true to execute the cell immediately after creating it (same behavior and result shape as run_cell, including inline results and running-state UI)"},"timeout_ms":{"type":"integer","description":"Optional max execution time in milliseconds when run=true (max 600000; without it the connector's timeout_seconds applies, 5 minutes when unset). Ignored when run is not true."}},"required":["notebook_id","type","title"]}`,
 		},
 		Handler:         makeCreateCellHandler(db),
 		ConfirmRequired: true,
@@ -99,8 +99,8 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "update_cell",
-			Description: "Change a cell's source, title, description, connector, or other properties",
-			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (from list_cells output, NOT the position number)"},"source":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell"}},"required":["cell_id"]}`,
+			Description: "Change a cell's source, title, connector, or other properties",
+			Parameters:  `{"type":"object","properties":{"cell_id":{"type":"string","description":"The cell's UUID (from list_cells output, NOT the position number)"},"source":{"type":"string"},"title":{"type":"string"},"connector_id":{"type":"string","description":"The ID of the connector to assign to this cell"}},"required":["cell_id"]}`,
 		},
 		Handler:         makeUpdateCellHandler(db),
 		ConfirmRequired: true,
@@ -329,7 +329,6 @@ func makeReadCellHandler(db *pgxpool.Pool) ToolHandler {
 			SourceVisible bool            `json:"source_visible"`
 			CellCollapsed bool            `json:"cell_collapsed"`
 			Title         *string         `json:"title"`
-			Description   *string         `json:"description"`
 			Slug          *string         `json:"slug"`
 			Parameters    json.RawMessage `json:"parameters"`
 			SlideBreak    bool            `json:"slide_break"`
@@ -339,13 +338,13 @@ func makeReadCellHandler(db *pgxpool.Pool) ToolHandler {
 		err = db.QueryRow(ctx.Context, `
 			SELECT id, notebook_id, position, type, language, connector_id, source, outputs, 
 			       "limit", created_at, updated_at, source_visible, cell_collapsed, title, 
-			       description, slug, parameters, slide_break, metadata
+			       slug, parameters, slide_break, metadata
 			FROM cells WHERE id = $1
 		`, resolved.ID).Scan(
 			&cell.ID, &cell.NotebookID, &cell.Position, &cell.Type, &cell.Language,
 			&cell.ConnectorID, &cell.Source, &cell.Outputs, &cell.Limit,
 			&cell.CreatedAt, &cell.UpdatedAt, &cell.SourceVisible, &cell.CellCollapsed,
-			&cell.Title, &cell.Description, &cell.Slug, &cell.Parameters,
+			&cell.Title, &cell.Slug, &cell.Parameters,
 			&cell.SlideBreak, &cell.Metadata,
 		)
 		if err != nil {
@@ -434,7 +433,6 @@ func makeReadCellHandler(db *pgxpool.Pool) ToolHandler {
 			"source_visible": cell.SourceVisible,
 			"cell_collapsed": cell.CellCollapsed,
 			"title":          cell.Title,
-			"description":    cell.Description,
 			"slug":           cell.Slug,
 			"parameters":     cell.Parameters,
 			"slide_break":    cell.SlideBreak,
@@ -452,7 +450,6 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 			Type        string `json:"type"`
 			Language    string `json:"language"`
 			Title       string `json:"title"`
-			Description string `json:"description"`
 			Source      string `json:"source"`
 			ConnectorID string `json:"connector_id"`
 			Position    int    `json:"position"`
@@ -473,12 +470,8 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 
 		// Documentation is part of creation: reject before any INSERT.
 		req.Title = strings.TrimSpace(req.Title)
-		req.Description = strings.TrimSpace(req.Description)
 		if req.Title == "" {
 			return nil, fmt.Errorf("title is required: provide a short name of what this cell does")
-		}
-		if req.Description == "" {
-			return nil, fmt.Errorf("description is required: describe what the query does, its data source assumptions, and caveats")
 		}
 		// Truncate to the title column width instead of failing the INSERT.
 		if len([]rune(req.Title)) > 255 {
@@ -532,9 +525,9 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 
 		now := time.Now()
 		_, err := db.Exec(ctx.Context, `
-			INSERT INTO cells (id, notebook_id, type, language, connector_id, source, title, description, position, "limit", created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1000, $10, $10)
-		`, cellID, req.NotebookID, req.Type, language, connID, req.Source, req.Title, req.Description, position, now)
+			INSERT INTO cells (id, notebook_id, type, language, connector_id, source, title, position, "limit", created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1000, $9, $9)
+		`, cellID, req.NotebookID, req.Type, language, connID, req.Source, req.Title, position, now)
 		if err != nil {
 			return nil, fmt.Errorf("create cell: %w", err)
 		}
@@ -554,7 +547,6 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 					"language":       language,
 					"source":         req.Source,
 					"title":          req.Title,
-					"description":    req.Description,
 					"outputs":        []models.Output{},
 					"source_visible": true,
 					"outputs_hidden": false,
@@ -601,7 +593,6 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 			CellID      string `json:"cell_id"`
 			Source      string `json:"source"`
 			Title       string `json:"title"`
-			Description string `json:"description"`
 			ConnectorID string `json:"connector_id"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
@@ -633,12 +624,11 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 		_, err = db.Exec(ctx.Context, `
 			UPDATE cells SET source = COALESCE(NULLIF($2, ''), source),
 				title = COALESCE(NULLIF($3, ''), title),
-				description = COALESCE(NULLIF($4, ''), description),
-				connector_id = COALESCE($5, connector_id),
+				connector_id = COALESCE($4, connector_id),
 				agent_updated_at = NOW(),
 				updated_at = NOW()
 			WHERE id = $1
-		`, cellID, req.Source, req.Title, req.Description, connID)
+		`, cellID, req.Source, req.Title, connID)
 		if err != nil {
 			return nil, fmt.Errorf("update cache: %w", err)
 		}

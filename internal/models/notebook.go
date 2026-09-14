@@ -40,7 +40,6 @@ type Cell struct {
 	SlideBreak     bool            `json:"slide_break"`
 	Parameters     []Parameter     `json:"parameters"`
 	Title          string          `json:"title,omitempty"`
-	Description    string          `json:"description,omitempty"`
 	Slug           string          `json:"slug,omitempty"`
 	Limit          *int            `json:"limit,omitempty"`
 	Metadata       json.RawMessage `json:"metadata,omitempty"`
@@ -86,7 +85,6 @@ type SnapshotCell struct {
 	SlideBreak    bool            `json:"slide_break"`
 	Metadata      json.RawMessage `json:"metadata,omitempty"`
 	Title         string          `json:"title,omitempty"`
-	Description   string          `json:"description,omitempty"`
 }
 
 type CellDiffLine struct {

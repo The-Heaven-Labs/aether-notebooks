@@ -20,7 +20,7 @@ func CreateNotebookSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, orgID
 	rows, err := pool.Query(ctx,
 		`SELECT id, type, language, source, position, connector_id, outputs,
 		        "limit", source_visible, cell_collapsed, slide_break, metadata,
-		        COALESCE(title,''), COALESCE(description,'')
+		        COALESCE(title,'')
 		 FROM cells WHERE notebook_id=$1 ORDER BY position`,
 		nbID,
 	)
@@ -34,11 +34,11 @@ func CreateNotebookSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, orgID
 	for rows.Next() {
 		var c models.SnapshotCell
 		var outputs, metadata []byte
-		var lang, connID, cTitle, cDesc *string
+		var lang, connID, cTitle *string
 		var limit *int
 		if err := rows.Scan(&c.ID, &c.Type, &lang, &c.Source, &c.Position, &connID,
 			&outputs, &limit, &c.SourceVisible, &c.CellCollapsed, &c.SlideBreak, &metadata,
-			&cTitle, &cDesc); err != nil {
+			&cTitle); err != nil {
 			return nil, fmt.Errorf("scan cell row: %w", err)
 		}
 		if lang != nil {
@@ -49,9 +49,6 @@ func CreateNotebookSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, orgID
 		}
 		if cTitle != nil {
 			c.Title = *cTitle
-		}
-		if cDesc != nil {
-			c.Description = *cDesc
 		}
 		c.Outputs = outputs
 		c.Metadata = metadata
@@ -205,25 +202,25 @@ func RestoreNotebookSnapshot(ctx context.Context, pool *pgxpool.Pool, nbID, snap
 				UPDATE cells SET type=$1, language=$2, source=$3, position=$4,
 					connector_id=$5, outputs=$6, "limit"=$7,
 					source_visible=$8, cell_collapsed=$9, slide_break=$10,
-					metadata=$11, title=$12, description=$13,
+					metadata=$11, title=$12,
 					agent_updated_at=NULL, updated_at=NOW()
-				WHERE id=$14 AND notebook_id=$15`,
+				WHERE id=$13 AND notebook_id=$14`,
 				sc.Type, sc.Language, sc.Source, sc.Position,
 				sc.ConnectorID, sc.Outputs, sc.Limit,
 				sc.SourceVisible, sc.CellCollapsed, sc.SlideBreak,
-				sc.Metadata, sc.Title, sc.Description,
+				sc.Metadata, sc.Title,
 				sc.ID, nbID,
 			)
 		} else {
 			tx.Exec(ctx, `
 				INSERT INTO cells (id, notebook_id, type, language, source, position,
 					connector_id, outputs, "limit", source_visible, cell_collapsed,
-					slide_break, metadata, title, description, created_at, updated_at)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW())`,
+					slide_break, metadata, title, created_at, updated_at)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),NOW())`,
 				sc.ID, nbID, sc.Type, sc.Language, sc.Source, sc.Position,
 				sc.ConnectorID, sc.Outputs, sc.Limit,
 				sc.SourceVisible, sc.CellCollapsed, sc.SlideBreak,
-				sc.Metadata, sc.Title, sc.Description,
+				sc.Metadata, sc.Title,
 			)
 		}
 

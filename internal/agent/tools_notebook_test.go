@@ -126,7 +126,6 @@ func TestAgentCreateCellWithPosition(t *testing.T) {
 		"source":      "SELECT 3",
 		"position":    1,
 		"title":       "Third cell",
-		"description": "Test cell at position 1",
 	})
 	result, err := createCellHandler(args, ctx)
 	if err != nil {
@@ -264,7 +263,6 @@ func TestAgentCreateCellWithConnectorID(t *testing.T) {
 		"source":       "SELECT 1",
 		"connector_id": connID,
 		"title":        "Connector cell",
-		"description":  "Test cell with connector",
 	})
 	result, err := createCellHandler(args, ctx)
 	if err != nil {
@@ -318,7 +316,6 @@ func TestAgentUpdateCellConnectorID(t *testing.T) {
 		"type":        "code",
 		"source":      "SELECT 1",
 		"title":       "Updatable cell",
-		"description": "Test cell for connector update",
 	})
 	createResult, err := createCellDef.Handler(createArgs, ctx)
 	if err != nil {
@@ -509,7 +506,6 @@ func TestAgentCreateCellAtEnd(t *testing.T) {
 		"type":        "code",
 		"source":      "SELECT 2",
 		"title":       "Second cell",
-		"description": "Test cell at end",
 	})
 	result, err := createCellHandler(args, ctx)
 	if err != nil {
@@ -543,7 +539,6 @@ func TestAgentMoveCell(t *testing.T) {
 			"source":      "SELECT " + fmt.Sprint(i),
 			"position":    i,
 			"title":       "Cell " + fmt.Sprint(i),
-			"description": "Test cell",
 		})
 		result, err := createCellHandler(args, ctx)
 		if err != nil {
@@ -1490,7 +1485,7 @@ func TestAgentRunCellCancelBeatsParentDeadline(t *testing.T) {
 	}
 }
 
-func TestAgentCreateCellRequiresTitleAndDescription(t *testing.T) {
+func TestAgentCreateCellRequiresTitle(t *testing.T) {
 	db := setupTestDB(t)
 	orgID, userID := createTestOrgAndUser(t, db.Pool)
 	nbID := createTestNotebook(t, db.Pool, orgID, userID)
@@ -1501,10 +1496,8 @@ func TestAgentCreateCellRequiresTitleAndDescription(t *testing.T) {
 	ctx := setupToolContext(t, db, orgID, userID, nbID)
 
 	for name, extra := range map[string]map[string]any{
-		"missing title":       {"description": "d"},
-		"missing description": {"title": "t"},
-		"blank title":         {"title": "   ", "description": "d"},
-		"blank description":   {"title": "t", "description": "  "},
+		"missing title": {},
+		"blank title":   {"title": "   "},
 	} {
 		base := map[string]any{"notebook_id": nbID, "type": "code", "source": "SELECT 1"}
 		for k, v := range extra {
@@ -1522,9 +1515,23 @@ func TestAgentCreateCellRequiresTitleAndDescription(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("rejected creates must not INSERT, found %d cells", count)
 	}
+
+	// A create with only a title (no description) must succeed.
+	args, _ := json.Marshal(map[string]any{
+		"notebook_id": nbID, "type": "code", "source": "SELECT 1", "title": "Title only",
+	})
+	if _, err := createCellDef.Handler(args, ctx); err != nil {
+		t.Fatalf("create with title only: %v", err)
+	}
+	if err := db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM cells WHERE notebook_id=$1`, nbID).Scan(&count); err != nil {
+		t.Fatalf("count cells: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 created cell, got %d", count)
+	}
 }
 
-func TestAgentCreateCellPersistsTitleDescription(t *testing.T) {
+func TestAgentCreateCellPersistsTitle(t *testing.T) {
 	db := setupTestDB(t)
 	orgID, userID := createTestOrgAndUser(t, db.Pool)
 	nbID := createTestNotebook(t, db.Pool, orgID, userID)
@@ -1542,7 +1549,7 @@ func TestAgentCreateCellPersistsTitleDescription(t *testing.T) {
 
 	args, _ := json.Marshal(map[string]any{
 		"notebook_id": nbID, "type": "code", "source": "SELECT 1",
-		"title": "Daily orders", "description": "GMV by region",
+		"title": "Daily orders",
 	})
 	result, err := createCellDef.Handler(args, ctx)
 	if err != nil {
@@ -1550,19 +1557,19 @@ func TestAgentCreateCellPersistsTitleDescription(t *testing.T) {
 	}
 	cellID := result.(map[string]any)["cell_id"].(string)
 
-	var title, desc string
-	if err := db.Pool.QueryRow(context.Background(), `SELECT title, description FROM cells WHERE id=$1`, cellID).Scan(&title, &desc); err != nil {
+	var title string
+	if err := db.Pool.QueryRow(context.Background(), `SELECT title FROM cells WHERE id=$1`, cellID).Scan(&title); err != nil {
 		t.Fatalf("query cell: %v", err)
 	}
-	if title != "Daily orders" || desc != "GMV by region" {
-		t.Fatalf("title/description not persisted: %q / %q", title, desc)
+	if title != "Daily orders" {
+		t.Fatalf("title not persisted: %q", title)
 	}
 	if len(broadcasts) != 1 {
 		t.Fatalf("expected 1 broadcast, got %d", len(broadcasts))
 	}
 	cell, _ := broadcasts[0]["cell"].(map[string]any)
-	if cell["title"] != "Daily orders" || cell["description"] != "GMV by region" {
-		t.Fatalf("broadcast missing title/description: %v", cell)
+	if cell["title"] != "Daily orders" {
+		t.Fatalf("broadcast missing title: %v", cell)
 	}
 }
 
@@ -1592,7 +1599,7 @@ func TestAgentCreateCellRunTrue(t *testing.T) {
 
 	args, _ := json.Marshal(map[string]any{
 		"notebook_id": nbID, "type": "code", "source": "SELECT 7 AS lucky",
-		"title": "Lucky", "description": "inline run test", "run": true,
+		"title": "Lucky", "run": true,
 	})
 	result, err := createCellDef.Handler(args, ctx)
 	if err != nil {
@@ -1655,7 +1662,7 @@ func TestAgentCreateCellRunTrueTextCellFails(t *testing.T) {
 
 	args, _ := json.Marshal(map[string]any{
 		"notebook_id": nbID, "type": "text", "source": "# hi",
-		"title": "Note", "description": "doc", "run": true,
+		"title": "Note", "run": true,
 	})
 	if _, err := createCellDef.Handler(args, ctx); err == nil {
 		t.Fatal("expected hard error for run=true on text cell")
@@ -1687,7 +1694,7 @@ func TestAgentCreateCellRunTrueFailureKeepsCell(t *testing.T) {
 
 	args, _ := json.Marshal(map[string]any{
 		"notebook_id": nbID, "type": "code", "source": "SELECT * FROM nonexistent_table_xyz",
-		"title": "Broken", "description": "bad query", "run": true,
+		"title": "Broken", "run": true,
 	})
 	result, err := createCellDef.Handler(args, ctx)
 	if err != nil {
