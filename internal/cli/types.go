@@ -38,7 +38,6 @@ type (
 		CellCollapsed  bool            `json:"cell_collapsed"`
 		SlideBreak     bool            `json:"slide_break"`
 		Title          string          `json:"title,omitempty"`
-		Description    string          `json:"description,omitempty"`
 		Slug           string          `json:"slug,omitempty"`
 		Limit          *int            `json:"limit,omitempty"`
 		CreatedAt      time.Time       `json:"created_at"`

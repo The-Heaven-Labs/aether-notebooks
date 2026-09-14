@@ -1,0 +1,1 @@
+ALTER TABLE cells DROP COLUMN IF EXISTS description;

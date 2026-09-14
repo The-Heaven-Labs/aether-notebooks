@@ -61,7 +61,7 @@ export function useNotebookWs(
           onCellMetadataChangedRef.current(msg.cell_id, msg.metadata, msg.user_email)
         } else if (msg.type === 'cell_updated' && onCellUpdatedRef.current) {
           const updates: Record<string, unknown> = {}
-          for (const key of ['source', 'cell_type', 'language', 'source_visible', 'outputs_hidden', 'cell_collapsed', 'slide_break', 'title', 'description', 'slug', 'limit']) {
+          for (const key of ['source', 'cell_type', 'language', 'source_visible', 'outputs_hidden', 'cell_collapsed', 'slide_break', 'title', 'slug', 'limit']) {
             if (msg[key] !== undefined) {
               updates[key === 'cell_type' ? 'type' : key] = msg[key]
             }
