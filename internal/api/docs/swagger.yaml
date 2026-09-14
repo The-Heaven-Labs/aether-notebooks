@@ -233,6 +233,17 @@ definitions:
         type: boolean
       agent_id:
         type: string
+      auto_answer_questions:
+        description: |-
+          AutoAnswerQuestions makes the engine resolve ask_question itself instead
+          of waiting on a client. It reports that no interactive user is reachable
+          rather than choosing an option on the user's behalf.
+        type: boolean
+      auto_approve_tools:
+        description: |-
+          AutoApproveTools makes the engine resolve tool_confirm_required itself
+          instead of waiting on a client, so headless/API sessions don't hang.
+        type: boolean
       created_at:
         type: string
       ended_at:

@@ -109,6 +109,13 @@ type AgentSession struct {
 	// AdminMode is a per-session transient flag derived from the X-AETHER-Admin-Mode
 	// header at session creation / WebSocket connection time. It is not persisted.
 	AdminMode bool `json:"admin_mode,omitempty"`
+	// AutoApproveTools makes the engine resolve tool_confirm_required itself
+	// instead of waiting on a client, so headless/API sessions don't hang.
+	AutoApproveTools bool `json:"auto_approve_tools,omitempty"`
+	// AutoAnswerQuestions makes the engine resolve ask_question itself instead
+	// of waiting on a client. It reports that no interactive user is reachable
+	// rather than choosing an option on the user's behalf.
+	AutoAnswerQuestions bool `json:"auto_answer_questions,omitempty"`
 }
 
 type ToolCall struct {

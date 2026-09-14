@@ -466,3 +466,82 @@ func TestAgentSubagentLimitsRoundTrip(t *testing.T) {
 		t.Fatalf("LIST must return updated values, got %v", agents)
 	}
 }
+
+func TestAgentSessionAutoResolveFlags(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("agent-autoresolve-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Agent AutoResolve Org")
+	mcID := createModelConfig(t, srv, token)
+	agentID := createAgent(t, srv, token, mcID)
+
+	createSession := func(t *testing.T, body string) map[string]any {
+		t.Helper()
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/v1/agents/%s/session", agentID), strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create session: expected 201, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp map[string]any
+		json.NewDecoder(rec.Body).Decode(&resp)
+		return resp
+	}
+
+	// The columns drive engine-side auto-resolution of tool_confirm_required and
+	// ask_question, so assert on what was persisted, not just the response echo.
+	persisted := func(t *testing.T, sessionID string) (tools, questions bool) {
+		t.Helper()
+		err := srv.DB().Pool.QueryRow(context.Background(),
+			`SELECT auto_approve_tools, auto_answer_questions FROM agent_sessions WHERE id = $1`,
+			sessionID).Scan(&tools, &questions)
+		if err != nil {
+			t.Fatalf("read auto-resolve flags: %v", err)
+		}
+		return tools, questions
+	}
+
+	t.Run("both default to false when omitted", func(t *testing.T) {
+		resp := createSession(t, `{}`)
+		if resp["auto_approve_tools"] != false || resp["auto_answer_questions"] != false {
+			t.Fatalf("expected both flags false in response, got %v", resp)
+		}
+		tools, questions := persisted(t, resp["session_id"].(string))
+		if tools || questions {
+			t.Fatalf("expected both flags to persist as false, got tools=%v questions=%v", tools, questions)
+		}
+	})
+
+	// The two flags are independent: approving tools must not imply answering
+	// questions, since only the latter proceeds without any human input.
+	t.Run("auto_approve_tools alone does not set auto_answer_questions", func(t *testing.T) {
+		resp := createSession(t, `{"auto_approve_tools": true}`)
+		if resp["auto_approve_tools"] != true || resp["auto_answer_questions"] != false {
+			t.Fatalf("expected tools=true questions=false in response, got %v", resp)
+		}
+		tools, questions := persisted(t, resp["session_id"].(string))
+		if !tools || questions {
+			t.Fatalf("expected tools=true questions=false persisted, got tools=%v questions=%v", tools, questions)
+		}
+	})
+
+	t.Run("auto_answer_questions alone does not set auto_approve_tools", func(t *testing.T) {
+		resp := createSession(t, `{"auto_answer_questions": true}`)
+		if resp["auto_answer_questions"] != true || resp["auto_approve_tools"] != false {
+			t.Fatalf("expected questions=true tools=false in response, got %v", resp)
+		}
+		tools, questions := persisted(t, resp["session_id"].(string))
+		if tools || !questions {
+			t.Fatalf("expected tools=false questions=true persisted, got tools=%v questions=%v", tools, questions)
+		}
+	})
+
+	t.Run("both persist when both requested", func(t *testing.T) {
+		resp := createSession(t, `{"auto_approve_tools": true, "auto_answer_questions": true}`)
+		tools, questions := persisted(t, resp["session_id"].(string))
+		if !tools || !questions {
+			t.Fatalf("expected both flags to persist as true, got tools=%v questions=%v", tools, questions)
+		}
+	})
+}
