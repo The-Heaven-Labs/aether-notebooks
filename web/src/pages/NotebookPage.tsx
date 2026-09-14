@@ -15,6 +15,7 @@ import type { Notebook, Cell, Output, Connector, Parameter, CellVersion, Noteboo
 import type { ChartConfig } from '../charts'
 import { Cell as NotebookCell, focusCellEditorEnd, collabCache, updateCellScroll, type NotebookCollab } from '../components/Cell'
 import { focusMarkdownCell } from '../utils/editorFocus'
+import { createFlashQueue, isAgentOrigin } from '../utils/agentFocus'
 import { ParametersBar } from '../components/ParametersBar'
 import { SchemaBrowser } from '../components/SchemaBrowser'
 import { SchedulesPanel } from '../components/SchedulesPanel'
@@ -263,6 +264,16 @@ export function NotebookPage() {
       }
     }, 50)
   }
+  const flashCellRef = useRef<(cellId: string) => void>(noop)
+  useEffect(() => {
+    flashCellRef.current = flashCell
+  })
+  const agentFlashRef = useRef<ReturnType<typeof createFlashQueue> | null>(null)
+  useEffect(() => {
+    const queue = createFlashQueue((cellId) => flashCellRef.current(cellId))
+    agentFlashRef.current = queue
+    return () => queue.flush()
+  }, [])
   const shouldScroll = useCallback((userEmail?: string) => {
     return following && userEmail === following.email
   }, [following])
@@ -278,8 +289,12 @@ export function NotebookPage() {
       return next
     })
     setCellRunAt((prev) => ({ ...prev, [cellId]: new Date() }))
-    if (!pendingExecRef.current.has(cellId) && shouldScroll(userEmail)) {
-      flashCell(cellId)
+    if (!pendingExecRef.current.has(cellId)) {
+      if (isAgentOrigin(userEmail)) {
+        agentFlashRef.current?.push(cellId)
+      } else if (shouldScroll(userEmail)) {
+        flashCell(cellId)
+      }
     }
   }, [shouldScroll]), useCallback((cellId: string, metadata: Record<string, unknown>, userEmail?: string) => {
     setLocalCells((prev) =>
@@ -321,7 +336,10 @@ export function NotebookPage() {
       )
       return { ...old, cells: [...shifted, cell].sort((a, b) => a.position - b.position) }
     })
-    if (!pendingExecRef.current.has(cell.id) && shouldScroll(userEmail)) {
+    if (isAgentOrigin(userEmail)) {
+      agentFlashRef.current?.push(cell.id)
+      setFocusedCellId(cell.id)
+    } else if (!pendingExecRef.current.has(cell.id) && shouldScroll(userEmail)) {
       flashCell(cell.id)
     }
   }, [id, qc, shouldScroll]), useCallback((cellId: string) => {
