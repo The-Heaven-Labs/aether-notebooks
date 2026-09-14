@@ -20,9 +20,11 @@ export function useNotebookWs(
   onNotebookRefresh?: (reason?: string) => void,
   onCellExecuting?: (cellId: string, startedAt?: string, userEmail?: string) => void,
   onSync?: (data: { running_cells?: Array<{ cell_id: string; started_at: string }> }) => void,
+  onReconnect?: () => void,
 ) {
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const everConnectedRef = useRef(false)
   const onCellOutputRef = useRef(onCellOutput)
   onCellOutputRef.current = onCellOutput
   const onCellMetadataChangedRef = useRef(onCellMetadataChanged)
@@ -39,6 +41,8 @@ export function useNotebookWs(
   onCellExecutingRef.current = onCellExecuting
   const onSyncRef = useRef(onSync)
   onSyncRef.current = onSync
+  const onReconnectRef = useRef(onReconnect)
+  onReconnectRef.current = onReconnect
 
   const connect = useCallback(() => {
     if (!notebookId) return
@@ -52,6 +56,15 @@ export function useNotebookWs(
     const ws = new WebSocket(url)
     wsRef.current = ws
 
+    ws.onopen = () => {
+      // A subsequent open means the socket dropped and reconnected — give
+      // callers a chance to resync state that may have changed while offline.
+      if (everConnectedRef.current) {
+        onReconnectRef.current?.()
+      }
+      everConnectedRef.current = true
+    }
+
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data)
@@ -61,7 +74,7 @@ export function useNotebookWs(
           onCellMetadataChangedRef.current(msg.cell_id, msg.metadata, msg.user_email)
         } else if (msg.type === 'cell_updated' && onCellUpdatedRef.current) {
           const updates: Record<string, unknown> = {}
-          for (const key of ['source', 'cell_type', 'language', 'source_visible', 'outputs_hidden', 'cell_collapsed', 'slide_break', 'title', 'slug', 'limit']) {
+          for (const key of ['source', 'cell_type', 'language', 'source_visible', 'outputs_hidden', 'cell_collapsed', 'slide_break', 'title', 'slug', 'limit', 'agent_updated_at', 'updated_at']) {
             if (msg[key] !== undefined) {
               updates[key === 'cell_type' ? 'type' : key] = msg[key]
             }

@@ -604,10 +604,10 @@ func makeCreateCellHandler(db *pgxpool.Pool) ToolHandler {
 func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
-			CellID      string `json:"cell_id"`
-			Source      string `json:"source"`
-			Title       string `json:"title"`
-			ConnectorID string `json:"connector_id"`
+			CellID      string  `json:"cell_id"`
+			Source      *string `json:"source"`
+			Title       string  `json:"title"`
+			ConnectorID string  `json:"connector_id"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -623,9 +623,14 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 		notebookID := resolved.NotebookID
 		cellID := resolved.ID
 
+		src := ""
+		if req.Source != nil {
+			src = *req.Source
+		}
+
 		// 1. Update Yjs document (source of truth) if source is changing
-		if req.Source != "" {
-			if err := UpdateCellInYjs(ctx.Context, db, notebookID, cellID, req.Source); err != nil {
+		if src != "" {
+			if err := UpdateCellInYjs(ctx.Context, db, notebookID, cellID, src); err != nil {
 				return nil, fmt.Errorf("update yjs: %w", err)
 			}
 		}
@@ -635,14 +640,15 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 		if req.ConnectorID != "" {
 			connID = &req.ConnectorID
 		}
+		now := time.Now()
 		_, err = db.Exec(ctx.Context, `
 			UPDATE cells SET source = COALESCE(NULLIF($2, ''), source),
 				title = COALESCE(NULLIF($3, ''), title),
 				connector_id = COALESCE($4, connector_id),
-				agent_updated_at = NOW(),
-				updated_at = NOW()
+				agent_updated_at = $5,
+				updated_at = $5
 			WHERE id = $1
-		`, cellID, req.Source, req.Title, connID)
+		`, cellID, src, req.Title, connID, now)
 		if err != nil {
 			return nil, fmt.Errorf("update cache: %w", err)
 		}
@@ -650,16 +656,23 @@ func makeUpdateCellHandler(db *pgxpool.Pool) ToolHandler {
 		_ = ctx.AuditLog("cell.update", "cell", cellID)
 
 		// Notify agent panel via event
-		ctx.EmitCellUpdated(cellID, req.Source)
+		ctx.EmitCellUpdated(cellID, src)
 
-		// Broadcast to all notebook viewers via WebSocket
+		// Broadcast to all notebook viewers via WebSocket. Only include source
+		// when it actually changed — a title-only update must not blank the
+		// editor by broadcasting an empty source.
 		if ctx.BroadcastFunc != nil {
-			ctx.BroadcastFunc(notebookID, map[string]any{
-				"type":       "cell_updated",
-				"cell_id":    cellID,
-				"source":     req.Source,
-				"user_email": "agent@aether",
-			})
+			msg := map[string]any{
+				"type":             "cell_updated",
+				"cell_id":          cellID,
+				"user_email":       "agent@aether",
+				"agent_updated_at": now,
+				"updated_at":       now,
+			}
+			if src != "" {
+				msg["source"] = src
+			}
+			ctx.BroadcastFunc(notebookID, msg)
 		}
 
 		return map[string]any{"cell_id": cellID}, nil

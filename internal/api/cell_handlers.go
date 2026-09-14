@@ -328,7 +328,10 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(cellParams, &cell.Parameters)
 
 	// Broadcast updates to connected clients
-	updateMsg := map[string]any{"type": "cell_updated", "cell_id": cellID}
+	updateMsg := map[string]any{"type": "cell_updated", "cell_id": cellID, "updated_at": cell.UpdatedAt}
+	if cell.AgentUpdatedAt != nil {
+		updateMsg["agent_updated_at"] = *cell.AgentUpdatedAt
+	}
 	if req.Source != nil {
 		s.upsertCellVersion(ctx, cellID, *req.Source, claims.UserID)
 

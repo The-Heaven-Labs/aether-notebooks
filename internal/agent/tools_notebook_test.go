@@ -1816,6 +1816,58 @@ func TestCreateCellLimit(t *testing.T) {
 	}
 }
 
+func TestUpdateCellBroadcastOmitsUnchangedSource(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	cellID := createTestCellForYjs(t, db.Pool, nbID, "sql", "SELECT 1")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	updateDef, ok := reg.Get("update_cell")
+	if !ok {
+		t.Fatal("update_cell tool not found")
+	}
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	var last map[string]any
+	ctx.BroadcastFunc = func(notebookID string, msg any) {
+		if m, ok := msg.(map[string]any); ok {
+			last = m
+		}
+	}
+
+	// title-only update must not include source
+	args, _ := json.Marshal(map[string]any{"cell_id": cellID, "title": "Renamed"})
+	if _, err := updateDef.Handler(args, ctx); err != nil {
+		t.Fatalf("update title: %v", err)
+	}
+	if last == nil || last["type"] != "cell_updated" {
+		t.Fatalf("expected cell_updated broadcast, got %v", last)
+	}
+	if _, hasSource := last["source"]; hasSource {
+		t.Fatalf("title-only update must omit source, got %v", last["source"])
+	}
+	if last["agent_updated_at"] == nil || last["updated_at"] == nil {
+		t.Fatalf("broadcast missing timestamps: %v", last)
+	}
+	var dbSource string
+	if err := db.Pool.QueryRow(context.Background(), `SELECT source FROM cells WHERE id=$1`, cellID).Scan(&dbSource); err != nil {
+		t.Fatalf("query source: %v", err)
+	}
+	if dbSource != "SELECT 1" {
+		t.Fatalf("title-only update must not clear source, got %q", dbSource)
+	}
+
+	// source update includes it
+	args, _ = json.Marshal(map[string]any{"cell_id": cellID, "source": "SELECT 2"})
+	if _, err := updateDef.Handler(args, ctx); err != nil {
+		t.Fatalf("update source: %v", err)
+	}
+	if last["source"] != "SELECT 2" {
+		t.Fatalf("source update must include source, got %v", last["source"])
+	}
+}
+
 func waitForAutoSnapshot(t *testing.T, pool *pgxpool.Pool, nbID string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

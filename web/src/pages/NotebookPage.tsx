@@ -367,7 +367,10 @@ export function NotebookPage() {
         return next
       })
     }
-  }, []))
+  }, []), useCallback(() => {
+    // A dropped notebook socket may have missed cell updates while offline.
+    qc.invalidateQueries({ queryKey: ['notebook', id] })
+  }, [id, qc]))
 
   // Scroll to cell from URL hash (#cell-{id})
   useEffect(() => {
