@@ -825,7 +825,7 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 	}
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT id, role, content, tool_calls, tool_call_id, reasoning_content, image_ids, tokens_input, tokens_output, COALESCE(tokens_direct,0), COALESCE(tokens_after,0), duration_ms, created_at
+		SELECT id, role, content, tool_calls, tool_call_id, reasoning_content, image_ids, tokens_input, tokens_output, COALESCE(tokens_direct,0), COALESCE(tokens_after,0), COALESCE(duration_ms,0), created_at
 		FROM agent_messages WHERE session_id = $1 ORDER BY created_at ASC
 	`, sessionID)
 	if err != nil {

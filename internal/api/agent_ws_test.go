@@ -180,9 +180,25 @@ func TestAgentWSReconnect(t *testing.T) {
 	}
 }
 
+// findMessageByContent locates a decoded message row by its content. It
+// accepts both []any (websocket payloads) and []map[string]any (REST payloads).
+func findMessageByContent[T any](t *testing.T, msgs []T, content string) map[string]any {
+	t.Helper()
+	for _, raw := range msgs {
+		m, _ := any(raw).(map[string]any)
+		if m["content"] == content {
+			return m
+		}
+	}
+	t.Fatalf("message %q not found in %v", content, msgs)
+	return nil
+}
+
 // A persisted compaction row must carry its real before/after token counts
 // through reconnect_sync and the REST messages endpoint, so the divider keeps
-// its numbers after a reload.
+// its numbers after a reload. Legacy rows (NULL tokens_after and NULL
+// duration_ms) and non-compaction rows must stay safe: NULL duration_ms is
+// coalesced, and a missing tokens_after is never synthesized into a count.
 func TestAgentWSReconnectCompactionTokens(t *testing.T) {
 	srv := setupTestServer(t)
 	ts := httptest.NewServer(srv)
@@ -195,14 +211,18 @@ func TestAgentWSReconnectCompactionTokens(t *testing.T) {
 	agentID := createAgent(t, srv, token, mcID)
 	sessionID := createAgentSession(t, srv, token, agentID, nbID)
 
+	// The legacy compaction row and the user row have NULL duration_ms — the
+	// messages endpoint used to 500 on those scans.
 	if _, err := srv.DB().Pool.Exec(context.Background(), `
-		INSERT INTO agent_messages (session_id, role, content, tokens_direct, tokens_after, duration_ms, created_at)
-		VALUES ($1, 'compaction', 'earlier context summary', 1200, 400, 0, NOW())
+		INSERT INTO agent_messages (session_id, role, content, tokens_direct, tokens_after, duration_ms, created_at) VALUES
+			($1, 'compaction', 'legacy context summary', 900, NULL, NULL, NOW() - INTERVAL '2 minutes'),
+			($1, 'user', 'hello', 0, NULL, NULL, NOW() - INTERVAL '1 minute'),
+			($1, 'compaction', 'earlier context summary', 1200, 400, 0, NOW())
 	`, sessionID); err != nil {
-		t.Fatalf("insert compaction message: %v", err)
+		t.Fatalf("insert messages: %v", err)
 	}
 
-	assertCounts := func(t *testing.T, msg map[string]any) {
+	assertCurrentCounts := func(t *testing.T, msg map[string]any) {
 		t.Helper()
 		if got, _ := msg["tokens_direct"].(float64); got != 1200 {
 			t.Fatalf("tokens_direct = %v, want 1200 (%v)", msg["tokens_direct"], msg)
@@ -225,14 +245,23 @@ func TestAgentWSReconnectCompactionTokens(t *testing.T) {
 		}
 		found := readWSUntil(t, conn, map[string]bool{"reconnect_sync": true})
 		msgs, _ := found["reconnect_sync"]["messages"].([]any)
-		if len(msgs) != 1 {
-			t.Fatalf("messages = %v, want the single compaction row", found["reconnect_sync"]["messages"])
+		if len(msgs) != 3 {
+			t.Fatalf("messages = %v, want 3 rows", found["reconnect_sync"]["messages"])
 		}
-		msg, _ := msgs[0].(map[string]any)
-		if msg["role"] != "compaction" {
-			t.Fatalf("role = %v, want compaction", msg["role"])
+		assertCurrentCounts(t, findMessageByContent(t, msgs, "earlier context summary"))
+
+		legacy := findMessageByContent(t, msgs, "legacy context summary")
+		if got, _ := legacy["tokens_direct"].(float64); got != 900 {
+			t.Fatalf("legacy tokens_direct = %v, want 900 (%v)", legacy["tokens_direct"], legacy)
 		}
-		assertCounts(t, msg)
+		if _, has := legacy["tokens_after"]; has {
+			t.Fatalf("legacy row must omit tokens_after, got %v", legacy)
+		}
+
+		user := findMessageByContent(t, msgs, "hello")
+		if _, has := user["tokens_after"]; has {
+			t.Fatalf("non-compaction row must omit tokens_after, got %v", user)
+		}
 	})
 
 	t.Run("messages endpoint", func(t *testing.T) {
@@ -247,10 +276,20 @@ func TestAgentWSReconnectCompactionTokens(t *testing.T) {
 		if err := json.NewDecoder(rec.Body).Decode(&msgs); err != nil {
 			t.Fatalf("decode messages: %v", err)
 		}
-		if len(msgs) != 1 {
-			t.Fatalf("messages = %v, want the single compaction row", msgs)
+		if len(msgs) != 3 {
+			t.Fatalf("messages = %v, want 3 rows", msgs)
 		}
-		assertCounts(t, msgs[0])
+		assertCurrentCounts(t, findMessageByContent(t, msgs, "earlier context summary"))
+
+		legacy := findMessageByContent(t, msgs, "legacy context summary")
+		if got, _ := legacy["tokens_direct"].(float64); got != 900 {
+			t.Fatalf("legacy tokens_direct = %v, want 900 (%v)", legacy["tokens_direct"], legacy)
+		}
+		// The wire carries 0 for the NULL tokens_after; the frontend mapper
+		// treats 0 as absent so the divider falls back to no counts.
+		if got, _ := legacy["tokens_after"].(float64); got != 0 {
+			t.Fatalf("legacy tokens_after = %v, want 0 (%v)", legacy["tokens_after"], legacy)
+		}
 	})
 }
 

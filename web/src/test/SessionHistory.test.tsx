@@ -35,8 +35,11 @@ describe('SessionHistory compaction rows', () => {
     render(<SessionHistory agentId="a1" onBack={() => {}} onResumeSession={() => {}} />)
     await userEvent.click(await screen.findByRole('button', { name: /revenue question/ }))
 
-    expect(await screen.findByText(/Context compacted/i)).toBeInTheDocument()
-    expect(screen.getByText(/The user asked about revenue tables/)).toBeInTheDocument()
-    expect(screen.queryByText('Tool calls')).toBeNull()
+    const label = await screen.findByText(/Context compacted/i)
+    const summary = screen.getByText(/The user asked about revenue tables/)
+    // Label + summary share the summary card as a direct parent; the old
+    // generic bubble had no label and rendered the summary through markdown.
+    expect(label.parentElement).toBe(summary.parentElement)
+    expect(label.parentElement?.textContent).toContain('The user asked about revenue tables and then about margins.')
   })
 })

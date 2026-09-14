@@ -1345,16 +1345,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             setSessionId(session.id)
             setShowHistory(false)
             try {
-              const msgs = await api.get<Array<{ id: string; role: string; content: string; reasoning_content?: string; image_ids?: string[]; duration_ms?: number; created_at?: string }>>(`/api/v1/sessions/${session.id}/messages`)
-              const formatted = msgs.map((m) => ({
-                id: m.id,
-                role: m.role,
-                content: m.content || '',
-                reasoning: m.reasoning_content,
-                images: m.image_ids?.length ? m.image_ids : undefined,
-                duration_ms: m.duration_ms,
-                created_at: m.created_at,
-              }))
+              const msgs = await api.get<Array<{ id: string; role: string; content: string; reasoning_content?: string; image_ids?: string[]; duration_ms?: number; tokens_direct?: number; tokens_after?: number; created_at?: string }>>(`/api/v1/sessions/${session.id}/messages`)
+              const formatted = mapServerMessagesToChat(msgs)
               setMessages(formatted)
               if (selectedAgent) {
                 saveChatState(selectedAgent.id, session.id, formatted, undefined)
