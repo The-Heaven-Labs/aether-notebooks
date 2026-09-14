@@ -489,3 +489,52 @@ describe('MarkdownView image resize', () => {
     })
   })
 })
+
+// ── Row limit select ──────────────────────────────────────────────────────────
+
+describe('row limit select', () => {
+  function renderCodeCell(limit: number | null) {
+    const cell: CellType = {
+      id: 'cell-limit',
+      notebook_id: 'nb-1',
+      type: 'code',
+      language: 'sql',
+      source: 'SELECT 1',
+      outputs: [],
+      position: 0,
+      created_at: '',
+      updated_at: '',
+      source_visible: true,
+      cell_collapsed: false,
+      limit,
+    }
+    return render(
+      <Suspense fallback={null}>
+        <Cell
+          cell={cell}
+          connectors={[]}
+          notebookId="nb-1"
+          onRun={vi.fn()}
+          onDelete={vi.fn()}
+          onSourceChange={vi.fn()}
+          onAssignConnector={vi.fn()}
+        />
+      </Suspense>
+    )
+  }
+
+  it('renders a synthetic LIMIT option for arbitrary limits', () => {
+    const { container } = renderCodeCell(250)
+    const select = container.querySelector('select')!
+    expect(select.value).toBe('250')
+    expect(screen.getByRole('option', { name: 'LIMIT 250' })).toBeTruthy()
+  })
+
+  it('shows Unlimited without a synthetic option when limit is null', () => {
+    const { container } = renderCodeCell(null)
+    const select = container.querySelector('select')!
+    expect(select.value).toBe('null')
+    expect(screen.queryByRole('option', { name: /^LIMIT 250$/ })).toBeNull()
+    expect(screen.getByRole('option', { name: 'Unlimited' })).toBeTruthy()
+  })
+})

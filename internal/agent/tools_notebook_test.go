@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/database"
@@ -1729,8 +1730,9 @@ func TestCreateCellLimit(t *testing.T) {
 			broadcasts = append(broadcasts, m)
 		}
 	}
-	broadcastCell := func() map[string]any {
-		cell, _ := broadcasts[len(broadcasts)-1]["cell"].(map[string]any)
+	broadcastCell := func(n int) map[string]any {
+		require.Len(t, broadcasts, n)
+		cell, _ := broadcasts[n-1]["cell"].(map[string]any)
 		return cell
 	}
 
@@ -1763,7 +1765,7 @@ func TestCreateCellLimit(t *testing.T) {
 	if res["limit"] != 1000 {
 		t.Fatalf("result limit = %v, want 1000", res["limit"])
 	}
-	if got := broadcastCell()["limit"]; got != 1000 {
+	if got := broadcastCell(1)["limit"]; got != 1000 {
 		t.Fatalf("default broadcast limit = %v, want 1000", got)
 	}
 
@@ -1772,10 +1774,17 @@ func TestCreateCellLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("explicit create: %v", err)
 	}
+	cellID = res["cell_id"].(string)
+	if err := db.Pool.QueryRow(context.Background(), `SELECT "limit" FROM cells WHERE id=$1`, cellID).Scan(&limit); err != nil {
+		t.Fatalf("query explicit limit: %v", err)
+	}
+	if limit == nil || *limit != 250 {
+		t.Fatalf("explicit limit = %v, want 250", limit)
+	}
 	if res["limit"] != 250 {
 		t.Fatalf("result limit = %v, want 250", res["limit"])
 	}
-	if got := broadcastCell()["limit"]; got != 250 {
+	if got := broadcastCell(2)["limit"]; got != 250 {
 		t.Fatalf("explicit broadcast limit = %v, want 250", got)
 	}
 
@@ -1791,14 +1800,15 @@ func TestCreateCellLimit(t *testing.T) {
 	if limit != nil {
 		t.Fatalf("zero limit = %v, want NULL", *limit)
 	}
-	if got := broadcastCell()["limit"]; got != nil {
+	if got := broadcastCell(3)["limit"]; got != nil {
 		t.Fatalf("zero broadcast limit = %v, want null", got)
 	}
 
-	// negative -> tool error, no insert
+	// negative -> tool error, no insert, no broadcast
 	if _, err := create(map[string]any{"limit": -1}); err == nil {
 		t.Fatal("negative limit must error")
 	}
+	require.Len(t, broadcasts, 3)
 	var count int
 	_ = db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM cells WHERE notebook_id=$1`, nbID).Scan(&count)
 	if count != 3 {

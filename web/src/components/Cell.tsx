@@ -577,6 +577,9 @@ export const Cell = memo(function Cell({
                 onClick={(e) => e.stopPropagation()}
               >
                 <option value="null">Unlimited</option>
+                {cell.limit != null && !['1000', '100', '10'].includes(String(cell.limit)) && (
+                  <option value={String(cell.limit)}>LIMIT {cell.limit}</option>
+                )}
                 <option value="1000">LIMIT 1000</option>
                 <option value="100">LIMIT 100</option>
                 <option value="10">LIMIT 10</option>
