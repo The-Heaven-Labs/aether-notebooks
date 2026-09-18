@@ -138,3 +138,69 @@ func TestMigrateDropsCellsDescription(t *testing.T) {
 		t.Fatalf("V100 not recorded (count=%d)", applied)
 	}
 }
+
+// TestNoRowLevelSecurityWithoutPolicies is a regression guard for the
+// V103 migration: RLS was enabled on six tables in V001 but no policies were
+// ever created, making every non-owner role default-deny. The migration drops
+// RLS from those tables. If any user table still has RLS enabled with zero
+// policies, the guard fails so future migrations cannot reintroduce the trap.
+func TestNoRowLevelSecurityWithoutPolicies(t *testing.T) {
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+	}
+
+	db, err := database.Connect(context.Background(), dsn, "")
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Any table with relrowsecurity = true must have at least one policy.
+	rows, err := db.Pool.Query(ctx, `
+		SELECT c.relname
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relkind = 'r' AND c.relrowsecurity
+		  AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid)`)
+	if err != nil {
+		t.Fatalf("rls check query failed: %v", err)
+	}
+	defer rows.Close()
+
+	var offenders []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		offenders = append(offenders, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	if len(offenders) > 0 {
+		t.Fatalf("tables have RLS enabled with zero policies: %v", offenders)
+	}
+
+	// The six tables that had RLS in V001 must no longer have it enabled.
+	for _, tbl := range []string{"orgs", "notebooks", "cells", "connectors", "dashboards", "audit_logs"} {
+		var enabled bool
+		err := db.Pool.QueryRow(ctx,
+			`SELECT c.relrowsecurity
+			 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+			 WHERE n.nspname = current_schema() AND c.relname = $1`, tbl).Scan(&enabled)
+		if err != nil {
+			t.Fatalf("relrowsecurity lookup for %s: %v", tbl, err)
+		}
+		if enabled {
+			t.Fatalf("%s still has RLS enabled after V103", tbl)
+		}
+	}
+}
