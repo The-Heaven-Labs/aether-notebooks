@@ -337,6 +337,8 @@ Token consumption is tracked across the session and displayed in the agent panel
 
 A per-component estimate (system prompt, history, user message, tool definitions, tool calls, tool results) is shown separately under "Estimated (tiktoken)" using `github.com/pkoukk/tiktoken-go`. The model-to-encoding mapping is in `internal/agent/tokens.go`.
 
+**Price units**: `model_configs.price_per_input_token` / `price_per_output_token` / `price_per_cache_read_token` are dollars per **1M tokens** (the unit the model-config UI labels and the session panel divides by). `RollupHourlyStats` must divide token counts by `1e6` when computing `agent_stats_hourly.est_cost_usd`; `V106__fix_agent_stats_hourly_cost.sql` repaired pre-fix rows that skipped the division. Cost surfaces use `formatCost` (tiered: 4 decimals sub-$1, 2 above, compact `k`/`M` for large totals) and integer counts are formatted with a pinned `'en-US'` locale so they stay consistent beside the compact token formatters.
+
 Chat messages now include `created_at` timestamps displayed as muted text at the top of each message bubble.
 
 ## Reasoning Effort

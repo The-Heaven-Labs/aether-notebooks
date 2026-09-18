@@ -17,7 +17,7 @@ func TestRollupHourlyStats(t *testing.T) {
 	_, err := db.Pool.Exec(ctx, `
 		INSERT INTO model_configs (id, org_id, name, provider, base_url, model, api_key_encrypted, context_window, created_by,
 			price_per_input_token, price_per_output_token, price_per_cache_read_token)
-		VALUES ($1, $2, 'm', 'openai', 'http://x', 'gpt-4', 'k', 128000, $3, 0.000002, 0.000008, 0)
+		VALUES ($1, $2, 'm', 'openai', 'http://x', 'gpt-4', 'k', 128000, $3, 0.15, 0.60, 0.075)
 	`, mcID, orgID, userID)
 	if err != nil {
 		t.Fatalf("model config: %v", err)
@@ -95,8 +95,9 @@ func TestRollupHourlyStats(t *testing.T) {
 	if got.calls != 4 || got.dur != 3000 {
 		t.Fatalf("calls/duration: got %d/%d", got.calls, got.dur)
 	}
-	// cost = 140*2e-6 + 60*8e-6 = 0.00076
-	if got.cost < 0.000759 || got.cost > 0.000761 {
+	// cost = (140*0.15 + 60*0.60) / 1e6 = 0.000057 (prices are $ per 1M tokens,
+	// the unit the model-config UI uses).
+	if got.cost < 0.0000569 || got.cost > 0.0000571 {
 		t.Fatalf("cost: got %v", got.cost)
 	}
 

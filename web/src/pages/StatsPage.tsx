@@ -122,9 +122,9 @@ export function StatsPage() {
   }
 
   const kpiCards: { label: string; value: string }[] = [
-    { label: 'Sessions', value: kpis.sessions.toLocaleString() },
-    { label: 'Messages', value: kpis.messages.toLocaleString() },
-    { label: 'Model calls', value: kpis.modelCalls.toLocaleString() },
+    { label: 'Sessions', value: kpis.sessions.toLocaleString('en-US') },
+    { label: 'Messages', value: kpis.messages.toLocaleString('en-US') },
+    { label: 'Model calls', value: kpis.modelCalls.toLocaleString('en-US') },
     { label: 'Tokens in', value: formatTokens(kpis.tokensIn) },
     { label: 'Tokens out', value: formatTokens(kpis.tokensOut) },
     { label: 'Est. cost', value: formatCost(kpis.cost) },
@@ -191,7 +191,7 @@ export function StatsPage() {
           {rows.length === 0 && !isLoading ? (
             <EmptyState title="No usage yet" text="Chat with an agent, then roll up to see activity here." />
           ) : (
-            <EChartsContainer option={chartOption as never} />
+            <EChartsContainer option={chartOption as never} height={280} />
           )}
         </div>
 
@@ -204,12 +204,12 @@ export function StatsPage() {
               <tr key={a.agent_id} onClick={() => setAgentFilter(a.agent_id)} style={{ cursor: 'pointer' }} title="Filter to this agent">
                 <td>{a.agent_name}</td>
                 {showUserCol && <td>{a.user_email || a.user_name}</td>}
-                <td>{a.sessions.toLocaleString()}</td>
-                <td>{a.messages.toLocaleString()}</td>
+                <td>{a.sessions.toLocaleString('en-US')}</td>
+                <td>{a.messages.toLocaleString('en-US')}</td>
                 <td>{formatTokens(a.tokensIn)}</td>
                 <td>{formatTokens(a.tokensOut)}</td>
                 <td>{formatTokens(a.tokensSubagent)}</td>
-                <td>{a.avgDurationMs.toLocaleString()}</td>
+                <td>{a.avgDurationMs.toLocaleString('en-US')}</td>
                 <td>{formatCost(a.cost)}</td>
               </tr>
             ))}
@@ -265,8 +265,11 @@ const styles: Record<string, React.CSSProperties> = {
   toggleBtn: { fontSize: 12, padding: '7px 12px', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' },
   toggleActive: { fontSize: 12, padding: '7px 12px', background: 'var(--accent-light)', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontWeight: 600 },
   kpis: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 16 },
-  kpi: { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px' },
-  kpiValue: { fontSize: 22, fontWeight: 700, color: 'var(--text-primary)' },
+  kpi: { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px', minWidth: 0 },
+  kpiValue: {
+    fontSize: 22, fontWeight: 700, color: 'var(--text-primary)',
+    minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
   kpiLabel: { fontSize: 12, color: 'var(--text-muted)', marginTop: 2 },
   card: { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 16, marginBottom: 16 },
   cardTitle: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 },

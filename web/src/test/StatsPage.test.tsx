@@ -71,6 +71,19 @@ describe('StatsPage', () => {
     expect(screen.getAllByText('Beta').length).toBeGreaterThan(1)
     // Agent filter derived from rows
     expect(screen.getByRole('option', { name: 'Alpha' })).toBeDefined()
+    // Chart gets a definite height so ECharts can lay out outside a flex parent
+    expect(screen.getByTestId('chart-container').parentElement?.style.height).toBe('280px')
+  })
+
+  it('formats large costs compactly', async () => {
+    server.use(
+      http.get('/api/v1/agents/stats', () =>
+        HttpResponse.json([{ ...ROWS[0], est_cost_usd: 12345.6789 }]),
+      ),
+    )
+    renderWithProviders(<StatsPage />)
+    await waitFor(() => expect(screen.getAllByText('$12.3k').length).toBeGreaterThan(0))
+    expect(screen.queryByText('$12,345.6789')).toBeNull()
   })
 
   it('roll up now posts and refreshes the query', async () => {

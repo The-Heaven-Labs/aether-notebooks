@@ -216,6 +216,10 @@ export function buildTokenChartOption(
 }
 
 export function formatCost(usd: number): string {
+  const abs = Math.abs(usd)
+  if (abs >= 1_000_000) return '$' + (usd / 1_000_000).toLocaleString('en-US', { maximumFractionDigits: 2 }) + 'M'
+  if (abs >= 10_000) return '$' + (usd / 1_000).toLocaleString('en-US', { maximumFractionDigits: 1 }) + 'k'
+  if (abs >= 1) return '$' + usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   return '$' + usd.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 })
 }
 
