@@ -422,6 +422,9 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/groups/{id}/members", authMW(http.HandlerFunc(s.handleListGroupMembers)))
 	s.mux.Handle("POST /api/v1/groups/{id}/members", authMW(RequireRole("admin")(http.HandlerFunc(s.handleAddGroupMember))))
 	s.mux.Handle("DELETE /api/v1/groups/{id}/members/{user_id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleRemoveGroupMember))))
+	s.mux.Handle("GET /api/v1/groups/{id}/pending-members", authMW(http.HandlerFunc(s.handleListPendingGroupMembers)))
+	s.mux.Handle("POST /api/v1/groups/{id}/pending-members", authMW(RequireRole("admin")(http.HandlerFunc(s.handleAddPendingGroupMembers))))
+	s.mux.Handle("DELETE /api/v1/groups/{id}/pending-members/{email}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleRemovePendingGroupMember))))
 
 	// ACL routes
 	s.mux.Handle("GET /api/v1/acl/{resource_type}/{resource_id}", authMW(http.HandlerFunc(s.handleGetACL)))

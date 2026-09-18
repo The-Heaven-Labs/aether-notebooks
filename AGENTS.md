@@ -261,6 +261,8 @@ In dev, `Taskfile.yml` sets `AETHER_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com`
 
 **Groups**: Custom groups (`groups` + `group_members` tables) are first-class permission subjects. Group management (create/rename/delete/members) requires `admin` role; viewing groups is open to all members.
 
+**Pre-provisioned group members**: Org admins can stage group memberships by email before the person has an account (`pending_group_members`, V105; endpoints `POST`/`GET /api/v1/groups/{id}/pending-members` and `DELETE /api/v1/groups/{id}/pending-members/{email}`). `ApplyPendingGroups` (called inside the join transaction on password registration, SSO provisioning/auto-join, and invite redemption) materializes matching rows into `group_members` and consumes the pending rows; failures are audited (`group.pending_materialize.error`) and never block first login. Staged memberships are admin-curated and therefore survive IdP `auto_sync_groups` removals. Posting an email that already belongs to an org member adds them directly instead of staging.
+
 **Internal routes** (`/internal/*`) are unauthenticated by standard JWT middleware — they're called only by the Hocuspocus relay and validated via `handleInternalAuthValidate`. Do not add auth middleware to these.
 
 **Migrations run automatically** on server startup (not a separate migration tool).

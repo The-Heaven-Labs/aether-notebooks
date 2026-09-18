@@ -3060,6 +3060,108 @@ paths:
       summary: Remove group member
       tags:
       - groups
+  /groups/{id}/pending-members:
+    get:
+      description: |-
+        List memberships staged by email that have not yet been
+        materialized (the person has no account in this org yet).
+      parameters:
+      - description: Group ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List pending group members
+      tags:
+      - groups
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Stage group memberships by email for people who do not have an
+        account yet. Existing org members are added directly; emails that
+        already belong to a member of the group are skipped.
+      parameters:
+      - description: Group ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Emails to stage
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Add pending group members
+      tags:
+      - groups
+  /groups/{id}/pending-members/{email}:
+    delete:
+      description: Remove a membership staged by email (case-insensitive match).
+      parameters:
+      - description: Group ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Email
+        in: path
+        name: email
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove pending group member
+      tags:
+      - groups
   /home:
     get:
       description: List all home folders for the current user

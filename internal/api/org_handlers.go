@@ -296,6 +296,11 @@ func (s *Server) handleOrgJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Materialize any group memberships pre-provisioned for this email.
+	var joinUserEmail string
+	joinTx.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, claims.UserID).Scan(&joinUserEmail)
+	s.applyPendingGroups(ctx, joinTx, orgID, claims.UserID, joinUserEmail)
+
 	if err := joinTx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit")
 		return
