@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/config"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
@@ -711,6 +713,112 @@ func (s *Server) handleUpdateOrgSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, req)
+}
+
+// @Summary Get org output limits
+// @Description Get the org's cell output byte caps. The stored values are
+// @Description returned alongside the resolved (platform-clamped) values used at
+// @Description runtime, plus the platform ceiling itself.
+// @Tags org
+// @Produce json
+// @Success 200 {object} map[string]int64
+// @Security BearerAuth
+// @Router /org/output-limits [get]
+func (s *Server) handleGetOrgOutputLimits(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	ctx := r.Context()
+
+	var cellMax, inlineMax int64
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT cell_output_max_bytes, notebook_inline_outputs_max_bytes FROM orgs WHERE id = $1`,
+		claims.OrgID,
+	).Scan(&cellMax, &inlineMax)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]int64{
+		"cell_output_max_bytes":                      cellMax,
+		"cell_output_max_bytes_resolved":             config.ResolveOutputLimit(cellMax, s.outputLimitsMaxBytes),
+		"notebook_inline_outputs_max_bytes":          inlineMax,
+		"notebook_inline_outputs_max_bytes_resolved": config.ResolveOutputLimit(inlineMax, s.outputLimitsMaxBytes),
+		"platform_max_bytes":                         s.outputLimitsMaxBytes,
+	})
+}
+
+// @Summary Update org output limits
+// @Description Set the org's per-cell output byte cap and/or notebook inline
+// @Description output budget. Values must be non-negative; 0 means unlimited.
+// @Tags org
+// @Accept json
+// @Produce json
+// @Param request body object true "Output limits"
+// @Success 200 {object} map[string]int64
+// @Security BearerAuth
+// @Router /org/output-limits [put]
+func (s *Server) handleUpdateOrgOutputLimits(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	ctx := r.Context()
+
+	var req struct {
+		CellOutputMaxBytes            *int64 `json:"cell_output_max_bytes"`
+		NotebookInlineOutputsMaxBytes *int64 `json:"notebook_inline_outputs_max_bytes"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.CellOutputMaxBytes == nil && req.NotebookInlineOutputsMaxBytes == nil {
+		writeError(w, http.StatusBadRequest, "at least one field must be provided")
+		return
+	}
+
+	query := "UPDATE orgs SET"
+	args := []any{}
+	argN := 1
+	if req.CellOutputMaxBytes != nil {
+		if *req.CellOutputMaxBytes < 0 {
+			writeError(w, http.StatusBadRequest, "cell_output_max_bytes must be non-negative")
+			return
+		}
+		query += fmt.Sprintf(" cell_output_max_bytes = $%d,", argN)
+		args = append(args, *req.CellOutputMaxBytes)
+		argN++
+	}
+	if req.NotebookInlineOutputsMaxBytes != nil {
+		if *req.NotebookInlineOutputsMaxBytes < 0 {
+			writeError(w, http.StatusBadRequest, "notebook_inline_outputs_max_bytes must be non-negative")
+			return
+		}
+		query += fmt.Sprintf(" notebook_inline_outputs_max_bytes = $%d,", argN)
+		args = append(args, *req.NotebookInlineOutputsMaxBytes)
+		argN++
+	}
+	query = strings.TrimSuffix(query, ",")
+	query += fmt.Sprintf(", updated_at = NOW() WHERE id = $%d", argN)
+	args = append(args, claims.OrgID)
+
+	if _, err := s.db.Pool.Exec(ctx, query, args...); err != nil {
+		writeError(w, http.StatusInternalServerError, "update failed")
+		return
+	}
+
+	// Return the stored (unclamped) values for echo; the UI shows resolved values.
+	writeJSON(w, http.StatusOK, map[string]int64{
+		"cell_output_max_bytes":                      derefInt64(req.CellOutputMaxBytes),
+		"cell_output_max_bytes_resolved":             config.ResolveOutputLimit(derefInt64(req.CellOutputMaxBytes), s.outputLimitsMaxBytes),
+		"notebook_inline_outputs_max_bytes":          derefInt64(req.NotebookInlineOutputsMaxBytes),
+		"notebook_inline_outputs_max_bytes_resolved": config.ResolveOutputLimit(derefInt64(req.NotebookInlineOutputsMaxBytes), s.outputLimitsMaxBytes),
+		"platform_max_bytes":                         s.outputLimitsMaxBytes,
+	})
+}
+
+func derefInt64(v *int64) int64 {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 
 // generateSecureToken returns a hex-encoded random token of the given byte length.

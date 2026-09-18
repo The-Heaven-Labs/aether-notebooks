@@ -351,7 +351,32 @@ export function OrgSettingsPage() {
   const [auditRetentionSaved, setAuditRetentionSaved] = useState(false)
   const [auditRetentionError, setAuditRetentionError] = useState<string | null>(null)
 
+  // ── Cell output limits ────────────────────────────────────────────────────
+  const [cellOutputMaxBytes, setCellOutputMaxBytes] = useState(10485760)
+  const [cellOutputMaxBytesResolved, setCellOutputMaxBytesResolved] = useState(10485760)
+  const [inlineOutputsMaxBytes, setInlineOutputsMaxBytes] = useState(33554432)
+  const [inlineOutputsMaxBytesResolved, setInlineOutputsMaxBytesResolved] = useState(33554432)
+  const [outputLimitsPlatformMax, setOutputLimitsPlatformMax] = useState(0)
+  const [outputLimitsSaving, setOutputLimitsSaving] = useState(false)
+  const [outputLimitsSaved, setOutputLimitsSaved] = useState(false)
+  const [outputLimitsError, setOutputLimitsError] = useState<string | null>(null)
+
   useEffect(() => {
+    api.get<{
+      cell_output_max_bytes: number
+      cell_output_max_bytes_resolved: number
+      notebook_inline_outputs_max_bytes: number
+      notebook_inline_outputs_max_bytes_resolved: number
+      platform_max_bytes: number
+    }>('/api/v1/org/output-limits')
+      .then(r => {
+        setCellOutputMaxBytes(r.cell_output_max_bytes ?? 10485760)
+        setCellOutputMaxBytesResolved(r.cell_output_max_bytes_resolved ?? 10485760)
+        setInlineOutputsMaxBytes(r.notebook_inline_outputs_max_bytes ?? 33554432)
+        setInlineOutputsMaxBytesResolved(r.notebook_inline_outputs_max_bytes_resolved ?? 33554432)
+        setOutputLimitsPlatformMax(r.platform_max_bytes ?? 0)
+      })
+      .catch(() => {})
     api.get<{ public_sharing_enabled: boolean }>('/api/v1/org/sharing')
       .then(r => setSharingEnabled(r.public_sharing_enabled))
       .catch(() => {})
@@ -387,6 +412,41 @@ export function OrgSettingsPage() {
   async function handleToggleDataExport(enabled: boolean) {
     await api.put('/api/v1/org/data-export', { data_export_enabled: enabled })
     setDataExportEnabled(enabled)
+  }
+
+  function formatBytesLabel(n: number): string {
+    if (n <= 0) return 'unlimited'
+    if (n >= 1024 * 1024 * 1024) return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`
+    if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(0)} MB`
+    return `${n} bytes`
+  }
+
+  async function handleSaveOutputLimits() {
+    setOutputLimitsSaving(true)
+    setOutputLimitsError(null)
+    try {
+      const r = await api.put<{
+        cell_output_max_bytes: number
+        cell_output_max_bytes_resolved: number
+        notebook_inline_outputs_max_bytes: number
+        notebook_inline_outputs_max_bytes_resolved: number
+        platform_max_bytes: number
+      }>('/api/v1/org/output-limits', {
+        cell_output_max_bytes: Math.max(0, cellOutputMaxBytes),
+        notebook_inline_outputs_max_bytes: Math.max(0, inlineOutputsMaxBytes),
+      })
+      setCellOutputMaxBytes(r.cell_output_max_bytes)
+      setCellOutputMaxBytesResolved(r.cell_output_max_bytes_resolved)
+      setInlineOutputsMaxBytes(r.notebook_inline_outputs_max_bytes)
+      setInlineOutputsMaxBytesResolved(r.notebook_inline_outputs_max_bytes_resolved)
+      setOutputLimitsPlatformMax(r.platform_max_bytes)
+      setOutputLimitsSaved(true)
+      setTimeout(() => setOutputLimitsSaved(false), 2000)
+    } catch (e: unknown) {
+      setOutputLimitsError(String(e))
+    } finally {
+      setOutputLimitsSaving(false)
+    }
   }
 
   const createProvider = useMutation({
@@ -955,7 +1015,55 @@ const formInput: React.CSSProperties = {
           </label>
         </section>
 
-        {/* ── H. Audit Settings ── */}
+        {/* ── H. Cell Output Limits ── */}
+        <section style={styles.section}>
+          <div style={styles.sectionTitle}>Cell Output Limits</div>
+          <p style={styles.sectionDesc}>
+            Bound the size of stored cell results to protect the server. Values are in bytes; 0 means unlimited.
+            The effective value is clamped to the platform ceiling of {outputLimitsPlatformMax > 0 ? formatBytesLabel(outputLimitsPlatformMax) : 'unlimited'}.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 12 }}>
+            <label style={formLabel}>
+              Max bytes per cell output
+              <input
+                type="number"
+                min={0}
+                style={formInput}
+                value={cellOutputMaxBytes}
+                onChange={e => setCellOutputMaxBytes(parseInt(e.target.value) || 0)}
+              />
+              <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: 11 }}>
+                Effective: {formatBytesLabel(cellOutputMaxBytesResolved)}
+              </span>
+            </label>
+            <label style={formLabel}>
+              Max inline bytes per notebook view
+              <input
+                type="number"
+                min={0}
+                style={formInput}
+                value={inlineOutputsMaxBytes}
+                onChange={e => setInlineOutputsMaxBytes(parseInt(e.target.value) || 0)}
+              />
+              <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: 11 }}>
+                Effective: {formatBytesLabel(inlineOutputsMaxBytesResolved)}
+              </span>
+            </label>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              style={{ ...styles.saveBtn, opacity: outputLimitsSaving ? 0.6 : 1 }}
+              onClick={handleSaveOutputLimits}
+              disabled={outputLimitsSaving}
+            >
+              {outputLimitsSaving ? 'Saving…' : 'Save'}
+            </button>
+            {outputLimitsSaved && <span style={{ fontSize: 12, color: 'var(--success, #059669)' }}>Saved</span>}
+            {outputLimitsError && <span style={{ fontSize: 12, color: 'var(--error)' }}>{outputLimitsError}</span>}
+          </div>
+        </section>
+
+        {/* ── I. Audit Settings ── */}
         <section style={styles.section}>
           <div style={styles.sectionTitle}>Audit Log Retention</div>
           <p style={styles.sectionDesc}>
@@ -994,7 +1102,7 @@ const formInput: React.CSSProperties = {
           </div>
         </section>
 
-        {/* ── I. Message of the Day ── */}
+        {/* ── J. Message of the Day ── */}
         <section style={styles.section}>
           <div style={styles.sectionTitle}>Message of the Day</div>
           <p style={styles.sectionDesc}>

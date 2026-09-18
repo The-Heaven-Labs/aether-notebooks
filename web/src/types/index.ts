@@ -122,11 +122,27 @@ export interface Output {
 export interface ResultSet {
   columns: Column[]
   rows: unknown[][]
+  /** true when the result was cut at a row boundary by the per-cell byte cap */
+  truncated?: boolean
+  rows_included?: number
+  /** -1 when the driver could not pre-count total rows */
+  rows_total?: number
+  /** cheap estimated size in bytes of the included rows (or stored column) */
+  bytes?: number
 }
 
 export interface Column {
   name: string
   type: string
+}
+
+/** Read-path stub shape for a cell whose outputs were not inlined (budget
+ * exhausted on notebook GET). data = { truncated: true, bytes: N }. */
+export interface OutputStubData {
+  truncated: boolean
+  bytes: number
+  rows_included?: number
+  rows_total?: number
 }
 
 export interface Connector {

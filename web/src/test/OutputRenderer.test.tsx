@@ -275,3 +275,78 @@ describe('TableOutput detail copy', () => {
     expect(writeText).not.toHaveBeenCalled()
   })
 })
+
+// ── Output truncation & streaming download ───────────────────────────────────
+
+describe('OutputRenderer truncation', () => {
+  beforeEach(() => {
+    localStorage.setItem('aether_token', 'test-token')
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 300 })
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 800 })
+  })
+  afterEach(() => {
+    localStorage.removeItem('aether_token')
+    delete (HTMLElement.prototype as { offsetHeight?: unknown }).offsetHeight
+    delete (HTMLElement.prototype as { offsetWidth?: unknown }).offsetWidth
+  })
+
+  it('shows the truncation badge and a full-result download link on an executor-truncated table', async () => {
+    const truncated: Output = {
+      type: 'table',
+      data: {
+        columns: [{ name: 'val', type: 'string' }],
+        rows: [['a'], ['b']],
+        truncated: true,
+        rows_included: 2,
+        rows_total: -1,
+        bytes: 5120,
+      },
+    }
+    render(<OutputRenderer outputs={[truncated]} cellId="cell-42" />)
+    await waitFor(() => expect(screen.getByText(/Truncated — 2 .*rows \/ 5\.0 KB/)).toBeDefined())
+    const fullLink = screen.getByLabelText('Download full result')
+    expect(fullLink.getAttribute('href')).toBe('/api/v1/cells/cell-42/outputs/download?token=test-token')
+  })
+
+  it('shows the badge with a known total row count when the driver reports it', async () => {
+    const truncated: Output = {
+      type: 'table',
+      data: {
+        columns: [{ name: 'val', type: 'string' }],
+        rows: [['a'], ['b']],
+        truncated: true,
+        rows_included: 2,
+        rows_total: 26573,
+        bytes: 10485760,
+      },
+    }
+    render(<OutputRenderer outputs={[truncated]} cellId="cell-43" />)
+    await waitFor(() => expect(screen.getByText(/Truncated — 2 of 26573 rows \/ 10\.0 MB/)).toBeDefined())
+  })
+
+  it('renders the read-path stub with a download button when outputs were not inlined', async () => {
+    const stub: Output = { type: 'table', data: { truncated: true, bytes: 149600000 } }
+    render(<OutputRenderer outputs={[stub]} cellId="cell-44" />)
+    await waitFor(() => expect(screen.getByText(/Output truncated — 142\.7 MB not inlined/)).toBeDefined())
+    const downloadLink = screen.getByLabelText('Download full result')
+    expect(downloadLink.getAttribute('href')).toBe('/api/v1/cells/cell-44/outputs/download?token=test-token')
+  })
+
+  it('hides download buttons when data export is disabled org-wide', async () => {
+    const truncated: Output = {
+      type: 'table',
+      data: {
+        columns: [{ name: 'val', type: 'string' }],
+        rows: [['a']],
+        truncated: true,
+        rows_included: 1,
+        rows_total: 5,
+        bytes: 1024,
+      },
+    }
+    render(<OutputRenderer outputs={[truncated]} cellId="cell-45" hideExport />)
+    await waitFor(() => expect(screen.getByText(/Truncated — 1 of 5 rows \/ 1\.0 KB/)).toBeDefined())
+    expect(screen.queryByLabelText('Download full result')).toBeNull()
+    expect(screen.queryByLabelText('Download as CSV')).toBeNull()
+  })
+})

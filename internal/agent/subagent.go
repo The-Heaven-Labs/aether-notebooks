@@ -121,14 +121,15 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 			}
 
 			result, err := toolDef.Execute(json.RawMessage(tc.Function.Arguments), &ToolContext{
-				Context:    ctx,
-				UserID:     parentUserID,
-				OrgID:      parentOrgID,
-				OrgRole:    "editor",
-				NotebookID: taskID,
-				SessionID:  parentSessionID,
-				DB:         e.pool,
-				MasterKey:  masterKey,
+				Context:              ctx,
+				UserID:               parentUserID,
+				OrgID:                parentOrgID,
+				OrgRole:              "editor",
+				NotebookID:           taskID,
+				SessionID:            parentSessionID,
+				DB:                   e.pool,
+				MasterKey:            masterKey,
+				OutputLimitsMaxBytes: e.outputLimitsMaxBytes,
 			})
 
 			if err != nil {
@@ -420,14 +421,15 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 
 			toolStart := time.Now()
 			result, err := toolDef.Execute(json.RawMessage(tc.Function.Arguments), &ToolContext{
-				Context:    ctx,
-				UserID:     parentUserID,
-				OrgID:      parentOrgID,
-				OrgRole:    parentOrgRole,
-				NotebookID: taskID,
-				SessionID:  parentSessionID,
-				DB:         e.pool,
-				MasterKey:  masterKey,
+				Context:              ctx,
+				UserID:               parentUserID,
+				OrgID:                parentOrgID,
+				OrgRole:              parentOrgRole,
+				NotebookID:           taskID,
+				SessionID:            parentSessionID,
+				DB:                   e.pool,
+				MasterKey:            masterKey,
+				OutputLimitsMaxBytes: e.outputLimitsMaxBytes,
 			})
 			toolDuration := int(time.Since(toolStart).Milliseconds())
 

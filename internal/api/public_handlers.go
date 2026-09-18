@@ -75,7 +75,7 @@ func (s *Server) servePublicNotebook(w http.ResponseWriter, r *http.Request, nbI
 		Type          string                 `json:"type"`
 		Language      string                 `json:"language,omitempty"`
 		Source        string                 `json:"source"`
-		Outputs       []models.Output        `json:"outputs"`
+		Outputs       json.RawMessage        `json:"outputs"`
 		Parameters    []models.Parameter     `json:"parameters"`
 		Metadata      map[string]interface{} `json:"metadata"`
 		OutputsHidden bool                   `json:"outputs_hidden"`
@@ -91,11 +91,11 @@ func (s *Server) servePublicNotebook(w http.ResponseWriter, r *http.Request, nbI
 		if lang != nil {
 			c.Language = *lang
 		}
-		json.Unmarshal(outputs, &c.Outputs)
+		c.Outputs = outputs
 		json.Unmarshal(cellParams, &c.Parameters)
 		json.Unmarshal(meta, &c.Metadata)
-		if c.Outputs == nil {
-			c.Outputs = []models.Output{}
+		if len(c.Outputs) == 0 {
+			c.Outputs = json.RawMessage("[]")
 		}
 		if c.Metadata == nil {
 			c.Metadata = map[string]interface{}{}

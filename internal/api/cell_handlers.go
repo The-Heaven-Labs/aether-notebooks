@@ -324,7 +324,7 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 		cell.Limit = limit
 	}
 	cell.AgentUpdatedAt = agentUpdatedAt
-	json.Unmarshal(outputs, &cell.Outputs)
+	cell.Outputs = outputs
 	json.Unmarshal(cellParams, &cell.Parameters)
 
 	// Broadcast updates to connected clients
@@ -550,10 +550,10 @@ func (s *Server) handleDuplicateCell(w http.ResponseWriter, r *http.Request) {
 	if newLimit != nil {
 		newCell.Limit = newLimit
 	}
-	json.Unmarshal(newOutputs, &newCell.Outputs)
+	newCell.Outputs = newOutputs
 	json.Unmarshal(newParams, &newCell.Parameters)
-	if newCell.Outputs == nil {
-		newCell.Outputs = []models.Output{}
+	if len(newCell.Outputs) == 0 {
+		newCell.Outputs = json.RawMessage("[]")
 	}
 	// Touch notebook timestamp so "Last updated" reflects cell duplication
 	s.db.Pool.Exec(ctx, `UPDATE notebooks SET updated_at = NOW() WHERE id = $1`, nbID)
@@ -566,4 +566,56 @@ func nilIfEmptyStr(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+// @Summary Download cell outputs
+// @Description Stream a cell's raw stored outputs as JSON (no decode). The full
+// @Description payload remains available here even when the notebook GET inline
+// @Description budget stubbed it.
+// @Tags cells
+// @Produce application/json
+// @Param id path string true "Cell ID"
+// @Success 200 {file} binary
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /cells/{id}/outputs/download [get]
+func (s *Server) handleCellOutputsDownload(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	cellID := r.PathValue("id")
+	ctx := r.Context()
+
+	var notebookID string
+	var outputs []byte
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT notebook_id, outputs FROM cells WHERE id = $1`,
+		cellID,
+	).Scan(&notebookID, &outputs)
+	if err == pgx.ErrNoRows {
+		writeError(w, http.StatusNotFound, "cell not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	// Org scope check via the owning notebook, then the same view check the
+	// cell's notebook requires.
+	var orgID string
+	if err := s.db.Pool.QueryRow(ctx, `SELECT org_id FROM notebooks WHERE id = $1`, notebookID).Scan(&orgID); err != nil || orgID != claims.OrgID {
+		writeError(w, http.StatusNotFound, "cell not found")
+		return
+	}
+	if allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", notebookID, "view"); err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
+
+	if len(outputs) == 0 {
+		outputs = []byte("[]")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="cell-%s.json"`, cellID))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(outputs)))
+	w.Write(outputs)
 }

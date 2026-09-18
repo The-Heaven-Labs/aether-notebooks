@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
-
-	"sort"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/audit"
@@ -145,10 +145,10 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 		if cellLang != nil {
 			inserted.Language = *cellLang
 		}
-		json.Unmarshal(cellOutputs, &inserted.Outputs)
 		json.Unmarshal(cellParams, &inserted.Parameters)
-		if inserted.Outputs == nil {
-			inserted.Outputs = []models.Output{}
+		inserted.Outputs = cellOutputs
+		if len(inserted.Outputs) == 0 {
+			inserted.Outputs = json.RawMessage("[]")
 		}
 		createdCells = append(createdCells, inserted)
 	}
@@ -283,10 +283,31 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 	runOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "run")
 	shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nbID, "share")
 
+	// Inline output budget: under the org's notebook_inline_outputs_max_bytes we
+	// embed every cell's outputs verbatim; over it, we walk cells in position
+	// order and stub the ones that no longer fit. The stub keeps the response
+	// bounded no matter how many cells or how large the stored outputs are and
+	// offers the full payload via the streaming download endpoint.
+	inlineBudget, budgetErr := s.orgInlineOutputsMaxBytes(ctx, claims.OrgID)
+	if budgetErr != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	var inlineTotal int64
+	if budgetErr := s.db.Pool.QueryRow(ctx,
+		`SELECT COALESCE(SUM(pg_column_size(outputs)), 0) FROM cells WHERE notebook_id = $1`,
+		nbID,
+	).Scan(&inlineTotal); budgetErr != nil {
+		writeError(w, http.StatusInternalServerError, "query cells failed")
+		return
+	}
+	inlineAll := inlineBudget <= 0 || inlineTotal <= inlineBudget
+
 	cellRows, err := s.db.Pool.Query(ctx,
 		`SELECT id, notebook_id, position, type, language, connector_id, source, outputs,
 		        source_visible, outputs_hidden, cell_collapsed, slide_break, parameters, COALESCE(title,''), COALESCE(slug,''), "limit",
-		        COALESCE(metadata, '{}'), duration_ms, created_at, updated_at, agent_updated_at
+		        COALESCE(metadata, '{}'), duration_ms, created_at, updated_at, agent_updated_at,
+		        pg_column_size(outputs)
 		 FROM cells WHERE notebook_id = $1 ORDER BY position ASC`,
 		nbID,
 	)
@@ -297,6 +318,7 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 	defer cellRows.Close()
 
 	var cells []models.Cell
+	var runningBytes int64
 	for cellRows.Next() {
 		var c models.Cell
 		var lang, connID *string
@@ -304,9 +326,10 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 		var cellLimit *int
 		var durationMs *int
 		var agentUpdatedAt *time.Time
+		var outputBytes int64
 		if err := cellRows.Scan(&c.ID, &c.NotebookID, &c.Position, &c.Type, &lang, &connID, &c.Source, &outputs,
 			&c.SourceVisible, &c.OutputsHidden, &c.CellCollapsed, &c.SlideBreak, &cellParams, &c.Title, &c.Slug, &cellLimit,
-			&c.Metadata, &durationMs, &c.CreatedAt, &c.UpdatedAt, &agentUpdatedAt); err != nil {
+			&c.Metadata, &durationMs, &c.CreatedAt, &c.UpdatedAt, &agentUpdatedAt, &outputBytes); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan cell failed")
 			return
 		}
@@ -321,7 +344,12 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 		}
 		c.AgentUpdatedAt = agentUpdatedAt
 		c.DurationMs = durationMs
-		json.Unmarshal(outputs, &c.Outputs)
+		if inlineAll || inlineBudget <= 0 || runningBytes+outputBytes <= inlineBudget {
+			c.Outputs = outputs
+			runningBytes += outputBytes
+		} else {
+			c.Outputs = outputStubJSON(outputBytes)
+		}
 		json.Unmarshal(cellParams, &c.Parameters)
 		cells = append(cells, c)
 	}
@@ -1008,8 +1036,8 @@ func (s *Server) handleCloneNotebook(w http.ResponseWriter, r *http.Request) {
 			newCell.Limit = newLimit
 		}
 		json.Unmarshal(newParams, &newCell.Parameters)
-		if newCell.Outputs == nil {
-			newCell.Outputs = []models.Output{}
+		if len(newCell.Outputs) == 0 {
+			newCell.Outputs = json.RawMessage("[]")
 		}
 		newCells = append(newCells, newCell)
 		pos++
@@ -1169,4 +1197,12 @@ func (s *Server) handleRevokeNotebookShare(w http.ResponseWriter, r *http.Reques
 		Action: "notebook.share_revoke", ResourceType: "notebook", ResourceID: nbID,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// outputStubJSON builds the read-path stub for a cell whose outputs were not
+// inlined because the notebook's inline output budget was exhausted. The stub
+// keeps the payload bounded regardless of the stored column size; the full
+// payload stays available via the streaming download endpoint.
+func outputStubJSON(bytes int64) json.RawMessage {
+	return json.RawMessage(`[{"type":"table","data":{"truncated":true,"bytes":` + strconv.FormatInt(bytes, 10) + `}}]`)
 }

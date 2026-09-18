@@ -231,14 +231,24 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// Resolve the org's per-cell output byte cap (clamped by the platform
+	// ceiling) before broadcasting the running state so a lookup failure does
+	// not leave the cell stuck as running.
+	cellMaxBytes, capErr := s.orgCellOutputMaxBytes(bgCtx, claims.OrgID)
+	if capErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load output limits")
+		return
+	}
+
 	// Broadcast executing state and track in Hub (survives page refresh)
 	execStart := time.Now()
 	s.hub.Broadcast(nbID, map[string]any{"type": "cell_executing", "cell_id": cellID, "started_at": execStart, "user_email": s.userEmail(bgCtx, claims.UserID)})
 	s.hub.SetRunning(cellID, nbID, execStart)
 
-	// Execute — respects cancellation and connector timeout
+	// Execute — respects cancellation, connector timeout, and the org's
+	// per-cell output byte cap (clamped by the platform ceiling).
 	queryStart := time.Now()
-	result, err := exec.Execute(execCtx, resolvedSource, req.Parameters, maxRows)
+	result, err := exec.Execute(execCtx, resolvedSource, req.Parameters, executor.OutputLimits{MaxBytes: cellMaxBytes, MaxRows: maxRows})
 	wasCancelled := execCtx.Err() != nil
 	execCancel()
 	s.hub.DeleteCancelFunc(cellID)
