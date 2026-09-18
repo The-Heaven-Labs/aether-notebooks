@@ -3,7 +3,7 @@ import { ChevronRight } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { Group, GroupMember, Member } from '../types'
+import type { Group, GroupMember, Member, PendingGroupMember, PendingGroupMemberResult } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -15,9 +15,30 @@ interface MemberDropdownProps {
   value: string
   onChange: (userId: string) => void
   placeholder?: string
+  /** Offer an "add as pending member" action when the query looks like an email that matches no user. */
+  onAddPending?: (email: string) => void
 }
 
-function MemberDropdown({ options, value, onChange, placeholder = 'Add member…' }: MemberDropdownProps) {
+function looksLikeEmail(value: string): boolean {
+  const v = value.trim()
+  const at = v.indexOf('@')
+  return at > 0 && at < v.length - 1 && !/\s/.test(v)
+}
+
+function formatPendingNotice(result: PendingGroupMemberResult): string {
+  const parts = [`${result.added} added`]
+  if (result.skipped.length > 0) {
+    const reasons = new Set(result.skipped.map((s) => s.reason))
+    const labels: string[] = []
+    if (reasons.has('already_member')) labels.push('already members')
+    if (reasons.has('already_pending')) labels.push('already pending')
+    if (reasons.has('invalid')) labels.push('invalid')
+    parts.push(`${result.skipped.length} skipped${labels.length ? `: ${labels.join(', ')}` : ''}`)
+  }
+  return parts.join(', ')
+}
+
+function MemberDropdown({ options, value, onChange, placeholder = 'Add member…', onAddPending }: MemberDropdownProps) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [focusedIdx, setFocusedIdx] = useState(-1)
@@ -33,6 +54,8 @@ function MemberDropdown({ options, value, onChange, placeholder = 'Add member…
         return (m.name ?? '').toLowerCase().includes(q) || m.email.toLowerCase().includes(q)
       })
     : options
+
+  const canAddPending = !!onAddPending && filtered.length === 0 && looksLikeEmail(query)
 
   const openDropdown = () => {
     setOpen(true)
@@ -98,6 +121,9 @@ function MemberDropdown({ options, value, onChange, placeholder = 'Add member…
       e.preventDefault()
       if (focusedIdx >= 0 && filtered[focusedIdx]) {
         selectOption(filtered[focusedIdx].user_id)
+      } else if (canAddPending) {
+        onAddPending!(query.trim())
+        closeDropdown()
       }
       return
     }
@@ -141,7 +167,7 @@ function MemberDropdown({ options, value, onChange, placeholder = 'Add member…
 
           {/* Options list */}
           <ul ref={listRef} style={dd.list} role="listbox">
-            {filtered.length === 0 && (
+            {filtered.length === 0 && !canAddPending && (
               <li style={dd.empty}>No members found</li>
             )}
             {filtered.map((m, idx) => {
@@ -165,6 +191,16 @@ function MemberDropdown({ options, value, onChange, placeholder = 'Add member…
                 </li>
               )
             })}
+            {canAddPending && (
+              <li
+                role="option"
+                aria-selected={false}
+                style={{ ...dd.option, color: 'var(--accent)', fontWeight: 600 }}
+                onMouseDown={(e) => { e.preventDefault(); onAddPending!(query.trim()); closeDropdown() }}
+              >
+                <span style={dd.optionName}>Add {query.trim()} as pending member</span>
+              </li>
+            )}
           </ul>
         </div>
       )}
@@ -279,7 +315,13 @@ export function GroupsPage() {
 
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [groupMembers, setGroupMembers] = useState<Record<string, GroupMember[]>>({})
+  const [pendingMembers, setPendingMembers] = useState<Record<string, PendingGroupMember[]>>({})
   const [loadingMembers, setLoadingMembers] = useState<Record<string, boolean>>({})
+
+  // Bulk email staging state
+  const [bulkGroupId, setBulkGroupId] = useState<string | null>(null)
+  const [bulkText, setBulkText] = useState('')
+  const [bulkNotice, setBulkNotice] = useState<Record<string, string>>({})
 
   // Rename state: groupId → new name being edited
   const [renamingId, setRenamingId] = useState<string | null>(null)
@@ -368,21 +410,77 @@ export function GroupsPage() {
     onError: (err: Error) => setMutateError(err.message),
   })
 
+  const refreshGroupMembers = async (groupId: string) => {
+    try {
+      const [members, pending] = await Promise.all([
+        api.get<GroupMember[]>(`/api/v1/groups/${groupId}/members`),
+        api.get<PendingGroupMember[]>(`/api/v1/groups/${groupId}/pending-members`),
+      ])
+      setGroupMembers((prev) => ({ ...prev, [groupId]: members }))
+      setPendingMembers((prev) => ({ ...prev, [groupId]: pending }))
+    } catch {
+      // Refreshes are best-effort; the mutation already surfaced any error.
+    }
+  }
+
+  const addPending = useMutation({
+    mutationFn: ({ groupId, emails }: { groupId: string; emails: string[] }) =>
+      api.post<PendingGroupMemberResult>(`/api/v1/groups/${groupId}/pending-members`, { emails }),
+    onSuccess: (result, { groupId }) => {
+      setBulkNotice((prev) => ({ ...prev, [groupId]: formatPendingNotice(result) }))
+      qc.invalidateQueries({ queryKey: ['groups'] })
+      void refreshGroupMembers(groupId)
+      setMutateError(null)
+    },
+    onError: (err: Error) => setMutateError(err.message),
+  })
+
+  const removePending = useMutation({
+    mutationFn: ({ groupId, email }: { groupId: string; email: string }) =>
+      api.delete(`/api/v1/groups/${groupId}/pending-members/${encodeURIComponent(email)}`),
+    onSuccess: (_, { groupId, email }) => {
+      setPendingMembers((prev) => ({
+        ...prev,
+        [groupId]: (prev[groupId] ?? []).filter((p) => p.email !== email),
+      }))
+      qc.invalidateQueries({ queryKey: ['groups'] })
+      setMutateError(null)
+    },
+    onError: (err: Error) => setMutateError(err.message),
+  })
+
+  const handleAddPending = (groupId: string, email: string) => {
+    addPending.mutate({ groupId, emails: [email] })
+  }
+
+  const handleBulkAdd = (groupId: string) => {
+    const emails = bulkText.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean)
+    if (emails.length === 0) return
+    addPending.mutate({ groupId, emails }, {
+      onSuccess: () => { setBulkText(''); setBulkGroupId(null) },
+    })
+  }
+
   const handleToggleExpand = async (groupId: string) => {
     if (expandedId === groupId) {
       setExpandedId(null)
       return
     }
     setExpandedId(groupId)
-    if (groupMembers[groupId] !== undefined) return
+    if (groupMembers[groupId] !== undefined && pendingMembers[groupId] !== undefined) return
 
     setLoadingMembers((prev) => ({ ...prev, [groupId]: true }))
     try {
-      const fetched = await api.get<GroupMember[]>(`/api/v1/groups/${groupId}/members`)
-      setGroupMembers((prev) => ({ ...prev, [groupId]: fetched }))
+      const fetched = await Promise.all([
+        api.get<GroupMember[]>(`/api/v1/groups/${groupId}/members`),
+        api.get<PendingGroupMember[]>(`/api/v1/groups/${groupId}/pending-members`),
+      ])
+      setGroupMembers((prev) => ({ ...prev, [groupId]: fetched[0] }))
+      setPendingMembers((prev) => ({ ...prev, [groupId]: fetched[1] }))
     } catch (e) {
       setMutateError(e instanceof Error ? e.message : 'Failed to load members')
       setGroupMembers((prev) => ({ ...prev, [groupId]: [] }))
+      setPendingMembers((prev) => ({ ...prev, [groupId]: [] }))
     } finally {
       setLoadingMembers((prev) => ({ ...prev, [groupId]: false }))
     }
@@ -405,6 +503,7 @@ export function GroupsPage() {
 
   const [deleteGroupConfirm, setDeleteGroupConfirm] = useState<Group | null>(null)
   const [removeMemberConfirm, setRemoveMemberConfirm] = useState<{ groupId: string; member: GroupMember } | null>(null)
+  const [removePendingConfirm, setRemovePendingConfirm] = useState<{ groupId: string; email: string } | null>(null)
 
   const handleDelete = (group: Group) => {
     setDeleteGroupConfirm(group)
@@ -539,6 +638,7 @@ export function GroupsPage() {
             const isExpanded = expandedId === group.id
             const isEveryone = /^everyone$/i.test(group.name)
             const currentMembers = groupMembers[group.id] ?? []
+            const currentPending = pendingMembers[group.id] ?? []
             const isLoadingGroup = loadingMembers[group.id] ?? false
 
             // Members not yet in the group
@@ -579,6 +679,7 @@ export function GroupsPage() {
                     )}
                     <span style={styles.memberCount}>
                       {group.member_count} {group.member_count === 1 ? 'member' : 'members'}
+                      {currentPending.length > 0 && ` · ${currentPending.length} pending`}
                     </span>
                   </button>
 
@@ -653,7 +754,7 @@ export function GroupsPage() {
                     {isLoadingGroup && (
                       <div style={styles.loadingText}>Loading members…</div>
                     )}
-                    {!isLoadingGroup && currentMembers.length === 0 && (
+                    {!isLoadingGroup && currentMembers.length === 0 && currentPending.length === 0 && (
                       <div style={styles.emptyMembers}>No members in this group.</div>
                     )}
                     {!isLoadingGroup && currentMembers.map((m) => (
@@ -675,30 +776,97 @@ export function GroupsPage() {
                         )}
                       </div>
                     ))}
+                    {!isLoadingGroup && currentPending.map((p) => (
+                      <div key={`pending:${p.email}`} style={styles.memberRow}>
+                        <span style={styles.memberName}>{p.email}</span>
+                        <span style={styles.pendingBadge}>Pending — awaiting first login</span>
+                        {isAdmin && !isEveryone && (
+                          <button
+                            type="button"
+                            style={styles.removeBtn}
+                            title="Remove pending member"
+                            onClick={() => setRemovePendingConfirm({ groupId: group.id, email: p.email })}
+                            disabled={removePending.isPending}
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    ))}
 
                     {isAdmin && !isEveryone && (
-                      <div style={styles.addMemberRow}>
-                        <MemberDropdown
-                          options={availableToAdd}
-                          value={selectedUserId[group.id] ?? ''}
-                          onChange={(userId) =>
-                            setSelectedUserId((prev) => ({ ...prev, [group.id]: userId }))
-                          }
-                        />
-                        <button
-                          type="button"
-                          style={{
-                            ...styles.primaryBtn,
-                            opacity: (!selectedUserId[group.id] || addMember.isPending) ? 0.5 : 1,
-                            cursor: (!selectedUserId[group.id] || addMember.isPending) ? 'not-allowed' : 'pointer',
-                          }}
-                          title={!selectedUserId[group.id] ? 'Select a member first' : undefined}
-                          disabled={!selectedUserId[group.id] || addMember.isPending}
-                          onClick={() => handleAddMemberClick(group.id)}
-                        >
-                          Add
-                        </button>
-                      </div>
+                      <>
+                        <div style={styles.addMemberRow}>
+                          <MemberDropdown
+                            options={availableToAdd}
+                            value={selectedUserId[group.id] ?? ''}
+                            onChange={(userId) =>
+                              setSelectedUserId((prev) => ({ ...prev, [group.id]: userId }))
+                            }
+                            onAddPending={(email) => handleAddPending(group.id, email)}
+                          />
+                          <button
+                            type="button"
+                            style={{
+                              ...styles.primaryBtn,
+                              opacity: (!selectedUserId[group.id] || addMember.isPending) ? 0.5 : 1,
+                              cursor: (!selectedUserId[group.id] || addMember.isPending) ? 'not-allowed' : 'pointer',
+                            }}
+                            title={!selectedUserId[group.id] ? 'Select a member first' : undefined}
+                            disabled={!selectedUserId[group.id] || addMember.isPending}
+                            onClick={() => handleAddMemberClick(group.id)}
+                          >
+                            Add
+                          </button>
+                          <button
+                            type="button"
+                            style={styles.actionBtn}
+                            title="Stage memberships by email before they have an account"
+                            onClick={() => {
+                              setBulkGroupId(bulkGroupId === group.id ? null : group.id)
+                              setBulkText('')
+                            }}
+                          >
+                            Paste emails
+                          </button>
+                        </div>
+                        {bulkGroupId === group.id && (
+                          <div style={styles.bulkPanel}>
+                            <textarea
+                              style={styles.bulkInput}
+                              value={bulkText}
+                              onChange={(e) => setBulkText(e.target.value)}
+                              placeholder={'One email per line\nor comma/semicolon separated'}
+                              rows={4}
+                              aria-label="Emails to pre-provision"
+                            />
+                            <div style={{ display: 'flex', gap: 8 }}>
+                              <button
+                                type="button"
+                                style={{
+                                  ...styles.primaryBtn,
+                                  opacity: (!bulkText.trim() || addPending.isPending) ? 0.5 : 1,
+                                  cursor: (!bulkText.trim() || addPending.isPending) ? 'not-allowed' : 'pointer',
+                                }}
+                                disabled={!bulkText.trim() || addPending.isPending}
+                                onClick={() => handleBulkAdd(group.id)}
+                              >
+                                Add emails
+                              </button>
+                              <button
+                                type="button"
+                                style={styles.actionBtn}
+                                onClick={() => { setBulkGroupId(null); setBulkText('') }}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        {bulkNotice[group.id] && (
+                          <div style={styles.bulkNotice}>{bulkNotice[group.id]}</div>
+                        )}
+                      </>
                     )}
                   </div>
                 )}
@@ -729,6 +897,18 @@ export function GroupsPage() {
           setRemoveMemberConfirm(null)
         }}
         onCancel={() => setRemoveMemberConfirm(null)}
+      />
+      <ConfirmDialog
+        open={!!removePendingConfirm}
+        title="Remove pending member"
+        message={`Remove ${removePendingConfirm?.email} from this group? They have not logged in yet, so this cancels their pre-provisioned access.`}
+        confirmLabel="Remove"
+        destructive
+        onConfirm={() => {
+          if (removePendingConfirm) removePending.mutate(removePendingConfirm)
+          setRemovePendingConfirm(null)
+        }}
+        onCancel={() => setRemovePendingConfirm(null)}
       />
     </AppShell>
   )
@@ -924,6 +1104,47 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-secondary)',
     fontFamily: 'var(--font-mono)',
     flex: 1,
+  },
+  pendingBadge: {
+    flex: 1,
+    alignSelf: 'center',
+    maxWidth: 'fit-content',
+    fontSize: 11,
+    fontStyle: 'italic',
+    color: 'var(--text-muted)',
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
+    borderRadius: 10,
+    padding: '1px 8px',
+  },
+  bulkPanel: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    marginTop: 6,
+    paddingTop: 8,
+    borderTop: '1px solid var(--border)',
+  },
+  bulkInput: {
+    width: '100%',
+    padding: '7px 10px',
+    fontSize: 12,
+    fontFamily: 'var(--font-mono)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
+    resize: 'vertical' as const,
+    boxSizing: 'border-box' as const,
+  },
+  bulkNotice: {
+    fontSize: 12,
+    color: 'var(--text-secondary)',
+    background: 'var(--accent-light)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    padding: '4px 8px',
+    marginTop: 6,
   },
   removeBtn: {
     padding: '2px 7px',

@@ -197,6 +197,79 @@ describe('Rename group', () => {
   })
 })
 
+// ── T8.7 Pre-provisioned (pending) members ──────────────────────────────────
+
+describe('Pending members', () => {
+  test('shows pending rows with a badge and removes by email', async () => {
+    let deletedEmail = ''
+    server.use(
+      http.get('/api/v1/groups/g-1/pending-members', () => HttpResponse.json([
+        { email: 'future@example.com', created_at: '2026-01-01T00:00:00Z' },
+      ])),
+      http.delete('/api/v1/groups/:id/pending-members/:email', ({ params }) => {
+        deletedEmail = params.email as string
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithProviders(<GroupsPage />)
+    await screen.findByText('Data Team')
+    fireEvent.click(screen.getByText('Data Team'))
+    expect(await screen.findByText('future@example.com')).toBeInTheDocument()
+    expect(screen.getByText('Pending — awaiting first login')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTitle('Remove pending member'))
+    fireEvent.click(screen.getByRole('button', { name: /remove/i }))
+    await waitFor(() => expect(deletedEmail).toBe('future@example.com'))
+  })
+
+  test('dropdown offers adding an unmatched email as pending', async () => {
+    let posted: string[] = []
+    server.use(
+      http.post('/api/v1/groups/:id/pending-members', async ({ request }) => {
+        const body = await request.json() as { emails: string[] }
+        posted = body.emails
+        return HttpResponse.json({ added: body.emails.length, skipped: [] })
+      }),
+    )
+    renderWithProviders(<GroupsPage />)
+    await screen.findByText('CSIRT')
+    fireEvent.click(screen.getByText('CSIRT'))
+    await screen.findByText('No members in this group.')
+
+    fireEvent.click(screen.getByText('Add member…'))
+    fireEvent.change(screen.getByPlaceholderText('Search…'), { target: { value: 'newbie@example.com' } })
+    fireEvent.mouseDown(await screen.findByText('Add newbie@example.com as pending member'))
+    await waitFor(() => expect(posted).toEqual(['newbie@example.com']))
+  })
+
+  test('bulk paste stages multiple emails and reports skips', async () => {
+    let posted: string[] = []
+    server.use(
+      http.post('/api/v1/groups/:id/pending-members', async ({ request }) => {
+        const body = await request.json() as { emails: string[] }
+        posted = body.emails
+        return HttpResponse.json({
+          added: 2,
+          skipped: [{ email: 'dup@example.com', reason: 'already_pending' }],
+        })
+      }),
+    )
+    renderWithProviders(<GroupsPage />)
+    await screen.findByText('CSIRT')
+    fireEvent.click(screen.getByText('CSIRT'))
+    await screen.findByText('No members in this group.')
+
+    fireEvent.click(screen.getByText('Paste emails'))
+    fireEvent.change(screen.getByLabelText('Emails to pre-provision'), {
+      target: { value: 'a@example.com, b@example.com\ndup@example.com' },
+    })
+    fireEvent.click(screen.getByText('Add emails'))
+
+    await waitFor(() => expect(posted).toEqual(['a@example.com', 'b@example.com', 'dup@example.com']))
+    expect(await screen.findByText('2 added, 1 skipped: already pending')).toBeInTheDocument()
+  })
+})
+
 // ── T8.6 Delete group ───────────────────────────────────────────────────────
 
 describe('Delete group', () => {

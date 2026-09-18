@@ -212,6 +212,16 @@ export const handlers = [
     '/api/v1/groups/:id/members/:uid',
     () => new HttpResponse(null, { status: 204 })
   ),
+  http.get('/api/v1/groups/:id/pending-members', () => HttpResponse.json([])),
+  http.post('/api/v1/groups/:id/pending-members', async ({ request }) => {
+    const body = await request.json() as { emails?: string[] }
+    const emails = body.emails ?? []
+    return HttpResponse.json({ added: emails.length, skipped: [] })
+  }),
+  http.delete(
+    '/api/v1/groups/:id/pending-members/:email',
+    () => new HttpResponse(null, { status: 204 })
+  ),
 
   // ACL
   http.get('/api/v1/acl/:type/:id', () => HttpResponse.json(ACL_ENTRIES)),

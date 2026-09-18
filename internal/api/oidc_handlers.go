@@ -314,6 +314,9 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
+			// Materialize memberships pre-provisioned for this email.
+			s.applyPendingGroups(ctx, tx, orgID, userID, claims.Email)
+
 			if txErr = tx.Commit(ctx); txErr != nil {
 				writeError(w, http.StatusInternalServerError, "failed to commit")
 				return
@@ -386,6 +389,9 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
+			// Materialize memberships pre-provisioned for this email.
+			s.applyPendingGroups(ctx, tx, orgID, userID, claims.Email)
+
 			if txErr = tx.Commit(ctx); txErr != nil {
 				writeError(w, http.StatusInternalServerError, "failed to commit")
 				return
@@ -426,6 +432,9 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 					)
 					if txErr == nil {
 						txErr = createHomeFolder(ctx, tx, targetOrgID, userID, "")
+					}
+					if txErr == nil {
+						s.applyPendingGroups(ctx, tx, targetOrgID, userID, claims.Email)
 					}
 					if txErr != nil {
 						tx.Rollback(ctx)
@@ -477,11 +486,14 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 				tx, txErr := s.db.Pool.Begin(ctx)
 				if txErr == nil {
 					_, txErr = tx.Exec(ctx,
-						`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'viewer')`,
+						`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'non-admin')`,
 						subdomainOrgID, userID,
 					)
 					if txErr == nil {
 						txErr = createHomeFolder(ctx, tx, subdomainOrgID, userID, "")
+					}
+					if txErr == nil {
+						s.applyPendingGroups(ctx, tx, subdomainOrgID, userID, userEmail)
 					}
 					if txErr != nil {
 						tx.Rollback(ctx)

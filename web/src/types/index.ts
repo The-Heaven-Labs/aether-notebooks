@@ -273,6 +273,17 @@ export interface GroupMember {
   name: string
 }
 
+export interface PendingGroupMember {
+  email: string
+  created_by?: string
+  created_at: string
+}
+
+export interface PendingGroupMemberResult {
+  added: number
+  skipped: { email: string; reason: string }[]
+}
+
 export interface ACLEntry {
   id: string
   org_id: string
