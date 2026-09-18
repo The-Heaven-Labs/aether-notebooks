@@ -281,6 +281,7 @@ func main() {
 	srv.SetMaxAttachmentBytes(cfg.MaxAttachmentBytes)
 	srv.SetToolAllowedDomains(cfg.ToolAllowedDomains)
 	srv.SetToolTimeoutDefault(cfg.AgentToolTimeoutDefault)
+	srv.SetOutputLimitsMaxBytes(cfg.OutputLimitsMaxBytes)
 	srv.SetOIDCHostRewrite(cfg.OIDCHostRewrite)
 	srv.SetDisableRegistration(cfg.DisableRegistration)
 	srv.SetFrontendHandler(frontendHandler(&runtimeConfig{

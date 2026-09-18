@@ -15,6 +15,7 @@ import (
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/auth"
 	"github.com/the-heaven-labs/aether/internal/cache"
+	"github.com/the-heaven-labs/aether/internal/config"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/database"
 	"github.com/the-heaven-labs/aether/internal/storage"
@@ -22,30 +23,31 @@ import (
 
 // Server is the HTTP server for the Aether API, holding all dependencies.
 type Server struct {
-	db                  *database.DB
-	jwt                 *auth.JWTIssuer
-	audit               *audit.Logger
-	masterKey           []byte
-	hub                 *Hub
-	mux                 *http.ServeMux
-	store               storage.Storage
-	platformAdminEmail  string
-	disableRegistration bool
-	publicURL           string
-	frontendURL         string
-	Cache               *cache.Cache
-	maxAttachmentBytes  int64
-	agentEngine         *agent.Engine
-	upgrader            websocket.Upgrader
-	toolAllowedDomains  []string
-	sessionCancels      sync.Map                        // sessionID -> context.CancelFunc
-	subdomainMW         func(http.Handler) http.Handler // host → org resolution
-	oidcRewriteFrom     string                          // host rewrite for OIDC discovery inside Docker (e.g. "localhost:5557")
-	oidcRewriteTo       string                          // target host rewrite (e.g. "host.docker.internal:5557")
-	frontendHandler     http.Handler                    // embedded web frontend SPA (nil in tests)
-	version             string                          // build version (set via ldflags)
-	commit              string                          // git commit (set via ldflags)
-	buildDate           string                          // build date (set via ldflags)
+	db                   *database.DB
+	jwt                  *auth.JWTIssuer
+	audit                *audit.Logger
+	masterKey            []byte
+	hub                  *Hub
+	mux                  *http.ServeMux
+	store                storage.Storage
+	platformAdminEmail   string
+	disableRegistration  bool
+	publicURL            string
+	frontendURL          string
+	Cache                *cache.Cache
+	maxAttachmentBytes   int64
+	outputLimitsMaxBytes int64 // platform ceiling for org output byte caps (AETHER_OUTPUT_LIMITS_MAX_BYTES)
+	agentEngine          *agent.Engine
+	upgrader             websocket.Upgrader
+	toolAllowedDomains   []string
+	sessionCancels       sync.Map                        // sessionID -> context.CancelFunc
+	subdomainMW          func(http.Handler) http.Handler // host → org resolution
+	oidcRewriteFrom      string                          // host rewrite for OIDC discovery inside Docker (e.g. "localhost:5557")
+	oidcRewriteTo        string                          // target host rewrite (e.g. "host.docker.internal:5557")
+	frontendHandler      http.Handler                    // embedded web frontend SPA (nil in tests)
+	version              string                          // build version (set via ldflags)
+	commit               string                          // git commit (set via ldflags)
+	buildDate            string                          // build date (set via ldflags)
 }
 
 // NewServer creates a new Aether API server with the provided dependencies.
@@ -120,6 +122,34 @@ func (s *Server) SetAgentStore(st storage.Storage) {
 // SetMaxAttachmentBytes sets the maximum allowed attachment upload size in bytes.
 func (s *Server) SetMaxAttachmentBytes(n int64) {
 	s.maxAttachmentBytes = n
+}
+
+// SetOutputLimitsMaxBytes sets the platform ceiling applied to every org's
+// configured output byte caps. It is also forwarded to the agent engine so
+// agent-driven cell runs enforce the same bound.
+func (s *Server) SetOutputLimitsMaxBytes(n int64) {
+	s.outputLimitsMaxBytes = n
+	s.agentEngine.SetOutputLimitsMaxBytes(n)
+}
+
+// orgCellOutputMaxBytes returns the effective per-cell output byte cap for the
+// org (0 = unlimited), clamped by the platform ceiling.
+func (s *Server) orgCellOutputMaxBytes(ctx context.Context, orgID string) (int64, error) {
+	var orgValue int64
+	if err := s.db.Pool.QueryRow(ctx, `SELECT cell_output_max_bytes FROM orgs WHERE id = $1`, orgID).Scan(&orgValue); err != nil {
+		return 0, err
+	}
+	return config.ResolveOutputLimit(orgValue, s.outputLimitsMaxBytes), nil
+}
+
+// orgInlineOutputsMaxBytes returns the effective notebook-inline output byte
+// budget for the org (0 = unlimited), clamped by the platform ceiling.
+func (s *Server) orgInlineOutputsMaxBytes(ctx context.Context, orgID string) (int64, error) {
+	var orgValue int64
+	if err := s.db.Pool.QueryRow(ctx, `SELECT notebook_inline_outputs_max_bytes FROM orgs WHERE id = $1`, orgID).Scan(&orgValue); err != nil {
+		return 0, err
+	}
+	return config.ResolveOutputLimit(orgValue, s.outputLimitsMaxBytes), nil
 }
 
 // SetToolAllowedDomains sets which domains bypass the private IP block for webhook tools.
@@ -330,6 +360,13 @@ func (s *Server) routes() {
 	// Org settings (JSONB settings column)
 	s.mux.Handle("GET /api/v1/org/settings", authMW(RequireRole("admin")(http.HandlerFunc(s.handleGetOrgSettings))))
 	s.mux.Handle("PUT /api/v1/org/settings", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateOrgSettings))))
+
+	// Org output limits
+	s.mux.Handle("GET /api/v1/org/output-limits", authMW(RequireRole("admin")(http.HandlerFunc(s.handleGetOrgOutputLimits))))
+	s.mux.Handle("PUT /api/v1/org/output-limits", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateOrgOutputLimits))))
+
+	// Cell output download
+	s.mux.Handle("GET /api/v1/cells/{id}/outputs/download", authMW(http.HandlerFunc(s.handleCellOutputsDownload)))
 
 	// WebSocket routes
 	s.mux.Handle("GET /api/v1/ws/notebooks/{id}", authMW(http.HandlerFunc(s.handleNotebookWS)))

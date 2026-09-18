@@ -41,6 +41,7 @@ type Config struct {
 	DisableMigrations       bool          // when true, skip embedded migrations on startup (used when pipeline handles migrations)
 	StatsRollupInterval     time.Duration // agent stats rollup cadence (AETHER_AGENT_STATS_ROLLUP_INTERVAL, default 1h, floor 5m)
 	AgentToolTimeoutDefault time.Duration // fallback agent tool execution budget (AETHER_AGENT_TOOL_TIMEOUT_DEFAULT, default 120s, floor 1s)
+	OutputLimitsMaxBytes    int64         // platform ceiling for org-configured output byte caps (AETHER_OUTPUT_LIMITS_MAX_BYTES, default 64MB)
 }
 
 func parseCommaList(s string) []string {
@@ -89,6 +90,13 @@ func load(migrateOnly bool) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	outputLimitsMaxBytes, err := strconv.ParseInt(envOrDefault("AETHER_OUTPUT_LIMITS_MAX_BYTES", "67108864"), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid AETHER_OUTPUT_LIMITS_MAX_BYTES: %w", err)
+	}
+	if outputLimitsMaxBytes < 0 {
+		return nil, fmt.Errorf("AETHER_OUTPUT_LIMITS_MAX_BYTES must be non-negative")
+	}
 	cfg := &Config{
 		Port:                    envOrDefault("AETHER_PORT", "8088"),
 		DatabaseURL:             os.Getenv("AETHER_DATABASE_URL"),
@@ -121,6 +129,7 @@ func load(migrateOnly bool) (*Config, error) {
 		DisableMigrations:       envOrDefault("AETHER_DISABLE_MIGRATIONS", "false") == "true",
 		StatsRollupInterval:     statsRollupInterval,
 		AgentToolTimeoutDefault: agentToolTimeoutDefault,
+		OutputLimitsMaxBytes:    outputLimitsMaxBytes,
 	}
 
 	// If no explicit DatabaseURL, build from individual components.
@@ -208,4 +217,19 @@ func envOrDefault(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+// ResolveOutputLimit returns the effective byte cap for an org-configured value
+// given the platform ceiling. orgValue <= 0 means unlimited (explicit per-org
+// opt-out, passed through unchanged). Otherwise the value is clamped to the
+// platform ceiling so a single org admin cannot tune around the cap that
+// protects shared pods. A platformMax <= 0 means no ceiling is configured.
+func ResolveOutputLimit(orgValue, platformMax int64) int64 {
+	if orgValue <= 0 {
+		return 0
+	}
+	if platformMax > 0 && orgValue > platformMax {
+		return platformMax
+	}
+	return orgValue
 }

@@ -1,11 +1,31 @@
 import { useState, useRef, useCallback, useEffect, useMemo, memo } from 'react'
 import type React from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import type { Output, ResultSet, Column } from '../types'
+import type { Output, ResultSet, Column, OutputStubData } from '../types'
 import { ChartView } from '../charts'
 import type { ChartConfig } from '../charts'
 import { ToggleLeft, Calendar, Clock, Fingerprint, Ban, Binary, Table, BarChart2, Timer, Sigma, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, X, Copy, Check, Download } from 'lucide-react'
-import { api } from '../api/client'
+import { api, getToken } from '../api/client'
+import { getApiUrl } from '../config'
+
+// Streaming download URL for a cell's raw stored outputs. A real navigation is
+// used (not fetch+blob) so the payload is streamed to disk rather than
+// materialized in the JS heap; the token rides the query string because the
+// middleware accepts it for navigations that cannot set an Authorization header.
+function outputsDownloadUrl(cellId: string): string {
+  const base = getApiUrl()
+  const token = getToken()
+  const q = token ? `?token=${encodeURIComponent(token)}` : ''
+  return `${base}/api/v1/cells/${cellId}/outputs/download${q}`
+}
+
+function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '0 B'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`
+  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
 
 // Global state to ensure only one detail panel is open at a time across all cells
 let activeDetailCellId: string | null = null
@@ -73,11 +93,37 @@ function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChang
 
   if (output.type === 'table') {
     const rs = output.data as ResultSet
+    // Read-path stub: the notebook inline budget stubbed this cell's outputs.
+    // No columns/rows were inlined — show the truncation notice and offer the
+    // streaming download instead.
+    if (rs?.truncated && !rs?.columns?.length) {
+      return <TruncatedStub data={rs as unknown as OutputStubData} cellId={cellId} hideExport={hideExport} />
+    }
     if (!rs?.columns?.length) return <p style={styles.empty}>No results returned</p>
     return <TableOutput rs={rs} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} chartConfigOverridden={chartConfigOverridden} onChartConfigReset={onChartConfigReset} hideExport={hideExport} viewMode={viewMode} onViewModeChange={onViewModeChange} footerExtra={footerExtra} />
   }
 
   return null
+}
+
+// TruncatedStub renders the read-path stub for a cell whose outputs were not
+// inlined on notebook GET because the inline budget was exhausted. The full
+// payload remains available via the streaming download endpoint.
+function TruncatedStub({ data, cellId, hideExport }: { data: OutputStubData; cellId?: string; hideExport?: boolean }) {
+  return (
+    <div style={styles.tableSection}>
+      <div style={styles.outputBar}>
+        <span style={styles.rowCount}>
+          Output truncated — {formatBytes(data.bytes ?? 0)} not inlined
+        </span>
+        {!hideExport && cellId && (
+          <a style={styles.exportBtn} href={outputsDownloadUrl(cellId)} title="Download full result" aria-label="Download full result">
+            <Download size={12} /> Download full result
+          </a>
+        )}
+      </div>
+    </div>
+  )
 }
 
 const TYPE_MAP: Record<string, { icon: React.ReactNode; label: string }> = {
@@ -562,15 +608,31 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
       <div style={{ ...styles.outputBar, flexShrink: 0 }}>
         <span style={styles.rowCount}>
           {rs.rows.length} row{rs.rows.length !== 1 ? 's' : ''} · {rs.columns.length} columns
+          {rs.truncated && (
+            <span style={styles.truncatedBadge}>
+              Truncated — {rs.rows_included ?? rs.rows.length} {rs.rows_total != null && rs.rows_total > 0 ? `of ${rs.rows_total} ` : ''}rows / {formatBytes(rs.bytes ?? 0)}
+            </span>
+          )}
         </span>
         {!fixedView && !hideExport && (
           <div style={styles.exportGroup}>
+            {rs.truncated && cellId && (
+              <a style={styles.exportBtn} href={outputsDownloadUrl(cellId)} title="Download full result" aria-label="Download full result">
+                <Download size={12} /> Full result
+              </a>
+            )}
             <button style={styles.exportBtn} onClick={() => exportCSV(rs)} title="Download as CSV" aria-label="Download as CSV">
               <Download size={12} /> CSV
             </button>
-            <button style={styles.exportBtn} onClick={() => exportJSON(rs)} title="Download as JSON" aria-label="Download as JSON">
-              <Download size={12} /> JSON
-            </button>
+            {!rs.truncated && (cellId ? (
+              <a style={styles.exportBtn} href={outputsDownloadUrl(cellId)} title="Download as JSON" aria-label="Download as JSON">
+                <Download size={12} /> JSON
+              </a>
+            ) : (
+              <button style={styles.exportBtn} onClick={() => exportJSON(rs)} title="Download as JSON" aria-label="Download as JSON">
+                <Download size={12} /> JSON
+              </button>
+            ))}
           </div>
         )}
         {!fixedView && !hideExport && (
@@ -811,11 +873,25 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-secondary)',
     cursor: 'pointer',
     fontFamily: 'var(--font-sans)',
+    textDecoration: 'none',
   },
   rowCount: {
     fontSize: 10,
     color: 'var(--text-muted)',
     fontFamily: 'var(--font-mono)',
+  },
+  truncatedBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    marginLeft: 8,
+    padding: '2px 8px',
+    borderRadius: 10,
+    background: 'var(--accent-light, #e0f2fe)',
+    color: 'var(--accent, #0369a1)',
+    fontSize: 10,
+    fontWeight: 600,
+    fontFamily: 'var(--font-sans)',
   },
   viewToggle: {
     display: 'flex',

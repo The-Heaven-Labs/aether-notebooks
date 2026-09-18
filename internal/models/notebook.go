@@ -33,7 +33,7 @@ type Cell struct {
 	Language       string          `json:"language,omitempty"`
 	ConnectorID    string          `json:"connector_id,omitempty"`
 	Source         string          `json:"source"`
-	Outputs        []Output        `json:"outputs"`
+	Outputs        json.RawMessage `json:"outputs"`
 	SourceVisible  bool            `json:"source_visible"`
 	OutputsHidden  bool            `json:"outputs_hidden"`
 	CellCollapsed  bool            `json:"cell_collapsed"`

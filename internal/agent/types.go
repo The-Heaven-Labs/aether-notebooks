@@ -38,6 +38,9 @@ type ToolContext struct {
 	SetCancelFunc    func(cellID string, cancel context.CancelFunc)
 	DeleteCancelFunc func(cellID string)
 	QuestionFunc     func(question string, options any, allowCustom bool) (string, error)
+	// OutputLimitsMaxBytes is the platform ceiling applied to the org's
+	// cell_output_max_bytes cap for agent-driven executions (0 = no ceiling).
+	OutputLimitsMaxBytes int64
 }
 
 type AgentTask struct {

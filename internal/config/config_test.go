@@ -137,3 +137,58 @@ func TestAgentToolTimeoutInvalid(t *testing.T) {
 		t.Error("expected error for invalid duration, got nil")
 	}
 }
+
+func TestOutputLimitsMaxBytesDefault(t *testing.T) {
+	os.Unsetenv("AETHER_OUTPUT_LIMITS_MAX_BYTES")
+	cfg, err := LoadMigrateOnly()
+	if err != nil {
+		t.Fatalf("LoadMigrateOnly() failed: %v", err)
+	}
+	if cfg.OutputLimitsMaxBytes != 64*1024*1024 {
+		t.Errorf("expected default 64MB ceiling, got %d", cfg.OutputLimitsMaxBytes)
+	}
+}
+
+func TestOutputLimitsMaxBytesCustom(t *testing.T) {
+	os.Setenv("AETHER_OUTPUT_LIMITS_MAX_BYTES", "1048576")
+	defer os.Unsetenv("AETHER_OUTPUT_LIMITS_MAX_BYTES")
+	cfg, err := LoadMigrateOnly()
+	if err != nil {
+		t.Fatalf("LoadMigrateOnly() failed: %v", err)
+	}
+	if cfg.OutputLimitsMaxBytes != 1048576 {
+		t.Errorf("expected 1MB ceiling, got %d", cfg.OutputLimitsMaxBytes)
+	}
+}
+
+func TestOutputLimitsMaxBytesInvalid(t *testing.T) {
+	os.Setenv("AETHER_OUTPUT_LIMITS_MAX_BYTES", "not-a-number")
+	defer os.Unsetenv("AETHER_OUTPUT_LIMITS_MAX_BYTES")
+	if _, err := LoadMigrateOnly(); err == nil {
+		t.Error("expected error for invalid ceiling, got nil")
+	}
+}
+
+func TestResolveOutputLimit(t *testing.T) {
+	tests := []struct {
+		name        string
+		orgValue    int64
+		platformMax int64
+		want        int64
+	}{
+		{"org default clamped by platform ceiling", 10 * 1024 * 1024, 64 * 1024 * 1024, 10 * 1024 * 1024},
+		{"org above ceiling clamped down", 128 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024},
+		{"org zero is unlimited", 0, 64 * 1024 * 1024, 0},
+		{"org negative is unlimited", -1, 64 * 1024 * 1024, 0},
+		{"no ceiling configured passes org value", 10 * 1024 * 1024, 0, 10 * 1024 * 1024},
+		{"no ceiling and unlimited org stays unlimited", 0, 0, 0},
+		{"org equal to ceiling unchanged", 64 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ResolveOutputLimit(tt.orgValue, tt.platformMax); got != tt.want {
+				t.Errorf("ResolveOutputLimit(%d, %d) = %d, want %d", tt.orgValue, tt.platformMax, got, tt.want)
+			}
+		})
+	}
+}

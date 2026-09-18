@@ -37,7 +37,7 @@ func TestClickHouseDecimalScan(t *testing.T) {
 	}
 	defer exec.Close()
 
-	result, err := exec.Execute(context.Background(), "SELECT * FROM events LIMIT 5", nil, 10)
+	result, err := exec.Execute(context.Background(), "SELECT * FROM events LIMIT 5", nil, executor.OutputLimits{MaxRows: 10})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestClickHouseIntegerWidths(t *testing.T) {
 	result, err := exec.Execute(context.Background(),
 		`SELECT toUInt8(1) AS u8, toUInt16(2) AS u16, toUInt32(3) AS u32, toUInt64(4) AS u64,
 		        toInt8(-1) AS i8, toInt16(-2) AS i16, toInt32(-3) AS i32, toInt64(-4) AS i64`,
-		nil, 1)
+		nil, executor.OutputLimits{MaxRows: 1})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}

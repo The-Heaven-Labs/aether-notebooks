@@ -904,6 +904,14 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 	}
 	defer exec.Close()
 
+	// Resolve the org's per-cell output byte cap (clamped by the platform
+	// ceiling) before signalling the running state so a lookup failure does not
+	// leave the cell stuck as running.
+	maxBytes, err := effectiveCellOutputMaxBytes(ctx.Context, db, ctx.OrgID, ctx.OutputLimitsMaxBytes)
+	if err != nil {
+		return nil, err
+	}
+
 	// Signal start of execution to all notebook viewers: running badge plus
 	// scroll-at-start for agent runs (user_email). Every path below emits
 	// cell_output, which clears the badge. The skip path above returns before
@@ -958,7 +966,7 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 		db.Exec(persistCtx, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, durationMs, cellID)
 	}
 
-	result, err := exec.Execute(execCtx, query, nil, cell.Limit)
+	result, err := exec.Execute(execCtx, query, nil, executor.OutputLimits{MaxBytes: maxBytes, MaxRows: cell.Limit})
 	wasCancelled := execCtx.Err() != nil
 	clearRunning()
 	// Some drivers return empty results instead of context.Canceled when the

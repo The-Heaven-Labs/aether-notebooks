@@ -42,7 +42,7 @@ func TestOpenSearchExecutor_Execute(t *testing.T) {
 	})
 
 	exec := newTestOpenSearchExecutor(handler)
-	rs, err := exec.Execute(context.Background(), "SELECT * FROM users", nil, 1000)
+	rs, err := exec.Execute(context.Background(), "SELECT * FROM users", nil, OutputLimits{MaxRows: 1000})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestOpenSearchExecutor_Execute_Truncation(t *testing.T) {
 	})
 
 	exec := newTestOpenSearchExecutor(handler)
-	rs, err := exec.Execute(context.Background(), "SELECT id FROM users", nil, 1000)
+	rs, err := exec.Execute(context.Background(), "SELECT id FROM users", nil, OutputLimits{MaxRows: 1000})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestOpenSearchExecutor_Execute_MaxRows(t *testing.T) {
 	})
 
 	exec := newTestOpenSearchExecutor(handler)
-	rs, err := exec.Execute(context.Background(), "SELECT id FROM users", nil, 3)
+	rs, err := exec.Execute(context.Background(), "SELECT id FROM users", nil, OutputLimits{MaxRows: 3})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

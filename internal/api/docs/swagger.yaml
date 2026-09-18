@@ -1999,6 +1999,36 @@ paths:
       summary: Probe SSO providers
       tags:
       - sso
+  /cells/{id}/outputs/download:
+    get:
+      description: |-
+        Stream a cell's raw stored outputs as JSON (no decode). The full
+        payload remains available here even when the notebook GET inline
+        budget stubbed it.
+      parameters:
+      - description: Cell ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Download cell outputs
+      tags:
+      - cells
   /connectors:
     get:
       description: List all connectors for the current organization
@@ -4694,6 +4724,55 @@ paths:
       summary: Update org invitation settings
       tags:
       - orgs
+  /org/output-limits:
+    get:
+      description: |-
+        Get the org's cell output byte caps. The stored values are
+        returned alongside the resolved (platform-clamped) values used at
+        runtime, plus the platform ceiling itself.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              format: int64
+              type: integer
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get org output limits
+      tags:
+      - org
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Set the org's per-cell output byte cap and/or notebook inline
+        output budget. Values must be non-negative; 0 means unlimited.
+      parameters:
+      - description: Output limits
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              format: int64
+              type: integer
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update org output limits
+      tags:
+      - org
   /org/registration:
     get:
       description: Get the registration settings for the organization

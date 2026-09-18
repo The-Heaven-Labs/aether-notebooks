@@ -9,10 +9,22 @@ import (
 	"unicode"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-heaven-labs/aether/internal/config"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
+
+// effectiveCellOutputMaxBytes returns the org-configured per-cell output byte
+// cap, clamped by the platform ceiling. It is resolved per call (no caching)
+// from the org row the handlers already load for the connector.
+func effectiveCellOutputMaxBytes(ctx context.Context, pool *pgxpool.Pool, orgID string, platformMax int64) (int64, error) {
+	var orgValue int64
+	if err := pool.QueryRow(ctx, `SELECT cell_output_max_bytes FROM orgs WHERE id = $1`, orgID).Scan(&orgValue); err != nil {
+		return 0, fmt.Errorf("load org output limit: %w", err)
+	}
+	return config.ResolveOutputLimit(orgValue, platformMax), nil
+}
 
 func makeSQLQueryToolDef(t *models.Tool, pool *pgxpool.Pool) (*ToolDef, error) {
 	connectorID, _ := t.Config["connector_id"].(string)
@@ -58,7 +70,7 @@ func makeSQLQueryToolDef(t *models.Tool, pool *pgxpool.Pool) (*ToolDef, error) {
 				}
 			}
 
-			return executeAgentSQL(ctx.Context, pool, connectorID, query, strParams, ctx.MasterKey, ctx.OrgID, defaultSQLRowLimit)
+			return executeAgentSQL(ctx.Context, pool, connectorID, query, strParams, ctx.MasterKey, ctx.OrgID, defaultSQLRowLimit, ctx.OutputLimitsMaxBytes)
 		},
 	}, nil
 }
@@ -82,7 +94,7 @@ func clampSQLRowLimit(limit int) int {
 	return limit
 }
 
-func executeAgentSQL(ctx context.Context, pool *pgxpool.Pool, connectorID, query string, params map[string]string, masterKey []byte, orgID string, limit int) (any, error) {
+func executeAgentSQL(ctx context.Context, pool *pgxpool.Pool, connectorID, query string, params map[string]string, masterKey []byte, orgID string, limit int, platformMaxBytes int64) (any, error) {
 	var connType string
 	var configEnc []byte
 	err := pool.QueryRow(ctx,
@@ -90,6 +102,11 @@ func executeAgentSQL(ctx context.Context, pool *pgxpool.Pool, connectorID, query
 		connectorID, orgID).Scan(&connType, &configEnc)
 	if err != nil {
 		return nil, fmt.Errorf("connector not found: %w", err)
+	}
+
+	maxBytes, err := effectiveCellOutputMaxBytes(ctx, pool, orgID, platformMaxBytes)
+	if err != nil {
+		return nil, err
 	}
 
 	plain, err := crypto.Decrypt(configEnc, masterKey)
@@ -108,7 +125,7 @@ func executeAgentSQL(ctx context.Context, pool *pgxpool.Pool, connectorID, query
 	}
 	defer exec.Close()
 
-	result, err := exec.Execute(ctx, query, params, clampSQLRowLimit(limit))
+	result, err := exec.Execute(ctx, query, params, executor.OutputLimits{MaxBytes: maxBytes, MaxRows: clampSQLRowLimit(limit)})
 	if err != nil {
 		return nil, fmt.Errorf("execute: %w", err)
 	}
@@ -141,7 +158,7 @@ func makeExecuteSQLHandler(pool *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("only read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are allowed")
 		}
 
-		result, err := executeAgentSQL(ctx.Context, pool, req.ConnectorID, req.Query, nil, ctx.MasterKey, ctx.OrgID, req.Limit)
+		result, err := executeAgentSQL(ctx.Context, pool, req.ConnectorID, req.Query, nil, ctx.MasterKey, ctx.OrgID, req.Limit, ctx.OutputLimitsMaxBytes)
 		if err != nil {
 			return nil, err
 		}

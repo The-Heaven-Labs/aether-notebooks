@@ -234,7 +234,7 @@ func (s *Server) handleRestoreCellVersion(w http.ResponseWriter, r *http.Request
 	if connID != nil {
 		cell.ConnectorID = *connID
 	}
-	json.Unmarshal(outputs, &cell.Outputs)
+	cell.Outputs = outputs
 
 	// Version the restored source (best-effort — cell is already updated)
 	_ = s.upsertCellVersion(ctx, cellID, source, claims.UserID)

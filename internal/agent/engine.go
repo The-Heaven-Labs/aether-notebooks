@@ -20,30 +20,31 @@ import (
 )
 
 type Engine struct {
-	rdb                *redis.Client // shared Redis client for cross-pod state
-	registry           *ToolRegistry
-	session            *SessionStore
-	llm                *LLMClient
-	pool               *pgxpool.Pool
-	mu                 sync.Mutex
-	BroadcastFunc      func(notebookID string, msg any)
-	SetRunningFunc     func(cellID, notebookID string, startedAt time.Time)
-	UnsetRunningFunc   func(cellID string)
-	SetCancelFunc      func(cellID string, cancel context.CancelFunc)
-	DeleteCancelFunc   func(cellID string)
-	toolAllowedDomains []string
-	toolTimeoutDefault time.Duration
-	tokenCounter       *TokenCounter
-	store              storage.Storage
-	reasoningEffort    sync.Map // sessionID -> string
-	toolConfirmPending sync.Map // sessionID -> chan ToolConfirmResult
-	questionPending    sync.Map // sessionID -> chan string
-	pageContextMap     sync.Map // sessionID -> map[string]string
-	sessionModelConfig sync.Map // sessionID -> modelConfigID string
-	steeringChans      sync.Map // sessionID -> chan string (follow-ups sent mid-turn)
-	frontendURL        string
-	publicURL          string
-	streams            *StreamManager
+	rdb                  *redis.Client // shared Redis client for cross-pod state
+	registry             *ToolRegistry
+	session              *SessionStore
+	llm                  *LLMClient
+	pool                 *pgxpool.Pool
+	mu                   sync.Mutex
+	BroadcastFunc        func(notebookID string, msg any)
+	SetRunningFunc       func(cellID, notebookID string, startedAt time.Time)
+	UnsetRunningFunc     func(cellID string)
+	SetCancelFunc        func(cellID string, cancel context.CancelFunc)
+	DeleteCancelFunc     func(cellID string)
+	toolAllowedDomains   []string
+	toolTimeoutDefault   time.Duration
+	outputLimitsMaxBytes int64 // platform ceiling for org output byte caps
+	tokenCounter         *TokenCounter
+	store                storage.Storage
+	reasoningEffort      sync.Map // sessionID -> string
+	toolConfirmPending   sync.Map // sessionID -> chan ToolConfirmResult
+	questionPending      sync.Map // sessionID -> chan string
+	pageContextMap       sync.Map // sessionID -> map[string]string
+	sessionModelConfig   sync.Map // sessionID -> modelConfigID string
+	steeringChans        sync.Map // sessionID -> chan string (follow-ups sent mid-turn)
+	frontendURL          string
+	publicURL            string
+	streams              *StreamManager
 }
 
 type ToolConfirmResult struct {
@@ -1196,10 +1197,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				OnEvent:       onEvent,
 				BroadcastFunc: e.BroadcastFunc,
 				// Running-state/cancel hooks propagate like BroadcastFunc.
-				SetRunningFunc:   e.SetRunningFunc,
-				UnsetRunningFunc: e.UnsetRunningFunc,
-				SetCancelFunc:    e.SetCancelFunc,
-				DeleteCancelFunc: e.DeleteCancelFunc,
+				SetRunningFunc:       e.SetRunningFunc,
+				UnsetRunningFunc:     e.UnsetRunningFunc,
+				SetCancelFunc:        e.SetCancelFunc,
+				DeleteCancelFunc:     e.DeleteCancelFunc,
+				OutputLimitsMaxBytes: e.outputLimitsMaxBytes,
 				QuestionFunc: func(question string, options any, allowCustom bool) (string, error) {
 					ch := make(chan string, 1)
 					e.SetQuestionPending(sessionID, ch)
@@ -1553,6 +1555,12 @@ func (e *Engine) SetToolTimeoutDefault(d time.Duration) {
 		d = DefaultToolTimeout
 	}
 	e.toolTimeoutDefault = d
+}
+
+// SetOutputLimitsMaxBytes sets the platform ceiling applied to every org's
+// configured cell-output byte cap for agent-driven runs.
+func (e *Engine) SetOutputLimitsMaxBytes(n int64) {
+	e.outputLimitsMaxBytes = n
 }
 
 func (e *Engine) PublishSessionEvent(sessionID string, msg any) {

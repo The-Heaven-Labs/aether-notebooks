@@ -80,16 +80,16 @@ func NewOpenSearchExecutor(cfg opensearchConfig) *OpenSearchExecutor {
 	}
 }
 
-func (e *OpenSearchExecutor) Execute(ctx context.Context, query string, params map[string]string, maxRows int) (*ResultSet, error) {
-	return e.execute(ctx, query, params, maxRows, true)
+func (e *OpenSearchExecutor) Execute(ctx context.Context, query string, params map[string]string, limits OutputLimits) (*ResultSet, error) {
+	return e.execute(ctx, query, params, limits, true)
 }
 
 // executeInternal runs a query without column filtering (for Schema/Databases).
-func (e *OpenSearchExecutor) executeInternal(ctx context.Context, query string, params map[string]string, maxRows int) (*ResultSet, error) {
-	return e.execute(ctx, query, params, maxRows, false)
+func (e *OpenSearchExecutor) executeInternal(ctx context.Context, query string, params map[string]string, limits OutputLimits) (*ResultSet, error) {
+	return e.execute(ctx, query, params, limits, false)
 }
 
-func (e *OpenSearchExecutor) execute(ctx context.Context, query string, params map[string]string, maxRows int, applyFilter bool) (*ResultSet, error) {
+func (e *OpenSearchExecutor) execute(ctx context.Context, query string, params map[string]string, limits OutputLimits, applyFilter bool) (*ResultSet, error) {
 	resolved := ResolveParams(query, params)
 
 	body, err := json.Marshal(sqlRequest{Query: resolved})
@@ -138,19 +138,53 @@ func (e *OpenSearchExecutor) execute(ctx context.Context, query string, params m
 		columns, rows = filterShowTables(columns, rows)
 	}
 
-	note := ""
-	if maxRows > 0 && len(rows) > maxRows {
-		rows = rows[:maxRows]
+	truncated := false
+	rowsIncluded := len(rows)
+	rowsTotal := int64(-1)
+	bytes := int64(0)
+
+	// Apply the byte cap at row boundaries (rows arrive whole from the plugin).
+	if limits.MaxBytes > 0 {
+		var total int64
+		keep := len(rows)
+		for i, row := range rows {
+			sz := estimateRowSize(row)
+			if total+sz > limits.MaxBytes {
+				keep = i
+				truncated = true
+				break
+			}
+			total += sz
+		}
+		rows = rows[:keep]
+		rowsIncluded = len(rows)
+		bytes = total
 	}
-	if sqlResp.Total > len(rows) {
-		note = fmt.Sprintf("Showing %d of %d total results", len(rows), sqlResp.Total)
+	// Apply the row cap (MaxRows <= 0 = unlimited).
+	if limits.MaxRows > 0 && len(rows) > limits.MaxRows {
+		rows = rows[:limits.MaxRows]
+		rowsIncluded = len(rows)
+	}
+	if sqlResp.Total > 0 {
+		rowsTotal = int64(sqlResp.Total)
+	}
+	note := ""
+	if sqlResp.Total > rowsIncluded {
+		note = fmt.Sprintf("Showing %d of %d total results", rowsIncluded, sqlResp.Total)
 	}
 
-	return &ResultSet{
+	result := &ResultSet{
 		Columns: columns,
 		Rows:    rows,
 		Note:    note,
-	}, nil
+	}
+	if truncated {
+		result.Truncated = true
+		result.RowsIncluded = rowsIncluded
+		result.RowsTotal = rowsTotal
+		result.Bytes = bytes
+	}
+	return result, nil
 }
 
 func (e *OpenSearchExecutor) TestConnection(ctx context.Context) error {
@@ -173,7 +207,7 @@ func (e *OpenSearchExecutor) TestConnection(ctx context.Context) error {
 
 func (e *OpenSearchExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
 	// Get all indices - pattern must be quoted for OpenSearch SQL plugin
-	rs, err := e.executeInternal(ctx, "SHOW TABLES LIKE '%'", nil, 10000)
+	rs, err := e.executeInternal(ctx, "SHOW TABLES LIKE '%'", nil, OutputLimits{MaxRows: 10000})
 	if err != nil {
 		return nil, fmt.Errorf("list tables: %w", err)
 	}
@@ -195,7 +229,7 @@ func (e *OpenSearchExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
 		}
 
 		// Describe each index - use DESCRIBE TABLES LIKE syntax (required by OpenSearch 2.x SQL plugin)
-		descRS, err := e.Execute(ctx, fmt.Sprintf("DESCRIBE TABLES LIKE '%s'", indexName), nil, 10000)
+		descRS, err := e.Execute(ctx, fmt.Sprintf("DESCRIBE TABLES LIKE '%s'", indexName), nil, OutputLimits{MaxRows: 10000})
 		if err != nil {
 			continue // skip indices that fail to describe
 		}
@@ -251,7 +285,7 @@ func (e *OpenSearchExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
 }
 
 func (e *OpenSearchExecutor) Databases(ctx context.Context) ([]string, error) {
-	rs, err := e.executeInternal(ctx, "SHOW TABLES LIKE '%'", nil, 10000)
+	rs, err := e.executeInternal(ctx, "SHOW TABLES LIKE '%'", nil, OutputLimits{MaxRows: 10000})
 	if err != nil {
 		return nil, fmt.Errorf("list databases: %w", err)
 	}

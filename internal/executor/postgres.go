@@ -58,7 +58,7 @@ func NewPostgresExecutor(cfg models.ConnectorConfig) (*PostgresExecutor, error) 
 	return &PostgresExecutor{pool: pool}, nil
 }
 
-func (p *PostgresExecutor) Execute(ctx context.Context, query string, params map[string]string, maxRows int) (*ResultSet, error) {
+func (p *PostgresExecutor) Execute(ctx context.Context, query string, params map[string]string, limits OutputLimits) (*ResultSet, error) {
 	resolved := ResolveParams(query, params)
 
 	// Tag queries with the Aether user email for tracing in the database query_log
@@ -78,9 +78,8 @@ func (p *PostgresExecutor) Execute(ctx context.Context, query string, params map
 		columns[i] = Column{Name: string(f.Name), Type: pgTypeToString(f.DataTypeOID)}
 	}
 
-	var resultRows [][]interface{}
-	count := 0
-	for rows.Next() && count < maxRows {
+	acc := newRowAccumulator(limits)
+	for rows.Next() && !acc.full() {
 		values, err := rows.Values()
 		if err != nil {
 			return nil, fmt.Errorf("scan row: %w", err)
@@ -88,19 +87,20 @@ func (p *PostgresExecutor) Execute(ctx context.Context, query string, params map
 		for i, v := range values {
 			values[i] = normalizeValue(v)
 		}
-		resultRows = append(resultRows, values)
-		count++
+		if !acc.add(values) {
+			break
+		}
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("rows: %w", err)
 	}
 
-	if resultRows == nil {
-		resultRows = [][]interface{}{}
+	if acc.rows == nil {
+		acc.rows = [][]interface{}{}
 	}
 
-	return &ResultSet{Columns: columns, Rows: resultRows}, nil
+	return acc.result(columns), nil
 }
 
 func (p *PostgresExecutor) TestConnection(ctx context.Context) error {

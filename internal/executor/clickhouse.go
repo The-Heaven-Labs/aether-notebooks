@@ -345,7 +345,7 @@ func chExtractValue(dest interface{}) interface{} {
 	}
 }
 
-func (c *ClickHouseExecutor) Execute(ctx context.Context, query string, params map[string]string, maxRows int) (*ResultSet, error) {
+func (c *ClickHouseExecutor) Execute(ctx context.Context, query string, params map[string]string, limits OutputLimits) (*ResultSet, error) {
 	resolved := ResolveParams(query, params)
 
 	// Tag queries with the Aether user email for tracing in the database query_log
@@ -377,9 +377,8 @@ func (c *ClickHouseExecutor) Execute(ctx context.Context, query string, params m
 		columns[i] = Column{Name: ct.Name(), Type: ct.DatabaseTypeName()}
 	}
 
-	var resultRows [][]interface{}
-	count := 0
-	for rows.Next() && count < maxRows {
+	acc := newRowAccumulator(limits)
+	for rows.Next() && !acc.full() {
 		dests := make([]interface{}, len(columns))
 		for i, ct := range columnTypes {
 			dests[i] = chAllocDest(ct.DatabaseTypeName())
@@ -391,19 +390,20 @@ func (c *ClickHouseExecutor) Execute(ctx context.Context, query string, params m
 		for i, d := range dests {
 			row[i] = chExtractValue(d)
 		}
-		resultRows = append(resultRows, row)
-		count++
+		if !acc.add(row) {
+			break
+		}
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("rows: %w", err)
 	}
 
-	if resultRows == nil {
-		resultRows = [][]interface{}{}
+	if acc.rows == nil {
+		acc.rows = [][]interface{}{}
 	}
 
-	return &ResultSet{Columns: columns, Rows: resultRows}, nil
+	return acc.result(columns), nil
 }
 
 func (c *ClickHouseExecutor) TestConnection(ctx context.Context) error {
