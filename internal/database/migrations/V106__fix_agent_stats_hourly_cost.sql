@@ -1,0 +1,15 @@
+-- One-time repair of historical agent_stats_hourly.est_cost_usd values.
+--
+-- Every row written before the per-1M cost fix multiplied raw token counts by
+-- model-config prices configured as "$ per 1M tokens" (the unit the admin UI
+-- and the session token panel use), inflating every cost by 1,000,000x.
+-- Divide once — the versioned migration runner applies this exactly once.
+--
+-- Ordering note: the binary applies migrations before it serves traffic or
+-- runs the hourly rollup, and the rollup recomputes the last ~25h with the
+-- corrected formula, so only older buckets rely on this repair.
+--
+-- Caveat: assumes historical prices were entered in the documented per-1M
+-- unit. Configs written through the API with per-token prices are understated
+-- after the divide; re-entering prices in the documented unit fixes them.
+UPDATE agent_stats_hourly SET est_cost_usd = est_cost_usd / 1000000.0;

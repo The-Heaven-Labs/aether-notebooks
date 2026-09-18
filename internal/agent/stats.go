@@ -31,7 +31,9 @@ type RollupHourlyStatsResult struct {
 // sessions) joined through agent_sessions, plus subagent_tasks (subagent
 // tokens, attributed to the triggering user). Cost uses the agent's CURRENT
 // model-config prices at rollup time — per-message price snapshots are out of
-// scope. agent_stats_daily is left untouched for history.
+// scope. Prices are dollars per 1M tokens (the unit the model-config UI and
+// the session token panel use), so token counts are divided by 1e6.
+// agent_stats_daily is left untouched for history.
 func (sa *StatsAggregator) RollupHourlyStats(ctx context.Context, since time.Time) (*RollupHourlyStatsResult, error) {
 	tag, err := sa.pool.Exec(ctx, `
 		WITH msg AS (
@@ -76,7 +78,7 @@ func (sa *StatsAggregator) RollupHourlyStats(ctx context.Context, since time.Tim
 			COALESCE(m.sessions, 0), COALESCE(m.messages, 0),
 			COALESCE(m.tin, 0), COALESCE(m.tout, 0), COALESCE(m.tdirect, 0),
 			COALESCE(s.tsub, 0), COALESCE(m.calls, 0), COALESCE(m.dur, 0),
-			COALESCE(m.tin, 0) * p.pin + COALESCE(m.tout, 0) * p.pout
+			(COALESCE(m.tin, 0) * p.pin + COALESCE(m.tout, 0) * p.pout) / 1000000.0
 		FROM (
 			SELECT bucket, agent_id, user_id FROM msg
 			UNION

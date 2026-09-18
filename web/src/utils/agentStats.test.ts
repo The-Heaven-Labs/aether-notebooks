@@ -113,4 +113,13 @@ describe('formatters', () => {
     expect(formatTokens(1500)).toBe('1.5k')
     expect(formatTokens(999)).toBe('999')
   })
+
+  it('tiers cost formatting by magnitude', () => {
+    expect(formatCost(0)).toBe('$0.0000')
+    expect(formatCost(0.45)).toBe('$0.4500')
+    expect(formatCost(12.3456)).toBe('$12.35')
+    expect(formatCost(1234.567)).toBe('$1,234.57')
+    expect(formatCost(12345.6789)).toBe('$12.3k')
+    expect(formatCost(1030624)).toBe('$1.03M')
+  })
 })
