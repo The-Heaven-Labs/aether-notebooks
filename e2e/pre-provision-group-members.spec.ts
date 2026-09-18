@@ -100,4 +100,59 @@ test.describe('Pre-provisioned group members', () => {
     await expect(page.getByText(newEmail)).toBeVisible({ timeout: 15_000 })
     await expect(page.getByText('Pending — awaiting first login')).toHaveCount(0)
   })
+
+  test('admin stages, bulk-adds, and removes pending members through the UI', async ({ page, request }) => {
+    test.setTimeout(90_000)
+    const suffix = Date.now().toString()
+    await registerAndOnboard(page, suffix)
+    const token = await adminToken(page)
+    const headers = { Authorization: `Bearer ${token}` }
+    const adminEmail = `test-${suffix}@example.com`
+
+    const groupName = `Pending UI ${suffix}`
+    const groupResp = await request.post('/api/v1/groups', { headers, data: { name: groupName } })
+    expect(groupResp.ok()).toBeTruthy()
+
+    await page.goto('/groups')
+    await page.getByText(groupName).click()
+
+    // 1. Single pending add via the member picker.
+    const singleEmail = `single-${suffix}@example.com`
+    await page.getByText('Add member…').click()
+    await page.getByPlaceholder('Search…').fill(singleEmail)
+    await page.getByText(`Add ${singleEmail} as pending member`).click()
+    await expect(page.getByText(singleEmail)).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('Pending — awaiting first login')).toBeVisible()
+    await expect(page.getByText(/1 pending/).first()).toBeVisible()
+
+    // 2. Bulk paste: two new emails and one invalid entry.
+    const bulkA = `bulk-a-${suffix}@example.com`
+    const bulkB = `bulk-b-${suffix}@example.com`
+    await page.getByText('Paste emails').click()
+    await page.getByLabel('Emails to pre-provision').fill(`${bulkA}, ${bulkB}\nnot-an-email`)
+    await page.getByText('Add emails').click()
+    await expect(page.getByText('2 added, 1 skipped: invalid')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(bulkA)).toBeVisible()
+    await expect(page.getByText(bulkB)).toBeVisible()
+
+    // 3. An existing org member is added directly, then reported as a skip.
+    await page.getByText('Paste emails').click()
+    await page.getByLabel('Emails to pre-provision').fill(adminEmail)
+    await page.getByText('Add emails').click()
+    await expect(page.getByText('1 added')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(adminEmail)).toBeVisible()
+
+    await page.getByText('Paste emails').click()
+    await page.getByLabel('Emails to pre-provision').fill(adminEmail)
+    await page.getByText('Add emails').click()
+    await expect(page.getByText('0 added, 1 skipped: already members')).toBeVisible({ timeout: 15_000 })
+
+    // 4. Remove the first pending row (real DELETE with a URL-encoded email).
+    //    Pending rows are listed by email, so bulk-a is first.
+    await page.getByTitle('Remove pending member').first().click()
+    await page.getByRole('button', { name: 'Remove', exact: true }).click()
+    await expect(page.getByText(bulkA)).toHaveCount(0)
+    await expect(page.getByText(bulkB)).toBeVisible()
+    await expect(page.getByText(singleEmail)).toBeVisible()
+  })
 })
