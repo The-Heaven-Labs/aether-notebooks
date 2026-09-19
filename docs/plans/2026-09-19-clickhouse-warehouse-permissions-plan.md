@@ -1844,6 +1844,9 @@ PUT    /api/v1/connectors/{id}/warehouse        {"warehouse_id": "..."|null}
 Use existing `writeJSON`/`writeError` helpers and `@Router` swag annotations.
 Validation: connector and warehouse same org; provisioner belongs to the
 warehouse; `provisioner_connector_id` required before first sync.
+Connector soft-delete (`internal/api/connector_handlers.go:485`) must also
+`DELETE FROM warehouse_service_preferences WHERE connector_id=$1` — connectors
+are soft-deleted, so the FK cascade never fires.
 
 **Step 4: Run test to verify it passes**
 
@@ -1906,6 +1909,9 @@ Rules:
 - Table/database names validated with the same whitelist used by
   `chaccess.QuoteIdent`; reject invalid names with 400.
 - Effective access returns the union set and the CH identity names.
+- `PUT /warehouses/{id}/preference` validates the connector belongs to that
+  warehouse (`connectors.warehouse_id = :id AND connectors.deleted_at IS NULL`);
+  reject cross-warehouse or deleted connectors with 400 (negative test).
 
 **Step 4: Run test to verify it passes**
 
