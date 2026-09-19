@@ -178,8 +178,10 @@ func (e *panicError) Error() string {
 
 // Close rejects new Enqueue calls, cancels retry backoff, and waits for
 // queued and active work to finish. Work already enqueued when Close is
-// called (including a rerun requested before Close) still runs to completion:
-// queued work is drained, not cancelled.
+// called (including a rerun requested before Close) still gets its first
+// attempt, but the service context is cancelled, so retries stop and a
+// context-aware Reconcile may abort before applying changes; restart
+// catch-up (Task 11 startup enqueue) covers that.
 func (s *SyncService) Close() {
 	s.mu.Lock()
 	s.closed = true
