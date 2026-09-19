@@ -667,6 +667,46 @@ func TestMigration110WarehouseGrantsIntegrity(t *testing.T) {
 	expectSQLState("23514", "everyone", "not-everyone")
 }
 
+func TestMigration111WarehouseMasterFingerprint(t *testing.T) {
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+	}
+
+	db, err := database.Connect(context.Background(), dsn, "")
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	var dataType, nullable string
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT data_type, is_nullable
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'warehouses' AND column_name = 'applied_master_fp'`).
+		Scan(&dataType, &nullable); err != nil {
+		t.Fatalf("warehouses.applied_master_fp missing: %v", err)
+	}
+	if dataType != "text" || nullable != "YES" {
+		t.Fatalf("warehouses.applied_master_fp = (%s, nullable=%s), want (text, YES)", dataType, nullable)
+	}
+
+	var applied int
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM schema_migrations WHERE version='111_warehouse_master_fingerprint'`).Scan(&applied); err != nil {
+		t.Fatalf("schema_migrations query: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("V111 not recorded (count=%d)", applied)
+	}
+}
+
 // TestNoRowLevelSecurityWithoutPolicies is a regression guard for the
 // V103 migration: RLS was enabled on six tables in V001 but no policies were
 // ever created, making every non-owner role default-deny. The migration drops
