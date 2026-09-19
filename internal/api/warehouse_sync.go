@@ -48,12 +48,20 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 			fmt.Errorf("warehouse %s has no provisioner connector", warehouseID))
 	}
 
+	// The provisioner must belong to this warehouse: a connector linked to a
+	// different warehouse (or to no warehouse at all) would adopt another
+	// warehouse's credential namespace.
+	// NOTE: the "provisioner must be read-write" requirement is not
+	// enforceable at load time — connectors carry no service-type/RW metadata
+	// yet (deferred with that work). A read-only credential fails at DDL
+	// execution time instead.
 	var encrypted []byte
+	var connectorWarehouseID *uuid.UUID
 	err = s.db.Pool.QueryRow(ctx, `
-		SELECT config_encrypted FROM connectors
+		SELECT config_encrypted, warehouse_id FROM connectors
 		WHERE id = $1 AND org_id = $2 AND type = 'clickhouse' AND deleted_at IS NULL`,
 		provisionerID.String(), orgID.String(),
-	).Scan(&encrypted)
+	).Scan(&encrypted, &connectorWarehouseID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return s.failWarehouseSync(ctx, warehouseID, fmt.Errorf(
 			"provisioner connector %s is missing, soft-deleted, or not a clickhouse connector", provisionerID))
@@ -61,6 +69,10 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 	if err != nil {
 		return s.failWarehouseSync(ctx, warehouseID,
 			fmt.Errorf("load provisioner connector: %w", err))
+	}
+	if connectorWarehouseID == nil || *connectorWarehouseID != warehouseID {
+		return s.failWarehouseSync(ctx, warehouseID, fmt.Errorf(
+			"provisioner connector %s does not belong to warehouse %s", provisionerID, warehouseID))
 	}
 
 	plain, err := crypto.Decrypt(encrypted, s.masterKey)

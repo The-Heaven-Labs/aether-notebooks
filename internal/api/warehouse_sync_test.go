@@ -224,6 +224,14 @@ func requireClickHouseUserExists(t *testing.T, conn clickhouse.Conn, name string
 	require.Equal(t, uint64(1), n, "clickhouse user %s should exist", name)
 }
 
+func requireClickHouseUserAbsent(t *testing.T, conn clickhouse.Conn, name string) {
+	t.Helper()
+	var n uint64
+	require.NoError(t, conn.QueryRow(context.Background(),
+		"SELECT count() FROM system.users WHERE name = ?", name).Scan(&n))
+	require.Equal(t, uint64(0), n, "clickhouse user %s should not exist", name)
+}
+
 func requireClickHouseRoleExists(t *testing.T, conn clickhouse.Conn, name string) {
 	t.Helper()
 	var n uint64
@@ -332,4 +340,67 @@ func TestReconcileWarehouseFailsClosedOnWildcard(t *testing.T) {
 		WHERE org_id = $1 AND action = 'warehouse.drift' AND resource_id = $2`,
 		fx.orgID.String(), fx.warehouseID.String()).Scan(&driftAudits))
 	require.Greater(t, driftAudits, 0)
+}
+
+func TestReconcileWarehouseRejectsForeignProvisioner(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+
+	// A second warehouse in the same org owns its own connector. Pointing the
+	// fixture warehouse at that connector must fail closed instead of
+	// provisioning through another warehouse's credential namespace.
+	var encrypted []byte
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT config_encrypted FROM connectors WHERE id = $1`, fx.connectorID.String()).Scan(&encrypted))
+
+	otherWarehouseID := uuid.New()
+	otherConnectorID := uuid.New()
+	_, err := fx.s.db.Pool.Exec(ctx,
+		`INSERT INTO warehouses (id, org_id, name) VALUES ($1, $2, $3)`,
+		otherWarehouseID.String(), fx.orgID.String(), "Foreign Provisioner Warehouse")
+	require.NoError(t, err)
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted, warehouse_id)
+		VALUES ($1, $2, $3, 'clickhouse', $4, $5)`,
+		otherConnectorID.String(), fx.orgID.String(), "Foreign Provisioner Connector",
+		encrypted, otherWarehouseID.String())
+	require.NoError(t, err)
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET provisioner_connector_id = $1 WHERE id = $2`,
+		otherConnectorID.String(), otherWarehouseID.String())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := fx.s.db.Pool.Exec(cleanupCtx,
+			`DELETE FROM warehouses WHERE id = $1`, otherWarehouseID.String()); err != nil {
+			t.Logf("cleanup foreign warehouse: %v", err)
+		}
+		if _, err := fx.s.db.Pool.Exec(cleanupCtx,
+			`DELETE FROM connectors WHERE id = $1`, otherConnectorID.String()); err != nil {
+			t.Logf("cleanup foreign connector: %v", err)
+		}
+	})
+
+	// Cross-wire the fixture warehouse directly, bypassing the write path.
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET provisioner_connector_id = $1 WHERE id = $2`,
+		otherConnectorID.String(), fx.warehouseID.String())
+	require.NoError(t, err)
+
+	err = fx.s.reconcileWarehouse(ctx, fx.warehouseID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "does not belong to warehouse")
+
+	var status string
+	var syncErr *string
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT sync_status, sync_error FROM warehouses WHERE id = $1`, fx.warehouseID.String()).
+		Scan(&status, &syncErr))
+	require.Equal(t, "error", status)
+	require.NotNil(t, syncErr)
+	require.Contains(t, *syncErr, "does not belong to warehouse")
+
+	// Nothing may be provisioned from the foreign connector.
+	requireClickHouseUserAbsent(t, fx.conn, chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID))
 }
