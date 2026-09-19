@@ -13,7 +13,8 @@ func TestUserIdentStableAndScoped(t *testing.T) {
 	a := UserIdent(wh, org, user)
 	b := UserIdent(wh, org, user)
 	require.Equal(t, a, b)
-	require.True(t, strings.HasPrefix(a, "aether_u_"))
+	require.Len(t, a, 34)
+	require.True(t, strings.HasPrefix(a, IdentifierPrefix(wh)))
 	require.NotEqual(t, a, UserIdent(wh, org, uuid.New()))
 	require.NotEqual(t, a, UserIdent(wh, uuid.New(), user))
 	require.NotEqual(t, a, UserIdent(uuid.New(), org, user))
@@ -23,10 +24,25 @@ func TestRoleIdentStableAndScoped(t *testing.T) {
 	wh, org, group := uuid.New(), uuid.New(), uuid.New()
 	a := RoleIdent(wh, org, group)
 	require.Equal(t, a, RoleIdent(wh, org, group))
-	require.True(t, strings.HasPrefix(a, "aether_g_"))
+	require.Len(t, a, 34)
+	require.True(t, strings.HasPrefix(a, IdentifierPrefix(wh)))
 	require.NotEqual(t, a, RoleIdent(wh, org, uuid.New()))
 	require.NotEqual(t, a, RoleIdent(wh, uuid.New(), group))
 	require.NotEqual(t, a, RoleIdent(uuid.New(), org, group))
+}
+
+func TestIdentifierPrefixScopesWarehouse(t *testing.T) {
+	wh1 := uuid.MustParse("44444444-4444-4444-4444-444444444444")
+	wh2 := uuid.MustParse("55555555-5555-5555-5555-555555555555")
+	org, user, group := uuid.New(), uuid.New(), uuid.New()
+
+	prefix1, prefix2 := IdentifierPrefix(wh1), IdentifierPrefix(wh2)
+	require.NotEqual(t, prefix1, prefix2)
+
+	for _, name := range []string{UserIdent(wh1, org, user), RoleIdent(wh1, org, group), EveryoneRole(wh1)} {
+		require.True(t, strings.HasPrefix(name, prefix1), "%s must carry warehouse prefix", name)
+		require.False(t, strings.HasPrefix(name, prefix2), "%s must not match another warehouse's prefix", name)
+	}
 }
 
 func TestGoldenValues(t *testing.T) {
@@ -37,8 +53,10 @@ func TestGoldenValues(t *testing.T) {
 
 	// Golden values — changing these means changing the identity scheme
 	// (requires re-provisioning).
-	require.Equal(t, "aether_u_2b4ea91627ef8e43", UserIdent(wh, org, user))
-	require.Equal(t, "aether_g_7679a9b59a843fcb", RoleIdent(wh, org, group))
+	require.Equal(t, "aether_44444444_", IdentifierPrefix(wh))
+	require.Equal(t, "aether_44444444_u_2b4ea91627ef8e43", UserIdent(wh, org, user))
+	require.Equal(t, "aether_44444444_g_7679a9b59a843fcb", RoleIdent(wh, org, group))
+	require.Equal(t, "aether_44444444_everyone", EveryoneRole(wh))
 
 	pw := DerivePassword([]byte("0123456789abcdef0123456789abcdef"), wh, user)
 	require.Equal(t, "Ae1_oGAUbvqm3-oINFPX4yhM28yEMXiNxMrg", pw)

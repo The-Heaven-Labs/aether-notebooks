@@ -13,14 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// EveryoneRole is granted to every provisioned user in a warehouse.
-const EveryoneRole = "aether_everyone"
-
-const (
-	userPrefix = "aether_u_"
-	rolePrefix = "aether_g_"
-)
-
 var (
 	identRe       = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
 	objectIdentRe = regexp.MustCompile(`^[A-Za-z0-9_$][A-Za-z0-9_$.-]{0,126}$`)
@@ -34,18 +26,32 @@ func hexID(ids ...uuid.UUID) string {
 	return hex.EncodeToString(sum.Sum(nil)[:8])
 }
 
+// IdentifierPrefix returns the prefix shared by every ClickHouse identity
+// this package generates for a warehouse. Catalog queries (system.users,
+// system.roles, system.grants) filter on it so multiple warehouses sharing
+// one ClickHouse service never reconcile each other's entities.
+func IdentifierPrefix(warehouseID uuid.UUID) string {
+	return "aether_" + warehouseID.String()[:8] + "_"
+}
+
 // UserIdent returns the ClickHouse username for an Aether user in a
-// warehouse. The warehouse is part of the hash input (warehouse ‖ org ‖ user)
-// so that separate warehouses sharing one ClickHouse service never manage the
-// same user objects.
+// warehouse. The name carries the warehouse discriminator as a prefix for
+// scoping; the hash input (warehouse ‖ org ‖ user) is the collision
+// protection.
 func UserIdent(warehouseID, orgID, userID uuid.UUID) string {
-	return userPrefix + hexID(warehouseID, orgID, userID)
+	return IdentifierPrefix(warehouseID) + "u_" + hexID(warehouseID, orgID, userID)
 }
 
 // RoleIdent returns the ClickHouse role name for an Aether group in a
 // warehouse. The hash input is warehouse ‖ org ‖ group, matching UserIdent.
 func RoleIdent(warehouseID, orgID, groupID uuid.UUID) string {
-	return rolePrefix + hexID(warehouseID, orgID, groupID)
+	return IdentifierPrefix(warehouseID) + "g_" + hexID(warehouseID, orgID, groupID)
+}
+
+// EveryoneRole returns the role granted to every provisioned user in a
+// warehouse.
+func EveryoneRole(warehouseID uuid.UUID) string {
+	return IdentifierPrefix(warehouseID) + "everyone"
 }
 
 // DerivePassword deterministically derives a ClickHouse password from the
