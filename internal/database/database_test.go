@@ -179,15 +179,22 @@ func TestMigration107Warehouses(t *testing.T) {
 	if err := db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*)
 		FROM information_schema.table_constraints tc
+		JOIN information_schema.key_column_usage kcu
+		  ON kcu.constraint_schema = tc.constraint_schema AND kcu.constraint_name = tc.constraint_name
 		JOIN information_schema.constraint_column_usage ccu
 		  ON ccu.constraint_schema = tc.constraint_schema AND ccu.constraint_name = tc.constraint_name
+		JOIN information_schema.referential_constraints rc
+		  ON rc.constraint_schema = tc.constraint_schema AND rc.constraint_name = tc.constraint_name
 		WHERE tc.table_name = 'connectors'
 		  AND tc.constraint_type = 'FOREIGN KEY'
-		  AND ccu.table_name = 'warehouses'`).Scan(&fk); err != nil {
+		  AND kcu.table_name = 'connectors'
+		  AND kcu.column_name = 'warehouse_id'
+		  AND ccu.table_name = 'warehouses'
+		  AND rc.delete_rule = 'SET NULL'`).Scan(&fk); err != nil {
 		t.Fatalf("connectors.warehouse_id foreign key query: %v", err)
 	}
 	if fk != 1 {
-		t.Fatalf("connectors.warehouse_id should reference warehouses (fk count=%d)", fk)
+		t.Fatalf("connectors.warehouse_id should reference warehouses with ON DELETE SET NULL (fk count=%d)", fk)
 	}
 }
 

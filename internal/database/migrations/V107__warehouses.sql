@@ -8,8 +8,10 @@ CREATE TABLE warehouses (
     org_id                   UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
     name                     TEXT NOT NULL,
     -- The connector whose stored credential is used for provisioning DDL.
-    -- Must be a read-write, non-idling service. SET NULL if deleted so the
-    -- warehouse becomes invalid until an admin picks a new provisioner.
+    -- Must be a read-write, non-idling service. ON DELETE SET NULL fires on
+    -- hard delete only; soft-deleted connectors keep the link, so
+    -- reconciliation/CRUD must filter deleted_at IS NULL when loading the
+    -- provisioner.
     provisioner_connector_id UUID REFERENCES connectors(id) ON DELETE SET NULL,
     sync_status              TEXT NOT NULL DEFAULT 'pending'
                              CHECK (sync_status IN ('pending','syncing','ready','error')),
