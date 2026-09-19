@@ -49,6 +49,11 @@
   `is_wildcard` column. Wildcard detection is version-agnostic (empty `table`, plus quote
   validation for table-prefix wildcards) and partial revokes (`is_partial_revoke = 1`) are
   excluded from actual state.
+- **Task 8 as implemented (`05352982`)** uses `MaxAttempts` (total attempts including the first,
+  default 3), `RetryBackoff` (default 500ms), a per-warehouse rerun flag so enqueues landing
+  during an active reconcile are not lost, a service context cancelled by `Close`, and panic
+  recovery. The snippet below uses `MaxRetries` and predates the rerun loop; the code is the
+  source of truth.
 - **Task 7 as implemented (`2f52a710`)** detects prefix wildcards that older servers strip from
   `system.grants` (`db.events*` → `table='events'`): it probes `system.columns` for
   `is_wildcard`; when present it is used, when absent each namespace identity is checked with
@@ -1602,6 +1607,10 @@ Expected: FAIL.
   `Wildcards` (subject + scope), `Unexpected` entries, users whose
   `DefaultRolesAll` is false while roles exist, and users present in the
   warehouse's `IdentifierPrefix` namespace but absent from desired state.
+- The loop enqueues **every warehouse immediately at startup** (non-blocking
+  enqueue-all), then ticks at `AETHER_CH_RECONCILE_INTERVAL`. Shutdown can
+  cancel queued work, so restart catch-up is required to guarantee queued
+  revocations converge.
 - Audit `warehouse.drift` for non-empty reports; reconciliation loop enqueues
   sync for warehouses with drift.
 - Loop: ticker at `AETHER_CH_RECONCILE_INTERVAL`, enqueue all warehouses,
