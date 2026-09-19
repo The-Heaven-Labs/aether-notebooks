@@ -13,19 +13,36 @@
 **Conventions:** Tests hit a real database. Run `task infra:up` once, then targeted `go test` commands. Migrations are embedded and applied at startup (`internal/database/migrate.go`). Next migration numbers: `V107`, `V108`, `V109`, …
 
 **Revision notes (post-review, apply to all tasks below):**
-- Identities are warehouse-scoped: `chaccess.UserIdent(warehouseID, orgID, userID)` and
-  `chaccess.RoleIdent(warehouseID, orgID, groupID)` (hash input order `warehouse‖org‖subject`).
-  Golden values are pinned in `internal/chaccess/ident_test.go`; changing them requires
-  re-provisioning every warehouse.
+- Identities are warehouse-scoped **and warehouse-discriminated**:
+  `UserIdent(warehouseID, orgID, userID)` → `aether_<wh8>_u_<hash>`,
+  `RoleIdent(warehouseID, orgID, groupID)` → `aether_<wh8>_g_<hash>`, and
+  `EveryoneRole(warehouseID)` → `aether_<wh8>_everyone`. `IdentifierPrefix(warehouseID)`
+  returns `aether_<wh8>_` and scopes actual-state loading so two warehouses sharing one
+  ClickHouse service cannot drop each other's entities. Golden values are pinned in
+  `internal/chaccess/ident_test.go`; changing them requires re-provisioning every warehouse.
 - `chaccess.Statements(d, a)` returns `(stmts []string, skipped []string)`. Catalog
   database/table names that fail `QuoteObjectIdent` are reported in `skipped` and audited as
-  drift — never panic and never abort the whole sync for one odd table name.
+  drift — never panic and never abort the whole sync for one odd table name. Actual-side
+  identity names that fail quoting are likewise skipped (`tryQuoteIdent`).
 - Password rotation is driven by `warehouses.applied_master_fp` (migration
   `V111__warehouse_master_fingerprint.sql`, added in Task 9), not by comparing ClickHouse
   password hashes (which are salted and unreadable). On fingerprint mismatch the reconcile
   emits `ALTER USER ... IDENTIFIED` for every provisioned user, then stores the new fingerprint.
-- `ActualState.ForcePasswordReset` replaces the old `PasswordFingerprint` comparison;
-  `UserState.PasswordFp` is removed.
+- `ActualState.ForcePasswordReset` replaces the old `PasswordFingerprint` comparison. Actual
+  state also carries `Wildcards` (subject + scope) and `UserActual.DefaultRolesAll`; a
+  warehouse with wildcards fails closed in Task 9.
+- **Task 5 as implemented (`885a2c02`)** differs from its snippet below in these ways (the code
+  is the source of truth): `RoleState`/`UserState` have no `Ident` field (map keys are
+  identity); `CREATE ROLE IF NOT EXISTS` is suppressed when the role exists in actual state;
+  `SET DEFAULT ROLE ALL` is emitted only when desired roles are non-empty and either membership
+  changed or `!actual.DefaultRolesAll`; `skipped` is sorted and deduplicated; empty passwords
+  panic; `Fingerprint` is the full sha256 hex; `grantSet` lives in `ddl_test.go`.
+- Settings profiles and quotas (readonly, max_execution_time, per-user concurrency) are
+  **deferred to a follow-up change**; this implementation's boundary is ClickHouse grants.
+  Documented in the design doc's out-of-scope section.
+- Task 8's worker must wrap each `Reconcile` call in a `defer/recover`, converting any panic
+  (e.g. a future desired-side invariant failure) into a sync error instead of crashing the API
+  server process.
 
 ---
 
@@ -534,17 +551,14 @@ type Grant struct {
 
 // RoleState is the desired grant set for one group role.
 type RoleState struct {
-	Ident  string
 	Grants map[Grant]struct{}
 }
 
 // UserState is the desired state for one Aether user in a warehouse.
 type UserState struct {
-	Ident           string
-	Password        string
-	Roles           []string
-	DirectGrants    map[Grant]struct{}
-	SettingsProfile string // empty = none
+	Password     string
+	Roles        []string
+	DirectGrants map[Grant]struct{}
 }
 
 // DesiredState is the full desired ClickHouse access state for a warehouse.
@@ -560,6 +574,14 @@ type UserActual struct {
 	DefaultRolesAll bool
 }
 
+// WildcardGrant is an unexpected ClickHouse wildcard grant. Aether never
+// creates these; they defeat table-level least privilege and make a warehouse
+// fail closed (Task 9).
+type WildcardGrant struct {
+	Subject string // user or role name
+	Scope   string // "db.*" or "*.*"
+}
+
 // ActualState is the observed ClickHouse access state. ForcePasswordReset is
 // set by the caller when warehouses.applied_master_fp differs from the current
 // master-key fingerprint (ClickHouse password hashes are salted and cannot be
@@ -567,9 +589,12 @@ type UserActual struct {
 type ActualState struct {
 	Roles              map[string]map[Grant]struct{}
 	Users              map[string]UserActual
-	HasWildcard        bool
+	Wildcards          []WildcardGrant
 	ForcePasswordReset bool
 }
+
+// HasWildcard reports whether any unexpected wildcard grant exists.
+func (a ActualState) HasWildcard() bool { return len(a.Wildcards) > 0 }
 ```
 
 Create `internal/chaccess/ddl.go`:
@@ -813,11 +838,11 @@ func TestComputeUnionsGroupsEveryoneAndDirect(t *testing.T) {
 
 	require.Contains(t, d.Roles, RoleIdent(wh, org, g1))
 	require.Contains(t, d.Roles, RoleIdent(wh, org, g2))
-	require.Contains(t, d.Roles, EveryoneRole)
+	require.Contains(t, d.Roles, EveryoneRole(wh))
 	require.NotContains(t, d.Roles, RoleIdent(wh, org, uuid.New()))
 
 	ust := d.Users[UserIdent(wh, org, u1)]
-	require.Equal(t, []string{EveryoneRole, RoleIdent(wh, org, g1)}, ust.Roles)
+	require.Equal(t, []string{EveryoneRole(wh), RoleIdent(wh, org, g1)}, ust.Roles)
 	require.Contains(t, ust.DirectGrants, Grant{Database: "db", Table: "u_only"})
 	require.Equal(t, DerivePassword(master, wh, u1), ust.Password)
 }
@@ -860,11 +885,11 @@ type UserSpec struct {
 // Compute builds the desired ClickHouse state for a warehouse.
 //
 // - One role per group with at least one grant.
-// - Everyone grants go to a shared EveryoneRole role.
+// - Everyone grants go to the warehouse's EveryoneRole(warehouseID) role.
 // - A user is provisioned only when their union (direct + groups + everyone)
 //   is non-empty.
 // - A user's default roles are the roles of their granting groups plus
-//   EveryoneRole when applicable.
+//   EveryoneRole(warehouseID) when applicable.
 func Compute(
 	orgID, warehouseID uuid.UUID,
 	masterKey []byte,
@@ -901,17 +926,17 @@ func Compute(
 
 	roles := map[string]RoleState{}
 	for ident, gs := range roleGrants {
-		roles[ident] = RoleState{Ident: ident, Grants: gs}
+		roles[ident] = RoleState{Grants: gs}
 	}
 	if len(everyone) > 0 {
-		roles[EveryoneRole] = RoleState{Ident: EveryoneRole, Grants: everyone}
+		roles[EveryoneRole(warehouseID)] = RoleState{Grants: everyone}
 	}
 
 	usersOut := map[string]UserState{}
 	for _, u := range users {
 		var userRoles []string
 		if len(everyone) > 0 {
-			userRoles = append(userRoles, EveryoneRole)
+			userRoles = append(userRoles, EveryoneRole(warehouseID))
 		}
 		for _, gid := range memberships[u.ID] {
 			ident := RoleIdent(warehouseID, orgID, gid)
@@ -925,7 +950,6 @@ func Compute(
 		}
 		pw := DerivePassword(masterKey, warehouseID, u.ID)
 		usersOut[UserIdent(warehouseID, orgID, u.ID)] = UserState{
-			Ident:        UserIdent(warehouseID, orgID, u.ID),
 			Password:     pw,
 			Roles:        sortedStrings(userRoles),
 			DirectGrants: direct,
@@ -964,18 +988,26 @@ func TestParseGrantRows(t *testing.T) {
 		{UserName: "aether_u_x", AccessType: "SELECT", Database: "db", Table: "t1"},
 		{UserName: "aether_u_x", AccessType: "SELECT", Database: "db", Table: "t2"},
 	}
-	a := buildActualFromGrantRows(rows, nil, nil)
+	users := map[string]UserActual{"aether_u_x": {}}
+	a := buildActualFromGrantRows(rows, nil, users)
 	require.Contains(t, a.Users["aether_u_x"].DirectGrants, Grant{"db", "t1"})
 	require.NotContains(t, a.Users["aether_u_x"].Roles, "aether_g_y")
 }
 
 func TestParseWildcardRowsFlagged(t *testing.T) {
 	rows := []GrantRow{
-		{RoleName: "aether_g_x", AccessType: "SELECT", Database: "db", Table: "", IsWildcard: 1},
+		{RoleName: "aether_wh_g_x", AccessType: "SELECT", Database: "db", Table: "", IsWildcard: 1},
 	}
 	a := buildActualFromGrantRows(rows, nil, nil)
-	require.Len(t, a.Roles["aether_g_x"], 0)
-	require.True(t, a.HasWildcard)
+	require.True(t, a.HasWildcard())
+	require.Equal(t, WildcardGrant{Subject: "aether_wh_g_x", Scope: "db.*"}, a.Wildcards[0])
+}
+
+func TestParseZeroGrantRolesAreLoaded(t *testing.T) {
+	roles := map[string]map[Grant]struct{}{"aether_wh_g_empty": {}}
+	a := buildActualFromGrantRows(nil, roles, nil)
+	require.Contains(t, a.Roles, "aether_wh_g_empty")
+	require.Empty(t, a.Roles["aether_wh_g_empty"])
 }
 ```
 
@@ -998,8 +1030,6 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 )
 
-const identLike = "aether\\_%"
-
 // GrantRow is one row of system.grants.
 type GrantRow struct {
 	UserName   string
@@ -1010,20 +1040,26 @@ type GrantRow struct {
 	IsWildcard uint8
 }
 
-// LoadActual reads users, roles, role grants, and direct grants for all
-// Aether-managed entities. Wildcard grants are never expected and set
-// HasWildcard so the caller can raise a drift alert.
+// LoadActual reads users, roles, role grants, and direct grants for one
+// warehouse's namespace. The namespace is selected with startsWith on
+// IdentifierPrefix(warehouseID) rather than LIKE, so underscores in the
+// prefix are never treated as wildcards.
+//
+// Roles are enumerated from system.roles (not only from grant rows) so a
+// zero-grant orphan role is visible and can be dropped.
 //
 // It does NOT read password hashes: ClickHouse stores salted hashes that
 // cannot be compared. Password rotation is driven by
 // warehouses.applied_master_fp (see Task 9) via ActualState.ForcePasswordReset.
-func LoadActual(ctx context.Context, conn clickhouse.Conn) (ActualState, error) {
+func LoadActual(ctx context.Context, conn clickhouse.Conn, warehouseID uuid.UUID) (ActualState, error) {
+	prefix := IdentifierPrefix(warehouseID)
+
 	var grants []GrantRow
 	rows, err := conn.Query(ctx, `
 		SELECT coalesce(user_name,''), coalesce(role_name,''), access_type, coalesce(database,''), coalesce(table,''), is_wildcard
 		FROM system.grants
-		WHERE (user_name LIKE ? OR role_name LIKE ?) AND access_type = 'SELECT'`,
-		identLike, identLike)
+		WHERE (startsWith(user_name, ?) OR startsWith(role_name, ?)) AND access_type = 'SELECT'`,
+		prefix, prefix)
 	if err != nil {
 		return ActualState{}, fmt.Errorf("system.grants: %w", err)
 	}
@@ -1038,10 +1074,26 @@ func LoadActual(ctx context.Context, conn clickhouse.Conn) (ActualState, error) 
 		return ActualState{}, err
 	}
 
+	roles := map[string]map[Grant]struct{}{}
+	rrows, err := conn.Query(ctx, `SELECT name FROM system.roles WHERE startsWith(name, ?)`, prefix)
+	if err != nil {
+		return ActualState{}, fmt.Errorf("system.roles: %w", err)
+	}
+	for rrows.Next() {
+		var name string
+		if err := rrows.Scan(&name); err != nil {
+			return ActualState{}, err
+		}
+		roles[name] = map[Grant]struct{}{}
+	}
+	if err := rrows.Err(); err != nil {
+		return ActualState{}, err
+	}
+
 	memberships := map[string]map[string]struct{}{}
 	mrows, err := conn.Query(ctx, `
 		SELECT user_name, granted_role_name FROM system.role_grants
-		WHERE user_name LIKE ?`, identLike)
+		WHERE startsWith(user_name, ?)`, prefix)
 	if err != nil {
 		return ActualState{}, fmt.Errorf("system.role_grants: %w", err)
 	}
@@ -1060,35 +1112,54 @@ func LoadActual(ctx context.Context, conn clickhouse.Conn) (ActualState, error) 
 	}
 
 	users := map[string]UserActual{}
-	urows, err := conn.Query(ctx, `SELECT name FROM system.users WHERE name LIKE ?`, identLike)
+	urows, err := conn.Query(ctx,
+		`SELECT name, default_roles_all FROM system.users WHERE startsWith(name, ?)`, prefix)
 	if err != nil {
 		return ActualState{}, fmt.Errorf("system.users: %w", err)
 	}
 	for urows.Next() {
 		var name string
-		if err := urows.Scan(&name); err != nil {
+		var defaultRolesAll uint8
+		if err := urows.Scan(&name, &defaultRolesAll); err != nil {
 			return ActualState{}, err
 		}
-		users[name] = UserActual{Roles: memberships[name]}
+		users[name] = UserActual{Roles: memberships[name], DefaultRolesAll: defaultRolesAll == 1}
 	}
 	if err := urows.Err(); err != nil {
 		return ActualState{}, err
 	}
 
-	return buildActualFromGrantRows(grants, memberships, users), nil
+	return buildActualFromGrantRows(grants, roles, users), nil
 }
 
-func buildActualFromGrantRows(grants []GrantRow, _ map[string]map[string]struct{}, users map[string]UserActual) ActualState {
+func buildActualFromGrantRows(grants []GrantRow, roles map[string]map[Grant]struct{}, users map[string]UserActual) ActualState {
 	a := ActualState{Roles: map[string]map[Grant]struct{}{}, Users: map[string]UserActual{}}
+	for name, gs := range roles {
+		if gs == nil {
+			gs = map[Grant]struct{}{}
+		}
+		a.Roles[name] = gs
+	}
 	for k, v := range users {
 		if v.Roles == nil {
 			v.Roles = map[string]struct{}{}
+		}
+		if v.DirectGrants == nil {
+			v.DirectGrants = map[Grant]struct{}{}
 		}
 		a.Users[k] = v
 	}
 	for _, r := range grants {
 		if r.IsWildcard == 1 {
-			a.HasWildcard = true
+			scope := r.Database + ".*"
+			if r.Database == "" {
+				scope = "*.*"
+			}
+			subject := r.RoleName
+			if subject == "" {
+				subject = r.UserName
+			}
+			a.Wildcards = append(a.Wildcards, WildcardGrant{Subject: subject, Scope: scope})
 			continue
 		}
 		if r.Table == "" {
@@ -1113,7 +1184,8 @@ func buildActualFromGrantRows(grants []GrantRow, _ map[string]map[string]struct{
 }
 ```
 
-Add `HasWildcard bool` to `ActualState` in `desired.go`.
+`WildcardGrant`, `ActualState.Wildcards`, `ActualState.HasWildcard()` and
+`UserActual.DefaultRolesAll` are defined in `desired.go` (Task 5 revision).
 
 **Step 4: Run test to verify it passes**
 
@@ -1349,7 +1421,11 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 	// 5. Load org users that have any effective grant (users in granting groups,
 	//    direct-grant users, everyone covers all org members).
 	// 6. desired := chaccess.Compute(...)
-	// 7. actual, err := chaccess.LoadActual(ctx, conn); if actual.HasWildcard -> audit alert.
+	// 7. actual, err := chaccess.LoadActual(ctx, conn, warehouseID).
+	//    If actual.HasWildcard() -> set sync_status='error' with
+	//    sync_error listing subject+scope for each WildcardGrant and return
+	//    (fail closed; never mark ready while a wildcard exists). Manual
+	//    revocation is the remediation; wildcards are not auto-healed in v1.
 	//    actual.ForcePasswordReset = (warehouse.applied_master_fp != chaccess.Fingerprint(derivedMasterKey))
 	// 8. stmts, skipped := chaccess.Statements(desired, actual); audit skipped as warehouse.drift.
 	//    for _, stmt := range stmts { exec; on error -> mark error + return }
@@ -1477,8 +1553,10 @@ Expected: FAIL.
 **Step 3: Implement**
 
 - `detectWarehouseDrift(ctx, whID) (DriftReport, error)`: compares desired
-  vs actual and reports unexpected grants/users/roles, missing grants, and
-  `HasWildcard`.
+  vs actual and reports unexpected grants/users/roles, missing grants,
+  `Wildcards` (subject + scope), users whose `DefaultRolesAll` is false while
+  roles exist, and users present in the warehouse's `IdentifierPrefix`
+  namespace but absent from desired state.
 - Audit `warehouse.drift` for non-empty reports; reconciliation loop enqueues
   sync for warehouses with drift.
 - Loop: ticker at `AETHER_CH_RECONCILE_INTERVAL`, enqueue all warehouses,

@@ -101,13 +101,14 @@ the user was explicitly granted does not change results — only compute placeme
 
 ## ClickHouse objects (per warehouse)
 
-- One CH user per Aether user per warehouse: `aether_u_<hash(warehouse, org, user)>` derived from
-  UUIDs, never email. Scoping the hash by warehouse keeps identities separate if two warehouses
-  ever point at the same service.
-- Password = HKDF(masterKey, warehouse, user); `sha256_password`, `GRANTEES NONE`, settings
-  profile attached; never `NOT IDENTIFIED`.
-- One role per Aether group per warehouse: `aether_g_<hash(warehouse, org, group)>` with that
-  group's table grants; an `Everyone` role; direct user grants attach to the user object.
+- One CH user per Aether user per warehouse: `aether_<wh8>_u_<hash(warehouse, org, user)>`
+  derived from UUIDs, never email. The `wh8` prefix (first 8 hex of the warehouse UUID) scopes
+  reconciliation so two warehouses sharing a service cannot drop each other's entities.
+- Password = HKDF(masterKey, warehouse, user); `sha256_password`, `GRANTEES NONE`; never
+  `NOT IDENTIFIED`.
+- One role per group per warehouse: `aether_<wh8>_g_<hash(warehouse, org, group)>` with that
+  group's table grants; an `aether_<wh8>_everyone` role; direct user grants attach to the user
+  object.
 - Default roles = all of the user's group roles (`SET DEFAULT ROLE ALL`). ClickHouse roles are
   additive, matching Aether's allow-only ACL union semantics (`acl_entries` has no deny column).
 - Provisioning condition: at least one effective table grant. Service access gates execution
@@ -164,10 +165,12 @@ the user was explicitly granted does not change results — only compute placeme
 - Privileges: table-by-table grants only (no wildcards); table functions (`URL`, `REMOTE`,
   `S3`, `FILE`, …) and DDL/DML privileges remain ungranted; no `WITH GRANT OPTION`;
   `GRANTEES NONE`.
-- Query limits: settings profile per role — `readonly`, constrained `max_execution_time`,
-  `max_memory_usage`, `max_result_rows`, `max_rows_to_read`/`max_bytes_to_read`,
-  `max_concurrent_queries_for_user`, `result_overflow_mode=throw`; DDL quotas per group for
-  read bytes / execution time / queries per interval.
+- Wildcard drift fails closed: if reconciliation finds a wildcard grant (`system.grants`
+  `is_wildcard=1`) in the warehouse namespace, `sync_status` is set to `error` with the
+  offending subject/scope and managed execution stays blocked until an operator revokes it.
+  Wildcards are not auto-healed in this iteration.
+- Query limits via settings profiles and quotas are deferred to a follow-up change; until then,
+  resource protection relies on Aether-side limits and ClickHouse defaults.
 - Identifiers: generated user/role names are strict `[a-z0-9_]{1,64}` derived from UUIDs.
   Database/table names come from the ClickHouse catalog and use a conservative object-name
   charset (`[A-Za-z0-9_$][A-Za-z0-9_$.-]{0,126}`) with backtick quoting; backticks,
@@ -228,3 +231,5 @@ the user was explicitly granted does not change results — only compute placeme
 - Row policies, column masking, and row-level filters.
 - Client-side OIDC/JWT gateway (e.g. Trino) for user-held tokens.
 - ClickHouse Cloud control-plane automation (service discovery, IP allowlist management).
+- Settings profiles and quotas per role/user (readonly, execution-time, memory, concurrency).
+  Follow-up change; see Security controls for the interim posture.
