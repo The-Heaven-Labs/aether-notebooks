@@ -49,6 +49,13 @@
   `is_wildcard` column. Wildcard detection is version-agnostic (empty `table`, plus quote
   validation for table-prefix wildcards) and partial revokes (`is_partial_revoke = 1`) are
   excluded from actual state.
+- **Task 7 as implemented (`2f52a710`)** detects prefix wildcards that older servers strip from
+  `system.grants` (`db.events*` → `table='events'`): it probes `system.columns` for
+  `is_wildcard`; when present it is used, when absent each namespace identity is checked with
+  `SHOW GRANTS FOR` (any SELECT line containing `*` is a wildcard; false positives fail
+  closed). Column-level grants are excluded (`coalesce(\`column\`, '') = ''`). `ActualState`
+  also carries `Unexpected []string` for nested/foreign role grants and `WITH GRANT OPTION`
+  rows.
 
 ---
 
@@ -1455,10 +1462,11 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 	//    direct-grant users, everyone covers all org members).
 	// 6. desired := chaccess.Compute(...)
 	// 7. actual, err := chaccess.LoadActual(ctx, conn, warehouseID).
-	//    If actual.HasWildcard() -> set sync_status='error' with
-	//    sync_error listing subject+scope for each WildcardGrant and return
-	//    (fail closed; never mark ready while a wildcard exists). Manual
-	//    revocation is the remediation; wildcards are not auto-healed in v1.
+	//    If actual.HasWildcard() || len(actual.Unexpected) > 0 -> set
+	//    sync_status='error' with sync_error listing wildcards (subject+scope)
+	//    and unexpected entries, then return (fail closed; never mark ready
+	//    while wildcards or unexpected role wiring / grant options exist).
+	//    Manual remediation only; not auto-healed in v1.
 	//    actual.ForcePasswordReset = (warehouse.applied_master_fp != chaccess.Fingerprint(derivedMasterKey))
 	// 8. stmts, skipped := chaccess.Statements(desired, actual); audit skipped as warehouse.drift.
 	//    for _, stmt := range stmts { exec; on error -> mark error + return }
@@ -1591,9 +1599,9 @@ Expected: FAIL.
 
 - `detectWarehouseDrift(ctx, whID) (DriftReport, error)`: compares desired
   vs actual and reports unexpected grants/users/roles, missing grants,
-  `Wildcards` (subject + scope), users whose `DefaultRolesAll` is false while
-  roles exist, and users present in the warehouse's `IdentifierPrefix`
-  namespace but absent from desired state.
+  `Wildcards` (subject + scope), `Unexpected` entries, users whose
+  `DefaultRolesAll` is false while roles exist, and users present in the
+  warehouse's `IdentifierPrefix` namespace but absent from desired state.
 - Audit `warehouse.drift` for non-empty reports; reconciliation loop enqueues
   sync for warehouses with drift.
 - Loop: ticker at `AETHER_CH_RECONCILE_INTERVAL`, enqueue all warehouses,
