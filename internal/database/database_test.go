@@ -139,6 +139,58 @@ func TestMigrateDropsCellsDescription(t *testing.T) {
 	}
 }
 
+func TestMigration107Warehouses(t *testing.T) {
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+	}
+
+	db, err := database.Connect(context.Background(), dsn, "")
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	var exists bool
+	if err := db.Pool.QueryRow(ctx,
+		"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='warehouses')").Scan(&exists); err != nil {
+		t.Fatalf("warehouses existence query: %v", err)
+	}
+	if !exists {
+		t.Fatal("warehouses table should exist after migration")
+	}
+
+	var nullable string
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT is_nullable FROM information_schema.columns WHERE table_name='connectors' AND column_name='warehouse_id'`).Scan(&nullable); err != nil {
+		t.Fatalf("connectors.warehouse_id missing: %v", err)
+	}
+	if nullable != "YES" {
+		t.Fatalf("connectors.warehouse_id should be nullable (nullable=%q)", nullable)
+	}
+
+	var fk int
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM information_schema.table_constraints tc
+		JOIN information_schema.constraint_column_usage ccu
+		  ON ccu.constraint_schema = tc.constraint_schema AND ccu.constraint_name = tc.constraint_name
+		WHERE tc.table_name = 'connectors'
+		  AND tc.constraint_type = 'FOREIGN KEY'
+		  AND ccu.table_name = 'warehouses'`).Scan(&fk); err != nil {
+		t.Fatalf("connectors.warehouse_id foreign key query: %v", err)
+	}
+	if fk != 1 {
+		t.Fatalf("connectors.warehouse_id should reference warehouses (fk count=%d)", fk)
+	}
+}
+
 // TestNoRowLevelSecurityWithoutPolicies is a regression guard for the
 // V103 migration: RLS was enabled on six tables in V001 but no policies were
 // ever created, making every non-owner role default-deny. The migration drops
