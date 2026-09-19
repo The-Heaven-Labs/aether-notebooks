@@ -12,6 +12,21 @@
 
 **Conventions:** Tests hit a real database. Run `task infra:up` once, then targeted `go test` commands. Migrations are embedded and applied at startup (`internal/database/migrate.go`). Next migration numbers: `V107`, `V108`, `V109`, …
 
+**Revision notes (post-review, apply to all tasks below):**
+- Identities are warehouse-scoped: `chaccess.UserIdent(warehouseID, orgID, userID)` and
+  `chaccess.RoleIdent(warehouseID, orgID, groupID)` (hash input order `warehouse‖org‖subject`).
+  Golden values are pinned in `internal/chaccess/ident_test.go`; changing them requires
+  re-provisioning every warehouse.
+- `chaccess.Statements(d, a)` returns `(stmts []string, skipped []string)`. Catalog
+  database/table names that fail `QuoteObjectIdent` are reported in `skipped` and audited as
+  drift — never panic and never abort the whole sync for one odd table name.
+- Password rotation is driven by `warehouses.applied_master_fp` (migration
+  `V111__warehouse_master_fingerprint.sql`, added in Task 9), not by comparing ClickHouse
+  password hashes (which are salted and unreadable). On fingerprint mismatch the reconcile
+  emits `ALTER USER ... IDENTIFIED` for every provisioned user, then stores the new fingerprint.
+- `ActualState.ForcePasswordReset` replaces the old `PasswordFingerprint` comparison;
+  `UserState.PasswordFp` is removed.
+
 ---
 
 ## Phase 1 — Schema
@@ -238,20 +253,22 @@ import (
 )
 
 func TestUserIdentStableAndScoped(t *testing.T) {
-	org, user := uuid.New(), uuid.New()
-	a := UserIdent(org, user)
-	b := UserIdent(org, user)
+	wh, org, user := uuid.New(), uuid.New(), uuid.New()
+	a := UserIdent(wh, org, user)
+	b := UserIdent(wh, org, user)
 	require.Equal(t, a, b)
 	require.True(t, strings.HasPrefix(a, "aether_u_"))
-	require.NotEqual(t, a, UserIdent(org, uuid.New()))
-	require.NotEqual(t, a, UserIdent(uuid.New(), user))
+	require.NotEqual(t, a, UserIdent(wh, org, uuid.New()))
+	require.NotEqual(t, a, UserIdent(wh, uuid.New(), user))
+	require.NotEqual(t, a, UserIdent(uuid.New(), org, user))
 }
 
 func TestRoleIdentStableAndScoped(t *testing.T) {
-	org, group := uuid.New(), uuid.New()
-	require.Equal(t, RoleIdent(org, group), RoleIdent(org, group))
-	require.True(t, strings.HasPrefix(RoleIdent(org, group), "aether_g_"))
-	require.NotEqual(t, RoleIdent(org, group), RoleIdent(org, uuid.New()))
+	wh, org, group := uuid.New(), uuid.New(), uuid.New()
+	require.Equal(t, RoleIdent(wh, org, group), RoleIdent(wh, org, group))
+	require.True(t, strings.HasPrefix(RoleIdent(wh, org, group), "aether_g_"))
+	require.NotEqual(t, RoleIdent(wh, org, group), RoleIdent(wh, org, uuid.New()))
+	require.NotEqual(t, RoleIdent(wh, org, group), RoleIdent(uuid.New(), org, group))
 }
 
 func TestDerivePasswordDeterministicAndComplex(t *testing.T) {
@@ -330,16 +347,23 @@ var (
 	objectIdentRe = regexp.MustCompile(`^[A-Za-z0-9_$][A-Za-z0-9_$.-]{0,126}$`)
 )
 
-func hexID(a, b uuid.UUID) string {
-	sum := sha256.Sum256(append(append([]byte{}, a[:]...), b[:]...))
-	return hex.EncodeToString(sum[:8])
+func hexID(ids ...uuid.UUID) string {
+	h := sha256.New()
+	for _, id := range ids {
+		h.Write(id[:])
+	}
+	return hex.EncodeToString(h.Sum(nil)[:8])
 }
 
 // UserIdent returns the ClickHouse username for an Aether user in a warehouse.
-func UserIdent(orgID, userID uuid.UUID) string { return userPrefix + hexID(orgID, userID) }
+func UserIdent(warehouseID, orgID, userID uuid.UUID) string {
+	return userPrefix + hexID(warehouseID, orgID, userID)
+}
 
 // RoleIdent returns the ClickHouse role name for an Aether group.
-func RoleIdent(orgID, groupID uuid.UUID) string { return rolePrefix + hexID(orgID, groupID) }
+func RoleIdent(warehouseID, orgID, groupID uuid.UUID) string {
+	return rolePrefix + hexID(warehouseID, orgID, groupID)
+}
 
 // DerivePassword deterministically derives a ClickHouse password from the
 // master key so no per-user secret is stored at rest. The fixed prefix
@@ -425,7 +449,7 @@ func TestStatementsCreateRoleUserAndGrants(t *testing.T) {
 			},
 		},
 	}
-	stmts := Statements(d, ActualState{})
+	stmts, _ := Statements(d, ActualState{})
 	require.Contains(t, stmts, "CREATE ROLE IF NOT EXISTS `aether_g_aaa`")
 	require.Contains(t, stmts, "GRANT SELECT ON `db1`.`t1` TO `aether_g_aaa`")
 	require.Contains(t, stmts, "GRANT SELECT ON `db1`.`t2` TO `aether_g_aaa`")
@@ -453,23 +477,38 @@ func TestStatementsRevokeExtrasAndDropOrphans(t *testing.T) {
 			"aether_u_old": {Roles: map[string]struct{}{}},
 		},
 	}
-	joined := strings.Join(Statements(d, a), "\n")
+	stmts, _ := Statements(d, a)
+	joined := strings.Join(stmts, "\n")
 	require.Contains(t, joined, "REVOKE SELECT ON `db1`.`old` FROM `aether_g_aaa`")
 	require.Contains(t, joined, "DROP ROLE `aether_g_zzz`")
 	require.Contains(t, joined, "REVOKE `aether_g_old` FROM `aether_u_bbb`")
 	require.Contains(t, joined, "DROP USER `aether_u_old`")
 }
 
-func TestStatementsResetsPasswordWhenChanged(t *testing.T) {
+func TestStatementsResetsPasswordOnMasterKeyChange(t *testing.T) {
 	d := DesiredState{Users: map[string]UserState{
 		"aether_u_bbb": {Ident: "aether_u_bbb", Password: "Ae1_new"},
 	}}
-	a := ActualState{Users: map[string]UserActual{
-		"aether_u_bbb": {PasswordFingerprint: Fingerprint("Ae1_old")},
-	}}
-	stmts := Statements(d, a)
+	a := ActualState{
+		ForcePasswordReset: true,
+		Users: map[string]UserActual{
+			"aether_u_bbb": {},
+		},
+	}
+	stmts, _ := Statements(d, a)
 	require.Contains(t, strings.Join(stmts, "\n"),
 		"ALTER USER `aether_u_bbb` IDENTIFIED WITH sha256_password BY 'Ae1_new'")
+}
+
+func TestStatementsSkipsUnquotableCatalogNames(t *testing.T) {
+	d := DesiredState{
+		Roles: map[string]RoleState{
+			"aether_g_aaa": {Ident: "aether_g_aaa", Grants: grantSet(g("db1", "ok"), g("db1", "my table"))},
+		},
+	}
+	stmts, skipped := Statements(d, ActualState{})
+	require.Contains(t, stmts, "GRANT SELECT ON `db1`.`ok` TO `aether_g_aaa`")
+	require.Equal(t, []string{"db1.my table"}, skipped)
 }
 ```
 
@@ -501,12 +540,11 @@ type RoleState struct {
 
 // UserState is the desired state for one Aether user in a warehouse.
 type UserState struct {
-	Ident             string
-	Password          string
-	PasswordFp        string // Fingerprint(password)
-	Roles             []string
-	DirectGrants      map[Grant]struct{}
-	SettingsProfile   string // empty = none
+	Ident           string
+	Password        string
+	Roles           []string
+	DirectGrants    map[Grant]struct{}
+	SettingsProfile string // empty = none
 }
 
 // DesiredState is the full desired ClickHouse access state for a warehouse.
@@ -517,16 +555,20 @@ type DesiredState struct {
 
 // UserActual is the observed state of one ClickHouse user.
 type UserActual struct {
-	PasswordFingerprint string
-	Roles               map[string]struct{}
-	DirectGrants        map[Grant]struct{}
-	DefaultRolesAll     bool
+	Roles           map[string]struct{}
+	DirectGrants    map[Grant]struct{}
+	DefaultRolesAll bool
 }
 
-// ActualState is the observed ClickHouse access state.
+// ActualState is the observed ClickHouse access state. ForcePasswordReset is
+// set by the caller when warehouses.applied_master_fp differs from the current
+// master-key fingerprint (ClickHouse password hashes are salted and cannot be
+// compared).
 type ActualState struct {
-	Roles map[string]map[Grant]struct{}
-	Users map[string]UserActual
+	Roles              map[string]map[Grant]struct{}
+	Users              map[string]UserActual
+	HasWildcard        bool
+	ForcePasswordReset bool
 }
 ```
 
@@ -571,8 +613,13 @@ func sortedGrants(m map[Grant]struct{}) []Grant {
 // Statements returns an ordered, idempotent DDL plan that moves ClickHouse
 // from a to d. Every identifier is validated/quoted. The caller runs
 // statements sequentially through the provisioner connector.
-func Statements(d DesiredState, a ActualState) []string {
+func Statements(d DesiredState, a ActualState) (out []string, skipped []string) {
 	var out []string
+
+	// NOTE (revision): the inline grant/revoke emission sites below must use
+	// grantDDL/revokeDDL (defined after mustQuoteObject) so unquotable catalog
+	// names land in `skipped` instead of panicking. Because `out` is a named
+	// return, drop the local declaration and append directly.
 
 	// 1. Roles: create, grant additions, revoke extras, drop orphan roles.
 	for _, ident := range sortedKeys(d.Roles) {
@@ -607,7 +654,7 @@ func Statements(d DesiredState, a ActualState) []string {
 			out = append(out, fmt.Sprintf(
 				"CREATE USER IF NOT EXISTS %s IDENTIFIED WITH sha256_password BY '%s' GRANTEES NONE",
 				mustQuote(us.Ident), escapePassword(us.Password)))
-		} else if actual.PasswordFingerprint != "" && actual.PasswordFingerprint != us.PasswordFp {
+		} else if a.ForcePasswordReset {
 			out = append(out, fmt.Sprintf(
 				"ALTER USER %s IDENTIFIED WITH sha256_password BY '%s'",
 				mustQuote(us.Ident), escapePassword(us.Password)))
@@ -665,6 +712,28 @@ func mustQuoteObject(s string) string {
 		panic(err) // catalog object names are validated before DDL
 	}
 	return q
+}
+
+// grantDDL/revokeDDL validate catalog object names and skip unquotable ones
+// (appended to skipped) rather than panicking or aborting the whole sync.
+func grantDDL(gr Grant, target string, skipped *[]string) (string, bool) {
+	db, err1 := QuoteObjectIdent(gr.Database)
+	tbl, err2 := QuoteObjectIdent(gr.Table)
+	if err1 != nil || err2 != nil {
+		*skipped = append(*skipped, gr.Database+"."+gr.Table)
+		return "", false
+	}
+	return fmt.Sprintf("GRANT SELECT ON %s.%s TO %s", db, tbl, target), true
+}
+
+func revokeDDL(gr Grant, target string, skipped *[]string) (string, bool) {
+	db, err1 := QuoteObjectIdent(gr.Database)
+	tbl, err2 := QuoteObjectIdent(gr.Table)
+	if err1 != nil || err2 != nil {
+		*skipped = append(*skipped, gr.Database+"."+gr.Table)
+		return "", false
+	}
+	return fmt.Sprintf("REVOKE SELECT ON %s.%s FROM %s", db, tbl, target), true
 }
 
 // escapePassword hardens the string literal. Derived passwords are already
@@ -754,13 +823,13 @@ func TestComputeUnionsGroupsEveryoneAndDirect(t *testing.T) {
 
 	d := Compute(org, wh, master, grants, memberships, users)
 
-	require.Contains(t, d.Roles, RoleIdent(org, g1))
-	require.Contains(t, d.Roles, RoleIdent(org, g2))
+	require.Contains(t, d.Roles, RoleIdent(wh, org, g1))
+	require.Contains(t, d.Roles, RoleIdent(wh, org, g2))
 	require.Contains(t, d.Roles, EveryoneRole)
-	require.NotContains(t, d.Roles, RoleIdent(org, uuid.New()))
+	require.NotContains(t, d.Roles, RoleIdent(wh, org, uuid.New()))
 
-	ust := d.Users[UserIdent(org, u1)]
-	require.Equal(t, []string{EveryoneRole, RoleIdent(org, g1)}, ust.Roles)
+	ust := d.Users[UserIdent(wh, org, u1)]
+	require.Equal(t, []string{EveryoneRole, RoleIdent(wh, org, g1)}, ust.Roles)
 	require.Contains(t, ust.DirectGrants, Grant{Database: "db", Table: "u_only"})
 	require.Equal(t, DerivePassword(master, wh, u1), ust.Password)
 }
@@ -768,7 +837,7 @@ func TestComputeUnionsGroupsEveryoneAndDirect(t *testing.T) {
 func TestComputeSkipsUserWithNoEffectiveGrants(t *testing.T) {
 	org, wh, u1 := uuid.New(), uuid.New(), uuid.New()
 	d := Compute(org, wh, []byte("k"), nil, map[uuid.UUID][]uuid.UUID{u1: {}}, []UserSpec{{ID: u1}})
-	require.NotContains(t, d.Users, UserIdent(org, u1))
+	require.NotContains(t, d.Users, UserIdent(wh, org, u1))
 }
 ```
 
@@ -827,7 +896,7 @@ func Compute(
 			if err != nil {
 				continue
 			}
-			ident := RoleIdent(orgID, gid)
+			ident := RoleIdent(warehouseID, orgID, gid)
 			if roleGrants[ident] == nil {
 				roleGrants[ident] = map[Grant]struct{}{}
 			}
@@ -857,7 +926,7 @@ func Compute(
 			userRoles = append(userRoles, EveryoneRole)
 		}
 		for _, gid := range memberships[u.ID] {
-			ident := RoleIdent(orgID, gid)
+			ident := RoleIdent(warehouseID, orgID, gid)
 			if _, ok := roles[ident]; ok {
 				userRoles = append(userRoles, ident)
 			}
@@ -867,10 +936,9 @@ func Compute(
 			continue // no effective grants: do not provision
 		}
 		pw := DerivePassword(masterKey, warehouseID, u.ID)
-		usersOut[UserIdent(orgID, u.ID)] = UserState{
-			Ident:        UserIdent(orgID, u.ID),
+		usersOut[UserIdent(warehouseID, orgID, u.ID)] = UserState{
+			Ident:        UserIdent(warehouseID, orgID, u.ID),
 			Password:     pw,
-			PasswordFp:   Fingerprint(pw),
 			Roles:        sortedStrings(userRoles),
 			DirectGrants: direct,
 		}
@@ -957,6 +1025,10 @@ type GrantRow struct {
 // LoadActual reads users, roles, role grants, and direct grants for all
 // Aether-managed entities. Wildcard grants are never expected and set
 // HasWildcard so the caller can raise a drift alert.
+//
+// It does NOT read password hashes: ClickHouse stores salted hashes that
+// cannot be compared. Password rotation is driven by
+// warehouses.applied_master_fp (see Task 9) via ActualState.ForcePasswordReset.
 func LoadActual(ctx context.Context, conn clickhouse.Conn) (ActualState, error) {
 	var grants []GrantRow
 	rows, err := conn.Query(ctx, `
@@ -1236,6 +1308,8 @@ git commit -m "feat(chaccess): add per-warehouse sync service"
 
 **Files:**
 - Create: `internal/api/warehouse_sync.go`
+- Create: `internal/database/migrations/V111__warehouse_master_fingerprint.sql`
+  (`ALTER TABLE warehouses ADD COLUMN applied_master_fp TEXT;`)
 - Test: `internal/api/warehouse_sync_test.go`
 
 **Step 1: Write the failing test**
@@ -1246,7 +1320,7 @@ user and one group, run `reconcileWarehouse`, then assert:
 
 ```go
 func TestReconcileWarehouseProvisionsUsersAndRoles(t *testing.T) {
-	s, orgID, userID := setupWarehouseFixture(t)
+	s, orgID, userID, whID := setupWarehouseFixture(t)
 	// fixture: warehouse + clickhouse connector + group + membership + grants
 	require.NoError(t, s.reconcileWarehouse(context.Background(), whID))
 
@@ -1257,7 +1331,7 @@ func TestReconcileWarehouseProvisionsUsersAndRoles(t *testing.T) {
 
 	// verify via provisioner connection explicitly (not the pool manager)
 	conn := dialProvisioner(t, s, whID)
-	requireUserExists(t, conn, chaccess.UserIdent(orgID, userID))
+	requireUserExists(t, conn, chaccess.UserIdent(warehouseID, orgID, userID))
 }
 ```
 
@@ -1279,7 +1353,7 @@ Create `internal/api/warehouse_sync.go` with:
 // reconcileWarehouse computes desired ClickHouse access state for a warehouse
 // and applies it through the provisioner connector. Idempotent.
 func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) error {
-	// 1. Load warehouse + org + provisioner connector row.
+	// 1. Load warehouse + org + provisioner connector row (filter connectors.deleted_at IS NULL).
 	// 2. Decrypt provisioner config, open a ClickHouse connection (short-lived,
 	//    NOT through the user pool manager).
 	// 3. Load warehouse_table_grants.
@@ -1288,8 +1362,10 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 	//    direct-grant users, everyone covers all org members).
 	// 6. desired := chaccess.Compute(...)
 	// 7. actual, err := chaccess.LoadActual(ctx, conn); if actual.HasWildcard -> audit alert.
-	// 8. for _, stmt := range chaccess.Statements(desired, actual) { exec; on error -> mark error + return }
-	// 9. mark sync_status='ready', last_synced_at=now().
+	//    actual.ForcePasswordReset = (warehouse.applied_master_fp != chaccess.Fingerprint(derivedMasterKey))
+	// 8. stmts, skipped := chaccess.Statements(desired, actual); audit skipped as warehouse.drift.
+	//    for _, stmt := range stmts { exec; on error -> mark error + return }
+	// 9. mark sync_status='ready', last_synced_at=now(), applied_master_fp=current fp.
 	// 10. audit "warehouse.sync" with counts.
 	// Wrap all DB mutations in setWarehouseSyncStatus(status, errorText).
 }
@@ -1298,10 +1374,17 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 Requirements:
 - Statements execute sequentially; the first error aborts and sets
   `sync_status='error'` with `sync_error`.
+- Skipped (unquotable) catalog names are audited as `warehouse.drift` and do
+  not abort the sync.
+- Master-key rotation self-heals: when `applied_master_fp` differs from the
+  current fingerprint, `ForcePasswordReset` makes the plan emit
+  `ALTER USER ... IDENTIFIED` for every existing provisioned user; the new
+  fingerprint is stored only after all statements succeed.
 - Auditing uses the existing audit logger (`s.audit`), action `warehouse.sync`,
   with `warehouse_id`, `statements`, `users`, `roles`.
 - The provisioner must be RW; if the connector has no warehouse or no
   provisioner is designated, return a descriptive error.
+- Soft-deleted connectors are never used as provisioners (`deleted_at IS NULL`).
 
 **Step 4: Run test to verify it passes**
 
@@ -1666,7 +1749,8 @@ Steps:
 - `checkPermission(ctx, userID, orgID, role, "connector", connectorID, "use")`.
 - List connectors in the warehouse; filter by `use`.
 - Apply preference lookup in `warehouse_service_preferences`.
-- Build the CH identity via `chaccess.UserIdent` + `chaccess.DerivePassword`.
+- Build the CH identity via `chaccess.UserIdent(warehouseID, orgID, userID)` +
+  `chaccess.DerivePassword(masterKey, warehouseID, userID)`.
 - Return `ErrServiceChoiceRequired` when multiple services are allowed and no
   preference is set (HTTP 409 with the allowed list).
 
@@ -1943,7 +2027,7 @@ Rules:
 - Granting tables to a subject with no service access returns a warning field
   `{"warning":"no_service_access"}` (not an error).
 - Table/database names validated with the same whitelist used by
-  `chaccess.QuoteIdent`; reject invalid names with 400.
+  `chaccess.QuoteObjectIdent`; reject invalid names with 400.
 - Effective access returns the union set and the CH identity names.
 - `PUT /warehouses/{id}/preference` validates the connector belongs to that
   warehouse (`connectors.warehouse_id = :id AND connectors.deleted_at IS NULL`);

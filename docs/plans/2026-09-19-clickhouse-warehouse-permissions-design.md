@@ -101,11 +101,13 @@ the user was explicitly granted does not change results — only compute placeme
 
 ## ClickHouse objects (per warehouse)
 
-- One CH user per Aether user: `aether_<org>_<user>` derived from UUID prefixes, never email.
+- One CH user per Aether user per warehouse: `aether_u_<hash(warehouse, org, user)>` derived from
+  UUIDs, never email. Scoping the hash by warehouse keeps identities separate if two warehouses
+  ever point at the same service.
 - Password = HKDF(masterKey, warehouse, user); `sha256_password`, `GRANTEES NONE`, settings
   profile attached; never `NOT IDENTIFIED`.
-- One role per Aether group: `aether_<org>_<group>` with that group's table grants; an
-  `Everyone` role; direct user grants attach to the user object.
+- One role per Aether group per warehouse: `aether_g_<hash(warehouse, org, group)>` with that
+  group's table grants; an `Everyone` role; direct user grants attach to the user object.
 - Default roles = all of the user's group roles (`SET DEFAULT ROLE ALL`). ClickHouse roles are
   additive, matching Aether's allow-only ACL union semantics (`acl_entries` has no deny column).
 - Provisioning condition: at least one effective table grant. Service access gates execution
@@ -116,6 +118,10 @@ the user was explicitly granted does not change results — only compute placeme
 - One designated RW, non-idling **provisioner connector** per warehouse; all DDL and
   reconciliation runs through it. Other connectors' credentials are not used for provisioning.
 - Unmanaged connectors (no warehouse) are skipped entirely by the sync worker.
+- `warehouses.applied_master_fp` records the master-key fingerprint last applied. When it
+  differs, the next reconcile re-keys every provisioned user (`ALTER USER ... IDENTIFIED`) and
+  only then stores the new fingerprint. ClickHouse stores salted password hashes, so hashes are
+  never compared; rotation self-heals on the next sync.
 - Desired state is computed from `warehouse_table_grants` + group memberships; a single worker
   per warehouse processes it, debounced 1–3s, batching multi-name DDL, idempotent
   (`CREATE USER IF NOT EXISTS`, `OR REPLACE` roles).
