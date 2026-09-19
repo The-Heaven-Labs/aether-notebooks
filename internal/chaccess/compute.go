@@ -2,7 +2,8 @@ package chaccess
 
 import "github.com/google/uuid"
 
-// SubjectGrant is one row of warehouse_table_grants.
+// SubjectGrant is one row of warehouse_table_grants. SubjectID is a UUID
+// string for "user" and "group" subjects; it is ignored for "everyone".
 type SubjectGrant struct {
 	SubjectType string // user | group | everyone
 	SubjectID   string
@@ -10,20 +11,27 @@ type SubjectGrant struct {
 	Table       string
 }
 
-// UserSpec is a user who may be provisioned in a warehouse.
+// UserSpec is a user who may be provisioned in a warehouse. Identities are
+// UUID-derived, so no email (or other mutable attribute) is carried here.
 type UserSpec struct {
-	ID    uuid.UUID
-	Email string
+	ID uuid.UUID
 }
 
 // Compute builds the desired ClickHouse state for a warehouse.
 //
-//   - One role per group with at least one grant.
+// Preconditions: grants, memberships, and users must already be scoped to the
+// warehouse's org. Callers validate subjects against org membership before
+// calling (the sync worker joins org_members); Compute makes no DB calls.
+//
+//   - One role per group with at least one grant; a group with no grants gets
+//     no role. SubjectID is ignored for "everyone".
 //   - Everyone grants go to the warehouse's EveryoneRole(warehouseID) role.
 //   - A user is provisioned only when their union (direct + groups + everyone)
 //     is non-empty.
 //   - A user's default roles are the roles of their granting groups plus
-//     EveryoneRole(warehouseID) when applicable.
+//     EveryoneRole(warehouseID) when applicable, deduplicated and sorted.
+//   - Malformed subject IDs and unknown subject types are deliberately ignored
+//     (fail closed): they grant nothing and provision nobody.
 func Compute(
 	orgID, warehouseID uuid.UUID,
 	masterKey []byte,
@@ -49,10 +57,15 @@ func Compute(
 			}
 			roleGrants[ident][key] = struct{}{}
 		case "user":
-			if userDirect[gr.SubjectID] == nil {
-				userDirect[gr.SubjectID] = map[Grant]struct{}{}
+			uid, err := uuid.Parse(gr.SubjectID)
+			if err != nil {
+				continue
 			}
-			userDirect[gr.SubjectID][key] = struct{}{}
+			sid := uid.String() // canonical key: non-canonical spellings must match
+			if userDirect[sid] == nil {
+				userDirect[sid] = map[Grant]struct{}{}
+			}
+			userDirect[sid][key] = struct{}{}
 		case "everyone":
 			everyone[key] = struct{}{}
 		}
@@ -68,24 +81,24 @@ func Compute(
 
 	usersOut := map[string]UserState{}
 	for _, u := range users {
-		var userRoles []string
+		roleSet := map[string]struct{}{}
 		if len(everyone) > 0 {
-			userRoles = append(userRoles, EveryoneRole(warehouseID))
+			roleSet[EveryoneRole(warehouseID)] = struct{}{}
 		}
 		for _, gid := range memberships[u.ID] {
 			ident := RoleIdent(warehouseID, orgID, gid)
 			if _, ok := roles[ident]; ok {
-				userRoles = append(userRoles, ident)
+				roleSet[ident] = struct{}{}
 			}
 		}
 		direct := userDirect[u.ID.String()]
-		if len(userRoles) == 0 && len(direct) == 0 {
+		if len(roleSet) == 0 && len(direct) == 0 {
 			continue // no effective grants: do not provision
 		}
 		pw := DerivePassword(masterKey, warehouseID, u.ID)
 		usersOut[UserIdent(warehouseID, orgID, u.ID)] = UserState{
 			Password:     pw,
-			Roles:        sortedStrings(userRoles),
+			Roles:        sortedSet(roleSet),
 			DirectGrants: direct,
 		}
 	}

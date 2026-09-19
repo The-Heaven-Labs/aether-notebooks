@@ -2,6 +2,7 @@ package chaccess
 
 import (
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -18,7 +19,7 @@ func TestComputeUnionsGroupsEveryoneAndDirect(t *testing.T) {
 		{SubjectType: "everyone", SubjectID: "everyone", Database: "db", Table: "public"},
 	}
 	memberships := map[uuid.UUID][]uuid.UUID{u1: {g1}}
-	users := []UserSpec{{ID: u1, Email: "u1@x.com"}}
+	users := []UserSpec{{ID: u1}}
 	master := []byte("0123456789abcdef0123456789abcdef")
 
 	d := Compute(org, wh, master, grants, memberships, users)
@@ -101,14 +102,87 @@ func TestComputeEveryoneRoleWithoutMembers(t *testing.T) {
 	require.Empty(t, d.Users)
 }
 
-func TestComputeIgnoresUnparseableGroupSubject(t *testing.T) {
-	org, wh := uuid.New(), uuid.New()
+func TestComputeIgnoresUnparseableSubjects(t *testing.T) {
+	org, wh, u1 := uuid.New(), uuid.New(), uuid.New()
 	grants := []SubjectGrant{
 		{SubjectType: "group", SubjectID: "not-a-uuid", Database: "db", Table: "t"},
+		{SubjectType: "user", SubjectID: "also-not-a-uuid", Database: "db", Table: "t"},
 	}
 
-	d := Compute(org, wh, []byte("k"), grants, nil, nil)
+	d := Compute(org, wh, []byte("k"), grants, nil, []UserSpec{{ID: u1}})
 
 	require.Empty(t, d.Roles)
 	require.Empty(t, d.Users)
+}
+
+func TestComputeIgnoresUnknownSubjectType(t *testing.T) {
+	org, wh, u1 := uuid.New(), uuid.New(), uuid.New()
+	grants := []SubjectGrant{
+		{SubjectType: "team", SubjectID: u1.String(), Database: "db", Table: "t"},
+	}
+
+	d := Compute(org, wh, []byte("k"), grants, nil, []UserSpec{{ID: u1}})
+
+	require.Empty(t, d.Roles)
+	require.Empty(t, d.Users)
+}
+
+func TestComputeProvisionsGroupOnlyUser(t *testing.T) {
+	org, wh, u1, g1 := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	grants := []SubjectGrant{
+		{SubjectType: "group", SubjectID: g1.String(), Database: "db", Table: "t"},
+	}
+	memberships := map[uuid.UUID][]uuid.UUID{u1: {g1}}
+
+	d := Compute(org, wh, []byte("k"), grants, memberships, []UserSpec{{ID: u1}})
+
+	ust, ok := d.Users[UserIdent(wh, org, u1)]
+	require.True(t, ok)
+	require.Equal(t, []string{RoleIdent(wh, org, g1)}, ust.Roles)
+	require.Nil(t, ust.DirectGrants)
+}
+
+func TestComputeProvisionsEveryoneOnlyUser(t *testing.T) {
+	org, wh, u1 := uuid.New(), uuid.New(), uuid.New()
+	grants := []SubjectGrant{
+		{SubjectType: "everyone", SubjectID: "ignored", Database: "db", Table: "public"},
+	}
+
+	d := Compute(org, wh, []byte("k"), grants, nil, []UserSpec{{ID: u1}})
+
+	ust, ok := d.Users[UserIdent(wh, org, u1)]
+	require.True(t, ok)
+	require.Equal(t, []string{EveryoneRole(wh)}, ust.Roles)
+	require.Nil(t, ust.DirectGrants)
+}
+
+func TestComputeCanonicalizesUserSubject(t *testing.T) {
+	org, wh, u1 := uuid.New(), uuid.New(), uuid.New()
+	grants := []SubjectGrant{
+		{SubjectType: "user", SubjectID: strings.ToUpper(u1.String()), Database: "db", Table: "t1"},
+		{SubjectType: "user", SubjectID: u1.String(), Database: "db", Table: "t2"},
+	}
+
+	d := Compute(org, wh, []byte("k"), grants, nil, []UserSpec{{ID: u1}})
+
+	ust, ok := d.Users[UserIdent(wh, org, u1)]
+	require.True(t, ok)
+	require.Len(t, ust.DirectGrants, 2)
+	require.Contains(t, ust.DirectGrants, Grant{Database: "db", Table: "t1"})
+	require.Contains(t, ust.DirectGrants, Grant{Database: "db", Table: "t2"})
+}
+
+func TestComputeDedupesRolesFromDuplicateMemberships(t *testing.T) {
+	org, wh, u1, g1 := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	grants := []SubjectGrant{
+		{SubjectType: "group", SubjectID: g1.String(), Database: "db", Table: "t"},
+		{SubjectType: "group", SubjectID: g1.String(), Database: "db", Table: "t"},
+	}
+	memberships := map[uuid.UUID][]uuid.UUID{u1: {g1, g1, g1}}
+
+	d := Compute(org, wh, []byte("k"), grants, memberships, []UserSpec{{ID: u1}})
+
+	ust := d.Users[UserIdent(wh, org, u1)]
+	require.Equal(t, []string{RoleIdent(wh, org, g1)}, ust.Roles)
+	require.Len(t, d.Roles[RoleIdent(wh, org, g1)].Grants, 1)
 }
