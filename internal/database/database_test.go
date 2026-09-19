@@ -2,11 +2,13 @@ package database_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/the-heaven-labs/aether/internal/database"
 )
 
@@ -220,17 +222,20 @@ func TestMigration108WarehouseTableGrants(t *testing.T) {
 
 	var exists bool
 	if err := db.Pool.QueryRow(ctx,
-		"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='warehouse_table_grants')").Scan(&exists); err != nil {
+		"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='warehouse_table_grants')").Scan(&exists); err != nil {
 		t.Fatalf("warehouse_table_grants existence query: %v", err)
 	}
 	if !exists {
 		t.Fatal("warehouse_table_grants table should exist after migration")
 	}
 
+	// Column order is pinned on purpose: the leading warehouse_id keeps the
+	// unique btree usable for warehouse-scoped grant lookups.
 	rows, err := db.Pool.Query(ctx, `
 		SELECT a.attname
 		FROM pg_constraint c
 		JOIN pg_class t ON t.oid = c.conrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
 		JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
 		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
 		WHERE t.relname = 'warehouse_table_grants' AND c.contype = 'u'
@@ -256,36 +261,183 @@ func TestMigration108WarehouseTableGrants(t *testing.T) {
 		t.Fatalf("warehouse_table_grants unique constraint columns = %v, want %v", uniqueCols, wantUnique)
 	}
 
-	checkRows, err := db.Pool.Query(ctx, `
+	var checkDef string
+	if err := db.Pool.QueryRow(ctx, `
 		SELECT pg_get_constraintdef(c.oid)
 		FROM pg_constraint c
 		JOIN pg_class t ON t.oid = c.conrelid
-		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey)
-		WHERE t.relname = 'warehouse_table_grants' AND c.contype = 'c' AND a.attname = 'subject_type'`)
-	if err != nil {
-		t.Fatalf("check constraint query: %v", err)
-	}
-	defer checkRows.Close()
-
-	var checks []string
-	for checkRows.Next() {
-		var def string
-		if err := checkRows.Scan(&def); err != nil {
-			t.Fatalf("scan: %v", err)
-		}
-		checks = append(checks, def)
-	}
-	if err := checkRows.Err(); err != nil {
-		t.Fatalf("rows: %v", err)
-	}
-	if len(checks) != 1 {
-		t.Fatalf("subject_type CHECK constraint count = %d, want 1", len(checks))
+		JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+		WHERE t.relname = 'warehouse_table_grants' AND c.conname = 'warehouse_table_grants_subject_type_check'`).Scan(&checkDef); err != nil {
+		t.Fatalf("subject_type check constraint lookup: %v", err)
 	}
 	for _, v := range []string{"'user'", "'group'", "'everyone'"} {
-		if !strings.Contains(checks[0], v) {
-			t.Fatalf("subject_type CHECK constraint %q missing %s", checks[0], v)
+		if !strings.Contains(checkDef, v) {
+			t.Fatalf("subject_type CHECK constraint %q missing %s", checkDef, v)
 		}
 	}
+
+	for _, tc := range []struct {
+		name       string
+		refTable   string
+		cols       string
+		deleteRule string
+	}{
+		{"warehouse_table_grants_warehouse_org_fkey", "warehouses", "warehouse_id,org_id", "CASCADE"},
+		{"warehouse_table_grants_org_id_fkey", "orgs", "org_id", "CASCADE"},
+		{"warehouse_table_grants_created_by_fkey", "users", "created_by", "SET NULL"},
+	} {
+		var cols, rule string
+		if err := db.Pool.QueryRow(ctx, `
+			SELECT string_agg(a.attname, ',' ORDER BY k.ord), rc.delete_rule
+			FROM pg_constraint c
+			JOIN pg_class t ON t.oid = c.conrelid
+			JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+			JOIN pg_class rt ON rt.oid = c.confrelid
+			JOIN pg_namespace rn ON rn.oid = rt.relnamespace AND rn.nspname = 'public'
+			JOIN unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(attnum, refattnum, ord) ON true
+			JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+			JOIN information_schema.referential_constraints rc
+			  ON rc.constraint_name = c.conname AND rc.constraint_schema = 'public'
+			WHERE t.relname = 'warehouse_table_grants' AND c.conname = $1 AND rt.relname = $2
+			GROUP BY rc.delete_rule`, tc.name, tc.refTable).Scan(&cols, &rule); err != nil {
+			t.Fatalf("%s lookup: %v", tc.name, err)
+		}
+		if cols != tc.cols || rule != tc.deleteRule {
+			t.Fatalf("%s = (%s, %s), want (%s, %s)", tc.name, cols, rule, tc.cols, tc.deleteRule)
+		}
+	}
+}
+
+func TestMigration110WarehouseGrantsIntegrity(t *testing.T) {
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+	}
+
+	db, err := database.Connect(context.Background(), dsn, "")
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	var idOrgCols string
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT string_agg(a.attname, ',' ORDER BY k.ord)
+		FROM pg_constraint c
+		JOIN pg_class t ON t.oid = c.conrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+		JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
+		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+		WHERE t.relname = 'warehouses' AND c.conname = 'warehouses_id_org_key' AND c.contype = 'u'`).Scan(&idOrgCols); err != nil {
+		t.Fatalf("warehouses_id_org_key lookup: %v", err)
+	}
+	if idOrgCols != "id,org_id" {
+		t.Fatalf("warehouses_id_org_key covers %q, want \"id,org_id\"", idOrgCols)
+	}
+
+	var fkCols, fkRule string
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT string_agg(a.attname, ',' ORDER BY k.ord), rc.delete_rule
+		FROM pg_constraint c
+		JOIN pg_class t ON t.oid = c.conrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+		JOIN pg_class rt ON rt.oid = c.confrelid
+		JOIN pg_namespace rn ON rn.oid = rt.relnamespace AND rn.nspname = 'public'
+		JOIN unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(attnum, refattnum, ord) ON true
+		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+		JOIN information_schema.referential_constraints rc
+		  ON rc.constraint_name = c.conname AND rc.constraint_schema = 'public'
+		WHERE t.relname = 'warehouse_table_grants'
+		  AND c.conname = 'warehouse_table_grants_warehouse_org_fkey'
+		  AND rt.relname = 'warehouses'
+		GROUP BY rc.delete_rule`).Scan(&fkCols, &fkRule); err != nil {
+		t.Fatalf("warehouse_table_grants_warehouse_org_fkey lookup: %v", err)
+	}
+	if fkCols != "warehouse_id,org_id" || fkRule != "CASCADE" {
+		t.Fatalf("warehouse_table_grants_warehouse_org_fkey = (%s, %s), want (warehouse_id,org_id, CASCADE)", fkCols, fkRule)
+	}
+
+	var idxCols string
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT string_agg(a.attname, ',' ORDER BY k.ord)
+		FROM pg_index i
+		JOIN pg_class t ON t.oid = i.indexrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+		JOIN unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
+		JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+		WHERE t.relname = 'idx_wh_grants_subject_lookup'`).Scan(&idxCols); err != nil {
+		t.Fatalf("idx_wh_grants_subject_lookup lookup: %v", err)
+	}
+	if idxCols != "subject_type,subject_id" {
+		t.Fatalf("idx_wh_grants_subject_lookup covers %q, want \"subject_type,subject_id\"", idxCols)
+	}
+
+	for _, old := range []string{"idx_wh_grants_subject", "idx_wh_grants_group"} {
+		var n int
+		if err := db.Pool.QueryRow(ctx, `
+			SELECT COUNT(*)
+			FROM pg_class t
+			JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+			WHERE t.relname = $1 AND t.relkind = 'i'`, old).Scan(&n); err != nil {
+			t.Fatalf("%s existence query: %v", old, err)
+		}
+		if n != 0 {
+			t.Fatalf("%s should have been dropped", old)
+		}
+	}
+
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var orgID, warehouseID, userID string
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO orgs (name, slug) VALUES ('V110 Integrity Org', 'v110-integrity-org') RETURNING id::text`).Scan(&orgID); err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO warehouses (org_id, name) VALUES ($1, 'V110 Integrity Warehouse') RETURNING id::text`, orgID).Scan(&warehouseID); err != nil {
+		t.Fatalf("seed warehouse: %v", err)
+	}
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO users (email, name) VALUES ('v110-integrity@test.local', 'V110 Integrity') RETURNING id::text`).Scan(&userID); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	const insertGrant = `INSERT INTO warehouse_table_grants
+		(org_id, warehouse_id, subject_type, subject_id, database_name, table_name, created_by)
+		VALUES ($1, $2, $3, $4, 'analytics', 'events', $5)`
+	if _, err := tx.Exec(ctx, insertGrant, orgID, warehouseID, "user", userID, userID); err != nil {
+		t.Fatalf("valid grant insert: %v", err)
+	}
+
+	expectSQLState := func(wantCode, subjectType, subjectID string) {
+		t.Helper()
+		sp, err := tx.Begin(ctx)
+		if err != nil {
+			t.Fatalf("savepoint: %v", err)
+		}
+		_, err = sp.Exec(ctx, insertGrant, orgID, warehouseID, subjectType, subjectID, userID)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != wantCode {
+			t.Fatalf("insert (%s,%s) = %v, want SQLSTATE %s", subjectType, subjectID, err, wantCode)
+		}
+		if err := sp.Rollback(ctx); err != nil {
+			t.Fatalf("rollback savepoint: %v", err)
+		}
+	}
+
+	expectSQLState("23505", "user", userID)
+	expectSQLState("23514", "user", "ABCDEF01-2345-6789-ABCD-EF0123456789")
+	expectSQLState("23514", "everyone", "not-everyone")
 }
 
 // TestNoRowLevelSecurityWithoutPolicies is a regression guard for the
