@@ -6,19 +6,18 @@ type Grant struct {
 	Table    string
 }
 
-// RoleState is the desired grant set for one group role.
+// RoleState is the desired grant set for one group role. The role's identity
+// is its key in DesiredState.Roles.
 type RoleState struct {
-	Ident  string
 	Grants map[Grant]struct{}
 }
 
-// UserState is the desired state for one Aether user in a warehouse.
+// UserState is the desired state for one Aether user in a warehouse. The
+// user's identity is its key in DesiredState.Users.
 type UserState struct {
-	Ident           string
-	Password        string
-	Roles           []string
-	DirectGrants    map[Grant]struct{}
-	SettingsProfile string // empty = none
+	Password     string
+	Roles        []string
+	DirectGrants map[Grant]struct{}
 }
 
 // DesiredState is the full desired ClickHouse access state for a warehouse.
@@ -29,9 +28,8 @@ type DesiredState struct {
 
 // UserActual is the observed state of one ClickHouse user.
 type UserActual struct {
-	Roles           map[string]struct{}
-	DirectGrants    map[Grant]struct{}
-	DefaultRolesAll bool
+	Roles        map[string]struct{}
+	DirectGrants map[Grant]struct{}
 }
 
 // ActualState is the observed ClickHouse access state. ForcePasswordReset is
