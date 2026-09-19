@@ -278,6 +278,18 @@ func TestQuoteIdentRejectsInjection(t *testing.T) {
 		require.Error(t, err, "must reject %q", bad)
 	}
 }
+
+func TestQuoteObjectIdentAllowsCatalogNames(t *testing.T) {
+	for _, good := range []string{"fact_sales", "MyTable", "db-1", "a.b", "events_2024$"} {
+		q, err := QuoteObjectIdent(good)
+		require.NoError(t, err, "must accept %q", good)
+		require.Contains(t, q, good)
+	}
+	for _, bad := range []string{"", "a`b", "a\\b", "a b", "x\ny", "a;--", strings.Repeat("a", 128)} {
+		_, err := QuoteObjectIdent(bad)
+		require.Error(t, err, "must reject %q", bad)
+	}
+}
 ```
 
 **Step 2: Run test to verify it fails**
@@ -313,7 +325,10 @@ const (
 	rolePrefix = "aether_g_"
 )
 
-var identRe = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+var (
+	identRe       = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+	objectIdentRe = regexp.MustCompile(`^[A-Za-z0-9_$][A-Za-z0-9_$.-]{0,126}$`)
+)
 
 func hexID(a, b uuid.UUID) string {
 	sum := sha256.Sum256(append(append([]byte{}, a[:]...), b[:]...))
@@ -338,11 +353,23 @@ func DerivePassword(masterKey []byte, warehouseID, userID uuid.UUID) string {
 	return "Ae1_" + base64.RawURLEncoding.EncodeToString(key)
 }
 
-// QuoteIdent validates and backtick-quotes a ClickHouse identifier. All
-// identifiers that reach DDL must pass through this.
+// QuoteIdent validates and backtick-quotes a generated ClickHouse identity
+// name (user/role). These are always Aether-generated, so the charset is
+// strict.
 func QuoteIdent(name string) (string, error) {
 	if !identRe.MatchString(name) {
 		return "", fmt.Errorf("invalid clickhouse identifier %q", name)
+	}
+	return "`" + name + "`", nil
+}
+
+// QuoteObjectIdent validates and backtick-quotes a ClickHouse database/table
+// name. Names come from the live catalog and may contain uppercase, dots,
+// hyphens, or dollar signs; anything that could break out of backtick quoting
+// (backtick, backslash, whitespace, control chars) is rejected.
+func QuoteObjectIdent(name string) (string, error) {
+	if !objectIdentRe.MatchString(name) {
+		return "", fmt.Errorf("invalid clickhouse object name %q", name)
 	}
 	return "`" + name + "`", nil
 }
@@ -555,13 +582,13 @@ func Statements(d DesiredState, a ActualState) []string {
 		for _, gr := range sortedGrants(rs.Grants) {
 			if _, ok := actual[gr]; !ok {
 				out = append(out, fmt.Sprintf("GRANT SELECT ON %s.%s TO %s",
-					mustQuote(gr.Database), mustQuote(gr.Table), mustQuote(rs.Ident)))
+					mustQuoteObject(gr.Database), mustQuoteObject(gr.Table), mustQuote(rs.Ident)))
 			}
 		}
 		for _, gr := range sortedGrants(actual) {
 			if _, ok := rs.Grants[gr]; !ok {
 				out = append(out, fmt.Sprintf("REVOKE SELECT ON %s.%s FROM %s",
-					mustQuote(gr.Database), mustQuote(gr.Table), mustQuote(rs.Ident)))
+					mustQuoteObject(gr.Database), mustQuoteObject(gr.Table), mustQuote(rs.Ident)))
 			}
 		}
 	}
@@ -605,13 +632,13 @@ func Statements(d DesiredState, a ActualState) []string {
 		for _, gr := range sortedGrants(us.DirectGrants) {
 			if _, ok := actual.DirectGrants[gr]; !ok {
 				out = append(out, fmt.Sprintf("GRANT SELECT ON %s.%s TO %s",
-					mustQuote(gr.Database), mustQuote(gr.Table), mustQuote(us.Ident)))
+					mustQuoteObject(gr.Database), mustQuoteObject(gr.Table), mustQuote(us.Ident)))
 			}
 		}
 		for _, gr := range sortedGrants(actual.DirectGrants) {
 			if _, ok := us.DirectGrants[gr]; !ok {
 				out = append(out, fmt.Sprintf("REVOKE SELECT ON %s.%s FROM %s",
-					mustQuote(gr.Database), mustQuote(gr.Table), mustQuote(us.Ident)))
+					mustQuoteObject(gr.Database), mustQuoteObject(gr.Table), mustQuote(us.Ident)))
 			}
 		}
 	}
@@ -627,6 +654,15 @@ func mustQuote(s string) string {
 	q, err := QuoteIdent(s)
 	if err != nil {
 		panic(err) // generated identifiers are validated at construction
+	}
+	return q
+}
+
+// mustQuoteObject is for database/table names coming from the live catalog.
+func mustQuoteObject(s string) string {
+	q, err := QuoteObjectIdent(s)
+	if err != nil {
+		panic(err) // catalog object names are validated before DDL
 	}
 	return q
 }

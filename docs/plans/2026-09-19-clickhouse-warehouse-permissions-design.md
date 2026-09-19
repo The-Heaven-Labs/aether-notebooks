@@ -162,7 +162,10 @@ the user was explicitly granted does not change results — only compute placeme
   `max_memory_usage`, `max_result_rows`, `max_rows_to_read`/`max_bytes_to_read`,
   `max_concurrent_queries_for_user`, `result_overflow_mode=throw`; DDL quotas per group for
   read bytes / execution time / queries per interval.
-- Identifiers: whitelist `[a-z0-9_]{1,64}` derived from UUIDs, never org-provided names.
+- Identifiers: generated user/role names are strict `[a-z0-9_]{1,64}` derived from UUIDs.
+  Database/table names come from the ClickHouse catalog and use a conservative object-name
+  charset (`[A-Za-z0-9_$][A-Za-z0-9_$.-]{0,126}`) with backtick quoting; backticks,
+  backslashes, whitespace, and control characters are rejected.
 - Lifecycle: `DROP USER` (or credential reset) on offboarding, orphan sweep, optional
   `VALID UNTIL` expiry; restore runbook re-provisions the warehouse.
 - Audit: every execution records user, warehouse, endpoint, duration, read bytes; alerts for
