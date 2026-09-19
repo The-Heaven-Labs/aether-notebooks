@@ -308,6 +308,136 @@ func TestMigration108WarehouseTableGrants(t *testing.T) {
 	}
 }
 
+func TestMigration109ServicePreferences(t *testing.T) {
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+	}
+
+	db, err := database.Connect(context.Background(), dsn, "")
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	var exists bool
+	if err := db.Pool.QueryRow(ctx,
+		"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='warehouse_service_preferences')").Scan(&exists); err != nil {
+		t.Fatalf("warehouse_service_preferences existence query: %v", err)
+	}
+	if !exists {
+		t.Fatal("warehouse_service_preferences table should exist after migration")
+	}
+
+	rows, err := db.Pool.Query(ctx, `
+		SELECT column_name, data_type, is_nullable, column_default
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'warehouse_service_preferences'
+		ORDER BY ordinal_position`)
+	if err != nil {
+		t.Fatalf("columns query: %v", err)
+	}
+	defer rows.Close()
+
+	type column struct {
+		dataType string
+		nullable string
+		def      *string
+	}
+	got := map[string]column{}
+	var order []string
+	for rows.Next() {
+		var name string
+		var c column
+		if err := rows.Scan(&name, &c.dataType, &c.nullable, &c.def); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got[name] = c
+		order = append(order, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+
+	wantOrder := []string{"user_id", "warehouse_id", "connector_id", "updated_at"}
+	if !slices.Equal(order, wantOrder) {
+		t.Fatalf("warehouse_service_preferences columns = %v, want %v", order, wantOrder)
+	}
+	for name, want := range map[string]struct {
+		dataType string
+		nullable string
+	}{
+		"user_id":      {"uuid", "NO"},
+		"warehouse_id": {"uuid", "NO"},
+		"connector_id": {"uuid", "NO"},
+		"updated_at":   {"timestamp with time zone", "NO"},
+	} {
+		c, ok := got[name]
+		if !ok {
+			t.Fatalf("column %s missing", name)
+		}
+		if c.dataType != want.dataType || c.nullable != want.nullable {
+			t.Fatalf("%s = (%s, nullable=%s), want (%s, %s)", name, c.dataType, c.nullable, want.dataType, want.nullable)
+		}
+	}
+	if def := got["updated_at"].def; def == nil || *def != "now()" {
+		t.Fatalf("updated_at default = %v, want now()", def)
+	}
+
+	// Primary key column order is pinned on purpose: it is the lookup key for
+	// a user's routing preference within one warehouse.
+	var pkCols string
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT string_agg(a.attname, ',' ORDER BY k.ord)
+		FROM pg_constraint c
+		JOIN pg_class t ON t.oid = c.conrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+		JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
+		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+		WHERE t.relname = 'warehouse_service_preferences' AND c.contype = 'p'`).Scan(&pkCols); err != nil {
+		t.Fatalf("primary key query: %v", err)
+	}
+	if pkCols != "user_id,warehouse_id" {
+		t.Fatalf("primary key covers %q, want \"user_id,warehouse_id\"", pkCols)
+	}
+
+	for _, tc := range []struct {
+		col        string
+		refTable   string
+		deleteRule string
+	}{
+		{"user_id", "users", "CASCADE"},
+		{"warehouse_id", "warehouses", "CASCADE"},
+		{"connector_id", "connectors", "CASCADE"},
+	} {
+		var cols, rule string
+		if err := db.Pool.QueryRow(ctx, `
+			SELECT string_agg(a.attname, ',' ORDER BY k.ord), rc.delete_rule
+			FROM pg_constraint c
+			JOIN pg_class t ON t.oid = c.conrelid
+			JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+			JOIN pg_class rt ON rt.oid = c.confrelid
+			JOIN pg_namespace rn ON rn.oid = rt.relnamespace AND rn.nspname = 'public'
+			JOIN unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(attnum, refattnum, ord) ON true
+			JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+			JOIN information_schema.referential_constraints rc
+			  ON rc.constraint_name = c.conname AND rc.constraint_schema = 'public'
+			WHERE t.relname = 'warehouse_service_preferences' AND c.contype = 'f' AND rt.relname = $1
+			GROUP BY rc.delete_rule`, tc.refTable).Scan(&cols, &rule); err != nil {
+			t.Fatalf("%s FK lookup: %v", tc.col, err)
+		}
+		if cols != tc.col || rule != tc.deleteRule {
+			t.Fatalf("%s -> %s = (%s, %s), want (%s, %s)", tc.col, tc.refTable, cols, rule, tc.col, tc.deleteRule)
+		}
+	}
+}
+
 func TestMigration110WarehouseGrantsIntegrity(t *testing.T) {
 	dsn := os.Getenv("AETHER_DATABASE_URL")
 	if dsn == "" {
