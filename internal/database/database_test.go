@@ -3,6 +3,8 @@ package database_test
 import (
 	"context"
 	"os"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/the-heaven-labs/aether/internal/database"
@@ -195,6 +197,94 @@ func TestMigration107Warehouses(t *testing.T) {
 	}
 	if fk != 1 {
 		t.Fatalf("connectors.warehouse_id should reference warehouses with ON DELETE SET NULL (fk count=%d)", fk)
+	}
+}
+
+func TestMigration108WarehouseTableGrants(t *testing.T) {
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+	}
+
+	db, err := database.Connect(context.Background(), dsn, "")
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	var exists bool
+	if err := db.Pool.QueryRow(ctx,
+		"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='warehouse_table_grants')").Scan(&exists); err != nil {
+		t.Fatalf("warehouse_table_grants existence query: %v", err)
+	}
+	if !exists {
+		t.Fatal("warehouse_table_grants table should exist after migration")
+	}
+
+	rows, err := db.Pool.Query(ctx, `
+		SELECT a.attname
+		FROM pg_constraint c
+		JOIN pg_class t ON t.oid = c.conrelid
+		JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
+		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+		WHERE t.relname = 'warehouse_table_grants' AND c.contype = 'u'
+		ORDER BY k.ord`)
+	if err != nil {
+		t.Fatalf("unique constraint query: %v", err)
+	}
+	defer rows.Close()
+
+	var uniqueCols []string
+	for rows.Next() {
+		var col string
+		if err := rows.Scan(&col); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		uniqueCols = append(uniqueCols, col)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	wantUnique := []string{"warehouse_id", "subject_type", "subject_id", "database_name", "table_name"}
+	if !slices.Equal(uniqueCols, wantUnique) {
+		t.Fatalf("warehouse_table_grants unique constraint columns = %v, want %v", uniqueCols, wantUnique)
+	}
+
+	checkRows, err := db.Pool.Query(ctx, `
+		SELECT pg_get_constraintdef(c.oid)
+		FROM pg_constraint c
+		JOIN pg_class t ON t.oid = c.conrelid
+		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(c.conkey)
+		WHERE t.relname = 'warehouse_table_grants' AND c.contype = 'c' AND a.attname = 'subject_type'`)
+	if err != nil {
+		t.Fatalf("check constraint query: %v", err)
+	}
+	defer checkRows.Close()
+
+	var checks []string
+	for checkRows.Next() {
+		var def string
+		if err := checkRows.Scan(&def); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		checks = append(checks, def)
+	}
+	if err := checkRows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	if len(checks) != 1 {
+		t.Fatalf("subject_type CHECK constraint count = %d, want 1", len(checks))
+	}
+	for _, v := range []string{"'user'", "'group'", "'everyone'"} {
+		if !strings.Contains(checks[0], v) {
+			t.Fatalf("subject_type CHECK constraint %q missing %s", checks[0], v)
+		}
 	}
 }
 
