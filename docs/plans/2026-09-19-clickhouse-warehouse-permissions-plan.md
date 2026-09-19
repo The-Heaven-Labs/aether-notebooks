@@ -43,6 +43,12 @@
 - Task 8's worker must wrap each `Reconcile` call in a `defer/recover`, converting any panic
   (e.g. a future desired-side invariant failure) into a sync error instead of crashing the API
   server process.
+- Task 4's snippet below predates the warehouse-prefix refactor; `internal/chaccess/ident.go`
+  and its tests are the source of truth for identity names.
+- ClickHouse compatibility: the dev stack runs ClickHouse 24.x, whose `system.grants` has no
+  `is_wildcard` column. Wildcard detection is version-agnostic (empty `table`, plus quote
+  validation for table-prefix wildcards) and partial revokes (`is_partial_revoke = 1`) are
+  excluded from actual state.
 
 ---
 
@@ -996,11 +1002,22 @@ func TestParseGrantRows(t *testing.T) {
 
 func TestParseWildcardRowsFlagged(t *testing.T) {
 	rows := []GrantRow{
-		{RoleName: "aether_wh_g_x", AccessType: "SELECT", Database: "db", Table: "", IsWildcard: 1},
+		{RoleName: "aether_wh_g_x", AccessType: "SELECT", Database: "db", Table: ""},
 	}
 	a := buildActualFromGrantRows(rows, nil, nil)
 	require.True(t, a.HasWildcard())
 	require.Equal(t, WildcardGrant{Subject: "aether_wh_g_x", Scope: "db.*"}, a.Wildcards[0])
+}
+
+func TestParsePartialRevokeAndTablePrefixWildcards(t *testing.T) {
+	rows := []GrantRow{
+		{RoleName: "aether_wh_g_x", AccessType: "SELECT", Database: "db", Table: "revoked", IsPartialRevoke: 1},
+		{RoleName: "aether_wh_g_x", AccessType: "SELECT", Database: "db", Table: "events*"},
+	}
+	a := buildActualFromGrantRows(rows, nil, nil)
+	require.Empty(t, a.Roles["aether_wh_g_x"], "partial revokes and prefix wildcards are not table grants")
+	require.True(t, a.HasWildcard())
+	require.Equal(t, "db.events*", a.Wildcards[0].Scope)
 }
 
 func TestParseZeroGrantRolesAreLoaded(t *testing.T) {
@@ -1030,14 +1047,16 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 )
 
-// GrantRow is one row of system.grants.
+// GrantRow is one row of system.grants. is_wildcard does not exist before
+// ClickHouse 26.x, so wildcard detection uses the empty-table signal plus
+// quote validation (see buildActualFromGrantRows).
 type GrantRow struct {
-	UserName   string
-	RoleName   string
-	AccessType string
-	Database   string
-	Table      string
-	IsWildcard uint8
+	UserName        string
+	RoleName        string
+	AccessType      string
+	Database        string
+	Table           string
+	IsPartialRevoke uint8
 }
 
 // LoadActual reads users, roles, role grants, and direct grants for one
@@ -1056,16 +1075,17 @@ func LoadActual(ctx context.Context, conn clickhouse.Conn, warehouseID uuid.UUID
 
 	var grants []GrantRow
 	rows, err := conn.Query(ctx, `
-		SELECT coalesce(user_name,''), coalesce(role_name,''), access_type, coalesce(database,''), coalesce(table,''), is_wildcard
+		SELECT coalesce(user_name,''), coalesce(role_name,''), access_type, coalesce(database,''), coalesce(table,''), is_partial_revoke
 		FROM system.grants
-		WHERE (startsWith(user_name, ?) OR startsWith(role_name, ?)) AND access_type = 'SELECT'`,
+		WHERE (startsWith(user_name, ?) OR startsWith(role_name, ?))
+		  AND access_type = 'SELECT' AND is_partial_revoke = 0`,
 		prefix, prefix)
 	if err != nil {
 		return ActualState{}, fmt.Errorf("system.grants: %w", err)
 	}
 	for rows.Next() {
 		var r GrantRow
-		if err := rows.Scan(&r.UserName, &r.RoleName, &r.AccessType, &r.Database, &r.Table, &r.IsWildcard); err != nil {
+		if err := rows.Scan(&r.UserName, &r.RoleName, &r.AccessType, &r.Database, &r.Table, &r.IsPartialRevoke); err != nil {
 			return ActualState{}, fmt.Errorf("scan grant: %w", err)
 		}
 		grants = append(grants, r)
@@ -1150,19 +1170,32 @@ func buildActualFromGrantRows(grants []GrantRow, roles map[string]map[Grant]stru
 		a.Users[k] = v
 	}
 	for _, r := range grants {
-		if r.IsWildcard == 1 {
-			scope := r.Database + ".*"
-			if r.Database == "" {
-				scope = "*.*"
-			}
-			subject := r.RoleName
-			if subject == "" {
-				subject = r.UserName
+		if r.IsPartialRevoke == 1 {
+			continue
+		}
+		subject := r.RoleName
+		if subject == "" {
+			subject = r.UserName
+		}
+		// Version-agnostic wildcard detection (no is_wildcard column before
+		// ClickHouse 26.x): an empty table means a database/global wildcard.
+		// Table-prefix wildcards (e.g. db.events*) arrive as a non-empty
+		// table that cannot be quoted; treat those as wildcards too so
+		// reconcile fails closed instead of silently ignoring them.
+		if r.Table == "" {
+			scope := "*.*"
+			if r.Database != "" {
+				scope = r.Database + ".*"
 			}
 			a.Wildcards = append(a.Wildcards, WildcardGrant{Subject: subject, Scope: scope})
 			continue
 		}
-		if r.Table == "" {
+		if _, err := QuoteObjectIdent(r.Database); err != nil {
+			a.Wildcards = append(a.Wildcards, WildcardGrant{Subject: subject, Scope: r.Database + "." + r.Table})
+			continue
+		}
+		if _, err := QuoteObjectIdent(r.Table); err != nil {
+			a.Wildcards = append(a.Wildcards, WildcardGrant{Subject: subject, Scope: r.Database + "." + r.Table})
 			continue
 		}
 		gr := Grant{Database: r.Database, Table: r.Table}
