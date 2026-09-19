@@ -473,7 +473,7 @@ func TestStatementsRevokeExtrasAndDropOrphans(t *testing.T) {
 			"aether_g_zzz": grantSet(g("db1", "stale")),
 		},
 		Users: map[string]UserActual{
-			"aether_u_bbb": {Plain: false, Roles: map[string]struct{}{"aether_g_aaa": {}, "aether_g_old": {}}},
+			"aether_u_bbb": {Roles: map[string]struct{}{"aether_g_aaa": {}, "aether_g_old": {}}},
 			"aether_u_old": {Roles: map[string]struct{}{}},
 		},
 	}
@@ -644,7 +644,7 @@ func Statements(d DesiredState, a ActualState) (out []string, skipped []string) 
 
 	// 2. Users: create, password reset, role membership, default roles,
 	//    direct grants, drop orphans.
-	for _, ident := range sortedKeysUsers(d.Users) {
+	for _, ident := range sortedKeys(d.Users) {
 		us := d.Users[ident]
 		actual, exists := a.Users[ident]
 		if !exists {
@@ -688,7 +688,7 @@ func Statements(d DesiredState, a ActualState) (out []string, skipped []string) 
 			}
 		}
 	}
-	for _, ident := range sortedKeysUsers(a.Users) {
+	for _, ident := range sortedKeys(a.Users) {
 		if _, ok := d.Users[ident]; !ok {
 			out = append(out, fmt.Sprintf("DROP USER IF EXISTS %s", mustQuote(ident)))
 		}
@@ -745,8 +745,6 @@ func sortedKeys[V any](m map[string]V) []string {
 	sort.Strings(out)
 	return out
 }
-
-func sortedKeysUsers(m map[string]UserState) []string { return sortedKeys(m) }
 
 func sortedStrings(s []string) []string {
 	out := append([]string{}, s...)
