@@ -163,10 +163,55 @@ func TestStatementsNoOpWhenDesiredMatchesActual(t *testing.T) {
 			"aether_g_aaa": grantSet(g("db1", "t1")),
 		},
 		Users: map[string]UserActual{
-			"aether_u_bbb": {Roles: map[string]struct{}{"aether_g_aaa": {}}},
+			"aether_u_bbb": {
+				Roles:           map[string]struct{}{"aether_g_aaa": {}},
+				DefaultRolesAll: true,
+			},
 		},
 	}
 	stmts, skipped := Statements(d, a)
+	require.Empty(t, stmts)
+	require.Empty(t, skipped)
+}
+
+func TestStatementsSetsDefaultRoleWhenActualDefaultMissing(t *testing.T) {
+	d := DesiredState{Users: map[string]UserState{
+		"aether_u_bbb": {Password: "Ae1_x", Roles: []string{"aether_g_aaa"}},
+	}}
+	a := ActualState{Users: map[string]UserActual{
+		"aether_u_bbb": {
+			Roles:           map[string]struct{}{"aether_g_aaa": {}},
+			DefaultRolesAll: false,
+		},
+	}}
+	stmts, skipped := Statements(d, a)
+	require.Empty(t, skipped)
+	require.Contains(t, stmts, "SET DEFAULT ROLE ALL TO `aether_u_bbb`")
+}
+
+func TestStatementsSkipsDefaultRoleWhenActualDefaultSet(t *testing.T) {
+	d := DesiredState{Users: map[string]UserState{
+		"aether_u_bbb": {Password: "Ae1_x", Roles: []string{"aether_g_aaa"}},
+	}}
+	a := ActualState{Users: map[string]UserActual{
+		"aether_u_bbb": {
+			Roles:           map[string]struct{}{"aether_g_aaa": {}},
+			DefaultRolesAll: true,
+		},
+	}}
+	stmts, skipped := Statements(d, a)
+	require.Empty(t, skipped)
+	require.NotContains(t, stmts, "SET DEFAULT ROLE ALL TO `aether_u_bbb`")
+}
+
+func TestActualStateWildcards(t *testing.T) {
+	var a ActualState
+	require.False(t, a.HasWildcard())
+
+	a.Wildcards = []WildcardGrant{{Subject: "aether_u_bbb", Scope: "analytics.*"}}
+	require.True(t, a.HasWildcard())
+
+	stmts, skipped := Statements(DesiredState{}, a)
 	require.Empty(t, stmts)
 	require.Empty(t, skipped)
 }

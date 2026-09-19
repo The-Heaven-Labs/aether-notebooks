@@ -101,7 +101,7 @@ func Statements(d DesiredState, a ActualState) (out []string, skipped []string) 
 				rolesChanged = true
 			}
 		}
-		if len(us.Roles) > 0 && rolesChanged {
+		if len(us.Roles) > 0 && (rolesChanged || !actual.DefaultRolesAll) {
 			out = append(out, fmt.Sprintf("SET DEFAULT ROLE ALL TO %s", mustQuote(ident)))
 		}
 		for _, gr := range sortedGrants(us.DirectGrants) {
