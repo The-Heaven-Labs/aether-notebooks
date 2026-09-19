@@ -1469,6 +1469,10 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 ```
 
 Requirements:
+- Org scoping is enforced at load time: users come from
+  `org_members JOIN users` for the warehouse's org, and memberships only for
+  those users. A subject ID that does not belong to the org must never be
+  provisioned (defense in depth against any write-path gap).
 - Statements execute sequentially; the first error aborts and sets
   `sync_status='error'` with `sync_error`.
 - Skipped (unquotable) catalog names are audited as `warehouse.drift` and do
@@ -2131,6 +2135,9 @@ Rules:
 - `PUT /warehouses/{id}/preference` validates the connector belongs to that
   warehouse (`connectors.warehouse_id = :id AND connectors.deleted_at IS NULL`);
   reject cross-warehouse or deleted connectors with 400 (negative test).
+- Grant writes validate that `subject_id` belongs to the org (an org member for
+  `user`, an org group for `group`); reject cross-org subjects with 400
+  (negative test).
 
 **Step 4: Run test to verify it passes**
 
