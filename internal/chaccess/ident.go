@@ -26,20 +26,38 @@ var (
 	objectIdentRe = regexp.MustCompile(`^[A-Za-z0-9_$][A-Za-z0-9_$.-]{0,126}$`)
 )
 
-func hexID(a, b uuid.UUID) string {
-	sum := sha256.Sum256(append(append([]byte{}, a[:]...), b[:]...))
-	return hex.EncodeToString(sum[:8])
+func hexID(ids ...uuid.UUID) string {
+	sum := sha256.New()
+	for _, id := range ids {
+		sum.Write(id[:])
+	}
+	return hex.EncodeToString(sum.Sum(nil)[:8])
 }
 
-// UserIdent returns the ClickHouse username for an Aether user in a warehouse.
-func UserIdent(orgID, userID uuid.UUID) string { return userPrefix + hexID(orgID, userID) }
+// UserIdent returns the ClickHouse username for an Aether user in a
+// warehouse. The warehouse is part of the hash input (warehouse ‖ org ‖ user)
+// so that separate warehouses sharing one ClickHouse service never manage the
+// same user objects.
+func UserIdent(warehouseID, orgID, userID uuid.UUID) string {
+	return userPrefix + hexID(warehouseID, orgID, userID)
+}
 
-// RoleIdent returns the ClickHouse role name for an Aether group.
-func RoleIdent(orgID, groupID uuid.UUID) string { return rolePrefix + hexID(orgID, groupID) }
+// RoleIdent returns the ClickHouse role name for an Aether group in a
+// warehouse. The hash input is warehouse ‖ org ‖ group, matching UserIdent.
+func RoleIdent(warehouseID, orgID, groupID uuid.UUID) string {
+	return rolePrefix + hexID(warehouseID, orgID, groupID)
+}
 
 // DerivePassword deterministically derives a ClickHouse password from the
-// master key so no per-user secret is stored at rest. The fixed prefix
-// guarantees Cloud password complexity (uppercase + digit).
+// server's derived master key so no per-user secret is stored at rest. The
+// fixed "Ae1_" prefix guarantees Cloud password complexity (uppercase +
+// digit).
+//
+// masterKey is the output of crypto.DeriveKey(cfg.MasterKey), not the raw
+// AETHER_MASTER_KEY env value. The "aether-ch-pw/v1" info string, the 24-byte
+// output length, and the "Ae1_" prefix together form a versioned domain:
+// changing any of them would re-key every provisioned user, so such a change
+// must bump the info string to a new version (e.g. "aether-ch-pw/v2").
 func DerivePassword(masterKey []byte, warehouseID, userID uuid.UUID) string {
 	info := append([]byte("aether-ch-pw/v1:"+warehouseID.String()+":"), userID[:]...)
 	key, err := hkdf.Key(sha256.New, masterKey, nil, string(info), 24)
