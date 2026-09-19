@@ -46,10 +46,15 @@ type WildcardGrant struct {
 // master-key fingerprint (ClickHouse password hashes are salted and cannot be
 // compared). Wildcards records unexpected wildcard grants; Statements ignores
 // them and the reconcile fails the warehouse closed.
+//
+// Unexpected records drift outside Aether's model: role-to-role grants,
+// namespace roles granted to users outside the namespace, and grants held
+// WITH GRANT OPTION. It is informational (used for sync error reporting).
 type ActualState struct {
 	Roles              map[string]map[Grant]struct{}
 	Users              map[string]UserActual
 	Wildcards          []WildcardGrant
+	Unexpected         []string
 	ForcePasswordReset bool
 }
 
