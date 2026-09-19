@@ -1583,6 +1583,14 @@ func TestResolveExecutionTargetHonorsPin(t *testing.T) {
 func TestResolveExecutionTargetAmbiguousWithoutPreference(t *testing.T) {
 	// two granted services, no preference -> error prompting choice
 }
+
+func TestResolveExecutionTargetUnmanagedConnector(t *testing.T) {
+	// connector with no warehouse -> ErrUnmanagedConnector (legacy path)
+}
+
+func TestResolveExecutionTargetNotReadyFailsClosed(t *testing.T) {
+	// managed warehouse with sync_status != 'ready' -> ErrProvisioningNotReady
+}
 ```
 
 **Step 2: Run test to verify it fails**
@@ -1613,10 +1621,12 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, r
 ```
 
 Steps:
-- Load connector (requested) + `warehouse_id`. If no warehouse, fall back to
-  the legacy shared-credential path (feature flag) or reject when the feature
-  is enabled (implicit warehouse-of-one is Phase 6; for now return
-  `ErrNoWarehouse`).
+- Load connector (requested) + `warehouse_id`. When it is NULL, return
+  `ErrUnmanagedConnector`; callers treat that as the legacy shared-credential
+  path (connector stays exactly as today).
+- Managed connectors require `warehouses.sync_status='ready'`; otherwise return
+  `ErrProvisioningNotReady` (fail closed; never fall back to the stored
+  credential).
 - `checkPermission(ctx, userID, orgID, role, "connector", connectorID, "use")`.
 - List connectors in the warehouse; filter by `use`.
 - Apply preference lookup in `warehouse_service_preferences`.
@@ -1911,7 +1921,7 @@ git commit -m "feat(api): warehouse table grants, effective access, preference"
 
 ---
 
-### Task 20: Feature flag and legacy path
+### Task 20: Global kill switch and legacy path
 
 **Files:**
 - Modify: `internal/config/config.go` (`AETHER_CH_TABLE_PERMISSIONS`, default `false`)
@@ -1922,28 +1932,35 @@ git commit -m "feat(api): warehouse table grants, effective access, preference"
 
 ```go
 func TestWarehousePermissionsDisabledUsesLegacyPath(t *testing.T) {
-	s := setupTestServer(t) // flag false by default
-	// execute a cell on a connector with no warehouse
+	s := setupTestServer(t) // kill switch false by default
+	// execute a cell on an unmanaged connector
 	// assert success using the connector credential
+}
+
+func TestKillSwitchOffRoutesManagedConnectorLegacy(t *testing.T) {
+	// managed warehouse configured, kill switch off
+	// assert execution uses the connector credential
 }
 ```
 
 **Step 2: Run test to verify it fails**
 
-Run: `go test ./internal/api/ -run TestWarehousePermissionsDisabled -v`
+Run: `go test ./internal/api/ -run 'TestWarehousePermissionsDisabled|TestKillSwitchOff' -v`
 Expected: FAIL if the new path is unconditional.
 
 **Step 3: Implement**
 
-- Add `config.CHTablePermissions bool`.
-- When disabled, execution keeps using `buildExecutor` + connector credential
-  exactly as today (log a deprecation warning once per server start).
-- When enabled, missing warehouse/identity fails closed with
-  `ErrNoWarehouse`.
+- Add `config.CHTablePermissions bool` (kill switch).
+- Off: every connector executes through `buildExecutor` + stored credential
+  exactly as today. Log a one-time deprecation/info notice per server start.
+- On: unmanaged connectors (no warehouse) still use the legacy path — that is
+  their documented mode, not a fallback. Managed connectors use the per-user
+  path exclusively; provisioning/permission failures fail closed and never
+  fall back to the stored credential.
 
 **Step 4: Run tests**
 
-Run: `go test ./internal/api/ -run 'TestWarehousePermissions|TestExecuteCell' -v`
+Run: `go test ./internal/api/ -run 'TestWarehousePermissions|TestKillSwitchOff|TestExecuteCell' -v`
 Expected: PASS.
 
 **Step 5: Commit**
@@ -1988,6 +2005,10 @@ Expected: FAIL.
   members connector list with add/remove.
 - Table grant matrix: rows = subjects, chips = `db.table`; add via a
   database/table picker sourced from the connector schema endpoint.
+- Connectors page: access-mode badge per connector (`Managed — table grants
+  enforced` vs `Shared credential — not table-scoped`); a confirmation dialog
+  when linking a connector to a warehouse (execution mode changes and
+  provisioning begins).
 - Use CSS variables only (`var(--accent)`, `var(--text-primary)`).
 
 **Step 4: Run tests and typecheck**
@@ -2153,8 +2174,10 @@ Expected: all pass.
 **Step 2: Update docs**
 
 - Mark the design doc as implemented with any deltas.
-- Document the feature flag, env vars (`AETHER_CH_RECONCILE_INTERVAL`), and the
-  operational runbook (restore → re-sync, provisioner rotation, drift alerts).
+- Document the feature flag, env vars (`AETHER_CH_RECONCILE_INTERVAL`), the
+  managed vs unmanaged connector modes, the global kill switch, and the
+  operational runbook (restore → re-sync, provisioner rotation, drift alerts)
+  in `AGENTS.md`.
 
 **Step 3: Commit**
 

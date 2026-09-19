@@ -49,14 +49,35 @@ compute/QoS/cost attribution, while collaborating on the same notebooks.
 Three distinct concepts:
 
 - **Warehouse** — logical target. Owns table grants, ClickHouse identities/roles, the
-  provisioner connector, and one ClickHouse access namespace. A standalone service is a
-  warehouse of one.
+  provisioner connector, and one ClickHouse access namespace. A connector that is not
+  linked to a warehouse is **unmanaged** (see Connector access modes).
 - **Service (connector)** — physical endpoint. Owns host/TLS, service type (RO/RW), and
   *service access* (existing connector `use` ACL). Explicit per subject; no defaults.
 - **Routing preference** — user-level, per warehouse: which of the user's explicitly granted
   services their queries run on. Set once, changeable. Optional per-notebook/cell **pin** for
   workloads that must run on a specific service; then only subjects with `use` on that service
   can run it.
+
+## Connector access modes
+
+Warehouse membership is the per-connector mode selector:
+
+- **Managed (connector linked to a warehouse).** The sync worker provisions per-user
+  ClickHouse identities and group roles; table grants are enforced by ClickHouse. The
+  connector's stored credential is used only when it is the warehouse's provisioner (DDL and
+  reconciliation), never for user queries.
+- **Unmanaged (no warehouse).** The sync worker never touches the connector; no ClickHouse
+  users, roles, or grants are created. Execution uses the connector's stored credential
+  exactly as before this feature. The connector `use` ACL remains the only gate, so unmanaged
+  connectors sit **outside** the ClickHouse-enforced table boundary.
+
+An unmanaged connector may point at the same physical service as a managed warehouse; they are
+independent Aether connectors. There is no "managed without provisioning" mode: managed implies
+Aether owns identities for that warehouse. If unrestricted access is wanted, grant `everyone`
+all tables explicitly.
+
+**Global kill switch:** `AETHER_CH_TABLE_PERMISSIONS=false` makes every connector behave as
+unmanaged regardless of warehouse configuration, for rollback without schema or config changes.
 
 Because all services in a warehouse expose identical data and grants, choosing among services
 the user was explicitly granted does not change results — only compute placement and cost.
@@ -94,6 +115,7 @@ the user was explicitly granted does not change results — only compute placeme
 
 - One designated RW, non-idling **provisioner connector** per warehouse; all DDL and
   reconciliation runs through it. Other connectors' credentials are not used for provisioning.
+- Unmanaged connectors (no warehouse) are skipped entirely by the sync worker.
 - Desired state is computed from `warehouse_table_grants` + group memberships; a single worker
   per warehouse processes it, debounced 1–3s, batching multi-name DDL, idempotent
   (`CREATE USER IF NOT EXISTS`, `OR REPLACE` roles).
@@ -109,12 +131,15 @@ the user was explicitly granted does not change results — only compute placeme
 
 ## Execution & routing
 
-1. Resolve target warehouse from the cell's connector (or the pinned connector).
-2. Authorize service access: at least one `use` grant in the warehouse; pinned targets require
+1. If the kill switch is off, or the connector is unmanaged (no warehouse), execute through
+   the legacy shared-credential path and stop.
+2. Resolve the target warehouse from the cell's connector (or the pinned connector).
+3. Authorize service access: at least one `use` grant in the warehouse; pinned targets require
    `use` on that exact service.
-3. Resolve the user's ClickHouse identity and preferred service; connect to that endpoint as
-   that user.
-4. Execute; record actual endpoint + warehouse + execution ID in the Aether audit row and
+4. Resolve the user's ClickHouse identity and preferred service; connect to that endpoint as
+   that user. Managed execution requires `sync_status='ready'`; otherwise fail closed with a
+   provisioning error.
+5. Execute; record actual endpoint + warehouse + execution ID in the Aether audit row and
    `log_comment='aether:<execution_id>'` for `system.query_log` joins.
 
 - Per-(endpoint, user) connection pools with a global per-connector cap and LRU eviction of
@@ -175,8 +200,8 @@ the user was explicitly granted does not change results — only compute placeme
 3. Provisioning/sync worker behind a feature flag; existing shared-credential execution
    unchanged until sync and reconciliation are verified.
 4. Per-user execution + routing, then disable shared-credential execution path.
-5. Reconcile every existing connector: implicit warehouse-of-one, backfill grants from current
-   `table_allowlist` where applicable.
+5. Existing connectors stay unmanaged; admins opt into managed mode by creating a warehouse
+   and linking connectors. No automatic backfill.
 
 ## Open items to verify
 
