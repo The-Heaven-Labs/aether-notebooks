@@ -480,9 +480,9 @@ func TestStatementsRevokeExtrasAndDropOrphans(t *testing.T) {
 	stmts, _ := Statements(d, a)
 	joined := strings.Join(stmts, "\n")
 	require.Contains(t, joined, "REVOKE SELECT ON `db1`.`old` FROM `aether_g_aaa`")
-	require.Contains(t, joined, "DROP ROLE `aether_g_zzz`")
+	require.Contains(t, joined, "DROP ROLE IF EXISTS `aether_g_zzz`")
 	require.Contains(t, joined, "REVOKE `aether_g_old` FROM `aether_u_bbb`")
-	require.Contains(t, joined, "DROP USER `aether_u_old`")
+	require.Contains(t, joined, "DROP USER IF EXISTS `aether_u_old`")
 }
 
 func TestStatementsResetsPasswordOnMasterKeyChange(t *testing.T) {
@@ -611,16 +611,11 @@ func sortedGrants(m map[Grant]struct{}) []Grant {
 }
 
 // Statements returns an ordered, idempotent DDL plan that moves ClickHouse
-// from a to d. Every identifier is validated/quoted. The caller runs
-// statements sequentially through the provisioner connector.
+// from a to d. Generated identities are validated/quoted (a failure is an
+// internal invariant violation and panics); catalog database/table names that
+// cannot be quoted are reported in skipped and omitted from the plan. The
+// caller runs statements sequentially through the provisioner connector.
 func Statements(d DesiredState, a ActualState) (out []string, skipped []string) {
-	var out []string
-
-	// NOTE (revision): the inline grant/revoke emission sites below must use
-	// grantDDL/revokeDDL (defined after mustQuoteObject) so unquotable catalog
-	// names land in `skipped` instead of panicking. Because `out` is a named
-	// return, drop the local declaration and append directly.
-
 	// 1. Roles: create, grant additions, revoke extras, drop orphan roles.
 	for _, ident := range sortedKeys(d.Roles) {
 		rs := d.Roles[ident]
@@ -628,14 +623,16 @@ func Statements(d DesiredState, a ActualState) (out []string, skipped []string) 
 		actual := a.Roles[ident]
 		for _, gr := range sortedGrants(rs.Grants) {
 			if _, ok := actual[gr]; !ok {
-				out = append(out, fmt.Sprintf("GRANT SELECT ON %s.%s TO %s",
-					mustQuoteObject(gr.Database), mustQuoteObject(gr.Table), mustQuote(rs.Ident)))
+				if stmt, ok := grantDDL(gr, mustQuote(rs.Ident), &skipped); ok {
+					out = append(out, stmt)
+				}
 			}
 		}
 		for _, gr := range sortedGrants(actual) {
 			if _, ok := rs.Grants[gr]; !ok {
-				out = append(out, fmt.Sprintf("REVOKE SELECT ON %s.%s FROM %s",
-					mustQuoteObject(gr.Database), mustQuoteObject(gr.Table), mustQuote(rs.Ident)))
+				if stmt, ok := revokeDDL(gr, mustQuote(rs.Ident), &skipped); ok {
+					out = append(out, stmt)
+				}
 			}
 		}
 	}
@@ -678,14 +675,16 @@ func Statements(d DesiredState, a ActualState) (out []string, skipped []string) 
 		}
 		for _, gr := range sortedGrants(us.DirectGrants) {
 			if _, ok := actual.DirectGrants[gr]; !ok {
-				out = append(out, fmt.Sprintf("GRANT SELECT ON %s.%s TO %s",
-					mustQuoteObject(gr.Database), mustQuoteObject(gr.Table), mustQuote(us.Ident)))
+				if stmt, ok := grantDDL(gr, mustQuote(us.Ident), &skipped); ok {
+					out = append(out, stmt)
+				}
 			}
 		}
 		for _, gr := range sortedGrants(actual.DirectGrants) {
 			if _, ok := us.DirectGrants[gr]; !ok {
-				out = append(out, fmt.Sprintf("REVOKE SELECT ON %s.%s FROM %s",
-					mustQuoteObject(gr.Database), mustQuoteObject(gr.Table), mustQuote(us.Ident)))
+				if stmt, ok := revokeDDL(gr, mustQuote(us.Ident), &skipped); ok {
+					out = append(out, stmt)
+				}
 			}
 		}
 	}
@@ -694,22 +693,13 @@ func Statements(d DesiredState, a ActualState) (out []string, skipped []string) 
 			out = append(out, fmt.Sprintf("DROP USER IF EXISTS %s", mustQuote(ident)))
 		}
 	}
-	return out
+	return out, skipped
 }
 
 func mustQuote(s string) string {
 	q, err := QuoteIdent(s)
 	if err != nil {
 		panic(err) // generated identifiers are validated at construction
-	}
-	return q
-}
-
-// mustQuoteObject is for database/table names coming from the live catalog.
-func mustQuoteObject(s string) string {
-	q, err := QuoteObjectIdent(s)
-	if err != nil {
-		panic(err) // catalog object names are validated before DDL
 	}
 	return q
 }
