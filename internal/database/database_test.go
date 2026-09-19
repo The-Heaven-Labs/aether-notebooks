@@ -407,14 +407,17 @@ func TestMigration109ServicePreferences(t *testing.T) {
 		t.Fatalf("primary key covers %q, want \"user_id,warehouse_id\"", pkCols)
 	}
 
+	// cardinality(conkey) = 1 makes the lookup return no rows for a
+	// multi-column FK, failing the scan instead of silently passing.
 	for _, tc := range []struct {
+		name       string
 		col        string
 		refTable   string
 		deleteRule string
 	}{
-		{"user_id", "users", "CASCADE"},
-		{"warehouse_id", "warehouses", "CASCADE"},
-		{"connector_id", "connectors", "CASCADE"},
+		{"warehouse_service_preferences_user_id_fkey", "user_id", "users", "CASCADE"},
+		{"warehouse_service_preferences_warehouse_id_fkey", "warehouse_id", "warehouses", "CASCADE"},
+		{"warehouse_service_preferences_connector_id_fkey", "connector_id", "connectors", "CASCADE"},
 	} {
 		var cols, rule string
 		if err := db.Pool.QueryRow(ctx, `
@@ -424,17 +427,111 @@ func TestMigration109ServicePreferences(t *testing.T) {
 			JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
 			JOIN pg_class rt ON rt.oid = c.confrelid
 			JOIN pg_namespace rn ON rn.oid = rt.relnamespace AND rn.nspname = 'public'
-			JOIN unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(attnum, refattnum, ord) ON true
+			JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
 			JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
 			JOIN information_schema.referential_constraints rc
 			  ON rc.constraint_name = c.conname AND rc.constraint_schema = 'public'
-			WHERE t.relname = 'warehouse_service_preferences' AND c.contype = 'f' AND rt.relname = $1
-			GROUP BY rc.delete_rule`, tc.refTable).Scan(&cols, &rule); err != nil {
-			t.Fatalf("%s FK lookup: %v", tc.col, err)
+			WHERE t.relname = 'warehouse_service_preferences'
+			  AND c.conname = $1
+			  AND c.contype = 'f'
+			  AND rt.relname = $2
+			  AND cardinality(c.conkey) = 1
+			GROUP BY rc.delete_rule`, tc.name, tc.refTable).Scan(&cols, &rule); err != nil {
+			t.Fatalf("%s lookup: %v", tc.name, err)
 		}
 		if cols != tc.col || rule != tc.deleteRule {
-			t.Fatalf("%s -> %s = (%s, %s), want (%s, %s)", tc.col, tc.refTable, cols, rule, tc.col, tc.deleteRule)
+			t.Fatalf("%s = (%s, %s), want (%s, %s)", tc.name, cols, rule, tc.col, tc.deleteRule)
 		}
+	}
+
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var orgID, userID, warehouseID, otherWarehouseID, connectorID, otherConnectorID string
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO orgs (name, slug) VALUES ('V109 Preference Org', 'v109-preference-org') RETURNING id::text`).Scan(&orgID); err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO users (email, name) VALUES ('v109-preference@test.local', 'V109 Preference') RETURNING id::text`).Scan(&userID); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO warehouses (org_id, name) VALUES ($1, 'V109 Preference Warehouse') RETURNING id::text`, orgID).Scan(&warehouseID); err != nil {
+		t.Fatalf("seed warehouse: %v", err)
+	}
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO warehouses (org_id, name) VALUES ($1, 'V109 Preference Warehouse 2') RETURNING id::text`, orgID).Scan(&otherWarehouseID); err != nil {
+		t.Fatalf("seed second warehouse: %v", err)
+	}
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO connectors (org_id, name, type, config_encrypted) VALUES ($1, 'V109 Preference Connector', 'clickhouse', '\x'::bytea) RETURNING id::text`, orgID).Scan(&connectorID); err != nil {
+		t.Fatalf("seed connector: %v", err)
+	}
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO connectors (org_id, name, type, config_encrypted) VALUES ($1, 'V109 Preference Connector 2', 'clickhouse', '\x'::bytea) RETURNING id::text`, orgID).Scan(&otherConnectorID); err != nil {
+		t.Fatalf("seed second connector: %v", err)
+	}
+
+	const insertPref = `INSERT INTO warehouse_service_preferences (user_id, warehouse_id, connector_id) VALUES ($1, $2, $3)`
+
+	if _, err := tx.Exec(ctx, insertPref, userID, warehouseID, connectorID); err != nil {
+		t.Fatalf("valid preference insert: %v", err)
+	}
+
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		t.Fatalf("savepoint: %v", err)
+	}
+	_, err = sp.Exec(ctx, insertPref, userID, warehouseID, connectorID)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		t.Fatalf("duplicate preference insert = %v, want SQLSTATE 23505", err)
+	}
+	if err := sp.Rollback(ctx); err != nil {
+		t.Fatalf("rollback savepoint: %v", err)
+	}
+
+	// The connector is soft-deleted in normal operation, so this row must
+	// survive until the soft-delete handler cleans it up explicitly.
+	if _, err := tx.Exec(ctx, insertPref, userID, otherWarehouseID, connectorID); err != nil {
+		t.Fatalf("second preference insert: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE connectors SET deleted_at = NOW() WHERE id=$1`, connectorID); err != nil {
+		t.Fatalf("soft-delete connector: %v", err)
+	}
+	var remaining int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM warehouse_service_preferences WHERE connector_id=$1`, connectorID).Scan(&remaining); err != nil {
+		t.Fatalf("count by connector after soft delete: %v", err)
+	}
+	if remaining != 2 {
+		t.Fatalf("%d preference rows after connector soft delete, want 2", remaining)
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM connectors WHERE id=$1`, connectorID); err != nil {
+		t.Fatalf("hard-delete connector: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM warehouse_service_preferences WHERE connector_id=$1`, connectorID).Scan(&remaining); err != nil {
+		t.Fatalf("count by connector after hard delete: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("%d preference rows survived connector hard delete, want 0", remaining)
+	}
+
+	if _, err := tx.Exec(ctx, insertPref, userID, warehouseID, otherConnectorID); err != nil {
+		t.Fatalf("third preference insert: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM warehouses WHERE id=$1`, warehouseID); err != nil {
+		t.Fatalf("hard-delete warehouse: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM warehouse_service_preferences WHERE warehouse_id=$1`, warehouseID).Scan(&remaining); err != nil {
+		t.Fatalf("count by warehouse after hard delete: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("%d preference rows survived warehouse hard delete, want 0", remaining)
 	}
 }
 
