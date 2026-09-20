@@ -66,3 +66,50 @@ func TestExecutePassesLogComment(t *testing.T) {
 		require.NotContains(t, chQueryDump(fake.lastCtx), "log_comment")
 	})
 }
+
+// The aether_user comment is prepended before the statement is sent, but
+// classification must run on the user's SQL first: otherwise every statement
+// (DDL included) starts with "/*" and is sent through Query, which fails for
+// commands that return no result set.
+func TestExecuteClassifiesStatementsBeforeUserComment(t *testing.T) {
+	const email = "trace@example.com"
+	ctx := context.WithValue(context.Background(), CtxUserEmail{}, email)
+
+	t.Run("ddl uses exec", func(t *testing.T) {
+		conn := &recordingConn{fakeConn: &fakeConn{}}
+		e := NewPooledClickHouseExecutor(conn, nil)
+		_, err := e.Execute(ctx, "CREATE TEMPORARY TABLE t (x UInt8)", nil, OutputLimits{})
+		require.NoError(t, err)
+		require.Equal(t, int64(1), conn.execCount.Load())
+		require.Equal(t, int64(0), conn.queryCount.Load())
+		require.Contains(t, conn.lastQuery.Load().(string),
+			"/* aether_user:"+email+" */ CREATE TEMPORARY TABLE")
+	})
+
+	t.Run("select uses query", func(t *testing.T) {
+		conn := &recordingConn{fakeConn: &fakeConn{}}
+		e := NewPooledClickHouseExecutor(conn, nil)
+		_, err := e.Execute(ctx, "SELECT 1", nil, OutputLimits{})
+		require.NoError(t, err)
+		require.Equal(t, int64(0), conn.execCount.Load())
+		require.Equal(t, int64(1), conn.queryCount.Load())
+		require.Contains(t, conn.lastQuery.Load().(string),
+			"/* aether_user:"+email+" */ SELECT 1")
+	})
+}
+
+// ApplyLimit runs before Execute prepends the user comment; the final
+// statement must keep both the limit and the tag.
+func TestExecuteKeepsApplyLimitWithUserComment(t *testing.T) {
+	limited := ApplyLimit("SELECT 1;", 10)
+	require.Equal(t, "SELECT 1 LIMIT 10", limited)
+
+	conn := &recordingConn{fakeConn: &fakeConn{}}
+	e := NewPooledClickHouseExecutor(conn, nil)
+	ctx := context.WithValue(context.Background(), CtxUserEmail{}, "trace@example.com")
+	_, err := e.Execute(ctx, limited, nil, OutputLimits{})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), conn.queryCount.Load())
+	require.Contains(t, conn.lastQuery.Load().(string),
+		"/* aether_user:trace@example.com */ SELECT 1 LIMIT 10")
+}

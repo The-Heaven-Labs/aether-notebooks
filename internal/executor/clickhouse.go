@@ -394,6 +394,15 @@ func chExtractValue(dest interface{}) interface{} {
 func (c *ClickHouseExecutor) Execute(ctx context.Context, query string, params map[string]string, limits OutputLimits) (*ResultSet, error) {
 	resolved := ResolveParams(query, params)
 
+	// Classify the user's SQL before any leading comment is prepended below.
+	// hasPrefixAny only inspects the start of the string, so tagging first
+	// would make every statement look like a read and send DDL/DML through
+	// Query, which fails for statements that return no result set.
+	isCommand := hasPrefixAny(strings.TrimSpace(strings.ToUpper(resolved)),
+		[]string{"USE ", "SET ", "CREATE ", "DROP ", "ALTER ",
+			"ATTACH ", "DETACH ", "RENAME ", "TRUNCATE ", "OPTIMIZE ",
+			"INSERT ", "DELETE ", "KILL ", "CHECK ", "EXISTS "})
+
 	// Tag queries with the Aether user email for tracing in the database query_log
 	if userEmail, ok := ctx.Value(CtxUserEmail{}).(string); ok && userEmail != "" {
 		resolved = fmt.Sprintf("/* aether_user:%s */ %s", userEmail, resolved)
@@ -418,10 +427,7 @@ func (c *ClickHouseExecutor) Execute(ctx context.Context, query string, params m
 	}
 
 	// Use Exec for commands that don't return rows
-	upper := strings.TrimSpace(strings.ToUpper(resolved))
-	if hasPrefixAny(upper, []string{"USE ", "SET ", "CREATE ", "DROP ", "ALTER ",
-		"ATTACH ", "DETACH ", "RENAME ", "TRUNCATE ", "OPTIMIZE ",
-		"INSERT ", "DELETE ", "KILL ", "CHECK ", "EXISTS "}) {
+	if isCommand {
 		err := c.conn.Exec(ctx, resolved)
 		if err != nil {
 			return nil, fmt.Errorf("exec: %w", err)

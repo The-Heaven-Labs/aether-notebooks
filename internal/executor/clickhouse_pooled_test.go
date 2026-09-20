@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
@@ -66,8 +67,15 @@ func TestNonPooledExecutorCloseClosesConn(t *testing.T) {
 
 type recordingConn struct {
 	*fakeConn
-	execCount atomic.Int64
-	lastQuery atomic.Value
+	execCount  atomic.Int64
+	queryCount atomic.Int64
+	lastQuery  atomic.Value
+}
+
+func (r *recordingConn) Query(ctx context.Context, query string, args ...any) (driver.Rows, error) {
+	r.queryCount.Add(1)
+	r.lastQuery.Store(query)
+	return r.fakeConn.Query(ctx, query, args...)
 }
 
 func (r *recordingConn) Exec(ctx context.Context, query string, args ...any) error {
