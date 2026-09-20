@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/agent"
+	"github.com/the-heaven-labs/aether/internal/auth"
 	"github.com/the-heaven-labs/aether/internal/chaccess"
 )
 
@@ -377,6 +380,46 @@ func TestExecuteCellAppliesRoutedServiceLimits(t *testing.T) {
 
 	out := decodeExecuteOutputs(t, rec)
 	require.Len(t, out.Outputs[0].Data.Rows, 2, "the routed service's max_rows must apply")
+}
+
+// MCP sessions build their own ToolContext: it must carry the warehouse
+// execution hooks and resolve identities as the authenticated owner.
+func TestMCPToolContextUsesOwnerIdentity(t *testing.T) {
+	fx := setupExecuteWarehouseFixture(t)
+	fx.grantConnectorUse(t, fx.connA)
+
+	probe := &agent.ToolDef{Type: "function"}
+	probe.Function.Name = "probe_warehouse_identity"
+	probe.Function.Parameters = `{"type":"object","properties":{}}`
+	probe.Handler = func(_ json.RawMessage, tc *agent.ToolContext) (any, error) {
+		if tc.ResolveTarget == nil || tc.ConnPool == nil || tc.CheckPermissionFunc == nil {
+			return nil, fmt.Errorf("MCP tool context is missing warehouse execution hooks")
+		}
+		userID, err := uuid.Parse(tc.UserID)
+		if err != nil {
+			return nil, fmt.Errorf("tool context user id: %w", err)
+		}
+		target, err := tc.ResolveTarget(tc.Context, userID, fx.connA, false)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"ch_user": target.CHUser}, nil
+	}
+	fx.s.RegisterToolForTest(probe)
+	fx.s.SetMCPToolAllowedForTest("probe_warehouse_identity", true)
+	t.Cleanup(func() { fx.s.SetMCPToolAllowedForTest("probe_warehouse_identity", false) })
+
+	claims := &auth.Claims{UserID: fx.userID.String(), OrgID: fx.orgID.String(), Role: "admin"}
+	params, err := json.Marshal(map[string]any{"name": "probe_warehouse_identity", "arguments": map[string]any{}})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp", nil)
+	rec := httptest.NewRecorder()
+	fx.s.handleMCPToolsCall(rec, mcpJSONRPCRequest{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "tools/call", Params: params}, claims, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	// The resolver must derive the per-user identity for the claims owner.
+	require.Contains(t, rec.Body.String(), chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID),
+		"MCP must resolve the authenticated owner's warehouse identity")
 }
 
 func TestExecuteCellReusesPooledLease(t *testing.T) {

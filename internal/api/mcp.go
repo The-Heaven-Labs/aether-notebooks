@@ -299,10 +299,13 @@ func (s *Server) handleMCPToolsCall(w http.ResponseWriter, req mcpJSONRPCRequest
 		BroadcastFunc: func(notebookID string, msg interface{}) {
 			s.hub.Broadcast(notebookID, msg)
 		},
-		SetRunningFunc:   s.hub.SetRunning,
-		UnsetRunningFunc: s.hub.UnsetRunning,
-		SetCancelFunc:    s.hub.SetCancelFunc,
-		DeleteCancelFunc: s.hub.DeleteCancelFunc,
+		SetRunningFunc:      s.hub.SetRunning,
+		UnsetRunningFunc:    s.hub.UnsetRunning,
+		SetCancelFunc:       s.hub.SetCancelFunc,
+		DeleteCancelFunc:    s.hub.DeleteCancelFunc,
+		ResolveTarget:       s.resolveExecutionTarget,
+		ConnPool:            s.connPool,
+		CheckPermissionFunc: s.checkPermission,
 	}
 
 	result, err := def.Execute(params.Arguments, ctx)

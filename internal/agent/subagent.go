@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
@@ -79,6 +80,13 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 		return SubagentResult{TaskID: taskID, Status: "failed", Error: err.Error()}
 	}
 
+	// Subagents act as the parent user: carry the parent's real org role (not a
+	// hardcoded one) so the shared ACL resolver authorizes them the same way.
+	var parentOrgRole string
+	if err := e.pool.QueryRow(ctx, `SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2`, parentOrgID, parentUserID).Scan(&parentOrgRole); err != nil || parentOrgRole == "" {
+		parentOrgRole = "editor"
+	}
+
 	messages := []ChatMessage{
 		{Role: "user", Content: task.Goal},
 	}
@@ -121,15 +129,18 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 			}
 
 			result, err := toolDef.Execute(json.RawMessage(tc.Function.Arguments), &ToolContext{
-				Context:              ctx,
+				Context:              executor.WithAdminMode(ctx, e.session.GetAdminMode(parentSessionID)),
 				UserID:               parentUserID,
 				OrgID:                parentOrgID,
-				OrgRole:              "editor",
+				OrgRole:              parentOrgRole,
 				NotebookID:           taskID,
 				SessionID:            parentSessionID,
 				DB:                   e.pool,
 				MasterKey:            masterKey,
 				OutputLimitsMaxBytes: e.outputLimitsMaxBytes,
+				ResolveTarget:        e.ResolveTarget,
+				ConnPool:             e.ConnPool,
+				CheckPermissionFunc:  e.CheckPermissionFunc,
 			})
 
 			if err != nil {
@@ -421,7 +432,7 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 
 			toolStart := time.Now()
 			result, err := toolDef.Execute(json.RawMessage(tc.Function.Arguments), &ToolContext{
-				Context:              ctx,
+				Context:              executor.WithAdminMode(ctx, e.session.GetAdminMode(parentSessionID)),
 				UserID:               parentUserID,
 				OrgID:                parentOrgID,
 				OrgRole:              parentOrgRole,
@@ -430,6 +441,9 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 				DB:                   e.pool,
 				MasterKey:            masterKey,
 				OutputLimitsMaxBytes: e.outputLimitsMaxBytes,
+				ResolveTarget:        e.ResolveTarget,
+				ConnPool:             e.ConnPool,
+				CheckPermissionFunc:  e.CheckPermissionFunc,
 			})
 			toolDuration := int(time.Since(toolStart).Milliseconds())
 

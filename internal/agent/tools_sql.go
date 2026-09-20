@@ -10,7 +10,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-heaven-labs/aether/internal/config"
-	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
@@ -70,7 +69,7 @@ func makeSQLQueryToolDef(t *models.Tool, pool *pgxpool.Pool) (*ToolDef, error) {
 				}
 			}
 
-			return executeAgentSQL(ctx.Context, pool, connectorID, query, strParams, ctx.MasterKey, ctx.OrgID, defaultSQLRowLimit, ctx.OutputLimitsMaxBytes)
+			return executeAgentSQL(ctx, pool, connectorID, query, strParams, defaultSQLRowLimit)
 		},
 	}, nil
 }
@@ -94,38 +93,36 @@ func clampSQLRowLimit(limit int) int {
 	return limit
 }
 
-func executeAgentSQL(ctx context.Context, pool *pgxpool.Pool, connectorID, query string, params map[string]string, masterKey []byte, orgID string, limit int, platformMaxBytes int64) (any, error) {
+func executeAgentSQL(tc *ToolContext, pool *pgxpool.Pool, connectorID, query string, params map[string]string, limit int) (any, error) {
+	ctx := tc.Context
 	var connType string
 	var configEnc []byte
 	err := pool.QueryRow(ctx,
 		`SELECT type, config_encrypted FROM connectors WHERE id = $1 AND org_id = $2`,
-		connectorID, orgID).Scan(&connType, &configEnc)
+		connectorID, tc.OrgID).Scan(&connType, &configEnc)
 	if err != nil {
 		return nil, fmt.Errorf("connector not found: %w", err)
 	}
 
-	maxBytes, err := effectiveCellOutputMaxBytes(ctx, pool, orgID, platformMaxBytes)
+	maxBytes, err := effectiveCellOutputMaxBytes(ctx, pool, tc.OrgID, tc.OutputLimitsMaxBytes)
 	if err != nil {
 		return nil, err
 	}
 
-	plain, err := crypto.Decrypt(configEnc, masterKey)
+	exec, target, err := openAgentExecutor(tc, models.ConnectorType(connType), connectorID, configEnc)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt connector config: %w", err)
-	}
-
-	driver, ok := executor.GetDriver(models.ConnectorType(connType))
-	if !ok {
-		return nil, fmt.Errorf("unsupported connector type: %s", connType)
-	}
-
-	exec, err := driver.NewExecutor(plain)
-	if err != nil {
-		return nil, fmt.Errorf("create executor: %w", err)
+		return nil, err
 	}
 	defer exec.Close()
 
-	result, err := exec.Execute(ctx, query, params, executor.OutputLimits{MaxBytes: maxBytes, MaxRows: clampSQLRowLimit(limit)})
+	maxRows := clampSQLRowLimit(limit)
+	if target != nil && target.MaxRows > 0 && target.MaxRows < maxRows {
+		// A routed service can lower the row cap; it never raises it above the
+		// tool's own bounds.
+		maxRows = target.MaxRows
+	}
+
+	result, err := exec.Execute(ctx, query, params, executor.OutputLimits{MaxBytes: maxBytes, MaxRows: maxRows})
 	if err != nil {
 		return nil, fmt.Errorf("execute: %w", err)
 	}
@@ -158,7 +155,7 @@ func makeExecuteSQLHandler(pool *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("only read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are allowed")
 		}
 
-		result, err := executeAgentSQL(ctx.Context, pool, req.ConnectorID, req.Query, nil, ctx.MasterKey, ctx.OrgID, req.Limit, ctx.OutputLimitsMaxBytes)
+		result, err := executeAgentSQL(ctx, pool, req.ConnectorID, req.Query, nil, req.Limit)
 		if err != nil {
 			return nil, err
 		}

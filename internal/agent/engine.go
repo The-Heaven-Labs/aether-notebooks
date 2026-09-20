@@ -15,22 +15,30 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/the-heaven-labs/aether/internal/storage"
 )
 
 type Engine struct {
-	rdb                  *redis.Client // shared Redis client for cross-pod state
-	registry             *ToolRegistry
-	session              *SessionStore
-	llm                  *LLMClient
-	pool                 *pgxpool.Pool
-	mu                   sync.Mutex
-	BroadcastFunc        func(notebookID string, msg any)
-	SetRunningFunc       func(cellID, notebookID string, startedAt time.Time)
-	UnsetRunningFunc     func(cellID string)
-	SetCancelFunc        func(cellID string, cancel context.CancelFunc)
-	DeleteCancelFunc     func(cellID string)
+	rdb              *redis.Client // shared Redis client for cross-pod state
+	registry         *ToolRegistry
+	session          *SessionStore
+	llm              *LLMClient
+	pool             *pgxpool.Pool
+	mu               sync.Mutex
+	BroadcastFunc    func(notebookID string, msg any)
+	SetRunningFunc   func(cellID, notebookID string, startedAt time.Time)
+	UnsetRunningFunc func(cellID string)
+	SetCancelFunc    func(cellID string, cancel context.CancelFunc)
+	DeleteCancelFunc func(cellID string)
+	// ResolveTarget/ConnPool/CheckPermissionFunc are wired by the API server to
+	// the shared HTTP implementations (see router.go). Agent tools use them to
+	// execute ClickHouse queries as the acting user's warehouse identity and to
+	// enforce ACLs with the canonical resolver. See ToolContext for semantics.
+	ResolveTarget        func(ctx context.Context, userID, connectorID uuid.UUID, pinned bool) (*executor.ExecutionTarget, error)
+	ConnPool             *executor.ConnPool
+	CheckPermissionFunc  func(ctx context.Context, userID, orgID, orgRole, resourceType, resourceID, action string) (bool, error)
 	toolAllowedDomains   []string
 	toolTimeoutDefault   time.Duration
 	outputLimitsMaxBytes int64 // platform ceiling for org output byte caps
@@ -1184,7 +1192,10 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			}
 
 			toolCtx := &ToolContext{
-				Context:       ctx,
+				// Admin mode rides the context so the shared resolver (wired as
+				// ResolveTarget/CheckPermissionFunc) sees the same signal HTTP
+				// middleware installs.
+				Context:       executor.WithAdminMode(ctx, e.session.GetAdminMode(sessionID)),
 				UserID:        session.UserID,
 				OrgID:         agent.OrgID,
 				OrgRole:       orgRole,
@@ -1202,6 +1213,9 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				SetCancelFunc:        e.SetCancelFunc,
 				DeleteCancelFunc:     e.DeleteCancelFunc,
 				OutputLimitsMaxBytes: e.outputLimitsMaxBytes,
+				ResolveTarget:        e.ResolveTarget,
+				ConnPool:             e.ConnPool,
+				CheckPermissionFunc:  e.CheckPermissionFunc,
 				QuestionFunc: func(question string, options any, allowCustom bool) (string, error) {
 					ch := make(chan string, 1)
 					e.SetQuestionPending(sessionID, ch)

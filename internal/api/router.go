@@ -96,6 +96,12 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 	s.agentEngine.BroadcastFunc = func(notebookID string, msg any) {
 		s.hub.Broadcast(notebookID, msg)
 	}
+	// Agent tool execution resolves warehouse identities and enforces ACLs
+	// through the same server methods HTTP uses; the callbacks are wired here
+	// because internal/agent cannot import internal/api.
+	s.agentEngine.ResolveTarget = s.resolveExecutionTarget
+	s.agentEngine.ConnPool = s.connPool
+	s.agentEngine.CheckPermissionFunc = s.checkPermission
 	// Running-state/cancel lifecycle for agent-driven cell runs (mirrors the
 	// user-triggered execute path so badges, refresh-safe sync, and the Cancel
 	// endpoint all work for agent runs).
