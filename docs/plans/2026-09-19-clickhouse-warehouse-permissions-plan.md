@@ -1578,7 +1578,9 @@ git commit -m "feat(api): trigger warehouse sync on membership changes"
 
 **Files:**
 - Modify: `internal/api/warehouse_sync.go`
-- Modify: `cmd/aether-server/main.go` (start loop)
+- Modify: `internal/api/router.go` (add `Server.Close` stopping the sync service)
+- Modify: `internal/api/testhelpers_test.go` (cleanup closes the server)
+- Modify: `cmd/aether-server/main.go` (start loop + Close on shutdown)
 - Modify: `internal/config/config.go` (`AETHER_CH_RECONCILE_INTERVAL`, default `10m`)
 
 **Step 1: Write the failing test**
@@ -1608,13 +1610,23 @@ Expected: FAIL.
   `DefaultRolesAll` is false while roles exist, and users present in the
   warehouse's `IdentifierPrefix` namespace but absent from desired state.
 - The loop enqueues **every warehouse immediately at startup** (non-blocking
-  enqueue-all), then ticks at `AETHER_CH_RECONCILE_INTERVAL`. Shutdown can
-  cancel queued work, so restart catch-up is required to guarantee queued
-  revocations converge.
+  enqueue-all, with small jitter to avoid all replicas contending on the same
+  tick), then ticks at `AETHER_CH_RECONCILE_INTERVAL`. Shutdown can cancel
+  queued work, so restart catch-up is required to guarantee queued revocations
+  converge.
 - Audit `warehouse.drift` for non-empty reports; reconciliation loop enqueues
   sync for warehouses with drift.
 - Loop: ticker at `AETHER_CH_RECONCILE_INTERVAL`, enqueue all warehouses,
   started from `main.go` and stopped on shutdown.
+- **Lifecycle:** add `func (s *Server) Close()` that closes the sync service
+  (type-assert `interface{ Close() }` or hold a concrete reference), call it
+  from `main.go` on shutdown (defer order already puts it before `db.Close`),
+  and register `t.Cleanup(srv.Close)` in `setupTestServer`. The test-only
+  syncer setter must not leak the replaced real service.
+- Carry-forward notes: cross-replica lock-skip returns nil and converges only
+  on the next tick (expected; `warehouse.sync.skipped` audit is the signal),
+  and org deletion currently leaves ClickHouse identities behind — document
+  an explicit follow-up decision in the design doc rather than silence.
 
 **Step 4: Run tests**
 
