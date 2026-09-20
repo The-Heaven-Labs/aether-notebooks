@@ -245,7 +245,8 @@ func TestAgentExecuteSQLUsesUserIdentity(t *testing.T) {
 	require.False(t, gotPinned, "agent execution routes by preference like HTTP, it does not pin")
 
 	// The ad-hoc SQL path must execute with a per-execution ID tagged as
-	// log_comment, even though it has no audit entry of its own.
+	// log_comment; the same ID also rides the tool result (asserted in the
+	// routed-limits test).
 	probe, ok := capture.conn.(*identityProbeConn)
 	require.True(t, ok)
 	require.NotNil(t, probe.lastCtx, "execute_sql must execute with a per-execution context")
@@ -461,8 +462,9 @@ func TestAgentRoutedServiceLimitsApply(t *testing.T) {
 		require.NoError(t, err)
 		result, err := handler(args, tc)
 		require.NoError(t, err)
-		rs, ok := result.(*executor.ResultSet)
-		require.True(t, ok, "expected *executor.ResultSet, got %T", result)
+		rs, ok := result.(*sqlExecutionResult)
+		require.True(t, ok, "expected *sqlExecutionResult, got %T", result)
+		require.NotEmpty(t, rs.ExecutionID, "ad-hoc SQL results must carry the execution id")
 		require.Len(t, rs.Rows, 2, "the routed service's max_rows must cap the tool result")
 	})
 

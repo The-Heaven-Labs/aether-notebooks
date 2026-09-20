@@ -123,17 +123,28 @@ func executeAgentSQL(tc *ToolContext, pool *pgxpool.Pool, connectorID, query str
 		maxRows = target.MaxRows
 	}
 
-	// Per-execution ID: tags the ClickHouse query via log_comment. The ad-hoc
-	// SQL paths have no audit entry of their own, so the ID is only propagated
-	// to the driver here.
-	execCtx := executor.WithExecutionID(ctx, uuid.New().String())
+	// Per-execution ID: tags the ClickHouse query via log_comment and rides the
+	// tool result, so the persisted agent_messages row can be joined back to
+	// the tagged query in system.query_log.
+	executionID := uuid.New().String()
+	execCtx := executor.WithExecutionID(ctx, executionID)
 
 	result, err := exec.Execute(execCtx, query, params, executor.OutputLimits{MaxBytes: maxBytes, MaxRows: maxRows})
 	if err != nil {
 		return nil, fmt.Errorf("execute: %w", err)
 	}
 
-	return result, nil
+	return &sqlExecutionResult{ResultSet: result, ExecutionID: executionID}, nil
+}
+
+// sqlExecutionResult is the execute_sql/sql_query tool result. It embeds the
+// executor ResultSet (whose JSON fields are promoted to the top level, keeping
+// the result schema unchanged) and adds the per-execution ID so the tool
+// result persisted in agent_messages carries the same ID as the ClickHouse
+// query's log_comment.
+type sqlExecutionResult struct {
+	*executor.ResultSet
+	ExecutionID string `json:"execution_id"`
 }
 
 func makeExecuteSQLHandler(pool *pgxpool.Pool) ToolHandler {

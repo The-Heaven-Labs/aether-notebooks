@@ -403,6 +403,11 @@ func (c *ClickHouseExecutor) Execute(ctx context.Context, query string, params m
 	// back to the Aether audit entry. clickhouse-go carries per-query settings
 	// on the context, which both the Query and Exec paths read.
 	//
+	// WithSettings REPLACES the driver's per-query settings map. Any future
+	// per-query setting must therefore be merged here, inside Execute (via an
+	// explicit argument or a settings builder), never installed on the
+	// incoming context — this call would silently discard it.
+	//
 	// NOTE: when per-user settings profiles land (deferred), log_comment must
 	// stay changeable_in_readonly; otherwise a readonly=1 identity cannot set
 	// it and every tagged execution would fail.
