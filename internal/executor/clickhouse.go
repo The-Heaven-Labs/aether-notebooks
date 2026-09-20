@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -15,6 +16,11 @@ import (
 
 type ClickHouseExecutor struct {
 	conn clickhouse.Conn
+
+	pooled    bool
+	release   func()
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // chOptions builds driver options from a connector config. It is shared by
@@ -57,6 +63,14 @@ func NewClickHouseExecutor(cfg models.ConnectorConfig) (*ClickHouseExecutor, err
 		return nil, fmt.Errorf("ping: %w", err)
 	}
 	return &ClickHouseExecutor{conn: conn}, nil
+}
+
+// NewPooledClickHouseExecutor wraps a connection leased from a ConnPool.
+// Close calls release exactly once, returning the connection to the pool
+// without closing it; a nil release is treated as a no-op. The executor does
+// not own the connection.
+func NewPooledClickHouseExecutor(conn clickhouse.Conn, release func()) *ClickHouseExecutor {
+	return &ClickHouseExecutor{conn: conn, pooled: true, release: release}
 }
 
 // chBaseType strips Nullable(...) and LowCardinality(...) wrappers and
@@ -485,6 +499,18 @@ func (c *ClickHouseExecutor) Databases(ctx context.Context) ([]string, error) {
 	return dbs, rows.Err()
 }
 
+// Close releases the executor's connection. Pooled executors return their
+// lease to the pool; non-pooled executors close the connection they own. Close
+// is idempotent and safe to call more than once.
 func (c *ClickHouseExecutor) Close() error {
-	return c.conn.Close()
+	c.closeOnce.Do(func() {
+		if c.pooled {
+			if c.release != nil {
+				c.release()
+			}
+			return
+		}
+		c.closeErr = c.conn.Close()
+	})
+	return c.closeErr
 }
