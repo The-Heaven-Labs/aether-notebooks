@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -17,10 +19,9 @@ import (
 // warehouseService is one connector row inside a warehouse, as loaded during
 // routing. encrypted is the still-encrypted connector config.
 type warehouseService struct {
-	id          uuid.UUID
-	name        string
-	warehouseID *uuid.UUID
-	encrypted   []byte
+	id        uuid.UUID
+	name      string
+	encrypted []byte
 }
 
 // resolveExecutionTarget implements the routing rules:
@@ -33,16 +34,18 @@ type warehouseService struct {
 //
 // Managed warehouses must be ready before any routing happens. A requested
 // connector without a warehouse returns executor.ErrUnmanagedConnector, which
-// callers treat as the legacy shared-credential path.
+// callers treat as the legacy shared-credential path; a requested connector
+// that is missing, soft-deleted, non-ClickHouse, or linked across orgs
+// returns executor.ErrConnectorNotFound.
 func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, requestedConnectorID uuid.UUID, pinned bool) (*executor.ExecutionTarget, error) {
-	requested, err := s.loadServiceConnector(ctx, requestedConnectorID)
+	requested, requestedWarehouseID, err := s.loadServiceConnector(ctx, requestedConnectorID)
 	if err != nil {
 		return nil, err
 	}
-	if requested.warehouseID == nil {
+	if requestedWarehouseID == nil {
 		return nil, fmt.Errorf("connector %s: %w", requestedConnectorID, executor.ErrUnmanagedConnector)
 	}
-	warehouseID := *requested.warehouseID
+	warehouseID := *requestedWarehouseID
 
 	var orgID uuid.UUID
 	var syncStatus string
@@ -127,36 +130,82 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, r
 	}
 }
 
-// loadServiceConnector loads a single non-deleted connector row for routing.
-// A missing or soft-deleted connector is reported as pgx.ErrNoRows.
+// loadServiceConnector loads a single connector row for routing along with its
+// warehouse link (nil for an unmanaged connector).
 //
-// A managed connector must live in the same org as the warehouse it points
-// at: the join rejects a mismatched row even if some other write path skipped
-// the CRUD validation, so it can never borrow another org's credential
-// namespace or ACLs.
-func (s *Server) loadServiceConnector(ctx context.Context, connectorID uuid.UUID) (warehouseService, error) {
+// Only non-deleted ClickHouse connectors pass, and a managed connector must
+// live in the same org as the warehouse it points at: both guards hold in SQL
+// so a mismatched row can never borrow another org's credential namespace or
+// ACLs even if some write path skipped the CRUD validation. A rejected
+// connector is reported as executor.ErrConnectorNotFound wrapping
+// pgx.ErrNoRows; cross-org links are additionally logged (see
+// warnRejectedConnectorLink) instead of looking like plain missing rows.
+func (s *Server) loadServiceConnector(ctx context.Context, connectorID uuid.UUID) (warehouseService, *uuid.UUID, error) {
 	var svc warehouseService
+	var warehouseID *uuid.UUID
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT c.id, c.name, c.warehouse_id, c.config_encrypted
+		SELECT c.id, c.name, c.config_encrypted, c.warehouse_id
 		FROM connectors c
 		LEFT JOIN warehouses w ON w.id = c.warehouse_id
-		WHERE c.id = $1 AND c.deleted_at IS NULL
+		WHERE c.id = $1
+		  AND c.deleted_at IS NULL
+		  AND c.type = 'clickhouse'
 		  AND (c.warehouse_id IS NULL OR w.org_id = c.org_id)`, connectorID.String()).
-		Scan(&svc.id, &svc.name, &svc.warehouseID, &svc.encrypted)
-	if err != nil {
-		return warehouseService{}, fmt.Errorf("connector %s: %w", connectorID, err)
+		Scan(&svc.id, &svc.name, &svc.encrypted, &warehouseID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		s.warnRejectedConnectorLink(ctx, connectorID)
+		return warehouseService{}, nil, fmt.Errorf("connector %s: %w: %w",
+			connectorID, executor.ErrConnectorNotFound, err)
 	}
-	return svc, nil
+	if err != nil {
+		return warehouseService{}, nil, fmt.Errorf("connector %s: %w", connectorID, err)
+	}
+	return svc, warehouseID, nil
 }
 
-// listWarehouseServices lists the non-deleted connectors of a warehouse in a
-// stable order (name, then ID) for deterministic choice prompts. orgID is the
-// warehouse's org, so cross-org rows are filtered out here too.
+// warnRejectedConnectorLink logs a cross-org connector↔warehouse link that the
+// guarded load rejected, so an integrity violation is visible in logs instead
+// of being indistinguishable from a missing connector. It is best-effort: any
+// lookup failure is ignored and must never mask the not-found result.
+func (s *Server) warnRejectedConnectorLink(ctx context.Context, connectorID uuid.UUID) {
+	var (
+		deletedAt   *time.Time
+		connType    string
+		connOrgID   uuid.UUID
+		warehouseID *uuid.UUID
+		whOrgID     *uuid.UUID
+	)
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT c.deleted_at, c.type, c.org_id, c.warehouse_id, w.org_id
+		FROM connectors c
+		LEFT JOIN warehouses w ON w.id = c.warehouse_id
+		WHERE c.id = $1`, connectorID.String()).
+		Scan(&deletedAt, &connType, &connOrgID, &warehouseID, &whOrgID)
+	if err != nil {
+		return
+	}
+	if deletedAt != nil || connType != "clickhouse" || warehouseID == nil || whOrgID == nil {
+		return
+	}
+	if *whOrgID == connOrgID {
+		return
+	}
+	slog.Warn("execution target resolution rejected a cross-org connector link",
+		"connector_id", connectorID.String(),
+		"connector_org_id", connOrgID.String(),
+		"warehouse_id", warehouseID.String(),
+		"warehouse_org_id", whOrgID.String())
+}
+
+// listWarehouseServices lists the non-deleted ClickHouse connectors of a
+// warehouse in a stable order (name, then ID) for deterministic choice
+// prompts. orgID is the warehouse's org, so cross-org rows are filtered out
+// here too.
 func (s *Server) listWarehouseServices(ctx context.Context, warehouseID, orgID uuid.UUID) ([]warehouseService, error) {
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, name, warehouse_id, config_encrypted
+		SELECT id, name, config_encrypted
 		FROM connectors
-		WHERE warehouse_id = $1 AND org_id = $2 AND deleted_at IS NULL
+		WHERE warehouse_id = $1 AND org_id = $2 AND type = 'clickhouse' AND deleted_at IS NULL
 		ORDER BY name ASC, id ASC`, warehouseID.String(), orgID.String())
 	if err != nil {
 		return nil, fmt.Errorf("list warehouse %s services: %w", warehouseID, err)
@@ -166,7 +215,7 @@ func (s *Server) listWarehouseServices(ctx context.Context, warehouseID, orgID u
 	var services []warehouseService
 	for rows.Next() {
 		var svc warehouseService
-		if err := rows.Scan(&svc.id, &svc.name, &svc.warehouseID, &svc.encrypted); err != nil {
+		if err := rows.Scan(&svc.id, &svc.name, &svc.encrypted); err != nil {
 			return nil, fmt.Errorf("scan warehouse %s service: %w", warehouseID, err)
 		}
 		services = append(services, svc)
@@ -202,17 +251,20 @@ func (s *Server) buildExecutionTarget(warehouseID, orgID, userID uuid.UUID, svc 
 	}
 
 	chUser := chaccess.UserIdent(warehouseID, orgID, userID)
-	password := chaccess.DerivePassword(s.masterKey, warehouseID, userID)
 	cfg.User = chUser
-	cfg.Password = password
+	cfg.Password = chaccess.DerivePassword(s.masterKey, warehouseID, userID)
+
+	port := cfg.Port
+	if port == 0 {
+		port = executor.DefaultClickHousePort
+	}
 
 	return &executor.ExecutionTarget{
 		WarehouseID:   warehouseID,
 		ConnectorID:   svc.id,
 		ConnectorName: svc.name,
-		Endpoint:      fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
+		Endpoint:      fmt.Sprintf("%s:%d", cfg.Host, port),
 		Config:        cfg,
 		CHUser:        chUser,
-		Password:      password,
 	}, nil
 }

@@ -26,10 +26,15 @@ type ClickHouseExecutor struct {
 // chOptions builds driver options from a connector config. It is shared by
 // NewClickHouseExecutor and the connection pool's default opener so port,
 // database, and TLS handling cannot diverge.
+// DefaultClickHousePort is the native-protocol port used when a connector
+// config leaves Port unset. Keep endpoint construction in sync with this
+// default so the pool never keys a dial to ":0".
+const DefaultClickHousePort = 9000
+
 func chOptions(cfg models.ConnectorConfig) *clickhouse.Options {
 	port := cfg.Port
 	if port == 0 {
-		port = 9000
+		port = DefaultClickHousePort
 	}
 
 	opts := &clickhouse.Options{

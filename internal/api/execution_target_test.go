@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/chaccess"
+	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/executor"
 )
 
@@ -246,8 +248,10 @@ func TestResolveExecutionTargetExcludesSoftDeletedConnector(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fx.connB, target.ConnectorID)
 
-	// Requesting the soft-deleted connector is a miss, never a fallback.
+	// Requesting the soft-deleted connector is a domain-level miss, never a
+	// fallback.
 	target, err = fx.resolve(t, fx.connA, false)
+	require.ErrorIs(t, err, executor.ErrConnectorNotFound)
 	require.ErrorIs(t, err, pgx.ErrNoRows)
 	require.Nil(t, target)
 }
@@ -263,7 +267,7 @@ func TestResolveExecutionTargetIdentityAndEndpoint(t *testing.T) {
 	require.Equal(t, "Service B", target.ConnectorName)
 	require.Equal(t, "localhost:9000", target.Endpoint)
 	require.Equal(t, chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID), target.CHUser)
-	require.Equal(t, chaccess.DerivePassword(fx.key, fx.warehouseID, fx.userID), target.Password)
+	require.Equal(t, chaccess.DerivePassword(fx.key, fx.warehouseID, fx.userID), target.Config.Password)
 
 	// The target carries a usable config with the per-user credentials
 	// substituted for the connector's stored ones.
@@ -271,8 +275,105 @@ func TestResolveExecutionTargetIdentityAndEndpoint(t *testing.T) {
 	require.Equal(t, 9000, target.Config.Port)
 	require.Equal(t, "analytics", target.Config.Database)
 	require.Equal(t, target.CHUser, target.Config.User)
-	require.Equal(t, target.Password, target.Config.Password)
 	require.NotEqual(t, "dev", target.Config.Password, "the stored connector credential must not leak")
+
+	// String() is the only render that may reach logs or audit context.
+	rendered := target.String()
+	require.Contains(t, rendered, target.CHUser)
+	require.Contains(t, rendered, target.Endpoint)
+	require.NotContains(t, rendered, target.Config.Password, "String() must redact the per-user credential")
+	var nilTarget *executor.ExecutionTarget
+	require.Equal(t, "<nil>", nilTarget.String())
+}
+
+func TestResolveExecutionTargetDefaultEndpointPort(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	ctx := context.Background()
+
+	// A stored config without a port must key the pool to ClickHouse's native
+	// default, matching executor dialing.
+	cfg := warehouseSyncTestClickHouseConfig()
+	cfg.Port = 0
+	plain, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	encrypted, err := crypto.Encrypt(plain, fx.key)
+	require.NoError(t, err)
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE connectors SET config_encrypted = $1 WHERE id = $2`,
+		encrypted, fx.connA.String())
+	require.NoError(t, err)
+	fx.grantUse(t, fx.connA)
+
+	target, err := fx.resolve(t, fx.connA, false)
+	require.NoError(t, err)
+	require.Equal(t, "localhost:9000", target.Endpoint)
+	require.Equal(t, 0, target.Config.Port, "the stored config is preserved; only the endpoint defaults")
+}
+
+func TestResolveExecutionTargetRejectsNonClickHouseConnector(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	ctx := context.Background()
+
+	// A Postgres connector linked to a warehouse is an integrity violation;
+	// it must never become a routable service.
+	var encrypted []byte
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT config_encrypted FROM connectors WHERE id = $1`,
+		fx.provisionerID.String()).Scan(&encrypted))
+	pgID := uuid.New()
+	_, err := fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted, warehouse_id)
+		VALUES ($1, $2, $3, 'postgres', $4, $5)`,
+		pgID.String(), fx.orgID.String(), "Postgres Service", encrypted, fx.warehouseID.String())
+	require.NoError(t, err)
+	fx.grantUse(t, pgID)
+
+	target, err := fx.resolve(t, pgID, false)
+	require.ErrorIs(t, err, executor.ErrConnectorNotFound)
+	require.Nil(t, target)
+
+	// It must not appear in the warehouse's service list either: the sole
+	// clickhouse service still resolves without a choice prompt.
+	fx.grantUse(t, fx.connB)
+	target, err = fx.resolve(t, fx.connB, false)
+	require.NoError(t, err)
+	require.Equal(t, fx.connB, target.ConnectorID)
+}
+
+func TestResolveExecutionTargetInheritsFolderUseGrant(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	ctx := context.Background()
+
+	// A `use` grant on the connector's folder (the ACL ancestor walk) must
+	// authorize routing without a direct connector ACL.
+	folderID := uuid.New()
+	_, err := fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO folders (id, org_id, name, created_by)
+		VALUES ($1, $2, $3, $4)`,
+		folderID.String(), fx.orgID.String(), "Warehouse Services", fx.userID.String())
+	require.NoError(t, err)
+	// Delete the folder before the fixture deletes its creator user.
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := fx.s.db.Pool.Exec(cleanupCtx,
+			`DELETE FROM folders WHERE id = $1`, folderID.String()); err != nil {
+			t.Logf("cleanup folder: %v", err)
+		}
+	})
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE connectors SET folder_id = $1 WHERE id = $2`,
+		folderID.String(), fx.connB.String())
+	require.NoError(t, err)
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		VALUES ($1, 'folder', $2::uuid, 'user', $3, ARRAY['use'])`,
+		fx.orgID.String(), folderID.String(), fx.userID.String())
+	require.NoError(t, err)
+
+	target, err := fx.resolve(t, fx.connB, false)
+	require.NoError(t, err, "use inherited from the connector's folder must authorize routing")
+	require.Equal(t, fx.connB, target.ConnectorID)
 }
 
 func TestResolveExecutionTargetGroupGrantForViewer(t *testing.T) {
@@ -331,6 +432,7 @@ func TestResolveExecutionTargetRejectsCrossOrgWarehouseConnector(t *testing.T) {
 	require.NoError(t, err)
 
 	target, err := fx.resolve(t, foreignID, false)
+	require.ErrorIs(t, err, executor.ErrConnectorNotFound)
 	require.ErrorIs(t, err, pgx.ErrNoRows)
 	require.Nil(t, target)
 

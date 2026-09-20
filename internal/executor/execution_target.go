@@ -31,6 +31,12 @@ var (
 	// allowed and no preference picked one. A ServiceChoiceError carries the
 	// allowed list for the "choose a service" prompt.
 	ErrServiceChoiceRequired = errors.New("multiple warehouse services available")
+
+	// ErrConnectorNotFound reports that the requested connector cannot be
+	// resolved: it is missing, soft-deleted, not a ClickHouse connector, or
+	// linked across org boundaries. Where the underlying cause is a missing
+	// row, the returned error also wraps pgx.ErrNoRows.
+	ErrConnectorNotFound = errors.New("execution connector not found")
 )
 
 // ServiceChoice is one selectable service in a ServiceChoiceError, carrying
@@ -54,17 +60,14 @@ func (e *ServiceChoiceError) Error() string {
 // Unwrap makes errors.Is(err, ErrServiceChoiceRequired) succeed.
 func (e *ServiceChoiceError) Unwrap() error { return ErrServiceChoiceRequired }
 
-// Compile-time guards: callers rely on Error for messages and on Unwrap for
-// errors.Is(err, ErrServiceChoiceRequired) routing.
-var (
-	_ error                       = (*ServiceChoiceError)(nil)
-	_ interface{ Unwrap() error } = (*ServiceChoiceError)(nil)
-)
-
 // ExecutionTarget is a fully resolved per-user ClickHouse execution endpoint:
 // the warehouse that governs access, the service connector to dial, and the
 // derived per-user identity. It is self-contained so callers can open a pooled
 // connection without re-querying or re-decrypting anything.
+//
+// Config carries the per-user identity credentials in User/Password; there is
+// no second password copy on the target. Never serialize or log a target
+// wholesale — Config.Password is a live credential.
 type ExecutionTarget struct {
 	WarehouseID   uuid.UUID
 	ConnectorID   uuid.UUID
@@ -74,7 +77,27 @@ type ExecutionTarget struct {
 	// Config is the decrypted connector config carrying the selected
 	// endpoint's host/port/TLS settings with User/Password replaced by the
 	// per-user ClickHouse identity.
-	Config   models.ConnectorConfig
-	CHUser   string
-	Password string
+	Config models.ConnectorConfig
+	// CHUser is the derived ClickHouse username, duplicated from Config.User
+	// only for audit fields that should not reach into Config.
+	CHUser string
 }
+
+// String redacts the per-user credential: it is the only representation safe
+// to embed in logs or audit context. Never serialize the target itself.
+func (t *ExecutionTarget) String() string {
+	if t == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("ExecutionTarget{warehouse=%s connector=%s endpoint=%s user=%s}",
+		t.WarehouseID, t.ConnectorID, t.Endpoint, t.CHUser)
+}
+
+// Compile-time guards: callers rely on Error for messages, Unwrap for
+// errors.Is(err, ErrServiceChoiceRequired) routing, and String for redacted
+// rendering.
+var (
+	_ error                       = (*ServiceChoiceError)(nil)
+	_ interface{ Unwrap() error } = (*ServiceChoiceError)(nil)
+	_ fmt.Stringer                = (*ExecutionTarget)(nil)
+)
