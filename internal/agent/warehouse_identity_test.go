@@ -22,12 +22,15 @@ import (
 // identityProbeConn is a clickhouse.Conn whose Query always fails with a marker
 // error. Combined with a pool whose Open captures the config, it proves which
 // credential a pooled execution dialed with — without needing a real
-// ClickHouse server for the managed-connector cases.
+// ClickHouse server for the managed-connector cases. lastCtx records the
+// per-query context so tests can assert execution tagging (log_comment).
 type identityProbeConn struct {
 	clickhouse.Conn
+	lastCtx context.Context
 }
 
-func (c *identityProbeConn) Query(context.Context, string, ...any) (driver.Rows, error) {
+func (c *identityProbeConn) Query(ctx context.Context, _ string, _ ...any) (driver.Rows, error) {
+	c.lastCtx = ctx
 	return nil, errors.New("identity probe query")
 }
 
@@ -35,10 +38,12 @@ func (c *identityProbeConn) Query(context.Context, string, ...any) (driver.Rows,
 // persistence, audit, row limits) can be exercised on the pooled route.
 type identityResultConn struct {
 	clickhouse.Conn
-	rows int
+	rows    int
+	lastCtx context.Context
 }
 
-func (c *identityResultConn) Query(context.Context, string, ...any) (driver.Rows, error) {
+func (c *identityResultConn) Query(ctx context.Context, _ string, _ ...any) (driver.Rows, error) {
+	c.lastCtx = ctx
 	return newIdentityProbeRows(c.rows), nil
 }
 
@@ -112,6 +117,9 @@ func (identityProbeColumnType) DatabaseTypeName() string { return "String" }
 type identityCapture struct {
 	cfg  models.ConnectorConfig
 	used bool
+	// conn is the last connection the pool opened, so tests can inspect the
+	// per-query context it executed with (e.g. log_comment tagging).
+	conn clickhouse.Conn
 	// result makes the pool hand out a connection that serves `rows` rows
 	// instead of failing the query; block makes Query wait for cancellation.
 	result bool
@@ -125,12 +133,18 @@ func newIdentityCapturePool(capture *identityCapture) *executor.ConnPool {
 			capture.cfg = cfg
 			capture.used = true
 			if capture.block {
-				return &identityBlockingConn{}, nil
+				conn := &identityBlockingConn{}
+				capture.conn = conn
+				return conn, nil
 			}
 			if capture.result {
-				return &identityResultConn{rows: capture.rows}, nil
+				conn := &identityResultConn{rows: capture.rows}
+				capture.conn = conn
+				return conn, nil
 			}
-			return &identityProbeConn{}, nil
+			conn := &identityProbeConn{}
+			capture.conn = conn
+			return conn, nil
 		},
 	})
 }
@@ -229,6 +243,15 @@ func TestAgentExecuteSQLUsesUserIdentity(t *testing.T) {
 	require.Equal(t, userID, gotUser.String(), "resolution must use the acting user from the tool context")
 	require.Equal(t, connID, gotConn.String())
 	require.False(t, gotPinned, "agent execution routes by preference like HTTP, it does not pin")
+
+	// The ad-hoc SQL path must execute with a per-execution ID tagged as
+	// log_comment, even though it has no audit entry of its own.
+	probe, ok := capture.conn.(*identityProbeConn)
+	require.True(t, ok)
+	require.NotNil(t, probe.lastCtx, "execute_sql must execute with a per-execution context")
+	executionID := executor.ExecutionIDFromContext(probe.lastCtx)
+	require.NotEmpty(t, executionID, "execute_sql must generate an execution id")
+	require.Contains(t, fmt.Sprintf("%#v", probe.lastCtx), `"log_comment":"aether:`+executionID+`"`)
 }
 
 // Resolver failures (and a missing resolver) must surface as tool errors and
@@ -392,6 +415,15 @@ func TestAgentRunCellUsesUserIdentity(t *testing.T) {
 	require.Equal(t, warehouseID.String(), meta["warehouse_id"])
 	require.Equal(t, connID, meta["connector_id"])
 	require.Equal(t, chUser, meta["ch_user"])
+
+	// The audit entry's execution_id must be the one the driver received as
+	// log_comment, so system.query_log can be joined back to the audit row.
+	executionID, _ := meta["execution_id"].(string)
+	require.NotEmpty(t, executionID, "cell.run audit must carry the execution id")
+	resultConn, ok := capture.conn.(*identityResultConn)
+	require.True(t, ok)
+	require.NotNil(t, resultConn.lastCtx, "run_cell must execute with a per-execution context")
+	require.Contains(t, fmt.Sprintf("%#v", resultConn.lastCtx), `"log_comment":"aether:`+executionID+`"`)
 }
 
 // A routed service carries its own MaxRows/TimeoutSeconds; agent execution

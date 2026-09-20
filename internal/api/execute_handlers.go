@@ -280,12 +280,17 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 
 	bgCtx := context.Background()
 
+	// Per-execution ID: tags the ClickHouse query via log_comment and lands in
+	// the cell.execute audit metadata so the two can be correlated.
+	executionID := uuid.New().String()
+
 	// Create cancelable context for query execution
 	execCtx, execCancel := context.WithCancel(bgCtx)
 	s.hub.SetCancelFunc(cellID, execCancel)
 
 	// Tag the context with the user email for ClickHouse query tracing
 	execCtx = context.WithValue(execCtx, executor.CtxUserEmail{}, s.userEmail(bgCtx, claims.UserID))
+	execCtx = executor.WithExecutionID(execCtx, executionID)
 
 	// Set query timeout from connector config (0 = unlimited)
 	var timeoutCancel context.CancelFunc
@@ -394,7 +399,7 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	s.audit.Log(bgCtx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "cell.execute", ResourceType: "cell", ResourceID: cellID,
-		Metadata: auditMetadata(nbID, cellID, auditConnID, cell.Source, rowCount, totalTime, warehouseID, chUser),
+		Metadata: auditMetadata(nbID, cellID, auditConnID, cell.Source, rowCount, totalTime, warehouseID, chUser, executionID),
 	})
 }
 
@@ -402,7 +407,8 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 // are present only when the run executed as a warehouse per-user identity;
 // connector_id is the service actually dialed, which can differ from the
 // cell's connector when warehouse routing picks a preferred service.
-func auditMetadata(notebookID, cellID, connectorID, query string, rowCount int, durationMS int64, warehouseID, chUser string) map[string]any {
+// execution_id correlates the row with the query's ClickHouse log_comment.
+func auditMetadata(notebookID, cellID, connectorID, query string, rowCount int, durationMS int64, warehouseID, chUser, executionID string) map[string]any {
 	metadata := map[string]any{
 		"notebook_id":  notebookID,
 		"cell_id":      cellID,
@@ -410,6 +416,7 @@ func auditMetadata(notebookID, cellID, connectorID, query string, rowCount int, 
 		"query":        query,
 		"row_count":    rowCount,
 		"duration_ms":  durationMS,
+		"execution_id": executionID,
 	}
 	if warehouseID != "" {
 		metadata["warehouse_id"] = warehouseID

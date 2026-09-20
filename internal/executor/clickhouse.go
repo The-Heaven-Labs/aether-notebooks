@@ -399,6 +399,19 @@ func (c *ClickHouseExecutor) Execute(ctx context.Context, query string, params m
 		resolved = fmt.Sprintf("/* aether_user:%s */ %s", userEmail, resolved)
 	}
 
+	// Tag queries with the execution ID so system.query_log rows can be joined
+	// back to the Aether audit entry. clickhouse-go carries per-query settings
+	// on the context, which both the Query and Exec paths read.
+	//
+	// NOTE: when per-user settings profiles land (deferred), log_comment must
+	// stay changeable_in_readonly; otherwise a readonly=1 identity cannot set
+	// it and every tagged execution would fail.
+	if executionID := ExecutionIDFromContext(ctx); executionID != "" {
+		ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
+			"log_comment": "aether:" + executionID,
+		}))
+	}
+
 	// Use Exec for commands that don't return rows
 	upper := strings.TrimSpace(strings.ToUpper(resolved))
 	if hasPrefixAny(upper, []string{"USE ", "SET ", "CREATE ", "DROP ", "ALTER ",

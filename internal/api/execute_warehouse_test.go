@@ -174,6 +174,28 @@ func TestExecuteCellUsesPerUserIdentity(t *testing.T) {
 	require.Equal(t, fx.warehouseID.String(), meta["warehouse_id"])
 	require.Equal(t, fx.connA.String(), meta["connector_id"])
 	require.Equal(t, userIdent, meta["ch_user"])
+	executionID, _ := meta["execution_id"].(string)
+	require.NotEmpty(t, executionID, "cell.execute audit must carry the execution id")
+
+	// The query itself must be tagged in ClickHouse so system.query_log rows
+	// join back to the audit entry. query_log flushes asynchronously, so flush
+	// and poll instead of asserting once.
+	provConn, err := openWarehouseProvisionerConn(ctx, warehouseSyncTestClickHouseConfig())
+	require.NoError(t, err)
+	defer provConn.Close()
+	require.Eventually(t, func() bool {
+		if err := provConn.Exec(ctx, "SYSTEM FLUSH LOGS"); err != nil {
+			return false
+		}
+		var count uint64
+		if err := provConn.QueryRow(ctx,
+			`SELECT count() FROM system.query_log WHERE log_comment = $1`,
+			"aether:"+executionID).Scan(&count); err != nil {
+			return false
+		}
+		return count > 0
+	}, 10*time.Second, 250*time.Millisecond,
+		"system.query_log must contain the tagged query for execution %s", executionID)
 }
 
 func TestExecuteCellWarehouseTableDenied(t *testing.T) {

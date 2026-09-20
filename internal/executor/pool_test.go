@@ -16,6 +16,10 @@ import (
 
 type fakeConn struct {
 	closed bool
+	// lastCtx records the context of the most recent Query or Exec call so
+	// tests can inspect driver-level per-query options (settings) without a
+	// live ClickHouse server.
+	lastCtx context.Context
 }
 
 var _ clickhouse.Conn = (*fakeConn)(nil)
@@ -26,7 +30,10 @@ func (f *fakeConn) ServerVersion() (*driver.ServerVersion, error) { return nil, 
 
 func (f *fakeConn) Select(context.Context, any, string, ...any) error { return nil }
 
-func (f *fakeConn) Query(context.Context, string, ...any) (driver.Rows, error) { return nil, nil }
+func (f *fakeConn) Query(ctx context.Context, _ string, _ ...any) (driver.Rows, error) {
+	f.lastCtx = ctx
+	return fakeRows{}, nil
+}
 
 func (f *fakeConn) QueryRow(context.Context, string, ...any) driver.Row { return nil }
 
@@ -34,7 +41,10 @@ func (f *fakeConn) PrepareBatch(context.Context, string, ...driver.PrepareBatchO
 	return nil, nil
 }
 
-func (f *fakeConn) Exec(context.Context, string, ...any) error { return nil }
+func (f *fakeConn) Exec(ctx context.Context, _ string, _ ...any) error {
+	f.lastCtx = ctx
+	return nil
+}
 
 func (f *fakeConn) AsyncInsert(context.Context, string, bool, ...any) error { return nil }
 

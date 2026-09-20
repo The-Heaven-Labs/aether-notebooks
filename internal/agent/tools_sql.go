@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-heaven-labs/aether/internal/config"
 	"github.com/the-heaven-labs/aether/internal/executor"
@@ -122,7 +123,12 @@ func executeAgentSQL(tc *ToolContext, pool *pgxpool.Pool, connectorID, query str
 		maxRows = target.MaxRows
 	}
 
-	result, err := exec.Execute(ctx, query, params, executor.OutputLimits{MaxBytes: maxBytes, MaxRows: maxRows})
+	// Per-execution ID: tags the ClickHouse query via log_comment. The ad-hoc
+	// SQL paths have no audit entry of their own, so the ID is only propagated
+	// to the driver here.
+	execCtx := executor.WithExecutionID(ctx, uuid.New().String())
+
+	result, err := exec.Execute(execCtx, query, params, executor.OutputLimits{MaxBytes: maxBytes, MaxRows: maxRows})
 	if err != nil {
 		return nil, fmt.Errorf("execute: %w", err)
 	}

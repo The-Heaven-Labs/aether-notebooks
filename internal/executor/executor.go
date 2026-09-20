@@ -98,6 +98,24 @@ func hasPrefixAny(s string, prefixes []string) bool {
 // CtxUserEmail is the context key for the Aether user email, used for query tracing.
 type CtxUserEmail struct{}
 
+// CtxExecutionID is the context key for the Aether execution ID. ClickHouse
+// execution tags every query with log_comment "aether:<id>" so rows in
+// system.query_log can be joined back to the Aether audit entry.
+type CtxExecutionID struct{}
+
+// WithExecutionID returns a context carrying the per-execution ID used for
+// query tagging.
+func WithExecutionID(ctx context.Context, executionID string) context.Context {
+	return context.WithValue(ctx, CtxExecutionID{}, executionID)
+}
+
+// ExecutionIDFromContext returns the execution ID carried by ctx, or "" when
+// the context has none.
+func ExecutionIDFromContext(ctx context.Context) string {
+	executionID, _ := ctx.Value(CtxExecutionID{}).(string)
+	return executionID
+}
+
 // estimateValueSize returns a cheap lower-bound byte estimate for a single
 // result value. JSON overhead and numeric encodings are bounded, so summing
 // these per row is accurate enough to enforce a byte cap without round-tripping

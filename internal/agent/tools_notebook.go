@@ -924,9 +924,14 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 		ctx.SetRunningFunc(cellID, notebookID, execStart) // Hub + Redis → survives refresh
 	}
 
+	// Per-execution ID: tags the ClickHouse query via log_comment and lands in
+	// the cell.run audit metadata so the two can be correlated.
+	executionID := uuid.New().String()
+
 	// Cancellable execution context: powers the Cancel button via the hub
 	// (same lifecycle as user-triggered runs). The timeout nests inside.
 	execCtx, execCancel := context.WithCancel(ctx.Context)
+	execCtx = executor.WithExecutionID(execCtx, executionID)
 	defer execCancel()
 	if timeoutMs > 0 {
 		var timeoutCancel context.CancelFunc
@@ -1044,7 +1049,10 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 	// Record the connector actually dialed; a routed warehouse run also records
 	// the warehouse and per-user ClickHouse identity, mirroring the HTTP
 	// cell.execute audit entry.
-	auditMeta := map[string]any{"connector_id": *cell.ConnectorID}
+	auditMeta := map[string]any{
+		"connector_id": *cell.ConnectorID,
+		"execution_id": executionID,
+	}
 	if target != nil {
 		auditMeta["connector_id"] = target.ConnectorID.String()
 		auditMeta["warehouse_id"] = target.WarehouseID.String()
