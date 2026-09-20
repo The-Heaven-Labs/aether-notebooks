@@ -1902,6 +1902,19 @@ git commit -m "feat(api): resolve execution target with service routing"
 
 ### Task 15: Wire HTTP execution path
 
+**Post-Task-14 revision notes:**
+- Route by connector type first: only `type='clickhouse'` connectors call
+  `resolveExecutionTarget`; Postgres/OpenSearch stay on the legacy driver path
+  (`ErrConnectorNotFound` is returned for non-ClickHouse managed lookups).
+- `executor.ExecutionTarget` carries `Config` (with per-user credentials) and
+  `CHUser`; there is no separate `Password` field and `cfgForTarget` does not
+  exist. Errors to map: `ErrUnmanagedConnector` → legacy path,
+  `ErrConnectorNotFound` → 404, `ErrProvisioningNotReady` → 503,
+  `ErrServiceAccessDenied` → 403, `ErrServiceChoiceRequired` → 409 with the
+  allowed-service list.
+- `ConnPool` is created on `Server` and closed by `Server.Close` (`CloseAll`),
+  with a `CloseIdle` ticker so `IdleTTL` is not inert.
+
 **Files:**
 - Modify: `internal/api/execute_handlers.go` (replace `buildExecutor` usage at `:206` with target resolution + pool)
 - Modify: `internal/api/server.go` (hold `*executor.ConnPool`)
@@ -1950,6 +1963,12 @@ git commit -m "feat(api): per-user clickhouse identity on HTTP execution"
 ---
 
 ### Task 16: Wire agent and MCP execution paths
+
+**Task 14 contract notes:** `ExecutionTarget` and its errors live in
+`internal/executor` (no import cycle). `resolveExecutionTarget` is unexported on
+`*Server`; expose a callback on `ToolContext` typed in a package agent already
+imports, and inject the user's org role + admin mode into the resolution
+context so agent paths match HTTP authorization exactly.
 
 **Files:**
 - Modify: `internal/agent/tools_notebook.go` (`executeCell` at `:826`; `explore_schema` at `:1297`)
@@ -2096,6 +2115,10 @@ PUT    /api/v1/connectors/{id}/warehouse        {"warehouse_id": "..."|null}
 Use existing `writeJSON`/`writeError` helpers and `@Router` swag annotations.
 Validation: connector and warehouse same org; provisioner belongs to the
 warehouse; `provisioner_connector_id` required before first sync.
+Deleting a warehouse must refuse (or require explicit confirmation when)
+connectors are still linked: `connectors.warehouse_id` is `ON DELETE SET NULL`,
+so an unconfirmed delete silently downgrades those connectors to unmanaged
+shared-credential mode.
 Connector soft-delete (`internal/api/connector_handlers.go:485`) must also
 `DELETE FROM warehouse_service_preferences WHERE connector_id=$1` — connectors
 are soft-deleted, so the FK cascade never fires.
