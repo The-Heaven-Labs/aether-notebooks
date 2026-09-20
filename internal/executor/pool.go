@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,17 +16,17 @@ import (
 // PoolConfig configures a ConnPool.
 type PoolConfig struct {
 	// MaxPools caps the number of pooled connections per pool. <= 0 means
-	// unlimited.
+	// unlimited. In-use entries are never evicted, so the pool may temporarily
+	// exceed MaxPools while connections are leased; the overage is resolved
+	// when leases are released.
 	MaxPools int
 	// IdleTTL closes connections that have been idle for at least this long.
-	// <= 0 disables idle eviction.
+	// <= 0 disables idle eviction. In-use entries are skipped.
 	IdleTTL time.Duration
-	// PerUserMaxOpen is reserved for per-user connection limits; the pool
-	// currently keeps at most one connection per (endpoint, user).
-	PerUserMaxOpen int
 	// Open opens a new connection for a connector config. When nil the default
 	// opener is used, which builds driver options via chOptions and does not
-	// dial (dial/auth errors surface on first use).
+	// dial (dial/auth errors surface on first use). Open is called while the
+	// pool mutex is held, so it must not block or call back into the pool.
 	Open func(cfg models.ConnectorConfig) (clickhouse.Conn, error)
 }
 
@@ -38,6 +40,8 @@ type poolEntry struct {
 	lastUsed time.Time
 	cfg      models.ConnectorConfig
 	fp       string
+	refs     int
+	dead     bool
 }
 
 // ConnPool is a process-local pool of ClickHouse connections keyed by
@@ -68,12 +72,13 @@ func defaultPoolOpen(cfg models.ConnectorConfig) (clickhouse.Conn, error) {
 	return conn, nil
 }
 
-// Get returns a pooled connection for (endpoint, user), opening one if needed.
-// Credentials are fingerprinted; a changed password closes the stale
+// Get returns a pooled connection for (endpoint, user) and a release function
+// that must be called exactly once when the connection is no longer in use.
+// Connection-affecting config is fingerprinted; a change closes the stale
 // connection and opens a new one.
-func (p *ConnPool) Get(endpoint, user string, cfg models.ConnectorConfig) (clickhouse.Conn, error) {
+func (p *ConnPool) Get(endpoint, user string, cfg models.ConnectorConfig) (clickhouse.Conn, func(), error) {
 	key := poolKey{endpoint: endpoint, user: user}
-	fp := credentialFingerprint(cfg.Password)
+	fp := credentialFingerprint(cfg)
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -82,30 +87,60 @@ func (p *ConnPool) Get(endpoint, user string, cfg models.ConnectorConfig) (click
 		if e.fp == fp {
 			p.touch(key)
 			e.lastUsed = time.Now()
-			return e.conn, nil
+			e.refs++
+			return e.conn, p.releaser(e), nil
 		}
-		p.remove(key, true)
+		p.detachLocked(key)
 	}
 
 	conn, err := p.cfg.Open(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("open clickhouse connection for %q at %q: %w", user, endpoint, err)
+		return nil, nil, fmt.Errorf("open clickhouse connection for %q at %q: %w", user, endpoint, err)
 	}
 
-	p.entries[key] = &poolEntry{conn: conn, lastUsed: time.Now(), cfg: cfg, fp: fp}
+	e := &poolEntry{conn: conn, lastUsed: time.Now(), cfg: cfg, fp: fp, refs: 1}
+	p.entries[key] = e
 	p.keys = append(p.keys, key)
 	p.evictLocked()
-	return conn, nil
+	return conn, p.releaser(e), nil
 }
 
-// Invalidate closes and removes the pooled connection for (endpoint, user).
+// releaser returns an idempotent release function for a single acquisition.
+func (p *ConnPool) releaser(e *poolEntry) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			p.releaseLocked(e)
+		})
+	}
+}
+
+func (p *ConnPool) releaseLocked(e *poolEntry) {
+	if e.refs > 0 {
+		e.refs--
+	}
+	if e.refs > 0 {
+		return
+	}
+	if e.dead {
+		_ = e.conn.Close()
+		return
+	}
+	p.evictLocked()
+}
+
+// Invalidate removes the pooled connection for (endpoint, user) so new Gets
+// open a fresh connection. An in-use connection is closed by its last release.
 func (p *ConnPool) Invalidate(endpoint, user string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.remove(poolKey{endpoint: endpoint, user: user}, true)
+	p.detachLocked(poolKey{endpoint: endpoint, user: user})
 }
 
-// CloseIdle evicts connections idle for at least IdleTTL as of now.
+// CloseIdle evicts connections idle for at least IdleTTL as of now. In-use
+// connections are skipped.
 func (p *ConnPool) CloseIdle(now time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -114,12 +149,23 @@ func (p *ConnPool) CloseIdle(now time.Time) {
 	}
 	for _, key := range append([]poolKey(nil), p.keys...) {
 		e, ok := p.entries[key]
-		if !ok {
+		if !ok || e.refs > 0 {
 			continue
 		}
 		if now.Sub(e.lastUsed) >= p.cfg.IdleTTL {
-			p.remove(key, true)
+			p.detachLocked(key)
 		}
+	}
+}
+
+// CloseAll detaches and closes every pooled connection and clears the pool.
+// In-use connections are not closed mid-query; they are marked dead and closed
+// by their last release.
+func (p *ConnPool) CloseAll() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, key := range append([]poolKey(nil), p.keys...) {
+		p.detachLocked(key)
 	}
 }
 
@@ -140,7 +186,10 @@ func (p *ConnPool) touch(key poolKey) {
 	p.keys = append(p.keys, key)
 }
 
-func (p *ConnPool) remove(key poolKey, closeConn bool) {
+// detachLocked removes an entry from the pool. If it has no outstanding leases
+// it is closed immediately; otherwise it is marked dead and closed by its last
+// release.
+func (p *ConnPool) detachLocked(key poolKey) {
 	e, ok := p.entries[key]
 	if !ok {
 		return
@@ -152,21 +201,54 @@ func (p *ConnPool) remove(key poolKey, closeConn bool) {
 			break
 		}
 	}
-	if closeConn {
+	if e.refs == 0 {
 		_ = e.conn.Close()
+		return
 	}
+	e.dead = true
 }
 
+// evictLocked trims the pool to MaxPools by detaching least-recently-used idle
+// entries. When every entry is in use the pool is left above MaxPools until a
+// release makes eviction possible.
 func (p *ConnPool) evictLocked() {
 	if p.cfg.MaxPools <= 0 {
 		return
 	}
-	for len(p.entries) > p.cfg.MaxPools && len(p.keys) > 0 {
-		p.remove(p.keys[0], true)
+	for len(p.entries) > p.cfg.MaxPools {
+		evicted := false
+		for _, key := range p.keys {
+			if e := p.entries[key]; e != nil && e.refs == 0 {
+				p.detachLocked(key)
+				evicted = true
+				break
+			}
+		}
+		if !evicted {
+			return
+		}
 	}
 }
 
-func credentialFingerprint(password string) string {
-	sum := sha256.Sum256([]byte(password))
+// credentialFingerprint hashes every connection-affecting config field so a
+// credential or target change reopens the pooled connection. Fields are
+// length-prefixed so values cannot collide across field boundaries. The user
+// is also part of the pool key; it is included here for completeness.
+func credentialFingerprint(cfg models.ConnectorConfig) string {
+	var b strings.Builder
+	fields := []string{
+		cfg.Host,
+		strconv.Itoa(cfg.Port),
+		cfg.User,
+		cfg.Password,
+		cfg.Database,
+		cfg.SSLMode,
+	}
+	for _, f := range fields {
+		b.WriteString(strconv.Itoa(len(f)))
+		b.WriteByte(':')
+		b.WriteString(f)
+	}
+	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:])
 }
