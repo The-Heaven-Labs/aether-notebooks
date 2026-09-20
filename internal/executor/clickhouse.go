@@ -19,11 +19,12 @@ import (
 // returned when an identity lacks the grant a query needs.
 const clickHouseAccessDeniedCode int32 = 497
 
-// IsAccessDenied reports whether err is a ClickHouse access-denied failure,
-// e.g. a per-user identity selecting from a table it was not granted. The
-// structural check handles the driver's *clickhouse.Exception; the message
+// IsClickHouseAccessDenied reports whether err is a ClickHouse access-denied
+// failure, e.g. a per-user identity selecting from a table it was not granted.
+// It is ClickHouse-specific: other drivers' permission errors are not matched.
+// The structural check handles the driver's *clickhouse.Exception; the message
 // fallback covers exceptions wrapped in a way that loses the type.
-func IsAccessDenied(err error) bool {
+func IsClickHouseAccessDenied(err error) bool {
 	if err == nil {
 		return false
 	}

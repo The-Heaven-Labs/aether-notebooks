@@ -35,30 +35,9 @@ type executionTargetFixture struct {
 // resolution tests need only Postgres (no ClickHouse).
 func setupExecutionTargetFixture(t *testing.T) *executionTargetFixture {
 	t.Helper()
-	ctx := context.Background()
 
-	s, key := newWarehouseSyncTestServer(t)
+	s, key := sharedWarehouseTestServer(t)
 	seed := seedWarehouseFixtureRows(t, s, key)
-
-	var encrypted []byte
-	require.NoError(t, s.db.Pool.QueryRow(ctx,
-		`SELECT config_encrypted FROM connectors WHERE id = $1`,
-		seed.connectorID.String()).Scan(&encrypted))
-
-	insertConnector := func(name string, warehouseID *uuid.UUID) uuid.UUID {
-		t.Helper()
-		id := uuid.New()
-		var wh any
-		if warehouseID != nil {
-			wh = warehouseID.String()
-		}
-		_, err := s.db.Pool.Exec(ctx, `
-			INSERT INTO connectors (id, org_id, name, type, config_encrypted, warehouse_id)
-			VALUES ($1, $2, $3, 'clickhouse', $4, $5)`,
-			id.String(), seed.orgID.String(), name, encrypted, wh)
-		require.NoError(t, err)
-		return id
-	}
 
 	fx := &executionTargetFixture{
 		s:             s,
@@ -68,11 +47,11 @@ func setupExecutionTargetFixture(t *testing.T) *executionTargetFixture {
 		groupID:       seed.groupID,
 		warehouseID:   seed.warehouseID,
 		provisionerID: seed.connectorID,
-		connA:         insertConnector("Service A", &seed.warehouseID),
-		connB:         insertConnector("Service B", &seed.warehouseID),
-		unmanagedID:   insertConnector("Unmanaged", nil),
+		connA:         insertClickHouseService(t, s, seed.orgID, seed.connectorID, "Service A", &seed.warehouseID),
+		connB:         insertClickHouseService(t, s, seed.orgID, seed.connectorID, "Service B", &seed.warehouseID),
+		unmanagedID:   insertClickHouseService(t, s, seed.orgID, seed.connectorID, "Unmanaged", nil),
 	}
-	_, err := s.db.Pool.Exec(ctx,
+	_, err := s.db.Pool.Exec(context.Background(),
 		`UPDATE warehouses SET sync_status = 'ready' WHERE id = $1`, fx.warehouseID.String())
 	require.NoError(t, err)
 	return fx
@@ -81,21 +60,13 @@ func setupExecutionTargetFixture(t *testing.T) *executionTargetFixture {
 // grantUse gives the fixture user the `use` action on one connector.
 func (fx *executionTargetFixture) grantUse(t *testing.T, connectorID uuid.UUID) {
 	t.Helper()
-	_, err := fx.s.db.Pool.Exec(context.Background(), `
-		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-		VALUES ($1, 'connector', $2::uuid, 'user', $3, ARRAY['view','use'])`,
-		fx.orgID.String(), connectorID.String(), fx.userID.String())
-	require.NoError(t, err)
+	grantConnectorUse(t, fx.s, fx.orgID, fx.userID, connectorID)
 }
 
 // grantGroupUse gives the fixture group the `use` action on one connector.
 func (fx *executionTargetFixture) grantGroupUse(t *testing.T, connectorID uuid.UUID) {
 	t.Helper()
-	_, err := fx.s.db.Pool.Exec(context.Background(), `
-		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-		VALUES ($1, 'connector', $2::uuid, 'group', $3, ARRAY['use'])`,
-		fx.orgID.String(), connectorID.String(), fx.groupID.String())
-	require.NoError(t, err)
+	grantGroupConnectorUse(t, fx.s, fx.orgID, fx.groupID, connectorID)
 }
 
 // revokeUse removes the fixture user's direct `use` grant on a connector.
@@ -112,13 +83,7 @@ func (fx *executionTargetFixture) revokeUse(t *testing.T, connectorID uuid.UUID)
 // prefer records the user's routing preference for the warehouse.
 func (fx *executionTargetFixture) prefer(t *testing.T, connectorID uuid.UUID) {
 	t.Helper()
-	_, err := fx.s.db.Pool.Exec(context.Background(), `
-		INSERT INTO warehouse_service_preferences (user_id, warehouse_id, connector_id)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (user_id, warehouse_id) DO UPDATE
-		SET connector_id = EXCLUDED.connector_id, updated_at = now()`,
-		fx.userID.String(), fx.warehouseID.String(), connectorID.String())
-	require.NoError(t, err)
+	preferWarehouseService(t, fx.s, fx.userID, fx.warehouseID, connectorID)
 }
 
 func (fx *executionTargetFixture) setSyncStatus(t *testing.T, status string) {
@@ -284,6 +249,23 @@ func TestResolveExecutionTargetIdentityAndEndpoint(t *testing.T) {
 	require.NotContains(t, rendered, target.Config.Password, "String() must redact the per-user credential")
 	var nilTarget *executor.ExecutionTarget
 	require.Equal(t, "<nil>", nilTarget.String())
+}
+
+func TestResolveExecutionTargetCarriesRoutedServiceLimits(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	fx.grantUse(t, fx.connB)
+	_, err := fx.s.db.Pool.Exec(context.Background(),
+		`UPDATE connectors SET max_rows = 123, timeout_seconds = 45 WHERE id = $1`,
+		fx.connB.String())
+	require.NoError(t, err)
+
+	// The target must carry the routed service's limits, not the requested
+	// connector's values.
+	target, err := fx.resolve(t, fx.connA, false)
+	require.NoError(t, err)
+	require.Equal(t, fx.connB, target.ConnectorID)
+	require.Equal(t, 123, target.MaxRows)
+	require.Equal(t, 45, target.TimeoutSeconds)
 }
 
 func TestResolveExecutionTargetDefaultEndpointPort(t *testing.T) {

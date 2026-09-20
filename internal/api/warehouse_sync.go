@@ -784,19 +784,7 @@ func (s *Server) startWarehouseReconcileLoop(ctx context.Context) {
 		// comes from config.DefaultWarehouseReconcileInterval.
 		interval = config.DefaultWarehouseReconcileInterval
 	}
-	s.warehouseLoopMu.Lock()
-	if s.warehouseLoopClosed || s.warehouseLoopCancel != nil {
-		// Close already ran, or a loop is active: never start a second one.
-		s.warehouseLoopMu.Unlock()
-		return
-	}
-	loopCtx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
-	s.warehouseLoopCancel = cancel
-	s.warehouseLoopDone = done
-	s.warehouseLoopMu.Unlock()
-	go func() {
-		defer close(done)
+	s.warehouseLoop.start(ctx, func(loopCtx context.Context) {
 		if jitter := warehouseReconcileJitterFn(interval); jitter > 0 {
 			select {
 			case <-time.After(jitter):
@@ -815,7 +803,7 @@ func (s *Server) startWarehouseReconcileLoop(ctx context.Context) {
 				s.enqueueAllWarehouses(loopCtx)
 			}
 		}
-	}()
+	})
 }
 
 // warehouseReconcileJitter returns a random startup delay in [0, jitterMax).

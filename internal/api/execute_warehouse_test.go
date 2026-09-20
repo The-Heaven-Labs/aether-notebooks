@@ -12,8 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/chaccess"
-	"github.com/the-heaven-labs/aether/internal/crypto"
-	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 // executeWarehouseFixture seeds a ready, reconciled warehouse plus two managed
@@ -33,37 +31,19 @@ type executeWarehouseFixture struct {
 }
 
 // setupExecuteWarehouseFixture skips the test when the dev ClickHouse service
-// is unreachable (setupWarehouseFixtureWithServer handles that check).
+// is unreachable. The probe runs before the shared server is built so skipped
+// tests stay fast.
 func setupExecuteWarehouseFixture(t *testing.T) *executeWarehouseFixture {
 	t.Helper()
 	ctx := context.Background()
 
-	s, key := newWarehouseSyncTestServer(t)
+	requireClickHouseReachable(t)
+	s, key := sharedWarehouseTestServer(t)
 	seed := setupWarehouseFixtureWithServer(t, s, key)
 	require.NoError(t, s.reconcileWarehouse(ctx, seed.warehouseID))
 	// Run before the fixture's ClickHouse cleanup (LIFO), so no idle pooled
 	// connection outlives the identity it authenticated as.
 	t.Cleanup(func() { s.connPool.CloseAll() })
-
-	var encrypted []byte
-	require.NoError(t, s.db.Pool.QueryRow(ctx,
-		`SELECT config_encrypted FROM connectors WHERE id = $1`,
-		seed.connectorID.String()).Scan(&encrypted))
-
-	insertClickHouse := func(name string, warehouseID *uuid.UUID) uuid.UUID {
-		t.Helper()
-		id := uuid.New()
-		var wh any
-		if warehouseID != nil {
-			wh = warehouseID.String()
-		}
-		_, err := s.db.Pool.Exec(ctx, `
-			INSERT INTO connectors (id, org_id, name, type, config_encrypted, warehouse_id)
-			VALUES ($1, $2, $3, 'clickhouse', $4, $5)`,
-			id.String(), seed.orgID.String(), name, encrypted, wh)
-		require.NoError(t, err)
-		return id
-	}
 
 	return &executeWarehouseFixture{
 		s:           s,
@@ -71,54 +51,20 @@ func setupExecuteWarehouseFixture(t *testing.T) *executeWarehouseFixture {
 		orgID:       seed.orgID,
 		userID:      seed.userID,
 		warehouseID: seed.warehouseID,
-		connA:       insertClickHouse("Execute Service A", &seed.warehouseID),
-		connB:       insertClickHouse("Execute Service B", &seed.warehouseID),
-		unmanagedID: insertClickHouse("Execute Unmanaged", nil),
+		connA:       insertClickHouseService(t, s, seed.orgID, seed.connectorID, "Execute Service A", &seed.warehouseID),
+		connB:       insertClickHouseService(t, s, seed.orgID, seed.connectorID, "Execute Service B", &seed.warehouseID),
+		unmanagedID: insertClickHouseService(t, s, seed.orgID, seed.connectorID, "Execute Unmanaged", nil),
 	}
 }
 
 func (fx *executeWarehouseFixture) grantConnectorUse(t *testing.T, connectorID uuid.UUID) {
 	t.Helper()
-	_, err := fx.s.db.Pool.Exec(context.Background(), `
-		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-		VALUES ($1, 'connector', $2::uuid, 'user', $3, ARRAY['view','use'])`,
-		fx.orgID.String(), connectorID.String(), fx.userID.String())
-	require.NoError(t, err)
+	grantConnectorUse(t, fx.s, fx.orgID, fx.userID, connectorID)
 }
 
 func (fx *executeWarehouseFixture) grantNotebookRun(t *testing.T, notebookID uuid.UUID) {
 	t.Helper()
-	_, err := fx.s.db.Pool.Exec(context.Background(), `
-		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-		VALUES ($1, 'notebook', $2::uuid, 'user', $3, ARRAY['view','run'])`,
-		fx.orgID.String(), notebookID.String(), fx.userID.String())
-	require.NoError(t, err)
-}
-
-// insertPostgresConnector adds a legacy connector. It is linked to the
-// warehouse on purpose in the non-ClickHouse test so the type gate, not the
-// warehouse link, decides the execution path.
-func (fx *executeWarehouseFixture) insertPostgresConnector(t *testing.T, name string, warehouseID *uuid.UUID) uuid.UUID {
-	t.Helper()
-	cfg := models.ConnectorConfig{
-		Host: "localhost", Port: 5432, User: "aether", Password: "aether_dev", Database: "aether",
-	}
-	plain, err := json.Marshal(cfg)
-	require.NoError(t, err)
-	encrypted, err := crypto.Encrypt(plain, fx.key)
-	require.NoError(t, err)
-
-	id := uuid.New()
-	var wh any
-	if warehouseID != nil {
-		wh = warehouseID.String()
-	}
-	_, err = fx.s.db.Pool.Exec(context.Background(), `
-		INSERT INTO connectors (id, org_id, name, type, config_encrypted, warehouse_id)
-		VALUES ($1, $2, $3, 'postgres', $4, $5)`,
-		id.String(), fx.orgID.String(), name, encrypted, wh)
-	require.NoError(t, err)
-	return id
+	grantNotebookRun(t, fx.s, fx.orgID, fx.userID, notebookID)
 }
 
 // seedExecuteWarehouseCell inserts a notebook and one SQL cell directly, since
@@ -264,7 +210,9 @@ func TestExecuteCellUnmanagedClickHouseUsesLegacyCredential(t *testing.T) {
 
 func TestExecuteCellNonClickHouseConnectorKeepsLegacyPath(t *testing.T) {
 	fx := setupExecuteWarehouseFixture(t)
-	pgID := fx.insertPostgresConnector(t, "Execute Postgres", &fx.warehouseID)
+	// Linked to the warehouse on purpose: the type gate, not the warehouse
+	// link, must decide the execution path.
+	pgID := insertPostgresConnector(t, fx.s, fx.key, fx.orgID, "Execute Postgres", &fx.warehouseID)
 	fx.grantConnectorUse(t, pgID)
 
 	nbID, cellID := seedExecuteWarehouseCell(t, fx.s, fx.orgID, fx.userID, pgID,
@@ -350,4 +298,99 @@ func TestExecuteCellWarehouseAppliesCellLimit(t *testing.T) {
 
 	out := decodeExecuteOutputs(t, rec)
 	require.Len(t, out.Outputs[0].Data.Rows, 1, "the cell LIMIT must still be applied on the pooled path")
+}
+
+func TestExecuteCellSoftDeletedLegacyConnectorNotFound(t *testing.T) {
+	fx := setupExecuteWarehouseFixture(t)
+	pgID := insertPostgresConnector(t, fx.s, fx.key, fx.orgID, "Execute Postgres Deleted", nil)
+	fx.grantConnectorUse(t, pgID)
+	_, err := fx.s.db.Pool.Exec(context.Background(),
+		`UPDATE connectors SET deleted_at = now() WHERE id = $1`, pgID.String())
+	require.NoError(t, err)
+
+	nbID, cellID := seedExecuteWarehouseCell(t, fx.s, fx.orgID, fx.userID, pgID, "SELECT 1", nil)
+	fx.grantNotebookRun(t, nbID)
+
+	rec := executeWarehouseCell(t, fx.s, fx.userID, fx.orgID, nbID, cellID)
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+func TestExecuteCellPreferenceRoutesAndLogsRoutedService(t *testing.T) {
+	ctx := context.Background()
+	fx := setupExecuteWarehouseFixture(t)
+	fx.grantConnectorUse(t, fx.connA)
+	fx.grantConnectorUse(t, fx.connB)
+	preferWarehouseService(t, fx.s, fx.userID, fx.warehouseID, fx.connB)
+
+	// The cell requests Service A but the preference routes it to Service B.
+	nbID, cellID := seedExecuteWarehouseCell(t, fx.s, fx.orgID, fx.userID, fx.connA,
+		"SELECT currentUser() AS ch_user", nil)
+	fx.grantNotebookRun(t, nbID)
+
+	rec := executeWarehouseCell(t, fx.s, fx.userID, fx.orgID, nbID, cellID)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var metaJSON []byte
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT metadata FROM audit_logs
+		WHERE org_id = $1 AND action = 'cell.execute' AND resource_id = $2
+		ORDER BY id DESC LIMIT 1`,
+		fx.orgID.String(), cellID.String()).Scan(&metaJSON))
+	var meta map[string]any
+	require.NoError(t, json.Unmarshal(metaJSON, &meta))
+	require.Equal(t, fx.connB.String(), meta["connector_id"], "audit must record the routed service")
+
+	// The execution log is written asynchronously; it must record the routed
+	// service, not the cell's requested connector.
+	require.Eventually(t, func() bool {
+		var logged string
+		err := fx.s.db.Pool.QueryRow(ctx,
+			`SELECT connector_id::text FROM cell_execution_logs WHERE cell_id = $1`,
+			cellID.String()).Scan(&logged)
+		return err == nil && logged == fx.connB.String()
+	}, 5*time.Second, 50*time.Millisecond,
+		"cell_execution_logs must record the routed connector")
+}
+
+func TestExecuteCellAppliesRoutedServiceLimits(t *testing.T) {
+	ctx := context.Background()
+	fx := setupExecuteWarehouseFixture(t)
+	fx.grantConnectorUse(t, fx.connA)
+	fx.grantConnectorUse(t, fx.connB)
+	preferWarehouseService(t, fx.s, fx.userID, fx.warehouseID, fx.connB)
+
+	// The requested connector allows 1 row; the routed service allows 2. The
+	// routed service's cap must win.
+	_, err := fx.s.db.Pool.Exec(ctx,
+		`UPDATE connectors SET max_rows = 1 WHERE id = $1`, fx.connA.String())
+	require.NoError(t, err)
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE connectors SET max_rows = 2 WHERE id = $1`, fx.connB.String())
+	require.NoError(t, err)
+
+	nbID, cellID := seedExecuteWarehouseCell(t, fx.s, fx.orgID, fx.userID, fx.connA,
+		"SELECT event_type FROM analytics.events LIMIT 5", nil)
+	fx.grantNotebookRun(t, nbID)
+
+	rec := executeWarehouseCell(t, fx.s, fx.userID, fx.orgID, nbID, cellID)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	out := decodeExecuteOutputs(t, rec)
+	require.Len(t, out.Outputs[0].Data.Rows, 2, "the routed service's max_rows must apply")
+}
+
+func TestExecuteCellReusesPooledLease(t *testing.T) {
+	fx := setupExecuteWarehouseFixture(t)
+	fx.grantConnectorUse(t, fx.connA)
+
+	nbID, cellID := seedExecuteWarehouseCell(t, fx.s, fx.orgID, fx.userID, fx.connA,
+		"SELECT currentUser() AS ch_user", nil)
+	fx.grantNotebookRun(t, nbID)
+
+	for run := 1; run <= 2; run++ {
+		rec := executeWarehouseCell(t, fx.s, fx.userID, fx.orgID, nbID, cellID)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Equal(t, 1, fx.s.connPool.Len(),
+			"run %d must reuse the lease pooled for this identity", run)
+	}
 }

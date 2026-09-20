@@ -62,18 +62,13 @@ type Server struct {
 	// warehouse sync loop (AETHER_CH_RECONCILE_INTERVAL); <= 0 means the
 	// package default.
 	warehouseReconcileInterval time.Duration
-	warehouseLoopMu            sync.Mutex         // guards the loop fields and closed
-	warehouseLoopCancel        context.CancelFunc // stops the catch-up loop on Close
-	warehouseLoopDone          chan struct{}      // closed when the catch-up goroutine exits
-	warehouseLoopClosed        bool               // Close ran; starts after it are refused
+	warehouseLoop              backgroundLoop // periodic catch-up enqueue loop
 	// connPool holds per-user ClickHouse connections leased by warehouse-scoped
-	// HTTP executions. CloseAll runs from Close; CloseIdle runs on a ticker.
-	connPool           *executor.ConnPool
-	connPoolLoopMu     sync.Mutex
-	connPoolLoopCancel context.CancelFunc
-	connPoolLoopDone   chan struct{}
-	connPoolLoopClosed bool
-	closeOnce          sync.Once // makes Close idempotent
+	// HTTP executions. CloseAll runs from Close; CloseIdle runs on a ticker
+	// owned by connPoolLoop.
+	connPool     *executor.ConnPool
+	connPoolLoop backgroundLoop
+	closeOnce    sync.Once // makes Close idempotent
 }
 
 // NewServer creates a new Aether API server with the provided dependencies.
@@ -214,26 +209,16 @@ func (s *Server) SetWarehouseReconcileInterval(d time.Duration) {
 // database and cache are closed because the reconcile path uses both.
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
-		s.warehouseLoopMu.Lock()
-		s.warehouseLoopClosed = true
-		cancel := s.warehouseLoopCancel
-		done := s.warehouseLoopDone
-		s.warehouseLoopMu.Unlock()
 		// Stop new enqueues before draining the worker so the loop cannot
 		// feed work into a closing service.
-		if cancel != nil {
-			cancel()
-		}
-		if done != nil {
-			<-done
-		}
+		s.warehouseLoop.stop()
 		if closer, ok := s.warehouseSync.(interface{ Close() }); ok {
 			closer.Close()
 		}
 		// Stop the idle-eviction ticker before closing the pool so no
 		// CloseIdle can race CloseAll; connections still leased by an
 		// in-flight execution are closed by their last release.
-		s.stopConnPoolIdleLoop()
+		s.connPoolLoop.stop()
 		s.connPool.CloseAll()
 	})
 }

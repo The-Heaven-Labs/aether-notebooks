@@ -20,19 +20,7 @@ const (
 // It is safe to call more than once: a second call is a no-op while a loop is
 // running, and after Close no loop starts.
 func (s *Server) startConnPoolIdleLoop(ctx context.Context) {
-	s.connPoolLoopMu.Lock()
-	if s.connPoolLoopClosed || s.connPoolLoopCancel != nil {
-		s.connPoolLoopMu.Unlock()
-		return
-	}
-	loopCtx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
-	s.connPoolLoopCancel = cancel
-	s.connPoolLoopDone = done
-	s.connPoolLoopMu.Unlock()
-
-	go func() {
-		defer close(done)
+	s.connPoolLoop.start(ctx, func(loopCtx context.Context) {
 		ticker := time.NewTicker(connPoolIdleInterval)
 		defer ticker.Stop()
 		for {
@@ -43,20 +31,5 @@ func (s *Server) startConnPoolIdleLoop(ctx context.Context) {
 				s.connPool.CloseIdle(now)
 			}
 		}
-	}()
-}
-
-// stopConnPoolIdleLoop stops the idle-eviction loop and waits for it to exit.
-func (s *Server) stopConnPoolIdleLoop() {
-	s.connPoolLoopMu.Lock()
-	s.connPoolLoopClosed = true
-	cancel := s.connPoolLoopCancel
-	done := s.connPoolLoopDone
-	s.connPoolLoopMu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-	if done != nil {
-		<-done
-	}
+	})
 }

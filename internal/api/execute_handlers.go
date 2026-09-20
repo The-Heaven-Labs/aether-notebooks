@@ -169,7 +169,7 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	var maxRows, timeout int
 	err = s.db.Pool.QueryRow(ctx,
 		`SELECT type, config_encrypted, max_rows, timeout_seconds
-		 FROM connectors WHERE id = $1 AND org_id = $2`,
+		 FROM connectors WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
 		cell.ConnectorID, claims.OrgID,
 	).Scan(&connType, &encryptedConfig, &maxRows, &timeout)
 	if err == pgx.ErrNoRows {
@@ -223,12 +223,10 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "invalid user id")
 			return
 		}
-		connUUID, connErr := uuid.Parse(cell.ConnectorID)
-		if connErr != nil {
-			writeError(w, http.StatusBadRequest, "invalid connector id")
-			return
-		}
+		// cells.connector_id is a UUID column, so parsing cannot fail.
+		connUUID := uuid.MustParse(cell.ConnectorID)
 		target, targetErr := s.resolveExecutionTarget(ctx, userUUID, connUUID, false)
+		var choice *executor.ServiceChoiceError
 		switch {
 		case targetErr == nil:
 			conn, release, getErr := s.connPool.Get(target.Endpoint, target.CHUser, target.Config)
@@ -242,6 +240,11 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 			warehouseID = target.WarehouseID.String()
 			chUser = target.CHUser
 			auditConnID = target.ConnectorID.String()
+			// Limits belong to the service actually dialed: a preference or
+			// sole-service fallback can route to a different connector than
+			// the cell's requested one.
+			maxRows = target.MaxRows
+			timeout = target.TimeoutSeconds
 		case errors.Is(targetErr, executor.ErrUnmanagedConnector):
 			exec, err = driver.NewExecutor(plain)
 			if err != nil {
@@ -257,8 +260,8 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(targetErr, executor.ErrServiceAccessDenied):
 			writeError(w, http.StatusForbidden, "no permitted service in warehouse")
 			return
-		case errors.Is(targetErr, executor.ErrServiceChoiceRequired):
-			writeServiceChoiceRequired(w, targetErr)
+		case errors.As(targetErr, &choice):
+			writeServiceChoiceRequired(w, choice)
 			return
 		default:
 			slog.Error("resolve execution target", "connector_id", cell.ConnectorID, "error", targetErr)
@@ -342,7 +345,7 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		s.hub.Broadcast(nbID, map[string]any{"type": "cell_output", "cell_id": cellID, "outputs": []models.Output{errOutput}, "user_email": s.userEmail(bgCtx, claims.UserID)})
 		s.hub.Broadcast(nbID, map[string]any{"type": "cell_cancelled", "cell_id": cellID})
 		status := http.StatusUnprocessableEntity
-		if !isCancelled && executor.IsAccessDenied(err) {
+		if !isCancelled && executor.IsClickHouseAccessDenied(err) {
 			// A per-user warehouse identity hitting an ungranted table is an
 			// authorization failure, not an unprocessable query.
 			status = http.StatusForbidden
@@ -375,7 +378,7 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		s.db.Pool.Exec(logCtx,
 			`INSERT INTO cell_execution_logs (cell_id, notebook_id, connector_id, connect_time_ms, query_time_ms, render_time_ms, total_time_ms, row_count)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			cellID, nbID, cell.ConnectorID, connectTime, queryTime, renderTime, totalTime, rowCount)
+			cellID, nbID, auditConnID, connectTime, queryTime, renderTime, totalTime, rowCount)
 	}()
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -416,17 +419,15 @@ func auditMetadata(notebookID, cellID, connectorID, query string, rowCount int, 
 }
 
 // writeServiceChoiceRequired renders the 409 payload used to prompt for a
-// warehouse service. The allowed list comes from the resolution error.
-func writeServiceChoiceRequired(w http.ResponseWriter, err error) {
-	services := []map[string]string{}
-	var choice *executor.ServiceChoiceError
-	if errors.As(err, &choice) {
-		for _, svc := range choice.Allowed {
-			services = append(services, map[string]string{
-				"connector_id": svc.ConnectorID.String(),
-				"name":         svc.Name,
-			})
-		}
+// warehouse service. The caller has already matched the concrete error, so the
+// allowed list is always present.
+func writeServiceChoiceRequired(w http.ResponseWriter, choice *executor.ServiceChoiceError) {
+	services := make([]map[string]string, 0, len(choice.Allowed))
+	for _, svc := range choice.Allowed {
+		services = append(services, map[string]string{
+			"connector_id": svc.ConnectorID.String(),
+			"name":         svc.Name,
+		})
 	}
 	writeJSON(w, http.StatusConflict, map[string]any{
 		"error":    "service_choice_required",

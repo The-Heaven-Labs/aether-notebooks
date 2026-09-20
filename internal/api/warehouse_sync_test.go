@@ -75,6 +75,9 @@ func newWarehouseSyncTestServer(t *testing.T) (*Server, []byte) {
 // group grant. All IDs are random so repeated runs never collide.
 func setupWarehouseFixture(t *testing.T) *warehouseSyncFixture {
 	t.Helper()
+	// Probe before constructing the server so a skipped test does not pay
+	// connection + migration startup.
+	requireClickHouseReachable(t)
 	s, key := newWarehouseSyncTestServer(t)
 	return setupWarehouseFixtureWithServer(t, s, key)
 }

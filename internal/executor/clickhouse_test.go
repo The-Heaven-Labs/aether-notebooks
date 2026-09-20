@@ -99,7 +99,7 @@ func TestClickHouseIntegerWidths(t *testing.T) {
 	}
 }
 
-func TestIsAccessDenied(t *testing.T) {
+func TestIsClickHouseAccessDenied(t *testing.T) {
 	cases := []struct {
 		name string
 		err  error
@@ -115,8 +115,8 @@ func TestIsAccessDenied(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := executor.IsAccessDenied(tc.err); got != tc.want {
-				t.Fatalf("IsAccessDenied(%v) = %v, want %v", tc.err, got, tc.want)
+			if got := executor.IsClickHouseAccessDenied(tc.err); got != tc.want {
+				t.Fatalf("IsClickHouseAccessDenied(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
 	}

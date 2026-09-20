@@ -17,11 +17,15 @@ import (
 )
 
 // warehouseService is one connector row inside a warehouse, as loaded during
-// routing. encrypted is the still-encrypted connector config.
+// routing. encrypted is the still-encrypted connector config; maxRows and
+// timeoutSeconds are the service's own execution limits, which the resolved
+// target carries so callers apply the routed service's values.
 type warehouseService struct {
-	id        uuid.UUID
-	name      string
-	encrypted []byte
+	id             uuid.UUID
+	name           string
+	encrypted      []byte
+	maxRows        int
+	timeoutSeconds int
 }
 
 // resolveExecutionTarget implements the routing rules:
@@ -144,14 +148,14 @@ func (s *Server) loadServiceConnector(ctx context.Context, connectorID uuid.UUID
 	var svc warehouseService
 	var warehouseID *uuid.UUID
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT c.id, c.name, c.config_encrypted, c.warehouse_id
+		SELECT c.id, c.name, c.config_encrypted, c.max_rows, c.timeout_seconds, c.warehouse_id
 		FROM connectors c
 		LEFT JOIN warehouses w ON w.id = c.warehouse_id
 		WHERE c.id = $1
 		  AND c.deleted_at IS NULL
 		  AND c.type = 'clickhouse'
 		  AND (c.warehouse_id IS NULL OR w.org_id = c.org_id)`, connectorID.String()).
-		Scan(&svc.id, &svc.name, &svc.encrypted, &warehouseID)
+		Scan(&svc.id, &svc.name, &svc.encrypted, &svc.maxRows, &svc.timeoutSeconds, &warehouseID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		s.warnRejectedConnectorLink(ctx, connectorID)
 		return warehouseService{}, nil, fmt.Errorf("connector %s: %w: %w",
@@ -203,7 +207,7 @@ func (s *Server) warnRejectedConnectorLink(ctx context.Context, connectorID uuid
 // here too.
 func (s *Server) listWarehouseServices(ctx context.Context, warehouseID, orgID uuid.UUID) ([]warehouseService, error) {
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, name, config_encrypted
+		SELECT id, name, config_encrypted, max_rows, timeout_seconds
 		FROM connectors
 		WHERE warehouse_id = $1 AND org_id = $2 AND type = 'clickhouse' AND deleted_at IS NULL
 		ORDER BY name ASC, id ASC`, warehouseID.String(), orgID.String())
@@ -215,7 +219,7 @@ func (s *Server) listWarehouseServices(ctx context.Context, warehouseID, orgID u
 	var services []warehouseService
 	for rows.Next() {
 		var svc warehouseService
-		if err := rows.Scan(&svc.id, &svc.name, &svc.encrypted); err != nil {
+		if err := rows.Scan(&svc.id, &svc.name, &svc.encrypted, &svc.maxRows, &svc.timeoutSeconds); err != nil {
 			return nil, fmt.Errorf("scan warehouse %s service: %w", warehouseID, err)
 		}
 		services = append(services, svc)
@@ -260,11 +264,13 @@ func (s *Server) buildExecutionTarget(warehouseID, orgID, userID uuid.UUID, svc 
 	}
 
 	return &executor.ExecutionTarget{
-		WarehouseID:   warehouseID,
-		ConnectorID:   svc.id,
-		ConnectorName: svc.name,
-		Endpoint:      fmt.Sprintf("%s:%d", cfg.Host, port),
-		Config:        cfg,
-		CHUser:        chUser,
+		WarehouseID:    warehouseID,
+		ConnectorID:    svc.id,
+		ConnectorName:  svc.name,
+		Endpoint:       fmt.Sprintf("%s:%d", cfg.Host, port),
+		Config:         cfg,
+		CHUser:         chUser,
+		MaxRows:        svc.maxRows,
+		TimeoutSeconds: svc.timeoutSeconds,
 	}, nil
 }

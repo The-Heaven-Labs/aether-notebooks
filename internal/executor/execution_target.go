@@ -81,6 +81,12 @@ type ExecutionTarget struct {
 	// CHUser is the derived ClickHouse username, duplicated from Config.User
 	// only for audit fields that should not reach into Config.
 	CHUser string
+	// MaxRows and TimeoutSeconds are the routed service's execution limits.
+	// They can differ from the requested connector's values when a preference
+	// or sole-service fallback picks another service, and callers must apply
+	// the routed service's limits, not the requested connector's.
+	MaxRows        int
+	TimeoutSeconds int
 }
 
 // String redacts the per-user credential: it is the only representation safe
