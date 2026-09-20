@@ -38,6 +38,9 @@ type GrantRow struct {
 // treats any SELECT line containing "*" as a wildcard. False positives fail
 // closed (the reconcile treats wildcards as drift).
 //
+// Non-SELECT grants (INSERT, ALTER, DROP, ...) in the namespace are recorded
+// in Unexpected: Aether only ever grants SELECT, so they are drift.
+//
 // It does NOT read password hashes: ClickHouse stores salted hashes that
 // cannot be compared. Password rotation is driven by
 // warehouses.applied_master_fp (see Task 9) via ActualState.ForcePasswordReset.
@@ -63,6 +66,12 @@ func LoadActual(ctx context.Context, conn clickhouse.Conn, warehouseID uuid.UUID
 	if err != nil {
 		return ActualState{}, err
 	}
+
+	nonSelect, err := loadNonSelectGrants(ctx, conn, prefix)
+	if err != nil {
+		return ActualState{}, err
+	}
+	unexpected = append(unexpected, nonSelectDrift(nonSelect)...)
 
 	users, err := loadUsers(ctx, conn, prefix, memberships)
 	if err != nil {
@@ -193,6 +202,81 @@ func loadRoleGrants(ctx context.Context, conn clickhouse.Conn, prefix string) (m
 		return nil, nil, fmt.Errorf("close system.role_grants: %w", err)
 	}
 	return memberships, unexpected, nil
+}
+
+// NonSelectGrant is one non-SELECT grant in the warehouse namespace.
+// Aether only ever issues SELECT grants, so any of these is drift.
+type NonSelectGrant struct {
+	AccessType string
+	UserName   string
+	RoleName   string
+	Database   string
+	Table      string
+}
+
+// loadNonSelectGrants reads namespace grants whose access type is not SELECT
+// (INSERT, ALTER, DROP, ...). Partial revokes are not grants and are
+// excluded, matching loadGrants.
+func loadNonSelectGrants(ctx context.Context, conn clickhouse.Conn, prefix string) ([]NonSelectGrant, error) {
+	rows, err := conn.Query(ctx, `
+		SELECT access_type, coalesce(user_name,''), coalesce(role_name,''), coalesce(database,''), coalesce(table,'')
+		FROM system.grants
+		WHERE (startsWith(user_name, ?) OR startsWith(role_name, ?))
+		  AND access_type != 'SELECT' AND is_partial_revoke = 0`,
+		prefix, prefix)
+	if err != nil {
+		return nil, fmt.Errorf("system.grants (non-SELECT): %w", err)
+	}
+	var grants []NonSelectGrant
+	for rows.Next() {
+		var g NonSelectGrant
+		if err := rows.Scan(&g.AccessType, &g.UserName, &g.RoleName, &g.Database, &g.Table); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan system.grants (non-SELECT): %w", err)
+		}
+		grants = append(grants, g)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("read system.grants (non-SELECT): %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close system.grants (non-SELECT): %w", err)
+	}
+	return grants, nil
+}
+
+// nonSelectDrift renders non-SELECT grants as unexpected-drift entries
+// ("INSERT on db.table for <ident>"), sorted and deduplicated like the other
+// Unexpected entries.
+func nonSelectDrift(grants []NonSelectGrant) []string {
+	out := make([]string, 0, len(grants))
+	for _, g := range grants {
+		subject := g.RoleName
+		if subject == "" {
+			subject = g.UserName
+		}
+		if subject == "" {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s on %s for %s", g.AccessType, grantScopeLabel(g.Database, g.Table), subject))
+	}
+	return dedupeSorted(out)
+}
+
+// grantScopeLabel renders a grant target for drift messages: table-level,
+// db.*, or *.*.
+func grantScopeLabel(database, table string) string {
+	switch {
+	case database == "" && table == "":
+		return "*.*"
+	case table == "":
+		return database + ".*"
+	case database == "":
+		return table
+	default:
+		return database + "." + table
+	}
 }
 
 // classifyRoleGrantRow interprets one system.role_grants row. A namespace

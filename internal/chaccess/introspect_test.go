@@ -91,6 +91,21 @@ func TestParseUnexpectedSortedAndDeduped(t *testing.T) {
 	require.Equal(t, []string{"a", "b"}, a.Unexpected)
 }
 
+func TestNonSelectDriftEntries(t *testing.T) {
+	got := nonSelectDrift([]NonSelectGrant{
+		{AccessType: "INSERT", RoleName: "aether_wh_g_x", Database: "db", Table: "t1"},
+		{AccessType: "ALTER", UserName: "aether_wh_u_x", Database: "db", Table: ""},
+		{AccessType: "DROP", UserName: "aether_wh_u_x"},
+		{AccessType: "INSERT", RoleName: "aether_wh_g_x", Database: "db", Table: "t1"},
+		{AccessType: "DELETE", Database: "db", Table: "t1"}, // no subject: ignored
+	})
+	require.Equal(t, []string{
+		"ALTER on db.* for aether_wh_u_x",
+		"DROP on *.* for aether_wh_u_x",
+		"INSERT on db.t1 for aether_wh_g_x",
+	}, got)
+}
+
 func TestClassifyRoleGrantRows(t *testing.T) {
 	prefix := "aether_wh_"
 

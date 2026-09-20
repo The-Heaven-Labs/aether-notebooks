@@ -13,11 +13,21 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/chaccess"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
+
+// warehouseSyncTimeout bounds one reconcile run, including the provisioner
+// connection and statement execution.
+const warehouseSyncTimeout = 5 * time.Minute
+
+// warehouseSyncLockKeySQL derives a stable, cross-process advisory-lock key
+// from a warehouse UUID; hashtextextended yields a bigint acceptable to
+// pg_try_advisory_lock(bigint).
+const warehouseSyncLockKeySQL = `hashtextextended($1::text, 0)`
 
 // reconcileWarehouse computes the desired ClickHouse access state for a
 // warehouse and applies it through the provisioner connector. It is
@@ -25,9 +35,27 @@ import (
 // warehouses.applied_master_fp drives password re-keying after a master-key
 // rotation.
 //
-// The sync worker wraps calls in a panic recovery, so a chaccess invariant
-// violation cannot take down the API server.
+// The sync worker wraps calls in a panic recovery; the recover here only
+// records an honest sync_status so a panic cannot leave the warehouse stuck
+// in 'syncing'. The original panic is re-raised for the worker's stack log.
 func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) error {
+	ctx, cancel := context.WithTimeout(ctx, warehouseSyncTimeout)
+	defer cancel()
+
+	defer func() {
+		if r := recover(); r != nil {
+			panicErr := fmt.Errorf("reconcile warehouse %s panic: %v", warehouseID, r)
+			// The run context may be cancelled or nearly done; use a short
+			// detached context so the status write can still land.
+			statusCtx, statusCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer statusCancel()
+			if err := s.setWarehouseSyncStatus(statusCtx, warehouseID, "error", panicErr.Error(), ""); err != nil {
+				slog.Warn("warehouse sync panic status update failed", "warehouse_id", warehouseID, "error", err)
+			}
+			panic(r)
+		}
+	}()
+
 	var (
 		orgID         uuid.UUID
 		provisionerID *uuid.UUID
@@ -38,11 +66,24 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 		FROM warehouses WHERE id = $1`, warehouseID.String(),
 	).Scan(&orgID, &provisionerID, &appliedFP)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("reconcile warehouse %s: not found", warehouseID)
+		return fmt.Errorf("reconcile warehouse %s: %w", warehouseID, err)
 	}
 	if err != nil {
 		return fmt.Errorf("reconcile warehouse %s: load warehouse: %w", warehouseID, err)
 	}
+
+	// Cross-process single-flight: one reconcile per warehouse at a time.
+	// The lock is held on a dedicated pooled connection for the whole run.
+	lockConn, locked, err := s.acquireWarehouseSyncLock(ctx, warehouseID)
+	if err != nil {
+		return fmt.Errorf("reconcile warehouse %s: %w", warehouseID, err)
+	}
+	if !locked {
+		s.auditWarehouseSyncSkipped(ctx, orgID, warehouseID)
+		return nil
+	}
+	defer releaseWarehouseSyncLock(lockConn, warehouseID)
+
 	if provisionerID == nil {
 		return s.failWarehouseSync(ctx, warehouseID,
 			fmt.Errorf("warehouse %s has no provisioner connector", warehouseID))
@@ -129,9 +170,13 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 	if len(skipped) > 0 {
 		s.auditWarehouseDrift(ctx, orgID, warehouseID, skipped, chaccess.ActualState{})
 	}
-	for _, stmt := range stmts {
+	// Never embed the statement text: CREATE/ALTER USER statements carry the
+	// derived ClickHouse password, and the error reaches sync_error, worker
+	// logs, and the admin UI.
+	for i, stmt := range stmts {
 		if err := conn.Exec(ctx, stmt); err != nil {
-			return s.failWarehouseSync(ctx, warehouseID, fmt.Errorf("execute %q: %w", stmt, err))
+			return s.failWarehouseSync(ctx, warehouseID,
+				fmt.Errorf("execute statement %d of %d: %w", i+1, len(stmts), err))
 		}
 	}
 
@@ -293,7 +338,7 @@ func (s *Server) setWarehouseSyncStatus(ctx context.Context, warehouseID uuid.UU
 	if appliedFP != "" {
 		fp = &appliedFP
 	}
-	_, err := s.db.Pool.Exec(ctx, `
+	tag, err := s.db.Pool.Exec(ctx, `
 		UPDATE warehouses
 		SET sync_status = $2,
 		    sync_error = $3,
@@ -305,6 +350,11 @@ func (s *Server) setWarehouseSyncStatus(ctx context.Context, warehouseID uuid.UU
 	if err != nil {
 		return fmt.Errorf("set warehouse %s sync status %q: %w", warehouseID, status, err)
 	}
+	if tag.RowsAffected() == 0 {
+		// The warehouse was hard-deleted mid-run; surface it instead of
+		// pretending the transition landed.
+		return fmt.Errorf("set warehouse %s sync status %q: warehouse not found", warehouseID, status)
+	}
 	return nil
 }
 
@@ -315,6 +365,63 @@ func (s *Server) failWarehouseSync(ctx context.Context, warehouseID uuid.UUID, c
 		return errors.Join(cause, err)
 	}
 	return cause
+}
+
+// acquireWarehouseSyncLock takes a session-scoped Postgres advisory lock so
+// only one reconcile per warehouse runs at a time, even across API replicas.
+// It returns (nil, false, nil) when another session already holds the lock;
+// the returned connection must be passed to releaseWarehouseSyncLock.
+func (s *Server) acquireWarehouseSyncLock(ctx context.Context, warehouseID uuid.UUID) (*pgxpool.Conn, bool, error) {
+	conn, err := s.db.Pool.Acquire(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("acquire connection: %w", err)
+	}
+	var locked bool
+	if err := conn.QueryRow(ctx,
+		`SELECT pg_try_advisory_lock(`+warehouseSyncLockKeySQL+`)`, warehouseID.String(),
+	).Scan(&locked); err != nil {
+		conn.Release()
+		return nil, false, fmt.Errorf("acquire warehouse sync lock: %w", err)
+	}
+	if !locked {
+		conn.Release()
+		return nil, false, nil
+	}
+	return conn, true, nil
+}
+
+// releaseWarehouseSyncLock unlocks and returns the connection. The unlock runs
+// on a detached context because the run context may already be cancelled. If
+// the unlock statement fails, the connection is hijacked and closed so the
+// session-scoped lock cannot leak back into the pool.
+func releaseWarehouseSyncLock(conn *pgxpool.Conn, warehouseID uuid.UUID) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := conn.Exec(ctx,
+		`SELECT pg_advisory_unlock(`+warehouseSyncLockKeySQL+`)`, warehouseID.String(),
+	); err != nil {
+		slog.Warn("warehouse sync lock release failed; closing connection", "warehouse_id", warehouseID, "error", err)
+		conn.Hijack().Close(context.Background())
+		return
+	}
+	conn.Release()
+}
+
+// auditWarehouseSyncSkipped records that a reconcile was skipped because
+// another process holds the warehouse lock.
+func (s *Server) auditWarehouseSyncSkipped(ctx context.Context, orgID, warehouseID uuid.UUID) {
+	if err := s.audit.Log(ctx, audit.Entry{
+		OrgID:        orgID.String(),
+		Action:       "warehouse.sync.skipped",
+		ResourceType: "warehouse",
+		ResourceID:   warehouseID.String(),
+		Metadata: map[string]any{
+			"warehouse_id": warehouseID.String(),
+			"reason":       "another reconcile holds the warehouse lock",
+		},
+	}); err != nil {
+		slog.Warn("warehouse sync skip audit failed", "warehouse_id", warehouseID, "error", err)
+	}
 }
 
 // auditWarehouseDrift records detected drift (unquotable catalog names,
