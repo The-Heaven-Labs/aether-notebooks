@@ -11,6 +11,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/auth"
@@ -71,8 +72,15 @@ func newWarehouseSyncTestServer(t *testing.T) (*Server, []byte) {
 // group grant. All IDs are random so repeated runs never collide.
 func setupWarehouseFixture(t *testing.T) *warehouseSyncFixture {
 	t.Helper()
-	ctx := context.Background()
 	s, key := newWarehouseSyncTestServer(t)
+	return setupWarehouseFixtureWithServer(t, s, key)
+}
+
+// setupWarehouseFixtureWithServer seeds the fixture against an existing
+// Server, so tests can share one pool across warehouses.
+func setupWarehouseFixtureWithServer(t *testing.T, s *Server, key []byte) *warehouseSyncFixture {
+	t.Helper()
+	ctx := context.Background()
 
 	cfg := warehouseSyncTestClickHouseConfig()
 	conn, err := openWarehouseProvisionerConn(ctx, cfg)
@@ -705,4 +713,74 @@ func TestReconcileWarehouseSkipsWhenLockHeld(t *testing.T) {
 		WHERE org_id = $1 AND action = 'warehouse.sync.skipped' AND resource_id = $2`,
 		fx.orgID.String(), fx.warehouseID.String()).Scan(&skippedAudits))
 	require.Equal(t, 1, skippedAudits)
+}
+
+func TestRedactSecrets(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "create user statement",
+			in:   "CREATE USER `aether_x_u_y` IDENTIFIED WITH sha256_password BY 'Ae1_supersecret' GRANTEES NONE",
+			want: "CREATE USER `aether_x_u_y` IDENTIFIED WITH sha256_password BY '<redacted>' GRANTEES NONE",
+		},
+		{
+			name: "alter user statement",
+			in:   "ALTER USER u IDENTIFIED BY 'pw'",
+			want: "ALTER USER u IDENTIFIED BY '<redacted>'",
+		},
+		{
+			name: "no secret",
+			in:   "code: 497, message: ACCESS_DENIED: not enough privileges",
+			want: "code: 497, message: ACCESS_DENIED: not enough privileges",
+		},
+		{
+			name: "word containing by is untouched",
+			in:   "standby 'x'",
+			want: "standby 'x'",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, redactSecrets(tc.in))
+		})
+	}
+}
+
+// TestReconcileWarehouseDoesNotStarveSmallPool guards against the sync lock
+// occupying a pooled connection: with MaxConns=2 two concurrent reconciles
+// must still complete instead of self-deadlocking on the pool.
+func TestReconcileWarehouseDoesNotStarveSmallPool(t *testing.T) {
+	ctx := context.Background()
+
+	poolCfg, err := pgxpool.ParseConfig(warehouseSyncTestDSN())
+	require.NoError(t, err)
+	poolCfg.MaxConns = 2
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	db := &database.DB{Pool: pool}
+	require.NoError(t, db.Migrate(ctx))
+
+	key := crypto.DeriveKey(warehouseSyncTestMasterKey)
+	s := NewServer(db, auth.NewJWTIssuer("test-secret", 15*time.Minute), audit.NewLogger(db), key, nil)
+	fxA := setupWarehouseFixtureWithServer(t, s, key)
+	fxB := setupWarehouseFixtureWithServer(t, s, key)
+
+	runCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	errCh := make(chan error, 2)
+	go func() { errCh <- s.reconcileWarehouse(runCtx, fxA.warehouseID) }()
+	go func() { errCh <- s.reconcileWarehouse(runCtx, fxB.warehouseID) }()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-errCh:
+			require.NoError(t, err)
+		case <-time.After(60 * time.Second):
+			t.Fatal("reconcile starved: concurrent reconciles exhausted the 2-connection pool")
+		}
+	}
 }

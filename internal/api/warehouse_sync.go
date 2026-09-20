@@ -7,18 +7,30 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/chaccess"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
+
+// passwordLiteralRe matches a ClickHouse password literal ("BY '<secret>'").
+// Derived passwords never contain quotes (chaccess rejects them), so a
+// non-greedy quoted run cannot over-match.
+var passwordLiteralRe = regexp.MustCompile(`(?i)\bBY\s*'[^']*'`)
+
+// redactSecrets removes password literals from text that may reach sync_error
+// or logs. Defense in depth: reconcile builds its own error strings without
+// statement text, and driver messages do not echo statements today.
+func redactSecrets(s string) string {
+	return passwordLiteralRe.ReplaceAllString(s, "BY '<redacted>'")
+}
 
 // warehouseSyncTimeout bounds one reconcile run, including the provisioner
 // connection and statement execution.
@@ -172,11 +184,12 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 	}
 	// Never embed the statement text: CREATE/ALTER USER statements carry the
 	// derived ClickHouse password, and the error reaches sync_error, worker
-	// logs, and the admin UI.
+	// logs, and the admin UI. redactSecrets is belt-and-braces in case a
+	// driver error echoes the statement.
 	for i, stmt := range stmts {
-		if err := conn.Exec(ctx, stmt); err != nil {
-			return s.failWarehouseSync(ctx, warehouseID,
-				fmt.Errorf("execute statement %d of %d: %w", i+1, len(stmts), err))
+		if execErr := conn.Exec(ctx, stmt); execErr != nil {
+			return s.failWarehouseSync(ctx, warehouseID, fmt.Errorf(
+				"execute statement %d of %d: %s", i+1, len(stmts), redactSecrets(execErr.Error())))
 		}
 	}
 
@@ -333,6 +346,7 @@ func (s *Server) loadWarehouseDesiredState(ctx context.Context, warehouseID, org
 func (s *Server) setWarehouseSyncStatus(ctx context.Context, warehouseID uuid.UUID, status, syncErr, appliedFP string) error {
 	var errText, fp *string
 	if syncErr != "" {
+		syncErr = redactSecrets(syncErr)
 		errText = &syncErr
 	}
 	if appliedFP != "" {
@@ -371,40 +385,41 @@ func (s *Server) failWarehouseSync(ctx context.Context, warehouseID uuid.UUID, c
 // only one reconcile per warehouse runs at a time, even across API replicas.
 // It returns (nil, false, nil) when another session already holds the lock;
 // the returned connection must be passed to releaseWarehouseSyncLock.
-func (s *Server) acquireWarehouseSyncLock(ctx context.Context, warehouseID uuid.UUID) (*pgxpool.Conn, bool, error) {
-	conn, err := s.db.Pool.Acquire(ctx)
+//
+// The lock lives on a dedicated non-pool connection: a reconcile run needs
+// several pooled connections for its own DB work, and holding one of them
+// for the whole run would self-deadlock once concurrent reconciles reach the
+// pool's MaxConns.
+func (s *Server) acquireWarehouseSyncLock(ctx context.Context, warehouseID uuid.UUID) (*pgx.Conn, bool, error) {
+	conn, err := pgx.Connect(ctx, s.db.Pool.Config().ConnString())
 	if err != nil {
-		return nil, false, fmt.Errorf("acquire connection: %w", err)
+		return nil, false, fmt.Errorf("connect for warehouse sync lock: %w", err)
 	}
 	var locked bool
 	if err := conn.QueryRow(ctx,
 		`SELECT pg_try_advisory_lock(`+warehouseSyncLockKeySQL+`)`, warehouseID.String(),
 	).Scan(&locked); err != nil {
-		conn.Release()
+		conn.Close(context.Background())
 		return nil, false, fmt.Errorf("acquire warehouse sync lock: %w", err)
 	}
 	if !locked {
-		conn.Release()
+		conn.Close(context.Background())
 		return nil, false, nil
 	}
 	return conn, true, nil
 }
 
-// releaseWarehouseSyncLock unlocks and returns the connection. The unlock runs
-// on a detached context because the run context may already be cancelled. If
-// the unlock statement fails, the connection is hijacked and closed so the
-// session-scoped lock cannot leak back into the pool.
-func releaseWarehouseSyncLock(conn *pgxpool.Conn, warehouseID uuid.UUID) {
+// releaseWarehouseSyncLock unlocks and closes the dedicated connection.
+// Closing releases the session-scoped lock even if the explicit unlock fails.
+func releaseWarehouseSyncLock(conn *pgx.Conn, warehouseID uuid.UUID) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := conn.Exec(ctx,
 		`SELECT pg_advisory_unlock(`+warehouseSyncLockKeySQL+`)`, warehouseID.String(),
 	); err != nil {
-		slog.Warn("warehouse sync lock release failed; closing connection", "warehouse_id", warehouseID, "error", err)
-		conn.Hijack().Close(context.Background())
-		return
+		slog.Warn("warehouse sync lock release failed; closing connection drops it", "warehouse_id", warehouseID, "error", err)
 	}
-	conn.Release()
+	conn.Close(context.Background())
 }
 
 // auditWarehouseSyncSkipped records that a reconcile was skipped because

@@ -216,6 +216,59 @@ func TestSyncWarehousesRunIndependently(t *testing.T) {
 	s.Close()
 }
 
+func TestSyncMaxConcurrentBoundsParallelReconciles(t *testing.T) {
+	whA, whB := uuid.New(), uuid.New()
+	entered := make(chan uuid.UUID, 2)
+	finished := make(chan uuid.UUID, 2)
+	releaseA := make(chan struct{})
+	s := NewSyncService(SyncConfig{
+		Debounce:      time.Millisecond,
+		RetryBackoff:  time.Millisecond,
+		MaxAttempts:   1,
+		MaxConcurrent: 1,
+		Reconcile: func(ctx context.Context, warehouseID uuid.UUID) error {
+			entered <- warehouseID
+			if warehouseID == whA {
+				<-releaseA
+			}
+			finished <- warehouseID
+			return nil
+		},
+		Logger: discardSyncLogger(),
+	})
+
+	s.Enqueue(whA)
+	select {
+	case got := <-entered:
+		require.Equal(t, whA, got)
+	case <-time.After(2 * time.Second):
+		t.Fatal("warehouse A did not enter its reconcile")
+	}
+
+	s.Enqueue(whB)
+	select {
+	case got := <-entered:
+		t.Fatalf("warehouse %s entered its reconcile while the only slot was held", got)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(releaseA)
+
+	done := map[uuid.UUID]bool{}
+	deadline := time.After(5 * time.Second)
+	for len(done) < 2 {
+		select {
+		case id := <-finished:
+			done[id] = true
+		case <-deadline:
+			t.Fatalf("timed out waiting for both reconciles (finished=%v)", done)
+		}
+	}
+	require.True(t, done[whA])
+	require.True(t, done[whB])
+	s.Close()
+}
+
 func TestSyncCloseWaitsForActiveRun(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})

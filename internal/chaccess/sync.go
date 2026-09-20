@@ -23,6 +23,10 @@ type SyncConfig struct {
 	// MaxAttempts is the total number of reconcile attempts for one run,
 	// including the first. Defaults to 3.
 	MaxAttempts int
+	// MaxConcurrent bounds how many reconciles run at the same time across
+	// all warehouses, limiting ClickHouse and Postgres connection use when
+	// startup enqueues every warehouse at once. Defaults to 4.
+	MaxConcurrent int
 	// Reconcile performs one reconciliation pass for a warehouse. Required.
 	// Its ctx is cancelled by Close.
 	Reconcile func(ctx context.Context, warehouseID uuid.UUID) error
@@ -31,10 +35,11 @@ type SyncConfig struct {
 }
 
 // SyncService coalesces sync requests per warehouse and runs a single
-// reconciliation per warehouse at a time. A change enqueued while a warehouse
-// is reconciling sets a rerun flag, so one follow-up run is scheduled after
-// the current one finishes; further enqueues coalesce into that follow-up.
-// Close cancels retries and waits for queued and active work.
+// reconciliation per warehouse at a time, with a global concurrency cap. A
+// change enqueued while a warehouse is reconciling sets a rerun flag, so one
+// follow-up run is scheduled after the current one finishes; further enqueues
+// coalesce into that follow-up. Close cancels retries and waits for queued and
+// active work.
 type SyncService struct {
 	cfg    SyncConfig
 	ctx    context.Context
@@ -43,13 +48,14 @@ type SyncService struct {
 	queued map[uuid.UUID]struct{}
 	active map[uuid.UUID]struct{}
 	rerun  map[uuid.UUID]struct{}
+	sem    chan struct{}
 	wg     sync.WaitGroup
 	closed bool
 }
 
 // NewSyncService returns a worker. Debounce defaults to 2s, RetryBackoff to
-// 500ms, MaxAttempts to 3, and Logger to slog.Default. It panics if Reconcile
-// is nil.
+// 500ms, MaxAttempts to 3, MaxConcurrent to 4, and Logger to slog.Default. It
+// panics if Reconcile is nil.
 func NewSyncService(cfg SyncConfig) *SyncService {
 	if cfg.Reconcile == nil {
 		panic("chaccess: SyncConfig.Reconcile must not be nil")
@@ -63,6 +69,9 @@ func NewSyncService(cfg SyncConfig) *SyncService {
 	if cfg.MaxAttempts <= 0 {
 		cfg.MaxAttempts = 3
 	}
+	if cfg.MaxConcurrent <= 0 {
+		cfg.MaxConcurrent = 4
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -74,6 +83,7 @@ func NewSyncService(cfg SyncConfig) *SyncService {
 		queued: map[uuid.UUID]struct{}{},
 		active: map[uuid.UUID]struct{}{},
 		rerun:  map[uuid.UUID]struct{}{},
+		sem:    make(chan struct{}, cfg.MaxConcurrent),
 	}
 }
 
@@ -100,7 +110,9 @@ func (s *SyncService) Enqueue(warehouseID uuid.UUID) {
 }
 
 // worker drains one warehouse's queued/rerun work. It is a single wg unit:
-// Close waits for the whole drain, including follow-up runs.
+// Close waits for the whole drain, including follow-up runs. Each run holds a
+// global concurrency slot, so at most MaxConcurrent reconciles are in flight
+// across all warehouses.
 func (s *SyncService) worker(warehouseID uuid.UUID) {
 	defer s.wg.Done()
 	for {
@@ -111,7 +123,9 @@ func (s *SyncService) worker(warehouseID uuid.UUID) {
 		s.active[warehouseID] = struct{}{}
 		s.mu.Unlock()
 
+		s.sem <- struct{}{}
 		s.run(s.ctx, warehouseID)
+		<-s.sem
 
 		s.mu.Lock()
 		_, again := s.rerun[warehouseID]
