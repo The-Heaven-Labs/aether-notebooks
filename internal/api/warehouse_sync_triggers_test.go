@@ -337,7 +337,12 @@ func TestSSOGroupRemovalEnqueuesWarehouseSync(t *testing.T) {
 	rec := &recordingWarehouseSyncer{}
 	s.SetWarehouseSyncerForTest(rec)
 
-	// Second login: the IdP reports only aether-engineering, so aether-analysts
+	// A second login reporting the same groups changes no membership, so it
+	// must not enqueue anything.
+	login()
+	require.Empty(t, rec.ids(), "an unchanged SSO login must not enqueue any warehouse")
+
+	// Third login: the IdP reports only aether-engineering, so aether-analysts
 	// is stale and its membership is removed.
 	oidcSrv.groups = []string{"aether-engineering"}
 	login()

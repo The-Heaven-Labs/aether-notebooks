@@ -707,6 +707,59 @@ func TestMigration111WarehouseMasterFingerprint(t *testing.T) {
 	}
 }
 
+func TestMigration112MembershipUserIndexes(t *testing.T) {
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+	}
+
+	db, err := database.Connect(context.Background(), dsn, "")
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	for _, want := range []struct {
+		index string
+		table string
+		col   string
+	}{
+		{"idx_group_members_user", "group_members", "user_id"},
+		{"idx_org_members_user", "org_members", "user_id"},
+	} {
+		var cols string
+		if err := db.Pool.QueryRow(ctx, `
+			SELECT COALESCE(string_agg(a.attname, ',' ORDER BY k.ord), '')
+			FROM pg_class i
+			JOIN pg_index ix ON ix.indexrelid = i.oid
+			JOIN pg_class t ON t.oid = ix.indrelid
+			JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+			JOIN unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
+			JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+			WHERE i.relname = $1 AND t.relname = $2`, want.index, want.table).Scan(&cols); err != nil {
+			t.Fatalf("%s lookup: %v", want.index, err)
+		}
+		if cols != want.col {
+			t.Fatalf("%s covers %q, want %q", want.index, cols, want.col)
+		}
+	}
+
+	var applied int
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM schema_migrations WHERE version='112_membership_user_indexes'`).Scan(&applied); err != nil {
+		t.Fatalf("schema_migrations query: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("V112 not recorded (count=%d)", applied)
+	}
+}
+
 // TestNoRowLevelSecurityWithoutPolicies is a regression guard for the
 // V103 migration: RLS was enabled on six tables in V001 but no policies were
 // ever created, making every non-owner role default-deny. The migration drops

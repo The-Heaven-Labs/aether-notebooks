@@ -69,6 +69,7 @@ func (s *Server) handleAddPendingGroupMembers(w http.ResponseWriter, r *http.Req
 	}
 
 	added := 0
+	directAdd := false
 	skipped := []pendingMemberSkip{}
 	seen := make(map[string]bool, len(req.Emails))
 
@@ -107,8 +108,7 @@ func (s *Server) handleAddPendingGroupMembers(w http.ResponseWriter, r *http.Req
 				writeError(w, http.StatusInternalServerError, "insert failed")
 				return
 			}
-			// The insert autocommits; reconcile the group's grant warehouses.
-			s.enqueueWarehouseSyncForGroup(ctx, groupID)
+			directAdd = true
 			added++
 			s.audit.Log(ctx, audit.Entry{
 				OrgID: claims.OrgID, UserID: claims.UserID,
@@ -141,6 +141,13 @@ func (s *Server) handleAddPendingGroupMembers(w http.ResponseWriter, r *http.Req
 			Action: "group.pending_member.add", ResourceType: "group", ResourceID: groupID, ResourceName: groupName,
 			Metadata: map[string]any{"email": email, "group_id": groupID, "group_name": groupName},
 		})
+	}
+
+	// Direct adds commit as they happen; enqueue once for the whole request
+	// (the sync worker coalesces anyway, but one call keeps the trigger cheap
+	// when an admin pastes a long list).
+	if directAdd {
+		s.enqueueWarehouseSyncForGroup(ctx, groupID)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"added": added, "skipped": skipped})

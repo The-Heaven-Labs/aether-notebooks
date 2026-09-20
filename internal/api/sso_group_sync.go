@@ -44,7 +44,7 @@ func SyncSSOGroups(ctx context.Context, pool *pgxpool.Pool, logger *audit.Logger
 			continue
 		}
 
-		_, err = pool.Exec(ctx,
+		tag, err := pool.Exec(ctx,
 			`INSERT INTO group_members (group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
 			groupID, userID,
 		)
@@ -61,7 +61,11 @@ func SyncSSOGroups(ctx context.Context, pool *pgxpool.Pool, logger *audit.Logger
 			}
 			continue
 		}
-		changed[groupID] = struct{}{}
+		// Only a fresh membership changes warehouse access; a login that
+		// re-reports an existing group must not enqueue.
+		if tag.RowsAffected() > 0 {
+			changed[groupID] = struct{}{}
+		}
 
 		_, err = pool.Exec(ctx,
 			`INSERT INTO sso_group_memberships (provider_id, group_id, user_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
@@ -96,7 +100,7 @@ func SyncSSOGroups(ctx context.Context, pool *pgxpool.Pool, logger *audit.Logger
 	}
 
 	for _, groupID := range staleGroups {
-		_, err := pool.Exec(ctx,
+		tag, err := pool.Exec(ctx,
 			`DELETE FROM group_members WHERE group_id=$1 AND user_id=$2`,
 			groupID, userID,
 		)
@@ -111,6 +115,11 @@ func SyncSSOGroups(ctx context.Context, pool *pgxpool.Pool, logger *audit.Logger
 				})
 			}
 			continue
+		}
+		// Record the change before touching the bookkeeping row: a later
+		// failure there must not drop the warehouse trigger.
+		if tag.RowsAffected() > 0 {
+			changed[groupID] = struct{}{}
 		}
 
 		_, err = pool.Exec(ctx,
@@ -129,7 +138,6 @@ func SyncSSOGroups(ctx context.Context, pool *pgxpool.Pool, logger *audit.Logger
 			}
 			continue
 		}
-		changed[groupID] = struct{}{}
 	}
 
 	return changedGroupIDs(changed)
