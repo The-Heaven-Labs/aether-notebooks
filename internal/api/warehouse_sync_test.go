@@ -316,17 +316,24 @@ func TestReconcileWarehouseProvisionsUsersAndRoles(t *testing.T) {
 	require.Equal(t, 1, users)
 	require.Equal(t, 1, roles)
 
-	// A second reconcile is a no-op: no error, still ready, zero statements.
+	countSyncAudits := func() int {
+		t.Helper()
+		var n int
+		require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+			SELECT count(*) FROM audit_logs
+			WHERE org_id = $1 AND action = 'warehouse.sync' AND resource_id = $2`,
+			fx.orgID.String(), fx.warehouseID.String()).Scan(&n))
+		return n
+	}
+	require.Equal(t, 1, countSyncAudits())
+
+	// A second reconcile is a no-op: no error, still ready, no new heartbeat
+	// audit for a clean ready warehouse.
 	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
 	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
 		SELECT sync_status FROM warehouses WHERE id = $1`, fx.warehouseID.String()).Scan(&status))
 	require.Equal(t, "ready", status)
-	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE((metadata->>'statements')::int, -1)
-		FROM audit_logs
-		WHERE org_id = $1 AND action = 'warehouse.sync' AND resource_id = $2
-		ORDER BY id DESC LIMIT 1`, fx.orgID.String(), fx.warehouseID.String()).Scan(&statements))
-	require.Equal(t, 0, statements)
+	require.Equal(t, 1, countSyncAudits(), "a clean ready reconcile must not write another warehouse.sync audit")
 }
 
 func TestReconcileWarehouseFailsClosedOnWildcard(t *testing.T) {
@@ -362,7 +369,17 @@ func TestReconcileWarehouseFailsClosedOnWildcard(t *testing.T) {
 		SELECT count(*) FROM audit_logs
 		WHERE org_id = $1 AND action = 'warehouse.drift' AND resource_id = $2`,
 		fx.orgID.String(), fx.warehouseID.String()).Scan(&driftAudits))
-	require.Greater(t, driftAudits, 0)
+	require.Equal(t, 1, driftAudits)
+
+	// The same fail-closed drift on the next tick is one alert, not two.
+	err = fx.s.reconcileWarehouse(ctx, fx.warehouseID)
+	require.Error(t, err)
+	var driftAuditsAfter int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_logs
+		WHERE org_id = $1 AND action = 'warehouse.drift' AND resource_id = $2`,
+		fx.orgID.String(), fx.warehouseID.String()).Scan(&driftAuditsAfter))
+	require.Equal(t, driftAudits, driftAuditsAfter, "unchanged fail-closed drift must not re-audit")
 }
 
 func TestReconcileWarehouseRejectsForeignProvisioner(t *testing.T) {
@@ -501,15 +518,20 @@ func TestReconcileWarehouseRekeysOnFingerprintMismatch(t *testing.T) {
 	require.NoError(t, err, "derived password must authenticate after the rekey")
 	userConn.Close()
 
-	// The rekey is one-shot: the next reconcile emits no statements.
+	// The rekey is one-shot: the next reconcile emits no statements and writes
+	// no new warehouse.sync heartbeat.
+	countSyncAudits := func() int {
+		t.Helper()
+		var n int
+		require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+			SELECT count(*) FROM audit_logs
+			WHERE org_id = $1 AND action = 'warehouse.sync' AND resource_id = $2`,
+			fx.orgID.String(), fx.warehouseID.String()).Scan(&n))
+		return n
+	}
+	auditsBefore := countSyncAudits()
 	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
-	var statements int
-	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
-		SELECT COALESCE((metadata->>'statements')::int, -1)
-		FROM audit_logs
-		WHERE org_id = $1 AND action = 'warehouse.sync' AND resource_id = $2
-		ORDER BY id DESC LIMIT 1`, fx.orgID.String(), fx.warehouseID.String()).Scan(&statements))
-	require.Equal(t, 0, statements)
+	require.Equal(t, auditsBefore, countSyncAudits(), "a clean ready reconcile must not write a heartbeat audit")
 }
 
 func TestReconcileWarehouseStatementFailureMarksError(t *testing.T) {
@@ -854,6 +876,45 @@ func TestDriftDetectionReportsMissingGrant(t *testing.T) {
 	require.Equal(t, 1, driftAudits)
 }
 
+// TestReconcileWarehouseAuditsDriftForProvisionedWarehouse verifies drift is
+// alerted by the normal reconcile path once a warehouse has been provisioned,
+// and that the first provision does not emit an everything-missing report.
+func TestReconcileWarehouseAuditsDriftForProvisionedWarehouse(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	countDriftAudits := func() int {
+		t.Helper()
+		var n int
+		require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+			SELECT count(*) FROM audit_logs
+			WHERE org_id = $1 AND action = 'warehouse.drift' AND resource_id = $2`,
+			fx.orgID.String(), fx.warehouseID.String()).Scan(&n))
+		return n
+	}
+	require.Zero(t, countDriftAudits(), "a first provision must not emit an everything-missing drift report")
+
+	// Remove a provisioned grant outside Aether; the next reconcile restores
+	// it and audits the drift it observed.
+	userIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID)
+	quotedUser, err := chaccess.QuoteIdent(userIdent)
+	require.NoError(t, err)
+	require.NoError(t, fx.conn.Exec(ctx, "REVOKE SELECT ON `analytics`.`events` FROM "+quotedUser))
+
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+	requireClickHouseGrantExists(t, fx.conn, userIdent, "analytics", "events")
+
+	var driftAudits int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_logs
+		WHERE org_id = $1 AND action = 'warehouse.drift' AND resource_id = $2
+		  AND metadata->'missing_grants' @> $3::jsonb`,
+		fx.orgID.String(), fx.warehouseID.String(),
+		`["analytics.events for `+userIdent+`"]`).Scan(&driftAudits))
+	require.Equal(t, 1, driftAudits)
+}
+
 // TestCompareWarehouseStateReportsAllDriftKinds exercises the pure diff
 // directly so every report field is covered without a provisioner.
 func TestCompareWarehouseStateReportsAllDriftKinds(t *testing.T) {
@@ -864,13 +925,17 @@ func TestCompareWarehouseStateReportsAllDriftKinds(t *testing.T) {
 
 	desired := chaccess.DesiredState{
 		Roles: map[string]chaccess.RoleState{
-			"role_want": {Grants: map[chaccess.Grant]struct{}{grantPresent: {}}},
+			"role_want":   {Grants: map[chaccess.Grant]struct{}{grantPresent: {}}},
+			"role_absent": {Grants: map[chaccess.Grant]struct{}{grantMissing: {}}},
 		},
 		Users: map[string]chaccess.UserState{
 			"user_want": {
-				Roles:        []string{"role_want"},
+				Roles:        []string{"role_want", "role_absent"},
 				DirectGrants: map[chaccess.Grant]struct{}{grantMissing: {}},
 			},
+			// Role-only access: no direct grants, so an absent identity must
+			// still surface as MissingUsers rather than an empty report.
+			"user_absent": {Roles: []string{"role_want"}},
 		},
 	}
 	actual := chaccess.ActualState{
@@ -892,13 +957,39 @@ func TestCompareWarehouseStateReportsAllDriftKinds(t *testing.T) {
 
 	report := compareWarehouseState(warehouseID, desired, actual)
 	require.Equal(t, []string{"analytics.secret for user_want"}, report.UnexpectedGrants)
-	require.Equal(t, []string{"analytics.daily for user_want"}, report.MissingGrants)
+	require.Equal(t, []string{
+		"analytics.daily for role_absent",
+		"analytics.daily for user_want",
+	}, report.MissingGrants)
 	require.Equal(t, []string{"user_orphan"}, report.UnexpectedUsers)
 	require.Equal(t, []string{"role_orphan"}, report.UnexpectedRoles)
+	require.Equal(t, []string{"user_absent"}, report.MissingUsers)
+	require.Equal(t, []string{"role_absent"}, report.MissingRoles)
+	require.Equal(t, []string{"role role_absent for user_want"}, report.MissingRoleMemberships)
 	require.Equal(t, []string{"user_want"}, report.DefaultRolesNotAll)
 	require.Equal(t, []chaccess.WildcardGrant{{Subject: "user_want", Scope: "analytics.*"}}, report.Wildcards)
 	require.Equal(t, []string{"role x granted to y"}, report.Unexpected)
 	require.False(t, report.IsEmpty())
+
+	// A state that fully matches desired reports no drift.
+	matched := compareWarehouseState(warehouseID, desired, chaccess.ActualState{
+		Roles: map[string]map[chaccess.Grant]struct{}{
+			"role_want":   {grantPresent: {}},
+			"role_absent": {grantMissing: {}},
+		},
+		Users: map[string]chaccess.UserActual{
+			"user_want": {
+				Roles:           map[string]struct{}{"role_want": {}, "role_absent": {}},
+				DirectGrants:    map[chaccess.Grant]struct{}{grantMissing: {}},
+				DefaultRolesAll: true,
+			},
+			"user_absent": {
+				Roles:           map[string]struct{}{"role_want": {}},
+				DefaultRolesAll: true,
+			},
+		},
+	})
+	require.True(t, matched.IsEmpty(), "matching state must report no drift: %+v", matched)
 }
 
 // loopWarehouseRecorder records enqueues from the reconcile loop.
@@ -928,22 +1019,45 @@ func (r *loopWarehouseRecorder) count(id uuid.UUID) int {
 func TestWarehouseLoopEnqueuesAllAndStops(t *testing.T) {
 	fx := setupWarehouseFixture(t)
 
+	// A warehouse without a provisioner cannot sync; the loop must skip it.
+	noProvisionerID := uuid.New()
+	_, err := fx.s.db.Pool.Exec(context.Background(), `
+		INSERT INTO warehouses (id, org_id, name) VALUES ($1, $2, $3)`,
+		noProvisionerID.String(), fx.orgID.String(), "Loop No Provisioner "+noProvisionerID.String()[:8])
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := fx.s.db.Pool.Exec(cleanupCtx,
+			`DELETE FROM warehouses WHERE id = $1`, noProvisionerID.String()); err != nil {
+			t.Logf("cleanup provisioner-less warehouse: %v", err)
+		}
+	})
+
 	rec := &loopWarehouseRecorder{}
 	fx.s.SetWarehouseSyncerForTest(rec)
-	fx.s.SetWarehouseReconcileInterval(50 * time.Millisecond)
+	// A long interval makes the startup enqueue and the absence of an early
+	// second enqueue observable without racing the ticker.
+	fx.s.SetWarehouseReconcileInterval(10 * time.Second)
+
+	oldJitter := warehouseReconcileJitterFn
+	warehouseReconcileJitterFn = func(time.Duration) time.Duration { return 0 }
+	t.Cleanup(func() { warehouseReconcileJitterFn = oldJitter })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	fx.s.StartBackgroundJobs(ctx)
 
-	// The startup enqueue plus at least one tick.
-	require.Eventually(t, func() bool { return rec.count(fx.warehouseID) >= 2 },
-		5*time.Second, 10*time.Millisecond,
-		"loop must enqueue warehouses on startup and on each tick")
+	require.Eventually(t, func() bool { return rec.count(fx.warehouseID) == 1 },
+		2*time.Second, 10*time.Millisecond, "startup enqueue must happen promptly")
 
-	before := rec.count(fx.warehouseID)
+	// With a 10s interval, nothing else may be enqueued while we watch.
+	time.Sleep(300 * time.Millisecond)
+	require.Equal(t, 1, rec.count(fx.warehouseID), "loop must not enqueue again before the interval elapses")
+	require.Zero(t, rec.count(noProvisionerID), "loop must skip warehouses without a provisioner")
+
+	// Close joins the loop before returning, so no further enqueues can land.
 	fx.s.Close()
-	time.Sleep(200 * time.Millisecond)
-	require.Equal(t, before, rec.count(fx.warehouseID), "Close must stop the loop")
+	require.Equal(t, 1, rec.count(fx.warehouseID))
 	fx.s.Close() // Close is idempotent
 }

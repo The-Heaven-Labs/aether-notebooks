@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/chaccess"
+	"github.com/the-heaven-labs/aether/internal/config"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
@@ -38,17 +39,15 @@ func redactSecrets(s string) string {
 // connection and statement execution.
 const warehouseSyncTimeout = 5 * time.Minute
 
-// defaultWarehouseReconcileInterval is the catch-up cadence used when
-// AETHER_CH_RECONCILE_INTERVAL is unset. The loop re-enqueues every warehouse
-// so changes lost to a crash or a cross-replica lock-skip converge without a
-// membership mutation.
-const defaultWarehouseReconcileInterval = 10 * time.Minute
-
 // maxWarehouseReconcileStartupJitter caps the random delay applied before the
 // first enqueue-all so replicas started together do not contend on the same
 // warehouse advisory locks. The actual jitter is also bounded by a tenth of
 // the configured interval, keeping short test intervals fast.
 const maxWarehouseReconcileStartupJitter = 5 * time.Second
+
+// warehouseReconcileJitterFn computes the startup jitter for an interval. It is
+// a package var so tests can force deterministic (zero) jitter.
+var warehouseReconcileJitterFn = warehouseReconcileJitter
 
 // warehouseSyncLockKeySQL derives a stable, cross-process advisory-lock key
 // from a warehouse UUID; hashtextextended yields a bigint acceptable to
@@ -82,7 +81,7 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 		}
 	}()
 
-	orgID, provisionerID, appliedFP, err := s.loadWarehouseHeader(ctx, warehouseID)
+	hdr, err := s.loadWarehouseHeader(ctx, warehouseID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("reconcile warehouse %s: %w", warehouseID, err)
 	}
@@ -97,12 +96,12 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 		return fmt.Errorf("reconcile warehouse %s: %w", warehouseID, err)
 	}
 	if !locked {
-		s.auditWarehouseSyncSkipped(ctx, orgID, warehouseID)
+		s.auditWarehouseSyncSkipped(ctx, hdr.orgID, warehouseID)
 		return nil
 	}
 	defer releaseWarehouseSyncLock(lockConn, warehouseID)
 
-	cfg, err := s.loadProvisionerConfig(ctx, warehouseID, orgID, provisionerID)
+	cfg, err := s.loadProvisionerConfig(ctx, warehouseID, hdr.orgID, hdr.provisionerID)
 	if err != nil {
 		return s.failWarehouseSync(ctx, warehouseID, err)
 	}
@@ -119,7 +118,7 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 	}
 	defer conn.Close()
 
-	desired, err := s.loadWarehouseDesiredState(ctx, warehouseID, orgID)
+	desired, err := s.loadWarehouseDesiredState(ctx, warehouseID, hdr.orgID)
 	if err != nil {
 		return s.failWarehouseSync(ctx, warehouseID, err)
 	}
@@ -131,7 +130,13 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 	}
 
 	fingerprint := chaccess.Fingerprint(string(s.masterKey))
-	actual.ForcePasswordReset = appliedFP == nil || *appliedFP != fingerprint
+	actual.ForcePasswordReset = hdr.appliedFP == nil || *hdr.appliedFP != fingerprint
+
+	// Diff before applying so drift is reported from the same observation the
+	// plan is built from. A first provision legitimately reports everything as
+	// missing, so only warehouses that were provisioned before alert.
+	report := compareWarehouseState(warehouseID, desired, actual)
+	prevProvisioned := hdr.appliedFP != nil || hdr.syncStatus == "ready"
 
 	// Fail closed: wildcards defeat table-level least privilege and foreign
 	// role wiring / grant options are outside Aether's model. Never mark
@@ -142,13 +147,20 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 		if err := s.setWarehouseSyncStatus(ctx, warehouseID, "error", syncErr.Error(), ""); err != nil {
 			return errors.Join(syncErr, err)
 		}
-		s.auditWarehouseDrift(ctx, orgID, warehouseID, nil, actual)
+		// An unchanged fail-closed state is one alert, not one per tick.
+		if hdr.syncStatus != "error" || hdr.syncError == nil || *hdr.syncError != syncErr.Error() {
+			s.auditWarehouseDriftReport(ctx, hdr.orgID, warehouseID, report, nil)
+		}
 		return syncErr
 	}
 
 	stmts, skipped := chaccess.Statements(desired, actual)
-	if len(skipped) > 0 {
-		s.auditWarehouseDrift(ctx, orgID, warehouseID, skipped, chaccess.ActualState{})
+	auditReport := report
+	if !prevProvisioned {
+		auditReport = DriftReport{WarehouseID: warehouseID}
+	}
+	if !auditReport.IsEmpty() || len(skipped) > 0 {
+		s.auditWarehouseDriftReport(ctx, hdr.orgID, warehouseID, auditReport, skipped)
 	}
 	// Never embed the statement text: CREATE/ALTER USER statements carry the
 	// derived ClickHouse password, and the error reaches sync_error, worker
@@ -165,42 +177,52 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 		return fmt.Errorf("reconcile warehouse %s: %w", warehouseID, err)
 	}
 
-	if err := s.audit.Log(ctx, audit.Entry{
-		OrgID:        orgID.String(),
-		Action:       "warehouse.sync",
-		ResourceType: "warehouse",
-		ResourceID:   warehouseID.String(),
-		Metadata: map[string]any{
-			"warehouse_id": warehouseID.String(),
-			"statements":   len(stmts),
-			"users":        len(desired.Users),
-			"roles":        len(desired.Roles),
-		},
-	}); err != nil {
-		slog.Warn("warehouse sync audit failed", "warehouse_id", warehouseID, "error", err)
+	// A clean no-op run writes no heartbeat: without the gate every ready
+	// warehouse would produce an audit row on every reconcile tick.
+	if len(stmts) > 0 || hdr.syncStatus != "ready" {
+		if err := s.audit.Log(ctx, audit.Entry{
+			OrgID:        hdr.orgID.String(),
+			Action:       "warehouse.sync",
+			ResourceType: "warehouse",
+			ResourceID:   warehouseID.String(),
+			Metadata: map[string]any{
+				"warehouse_id": warehouseID.String(),
+				"statements":   len(stmts),
+				"users":        len(desired.Users),
+				"roles":        len(desired.Roles),
+			},
+		}); err != nil {
+			slog.Warn("warehouse sync audit failed", "warehouse_id", warehouseID, "error", err)
+		}
 	}
 	return nil
 }
 
-// loadWarehouseHeader reads the per-warehouse inputs shared by reconcile and
-// drift detection: the owning org, the provisioner connector ID (nil when
-// unset), and the master-key fingerprint recorded by the last successful run.
-// pgx.ErrNoRows is returned unwrapped so callers can distinguish a deleted
-// warehouse from a lookup failure.
-func (s *Server) loadWarehouseHeader(ctx context.Context, warehouseID uuid.UUID) (uuid.UUID, *uuid.UUID, *string, error) {
-	var (
-		orgID         uuid.UUID
-		provisionerID *uuid.UUID
-		appliedFP     *string
-	)
+// warehouseHeader is the warehouse row state shared by reconcile and drift
+// detection: the owning org, provisioner connector ID (nil when unset), the
+// master-key fingerprint recorded by the last successful run, and the stored
+// sync status/error used to suppress repeated alerts.
+type warehouseHeader struct {
+	orgID         uuid.UUID
+	provisionerID *uuid.UUID
+	appliedFP     *string
+	syncStatus    string
+	syncError     *string
+}
+
+// loadWarehouseHeader reads the per-warehouse header state. pgx.ErrNoRows is
+// returned unwrapped so callers can distinguish a deleted warehouse from a
+// lookup failure.
+func (s *Server) loadWarehouseHeader(ctx context.Context, warehouseID uuid.UUID) (warehouseHeader, error) {
+	var h warehouseHeader
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT org_id, provisioner_connector_id, applied_master_fp
+		SELECT org_id, provisioner_connector_id, applied_master_fp, sync_status, sync_error
 		FROM warehouses WHERE id = $1`, warehouseID.String(),
-	).Scan(&orgID, &provisionerID, &appliedFP)
+	).Scan(&h.orgID, &h.provisionerID, &h.appliedFP, &h.syncStatus, &h.syncError)
 	if err != nil {
-		return uuid.Nil, nil, nil, err
+		return warehouseHeader{}, err
 	}
-	return orgID, provisionerID, appliedFP, nil
+	return h, nil
 }
 
 // loadProvisionerConfig loads, validates, and decrypts a warehouse's
@@ -390,6 +412,14 @@ type DriftReport struct {
 	// UnexpectedRoles are roles in the warehouse namespace that desired state
 	// does not know about.
 	UnexpectedRoles []string
+	// MissingUsers are desired users absent from actual state entirely (e.g.
+	// access is group/everyone-only, so no grant of their own is missing).
+	MissingUsers []string
+	// MissingRoles are desired roles absent from actual state entirely.
+	MissingRoles []string
+	// MissingRoleMemberships are desired roles not granted to an existing
+	// desired user, rendered "role <role> for <user>".
+	MissingRoleMemberships []string
 	// Wildcards are actual wildcard grants (subject + scope). They defeat
 	// table-level least privilege and make reconcile fail closed.
 	Wildcards []chaccess.WildcardGrant
@@ -406,6 +436,8 @@ type DriftReport struct {
 func (r DriftReport) IsEmpty() bool {
 	return len(r.UnexpectedGrants) == 0 && len(r.MissingGrants) == 0 &&
 		len(r.UnexpectedUsers) == 0 && len(r.UnexpectedRoles) == 0 &&
+		len(r.MissingUsers) == 0 && len(r.MissingRoles) == 0 &&
+		len(r.MissingRoleMemberships) == 0 &&
 		len(r.Wildcards) == 0 && len(r.Unexpected) == 0 &&
 		len(r.DefaultRolesNotAll) == 0
 }
@@ -419,11 +451,11 @@ func (s *Server) detectWarehouseDrift(ctx context.Context, warehouseID uuid.UUID
 	ctx, cancel := context.WithTimeout(ctx, warehouseSyncTimeout)
 	defer cancel()
 
-	orgID, provisionerID, _, err := s.loadWarehouseHeader(ctx, warehouseID)
+	hdr, err := s.loadWarehouseHeader(ctx, warehouseID)
 	if err != nil {
 		return DriftReport{}, fmt.Errorf("detect warehouse %s drift: %w", warehouseID, err)
 	}
-	cfg, err := s.loadProvisionerConfig(ctx, warehouseID, orgID, provisionerID)
+	cfg, err := s.loadProvisionerConfig(ctx, warehouseID, hdr.orgID, hdr.provisionerID)
 	if err != nil {
 		return DriftReport{}, fmt.Errorf("detect warehouse %s drift: %w", warehouseID, err)
 	}
@@ -434,7 +466,7 @@ func (s *Server) detectWarehouseDrift(ctx context.Context, warehouseID uuid.UUID
 	}
 	defer conn.Close()
 
-	desired, err := s.loadWarehouseDesiredState(ctx, warehouseID, orgID)
+	desired, err := s.loadWarehouseDesiredState(ctx, warehouseID, hdr.orgID)
 	if err != nil {
 		return DriftReport{}, fmt.Errorf("detect warehouse %s drift: %w", warehouseID, err)
 	}
@@ -445,7 +477,7 @@ func (s *Server) detectWarehouseDrift(ctx context.Context, warehouseID uuid.UUID
 
 	report := compareWarehouseState(warehouseID, desired, actual)
 	if !report.IsEmpty() {
-		s.auditWarehouseDriftReport(ctx, orgID, report)
+		s.auditWarehouseDriftReport(ctx, hdr.orgID, warehouseID, report, nil)
 	}
 	return report, nil
 }
@@ -485,7 +517,10 @@ func compareWarehouseState(warehouseID uuid.UUID, desired chaccess.DesiredState,
 	}
 
 	for ident, rs := range desired.Roles {
-		have := actual.Roles[ident]
+		have, exists := actual.Roles[ident]
+		if !exists {
+			report.MissingRoles = append(report.MissingRoles, ident)
+		}
 		for g := range rs.Grants {
 			if _, ok := have[g]; !ok {
 				report.MissingGrants = append(report.MissingGrants, grantDriftLabel(g, ident))
@@ -493,18 +528,29 @@ func compareWarehouseState(warehouseID uuid.UUID, desired chaccess.DesiredState,
 		}
 	}
 	for ident, us := range desired.Users {
-		have := actual.Users[ident].DirectGrants
+		user, exists := actual.Users[ident]
+		if !exists {
+			// The whole identity is missing; its memberships and direct
+			// grants are covered by MissingUsers + MissingGrants, not by
+			// per-membership entries.
+			report.MissingUsers = append(report.MissingUsers, ident)
+		} else {
+			for _, role := range us.Roles {
+				if _, ok := user.Roles[role]; !ok {
+					report.MissingRoleMemberships = append(report.MissingRoleMemberships,
+						roleMembershipDriftLabel(role, ident))
+				}
+			}
+		}
 		for g := range us.DirectGrants {
-			if _, ok := have[g]; !ok {
+			if _, ok := user.DirectGrants[g]; !ok {
 				report.MissingGrants = append(report.MissingGrants, grantDriftLabel(g, ident))
 			}
 		}
 		// Mirrors the reconcile condition for SET DEFAULT ROLE ALL: only a
 		// user that exists with desired roles can have default roles wrong.
-		if len(us.Roles) > 0 {
-			if user, ok := actual.Users[ident]; ok && !user.DefaultRolesAll {
-				report.DefaultRolesNotAll = append(report.DefaultRolesNotAll, ident)
-			}
+		if exists && len(us.Roles) > 0 && !user.DefaultRolesAll {
+			report.DefaultRolesNotAll = append(report.DefaultRolesNotAll, ident)
 		}
 	}
 
@@ -514,6 +560,9 @@ func compareWarehouseState(warehouseID uuid.UUID, desired chaccess.DesiredState,
 	report.MissingGrants = sortDedupe(report.MissingGrants)
 	report.UnexpectedUsers = sortDedupe(report.UnexpectedUsers)
 	report.UnexpectedRoles = sortDedupe(report.UnexpectedRoles)
+	report.MissingUsers = sortDedupe(report.MissingUsers)
+	report.MissingRoles = sortDedupe(report.MissingRoles)
+	report.MissingRoleMemberships = sortDedupe(report.MissingRoleMemberships)
 	report.DefaultRolesNotAll = sortDedupe(report.DefaultRolesNotAll)
 	return report
 }
@@ -521,6 +570,11 @@ func compareWarehouseState(warehouseID uuid.UUID, desired chaccess.DesiredState,
 // grantDriftLabel renders one grant and its subject for a drift report.
 func grantDriftLabel(g chaccess.Grant, subject string) string {
 	return fmt.Sprintf("%s.%s for %s", g.Database, g.Table, subject)
+}
+
+// roleMembershipDriftLabel renders a missing role membership for a report.
+func roleMembershipDriftLabel(role, user string) string {
+	return fmt.Sprintf("role %s for %s", role, user)
 }
 
 // sortDedupe returns a sorted, deduplicated copy of in (nil for empty input).
@@ -640,39 +694,17 @@ func (s *Server) auditWarehouseSyncSkipped(ctx context.Context, orgID, warehouse
 	}
 }
 
-// auditWarehouseDrift records detected drift (unquotable catalog names,
-// wildcard grants, or unexpected role wiring). Audit failures are logged and
-// never abort the reconcile.
-func (s *Server) auditWarehouseDrift(ctx context.Context, orgID, warehouseID uuid.UUID, skipped []string, actual chaccess.ActualState) {
+// auditWarehouseDriftReport records a drift report (or skipped catalog names)
+// as warehouse.drift. It is the single drift audit path for reconcile and
+// detectWarehouseDrift; audit failures are logged and never abort the caller.
+func (s *Server) auditWarehouseDriftReport(ctx context.Context, orgID, warehouseID uuid.UUID, report DriftReport, skipped []string) {
+	if report.IsEmpty() && len(skipped) == 0 {
+		return
+	}
 	meta := map[string]any{"warehouse_id": warehouseID.String()}
 	if len(skipped) > 0 {
 		meta["skipped"] = skipped
 	}
-	if len(actual.Wildcards) > 0 {
-		meta["wildcards"] = wildcardLabels(actual.Wildcards)
-	}
-	if len(actual.Unexpected) > 0 {
-		meta["unexpected"] = actual.Unexpected
-	}
-	if err := s.audit.Log(ctx, audit.Entry{
-		OrgID:        orgID.String(),
-		Action:       "warehouse.drift",
-		ResourceType: "warehouse",
-		ResourceID:   warehouseID.String(),
-		Metadata:     meta,
-	}); err != nil {
-		slog.Warn("warehouse drift audit failed", "warehouse_id", warehouseID, "error", err)
-	}
-}
-
-// auditWarehouseDriftReport records a non-empty drift report produced by
-// detectWarehouseDrift. Empty reports are not audited; audit failures are
-// logged and never fail the detection.
-func (s *Server) auditWarehouseDriftReport(ctx context.Context, orgID uuid.UUID, report DriftReport) {
-	if report.IsEmpty() {
-		return
-	}
-	meta := map[string]any{"warehouse_id": report.WarehouseID.String()}
 	if len(report.UnexpectedGrants) > 0 {
 		meta["unexpected_grants"] = report.UnexpectedGrants
 	}
@@ -684,6 +716,15 @@ func (s *Server) auditWarehouseDriftReport(ctx context.Context, orgID uuid.UUID,
 	}
 	if len(report.UnexpectedRoles) > 0 {
 		meta["unexpected_roles"] = report.UnexpectedRoles
+	}
+	if len(report.MissingUsers) > 0 {
+		meta["missing_users"] = report.MissingUsers
+	}
+	if len(report.MissingRoles) > 0 {
+		meta["missing_roles"] = report.MissingRoles
+	}
+	if len(report.MissingRoleMemberships) > 0 {
+		meta["missing_role_memberships"] = report.MissingRoleMemberships
 	}
 	if len(report.Wildcards) > 0 {
 		meta["wildcards"] = wildcardLabels(report.Wildcards)
@@ -698,10 +739,10 @@ func (s *Server) auditWarehouseDriftReport(ctx context.Context, orgID uuid.UUID,
 		OrgID:        orgID.String(),
 		Action:       "warehouse.drift",
 		ResourceType: "warehouse",
-		ResourceID:   report.WarehouseID.String(),
+		ResourceID:   warehouseID.String(),
 		Metadata:     meta,
 	}); err != nil {
-		slog.Warn("warehouse drift audit failed", "warehouse_id", report.WarehouseID, "error", err)
+		slog.Warn("warehouse drift audit failed", "warehouse_id", warehouseID, "error", err)
 	}
 }
 
@@ -739,7 +780,9 @@ func (s *Server) startWarehouseReconcileLoop(ctx context.Context) {
 	}
 	interval := s.warehouseReconcileInterval
 	if interval <= 0 {
-		interval = defaultWarehouseReconcileInterval
+		// Defensive fallback for a Server built without NewServer; the value
+		// comes from config.DefaultWarehouseReconcileInterval.
+		interval = config.DefaultWarehouseReconcileInterval
 	}
 	s.warehouseLoopMu.Lock()
 	if s.warehouseLoopClosed || s.warehouseLoopCancel != nil {
@@ -754,7 +797,7 @@ func (s *Server) startWarehouseReconcileLoop(ctx context.Context) {
 	s.warehouseLoopMu.Unlock()
 	go func() {
 		defer close(done)
-		if jitter := warehouseReconcileJitter(interval); jitter > 0 {
+		if jitter := warehouseReconcileJitterFn(interval); jitter > 0 {
 			select {
 			case <-time.After(jitter):
 			case <-loopCtx.Done():
@@ -789,15 +832,17 @@ func warehouseReconcileJitter(interval time.Duration) time.Duration {
 	return time.Duration(rand.Int64N(int64(jitterMax)))
 }
 
-// enqueueAllWarehouses enqueues every warehouse for reconciliation. Lookup
-// failures are logged and swallowed: the next tick retries, and sync
-// bookkeeping must never take down the loop. A cancelled context (shutdown)
-// is not logged as a failure.
+// enqueueAllWarehouses enqueues every warehouse with a provisioner for
+// reconciliation. Warehouses without one cannot sync; assigning a provisioner
+// is covered by the membership/CRUD triggers. Lookup failures are logged and
+// swallowed: the next tick retries, and sync bookkeeping must never take down
+// the loop. A cancelled context (shutdown) is not logged as a failure.
 func (s *Server) enqueueAllWarehouses(ctx context.Context) {
 	if s.warehouseSync == nil {
 		return
 	}
-	rows, err := s.db.Pool.Query(ctx, `SELECT id FROM warehouses`)
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT id FROM warehouses WHERE provisioner_connector_id IS NOT NULL`)
 	if err != nil {
 		if ctx.Err() == nil {
 			slog.Warn("warehouse reconcile loop: list warehouses", "error", err)

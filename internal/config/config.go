@@ -218,12 +218,17 @@ func parseAgentToolTimeoutDefault(raw string) (time.Duration, error) {
 	return d, nil
 }
 
+// DefaultWarehouseReconcileInterval is the catch-up cadence used when
+// AETHER_CH_RECONCILE_INTERVAL is unset. Server construction falls back to it
+// so the value has a single source.
+const DefaultWarehouseReconcileInterval = 10 * time.Minute
+
 // parseWarehouseReconcileInterval parses AETHER_CH_RECONCILE_INTERVAL as a Go
-// duration. Empty means the 10m default; values below the 1m floor are raised
-// to it so a misconfigured env var cannot hot-loop the reconcile catch-up.
+// duration. Empty means the default; values below the 1m floor are raised to
+// it so a misconfigured env var cannot hot-loop the reconcile catch-up.
 func parseWarehouseReconcileInterval(raw string) (time.Duration, error) {
 	if raw == "" {
-		return 10 * time.Minute, nil
+		return DefaultWarehouseReconcileInterval, nil
 	}
 	d, err := time.ParseDuration(raw)
 	if err != nil {

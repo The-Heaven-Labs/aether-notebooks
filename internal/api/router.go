@@ -75,14 +75,15 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 		rdb = redisCache.Client()
 	}
 	s := &Server{
-		db:        db,
-		jwt:       jwt,
-		audit:     auditLogger,
-		masterKey: masterKey,
-		hub:       NewHub(rdb),
-		mux:       http.NewServeMux(),
-		Cache:     redisCache,
-		upgrader:  websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
+		db:                         db,
+		jwt:                        jwt,
+		audit:                      auditLogger,
+		masterKey:                  masterKey,
+		hub:                        NewHub(rdb),
+		mux:                        http.NewServeMux(),
+		Cache:                      redisCache,
+		upgrader:                   websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
+		warehouseReconcileInterval: config.DefaultWarehouseReconcileInterval,
 	}
 	s.agentEngine = agent.NewEngine(context.Background(), db.Pool, rdb)
 	s.agentEngine.BroadcastFunc = func(notebookID string, msg any) {
@@ -183,16 +184,22 @@ func (s *Server) SetToolAllowedDomains(domains []string) {
 }
 
 // SetWarehouseReconcileInterval sets the periodic warehouse reconciliation
-// cadence. Values <= 0 select the 10m default. Call it before
-// StartBackgroundJobs.
+// cadence. Values <= 0 select config.DefaultWarehouseReconcileInterval. Call it
+// before StartBackgroundJobs.
 func (s *Server) SetWarehouseReconcileInterval(d time.Duration) {
+	if d <= 0 {
+		d = config.DefaultWarehouseReconcileInterval
+	}
 	s.warehouseReconcileInterval = d
 }
 
-// Close stops the warehouse reconciliation loop and drains the sync worker,
-// waiting for in-flight reconciles to observe cancellation. It is safe to call
-// multiple times. Close must run before the database and cache are closed
-// because in-flight reconciles use both.
+// Close stops the warehouse reconciliation loop and then closes the sync
+// worker. The worker's context is cancelled, so queued runs are dropped and
+// retries stop; an in-flight reconcile may abort between statements or mid-DDL,
+// leaving a partially applied plan that the next start's catch-up converges.
+// Close waits for the loop goroutine to exit and for the worker's in-flight
+// run to return. It is safe to call multiple times, and must run before the
+// database and cache are closed because the reconcile path uses both.
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
 		s.warehouseLoopMu.Lock()
