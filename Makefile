@@ -14,7 +14,7 @@ dev:
 	go run ./cmd/aether-server
 
 test:
-	go test ./... -v
+	go test -timeout 3m ./... -v
 
 migrate:
 	go run ./cmd/aether-server migrate

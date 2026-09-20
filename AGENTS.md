@@ -91,6 +91,12 @@ task test:api          # Only internal/api/... tests
 task test:race         # With race detector
 task test:e2e          # Smoke test against live server
 
+All Go test commands pass an explicit `-timeout 3m` (Taskfile, Makefile, and CI).
+A package that exceeds 3 minutes here is pathological (the shared local dev DB
+accumulates data; CI is faster). Do not raise the timeout — narrow the run with
+`-run` or split/speed up the test. Agent-run test commands must include
+`-timeout 3m` too.
+
 # Code quality
 task fmt               # gofmt
 task vet               # go vet

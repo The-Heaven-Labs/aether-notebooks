@@ -2475,6 +2475,9 @@ git commit -m "docs: warehouse permissions rollout notes"
 ## Execution notes
 
 - Run `task infra:up` before any test command that touches the DB.
+- Always pass `-timeout 3m` to `go test` (matches Taskfile/Makefile/CI). A package that
+  exceeds it locally is pathological; narrow with `-run` or speed up the fixture instead
+  of raising the timeout.
 - Commit after every task; each commit should keep `task check` green.
 - Tasks 1–7 are pure and can be done in parallel with 12–13 if you prefer.
 - Task 9 is the first test that requires a real ClickHouse; the dev stack
