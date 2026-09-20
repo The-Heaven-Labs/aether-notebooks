@@ -1,6 +1,20 @@
 package api
 
-import "github.com/the-heaven-labs/aether/internal/agent"
+import (
+	"github.com/google/uuid"
+	"github.com/the-heaven-labs/aether/internal/agent"
+)
+
+// WarehouseSyncerForTest mirrors the warehouse sync trigger surface so
+// external tests can record enqueues without a real sync worker.
+type WarehouseSyncerForTest interface {
+	Enqueue(uuid.UUID)
+}
+
+// SetWarehouseSyncerForTest replaces the server's warehouse sync service.
+func (s *Server) SetWarehouseSyncerForTest(syncer WarehouseSyncerForTest) {
+	s.warehouseSync = syncer
+}
 
 // RegisterToolForTest exposes the agent tool registry so external tests can
 // exercise dispatch paths (e.g. MCP) with custom probe tools.

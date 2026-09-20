@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -9,17 +10,24 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/auth"
 	"github.com/the-heaven-labs/aether/internal/cache"
+	"github.com/the-heaven-labs/aether/internal/chaccess"
 	"github.com/the-heaven-labs/aether/internal/config"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/database"
 	"github.com/the-heaven-labs/aether/internal/storage"
 )
+
+// warehouseSyncer schedules reconciliation of one warehouse's ClickHouse
+// access state. *chaccess.SyncService is the production implementation; tests
+// inject a recorder.
+type warehouseSyncer interface{ Enqueue(uuid.UUID) }
 
 // Server is the HTTP server for the Aether API, holding all dependencies.
 type Server struct {
@@ -48,6 +56,7 @@ type Server struct {
 	version              string                          // build version (set via ldflags)
 	commit               string                          // git commit (set via ldflags)
 	buildDate            string                          // build date (set via ldflags)
+	warehouseSync        warehouseSyncer                 // debounced ClickHouse access sync (nil disables triggers)
 }
 
 // NewServer creates a new Aether API server with the provided dependencies.
@@ -78,6 +87,12 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 	s.agentEngine.SetCancelFunc = s.hub.SetCancelFunc
 	s.agentEngine.DeleteCancelFunc = s.hub.DeleteCancelFunc
 	s.subdomainMW = SubdomainMiddleware(s.db.Pool)
+	// Warehouse access-state worker. Enqueues arrive from membership mutations;
+	// a periodic catch-up loop is added by the server bootstrap.
+	s.warehouseSync = chaccess.NewSyncService(chaccess.SyncConfig{
+		Reconcile: s.reconcileWarehouse,
+		Logger:    slog.Default(),
+	})
 	s.routes()
 	return s
 }

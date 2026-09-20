@@ -321,6 +321,9 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "failed to commit")
 				return
 			}
+			// Cover the new memberships (including any just materialized
+			// pending groups) once the join transaction has committed.
+			s.enqueueWarehouseSyncForUser(ctx, userID)
 			s.audit.Log(ctx, audit.Entry{
 				OrgID: orgID, UserID: userID,
 				Action: "org.auto_join", ResourceType: "org", ResourceID: orgID,
@@ -396,6 +399,9 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "failed to commit")
 				return
 			}
+			// Cover the new memberships (including any just materialized
+			// pending groups) once the join transaction has committed.
+			s.enqueueWarehouseSyncForUser(ctx, userID)
 			s.audit.Log(ctx, audit.Entry{
 				OrgID: orgID, UserID: userID,
 				Action: "org.auto_join", ResourceType: "org", ResourceID: orgID,
@@ -440,6 +446,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 						tx.Rollback(ctx)
 					} else {
 						tx.Commit(ctx)
+						s.enqueueWarehouseSyncForUser(ctx, userID)
 						s.audit.Log(ctx, audit.Entry{
 							OrgID: targetOrgID, UserID: userID,
 							Action: "org.auto_join", ResourceType: "org", ResourceID: targetOrgID,
@@ -499,6 +506,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 						tx.Rollback(ctx)
 					} else {
 						tx.Commit(ctx)
+						s.enqueueWarehouseSyncForUser(ctx, userID)
 						s.audit.Log(ctx, audit.Entry{
 							OrgID: subdomainOrgID, UserID: userID,
 							Action: "org.auto_join", ResourceType: "org", ResourceID: subdomainOrgID,
@@ -522,6 +530,8 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	// Reconcile group membership via SSO
 	if dbProvider.AutoSyncGroups && len(claims.Groups) > 0 {
 		SyncSSOGroups(ctx, s.db.Pool, s.audit, dbProvider, orgID, userID, claims.Groups)
+		// The synced group memberships may grant (or revoke) warehouse access.
+		s.enqueueWarehouseSyncForUser(ctx, userID)
 	}
 
 	var isPlatformAdmin bool

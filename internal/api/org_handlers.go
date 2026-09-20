@@ -305,6 +305,9 @@ func (s *Server) handleOrgJoin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to commit")
 		return
 	}
+	// New member: reconcile warehouses reachable directly, through
+	// materialized pending groups, or through everyone grants.
+	s.enqueueWarehouseSyncForUser(ctx, claims.UserID)
 
 	var isPlatformAdmin bool
 	s.db.Pool.QueryRow(ctx, `SELECT is_platform_admin FROM users WHERE id = $1`, claims.UserID).Scan(&isPlatformAdmin)
