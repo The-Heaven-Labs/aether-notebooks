@@ -11,8 +11,12 @@ const adminModeKey contextKey = "aether_admin_mode"
 // gates the org-admin ACL bypass during execution-target resolution, and the
 // flag lives here (rather than in internal/api) so agent and MCP execution
 // paths — which cannot import internal/api — can install the same signal before
-// invoking a server-wired target resolver.
+// invoking a server-wired target resolver. A nil ctx is treated as a fresh
+// background context.
 func WithAdminMode(ctx context.Context, enabled bool) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return context.WithValue(ctx, adminModeKey, enabled)
 }
 

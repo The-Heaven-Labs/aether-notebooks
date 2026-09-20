@@ -69,12 +69,13 @@ func TestExecuteSQLHandlerThreadsLimit(t *testing.T) {
 	runCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	ctx := &ToolContext{
-		Context:   runCtx,
-		UserID:    userID,
-		OrgID:     orgID,
-		OrgRole:   "admin",
-		DB:        db.Pool,
-		MasterKey: masterKey,
+		Context:             runCtx,
+		UserID:              userID,
+		OrgID:               orgID,
+		OrgRole:             "admin",
+		DB:                  db.Pool,
+		MasterKey:           masterKey,
+		CheckPermissionFunc: allowAllPermissions,
 	}
 
 	t.Run("explicit limit", func(t *testing.T) {
@@ -110,12 +111,13 @@ func TestExecuteSQLToolBudgetGovernsAdHocSQL(t *testing.T) {
 	connID, masterKey := createSQLTestPGConnector(t, db, orgID, userID)
 
 	ctx := &ToolContext{
-		Context:   context.Background(),
-		UserID:    userID,
-		OrgID:     orgID,
-		OrgRole:   "admin",
-		DB:        db.Pool,
-		MasterKey: masterKey,
+		Context:             context.Background(),
+		UserID:              userID,
+		OrgID:               orgID,
+		OrgRole:             "admin",
+		DB:                  db.Pool,
+		MasterKey:           masterKey,
+		CheckPermissionFunc: allowAllPermissions,
 	}
 
 	t.Run("execute_sql", func(t *testing.T) {

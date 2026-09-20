@@ -11,7 +11,7 @@ import (
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
-// resolveManagedClickHouseTarget resolves the acting user's per-user identity
+// resolveClickHouseTarget resolves the acting user's per-user identity
 // for a ClickHouse connector through the server-wired ResolveTarget callback.
 //
 // A nil target with a nil error means the connector is not warehouse-managed
@@ -19,7 +19,7 @@ import (
 // failure is returned as an error and must fail the call closed: the stored
 // credential is never a fallback for a managed connector, nor for one whose
 // management cannot be determined because the callback is not wired.
-func resolveManagedClickHouseTarget(tc *ToolContext, connectorID string) (*executor.ExecutionTarget, error) {
+func resolveClickHouseTarget(tc *ToolContext, connectorID string) (*executor.ExecutionTarget, error) {
 	if tc.ResolveTarget == nil {
 		return nil, fmt.Errorf("cannot resolve connector %s: per-user warehouse identity resolution is not configured", connectorID)
 	}
@@ -71,7 +71,7 @@ func resolveManagedClickHouseTarget(tc *ToolContext, connectorID string) (*execu
 // executor owns its pooled lease: Close releases it exactly once.
 func openAgentExecutor(tc *ToolContext, connType models.ConnectorType, connectorID string, configEnc []byte) (executor.Executor, *executor.ExecutionTarget, error) {
 	if connType == models.ConnectorClickHouse {
-		target, err := resolveManagedClickHouseTarget(tc, connectorID)
+		target, err := resolveClickHouseTarget(tc, connectorID)
 		if err != nil {
 			return nil, nil, err
 		}

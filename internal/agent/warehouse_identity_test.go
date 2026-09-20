@@ -31,25 +31,43 @@ func (c *identityProbeConn) Query(context.Context, string, ...any) (driver.Rows,
 	return nil, errors.New("identity probe query")
 }
 
-// identityResultConn serves a one-row result so success paths (output
-// persistence, audit) can be exercised on the pooled route.
+// identityResultConn serves `rows` one-column rows so success paths (output
+// persistence, audit, row limits) can be exercised on the pooled route.
 type identityResultConn struct {
 	clickhouse.Conn
+	rows int
 }
 
 func (c *identityResultConn) Query(context.Context, string, ...any) (driver.Rows, error) {
-	return &identityProbeRows{}, nil
+	return newIdentityProbeRows(c.rows), nil
+}
+
+// identityBlockingConn blocks Query until the execution context ends, so
+// timeout enforcement can be exercised on the pooled route.
+type identityBlockingConn struct {
+	clickhouse.Conn
+}
+
+func (c *identityBlockingConn) Query(ctx context.Context, _ string, _ ...any) (driver.Rows, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 type identityProbeRows struct {
-	done bool
+	remaining int
+	idx       int
+}
+
+func newIdentityProbeRows(n int) *identityProbeRows {
+	return &identityProbeRows{remaining: n}
 }
 
 func (r *identityProbeRows) Next() bool {
-	if r.done {
+	if r.remaining <= 0 {
 		return false
 	}
-	r.done = true
+	r.remaining--
+	r.idx++
 	return true
 }
 
@@ -61,7 +79,7 @@ func (r *identityProbeRows) Scan(dest ...any) error {
 	if !ok {
 		return fmt.Errorf("identity probe rows: unexpected destination %T", dest[0])
 	}
-	*out = "identity_probe"
+	*out = fmt.Sprintf("row_%d", r.idx)
 	return nil
 }
 
@@ -94,9 +112,11 @@ func (identityProbeColumnType) DatabaseTypeName() string { return "String" }
 type identityCapture struct {
 	cfg  models.ConnectorConfig
 	used bool
-	// result makes the pool hand out a connection that serves a one-row
-	// result instead of failing the query.
+	// result makes the pool hand out a connection that serves `rows` rows
+	// instead of failing the query; block makes Query wait for cancellation.
 	result bool
+	rows   int
+	block  bool
 }
 
 func newIdentityCapturePool(capture *identityCapture) *executor.ConnPool {
@@ -104,8 +124,11 @@ func newIdentityCapturePool(capture *identityCapture) *executor.ConnPool {
 		Open: func(cfg models.ConnectorConfig) (clickhouse.Conn, error) {
 			capture.cfg = cfg
 			capture.used = true
+			if capture.block {
+				return &identityBlockingConn{}, nil
+			}
 			if capture.result {
-				return &identityResultConn{}, nil
+				return &identityResultConn{rows: capture.rows}, nil
 			}
 			return &identityProbeConn{}, nil
 		},
@@ -326,7 +349,7 @@ func TestAgentRunCellUsesUserIdentity(t *testing.T) {
 	warehouseID := uuid.New()
 	connUUID := uuid.MustParse(connID)
 	var gotUser uuid.UUID
-	capture := &identityCapture{result: true}
+	capture := &identityCapture{result: true, rows: 1}
 	tc := &ToolContext{
 		Context: context.Background(), UserID: userID, OrgID: orgID, OrgRole: "editor",
 		DB: db.Pool, MasterKey: masterKey,
@@ -369,6 +392,78 @@ func TestAgentRunCellUsesUserIdentity(t *testing.T) {
 	require.Equal(t, warehouseID.String(), meta["warehouse_id"])
 	require.Equal(t, connID, meta["connector_id"])
 	require.Equal(t, chUser, meta["ch_user"])
+}
+
+// A routed service carries its own MaxRows/TimeoutSeconds; agent execution
+// must apply the routed values, mirroring HTTP's routed-limits coverage.
+func TestAgentRoutedServiceLimitsApply(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+
+	managedTarget := func(maxRows, timeoutSeconds int) *executor.ExecutionTarget {
+		return &executor.ExecutionTarget{
+			Endpoint: "warehouse.invalid:9000",
+			CHUser:   "aether_test_wh_u_limits",
+			Config: models.ConnectorConfig{
+				Host: "warehouse.invalid", Port: 9000, User: "aether_test_wh_u_limits", Password: "derived_secret", Database: "analytics",
+			},
+			MaxRows:        maxRows,
+			TimeoutSeconds: timeoutSeconds,
+		}
+	}
+
+	t.Run("execute_sql caps rows at the routed max_rows", func(t *testing.T) {
+		connID, masterKey := createIdentityTestCHConnector(t, db, orgID, userID, storedCredentialCfg())
+		capture := &identityCapture{result: true, rows: 5}
+		tc := &ToolContext{
+			Context: context.Background(), UserID: userID, OrgID: orgID, OrgRole: "editor",
+			DB: db.Pool, MasterKey: masterKey,
+			ResolveTarget: func(context.Context, uuid.UUID, uuid.UUID, bool) (*executor.ExecutionTarget, error) {
+				return managedTarget(2, 0), nil
+			},
+			ConnPool:            newIdentityCapturePool(capture),
+			CheckPermissionFunc: allowAllPermissions,
+		}
+		handler := makeExecuteSQLHandler(db.Pool)
+		args, err := json.Marshal(map[string]any{"connector_id": connID, "query": "SELECT number FROM numbers(5)"})
+		require.NoError(t, err)
+		result, err := handler(args, tc)
+		require.NoError(t, err)
+		rs, ok := result.(*executor.ResultSet)
+		require.True(t, ok, "expected *executor.ResultSet, got %T", result)
+		require.Len(t, rs.Rows, 2, "the routed service's max_rows must cap the tool result")
+	})
+
+	t.Run("run_cell honors the routed timeout_seconds", func(t *testing.T) {
+		connID, masterKey := createIdentityTestCHConnector(t, db, orgID, userID, storedCredentialCfg())
+		nbID := createTestNotebook(t, db, orgID, userID)
+		cellID := uuid.New().String()
+		_, err := db.Pool.Exec(context.Background(), `
+			INSERT INTO cells (id, notebook_id, type, language, connector_id, source, position, created_at, updated_at)
+			VALUES ($1, $2, 'code', 'sql', $3, 'SELECT sleep(3)', 0, NOW(), NOW())
+		`, cellID, nbID, connID)
+		require.NoError(t, err)
+
+		capture := &identityCapture{block: true}
+		tc := &ToolContext{
+			Context: context.Background(), UserID: userID, OrgID: orgID, OrgRole: "editor",
+			DB: db.Pool, MasterKey: masterKey,
+			ResolveTarget: func(context.Context, uuid.UUID, uuid.UUID, bool) (*executor.ExecutionTarget, error) {
+				return managedTarget(0, 1), nil
+			},
+			ConnPool:            newIdentityCapturePool(capture),
+			CheckPermissionFunc: allowAllPermissions,
+		}
+		handler := makeRunCellHandler(db.Pool)
+		args, err := json.Marshal(map[string]any{"cell_id": cellID})
+		require.NoError(t, err)
+		result, err := handler(args, tc)
+		require.NoError(t, err)
+		m := result.(map[string]any)
+		require.Equal(t, "error", m["status"])
+		require.Equal(t, true, m["timed_out"])
+		require.Contains(t, m["error"], "execution timed out after 1000ms")
+	})
 }
 
 // explore_schema must open its connection through the pooled per-user identity
@@ -428,6 +523,11 @@ func TestToolContextCheckPermissionDelegatesToSharedResolver(t *testing.T) {
 	require.ErrorContains(t, err, "permission denied")
 	require.True(t, called, "the shared resolver must be consulted")
 	require.Equal(t, [6]string{"user-1", "org-1", "admin", "connector", "conn-1", "use"}, got)
+
+	// Without a resolver, even an org admin must be denied.
+	bare := &ToolContext{Context: context.Background(), UserID: "user-1", OrgID: "org-1", OrgRole: "admin"}
+	err = bare.CheckPermission("connector", "conn-1", "use")
+	require.ErrorContains(t, err, "permission resolver not configured")
 }
 
 // The engine must propagate the warehouse execution hooks and the session's

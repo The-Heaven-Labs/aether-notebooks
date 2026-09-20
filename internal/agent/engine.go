@@ -206,6 +206,20 @@ func (e *Engine) DrainSteering(sessionID string) []string {
 	}
 }
 
+// orgRoleForUser returns the user's role in the org, defaulting to "editor"
+// when the membership row is missing or the lookup fails. It feeds the org
+// role into the shared ACL resolver so agent and subagent tool calls authorize
+// exactly like HTTP.
+func (e *Engine) orgRoleForUser(ctx context.Context, orgID, userID string) string {
+	var role string
+	if err := e.pool.QueryRow(ctx,
+		`SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2`,
+		orgID, userID).Scan(&role); err != nil || role == "" {
+		return "editor"
+	}
+	return role
+}
+
 // applySteering folds one steering message into the running turn. It runs
 // only at turn boundaries (top of the turn loop): inserting a user message in
 // the middle of an assistant(tool_calls) → tool result batch would violate
@@ -481,11 +495,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		mcpRows.Close()
 	}
 
-	var orgRole string
-	err = e.pool.QueryRow(ctx, `SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2`, agent.OrgID, session.UserID).Scan(&orgRole)
-	if err != nil {
-		orgRole = "editor"
-	}
+	orgRole := e.orgRoleForUser(ctx, agent.OrgID, session.UserID)
 
 	// Load agent tools from tools table
 	// Tool ACLs are enforced at assignment time (validateToolAccess in agent_handlers.go);

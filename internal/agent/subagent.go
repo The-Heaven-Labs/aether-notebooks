@@ -82,10 +82,7 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 
 	// Subagents act as the parent user: carry the parent's real org role (not a
 	// hardcoded one) so the shared ACL resolver authorizes them the same way.
-	var parentOrgRole string
-	if err := e.pool.QueryRow(ctx, `SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2`, parentOrgID, parentUserID).Scan(&parentOrgRole); err != nil || parentOrgRole == "" {
-		parentOrgRole = "editor"
-	}
+	parentOrgRole := e.orgRoleForUser(ctx, parentOrgID, parentUserID)
 
 	messages := []ChatMessage{
 		{Role: "user", Content: task.Goal},
@@ -178,10 +175,8 @@ func (e *Engine) RunQueuedTasks(ctx context.Context, parentSessionID string, tas
 		return nil
 	}
 	// Look up the user's actual org role so admin users bypass ACL checks
-	var orgRole string
-	if err := e.pool.QueryRow(ctx, `SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2`, orgID, parentUserID).Scan(&orgRole); err != nil {
-		orgRole = "editor"
-	}
+	// through the shared resolver exactly like HTTP.
+	orgRole := e.orgRoleForUser(ctx, orgID, parentUserID)
 	// Read agent's max_subagent_turns setting
 	e.pool.QueryRow(ctx, `SELECT COALESCE(max_subagent_turns, 20) FROM agents WHERE id = $1`, parentAgentID).Scan(&maxSubagentTurns)
 	if maxSubagentTurns <= 0 {

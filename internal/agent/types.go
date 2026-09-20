@@ -32,19 +32,20 @@ type ToolContext struct {
 	// ResolveTarget resolves the acting user's ClickHouse execution target for
 	// a connector (the api.Server implementation is the same resolver HTTP
 	// uses). It is wired by the API server because internal/agent cannot import
-	// internal/api. executor.ErrUnmanagedConnector selects the legacy
-	// stored-credential path; every other outcome is a tool error and fails
-	// closed — managed ClickHouse execution never falls back to the connector's
-	// stored credential.
+	// internal/api. A nil target with a nil error is equivalent to
+	// executor.ErrUnmanagedConnector: the connector is not warehouse-managed
+	// and the caller selects the legacy stored-credential path. Every other
+	// outcome is a tool error and fails closed — managed ClickHouse execution
+	// never falls back to the connector's stored credential.
 	ResolveTarget func(ctx context.Context, userID, connectorID uuid.UUID, pinned bool) (*executor.ExecutionTarget, error)
 	// ConnPool leases per-user ClickHouse connections for resolved targets. It
 	// is required whenever ResolveTarget returns a managed target.
 	ConnPool *executor.ConnPool
 	// CheckPermissionFunc is the canonical ACL resolver (api.Server.checkPermission).
 	// When set, CheckPermission delegates to it, so agent and MCP executions get
-	// the same group-aware, admin-mode-aware authorization as HTTP. It is left
-	// nil for bare contexts (tests, tool handlers invoked outside a server),
-	// which fall back to the resource-only check below.
+	// the same group-aware, admin-mode-aware authorization as HTTP. A nil
+	// resolver makes CheckPermission fail closed; bare contexts (tests, tool
+	// handlers invoked outside a server) must wire a stub explicitly.
 	CheckPermissionFunc func(ctx context.Context, userID, orgID, orgRole, resourceType, resourceID, action string) (bool, error)
 	// Running-state hooks wired to the notebook Hub (see internal/api/router.go
 	// and mcp.go). They let agent-driven cell runs participate in the same
@@ -147,41 +148,17 @@ func (tc *ToolContext) EmitCellUpdated(cellID string, source string) {
 }
 
 func (tc *ToolContext) CheckPermission(resourceType, resourceID, action string) error {
-	if tc.CheckPermissionFunc != nil {
-		allowed, err := tc.CheckPermissionFunc(tc.Context, tc.UserID, tc.OrgID, tc.OrgRole, resourceType, resourceID, action)
-		if err != nil {
-			return fmt.Errorf("permission check: %w", err)
-		}
-		if !allowed {
-			return fmt.Errorf("permission denied: %s on %s/%s", action, resourceType, resourceID)
-		}
-		return nil
+	if tc.CheckPermissionFunc == nil {
+		// Fail closed: without the shared resolver there is no way to evaluate
+		// group memberships, folder ancestors, Everyone grants, or admin mode.
+		// A bare context must never authorize a tool action.
+		return fmt.Errorf("permission resolver not configured")
 	}
-
-	// Fallback for bare contexts: the original resource-only check. Note that
-	// servers always wire CheckPermissionFunc, so this path is not reached by
-	// agent runs or MCP sessions.
-	if tc.OrgRole == "admin" {
-		return nil
-	}
-
-	var exists bool
-	err := tc.DB.QueryRow(tc.Context, `
-		SELECT EXISTS(
-			SELECT 1 FROM acl_entries
-			WHERE resource_type = $1 AND resource_id = $2::uuid AND org_id = $3
-			AND (
-				(subject_type = 'user' AND subject_id = $4)
-				OR (subject_type = 'org_role' AND subject_id = $5)
-				OR (subject_type = 'org_role' AND subject_id = 'everyone')
-			)
-			AND $6 = ANY(actions)
-		)
-	`, resourceType, resourceID, tc.OrgID, tc.UserID, tc.OrgRole, action).Scan(&exists)
+	allowed, err := tc.CheckPermissionFunc(tc.Context, tc.UserID, tc.OrgID, tc.OrgRole, resourceType, resourceID, action)
 	if err != nil {
 		return fmt.Errorf("permission check: %w", err)
 	}
-	if !exists {
+	if !allowed {
 		return fmt.Errorf("permission denied: %s on %s/%s", action, resourceType, resourceID)
 	}
 	return nil
