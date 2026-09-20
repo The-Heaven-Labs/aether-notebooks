@@ -527,11 +527,13 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Reconcile group membership via SSO
+	// Reconcile group membership via SSO. Every group whose membership changed
+	// is enqueued by ID: additions and removals both affect the warehouses
+	// granting that group, and a removed group no longer resolves via the user.
 	if dbProvider.AutoSyncGroups && len(claims.Groups) > 0 {
-		SyncSSOGroups(ctx, s.db.Pool, s.audit, dbProvider, orgID, userID, claims.Groups)
-		// The synced group memberships may grant (or revoke) warehouse access.
-		s.enqueueWarehouseSyncForUser(ctx, userID)
+		for _, groupID := range SyncSSOGroups(ctx, s.db.Pool, s.audit, dbProvider, orgID, userID, claims.Groups) {
+			s.enqueueWarehouseSyncForGroup(ctx, groupID)
+		}
 	}
 
 	var isPlatformAdmin bool

@@ -107,6 +107,8 @@ func (s *Server) handleAddPendingGroupMembers(w http.ResponseWriter, r *http.Req
 				writeError(w, http.StatusInternalServerError, "insert failed")
 				return
 			}
+			// The insert autocommits; reconcile the group's grant warehouses.
+			s.enqueueWarehouseSyncForGroup(ctx, groupID)
 			added++
 			s.audit.Log(ctx, audit.Entry{
 				OrgID: claims.OrgID, UserID: claims.UserID,

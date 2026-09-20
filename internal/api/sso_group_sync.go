@@ -11,7 +11,13 @@ import (
 	"github.com/the-heaven-labs/aether/internal/sso"
 )
 
-func SyncSSOGroups(ctx context.Context, pool *pgxpool.Pool, logger *audit.Logger, provider sso.Provider, orgID, userID string, idpGroups []string) {
+// SyncSSOGroups reconciles the user's SSO-tracked group memberships with the
+// groups the IdP currently reports. It returns the IDs of groups whose
+// membership actually changed (added or removed), deduplicated, so callers can
+// reconcile warehouse access. Removals are included because a user no longer
+// resolves to a group they were removed from, yet the group's grant must still
+// be reconciled out of ClickHouse.
+func SyncSSOGroups(ctx context.Context, pool *pgxpool.Pool, logger *audit.Logger, provider sso.Provider, orgID, userID string, idpGroups []string) []string {
 	var filtered []string
 	for _, g := range idpGroups {
 		if provider.GroupPrefix == "" || strings.HasPrefix(g, provider.GroupPrefix) {
@@ -19,9 +25,10 @@ func SyncSSOGroups(ctx context.Context, pool *pgxpool.Pool, logger *audit.Logger
 		}
 	}
 	if len(filtered) == 0 {
-		return
+		return nil
 	}
 
+	changed := map[string]struct{}{}
 	for _, groupName := range filtered {
 		groupID, err := FindOrCreateGroup(ctx, pool, orgID, groupName)
 		if err != nil {
@@ -54,6 +61,7 @@ func SyncSSOGroups(ctx context.Context, pool *pgxpool.Pool, logger *audit.Logger
 			}
 			continue
 		}
+		changed[groupID] = struct{}{}
 
 		_, err = pool.Exec(ctx,
 			`INSERT INTO sso_group_memberships (provider_id, group_id, user_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
@@ -84,7 +92,7 @@ func SyncSSOGroups(ctx context.Context, pool *pgxpool.Pool, logger *audit.Logger
 				Metadata:     map[string]any{"error": err.Error(), "user_id": userID},
 			})
 		}
-		return
+		return changedGroupIDs(changed)
 	}
 
 	for _, groupID := range staleGroups {
@@ -121,7 +129,19 @@ func SyncSSOGroups(ctx context.Context, pool *pgxpool.Pool, logger *audit.Logger
 			}
 			continue
 		}
+		changed[groupID] = struct{}{}
 	}
+
+	return changedGroupIDs(changed)
+}
+
+// changedGroupIDs flattens a group-ID set for enqueueing.
+func changedGroupIDs(changed map[string]struct{}) []string {
+	ids := make([]string, 0, len(changed))
+	for id := range changed {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 func FindOrCreateGroup(ctx context.Context, pool *pgxpool.Pool, orgID, name string) (string, error) {
