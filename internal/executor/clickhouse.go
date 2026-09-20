@@ -17,7 +17,10 @@ type ClickHouseExecutor struct {
 	conn clickhouse.Conn
 }
 
-func NewClickHouseExecutor(cfg models.ConnectorConfig) (*ClickHouseExecutor, error) {
+// chOptions builds driver options from a connector config. It is shared by
+// NewClickHouseExecutor and the connection pool's default opener so port,
+// database, and TLS handling cannot diverge.
+func chOptions(cfg models.ConnectorConfig) *clickhouse.Options {
 	port := cfg.Port
 	if port == 0 {
 		port = 9000
@@ -35,13 +38,15 @@ func NewClickHouseExecutor(cfg models.ConnectorConfig) (*ClickHouseExecutor, err
 		opts.Auth.Database = cfg.Database
 	}
 	if cfg.SSLMode == "require" || cfg.SSLMode == "verify-full" {
-		tlsConfig := &tls.Config{
+		opts.TLS = &tls.Config{
 			InsecureSkipVerify: cfg.SSLMode == "require",
 		}
-		opts.TLS = tlsConfig
 	}
+	return opts
+}
 
-	conn, err := clickhouse.Open(opts)
+func NewClickHouseExecutor(cfg models.ConnectorConfig) (*ClickHouseExecutor, error) {
+	conn, err := clickhouse.Open(chOptions(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}
