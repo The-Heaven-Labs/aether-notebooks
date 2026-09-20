@@ -10,70 +10,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/chaccess"
 	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
-
-// Sentinel errors returned by resolveExecutionTarget. Each one tells the
-// caller which execution path to take (or which failure to surface); none of
-// them ever falls back to the connector's stored credential.
-var (
-	// ErrUnmanagedConnector reports a connector that is not linked to a
-	// warehouse. Callers must take the legacy shared-credential path.
-	ErrUnmanagedConnector = errors.New("connector is not managed by a warehouse")
-
-	// ErrProvisioningNotReady reports a managed warehouse whose sync_status is
-	// not 'ready'. Callers must fail closed instead of using the stored
-	// connector credential.
-	ErrProvisioningNotReady = errors.New("warehouse provisioning is not ready")
-
-	// ErrServiceAccessDenied reports that the user has no `use` grant on any
-	// eligible service in the warehouse, or on the explicitly pinned connector.
-	ErrServiceAccessDenied = errors.New("no permitted service in warehouse")
-
-	// ErrServiceChoiceRequired reports ambiguous routing: several services are
-	// allowed and no preference picked one. A ServiceChoiceError carries the
-	// allowed list for the "choose a service" prompt.
-	ErrServiceChoiceRequired = errors.New("multiple warehouse services available")
-)
-
-// ServiceChoice is one selectable service in a ServiceChoiceError, carrying
-// enough to render a picker without re-querying.
-type ServiceChoice struct {
-	ConnectorID uuid.UUID
-	Name        string
-}
-
-// ServiceChoiceError is returned when a user may use more than one service in
-// a warehouse and has not recorded a routing preference.
-type ServiceChoiceError struct {
-	WarehouseID uuid.UUID
-	Allowed     []ServiceChoice
-}
-
-func (e *ServiceChoiceError) Error() string {
-	return fmt.Sprintf("warehouse %s has %d permitted services and no routing preference", e.WarehouseID, len(e.Allowed))
-}
-
-// Unwrap makes errors.Is(err, ErrServiceChoiceRequired) succeed.
-func (e *ServiceChoiceError) Unwrap() error { return ErrServiceChoiceRequired }
-
-// ExecutionTarget is a fully resolved per-user ClickHouse execution endpoint:
-// the warehouse that governs access, the service connector to dial, and the
-// derived per-user identity. It is self-contained so callers can open a pooled
-// connection without re-querying or re-decrypting anything.
-type ExecutionTarget struct {
-	WarehouseID   uuid.UUID
-	ConnectorID   uuid.UUID
-	ConnectorName string
-	// Endpoint is the "host:port" connection key (also what the pool keys on).
-	Endpoint string
-	// Config is the decrypted connector config carrying the selected
-	// endpoint's host/port/TLS settings with User/Password replaced by the
-	// per-user ClickHouse identity.
-	Config   models.ConnectorConfig
-	CHUser   string
-	Password string
-}
 
 // warehouseService is one connector row inside a warehouse, as loaded during
 // routing. encrypted is the still-encrypted connector config.
@@ -90,18 +29,18 @@ type warehouseService struct {
 //  3. Allowed services = connectors in the warehouse with `use` for the user.
 //  4. Preference wins when allowed; a sole allowed service is used directly;
 //     several allowed services without a preference return
-//     ErrServiceChoiceRequired.
+//     executor.ErrServiceChoiceRequired.
 //
 // Managed warehouses must be ready before any routing happens. A requested
-// connector without a warehouse returns ErrUnmanagedConnector, which callers
-// treat as the legacy shared-credential path.
-func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, requestedConnectorID uuid.UUID, pinned bool) (*ExecutionTarget, error) {
+// connector without a warehouse returns executor.ErrUnmanagedConnector, which
+// callers treat as the legacy shared-credential path.
+func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, requestedConnectorID uuid.UUID, pinned bool) (*executor.ExecutionTarget, error) {
 	requested, err := s.loadServiceConnector(ctx, requestedConnectorID)
 	if err != nil {
 		return nil, err
 	}
 	if requested.warehouseID == nil {
-		return nil, fmt.Errorf("connector %s: %w", requestedConnectorID, ErrUnmanagedConnector)
+		return nil, fmt.Errorf("connector %s: %w", requestedConnectorID, executor.ErrUnmanagedConnector)
 	}
 	warehouseID := *requested.warehouseID
 
@@ -117,7 +56,7 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, r
 		return nil, fmt.Errorf("load warehouse %s: %w", warehouseID, err)
 	}
 	if syncStatus != "ready" {
-		return nil, fmt.Errorf("warehouse %s sync_status %q: %w", warehouseID, syncStatus, ErrProvisioningNotReady)
+		return nil, fmt.Errorf("warehouse %s sync_status %q: %w", warehouseID, syncStatus, executor.ErrProvisioningNotReady)
 	}
 
 	var role string
@@ -125,7 +64,7 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, r
 		`SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2`,
 		orgID.String(), userID.String()).Scan(&role)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("user %s is not a member of org %s: %w", userID, orgID, ErrServiceAccessDenied)
+		return nil, fmt.Errorf("user %s is not a member of org %s: %w", userID, orgID, executor.ErrServiceAccessDenied)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("load org role: %w", err)
@@ -137,7 +76,7 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, r
 			return nil, err
 		}
 		if !allowed {
-			return nil, fmt.Errorf("pinned connector %s: %w", requestedConnectorID, ErrServiceAccessDenied)
+			return nil, fmt.Errorf("pinned connector %s: %w", requestedConnectorID, executor.ErrServiceAccessDenied)
 		}
 		return s.buildExecutionTarget(warehouseID, orgID, userID, requested)
 	}
@@ -176,26 +115,33 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, r
 
 	switch len(allowed) {
 	case 0:
-		return nil, fmt.Errorf("warehouse %s: %w", warehouseID, ErrServiceAccessDenied)
+		return nil, fmt.Errorf("warehouse %s: %w", warehouseID, executor.ErrServiceAccessDenied)
 	case 1:
 		return s.buildExecutionTarget(warehouseID, orgID, userID, allowed[0])
 	default:
-		choices := make([]ServiceChoice, 0, len(allowed))
+		choices := make([]executor.ServiceChoice, 0, len(allowed))
 		for _, svc := range allowed {
-			choices = append(choices, ServiceChoice{ConnectorID: svc.id, Name: svc.name})
+			choices = append(choices, executor.ServiceChoice{ConnectorID: svc.id, Name: svc.name})
 		}
-		return nil, &ServiceChoiceError{WarehouseID: warehouseID, Allowed: choices}
+		return nil, &executor.ServiceChoiceError{WarehouseID: warehouseID, Allowed: choices}
 	}
 }
 
 // loadServiceConnector loads a single non-deleted connector row for routing.
 // A missing or soft-deleted connector is reported as pgx.ErrNoRows.
+//
+// A managed connector must live in the same org as the warehouse it points
+// at: the join rejects a mismatched row even if some other write path skipped
+// the CRUD validation, so it can never borrow another org's credential
+// namespace or ACLs.
 func (s *Server) loadServiceConnector(ctx context.Context, connectorID uuid.UUID) (warehouseService, error) {
 	var svc warehouseService
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT id, name, warehouse_id, config_encrypted
-		FROM connectors
-		WHERE id = $1 AND deleted_at IS NULL`, connectorID.String()).
+		SELECT c.id, c.name, c.warehouse_id, c.config_encrypted
+		FROM connectors c
+		LEFT JOIN warehouses w ON w.id = c.warehouse_id
+		WHERE c.id = $1 AND c.deleted_at IS NULL
+		  AND (c.warehouse_id IS NULL OR w.org_id = c.org_id)`, connectorID.String()).
 		Scan(&svc.id, &svc.name, &svc.warehouseID, &svc.encrypted)
 	if err != nil {
 		return warehouseService{}, fmt.Errorf("connector %s: %w", connectorID, err)
@@ -204,7 +150,8 @@ func (s *Server) loadServiceConnector(ctx context.Context, connectorID uuid.UUID
 }
 
 // listWarehouseServices lists the non-deleted connectors of a warehouse in a
-// stable order (name, then ID) for deterministic choice prompts.
+// stable order (name, then ID) for deterministic choice prompts. orgID is the
+// warehouse's org, so cross-org rows are filtered out here too.
 func (s *Server) listWarehouseServices(ctx context.Context, warehouseID, orgID uuid.UUID) ([]warehouseService, error) {
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, warehouse_id, config_encrypted
@@ -244,7 +191,7 @@ func (s *Server) connectorUseAllowed(ctx context.Context, userID, orgID uuid.UUI
 // buildExecutionTarget decrypts the chosen service's endpoint config and
 // replaces its stored credential with the warehouse-scoped per-user
 // ClickHouse identity. The stored credential is never returned to callers.
-func (s *Server) buildExecutionTarget(warehouseID, orgID, userID uuid.UUID, svc warehouseService) (*ExecutionTarget, error) {
+func (s *Server) buildExecutionTarget(warehouseID, orgID, userID uuid.UUID, svc warehouseService) (*executor.ExecutionTarget, error) {
 	plain, err := crypto.Decrypt(svc.encrypted, s.masterKey)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt connector %s config: %w", svc.id, err)
@@ -259,7 +206,7 @@ func (s *Server) buildExecutionTarget(warehouseID, orgID, userID uuid.UUID, svc 
 	cfg.User = chUser
 	cfg.Password = password
 
-	return &ExecutionTarget{
+	return &executor.ExecutionTarget{
 		WarehouseID:   warehouseID,
 		ConnectorID:   svc.id,
 		ConnectorName: svc.name,

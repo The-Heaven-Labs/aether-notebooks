@@ -3,11 +3,13 @@ package api
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/chaccess"
+	"github.com/the-heaven-labs/aether/internal/executor"
 )
 
 // executionTargetFixture seeds a ready warehouse with two service connectors
@@ -125,7 +127,7 @@ func (fx *executionTargetFixture) setSyncStatus(t *testing.T, status string) {
 	require.NoError(t, err)
 }
 
-func (fx *executionTargetFixture) resolve(t *testing.T, requested uuid.UUID, pinned bool) (*ExecutionTarget, error) {
+func (fx *executionTargetFixture) resolve(t *testing.T, requested uuid.UUID, pinned bool) (*executor.ExecutionTarget, error) {
 	t.Helper()
 	return fx.s.resolveExecutionTarget(context.Background(), fx.userID, requested, pinned)
 }
@@ -136,7 +138,7 @@ func TestResolveExecutionTargetUnmanagedConnector(t *testing.T) {
 
 	for _, pinned := range []bool{false, true} {
 		target, err := fx.resolve(t, fx.unmanagedID, pinned)
-		require.ErrorIs(t, err, ErrUnmanagedConnector, "pinned=%v", pinned)
+		require.ErrorIs(t, err, executor.ErrUnmanagedConnector, "pinned=%v", pinned)
 		require.Nil(t, target)
 	}
 }
@@ -149,11 +151,11 @@ func TestResolveExecutionTargetNotReadyFailsClosed(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			fx.setSyncStatus(t, status)
 			target, err := fx.resolve(t, fx.connA, false)
-			require.ErrorIs(t, err, ErrProvisioningNotReady)
+			require.ErrorIs(t, err, executor.ErrProvisioningNotReady)
 			require.Nil(t, target)
 
 			target, err = fx.resolve(t, fx.connA, true)
-			require.ErrorIs(t, err, ErrProvisioningNotReady, "pins must not bypass readiness")
+			require.ErrorIs(t, err, executor.ErrProvisioningNotReady, "pins must not bypass readiness")
 			require.Nil(t, target)
 		})
 	}
@@ -163,7 +165,7 @@ func TestResolveExecutionTargetRequiresServiceAccess(t *testing.T) {
 	fx := setupExecutionTargetFixture(t)
 
 	target, err := fx.resolve(t, fx.provisionerID, false)
-	require.ErrorIs(t, err, ErrServiceAccessDenied)
+	require.ErrorIs(t, err, executor.ErrServiceAccessDenied)
 	require.Nil(t, target)
 }
 
@@ -201,7 +203,7 @@ func TestResolveExecutionTargetHonorsPin(t *testing.T) {
 
 	fx.revokeUse(t, fx.connA)
 	target, err = fx.resolve(t, fx.connA, true)
-	require.ErrorIs(t, err, ErrServiceAccessDenied)
+	require.ErrorIs(t, err, executor.ErrServiceAccessDenied)
 	require.Nil(t, target, "a pin without use must not fall back to another service")
 
 	// Without the pin the warehouse still routes through the permitted service.
@@ -216,13 +218,13 @@ func TestResolveExecutionTargetAmbiguousWithoutPreference(t *testing.T) {
 	fx.grantUse(t, fx.connB)
 
 	target, err := fx.resolve(t, fx.connA, false)
-	require.ErrorIs(t, err, ErrServiceChoiceRequired)
+	require.ErrorIs(t, err, executor.ErrServiceChoiceRequired)
 	require.Nil(t, target)
 
-	var choice *ServiceChoiceError
+	var choice *executor.ServiceChoiceError
 	require.ErrorAs(t, err, &choice)
 	require.Equal(t, fx.warehouseID, choice.WarehouseID)
-	require.ElementsMatch(t, []ServiceChoice{
+	require.ElementsMatch(t, []executor.ServiceChoice{
 		{ConnectorID: fx.connA, Name: "Service A"},
 		{ConnectorID: fx.connB, Name: "Service B"},
 	}, choice.Allowed)
@@ -296,6 +298,46 @@ func TestResolveExecutionTargetRejectsNonMember(t *testing.T) {
 	require.NoError(t, err)
 
 	target, err := fx.resolve(t, fx.connA, false)
-	require.ErrorIs(t, err, ErrServiceAccessDenied)
+	require.ErrorIs(t, err, executor.ErrServiceAccessDenied)
 	require.Nil(t, target)
+}
+
+func TestResolveExecutionTargetRejectsCrossOrgWarehouseConnector(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	ctx := context.Background()
+
+	// A connector injected outside the CRUD validation may not borrow another
+	// org's warehouse, regardless of either org's ACL entries.
+	otherOrgID := uuid.New()
+	_, err := fx.s.db.Pool.Exec(ctx,
+		`INSERT INTO orgs (id, name, slug) VALUES ($1, $2, $3)`,
+		otherOrgID.String(), "Other Org", "other-"+uuid.NewString())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := fx.s.db.Pool.Exec(cleanupCtx,
+			`DELETE FROM orgs WHERE id = $1`, otherOrgID.String()); err != nil {
+			t.Logf("cleanup other org: %v", err)
+		}
+	})
+
+	foreignID := uuid.New()
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted, warehouse_id)
+		VALUES ($1, $2, $3, 'clickhouse', $4, $5)`,
+		foreignID.String(), otherOrgID.String(), "Foreign Service",
+		[]byte("unused"), fx.warehouseID.String())
+	require.NoError(t, err)
+
+	target, err := fx.resolve(t, foreignID, false)
+	require.ErrorIs(t, err, pgx.ErrNoRows)
+	require.Nil(t, target)
+
+	// The foreign row must not leak into the warehouse's service list either:
+	// a sole permitted service still resolves unambiguously.
+	fx.grantUse(t, fx.connB)
+	target, err = fx.resolve(t, fx.connB, false)
+	require.NoError(t, err)
+	require.Equal(t, fx.connB, target.ConnectorID)
 }
