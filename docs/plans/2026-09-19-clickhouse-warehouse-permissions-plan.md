@@ -2475,7 +2475,7 @@ git commit -m "docs: warehouse permissions rollout notes"
 ## Execution notes
 
 - Run `task infra:up` before any test command that touches the DB.
-- Always pass `-timeout 3m` to `go test` (matches Taskfile/Makefile/CI). A package that
+- Always pass `-timeout 3m` to `go test` (matches Taskfile/CI). A package that
   exceeds it locally is pathological; narrow with `-run` or speed up the fixture instead
   of raising the timeout.
 - Commit after every task; each commit should keep `task check` green.

@@ -61,7 +61,7 @@ For local multi-tenancy testing with subdomains (`org1.aether.test` → Org 1):
 
 ## Commands
 
-**Preferred task runner: `task` (Taskfile.yml). `make` provides equivalent commands independently.**
+**Task runner: `task` (Taskfile.yml) — the only task runner in this repo.**
 
 ```bash
 # Infrastructure
@@ -91,7 +91,7 @@ task test:api          # Only internal/api/... tests
 task test:race         # With race detector
 task test:e2e          # Smoke test against live server
 
-All Go test commands pass an explicit `-timeout 3m` (Taskfile, Makefile, and CI).
+All Go test commands pass an explicit `-timeout 3m` (Taskfile and CI).
 A package that exceeds 3 minutes here is pathological (the shared local dev DB
 accumulates data; CI is faster). Do not raise the timeout — narrow the run with
 `-run` or split/speed up the test. Agent-run test commands must include
