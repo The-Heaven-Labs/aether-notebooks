@@ -80,7 +80,8 @@ func setupWarehouseFixture(t *testing.T) *warehouseSyncFixture {
 }
 
 // setupWarehouseFixtureWithServer seeds the fixture against an existing
-// Server, so tests can share one pool across warehouses.
+// Server, so tests can share one pool across warehouses. It skips the test
+// when the dev ClickHouse service is unreachable.
 func setupWarehouseFixtureWithServer(t *testing.T, s *Server, key []byte) *warehouseSyncFixture {
 	t.Helper()
 	ctx := context.Background()
@@ -92,9 +93,37 @@ func setupWarehouseFixtureWithServer(t *testing.T, s *Server, key []byte) *wareh
 	}
 	t.Cleanup(func() { conn.Close() })
 
+	fx := seedWarehouseFixtureRows(t, s, key)
+	fx.conn = conn
+
+	prefix := chaccess.IdentifierPrefix(fx.warehouseID)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := dropPrefixedEntities(cleanupCtx, conn, "users", "DROP USER IF EXISTS %s", prefix); err != nil {
+			t.Logf("cleanup clickhouse users: %v", err)
+		}
+		if err := dropPrefixedEntities(cleanupCtx, conn, "roles", "DROP ROLE IF EXISTS %s", prefix); err != nil {
+			t.Logf("cleanup clickhouse roles: %v", err)
+		}
+	})
+	return fx
+}
+
+// seedWarehouseFixtureRows seeds one org, user, group (with membership),
+// clickhouse provisioner connector, warehouse, and a direct user grant plus a
+// group grant. It touches only Postgres so resolution tests can reuse the
+// rows without requiring ClickHouse. All IDs are random so repeated runs never
+// collide.
+func seedWarehouseFixtureRows(t *testing.T, s *Server, key []byte) *warehouseSyncFixture {
+	t.Helper()
+	ctx := context.Background()
+
+	cfg := warehouseSyncTestClickHouseConfig()
+
 	suffix := uuid.NewString()
 	orgID := uuid.New()
-	_, err = s.db.Pool.Exec(ctx,
+	_, err := s.db.Pool.Exec(ctx,
 		`INSERT INTO orgs (id, name, slug) VALUES ($1, $2, $3)`,
 		orgID.String(), "Warehouse Sync Org", "whsync-"+suffix)
 	require.NoError(t, err)
@@ -151,16 +180,9 @@ func setupWarehouseFixtureWithServer(t *testing.T, s *Server, key []byte) *wareh
 		orgID.String(), warehouseID.String(), userID.String(), userID.String(), groupID.String())
 	require.NoError(t, err)
 
-	prefix := chaccess.IdentifierPrefix(warehouseID)
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := dropPrefixedEntities(cleanupCtx, conn, "users", "DROP USER IF EXISTS %s", prefix); err != nil {
-			t.Logf("cleanup clickhouse users: %v", err)
-		}
-		if err := dropPrefixedEntities(cleanupCtx, conn, "roles", "DROP ROLE IF EXISTS %s", prefix); err != nil {
-			t.Logf("cleanup clickhouse roles: %v", err)
-		}
 		for _, stmt := range []struct {
 			sql string
 			id  uuid.UUID
@@ -179,7 +201,6 @@ func setupWarehouseFixtureWithServer(t *testing.T, s *Server, key []byte) *wareh
 
 	return &warehouseSyncFixture{
 		s:           s,
-		conn:        conn,
 		orgID:       orgID,
 		userID:      userID,
 		groupID:     groupID,
