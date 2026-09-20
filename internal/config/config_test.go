@@ -138,6 +138,45 @@ func TestAgentToolTimeoutInvalid(t *testing.T) {
 	}
 }
 
+func TestWarehouseReconcileIntervalDefault(t *testing.T) {
+	os.Unsetenv("AETHER_CH_RECONCILE_INTERVAL")
+	cfg, err := LoadMigrateOnly()
+	if err != nil {
+		t.Fatalf("LoadMigrateOnly() failed: %v", err)
+	}
+	if cfg.WarehouseReconcileInterval.String() != "10m0s" {
+		t.Errorf("expected default 10m, got %v", cfg.WarehouseReconcileInterval)
+	}
+}
+
+func TestWarehouseReconcileIntervalCustomAndFloor(t *testing.T) {
+	for raw, want := range map[string]string{
+		"30m": "30m0s",
+		"2h":  "2h0m0s",
+		"1m":  "1m0s",
+		"30s": "1m0s", // below floor → raised
+		"-5m": "1m0s",
+	} {
+		os.Setenv("AETHER_CH_RECONCILE_INTERVAL", raw)
+		cfg, err := LoadMigrateOnly()
+		if err != nil {
+			t.Fatalf("LoadMigrateOnly() failed for %q: %v", raw, err)
+		}
+		if cfg.WarehouseReconcileInterval.String() != want {
+			t.Errorf("for %q: expected %s, got %v", raw, want, cfg.WarehouseReconcileInterval)
+		}
+		os.Unsetenv("AETHER_CH_RECONCILE_INTERVAL")
+	}
+}
+
+func TestWarehouseReconcileIntervalInvalid(t *testing.T) {
+	os.Setenv("AETHER_CH_RECONCILE_INTERVAL", "not-a-duration")
+	defer os.Unsetenv("AETHER_CH_RECONCILE_INTERVAL")
+	if _, err := LoadMigrateOnly(); err == nil {
+		t.Error("expected error for invalid duration, got nil")
+	}
+}
+
 func TestOutputLimitsMaxBytesDefault(t *testing.T) {
 	os.Unsetenv("AETHER_OUTPUT_LIMITS_MAX_BYTES")
 	cfg, err := LoadMigrateOnly()

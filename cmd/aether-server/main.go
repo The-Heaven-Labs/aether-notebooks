@@ -240,6 +240,9 @@ func main() {
 
 	// Build HTTP server
 	srv := api.NewServer(db, jwtIssuer, auditLogger, masterKey, redisCache)
+	// Registered after db.Close and redisCache.Close, so it runs before them:
+	// in-flight reconciles still have their dependencies while they drain.
+	defer srv.Close()
 
 	// Configure storage backend
 	var store storage.Storage
@@ -272,6 +275,7 @@ func main() {
 	}
 	srv.SetStorage(store)
 	srv.SetAgentStore(store)
+	srv.SetWarehouseReconcileInterval(cfg.WarehouseReconcileInterval)
 	srv.StartBackgroundJobs(ctx)
 	srv.StartAuditS3Writers(ctx)
 	srv.SetPlatformAdminEmail(cfg.PlatformAdminEmail)

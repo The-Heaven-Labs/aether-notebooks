@@ -92,6 +92,9 @@ func setupTestServer(t *testing.T) *api.Server {
 	redisCache := setupTestCache(t)
 	srv := api.NewServer(db, jwt, auditLogger, key, redisCache)
 	srv.SetMaxAttachmentBytes(10 << 20) // 10 MB default for tests
+	// Registered after setupTestDB's cleanup, so it runs before db.Close:
+	// the sync worker drains while the database is still available.
+	t.Cleanup(srv.Close)
 	return srv
 }
 

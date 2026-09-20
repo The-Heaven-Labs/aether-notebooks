@@ -225,6 +225,9 @@ the user was explicitly granted does not change results — only compute placeme
   (`changeable_in_readonly`).
 - Propagation delay of access entities across services in a warehouse (retry on
   `ACCESS_DENIED` after fresh grants).
+- Org deletion currently leaves provisioned ClickHouse identities behind: `warehouses` cascade
+  from `orgs`, so the sync worker can no longer resolve them; a follow-up must decide on an
+  explicit cleanup path (e.g. pre-delete reconcile or an orphan sweep for deleted-org prefixes).
 
 ## Out of scope
 

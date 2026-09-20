@@ -11,8 +11,16 @@ type WarehouseSyncerForTest interface {
 	Enqueue(uuid.UUID)
 }
 
-// SetWarehouseSyncerForTest replaces the server's warehouse sync service.
+// SetWarehouseSyncerForTest replaces the server's warehouse sync service. The
+// replaced service is closed when it owns a Close method (the production
+// *chaccess.SyncService does), so worker state cannot leak past the swap;
+// recorders do not implement Close and are left alone.
 func (s *Server) SetWarehouseSyncerForTest(syncer WarehouseSyncerForTest) {
+	if s.warehouseSync != syncer {
+		if closer, ok := s.warehouseSync.(interface{ Close() }); ok {
+			closer.Close()
+		}
+	}
 	s.warehouseSync = syncer
 }
 

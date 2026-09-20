@@ -57,6 +57,15 @@ type Server struct {
 	commit               string                          // git commit (set via ldflags)
 	buildDate            string                          // build date (set via ldflags)
 	warehouseSync        warehouseSyncer                 // debounced ClickHouse access sync (nil disables triggers)
+	// warehouseReconcileInterval is the periodic catch-up cadence for the
+	// warehouse sync loop (AETHER_CH_RECONCILE_INTERVAL); <= 0 means the
+	// package default.
+	warehouseReconcileInterval time.Duration
+	warehouseLoopMu            sync.Mutex         // guards the loop fields and closed
+	warehouseLoopCancel        context.CancelFunc // stops the catch-up loop on Close
+	warehouseLoopDone          chan struct{}      // closed when the catch-up goroutine exits
+	warehouseLoopClosed        bool               // Close ran; starts after it are refused
+	closeOnce                  sync.Once          // makes Close idempotent
 }
 
 // NewServer creates a new Aether API server with the provided dependencies.
@@ -171,6 +180,38 @@ func (s *Server) orgInlineOutputsMaxBytes(ctx context.Context, orgID string) (in
 func (s *Server) SetToolAllowedDomains(domains []string) {
 	s.toolAllowedDomains = domains
 	s.agentEngine.SetToolAllowedDomains(domains)
+}
+
+// SetWarehouseReconcileInterval sets the periodic warehouse reconciliation
+// cadence. Values <= 0 select the 10m default. Call it before
+// StartBackgroundJobs.
+func (s *Server) SetWarehouseReconcileInterval(d time.Duration) {
+	s.warehouseReconcileInterval = d
+}
+
+// Close stops the warehouse reconciliation loop and drains the sync worker,
+// waiting for in-flight reconciles to observe cancellation. It is safe to call
+// multiple times. Close must run before the database and cache are closed
+// because in-flight reconciles use both.
+func (s *Server) Close() {
+	s.closeOnce.Do(func() {
+		s.warehouseLoopMu.Lock()
+		s.warehouseLoopClosed = true
+		cancel := s.warehouseLoopCancel
+		done := s.warehouseLoopDone
+		s.warehouseLoopMu.Unlock()
+		// Stop new enqueues before draining the worker so the loop cannot
+		// feed work into a closing service.
+		if cancel != nil {
+			cancel()
+		}
+		if done != nil {
+			<-done
+		}
+		if closer, ok := s.warehouseSync.(interface{ Close() }); ok {
+			closer.Close()
+		}
+	})
 }
 
 // SetToolTimeoutDefault sets the fallback execution budget for agent tools

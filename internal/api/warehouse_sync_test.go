@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -64,6 +65,8 @@ func newWarehouseSyncTestServer(t *testing.T) (*Server, []byte) {
 	require.NoError(t, db.Migrate(context.Background()))
 	key := crypto.DeriveKey(warehouseSyncTestMasterKey)
 	s := NewServer(db, auth.NewJWTIssuer("test-secret", 15*time.Minute), audit.NewLogger(db), key, nil)
+	// Registered after db.Close's cleanup, so it runs before the pool closes.
+	t.Cleanup(s.Close)
 	return s, key
 }
 
@@ -766,6 +769,7 @@ func TestReconcileWarehouseDoesNotStarveSmallPool(t *testing.T) {
 
 	key := crypto.DeriveKey(warehouseSyncTestMasterKey)
 	s := NewServer(db, auth.NewJWTIssuer("test-secret", 15*time.Minute), audit.NewLogger(db), key, nil)
+	t.Cleanup(s.Close)
 	fxA := setupWarehouseFixtureWithServer(t, s, key)
 	fxB := setupWarehouseFixtureWithServer(t, s, key)
 
@@ -783,4 +787,163 @@ func TestReconcileWarehouseDoesNotStarveSmallPool(t *testing.T) {
 			t.Fatal("reconcile starved: concurrent reconciles exhausted the 2-connection pool")
 		}
 	}
+}
+
+func TestDriftDetectionAlertsOnUnexpectedGrant(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+
+	// Provision the desired state first so the only difference is the grant
+	// injected below.
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	userIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID)
+	quotedUser, err := chaccess.QuoteIdent(userIdent)
+	require.NoError(t, err)
+	require.NoError(t, fx.conn.Exec(ctx, "GRANT SELECT ON `analytics`.`secret` TO "+quotedUser))
+
+	report, err := fx.s.detectWarehouseDrift(ctx, fx.warehouseID)
+	require.NoError(t, err)
+	require.Contains(t, report.UnexpectedGrants, "analytics.secret for "+userIdent)
+	require.False(t, report.IsEmpty())
+
+	var driftAudits int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_logs
+		WHERE org_id = $1 AND action = 'warehouse.drift' AND resource_id = $2
+		  AND metadata->'unexpected_grants' @> $3::jsonb`,
+		fx.orgID.String(), fx.warehouseID.String(),
+		`["analytics.secret for `+userIdent+`"]`).Scan(&driftAudits))
+	require.Equal(t, 1, driftAudits)
+}
+
+func TestDriftDetectionReportsMissingGrant(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	// A freshly reconciled warehouse has no drift.
+	report, err := fx.s.detectWarehouseDrift(ctx, fx.warehouseID)
+	require.NoError(t, err)
+	require.True(t, report.IsEmpty(), "clean warehouse must report no drift: %+v", report)
+
+	// Revoke a desired grant outside Aether and detect it as missing. Also
+	// create an orphan user in the warehouse namespace: both are drift.
+	userIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID)
+	quotedUser, err := chaccess.QuoteIdent(userIdent)
+	require.NoError(t, err)
+	require.NoError(t, fx.conn.Exec(ctx, "REVOKE SELECT ON `analytics`.`events` FROM "+quotedUser))
+
+	orphanIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, uuid.New())
+	quotedOrphan, err := chaccess.QuoteIdent(orphanIdent)
+	require.NoError(t, err)
+	require.NoError(t, fx.conn.Exec(ctx, "CREATE USER "+quotedOrphan+" IDENTIFIED WITH no_password"))
+
+	report, err = fx.s.detectWarehouseDrift(ctx, fx.warehouseID)
+	require.NoError(t, err)
+	require.Contains(t, report.MissingGrants, "analytics.events for "+userIdent)
+	require.Contains(t, report.UnexpectedUsers, orphanIdent)
+
+	var driftAudits int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_logs
+		WHERE org_id = $1 AND action = 'warehouse.drift' AND resource_id = $2
+		  AND metadata->'missing_grants' @> $3::jsonb`,
+		fx.orgID.String(), fx.warehouseID.String(),
+		`["analytics.events for `+userIdent+`"]`).Scan(&driftAudits))
+	require.Equal(t, 1, driftAudits)
+}
+
+// TestCompareWarehouseStateReportsAllDriftKinds exercises the pure diff
+// directly so every report field is covered without a provisioner.
+func TestCompareWarehouseStateReportsAllDriftKinds(t *testing.T) {
+	warehouseID := uuid.New()
+	grantPresent := chaccess.Grant{Database: "analytics", Table: "events"}
+	grantMissing := chaccess.Grant{Database: "analytics", Table: "daily"}
+	grantExtra := chaccess.Grant{Database: "analytics", Table: "secret"}
+
+	desired := chaccess.DesiredState{
+		Roles: map[string]chaccess.RoleState{
+			"role_want": {Grants: map[chaccess.Grant]struct{}{grantPresent: {}}},
+		},
+		Users: map[string]chaccess.UserState{
+			"user_want": {
+				Roles:        []string{"role_want"},
+				DirectGrants: map[chaccess.Grant]struct{}{grantMissing: {}},
+			},
+		},
+	}
+	actual := chaccess.ActualState{
+		Roles: map[string]map[chaccess.Grant]struct{}{
+			"role_want":   {grantPresent: {}},
+			"role_orphan": {},
+		},
+		Users: map[string]chaccess.UserActual{
+			"user_want": {
+				Roles:           map[string]struct{}{"role_want": {}},
+				DirectGrants:    map[chaccess.Grant]struct{}{grantExtra: {}},
+				DefaultRolesAll: false,
+			},
+			"user_orphan": {},
+		},
+		Wildcards:  []chaccess.WildcardGrant{{Subject: "user_want", Scope: "analytics.*"}},
+		Unexpected: []string{"role x granted to y"},
+	}
+
+	report := compareWarehouseState(warehouseID, desired, actual)
+	require.Equal(t, []string{"analytics.secret for user_want"}, report.UnexpectedGrants)
+	require.Equal(t, []string{"analytics.daily for user_want"}, report.MissingGrants)
+	require.Equal(t, []string{"user_orphan"}, report.UnexpectedUsers)
+	require.Equal(t, []string{"role_orphan"}, report.UnexpectedRoles)
+	require.Equal(t, []string{"user_want"}, report.DefaultRolesNotAll)
+	require.Equal(t, []chaccess.WildcardGrant{{Subject: "user_want", Scope: "analytics.*"}}, report.Wildcards)
+	require.Equal(t, []string{"role x granted to y"}, report.Unexpected)
+	require.False(t, report.IsEmpty())
+}
+
+// loopWarehouseRecorder records enqueues from the reconcile loop.
+type loopWarehouseRecorder struct {
+	mu  sync.Mutex
+	ids []uuid.UUID
+}
+
+func (r *loopWarehouseRecorder) Enqueue(id uuid.UUID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ids = append(r.ids, id)
+}
+
+func (r *loopWarehouseRecorder) count(id uuid.UUID) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, got := range r.ids {
+		if got == id {
+			n++
+		}
+	}
+	return n
+}
+
+func TestWarehouseLoopEnqueuesAllAndStops(t *testing.T) {
+	fx := setupWarehouseFixture(t)
+
+	rec := &loopWarehouseRecorder{}
+	fx.s.SetWarehouseSyncerForTest(rec)
+	fx.s.SetWarehouseReconcileInterval(50 * time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fx.s.StartBackgroundJobs(ctx)
+
+	// The startup enqueue plus at least one tick.
+	require.Eventually(t, func() bool { return rec.count(fx.warehouseID) >= 2 },
+		5*time.Second, 10*time.Millisecond,
+		"loop must enqueue warehouses on startup and on each tick")
+
+	before := rec.count(fx.warehouseID)
+	fx.s.Close()
+	time.Sleep(200 * time.Millisecond)
+	require.Equal(t, before, rec.count(fx.warehouseID), "Close must stop the loop")
+	fx.s.Close() // Close is idempotent
 }

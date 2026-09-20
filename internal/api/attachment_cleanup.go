@@ -66,4 +66,5 @@ func (s *Server) StartBackgroundJobs(ctx context.Context) {
 			}
 		}
 	}()
+	s.startWarehouseReconcileLoop(ctx)
 }
