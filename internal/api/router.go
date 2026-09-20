@@ -21,6 +21,7 @@ import (
 	"github.com/the-heaven-labs/aether/internal/config"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/database"
+	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/storage"
 )
 
@@ -65,7 +66,14 @@ type Server struct {
 	warehouseLoopCancel        context.CancelFunc // stops the catch-up loop on Close
 	warehouseLoopDone          chan struct{}      // closed when the catch-up goroutine exits
 	warehouseLoopClosed        bool               // Close ran; starts after it are refused
-	closeOnce                  sync.Once          // makes Close idempotent
+	// connPool holds per-user ClickHouse connections leased by warehouse-scoped
+	// HTTP executions. CloseAll runs from Close; CloseIdle runs on a ticker.
+	connPool           *executor.ConnPool
+	connPoolLoopMu     sync.Mutex
+	connPoolLoopCancel context.CancelFunc
+	connPoolLoopDone   chan struct{}
+	connPoolLoopClosed bool
+	closeOnce          sync.Once // makes Close idempotent
 }
 
 // NewServer creates a new Aether API server with the provided dependencies.
@@ -85,6 +93,10 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 		upgrader:                   websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
 		warehouseReconcileInterval: config.DefaultWarehouseReconcileInterval,
 	}
+	s.connPool = executor.NewConnPool(executor.PoolConfig{
+		MaxPools: connPoolMaxPools,
+		IdleTTL:  connPoolIdleTTL,
+	})
 	s.agentEngine = agent.NewEngine(context.Background(), db.Pool, rdb)
 	s.agentEngine.BroadcastFunc = func(notebookID string, msg any) {
 		s.hub.Broadcast(notebookID, msg)
@@ -218,6 +230,11 @@ func (s *Server) Close() {
 		if closer, ok := s.warehouseSync.(interface{ Close() }); ok {
 			closer.Close()
 		}
+		// Stop the idle-eviction ticker before closing the pool so no
+		// CloseIdle can race CloseAll; connections still leased by an
+		// in-flight execution are closed by their last release.
+		s.stopConnPoolIdleLoop()
+		s.connPool.CloseAll()
 	})
 }
 

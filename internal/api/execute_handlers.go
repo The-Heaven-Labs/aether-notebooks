@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/crypto"
@@ -202,11 +204,73 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ClickHouse connectors linked to a ready warehouse execute as the
+	// requesting user's provisioned ClickHouse identity through the shared
+	// connection pool. Unmanaged ClickHouse connectors and every other type
+	// keep the legacy stored-credential driver path, so routing is gated on
+	// the connector type before warehouse resolution is consulted.
+	var (
+		exec        executor.Executor
+		warehouseID string
+		chUser      string
+		auditConnID = cell.ConnectorID
+	)
 	connectStart := time.Now()
-	exec, err := driver.NewExecutor(plain)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to connect to database")
-		return
+	switch {
+	case connType == models.ConnectorClickHouse:
+		userUUID, userErr := uuid.Parse(claims.UserID)
+		if userErr != nil {
+			writeError(w, http.StatusInternalServerError, "invalid user id")
+			return
+		}
+		connUUID, connErr := uuid.Parse(cell.ConnectorID)
+		if connErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid connector id")
+			return
+		}
+		target, targetErr := s.resolveExecutionTarget(ctx, userUUID, connUUID, false)
+		switch {
+		case targetErr == nil:
+			conn, release, getErr := s.connPool.Get(target.Endpoint, target.CHUser, target.Config)
+			if getErr != nil {
+				writeError(w, http.StatusBadGateway, "failed to connect to database")
+				return
+			}
+			// The pooled executor owns the lease: Close releases it, so
+			// release must not be deferred separately.
+			exec = executor.NewPooledClickHouseExecutor(conn, release)
+			warehouseID = target.WarehouseID.String()
+			chUser = target.CHUser
+			auditConnID = target.ConnectorID.String()
+		case errors.Is(targetErr, executor.ErrUnmanagedConnector):
+			exec, err = driver.NewExecutor(plain)
+			if err != nil {
+				writeError(w, http.StatusBadGateway, "failed to connect to database")
+				return
+			}
+		case errors.Is(targetErr, executor.ErrConnectorNotFound):
+			writeError(w, http.StatusNotFound, "connector not found")
+			return
+		case errors.Is(targetErr, executor.ErrProvisioningNotReady):
+			writeError(w, http.StatusServiceUnavailable, "warehouse provisioning is not ready")
+			return
+		case errors.Is(targetErr, executor.ErrServiceAccessDenied):
+			writeError(w, http.StatusForbidden, "no permitted service in warehouse")
+			return
+		case errors.Is(targetErr, executor.ErrServiceChoiceRequired):
+			writeServiceChoiceRequired(w, targetErr)
+			return
+		default:
+			slog.Error("resolve execution target", "connector_id", cell.ConnectorID, "error", targetErr)
+			writeError(w, http.StatusInternalServerError, "failed to resolve execution target")
+			return
+		}
+	default:
+		exec, err = driver.NewExecutor(plain)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "failed to connect to database")
+			return
+		}
 	}
 	defer exec.Close()
 	connectTime := time.Since(connectStart).Milliseconds()
@@ -277,7 +341,13 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		s.db.Pool.Exec(bgCtx, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, errTotalTime, cellID)
 		s.hub.Broadcast(nbID, map[string]any{"type": "cell_output", "cell_id": cellID, "outputs": []models.Output{errOutput}, "user_email": s.userEmail(bgCtx, claims.UserID)})
 		s.hub.Broadcast(nbID, map[string]any{"type": "cell_cancelled", "cell_id": cellID})
-		writeError(w, http.StatusUnprocessableEntity, errMsg)
+		status := http.StatusUnprocessableEntity
+		if !isCancelled && executor.IsAccessDenied(err) {
+			// A per-user warehouse identity hitting an ungranted table is an
+			// authorization failure, not an unprocessable query.
+			status = http.StatusForbidden
+		}
+		writeError(w, status, errMsg)
 		return
 	}
 	queryTime := time.Since(queryStart).Milliseconds()
@@ -321,14 +391,46 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	s.audit.Log(bgCtx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "cell.execute", ResourceType: "cell", ResourceID: cellID,
-		Metadata: map[string]any{
-			"notebook_id":  nbID,
-			"cell_id":      cellID,
-			"connector_id": cell.ConnectorID,
-			"query":        cell.Source,
-			"row_count":    rowCount,
-			"duration_ms":  totalTime,
-		},
+		Metadata: auditMetadata(nbID, cellID, auditConnID, cell.Source, rowCount, totalTime, warehouseID, chUser),
+	})
+}
+
+// auditMetadata builds the cell.execute audit payload. warehouse_id and ch_user
+// are present only when the run executed as a warehouse per-user identity;
+// connector_id is the service actually dialed, which can differ from the
+// cell's connector when warehouse routing picks a preferred service.
+func auditMetadata(notebookID, cellID, connectorID, query string, rowCount int, durationMS int64, warehouseID, chUser string) map[string]any {
+	metadata := map[string]any{
+		"notebook_id":  notebookID,
+		"cell_id":      cellID,
+		"connector_id": connectorID,
+		"query":        query,
+		"row_count":    rowCount,
+		"duration_ms":  durationMS,
+	}
+	if warehouseID != "" {
+		metadata["warehouse_id"] = warehouseID
+		metadata["ch_user"] = chUser
+	}
+	return metadata
+}
+
+// writeServiceChoiceRequired renders the 409 payload used to prompt for a
+// warehouse service. The allowed list comes from the resolution error.
+func writeServiceChoiceRequired(w http.ResponseWriter, err error) {
+	services := []map[string]string{}
+	var choice *executor.ServiceChoiceError
+	if errors.As(err, &choice) {
+		for _, svc := range choice.Allowed {
+			services = append(services, map[string]string{
+				"connector_id": svc.ConnectorID.String(),
+				"name":         svc.Name,
+			})
+		}
+	}
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error":    "service_choice_required",
+		"services": services,
 	})
 }
 

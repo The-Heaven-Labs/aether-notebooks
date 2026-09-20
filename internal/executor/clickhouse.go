@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -13,6 +14,26 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
+
+// clickHouseAccessDeniedCode is ClickHouse's ACCESS_DENIED error code (497),
+// returned when an identity lacks the grant a query needs.
+const clickHouseAccessDeniedCode int32 = 497
+
+// IsAccessDenied reports whether err is a ClickHouse access-denied failure,
+// e.g. a per-user identity selecting from a table it was not granted. The
+// structural check handles the driver's *clickhouse.Exception; the message
+// fallback covers exceptions wrapped in a way that loses the type.
+func IsAccessDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+	var chErr *clickhouse.Exception
+	if errors.As(err, &chErr) {
+		return chErr.Code == clickHouseAccessDeniedCode
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "access_denied") || strings.Contains(msg, "not enough privileges")
+}
 
 type ClickHouseExecutor struct {
 	conn clickhouse.Conn
