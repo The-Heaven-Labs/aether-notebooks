@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/chaccess"
 )
@@ -886,4 +887,134 @@ func TestWarehouseDeleteCleanupFailureKeepsWarehouse(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "identity cleanup failed")
 	require.True(t, warehouseExists(t, s, wh), "a failed identity cleanup must not delete the warehouse")
 	require.Equal(t, connID.String(), *warehouseProvisioner(t, s, wh))
+	require.Equal(t, "pending", warehouseSyncStatus(t, s, wh),
+		"a failed cleanup must converge the warehouse back to pending")
+}
+
+// TestWarehouseDeleteRequiresProvisionerForRevocation is the regression for a
+// cleared provisioner silently skipping identity revocation: once
+// applied_master_fp proves a provisioner provisioned the namespace, the delete
+// must refuse (503) until a provisioner is reassigned, then revoke and delete.
+func TestWarehouseDeleteRequiresProvisionerForRevocation(t *testing.T) {
+	ctx := context.Background()
+	s, key := sharedWarehouseTestServer(t)
+	s.SetWarehouseSyncerForTest(&warehouseEnqueueRecorder{})
+	fx := setupWarehouseFixtureWithServer(t, s, key)
+	token, err := s.jwt.Issue(fx.userID.String(), fx.orgID.String(), "admin")
+	require.NoError(t, err)
+
+	require.NoError(t, s.reconcileWarehouse(ctx, fx.warehouseID))
+	userIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID)
+	requireClickHouseUserExists(t, fx.conn, userIdent)
+
+	// Clearing the provisioner leaves the identities with nothing able to
+	// revoke them; the delete must fail closed rather than orphan them.
+	clear := warehouseAPIRequest(t, s, http.MethodPut,
+		"/api/v1/warehouses/"+fx.warehouseID.String()+"/provisioner", token,
+		map[string]any{"connector_id": nil})
+	require.Equal(t, http.StatusOK, clear.Code, clear.Body.String())
+
+	rec := warehouseAPIRequest(t, s, http.MethodDelete,
+		"/api/v1/warehouses/"+fx.warehouseID.String()+"?force=true", token, nil)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "no provisioner connector")
+	require.True(t, warehouseExists(t, s, fx.warehouseID),
+		"a delete without a provisioner must not remove the warehouse")
+	requireClickHouseUserExists(t, fx.conn, userIdent)
+
+	// Reassigning a provisioner unblocks the delete, which revokes first.
+	set := warehouseAPIRequest(t, s, http.MethodPut,
+		"/api/v1/warehouses/"+fx.warehouseID.String()+"/provisioner", token,
+		map[string]any{"connector_id": fx.connectorID.String()})
+	require.Equal(t, http.StatusOK, set.Code, set.Body.String())
+
+	rec = warehouseAPIRequest(t, s, http.MethodDelete,
+		"/api/v1/warehouses/"+fx.warehouseID.String()+"?force=true", token, nil)
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	require.False(t, warehouseExists(t, s, fx.warehouseID))
+	requireNoPrefixedEntities(t, fx.conn, chaccess.IdentifierPrefix(fx.warehouseID))
+}
+
+// TestWarehouseDeleteBlockedByInFlightSync verifies the delete path takes the
+// per-warehouse advisory lock even when no provisioner is configured: a
+// reconcile (or concurrent provisioner-set) holding it must yield a retryable
+// 503, not a delete that races identity creation.
+func TestWarehouseDeleteBlockedByInFlightSync(t *testing.T) {
+	ctx := context.Background()
+	s, _ := warehouseHandlersServer(t)
+	_, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Locked Delete WH")
+
+	lockConn, err := pgx.Connect(ctx, warehouseSyncTestDSN())
+	require.NoError(t, err)
+	t.Cleanup(func() { lockConn.Close(context.Background()) })
+
+	var locked bool
+	require.NoError(t, lockConn.QueryRow(ctx,
+		`SELECT pg_try_advisory_lock(hashtextextended($1::text, 0))`, wh.String()).Scan(&locked))
+	require.True(t, locked, "test must hold the warehouse advisory lock")
+
+	rec := deleteWarehouseViaAPI(t, s, admin, wh)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "sync in progress")
+	require.True(t, warehouseExists(t, s, wh), "a locked delete must not remove the warehouse")
+
+	_, err = lockConn.Exec(ctx,
+		`SELECT pg_advisory_unlock(hashtextextended($1::text, 0))`, wh.String())
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusNoContent, deleteWarehouseViaAPI(t, s, admin, wh).Code)
+	require.False(t, warehouseExists(t, s, wh))
+}
+
+// TestWarehouseDeleteFailsOnUnquotableIdentities verifies the post-drop
+// verification: an identity whose name cannot be quoted must fail the cleanup
+// and keep the warehouse, and the delete succeeds once it is removed.
+func TestWarehouseDeleteFailsOnUnquotableIdentities(t *testing.T) {
+	ctx := context.Background()
+	s, key := sharedWarehouseTestServer(t)
+	s.SetWarehouseSyncerForTest(&warehouseEnqueueRecorder{})
+	fx := setupWarehouseFixtureWithServer(t, s, key)
+	token, err := s.jwt.Issue(fx.userID.String(), fx.orgID.String(), "admin")
+	require.NoError(t, err)
+	require.NoError(t, s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	badIdent := chaccess.IdentifierPrefix(fx.warehouseID) + "u_bad-name"
+	require.NoError(t, fx.conn.Exec(ctx,
+		"CREATE USER `"+badIdent+"` IDENTIFIED WITH no_password"))
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = fx.conn.Exec(cleanupCtx, "DROP USER IF EXISTS `"+badIdent+"`")
+	})
+
+	rec := warehouseAPIRequest(t, s, http.MethodDelete,
+		"/api/v1/warehouses/"+fx.warehouseID.String()+"?force=true", token, nil)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "unquotable")
+	require.True(t, warehouseExists(t, s, fx.warehouseID),
+		"identities that cannot be revoked must keep the warehouse")
+
+	require.NoError(t, fx.conn.Exec(ctx, "DROP USER IF EXISTS `"+badIdent+"`"))
+	rec = warehouseAPIRequest(t, s, http.MethodDelete,
+		"/api/v1/warehouses/"+fx.warehouseID.String()+"?force=true", token, nil)
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	require.False(t, warehouseExists(t, s, fx.warehouseID))
+	requireNoPrefixedEntities(t, fx.conn, chaccess.IdentifierPrefix(fx.warehouseID))
+}
+
+// TestWarehouseProvisionerRechecksConnector exercises the in-tx FOR SHARE
+// re-check directly: a connector that belongs to another warehouse must be
+// rejected even when the caller skips handler-level validation.
+func TestWarehouseProvisionerRechecksConnector(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	whA := createWarehouseViaAPI(t, s, admin, "Recheck WH A")
+	whB := createWarehouseViaAPI(t, s, admin, "Recheck WH B")
+	connB := seedWarehouseConnector(t, s, orgID, "Recheck Service")
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, connB, &whB).Code)
+
+	_, err := s.setWarehouseProvisioner(context.Background(), orgID.String(), whA, &connB)
+	require.ErrorIs(t, err, errProvisionerConnectorForeign)
+	require.Nil(t, warehouseProvisioner(t, s, whA))
 }

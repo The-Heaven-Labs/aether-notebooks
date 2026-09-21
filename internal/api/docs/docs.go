@@ -8582,7 +8582,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Update a warehouse's name and/or provisioner connector",
+                "description": "Update a warehouse's name and/or provisioner connector. An absent field leaves the value unchanged; an explicit null provisioner_connector_id clears the provisioner.",
                 "consumes": [
                     "application/json"
                 ],

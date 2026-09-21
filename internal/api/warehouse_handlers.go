@@ -415,7 +415,7 @@ type updateWarehouseRequest struct {
 }
 
 // @Summary Update a warehouse
-// @Description Update a warehouse's name and/or provisioner connector
+// @Description Update a warehouse's name and/or provisioner connector. An absent field leaves the value unchanged; an explicit null provisioner_connector_id clears the provisioner.
 // @Tags warehouses
 // @Accept json
 // @Produce json
@@ -485,6 +485,17 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
+
+	// Re-check the connector under a share lock before locking the warehouse
+	// row: the connector-move handler takes its locks in the same order, so a
+	// move landing after the handler validation is caught here instead of
+	// persisting a provisioner that no longer belongs to the warehouse.
+	if provisionerSet && provisionerID != nil {
+		if err := s.lockWarehouseProvisioner(ctx, tx, claims.OrgID, warehouseUUID, *provisionerID); err != nil {
+			writeProvisionerValidationError(w, err)
+			return
+		}
+	}
 
 	var oldName string
 	var oldProvisioner *uuid.UUID
@@ -592,6 +603,28 @@ func (s *Server) writeWarehouseProvisioner(ctx context.Context, tx pgx.Tx, orgID
 	return nil
 }
 
+// lockWarehouseProvisioner re-checks a provisioner connector inside the update
+// transaction with FOR SHARE. The connector-move and connector-delete handlers
+// hold FOR UPDATE on the same connector row while rewriting the link, so a
+// move that lands between handler validation and the provisioner write is
+// caught here rather than persisted.
+func (s *Server) lockWarehouseProvisioner(ctx context.Context, tx pgx.Tx, orgID string, warehouseID, connectorID uuid.UUID) error {
+	var id string
+	err := tx.QueryRow(ctx, `
+		SELECT id FROM connectors
+		WHERE id = $1 AND org_id = $2 AND type = 'clickhouse'
+		  AND deleted_at IS NULL AND warehouse_id = $3
+		FOR SHARE`,
+		connectorID.String(), orgID, warehouseID.String()).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errProvisionerConnectorForeign
+	}
+	if err != nil {
+		return fmt.Errorf("re-check provisioner connector: %w", err)
+	}
+	return nil
+}
+
 // setWarehouseProvisioner updates the provisioner under a row lock and reports
 // whether the value actually changed.
 func (s *Server) setWarehouseProvisioner(ctx context.Context, orgID string, warehouseID uuid.UUID, connectorID *uuid.UUID) (bool, error) {
@@ -600,6 +633,14 @@ func (s *Server) setWarehouseProvisioner(ctx context.Context, orgID string, ware
 		return false, err
 	}
 	defer tx.Rollback(ctx)
+
+	// Lock order matches the connector-move handler: connector, then
+	// warehouse.
+	if connectorID != nil {
+		if err := s.lockWarehouseProvisioner(ctx, tx, orgID, warehouseID, *connectorID); err != nil {
+			return false, err
+		}
+	}
 
 	var old *uuid.UUID
 	if err := tx.QueryRow(ctx, `
@@ -684,7 +725,7 @@ func (s *Server) handleSetWarehouseProvisioner(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "db error")
+		writeProvisionerValidationError(w, err)
 		return
 	}
 	if changed && connectorID != nil {
@@ -735,12 +776,10 @@ func (s *Server) handleDeleteWarehouse(w http.ResponseWriter, r *http.Request) {
 	}
 	force := r.URL.Query().Get("force") == "true"
 
-	wh, err := s.loadWarehouseForOrg(ctx, claims.OrgID, warehouseUUID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if _, err := s.loadWarehouseForOrg(ctx, claims.OrgID, warehouseUUID); errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "warehouse not found")
 		return
-	}
-	if err != nil {
+	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
@@ -759,32 +798,51 @@ func (s *Server) handleDeleteWarehouse(w http.ResponseWriter, r *http.Request) {
 
 	// Fail closed: never delete the row while live ClickHouse identities
 	// remain, and never let force skip this step. The per-warehouse sync lock
-	// is held across the drop and the delete so a reconcile cannot recreate
-	// identities in between.
-	var deleteErr error
-	if wh.ProvisionerConnectorID != nil {
-		lockCtx, cancel := context.WithTimeout(ctx, warehouseSyncTimeout)
-		defer cancel()
-		deleteErr = s.withWarehouseSyncLock(lockCtx, warehouseUUID, func(lockCtx context.Context) error {
-			if cleanupErr := s.dropWarehouseIdentitiesLocked(lockCtx, warehouseUUID); cleanupErr != nil {
-				return fmt.Errorf("%w: %s", errWarehouseIdentityCleanup, redactSecrets(cleanupErr.Error()))
+	// is taken unconditionally — even with no provisioner configured — and the
+	// header is re-read inside it, so a concurrent reconcile or
+	// provisioner-set cannot create identities after the row is gone.
+	lockCtx, cancel := context.WithTimeout(ctx, warehouseSyncTimeout)
+	defer cancel()
+	var (
+		deleteErr error
+		revoked   bool
+	)
+	deleteErr = s.withWarehouseSyncLock(lockCtx, warehouseUUID, func(lockCtx context.Context) error {
+		var cleanupErr error
+		revoked, cleanupErr = s.dropWarehouseIdentitiesLocked(lockCtx, warehouseUUID)
+		if cleanupErr != nil {
+			// Preserve the sentinel chain for the no-provisioner case;
+			// otherwise redact defensively before the message reaches a client.
+			if errors.Is(cleanupErr, errWarehouseProvisionerNeeded) {
+				return fmt.Errorf("%w: %w", errWarehouseIdentityCleanup, cleanupErr)
 			}
-			var rowErr error
-			linked, rowErr = s.deleteWarehouseRow(lockCtx, claims.OrgID, warehouseUUID, force)
-			return rowErr
-		})
-	} else {
-		linked, deleteErr = s.deleteWarehouseRow(ctx, claims.OrgID, warehouseUUID, force)
-	}
+			return fmt.Errorf("%w: %s", errWarehouseIdentityCleanup, redactSecrets(cleanupErr.Error()))
+		}
+		var rowErr error
+		linked, rowErr = s.deleteWarehouseRow(lockCtx, claims.OrgID, warehouseUUID, force)
+		return rowErr
+	})
 
 	switch {
+	case errors.Is(deleteErr, errWarehouseProvisionerNeeded):
+		// Nothing can revoke the identities; there is no state to converge.
+		writeError(w, http.StatusServiceUnavailable, deleteErr.Error())
+		return
+	case errors.Is(deleteErr, errWarehouseSyncInProgress):
+		writeError(w, http.StatusServiceUnavailable, deleteErr.Error()+"; retry")
+		return
 	case errors.Is(deleteErr, errWarehouseIdentityCleanup):
+		// The drop may have partially applied; converge the warehouse so the
+		// next reconcile restores whatever was removed.
+		if pendingErr := s.setWarehouseSyncPending(ctx, claims.OrgID, warehouseUUID); pendingErr == nil {
+			s.enqueueWarehouseSyncNow(warehouseUUID)
+		}
 		writeError(w, http.StatusServiceUnavailable, deleteErr.Error())
 		return
 	case errors.Is(deleteErr, errWarehouseDeleteRefused):
 		// A connector was linked after the pre-check; the identities were
 		// already revoked, so schedule a reconcile to restore them.
-		if wh.ProvisionerConnectorID != nil {
+		if revoked {
 			if pendingErr := s.setWarehouseSyncPending(ctx, claims.OrgID, warehouseUUID); pendingErr == nil {
 				s.enqueueWarehouseSyncNow(warehouseUUID)
 			}

@@ -482,6 +482,17 @@ func (s *Server) detectWarehouseDrift(ctx context.Context, warehouseID uuid.UUID
 	return report, nil
 }
 
+// errWarehouseSyncInProgress reports that another reconcile holds the
+// per-warehouse sync lock; callers should treat it as retryable.
+var errWarehouseSyncInProgress = errors.New("warehouse sync in progress")
+
+// errWarehouseProvisionerNeeded reports that a warehouse has provisioned
+// ClickHouse identities but no provisioner connector, so the identities
+// cannot be revoked. The caller must fail closed and tell the admin to assign
+// a provisioner.
+var errWarehouseProvisionerNeeded = errors.New(
+	"warehouse has provisioned ClickHouse identities but no provisioner connector; assign a provisioner to revoke them before deleting")
+
 // withWarehouseSyncLock runs fn while holding the per-warehouse reconcile
 // lock. It fails closed when a reconcile already holds the lock instead of
 // waiting, so callers can surface a retryable error.
@@ -491,7 +502,7 @@ func (s *Server) withWarehouseSyncLock(ctx context.Context, warehouseID uuid.UUI
 		return err
 	}
 	if !locked {
-		return fmt.Errorf("warehouse %s: a sync is in progress", warehouseID)
+		return fmt.Errorf("%w: warehouse %s", errWarehouseSyncInProgress, warehouseID)
 	}
 	defer releaseWarehouseSyncLock(lockConn, warehouseID)
 	return fn(ctx)
@@ -502,37 +513,63 @@ func (s *Server) withWarehouseSyncLock(ctx context.Context, warehouseID uuid.UUI
 // observed actual state; the orphan-drop ordering (users before roles) handles
 // dependencies. Callers must hold the per-warehouse sync lock (the delete path
 // holds it across this drop and the row delete) so a concurrent reconcile
-// cannot recreate identities mid-drop. It returns an error (fail closed) when
-// the provisioner is missing/unreachable or any statement fails. The warehouse
-// row is not touched here.
-func (s *Server) dropWarehouseIdentitiesLocked(ctx context.Context, warehouseID uuid.UUID) error {
+// cannot recreate identities mid-drop. It returns whether any drop statements
+// ran (so callers can decide whether a refused delete needs a restoring
+// reconcile) and fails closed when the provisioner is missing/unreachable,
+// any statement fails, or identities remain afterwards. The warehouse row is
+// not touched here.
+func (s *Server) dropWarehouseIdentitiesLocked(ctx context.Context, warehouseID uuid.UUID) (bool, error) {
 	hdr, err := s.loadWarehouseHeader(ctx, warehouseID)
 	if err != nil {
-		return fmt.Errorf("load warehouse header: %w", err)
+		return false, fmt.Errorf("load warehouse header: %w", err)
 	}
 	if hdr.provisionerID == nil {
-		return nil
+		// applied_master_fp proves a provisioner once provisioned this
+		// warehouse. Without one the identities cannot be revoked, so the
+		// delete must fail closed instead of orphaning them.
+		if hdr.appliedFP != nil {
+			return false, errWarehouseProvisionerNeeded
+		}
+		return false, nil
 	}
 	cfg, err := s.loadProvisionerConfig(ctx, warehouseID, hdr.orgID, hdr.provisionerID)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	conn, err := openWarehouseProvisionerConn(ctx, cfg)
 	if err != nil {
-		return fmt.Errorf("connect provisioner: %w", err)
+		return false, fmt.Errorf("connect provisioner: %w", err)
 	}
 	defer conn.Close()
 
 	actual, err := chaccess.LoadActual(ctx, conn, warehouseID)
 	if err != nil {
-		return fmt.Errorf("load clickhouse actual state: %w", err)
+		return false, fmt.Errorf("load clickhouse actual state: %w", err)
 	}
 	stmts, skipped := chaccess.Statements(chaccess.DesiredState{}, actual)
 	for i, stmt := range stmts {
 		if execErr := conn.Exec(ctx, stmt); execErr != nil {
-			return fmt.Errorf("execute drop statement %d of %d: %s", i+1, len(stmts), redactSecrets(execErr.Error()))
+			return len(stmts) > 0, fmt.Errorf("execute drop statement %d of %d: %s",
+				i+1, len(stmts), redactSecrets(execErr.Error()))
 		}
+	}
+	if len(skipped) > 0 {
+		return len(stmts) > 0, fmt.Errorf("cannot revoke %d unquotable identity name(s): %s",
+			len(skipped), strings.Join(skipped, ", "))
+	}
+
+	// Verify rather than assume: DROP ... IF EXISTS plus the prefix filter is
+	// the only thing between a deleted row and orphaned identities, so any
+	// identity still visible (an unquotable name, a concurrent server-side
+	// change) must fail the cleanup instead of surviving it silently.
+	remaining, err := chaccess.LoadActual(ctx, conn, warehouseID)
+	if err != nil {
+		return len(stmts) > 0, fmt.Errorf("verify clickhouse identities removed: %w", err)
+	}
+	if len(remaining.Users) > 0 || len(remaining.Roles) > 0 {
+		return len(stmts) > 0, fmt.Errorf("warehouse %s still has %d user(s) and %d role(s) after cleanup",
+			warehouseID, len(remaining.Users), len(remaining.Roles))
 	}
 
 	meta := map[string]any{
@@ -540,9 +577,6 @@ func (s *Server) dropWarehouseIdentitiesLocked(ctx context.Context, warehouseID 
 		"statements":   len(stmts),
 		"users":        len(actual.Users),
 		"roles":        len(actual.Roles),
-	}
-	if len(skipped) > 0 {
-		meta["skipped"] = skipped
 	}
 	if err := s.audit.Log(ctx, audit.Entry{
 		OrgID:        hdr.orgID.String(),
@@ -553,7 +587,7 @@ func (s *Server) dropWarehouseIdentitiesLocked(ctx context.Context, warehouseID 
 	}); err != nil {
 		slog.Warn("warehouse identity cleanup audit failed", "warehouse_id", warehouseID, "error", err)
 	}
-	return nil
+	return len(stmts) > 0, nil
 }
 
 // compareWarehouseState diffs desired against actual. It is pure so it can be
