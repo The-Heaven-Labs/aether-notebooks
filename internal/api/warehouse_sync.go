@@ -192,6 +192,17 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 		}
 	}
 
+	// DDL changed these identities' roles, grants, or existence. ClickHouse
+	// evaluates a session's roles from the set activated at login, so a pooled
+	// connection opened before this run would keep enforcing the old access
+	// until it is reused or evicted. Drop the affected identities' pooled
+	// connections now so the next execution re-authenticates with the access
+	// this run applied and a revoked identity cannot keep querying through a
+	// live session.
+	if len(stmts) > 0 {
+		s.invalidatePooledWarehouseIdentities(desired, actual)
+	}
+
 	if err := s.setWarehouseSyncStatus(ctx, warehouseID, "ready", "", fingerprint); err != nil {
 		return fmt.Errorf("reconcile warehouse %s: %w", warehouseID, err)
 	}
@@ -215,6 +226,36 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 		}
 	}
 	return nil
+}
+
+// pooledWarehouseUsers returns the ClickHouse identities a reconcile can
+// affect: every identity in desired or actual state. The pool is keyed per
+// user, so role entities need no entry; the union covers identities that were
+// created, re-granted, re-membered, re-keyed, or dropped by a run.
+func pooledWarehouseUsers(desired chaccess.DesiredState, actual chaccess.ActualState) map[string]struct{} {
+	if len(desired.Users) == 0 && len(actual.Users) == 0 {
+		return nil
+	}
+	users := make(map[string]struct{}, len(desired.Users)+len(actual.Users))
+	for ident := range desired.Users {
+		users[ident] = struct{}{}
+	}
+	for ident := range actual.Users {
+		users[ident] = struct{}{}
+	}
+	return users
+}
+
+// invalidatePooledWarehouseIdentities closes the pooled connections for every
+// identity a reconcile observed. Callers invoke it only when a run applied
+// DDL, so an idempotent tick does not churn resident connections.
+func (s *Server) invalidatePooledWarehouseIdentities(desired chaccess.DesiredState, actual chaccess.ActualState) {
+	if s.connPool == nil {
+		return
+	}
+	if users := pooledWarehouseUsers(desired, actual); len(users) > 0 {
+		s.connPool.InvalidateUsers(users)
+	}
 }
 
 // warehouseHeader is the warehouse row state shared by reconcile and drift
@@ -577,6 +618,11 @@ func (s *Server) dropWarehouseIdentitiesLocked(ctx context.Context, warehouseID 
 			return len(stmts) > 0, fmt.Errorf("execute drop statement %d of %d: %s",
 				i+1, len(stmts), redactSecrets(execErr.Error()))
 		}
+	}
+	// Revocation must not depend on ClickHouse dropping live sessions: close
+	// any pooled connection belonging to an identity this run revoked.
+	if len(stmts) > 0 {
+		s.invalidatePooledWarehouseIdentities(chaccess.DesiredState{}, actual)
 	}
 	if len(skipped) > 0 {
 		return len(stmts) > 0, fmt.Errorf("cannot revoke %d unquotable identity name(s): %s",

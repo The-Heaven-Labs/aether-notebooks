@@ -282,6 +282,66 @@ func TestPoolInvalidateWhileInUseClosesOnLastRelease(t *testing.T) {
 	rel3()
 }
 
+func TestPoolInvalidateUsersClosesMatchingAcrossEndpoints(t *testing.T) {
+	var opened atomic.Int64
+	p := NewConnPool(PoolConfig{
+		MaxPools: 8,
+		Open: func(models.ConnectorConfig) (clickhouse.Conn, error) {
+			opened.Add(1)
+			return &fakeConn{}, nil
+		},
+	})
+
+	cfg := models.ConnectorConfig{Host: "h", Port: 9000}
+	c1, rel1 := mustGet(t, p, "ep1", "u1", cfg)
+	c2, rel2 := mustGet(t, p, "ep2", "u1", cfg)
+	c3, rel3 := mustGet(t, p, "ep1", "u2", cfg)
+	rel1()
+	rel2()
+	rel3()
+
+	p.InvalidateUsers(map[string]struct{}{"u1": {}})
+	require.True(t, c1.(*fakeConn).closed, "u1 on ep1 must close")
+	require.True(t, c2.(*fakeConn).closed, "u1 on ep2 must close")
+	require.False(t, c3.(*fakeConn).closed, "unlisted users must survive")
+	require.Equal(t, 1, p.Len())
+
+	p.InvalidateUsers(nil)
+	p.InvalidateUsers(map[string]struct{}{})
+	require.Equal(t, 1, p.Len(), "an empty set must be a no-op")
+	require.False(t, c3.(*fakeConn).closed)
+
+	p.InvalidateUsers(map[string]struct{}{"u3": {}})
+	require.Equal(t, 1, p.Len(), "an unmatched set must not churn")
+	require.False(t, c3.(*fakeConn).closed)
+}
+
+func TestPoolInvalidateUsersWhileInUseClosesOnLastRelease(t *testing.T) {
+	var opened atomic.Int64
+	p := NewConnPool(PoolConfig{
+		MaxPools: 8,
+		Open: func(models.ConnectorConfig) (clickhouse.Conn, error) {
+			opened.Add(1)
+			return &fakeConn{}, nil
+		},
+	})
+
+	cfg := models.ConnectorConfig{Host: "h", Port: 9000}
+	c1, rel1 := mustGet(t, p, "ep", "u1", cfg)
+	_, rel2 := mustGet(t, p, "ep", "u1", cfg)
+	_, rel3 := mustGet(t, p, "ep", "u2", cfg)
+	rel3()
+
+	p.InvalidateUsers(map[string]struct{}{"u1": {}})
+	require.Equal(t, 1, p.Len(), "invalidated entries leave the pool immediately")
+	require.False(t, c1.(*fakeConn).closed, "in-use conn must not close mid-lease")
+
+	rel1()
+	require.False(t, c1.(*fakeConn).closed, "another lease is still outstanding")
+	rel2()
+	require.True(t, c1.(*fakeConn).closed, "last release must close the invalidated conn")
+}
+
 func TestPoolEvictionSkipsInUseAndResolvesOverage(t *testing.T) {
 	var opened atomic.Int64
 	p := NewConnPool(PoolConfig{

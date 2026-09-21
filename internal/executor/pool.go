@@ -139,6 +139,25 @@ func (p *ConnPool) Invalidate(endpoint, user string) {
 	p.detachLocked(poolKey{endpoint: endpoint, user: user})
 }
 
+// InvalidateUsers removes every pooled connection whose user is in users,
+// across all endpoints. It is the bulk form of Invalidate used after a
+// warehouse reconcile changes an identity's access: ClickHouse evaluates a
+// session's roles from the set activated at login, so a resident connection
+// must be reopened to observe new or revoked grants. An in-use connection is
+// closed by its last release. A nil or empty set is a no-op.
+func (p *ConnPool) InvalidateUsers(users map[string]struct{}) {
+	if len(users) == 0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, key := range append([]poolKey(nil), p.keys...) {
+		if _, ok := users[key.user]; ok {
+			p.detachLocked(key)
+		}
+	}
+}
+
 // CloseIdle evicts connections idle for at least IdleTTL as of now. In-use
 // connections are skipped.
 func (p *ConnPool) CloseIdle(now time.Time) {

@@ -45,8 +45,10 @@ func setupWarehouseRBACE2EFixture(t *testing.T) *warehouseRBACE2EFixture {
 	requireClickHouseReachable(t)
 	s, recorder := warehouseHandlersServer(t)
 	// Run before the fixture's ClickHouse cleanup (LIFO), so no idle pooled
-	// connection outlives the identity it authenticated as.
+	// connection outlives the identity it authenticated as. The immediate
+	// CloseAll starts pool accounting from a clean slate.
 	t.Cleanup(func() { s.connPool.CloseAll() })
+	s.connPool.CloseAll()
 
 	ctx := context.Background()
 	orgID, _, adminToken := seedWarehouseOrgAdmin(t, s)
@@ -149,16 +151,13 @@ func (fx *warehouseRBACE2EFixture) table(t *testing.T, name string) string {
 
 // runAs creates a notebook cell with source and executes it through the full
 // HTTP stack as userID with the non-admin role (no admin-mode bypass),
-// asserting the response status.
-//
-// The pool is closed first so each run authenticates with the roles granted at
-// that point: ClickHouse activates a session's roles at login, so a pooled
-// session opened before a role change would still evaluate the old role set.
+// asserting the response status. Reconcile invalidates pooled identities, so
+// consecutive runs only reuse connections within the same access state, which
+// is exactly what the RBAC steps below exercise.
 func (fx *warehouseRBACE2EFixture) runAs(t *testing.T, userID uuid.UUID, wantStatus int, source string) *httptest.ResponseRecorder {
 	t.Helper()
 	nbID, cellID := seedExecuteWarehouseCell(t, fx.s, fx.orgID, userID, fx.connectorID, source, nil)
 	grantNotebookRun(t, fx.s, fx.orgID, userID, nbID)
-	fx.s.connPool.CloseAll()
 
 	token, err := fx.s.jwt.Issue(userID.String(), fx.orgID.String(), "non-admin")
 	require.NoError(t, err)
@@ -232,6 +231,8 @@ func TestWarehouseRBACE2E(t *testing.T) {
 	require.Len(t, out.Outputs[0].Data.Rows, 1)
 	require.Equal(t, memberIdent, out.Outputs[0].Data.Rows[0][0])
 	require.Equal(t, float64(2), out.Outputs[0].Data.Rows[0][1])
+	require.Equal(t, 1, s.connPool.Len(),
+		"the successful run must leave the member's connection pooled")
 
 	// Step 4: t2 exists but is not granted; ClickHouse denies it.
 	rec = fx.runAs(t, fx.memberID, http.StatusForbidden,
@@ -245,11 +246,15 @@ func TestWarehouseRBACE2E(t *testing.T) {
 	requireClickHouseDenied(t, rec)
 
 	// Step 6: an everyone grant on t2 provisions the outsider (no group) and
-	// joins the member's union.
+	// joins the member's union. The reconcile applies DDL, so it must drop the
+	// pooled connection the member built in step 3; the next run then sees the
+	// new role without waiting for idle eviction.
 	rec = createGrantViaAPI(t, s, fx.adminToken, fx.warehouseID,
 		grantBody("everyone", "everyone", fx.database, "t2"))
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	require.NoError(t, s.reconcileWarehouse(ctx, fx.warehouseID))
+	require.Zero(t, s.connPool.Len(),
+		"a reconcile that applied DDL must invalidate the warehouse's pooled identities")
 	requireClickHouseRoleExists(t, fx.conn, everyoneRole)
 	requireClickHouseGrantExists(t, fx.conn, everyoneRole, fx.database, "t2")
 	requireClickHouseUserExists(t, fx.conn, outsiderIdent)
@@ -267,6 +272,8 @@ func TestWarehouseRBACE2E(t *testing.T) {
 	rec = fx.runAs(t, fx.memberID, http.StatusOK,
 		"SELECT count() AS n FROM "+fx.table(t, "t2"))
 	decodeExecuteOutputs(t, rec)
+	require.Equal(t, 2, s.connPool.Len(),
+		"both subjects' runs must be pooled after the invalidating reconcile")
 
 	// Step 7: drift repair. Revoking the everyone grant outside Aether is
 	// healed by the next reconcile, and reported as missing drift.
@@ -290,14 +297,24 @@ func TestWarehouseRBACE2E(t *testing.T) {
 		"REVOKE SELECT ON "+fx.table(t, "t2")+" FROM "+quotedEveryone))
 	require.NoError(t, s.reconcileWarehouse(ctx, fx.warehouseID))
 	requireClickHouseGrantExists(t, fx.conn, everyoneRole, fx.database, "t2")
+	require.Zero(t, s.connPool.Len(),
+		"the repairing reconcile must invalidate the identities it re-granted")
 	require.Equal(t, driftAuditsBefore+1, countDriftAudits(),
 		"the repaired drift must be audited exactly once")
 
 	// Step 8: the admin revokes the group grant; the member keeps their
-	// identity through the everyone grant but loses t1 in ClickHouse.
+	// identity through the everyone grant but loses t1 in ClickHouse. The
+	// pooled connection from the t2 run must not keep the revoked role alive.
+	rec = fx.runAs(t, fx.memberID, http.StatusOK,
+		"SELECT count() AS n FROM "+fx.table(t, "t2"))
+	decodeExecuteOutputs(t, rec)
+	require.Equal(t, 1, s.connPool.Len())
+
 	rec = deleteGrantViaAPI(t, s, fx.adminToken, fx.warehouseID, groupGrantID)
 	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 	require.NoError(t, s.reconcileWarehouse(ctx, fx.warehouseID))
+	require.Zero(t, s.connPool.Len(),
+		"a revoking reconcile must invalidate the pooled identity")
 	requireClickHouseUserExists(t, fx.conn, memberIdent)
 	require.Zero(t, countRoleGrants(t, fx.conn, memberIdent, groupRole),
 		"the revoked group role must no longer be granted to the member")
@@ -305,6 +322,8 @@ func TestWarehouseRBACE2E(t *testing.T) {
 	rec = fx.runAs(t, fx.memberID, http.StatusForbidden,
 		"SELECT count() FROM "+fx.table(t, "t1"))
 	requireClickHouseDenied(t, rec)
+	require.Equal(t, 1, s.connPool.Len(),
+		"the denied run reopens a connection as the reduced identity")
 
 	// Step 9: offboarding removes the member from the org, and the next
 	// reconcile drops the ClickHouse identity; the outsider is untouched.
@@ -312,11 +331,14 @@ func TestWarehouseRBACE2E(t *testing.T) {
 		"/api/v1/members/"+fx.memberID.String(), fx.adminToken, nil)
 	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 	require.NoError(t, s.reconcileWarehouse(ctx, fx.warehouseID))
+	require.Zero(t, s.connPool.Len(),
+		"dropping the identity must invalidate its pooled connection")
 	requireClickHouseUserAbsent(t, fx.conn, memberIdent)
 	requireClickHouseUserExists(t, fx.conn, outsiderIdent)
 
 	// The offboarded member's token no longer resolves a service, so the run
-	// fails closed in Aether before reaching ClickHouse.
+	// fails closed in Aether before reaching ClickHouse (and before pooling).
 	fx.runAs(t, fx.memberID, http.StatusForbidden,
 		"SELECT count() AS n FROM "+fx.table(t, "t2"))
+	require.Zero(t, s.connPool.Len())
 }

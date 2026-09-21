@@ -803,6 +803,91 @@ func TestRedactSecrets(t *testing.T) {
 // TestReconcileWarehouseDoesNotStarveSmallPool guards against the sync lock
 // occupying a pooled connection: with MaxConns=2 two concurrent reconciles
 // must still complete instead of self-deadlocking on the pool.
+// TestPooledWarehouseUsers pins the affected-identity computation: the union
+// of desired and actual users. Roles contribute no key because the pool is
+// keyed per user, not per role.
+func TestPooledWarehouseUsers(t *testing.T) {
+	desired := chaccess.DesiredState{
+		Roles: map[string]chaccess.RoleState{"role_only": {}},
+		Users: map[string]chaccess.UserState{"want": {}, "both": {}},
+	}
+	actual := chaccess.ActualState{
+		Users: map[string]chaccess.UserActual{"both": {}, "orphan": {}},
+	}
+
+	require.Equal(t, map[string]struct{}{
+		"want": {}, "both": {}, "orphan": {},
+	}, pooledWarehouseUsers(desired, actual))
+	require.Nil(t, pooledWarehouseUsers(chaccess.DesiredState{}, chaccess.ActualState{}))
+}
+
+// TestReconcileInvalidatesPooledWarehouseIdentities proves a reconcile that
+// applied DDL drops the warehouse identities' pooled connections, an
+// idempotent tick leaves them resident, and a failed run neither panics nor
+// touches them.
+func TestReconcileInvalidatesPooledWarehouseIdentities(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+
+	chCfg := warehouseSyncTestClickHouseConfig()
+	endpoint := fmt.Sprintf("%s:%d", chCfg.Host, chCfg.Port)
+	userIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID)
+
+	// The decoy mirrors a second warehouse sharing the service: invalidation
+	// is scoped by identity name, not by endpoint.
+	decoyWarehouseID, decoyOrgID, decoyUserID := uuid.New(), uuid.New(), uuid.New()
+	decoyUser := chaccess.UserIdent(decoyWarehouseID, decoyOrgID, decoyUserID)
+	decoyCfg := chCfg
+	decoyCfg.User = decoyUser
+	decoyCfg.Password = chaccess.DerivePassword(fx.s.masterKey, decoyWarehouseID, decoyUserID)
+
+	// The first provision creates the identity; then pool a connection for it.
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+	poolUser := func() {
+		t.Helper()
+		cfg := chCfg
+		cfg.User = userIdent
+		cfg.Password = chaccess.DerivePassword(fx.s.masterKey, fx.warehouseID, fx.userID)
+		_, release, err := fx.s.connPool.Get(endpoint, userIdent, cfg)
+		require.NoError(t, err)
+		release()
+	}
+	poolDecoy := func() {
+		t.Helper()
+		conn, release, err := fx.s.connPool.Get(endpoint, decoyUser, decoyCfg)
+		require.NoError(t, err)
+		require.NotNil(t, conn)
+		release()
+	}
+	poolDecoy()
+	poolUser()
+	require.Equal(t, 2, fx.s.connPool.Len())
+
+	// A grant change makes the next reconcile apply DDL.
+	_, err := fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants
+			(org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		VALUES ($1, $2, 'group', $3, 'analytics', 'users')`,
+		fx.orgID.String(), fx.warehouseID.String(), fx.groupID.String())
+	require.NoError(t, err)
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+	require.Equal(t, 1, fx.s.connPool.Len(),
+		"reconcile must invalidate the warehouse's pooled identities only")
+	poolDecoy()
+	require.Equal(t, 1, fx.s.connPool.Len(), "the decoy must still be resident")
+
+	// A no-op reconcile must not churn resident connections.
+	poolUser()
+	require.Equal(t, 2, fx.s.connPool.Len())
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+	require.Equal(t, 2, fx.s.connPool.Len(), "a no-op reconcile must not invalidate")
+
+	// A failing reconcile leaves the pool untouched and does not panic.
+	pointProvisionerAtUnreachableHost(t, fx.s, fx.s.masterKey, fx.connectorID)
+	require.Error(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+	require.Equal(t, 2, fx.s.connPool.Len())
+}
+
 func TestReconcileWarehouseDoesNotStarveSmallPool(t *testing.T) {
 	ctx := context.Background()
 
