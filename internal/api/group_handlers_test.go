@@ -16,7 +16,7 @@ func TestGroupCRUD(t *testing.T) {
 	token := registerAndGetToken(t, srv, email, "Group Org")
 
 	// Create group
-	body, _ := json.Marshal(map[string]string{"name": "Analytics"})
+	body, _ := json.Marshal(map[string]any{"name": "Analytics", "display_name": "Analytics Label"})
 	req := httptest.NewRequest("POST", "/api/v1/groups", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -28,6 +28,9 @@ func TestGroupCRUD(t *testing.T) {
 	var g map[string]any
 	json.NewDecoder(rec.Body).Decode(&g)
 	groupID := g["id"].(string)
+	if g["display_name"] != "Analytics Label" {
+		t.Fatalf("expected create to return display_name, got %v", g["display_name"])
+	}
 
 	// List groups
 	req2 := httptest.NewRequest("GET", "/api/v1/groups", nil)
@@ -41,6 +44,18 @@ func TestGroupCRUD(t *testing.T) {
 	json.NewDecoder(rec2.Body).Decode(&groups)
 	if len(groups) == 0 {
 		t.Error("expected at least one group")
+	}
+	var listed map[string]any
+	for _, raw := range groups {
+		if m, ok := raw.(map[string]any); ok && m["id"] == groupID {
+			listed = m
+		}
+	}
+	if listed == nil {
+		t.Fatal("created group missing from list")
+	}
+	if listed["display_name"] != "Analytics Label" {
+		t.Fatalf("expected list to return display_name, got %v", listed["display_name"])
 	}
 
 	// Get current user ID
@@ -114,6 +129,22 @@ func TestGroupCRUD(t *testing.T) {
 	}
 	if labeled["name"] != "Analytics" {
 		t.Fatalf("expected name unchanged, got %v", labeled["name"])
+	}
+
+	// Whitespace-only label clears to NULL
+	spaceBody, _ := json.Marshal(map[string]any{"display_name": "   "})
+	spaceReq := httptest.NewRequest("PUT", "/api/v1/groups/"+groupID, bytes.NewReader(spaceBody))
+	spaceReq.Header.Set("Content-Type", "application/json")
+	spaceReq.Header.Set("Authorization", "Bearer "+token)
+	spaceRec := httptest.NewRecorder()
+	srv.ServeHTTP(spaceRec, spaceReq)
+	if spaceRec.Code != http.StatusOK {
+		t.Fatalf("whitespace display name: expected 200, got %d: %s", spaceRec.Code, spaceRec.Body.String())
+	}
+	var spaced map[string]any
+	json.NewDecoder(spaceRec.Body).Decode(&spaced)
+	if spaced["display_name"] != nil {
+		t.Fatalf("expected whitespace display_name cleared to null, got %v", spaced["display_name"])
 	}
 
 	// Label-only update keeps the name
