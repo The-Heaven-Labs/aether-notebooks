@@ -240,9 +240,10 @@ the user was explicitly granted does not change results — only compute placeme
 - **Pool invalidation is process-local.** `connPool` lives inside the API process, so only the
   replica that applies DDL (or fails closed) drops its pooled identities. On a multi-replica
   deployment a resident session on another replica keeps serving pre-reconcile access until
-  its connection is reopened; restart the affected replicas or wait out the pool idle TTL
-  (10 min). Cross-replica invalidation (e.g. a Redis broadcast) is a follow-up; run a single
-  API replica until it lands.
+  its connection is reopened — restart the affected replicas; the 10-minute idle TTL only
+  helps if the connection actually goes idle, and a session kept warm by continuous queries
+  is not bounded by it. Cross-replica invalidation (e.g. a Redis broadcast) is a follow-up;
+  run a single API replica until it lands.
 - **Connection pooling deviation from the Performance constraints.** The implementation keeps
   one connection per `(endpoint, user)` (the design's "small per-user pools (1–2)") with a
   single process-wide cap (`connPoolMaxPools = 100`) and LRU eviction of idle entries after a

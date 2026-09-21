@@ -88,6 +88,9 @@ describe('WarehouseSettingsPage', () => {
     await screen.findByText('Analytics')
     expect(screen.getByText(/table permissions are currently disabled/)).toBeInTheDocument()
     expect(screen.queryByText(/table grants enforced by ClickHouse/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Analytics/ }))
+    expect(await screen.findByText(/keep using the stored credential/)).toBeInTheDocument()
+    expect(screen.queryByText(/provisions per-user ClickHouse access/)).toBeNull()
 
     // The delete confirmation must not promise identity revocation either.
     fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0])

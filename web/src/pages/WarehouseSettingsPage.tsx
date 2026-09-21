@@ -49,6 +49,7 @@ export function WarehouseSettingsPage() {
     queryKey: ['warehouses'],
     queryFn: listWarehouses,
     refetchInterval: (query) => {
+      if (!tablePermissionsEnabled) return false
       const data = query.state.data
       if (data?.some((w) => w.sync_status === 'pending' || w.sync_status === 'syncing')) return 4000
       return false
@@ -347,6 +348,7 @@ function WarehouseCard({
   const [renameValue, setRenameValue] = useState(warehouse.name)
   const [addConnectorId, setAddConnectorId] = useState('')
   const renameSubmitted = useRef(false)
+  const tablePermissionsEnabled = useWarehouseTablePermissions()
 
   const { data: detail, isLoading } = useQuery({
     queryKey: ['warehouse', warehouse.id],
@@ -453,7 +455,9 @@ function WarehouseCard({
                   ))}
                 </select>
                 <span style={styles.hint}>
-                  Runs the DDL that provisions per-user ClickHouse access.
+                  {tablePermissionsEnabled
+                    ? 'Runs the DDL that provisions per-user ClickHouse access.'
+                    : 'ClickHouse table permissions are disabled; runs keep using the stored credential.'}
                 </span>
               </div>
 
