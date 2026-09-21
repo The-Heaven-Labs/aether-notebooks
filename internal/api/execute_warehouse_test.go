@@ -235,18 +235,20 @@ func TestExecuteCellUnmanagedClickHouseUsesLegacyCredential(t *testing.T) {
 
 // With the kill switch off, a connector linked to a ready warehouse must still
 // execute through its stored credential rather than the per-user identity, so
-// an operator can roll back without unlinking warehouses.
+// an operator can roll back without unlinking warehouses. It runs on a
+// dedicated server with the switch off, never toggling the shared fixture.
 func TestKillSwitchOffRoutesManagedConnectorLegacy(t *testing.T) {
-	fx := setupExecuteWarehouseFixture(t)
-	fx.s.SetCHTablePermissions(false)
-	t.Cleanup(func() { fx.s.SetCHTablePermissions(true) })
-	fx.grantConnectorUse(t, fx.connA)
+	requireClickHouseReachable(t)
+	s, key := newKillSwitchTestServer(t)
+	seed := seedWarehouseFixtureRows(t, s, key)
+	connA := insertClickHouseService(t, s, seed.orgID, seed.connectorID, "Kill Switch Service", &seed.warehouseID)
+	grantConnectorUse(t, s, seed.orgID, seed.userID, connA)
 
-	nbID, cellID := seedExecuteWarehouseCell(t, fx.s, fx.orgID, fx.userID, fx.connA,
+	nbID, cellID := seedExecuteWarehouseCell(t, s, seed.orgID, seed.userID, connA,
 		"SELECT currentUser() AS ch_user", nil)
-	fx.grantNotebookRun(t, nbID)
+	grantNotebookRun(t, s, seed.orgID, seed.userID, nbID)
 
-	rec := executeWarehouseCell(t, fx.s, fx.userID, fx.orgID, nbID, cellID)
+	rec := executeWarehouseCell(t, s, seed.userID, seed.orgID, nbID, cellID)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	out := decodeExecuteOutputs(t, rec)
@@ -256,18 +258,18 @@ func TestKillSwitchOffRoutesManagedConnectorLegacy(t *testing.T) {
 
 	// The legacy run must not claim a warehouse identity in the audit trail.
 	var metaJSON []byte
-	require.NoError(t, fx.s.db.Pool.QueryRow(context.Background(), `
+	require.NoError(t, s.db.Pool.QueryRow(context.Background(), `
 		SELECT metadata FROM audit_logs
 		WHERE org_id = $1 AND action = 'cell.execute' AND resource_id = $2
 		ORDER BY id DESC LIMIT 1`,
-		fx.orgID.String(), cellID.String()).Scan(&metaJSON))
+		seed.orgID.String(), cellID.String()).Scan(&metaJSON))
 	var meta map[string]any
 	require.NoError(t, json.Unmarshal(metaJSON, &meta))
 	_, hasWarehouse := meta["warehouse_id"]
 	_, hasCHUser := meta["ch_user"]
 	require.False(t, hasWarehouse, "legacy run must not record a warehouse_id")
 	require.False(t, hasCHUser, "legacy run must not record a per-user ch_user")
-	require.Equal(t, fx.connA.String(), meta["connector_id"])
+	require.Equal(t, connA.String(), meta["connector_id"])
 }
 
 func TestExecuteCellNonClickHouseConnectorKeepsLegacyPath(t *testing.T) {

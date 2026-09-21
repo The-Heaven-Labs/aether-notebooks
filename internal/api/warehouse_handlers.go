@@ -54,7 +54,7 @@ var (
 // best-effort, matching the other warehouse sync triggers, and a no-op while
 // the AETHER_CH_TABLE_PERMISSIONS kill switch is off.
 func (s *Server) enqueueWarehouseSync(warehouseID uuid.UUID) {
-	if s.warehouseSync == nil || !s.chTablePermissions {
+	if s.warehouseSync == nil || !s.warehouseManagementEnabled() {
 		return
 	}
 	s.warehouseSync.Enqueue(warehouseID)
@@ -70,7 +70,7 @@ type warehouseSyncForcer interface{ EnqueueNow(uuid.UUID) }
 // support immediacy, and is a no-op while the AETHER_CH_TABLE_PERMISSIONS kill
 // switch is off.
 func (s *Server) enqueueWarehouseSyncNow(warehouseID uuid.UUID) {
-	if s.warehouseSync == nil || !s.chTablePermissions {
+	if s.warehouseSync == nil || !s.warehouseManagementEnabled() {
 		return
 	}
 	if forcer, ok := s.warehouseSync.(warehouseSyncForcer); ok {
@@ -803,6 +803,11 @@ func (s *Server) handleDeleteWarehouse(w http.ResponseWriter, r *http.Request) {
 	// is taken unconditionally — even with no provisioner configured — and the
 	// header is re-read inside it, so a concurrent reconcile or
 	// provisioner-set cannot create identities after the row is gone.
+	//
+	// With the AETHER_CH_TABLE_PERMISSIONS kill switch off the delete is
+	// DB-only: the provisioner is not required and no ClickHouse connection is
+	// opened, because rollback-mode operators may not have a reachable
+	// provisioner. The deferred cleanup is audited and warned about below.
 	lockCtx, cancel := context.WithTimeout(ctx, warehouseSyncTimeout)
 	defer cancel()
 	var (
@@ -810,15 +815,17 @@ func (s *Server) handleDeleteWarehouse(w http.ResponseWriter, r *http.Request) {
 		revoked   bool
 	)
 	deleteErr = s.withWarehouseSyncLock(lockCtx, warehouseUUID, func(lockCtx context.Context) error {
-		var cleanupErr error
-		revoked, cleanupErr = s.dropWarehouseIdentitiesLocked(lockCtx, warehouseUUID)
-		if cleanupErr != nil {
-			// Preserve the sentinel chain for the no-provisioner case;
-			// otherwise redact defensively before the message reaches a client.
-			if errors.Is(cleanupErr, errWarehouseProvisionerNeeded) {
-				return fmt.Errorf("%w: %w", errWarehouseIdentityCleanup, cleanupErr)
+		if s.warehouseManagementEnabled() {
+			var cleanupErr error
+			revoked, cleanupErr = s.dropWarehouseIdentitiesLocked(lockCtx, warehouseUUID)
+			if cleanupErr != nil {
+				// Preserve the sentinel chain for the no-provisioner case;
+				// otherwise redact defensively before the message reaches a client.
+				if errors.Is(cleanupErr, errWarehouseProvisionerNeeded) {
+					return fmt.Errorf("%w: %w", errWarehouseIdentityCleanup, cleanupErr)
+				}
+				return fmt.Errorf("%w: %s", errWarehouseIdentityCleanup, redactSecrets(cleanupErr.Error()))
 			}
-			return fmt.Errorf("%w: %s", errWarehouseIdentityCleanup, redactSecrets(cleanupErr.Error()))
 		}
 		var rowErr error
 		linked, rowErr = s.deleteWarehouseRow(lockCtx, claims.OrgID, warehouseUUID, force)
@@ -864,6 +871,9 @@ func (s *Server) handleDeleteWarehouse(w http.ResponseWriter, r *http.Request) {
 		Action: "warehouse.delete", ResourceType: "warehouse", ResourceID: warehouseUUID.String(),
 		Metadata: map[string]any{"force": force, "connector_count": linked},
 	})
+	if !s.warehouseManagementEnabled() {
+		s.auditDeferredWarehouseIdentityCleanup(ctx, claims.OrgID, warehouseUUID)
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }

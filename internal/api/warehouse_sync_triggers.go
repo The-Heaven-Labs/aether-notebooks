@@ -21,7 +21,7 @@ import (
 // resolved precisely — org membership removal and user deletion destroy the
 // user rows that identify their direct, group, and everyone relationships.
 func (s *Server) enqueueWarehouseSyncForOrg(ctx context.Context, orgID string) {
-	if s.warehouseSync == nil || !s.chTablePermissions {
+	if s.warehouseSync == nil || !s.warehouseManagementEnabled() {
 		return
 	}
 	oid, err := uuid.Parse(orgID)
@@ -45,7 +45,7 @@ func (s *Server) enqueueWarehouseSyncForOrg(ctx context.Context, orgID string) {
 // warehouses without one cannot change. Orphaned grants for a deleted group
 // still resolve, which is exactly what makes role removal possible.
 func (s *Server) enqueueWarehouseSyncForGroup(ctx context.Context, groupID string) {
-	if s.warehouseSync == nil || !s.chTablePermissions {
+	if s.warehouseSync == nil || !s.warehouseManagementEnabled() {
 		return
 	}
 	gid, err := uuid.Parse(groupID)
@@ -73,7 +73,7 @@ func (s *Server) enqueueWarehouseSyncForGroup(ctx context.Context, groupID strin
 // The everyone clause is what provisions a newly joined member; without it,
 // joining an org with an everyone-granted warehouse would go unsynced.
 func (s *Server) enqueueWarehouseSyncForUser(ctx context.Context, userID string) {
-	if s.warehouseSync == nil || !s.chTablePermissions {
+	if s.warehouseSync == nil || !s.warehouseManagementEnabled() {
 		return
 	}
 	uid, err := uuid.Parse(userID)

@@ -69,7 +69,7 @@ const warehouseSyncLockKeySQL = `hashtextextended($1::text, 0)`
 // records an honest sync_status so a panic cannot leave the warehouse stuck
 // in 'syncing'. The original panic is re-raised for the worker's stack log.
 func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) error {
-	if !s.chTablePermissions {
+	if !s.warehouseManagementEnabled() {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, warehouseSyncTimeout)
@@ -454,8 +454,13 @@ func (r DriftReport) IsEmpty() bool {
 // actual ClickHouse state without applying any DDL. It uses the same
 // provisioner connection as reconcile and audits a non-empty report as
 // warehouse.drift. Reconcile remains the auto-healing path; detection exists
-// so operators can observe drift without waiting for a mutation.
+// so operators can observe drift without waiting for a mutation. It is a no-op
+// while the AETHER_CH_TABLE_PERMISSIONS kill switch is off: drift is only
+// meaningful for the state the managed path owns.
 func (s *Server) detectWarehouseDrift(ctx context.Context, warehouseID uuid.UUID) (DriftReport, error) {
+	if !s.warehouseManagementEnabled() {
+		return DriftReport{WarehouseID: warehouseID}, nil
+	}
 	ctx, cancel := context.WithTimeout(ctx, warehouseSyncTimeout)
 	defer cancel()
 
@@ -596,6 +601,31 @@ func (s *Server) dropWarehouseIdentitiesLocked(ctx context.Context, warehouseID 
 		slog.Warn("warehouse identity cleanup audit failed", "warehouse_id", warehouseID, "error", err)
 	}
 	return len(stmts) > 0, nil
+}
+
+// auditDeferredWarehouseIdentityCleanup records a warehouse deletion that ran
+// with the AETHER_CH_TABLE_PERMISSIONS kill switch off. The deleted
+// warehouse's ClickHouse identities are namespaced by its warehouse prefix and
+// cannot be revoked without a provisioner connection, so cleanup is deferred:
+// re-enabling the switch and reconciling converges, and the audit plus warning
+// are the operational signal that identities may remain. It is best-effort; a
+// failed audit never fails the delete.
+func (s *Server) auditDeferredWarehouseIdentityCleanup(ctx context.Context, orgID string, warehouseID uuid.UUID) {
+	slog.Warn("warehouse deleted with ClickHouse table permissions disabled; provisioned identities may remain in ClickHouse",
+		"warehouse_id", warehouseID.String(), "org_id", orgID)
+	if err := s.audit.Log(ctx, audit.Entry{
+		OrgID:        orgID,
+		Action:       "warehouse.identities.cleanup",
+		ResourceType: "warehouse",
+		ResourceID:   warehouseID.String(),
+		Metadata: map[string]any{
+			"warehouse_id": warehouseID.String(),
+			"deferred":     true,
+		},
+	}); err != nil {
+		slog.Warn("deferred warehouse identity cleanup audit failed",
+			"warehouse_id", warehouseID, "error", err)
+	}
 }
 
 // compareWarehouseState diffs desired against actual. It is pure so it can be
@@ -892,7 +922,7 @@ func describeWarehouseDrift(actual chaccess.ActualState) string {
 // runs. It does not start while the AETHER_CH_TABLE_PERMISSIONS kill switch is
 // off; re-enabling it at the next server start enqueues everything again.
 func (s *Server) startWarehouseReconcileLoop(ctx context.Context) {
-	if s.warehouseSync == nil || !s.chTablePermissions {
+	if s.warehouseSync == nil || !s.warehouseManagementEnabled() {
 		return
 	}
 	interval := s.warehouseReconcileInterval
@@ -944,7 +974,7 @@ func warehouseReconcileJitter(interval time.Duration) time.Duration {
 // the loop. A cancelled context (shutdown) is not logged as a failure. It is a
 // no-op while the AETHER_CH_TABLE_PERMISSIONS kill switch is off.
 func (s *Server) enqueueAllWarehouses(ctx context.Context) {
-	if s.warehouseSync == nil || !s.chTablePermissions {
+	if s.warehouseSync == nil || !s.warehouseManagementEnabled() {
 		return
 	}
 	rows, err := s.db.Pool.Query(ctx,

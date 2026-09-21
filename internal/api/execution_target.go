@@ -42,18 +42,20 @@ type warehouseService struct {
 // that is missing, soft-deleted, non-ClickHouse, or linked across orgs
 // returns executor.ErrConnectorNotFound.
 //
-// When the AETHER_CH_TABLE_PERMISSIONS kill switch is off, every connector is
-// reported as unmanaged so execution falls back to the stored credential; the
-// per-user path is never consulted and provisioning failures cannot leak into
-// a rollback.
+// When the AETHER_CH_TABLE_PERMISSIONS kill switch is off, the connector is
+// still loaded and validated first (missing, soft-deleted, non-ClickHouse, and
+// cross-org links are rejected exactly as in managed mode); only then is it
+// reported as unmanaged so execution falls back to the stored credential. The
+// validation must not be skipped: agent and MCP callers rely on resolution to
+// reject a connector the cell-level HTTP load would have caught.
 func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, requestedConnectorID uuid.UUID, pinned bool) (*executor.ExecutionTarget, error) {
-	if !s.chTablePermissions {
-		return nil, fmt.Errorf("connector %s: per-user ClickHouse table permissions are disabled: %w",
-			requestedConnectorID, executor.ErrUnmanagedConnector)
-	}
 	requested, requestedWarehouseID, err := s.loadServiceConnector(ctx, requestedConnectorID)
 	if err != nil {
 		return nil, err
+	}
+	if !s.warehouseManagementEnabled() {
+		return nil, fmt.Errorf("connector %s: per-user ClickHouse table permissions are disabled: %w",
+			requestedConnectorID, executor.ErrUnmanagedConnector)
 	}
 	if requestedWarehouseID == nil {
 		return nil, fmt.Errorf("connector %s: %w", requestedConnectorID, executor.ErrUnmanagedConnector)

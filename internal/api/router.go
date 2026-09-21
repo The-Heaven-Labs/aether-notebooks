@@ -211,13 +211,23 @@ func (s *Server) SetWarehouseReconcileInterval(d time.Duration) {
 	s.warehouseReconcileInterval = d
 }
 
-// SetCHTablePermissions sets the AETHER_CH_TABLE_PERMISSIONS kill switch. When
-// disabled, every connector executes through the legacy stored-credential path
-// and warehouse reconciliation is dormant; warehouse CRUD and grant APIs stay
-// usable so admins can stage configuration before enabling it. Call it before
-// StartBackgroundJobs.
+// SetCHTablePermissions sets the AETHER_CH_TABLE_PERMISSIONS kill switch. It is
+// a process-start setting: call it exactly once during server construction,
+// before StartBackgroundJobs, and never while requests or background jobs are
+// running. When disabled, every connector executes through the legacy
+// stored-credential path, warehouse reconciliation is dormant, and warehouse
+// deletion is DB-only; warehouse CRUD and grant APIs stay usable so admins can
+// stage configuration before enabling it.
 func (s *Server) SetCHTablePermissions(enabled bool) {
 	s.chTablePermissions = enabled
+}
+
+// warehouseManagementEnabled is the single gate for per-user warehouse
+// execution, background reconciliation, drift detection, and delete-time
+// identity cleanup. Every warehouse-management path must consult it so a
+// rollback cannot leave one path active behind another.
+func (s *Server) warehouseManagementEnabled() bool {
+	return s.chTablePermissions
 }
 
 // Close stops the warehouse reconciliation loop and then closes the sync
