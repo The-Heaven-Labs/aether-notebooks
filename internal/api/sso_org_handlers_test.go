@@ -59,12 +59,14 @@ func TestOrgAdminSSOProviderCRUD(t *testing.T) {
 	}
 
 	createBody := map[string]any{
-		"name":            "Corp OIDC",
-		"client_id":       "cid-org-1",
-		"client_secret":   "org-secret",
-		"discovery_url":   "https://corp.example.com/.well-known/openid-configuration",
-		"allowed_domains": []string{"corp.example.com"},
-		"enabled":         true,
+		"name":               "Corp OIDC",
+		"client_id":          "cid-org-1",
+		"client_secret":      "org-secret",
+		"discovery_url":      "https://corp.example.com/.well-known/openid-configuration",
+		"allowed_domains":    []string{"corp.example.com"},
+		"enabled":            true,
+		"sync_empty_groups":  true,
+		"strip_group_prefix": true,
 	}
 
 	// 1. Create provider → 201
@@ -86,6 +88,8 @@ func TestOrgAdminSSOProviderCRUD(t *testing.T) {
 	assert.Equal(t, "cid-org-1", created["client_id"])
 	assert.Nil(t, created["client_secret"], "client_secret must not be returned")
 	assert.True(t, created["enabled"].(bool))
+	assert.True(t, created["sync_empty_groups"].(bool))
+	assert.True(t, created["strip_group_prefix"].(bool))
 
 	// 2. List providers → includes created one
 	req = httptest.NewRequest("GET", "/api/v1/sso/providers", nil)
@@ -110,12 +114,14 @@ func TestOrgAdminSSOProviderCRUD(t *testing.T) {
 
 	// 3. Update → 200
 	updateBody := map[string]any{
-		"name":            "Corp OIDC Updated",
-		"client_id":       "cid-org-1",
-		"client_secret":   "org-secret",
-		"discovery_url":   "https://corp.example.com/.well-known/openid-configuration",
-		"allowed_domains": []string{"corp.example.com"},
-		"enabled":         false,
+		"name":               "Corp OIDC Updated",
+		"client_id":          "cid-org-1",
+		"client_secret":      "org-secret",
+		"discovery_url":      "https://corp.example.com/.well-known/openid-configuration",
+		"allowed_domains":    []string{"corp.example.com"},
+		"enabled":            false,
+		"sync_empty_groups":  false,
+		"strip_group_prefix": false,
 	}
 	body, _ = json.Marshal(updateBody)
 	req = httptest.NewRequest("PUT", "/api/v1/sso/providers/"+providerID, bytes.NewReader(body))
@@ -130,6 +136,8 @@ func TestOrgAdminSSOProviderCRUD(t *testing.T) {
 	assert.Equal(t, "Corp OIDC Updated", updated["name"])
 	assert.False(t, updated["enabled"].(bool))
 	assert.Nil(t, updated["client_secret"])
+	assert.False(t, updated["sync_empty_groups"].(bool))
+	assert.False(t, updated["strip_group_prefix"].(bool))
 
 	// 4. Delete → 204
 	req = httptest.NewRequest("DELETE", "/api/v1/sso/providers/"+providerID, nil)
