@@ -869,6 +869,7 @@ export const Cell = memo(function Cell({
               >
                 <Server size={10} aria-hidden="true" />
                 ran on {routing.connector_name}
+                {routing.warehouse_name ? ` · ${routing.warehouse_name}` : ''}
               </span>
             )}
             {metrics && (

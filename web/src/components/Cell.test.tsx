@@ -763,6 +763,7 @@ describe('run endpoint footer', () => {
 
     const chip = screen.getByText(/ran on CH RW/)
     expect(chip).toBeInTheDocument()
+    expect(chip).toHaveTextContent('ran on CH RW · Analytics WH')
     expect(chip).toHaveAttribute('title', expect.stringContaining('warehouse: Analytics WH'))
     expect(chip).toHaveAttribute('title', expect.stringContaining('identity: aether_ab12_u_ef34'))
   })

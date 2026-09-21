@@ -188,6 +188,23 @@ describe('ServiceChoiceDialog', () => {
     expect(screen.getByRole('button', { name: 'CH RO' })).toBeDisabled()
   })
 
+  test('dismisses the error through the caller handler', () => {
+    const onDismissError = vi.fn()
+    renderWithProviders(
+      <ServiceChoiceDialog
+        open
+        services={SERVICES}
+        error="your preference was saved, but the query did not run"
+        onSelect={vi.fn()}
+        onCancel={vi.fn()}
+        onDismissError={onDismissError}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(onDismissError).toHaveBeenCalledTimes(1)
+  })
+
   test('renders nothing when closed', () => {
     renderWithProviders(
       <ServiceChoiceDialog
@@ -202,25 +219,57 @@ describe('ServiceChoiceDialog', () => {
 })
 
 describe('serviceChoicesFromError', () => {
-  test('extracts services from a 409 ApiError body', () => {
+  test('extracts the warehouse and services from a 409 ApiError body', () => {
     const err = new ApiError(409, 'service_choice_required', {
       error: 'service_choice_required',
+      warehouse_id: 'wh-1',
       services: [
         { connector_id: 'c-1', name: 'CH RO' },
         { connector_id: 'c-2', name: 'CH RW' },
       ],
     })
-    expect(serviceChoicesFromError(err)).toEqual([
-      { connector_id: 'c-1', name: 'CH RO' },
-      { connector_id: 'c-2', name: 'CH RW' },
-    ])
+    expect(serviceChoicesFromError(err)).toEqual({
+      warehouseId: 'wh-1',
+      services: [
+        { connector_id: 'c-1', name: 'CH RO' },
+        { connector_id: 'c-2', name: 'CH RW' },
+      ],
+    })
+  })
+
+  test('tolerates a missing warehouse_id and rejects unrelated 409s', () => {
+    expect(
+      serviceChoicesFromError(new ApiError(409, 'service_choice_required', {
+        error: 'service_choice_required',
+        services: [{ connector_id: 'c-1', name: 'CH RO' }],
+      })),
+    ).toEqual({ warehouseId: null, services: [{ connector_id: 'c-1', name: 'CH RO' }] })
+
+    // A 409 whose error is not service_choice_required is never a routing choice.
+    expect(
+      serviceChoicesFromError(new ApiError(409, 'conflict', {
+        error: 'some_other_conflict',
+        services: [{ connector_id: 'c-1', name: 'CH RO' }],
+      })),
+    ).toBeNull()
+    expect(
+      serviceChoicesFromError(new ApiError(409, 'conflict', { services: [{ connector_id: 'c-1', name: 'CH RO' }] })),
+    ).toBeNull()
   })
 
   test('ignores non-409 errors and malformed payloads', () => {
-    expect(serviceChoicesFromError(new ApiError(403, 'forbidden', { services: [] }))).toBeNull()
+    expect(
+      serviceChoicesFromError(new ApiError(403, 'forbidden', {
+        error: 'service_choice_required',
+        services: [{ connector_id: 'c-1', name: 'CH RO' }],
+      })),
+    ).toBeNull()
     expect(serviceChoicesFromError(new ApiError(409, 'nope', 'oops'))).toBeNull()
     expect(
-      serviceChoicesFromError(new ApiError(409, 'nope', { services: [{ connector_id: 1 }] })),
+      serviceChoicesFromError(new ApiError(409, 'service_choice_required', {
+        error: 'service_choice_required',
+        services: [{ connector_id: 1 }],
+      })),
     ).toBeNull()
     expect(serviceChoicesFromError(new Error('network'))).toBeNull()
   })

@@ -56,12 +56,18 @@ export interface WarehouseEffectiveService {
 }
 
 /**
- * One selectable service from an execution 409: the warehouses this user may
+ * One selectable service from an execution 409: the warehouse this user may
  * route to could not be narrowed to a single service without a preference.
  */
 export interface WarehouseServiceChoice {
   connector_id: string
   name: string
+}
+
+/** Parsed execute 409 service_choice_required payload. */
+export interface ServiceChoicePrompt {
+  warehouseId: string | null
+  services: WarehouseServiceChoice[]
 }
 
 export interface WarehouseEffectiveAccess {
@@ -170,15 +176,22 @@ function isServiceChoice(value: unknown): value is WarehouseServiceChoice {
 }
 
 /**
- * Extracts the allowed services from an execute 409
- * (`{"error":"service_choice_required","services":[...]}`). Returns null for
- * any other error so callers can fall through to normal error handling.
+ * Extracts the allowed services and warehouse from an execute 409
+ * (`{"error":"service_choice_required","warehouse_id":"...","services":[...]}`).
+ * Only that exact error is treated as a routing choice; any other 409 (or a
+ * malformed body) returns null so callers fall through to normal error
+ * handling.
  */
-export function serviceChoicesFromError(err: unknown): WarehouseServiceChoice[] | null {
+export function serviceChoicesFromError(err: unknown): ServiceChoicePrompt | null {
   if (!(err instanceof ApiError) || err.status !== 409) return null
   if (typeof err.body !== 'object' || err.body === null) return null
-  const services = (err.body as { services?: unknown }).services
-  if (!Array.isArray(services) || services.length === 0) return null
-  const choices = services.filter(isServiceChoice)
-  return choices.length === services.length ? choices : null
+  const body = err.body as { error?: unknown; warehouse_id?: unknown; services?: unknown }
+  if (body.error !== 'service_choice_required') return null
+  if (!Array.isArray(body.services) || body.services.length === 0) return null
+  const choices = body.services.filter(isServiceChoice)
+  if (choices.length !== body.services.length) return null
+  return {
+    warehouseId: typeof body.warehouse_id === 'string' ? body.warehouse_id : null,
+    services: choices,
+  }
 }

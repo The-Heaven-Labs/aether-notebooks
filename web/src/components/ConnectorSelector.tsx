@@ -68,8 +68,8 @@ export function ConnectorSelector({
           aria-label={pinned ? 'Unpin connector' : 'Pin connector'}
           aria-pressed={pinned}
           title={pinned
-            ? 'Pinned: runs use this connector directly, bypassing your service preference'
-            : 'Pin runs to this connector'}
+            ? 'Pinned: runs using this connector skip your service preference. Cells with their own connector are unaffected.'
+            : 'Pin runs using this connector to it, bypassing your service preference'}
           disabled={!value}
           onClick={() => onTogglePin(!pinned)}
           style={{

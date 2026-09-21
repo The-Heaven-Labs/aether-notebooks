@@ -93,12 +93,15 @@ interface ServiceChoiceDialogProps {
   error?: string | null
   onSelect: (connectorId: string) => void
   onCancel: () => void
+  onDismissError?: () => void
 }
 
 /**
  * Prompt shown when an execution returns 409 service_choice_required: the
  * warehouse has several permitted services and no preference picked one.
- * Choosing a service stores it as the user's routing preference.
+ * Choosing a service stores it as the user's routing preference. The dialog
+ * stays open while the preference saves and the cell re-runs; callers close it
+ * only once the run has succeeded.
  */
 export function ServiceChoiceDialog({
   open,
@@ -107,6 +110,7 @@ export function ServiceChoiceDialog({
   error = null,
   onSelect,
   onCancel,
+  onDismissError,
 }: ServiceChoiceDialogProps) {
   if (!open) return null
 
@@ -117,7 +121,7 @@ export function ServiceChoiceDialog({
           More than one service in this warehouse is available to you. Pick the service
           this query should run on — the choice is saved as your routing preference.
         </p>
-        {error && <ErrorBanner message={error} onDismiss={() => {}} />}
+        {error && <ErrorBanner message={error} onDismiss={onDismissError} />}
         <div style={styles.choiceList}>
           {services.map((service) => (
             <button

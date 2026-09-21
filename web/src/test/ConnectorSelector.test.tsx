@@ -20,6 +20,9 @@ describe('ConnectorSelector', () => {
   })
 
   test('shows placeholder when value is null', () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json(mockConnectors))
+    )
     render(<ConnectorSelector value={null} onChange={() => {}} placeholder="Select connector" />)
     // The select element has value "" which shows the placeholder option
     const select = screen.getByRole('combobox')
@@ -78,6 +81,9 @@ describe('ConnectorSelector', () => {
   })
 
   test('disables the pin toggle without a selected connector', () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json(mockConnectors))
+    )
     render(<ConnectorSelector value={null} onChange={() => {}} onTogglePin={vi.fn()} />)
     expect(screen.getByRole('button', { name: 'Pin connector' })).toBeDisabled()
   })
