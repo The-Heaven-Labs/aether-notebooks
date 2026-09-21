@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useId } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
@@ -83,6 +83,8 @@ function ProviderForm({
   error: string | null
 }) {
   const [values, setValues] = useState<ProviderFormValues>(initial)
+  const syncEmptyGroupsId = useId()
+  const stripGroupPrefixId = useId()
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [testing, setTesting] = useState(false)
 
@@ -157,14 +159,24 @@ function ProviderForm({
           <input type="checkbox" checked={values.get_user_info} onChange={set('get_user_info')} />
           Call UserInfo Endpoint
         </label>
-        <label style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <input type="checkbox" checked={values.sync_empty_groups} onChange={set('sync_empty_groups')} />
-          Sync Empty Groups
-        </label>
-        <label style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <input type="checkbox" checked={values.strip_group_prefix} onChange={set('strip_group_prefix')} />
-          Strip Group Prefix
-        </label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label htmlFor={syncEmptyGroupsId} style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <input id={syncEmptyGroupsId} type="checkbox" checked={values.sync_empty_groups} onChange={set('sync_empty_groups')} />
+            Sync Empty Groups
+          </label>
+          <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: 11 }}>
+            Requires Auto-sync Groups. When enabled, an IdP report of zero groups removes all SSO-managed memberships for that user. A removed or misconfigured mapper is indistinguishable from zero groups.
+          </span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label htmlFor={stripGroupPrefixId} style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <input id={stripGroupPrefixId} type="checkbox" checked={values.strip_group_prefix} onChange={set('strip_group_prefix')} />
+            Strip Group Prefix
+          </label>
+          <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: 11 }}>
+            Requires Group Prefix. Stores names without the prefix (Aether Notebooks: Area → Area); filtering still uses the prefix.
+          </span>
+        </div>
         <label style={formStyles.label}>
           Provisioning Mode
           <select style={formStyles.input} value={values.provisioning_mode} onChange={set('provisioning_mode')}>
