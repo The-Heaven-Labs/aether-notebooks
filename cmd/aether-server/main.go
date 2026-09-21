@@ -74,6 +74,8 @@ Configuration is done via environment variables:
 	AETHER_PUBLIC_URL           Public-facing URL for link generation (default: "http://localhost:8088")
     AETHER_FRONTEND_URL         Frontend URL for CORS and OIDC redirect (default value of AETHER_PUBLIC_URL)
     AETHER_DISABLE_REGISTRATION Disable new user registration (default: "false")
+    AETHER_CH_TABLE_PERMISSIONS Enables per-user ClickHouse warehouse table permissions (default: "false")
+    AETHER_CH_RECONCILE_INTERVAL Warehouse reconcile catch-up cadence (default: "10m", floor "1m")
 
   Storage:
     AETHER_STORAGE_BACKEND      Storage backend: "local" or "s3" (default: "local")
