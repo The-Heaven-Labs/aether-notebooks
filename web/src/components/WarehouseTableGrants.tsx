@@ -12,6 +12,7 @@ import {
 } from '../api/warehouses'
 import { ErrorBanner } from './ErrorBanner'
 import { StyledTable, rowStyle, cellStyle } from './StyledTable'
+import { useWarehouseTablePermissions } from '../hooks/useWarehouseTablePermissions'
 import type { Group, Member } from '../types'
 
 interface Props {
@@ -48,6 +49,7 @@ function parseSubjectKey(key: string): { subjectType: WarehouseSubjectType; subj
 
 export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
   const qc = useQueryClient()
+  const tablePermissionsEnabled = useWarehouseTablePermissions()
   const [subjectSelection, setSubjectSelection] = useState('')
   const [connectorId, setConnectorId] = useState('')
   const [database, setDatabase] = useState('')
@@ -238,7 +240,9 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
       <div style={styles.header}>
         <h3 style={styles.title}>Table grants</h3>
         <span style={styles.hint}>
-          Tables each subject may read in this warehouse. ClickHouse enforces these grants.
+          {tablePermissionsEnabled
+            ? 'Tables each subject may read in this warehouse. ClickHouse enforces these grants.'
+            : 'Tables each subject may read in this warehouse. ClickHouse table permissions are disabled, so these grants are not enforced yet.'}
         </span>
       </div>
 

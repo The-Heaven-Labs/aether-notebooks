@@ -69,6 +69,23 @@ describe('WarehouseTableGrants', () => {
     expect(screen.getByRole('option', { name: 'Everyone' })).toBeInTheDocument()
   })
 
+  test('states grants are not enforced while table permissions are disabled', async () => {
+    server.use(
+      http.get('/api/v1/auth/config', () =>
+        HttpResponse.json({
+          registration_disabled: false,
+          warehouse_table_permissions_enabled: false,
+        }),
+      ),
+    )
+    renderGrants()
+    await screen.findAllByText('Data Team')
+    expect(
+      screen.getByText(/table permissions are disabled, so these grants are not enforced yet/),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/ClickHouse enforces these grants/)).toBeNull()
+  })
+
   test('posts a grant for the selected subject and table and refetches grants', async () => {
     let posted: Record<string, unknown> | null = null
     let grantsCalls = 0

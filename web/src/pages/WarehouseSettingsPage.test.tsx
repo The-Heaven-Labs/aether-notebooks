@@ -75,6 +75,27 @@ describe('WarehouseSettingsPage', () => {
     expect(screen.getByText('Error')).toBeInTheDocument()
   })
 
+  test('does not claim enforcement while table permissions are disabled', async () => {
+    server.use(
+      http.get('/api/v1/auth/config', () =>
+        HttpResponse.json({
+          registration_disabled: false,
+          warehouse_table_permissions_enabled: false,
+        }),
+      ),
+    )
+    renderWithProviders(<WarehouseSettingsPage />)
+    await screen.findByText('Analytics')
+    expect(screen.getByText(/table permissions are currently disabled/)).toBeInTheDocument()
+    expect(screen.queryByText(/table grants enforced by ClickHouse/)).toBeNull()
+
+    // The delete confirmation must not promise identity revocation either.
+    fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0])
+    expect(
+      await screen.findByText(/any provisioned identities are left in place/),
+    ).toBeInTheDocument()
+  })
+
   test('creates a warehouse from the inline form', async () => {
     let posted: Record<string, unknown> | null = null
     server.use(

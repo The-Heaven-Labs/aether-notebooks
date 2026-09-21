@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
-import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { server } from './server'
 import { ConnectorsPage } from '../pages/ConnectorsPage'
@@ -66,6 +66,49 @@ describe('ConnectorsPage', () => {
     await screen.findByText('Managed CH')
     expect(screen.getByText('Managed — table grants enforced')).toBeInTheDocument()
     expect(screen.getByText('Shared credential — not table-scoped')).toBeInTheDocument()
+  })
+
+  test('softens the managed badge while table permissions are disabled', async () => {
+    server.use(
+      http.get('/api/v1/auth/config', () =>
+        HttpResponse.json({
+          registration_disabled: false,
+          warehouse_table_permissions_enabled: false,
+        }),
+      ),
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          { id: 'c-managed', name: 'Managed CH', type: 'clickhouse', warehouse_id: 'wh-1', config: {}, created_at: '2026-01-01T00:00:00Z' },
+        ]),
+      ),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    await screen.findByText('Managed CH')
+    expect(screen.getByText('Managed — table grants off')).toBeInTheDocument()
+    expect(screen.queryByText('Managed — table grants enforced')).toBeNull()
+  })
+
+  test('link dialog does not promise provisioning while table permissions are disabled', async () => {
+    server.use(
+      http.get('/api/v1/auth/config', () =>
+        HttpResponse.json({
+          registration_disabled: false,
+          warehouse_table_permissions_enabled: false,
+        }),
+      ),
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          { id: 'c-ch', name: 'CH RW', type: 'clickhouse', warehouse_id: null, config: {}, created_at: '2026-01-01T00:00:00Z' },
+        ]),
+      ),
+    )
+    renderWithProviders(<ConnectorsPage />)
+
+    fireEvent.click(await screen.findByText('Link to warehouse'))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/AETHER_CH_TABLE_PERMISSIONS/)).toBeInTheDocument()
+    expect(within(dialog).queryByText(/Provisioning begins immediately/)).toBeNull()
+    expect(within(dialog).queryByText(/table grants are enforced by the warehouse/)).toBeNull()
   })
 
   test('links a clickhouse connector to a warehouse through the confirmation dialog', async () => {

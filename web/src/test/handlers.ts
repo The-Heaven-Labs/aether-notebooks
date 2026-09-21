@@ -85,6 +85,15 @@ export const ACL_ENTRIES = [
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 export const handlers = [
+  // Public app config: registration + warehouse table permissions flags.
+  // Defaults to enforcement on so warehouse copy renders its managed wording.
+  http.get('/api/v1/auth/config', () =>
+    HttpResponse.json({
+      registration_disabled: false,
+      warehouse_table_permissions_enabled: true,
+    })
+  ),
+
   // Notebooks
   http.get('/api/v1/notebooks', () => HttpResponse.json([])),
   http.get('/api/v1/notebooks/:id', ({ params }) =>

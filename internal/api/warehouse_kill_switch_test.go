@@ -45,6 +45,28 @@ func pointProvisionerAtUnreachableHost(t *testing.T, s *Server, key []byte, conn
 	require.NoError(t, err)
 }
 
+// The public app config exposes the warehouse kill switch so the UI can stop
+// claiming table grants are enforced while execution falls back to stored
+// credentials.
+func TestAuthConfigExposesWarehouseKillSwitch(t *testing.T) {
+	s, _ := newKillSwitchTestServer(t)
+
+	readConfig := func() map[string]bool {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/config", nil)
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var body map[string]bool
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		return body
+	}
+
+	require.False(t, readConfig()["warehouse_table_permissions_enabled"])
+
+	s.SetCHTablePermissions(true)
+	require.True(t, readConfig()["warehouse_table_permissions_enabled"])
+}
+
 // With the kill switch off, a managed connector must resolve as unmanaged so
 // callers take the stored-credential path instead of the per-user identity.
 func TestKillSwitchOffResolveExecutionTargetIsUnmanaged(t *testing.T) {

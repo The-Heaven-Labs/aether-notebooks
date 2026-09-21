@@ -24,10 +24,12 @@ import {
   type WarehouseSyncStatus,
 } from '../api/warehouses'
 import type { Connector } from '../types'
+import { useWarehouseTablePermissions } from '../hooks/useWarehouseTablePermissions'
 
 export function WarehouseSettingsPage() {
   useEffect(() => { document.title = 'Warehouses — Aether Notebooks' }, [])
   const qc = useQueryClient()
+  const tablePermissionsEnabled = useWarehouseTablePermissions()
 
   const [creating, setCreating] = useState(false)
   const [form, setForm] = useState({ name: '', provisioner_connector_id: '' })
@@ -149,9 +151,20 @@ export function WarehouseSettingsPage() {
           </button>
         </SectionHeader>
         <p style={styles.intro}>
-          Group ClickHouse connectors that share one access namespace. Linked connectors run as
-          per-user identities with table grants enforced by ClickHouse; unlinked connectors keep
-          using their shared credential.
+          {tablePermissionsEnabled ? (
+            <>
+              Group ClickHouse connectors that share one access namespace. Linked connectors run as
+              per-user identities with table grants enforced by ClickHouse; unlinked connectors keep
+              using their shared credential.
+            </>
+          ) : (
+            <>
+              Group ClickHouse connectors that share one access namespace. ClickHouse table
+              permissions are currently disabled, so linked connectors execute with their stored
+              credential; per-user identities and table grants begin once an operator enables
+              AETHER_CH_TABLE_PERMISSIONS.
+            </>
+          )}
         </p>
 
         {creating && (
@@ -227,7 +240,9 @@ export function WarehouseSettingsPage() {
           <EmptyState
             icon={<Boxes size={28} />}
             title="No warehouses yet"
-            text="Create a warehouse to group ClickHouse services and enforce per-table grants."
+            text={tablePermissionsEnabled
+              ? 'Create a warehouse to group ClickHouse services and enforce per-table grants.'
+              : 'Create a warehouse to group ClickHouse services for per-user table grants.'}
             action={{ label: '+ New Warehouse', onClick: () => setCreating(true) }}
           />
         ) : (
@@ -259,7 +274,9 @@ export function WarehouseSettingsPage() {
       <ConfirmDialog
         open={!!deleteTarget}
         title="Delete warehouse"
-        message={`Delete "${deleteTarget?.name}"? Linked connectors return to shared-credential mode and managed ClickHouse identities are revoked.`}
+        message={tablePermissionsEnabled
+          ? `Delete "${deleteTarget?.name}"? Linked connectors return to shared-credential mode and managed ClickHouse identities are revoked.`
+          : `Delete "${deleteTarget?.name}"? Linked connectors return to shared-credential mode; ClickHouse table permissions are disabled, so any provisioned identities are left in place.`}
         confirmLabel="Delete"
         destructive
         confirmDisabled={deleteMutation.isPending}
@@ -286,7 +303,9 @@ export function WarehouseSettingsPage() {
       <ConfirmDialog
         open={!!unlinkTarget}
         title="Unlink connector"
-        message={`Unlink "${unlinkTarget?.connector.name}" from "${unlinkTarget?.warehouse.name}"? It returns to shared-credential mode and table grants no longer apply.`}
+        message={tablePermissionsEnabled
+          ? `Unlink "${unlinkTarget?.connector.name}" from "${unlinkTarget?.warehouse.name}"? It returns to shared-credential mode and table grants no longer apply.`
+          : `Unlink "${unlinkTarget?.connector.name}" from "${unlinkTarget?.warehouse.name}"? It returns to shared-credential mode.`}
         confirmLabel="Unlink"
         destructive
         onConfirm={() => {

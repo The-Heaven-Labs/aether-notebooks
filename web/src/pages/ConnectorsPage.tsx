@@ -14,6 +14,7 @@ import { EmptyState } from '../components/EmptyState'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Modal } from '../components/Modal'
 import { useAuth } from '../hooks/useAuth'
+import { useWarehouseTablePermissions } from '../hooks/useWarehouseTablePermissions'
 import { listWarehouses, setConnectorWarehouse } from '../api/warehouses'
 
 type ConnectorType = 'postgres' | 'clickhouse' | 'opensearch'
@@ -46,6 +47,7 @@ export function ConnectorsPage() {
   const qc = useQueryClient()
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
+  const tablePermissionsEnabled = useWarehouseTablePermissions()
   const [searchParams, setSearchParams] = useSearchParams()
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
@@ -475,11 +477,15 @@ export function ConnectorsPage() {
                     {c.warehouse_id ? (
                       <span
                         style={styles.managedBadge}
-                        title={`Managed by warehouse "${
-                          warehouses.find((w) => w.id === c.warehouse_id)?.name ?? c.warehouse_id
-                        }" — ClickHouse table grants are enforced`}
+                        title={tablePermissionsEnabled
+                          ? `Managed by warehouse "${
+                              warehouses.find((w) => w.id === c.warehouse_id)?.name ?? c.warehouse_id
+                            }" — ClickHouse table grants are enforced`
+                          : `Linked to warehouse "${
+                              warehouses.find((w) => w.id === c.warehouse_id)?.name ?? c.warehouse_id
+                            }" — ClickHouse table permissions are disabled, so queries use the connector's stored credential`}
                       >
-                        Managed — table grants enforced
+                        {tablePermissionsEnabled ? 'Managed — table grants enforced' : 'Managed — table grants off'}
                       </span>
                     ) : (
                       <span style={styles.sharedBadge}>
@@ -593,9 +599,20 @@ export function ConnectorsPage() {
         >
           <div style={styles.modalBody}>
             <p style={styles.modalText}>
-              Linking <strong>{linkTarget.name}</strong> changes its execution mode: queries run as
-              per-user ClickHouse identities and table grants are enforced by the warehouse.
-              Provisioning begins immediately.
+              {tablePermissionsEnabled ? (
+                <>
+                  Linking <strong>{linkTarget.name}</strong> changes its execution mode: queries run as
+                  per-user ClickHouse identities and table grants are enforced by the warehouse.
+                  Provisioning begins immediately.
+                </>
+              ) : (
+                <>
+                  Linking <strong>{linkTarget.name}</strong> records the warehouse membership.
+                  ClickHouse table permissions are currently disabled, so queries keep using the
+                  connector's stored credential; per-user identities and table grants begin once an
+                  operator enables AETHER_CH_TABLE_PERMISSIONS.
+                </>
+              )}
             </p>
             <label style={styles.label}>
               Warehouse
@@ -639,7 +656,9 @@ export function ConnectorsPage() {
       <ConfirmDialog
         open={!!unlinkTarget}
         title="Unlink connector"
-        message={`Unlink "${unlinkTarget?.name}" from its warehouse? It returns to shared-credential mode; table grants no longer apply.`}
+        message={tablePermissionsEnabled
+          ? `Unlink "${unlinkTarget?.name}" from its warehouse? It returns to shared-credential mode; table grants no longer apply.`
+          : `Unlink "${unlinkTarget?.name}" from its warehouse? It returns to shared-credential mode.`}
         confirmLabel="Unlink"
         destructive
         onConfirm={() => {

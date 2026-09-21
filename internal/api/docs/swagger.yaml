@@ -1761,7 +1761,8 @@ paths:
       - attachments
   /auth/config:
     get:
-      description: Returns whether self-registration is disabled (unauthenticated)
+      description: 'Returns public server flags: whether self-registration is disabled
+        and whether ClickHouse warehouse table permissions are enabled (unauthenticated)'
       produces:
       - application/json
       responses:
@@ -1771,7 +1772,7 @@ paths:
             additionalProperties:
               type: boolean
             type: object
-      summary: Registration status
+      summary: Public app config
       tags:
       - sso
   /auth/login:

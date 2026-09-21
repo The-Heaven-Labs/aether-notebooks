@@ -1780,14 +1780,14 @@ const docTemplate = `{
         },
         "/auth/config": {
             "get": {
-                "description": "Returns whether self-registration is disabled (unauthenticated)",
+                "description": "Returns public server flags: whether self-registration is disabled and whether ClickHouse warehouse table permissions are enabled (unauthenticated)",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "sso"
                 ],
-                "summary": "Registration status",
+                "summary": "Public app config",
                 "responses": {
                     "200": {
                         "description": "OK",

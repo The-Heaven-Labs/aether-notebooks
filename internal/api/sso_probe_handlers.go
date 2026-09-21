@@ -50,12 +50,15 @@ func (s *Server) handleSSOProbe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, providers)
 }
 
-// @Summary Registration status
-// @Description Returns whether self-registration is disabled (unauthenticated)
+// @Summary Public app config
+// @Description Returns public server flags: whether self-registration is disabled and whether ClickHouse warehouse table permissions are enabled (unauthenticated)
 // @Tags sso
 // @Produce json
 // @Success 200 {object} map[string]bool
 // @Router /auth/config [get]
-func (s *Server) handleRegistrationStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]bool{"registration_disabled": s.disableRegistration})
+func (s *Server) handleAuthConfig(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]bool{
+		"registration_disabled":               s.disableRegistration,
+		"warehouse_table_permissions_enabled": s.warehouseManagementEnabled(),
+	})
 }
