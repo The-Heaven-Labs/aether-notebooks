@@ -9,35 +9,54 @@ test.describe('Connectors', () => {
 
   test('create postgres connector with database field', async ({ page }) => {
     await page.goto('/connectors')
-    await page.click('button:has-text("New Connector")')
-    await page.selectOption('select[name="type"]', 'postgres')
-    await page.fill('input[name="name"]', 'Test PG')
-    await page.fill('input[name="host"]', 'localhost')
-    await page.fill('input[name="port"]', '5432')
-    await page.fill('input[name="database"]', 'aether')
-    await page.fill('input[name="user"]', 'aether')
-    await page.fill('input[name="password"]', 'aether_dev')
-    await page.click('button:has-text("Save")')
-    await expect(page.locator('text=Test PG')).toBeVisible()
+    await page.getByRole('button', { name: '+ New Connector' }).click()
+    await page.getByLabel('Type').selectOption('postgres')
+    await page.getByLabel('Name').fill('Test PG')
+    await page.getByLabel('Host').fill('localhost')
+    await page.getByLabel('Port').fill('5432')
+    await page.getByLabel('Database').fill('aether')
+    await page.getByLabel('User').fill('aether')
+    await page.getByLabel('Password').fill('aether_dev')
+    await page.getByRole('button', { name: 'Create', exact: true }).click()
+    await expect(page.getByText('Test PG')).toBeVisible()
   })
 
   test('create ClickHouse connector without database field', async ({ page }) => {
     await page.goto('/connectors')
-    await page.click('button:has-text("New Connector")')
-    await page.selectOption('select[name="type"]', 'clickhouse')
-    await page.fill('input[name="name"]', 'Test CH')
-    await page.fill('input[name="host"]', 'localhost')
-    await page.fill('input[name="port"]', '9000')
-    await page.fill('input[name="user"]', 'default')
-    await page.click('button:has-text("Save")')
-    await expect(page.locator('text=Test CH')).toBeVisible()
+    await page.getByRole('button', { name: '+ New Connector' }).click()
+    await page.getByLabel('Type').selectOption('clickhouse')
+    await page.getByLabel('Name').fill('Test CH')
+    await page.getByLabel('Host').fill('localhost')
+    await page.getByLabel('User').fill('dev')
+    await page.getByLabel('Password').fill('dev')
+    await page.getByRole('button', { name: 'Create', exact: true }).click()
+    await expect(page.getByText('Test CH')).toBeVisible()
   })
 
-  test('schema browser shows database picker for connector without default DB', async ({ page }) => {
-    await page.goto('/notebooks')
-    await page.click('text=New Notebook')
-    await page.locator('select').first().selectOption({ label: /Test CH/ })
-    await page.click('button:has-text("Schema")')
-    await expect(page.locator('text=select database')).toBeVisible()
+  test('schema browser lists tables for a ClickHouse connector without a default DB', async ({ page, request }) => {
+    const headers = { Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem('aether_token'))}` }
+
+    const connResp = await request.post('/api/v1/connectors', {
+      headers,
+      data: {
+        name: 'Test CH Schema',
+        type: 'clickhouse',
+        config: { host: 'localhost', port: 9000, user: 'dev', password: 'dev', database: '' },
+      },
+    })
+    expect(connResp.ok()).toBeTruthy()
+
+    const nbResp = await request.post('/api/v1/notebooks', { headers, data: { title: 'Schema Browser E2E' } })
+    expect(nbResp.ok()).toBeTruthy()
+    const notebook = await nbResp.json()
+
+    await page.goto(`/notebooks/${notebook.id}`)
+    await page.getByLabel('Select a connector').selectOption({ label: 'Test CH Schema' })
+    await page.getByRole('button', { name: /View/ }).click()
+    await page.getByRole('button', { name: 'Schema', exact: true }).click()
+
+    // Tables come from the live dev ClickHouse seed (dev/clickhouse-seed.sql).
+    await expect(page.getByText('Schema Browser', { exact: true })).toBeVisible()
+    await expect(page.getByText('events', { exact: true })).toBeVisible({ timeout: 20_000 })
   })
 })

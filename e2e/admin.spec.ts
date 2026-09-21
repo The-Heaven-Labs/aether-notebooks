@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { registerAndOnboard } from './helpers'
+import { loginAsPlatformAdmin, registerAndOnboard } from './helpers'
 
 test.describe('Platform admin panel', () => {
   // Register a user and try to access /admin — regular users should not see it
@@ -7,61 +7,49 @@ test.describe('Platform admin panel', () => {
     const ts = Date.now().toString()
     await registerAndOnboard(page, ts)
     await page.goto('/admin')
-    // Regular user should see either a redirect or no admin content
-    // The AdminPage renders only for platform admins; regular users see nothing useful
-    await expect(page.locator('h1:has-text("Platform Administration")')).not.toBeVisible()
+    // The page shell is public, but the admin tabs only render for platform admins.
+    await expect(page.getByRole('tab', { name: 'Orgs' })).toHaveCount(0)
+    await expect(page.getByRole('tab', { name: 'Users' })).toHaveCount(0)
   })
 
   test('visual: /admin as non-admin (should be empty or redirect)', async ({ page }) => {
     const ts = Date.now().toString()
     await registerAndOnboard(page, ts)
     await page.goto('/admin')
-    await expect(page).toHaveScreenshot('admin-non-admin.png')
+    await expect(page.locator('h1:has-text("Platform Admin")')).toBeVisible()
+    // The top bar shows the unique org name; tolerate its glyph-width drift.
+    await expect(page).toHaveScreenshot('admin-non-admin.png', { maxDiffPixelRatio: 0.002 })
   })
 
-  // Note: platform admin tests require a seeded platform admin user.
-  // Run `task db:seed-admin` or manually set is_platform_admin=true in the DB.
+  // Platform admin credentials are seeded by the dev stack
+  // (AETHER_PLATFORM_ADMIN_EMAIL=admin@heaven-labs.com / admin123).
   test.describe('with platform admin credentials', () => {
     test.skip(({ browserName }) => browserName !== 'chromium', 'admin tests run only on chromium')
 
     test('platform admin can view orgs table', async ({ page }) => {
-      await page.goto('/login')
-      await page.fill('input[type="email"]', 'platform-admin@example.com')
-      await page.fill('input[type="password"]', 'password')
-      await page.click('button[type="submit"]')
-      // If login succeeds (user exists), check admin page
-      if (page.url().includes('/onboarding')) {
-        test.skip() // user not seeded
-      }
-      await expect(page).toHaveURL('/')
+      await loginAsPlatformAdmin(page)
       await page.goto('/admin')
-      await expect(page.locator('h1:has-text("Platform Administration")')).toBeVisible()
+      await expect(page.locator('h1:has-text("Platform Admin")')).toBeVisible()
+      await expect(page.getByRole('tab', { name: 'Orgs' })).toBeVisible()
       await expect(page.locator('table')).toBeVisible()
     })
 
     test('platform admin can switch to users tab', async ({ page }) => {
-      await page.goto('/login')
-      await page.fill('input[type="email"]', 'platform-admin@example.com')
-      await page.fill('input[type="password"]', 'password')
-      await page.click('button[type="submit"]')
-      if (page.url().includes('/onboarding')) {
-        test.skip()
-      }
+      await loginAsPlatformAdmin(page)
       await page.goto('/admin')
-      await page.click('button:has-text("Users")')
+      await page.getByRole('tab', { name: 'Users' }).click()
       await expect(page.locator('th:has-text("Email")')).toBeVisible()
     })
 
     test('visual: platform admin panel', async ({ page }) => {
-      await page.goto('/login')
-      await page.fill('input[type="email"]', 'platform-admin@example.com')
-      await page.fill('input[type="password"]', 'password')
-      await page.click('button[type="submit"]')
-      if (page.url().includes('/onboarding')) {
-        test.skip()
-      }
+      await loginAsPlatformAdmin(page)
       await page.goto('/admin')
-      await expect(page).toHaveScreenshot('platform-admin-panel.png')
+      await expect(page.locator('table tbody tr').first()).toBeVisible()
+      // Org names/counts/dates and the pagination totals are live data; mask
+      // them so the snapshot covers the panel chrome, not the dev DB contents.
+      await expect(page).toHaveScreenshot('platform-admin-panel.png', {
+        mask: [page.locator('table'), page.getByText(/Showing .* entries/)],
+      })
     })
   })
 })
