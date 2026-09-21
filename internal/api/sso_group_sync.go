@@ -30,7 +30,7 @@ func SyncSSOGroups(ctx context.Context, pool *pgxpool.Pool, logger *audit.Logger
 
 	changed := map[string]struct{}{}
 	for _, groupName := range filtered {
-		groupID, err := FindOrCreateGroup(ctx, pool, orgID, groupName)
+		groupID, _, err := FindOrCreateGroup(ctx, pool, orgID, groupName)
 		if err != nil {
 			if logger != nil {
 				logger.Log(ctx, audit.Entry{
@@ -152,17 +152,17 @@ func changedGroupIDs(changed map[string]struct{}) []string {
 	return ids
 }
 
-func FindOrCreateGroup(ctx context.Context, pool *pgxpool.Pool, orgID, name string) (string, error) {
+func FindOrCreateGroup(ctx context.Context, pool *pgxpool.Pool, orgID, name string) (string, bool, error) {
 	var id string
 	err := pool.QueryRow(ctx,
 		`SELECT id FROM groups WHERE org_id=$1 AND LOWER(name)=LOWER($2)`,
 		orgID, name,
 	).Scan(&id)
 	if err == nil {
-		return id, nil
+		return id, false, nil
 	}
 	if err != pgx.ErrNoRows {
-		return "", fmt.Errorf("lookup group: %w", err)
+		return "", false, fmt.Errorf("lookup group: %w", err)
 	}
 
 	err = pool.QueryRow(ctx,
@@ -170,10 +170,10 @@ func FindOrCreateGroup(ctx context.Context, pool *pgxpool.Pool, orgID, name stri
 		orgID, name,
 	).Scan(&id)
 	if err != nil {
-		return "", fmt.Errorf("create group: %w", err)
+		return "", false, fmt.Errorf("create group: %w", err)
 	}
 
-	return id, nil
+	return id, true, nil
 }
 
 func FindStaleSSOGroups(ctx context.Context, pool *pgxpool.Pool, providerID, userID string, currentGroups []string) ([]string, error) {
