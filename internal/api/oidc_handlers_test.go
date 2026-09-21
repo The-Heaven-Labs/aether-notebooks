@@ -235,15 +235,41 @@ func TestSyncSSOGroups_EmptyGroups(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, count, "empty groups should be a no-op when sync_empty_groups is off")
 
+	// A manual (admin-added) membership must survive the authoritative empty sync.
+	var manualGroupID string
+	err = s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO groups (org_id, name) VALUES ($1, 'manual-group') RETURNING id`, orgID,
+	).Scan(&manualGroupID)
+	require.NoError(t, err)
+	_, err = s.DB().Pool.Exec(ctx,
+		`INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)`,
+		manualGroupID, userID,
+	)
+	require.NoError(t, err)
+
 	// Flag on: empty groups removes all SSO-managed memberships.
 	provider.SyncEmptyGroups = true
 	api.SyncSSOGroups(ctx, s.DB().Pool, logger, provider, orgID, userID, nil)
 
+	var ssoGroupID string
 	err = s.DB().Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM group_members WHERE user_id=$1`, userID,
+		`SELECT id FROM groups WHERE org_id=$1 AND name='engineering'`, orgID,
+	).Scan(&ssoGroupID)
+	require.NoError(t, err)
+
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM group_members WHERE group_id=$1 AND user_id=$2`,
+		ssoGroupID, userID,
 	).Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 0, count, "empty groups should remove SSO-managed memberships")
+
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM group_members WHERE group_id=$1 AND user_id=$2`,
+		manualGroupID, userID,
+	).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "manual memberships must survive")
 
 	err = s.DB().Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM sso_group_memberships WHERE provider_id=$1 AND user_id=$2`,
@@ -256,7 +282,7 @@ func TestSyncSSOGroups_EmptyGroups(t *testing.T) {
 		`SELECT COUNT(*) FROM groups WHERE org_id=$1`, orgID,
 	).Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 1, count, "groups are never deleted")
+	assert.Equal(t, 2, count, "groups are never deleted")
 }
 
 func TestSyncSSOGroups_CaseInsensitiveMatching(t *testing.T) {

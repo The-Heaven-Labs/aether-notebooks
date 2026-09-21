@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -37,6 +38,7 @@ func logGroupSyncError(ctx context.Context, logger *audit.Logger, orgID, userID,
 	}
 	logger.Log(ctx, audit.Entry{
 		OrgID:        orgID,
+		UserID:       userID,
 		Action:       "group.sso.error",
 		ResourceType: "group",
 		ResourceID:   groupID,
@@ -51,6 +53,7 @@ func logGroupSyncEvent(ctx context.Context, logger *audit.Logger, action, orgID,
 	}
 	logger.Log(ctx, audit.Entry{
 		OrgID:        orgID,
+		UserID:       userID,
 		Action:       action,
 		ResourceType: "group",
 		ResourceID:   groupID,
@@ -66,7 +69,9 @@ func logGroupSyncEvent(ctx context.Context, logger *audit.Logger, action, orgID,
 // resolves to a group they were removed from, yet the group's grant must still
 // be reconciled out of ClickHouse. When provider.SyncEmptyGroups is true, an
 // empty IdP group list is authoritative and removes all SSO-managed
-// memberships.
+// memberships. Names dropped by prefix filtering or prefix stripping count as
+// empty here, so changing a provider's prefix can remove memberships that were
+// previously tracked under the old name.
 func SyncSSOGroups(ctx context.Context, pool *pgxpool.Pool, logger *audit.Logger, provider sso.Provider, orgID, userID string, idpGroups []string) []string {
 	resolved := resolveSSOGroupNames(provider, idpGroups)
 	if len(resolved) == 0 && !provider.SyncEmptyGroups {
@@ -126,9 +131,12 @@ func SyncSSOGroups(ctx context.Context, pool *pgxpool.Pool, logger *audit.Logger
 		}
 		// Record the change before touching the bookkeeping row: a later
 		// failure there must not drop the warehouse trigger.
-		removed := tag.RowsAffected() > 0
-		if removed {
+		if tag.RowsAffected() > 0 {
 			changed[groupID] = struct{}{}
+			// Emit the removal before deleting the tracking row so a failure
+			// there cannot suppress the audit event for a membership that is
+			// already gone.
+			logGroupSyncEvent(ctx, logger, "group.sso.remove_member", orgID, userID, groupID, "")
 		}
 
 		_, err = pool.Exec(ctx,
@@ -138,10 +146,6 @@ func SyncSSOGroups(ctx context.Context, pool *pgxpool.Pool, logger *audit.Logger
 		if err != nil {
 			logGroupSyncError(ctx, logger, orgID, userID, groupID, "", err)
 			continue
-		}
-
-		if removed {
-			logGroupSyncEvent(ctx, logger, "group.sso.remove_member", orgID, userID, groupID, "")
 		}
 	}
 
@@ -169,7 +173,7 @@ func FindOrCreateGroup(ctx context.Context, pool *pgxpool.Pool, orgID, name stri
 	if err == nil {
 		return id, false, nil
 	}
-	if err != pgx.ErrNoRows {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", false, fmt.Errorf("lookup group: %w", err)
 	}
 
