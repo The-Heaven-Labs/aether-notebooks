@@ -109,7 +109,7 @@ If the IDP renames a group, the old Aether group persists with stale memberships
 
 ## Display Names
 
-Group sync creates groups with no label — `display_name` is `NULL` — and never writes it, so repeated logins cannot overwrite an admin edit. Any group except `Everyone` can carry a label; `Everyone` is always rendered as "Everyone" and rejects one with a 400.
+Group sync creates groups with no label — `display_name` is `NULL` — and never writes it, so repeated logins cannot overwrite an admin edit. Any group except `Everyone` can carry a label; `Everyone` is always rendered as "Everyone" and rejects one with a 400. A label equal to `everyone` (case-insensitive, trimmed) is rejected with a 400 just like the reserved group name.
 
 The label is presentation-only. The frontend renders `display_name?.trim() || name` everywhere through the shared `groupLabel` helper, while `name` remains the sync identity: matching, stale comparison, the `UNIQUE (org_id, name)` constraint, and audit resource names all use `name`. Permission resolution uses group IDs, with the `Everyone` special case matching on `name`, so `display_name` never participates in an access decision.
 
