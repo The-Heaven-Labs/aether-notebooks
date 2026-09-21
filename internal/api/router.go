@@ -506,6 +506,8 @@ func (s *Server) routes() {
 	s.mux.Handle("DELETE /api/v1/warehouses/{id}/grants/{grant_id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleDeleteWarehouseGrant))))
 	s.mux.Handle("GET /api/v1/warehouses/{id}/effective-access", authMW(http.HandlerFunc(s.handleWarehouseEffectiveAccess)))
 	s.mux.Handle("PUT /api/v1/warehouses/{id}/preference", authMW(http.HandlerFunc(s.handleSetWarehousePreference)))
+	s.mux.Handle("GET /api/v1/warehouses/{id}/new-tables", authMW(RequireRole("admin")(http.HandlerFunc(s.handleWarehouseNewTables))))
+	s.mux.Handle("GET /api/v1/warehouses/{id}/validation", authMW(RequireRole("admin")(http.HandlerFunc(s.handleWarehouseValidation))))
 
 	// Recent route
 	s.mux.Handle("GET /api/v1/recent", authMW(http.HandlerFunc(s.handleGetRecent)))

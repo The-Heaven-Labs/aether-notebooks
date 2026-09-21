@@ -47,6 +47,17 @@ beforeEach(() => {
       })
     }),
     http.get('/api/v1/warehouses/:id/grants', () => HttpResponse.json([])),
+    http.get('/api/v1/warehouses/:id/new-tables', ({ params }) =>
+      HttpResponse.json({ warehouse_id: params.id, since: '2026-01-01T00:00:00Z', tables: [] }),
+    ),
+    http.get('/api/v1/warehouses/:id/validation', ({ params }) =>
+      HttpResponse.json({
+        warehouse_id: params.id,
+        truncated: false,
+        tables_without_service_access: [],
+        service_access_without_tables: [],
+      }),
+    ),
   )
 })
 
@@ -97,6 +108,8 @@ describe('WarehouseSettingsPage', () => {
     expect(screen.getAllByText('CH RW').length).toBeGreaterThan(0)
     expect(await screen.findByText('Table grants')).toBeInTheDocument()
     expect(await screen.findByText('No table grants yet.')).toBeInTheDocument()
+    expect(await screen.findByText('New tables')).toBeInTheDocument()
+    expect(await screen.findByText('No new tables since your last review.')).toBeInTheDocument()
   })
 
   test('changes the provisioner through the selector', async () => {

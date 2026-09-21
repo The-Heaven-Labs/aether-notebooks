@@ -7,6 +7,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { FormCard } from '../components/FormCard'
+import { NewTablesInbox } from '../components/NewTablesInbox'
 import { SectionHeader } from '../components/SectionHeader'
 import { StatusBadge } from '../components/StatusBadge'
 import { WarehouseTableGrants } from '../components/WarehouseTableGrants'
@@ -492,6 +493,7 @@ function WarehouseCard({
               </div>
 
               <WarehouseTableGrants warehouseId={warehouse.id} connectors={linked} />
+              <NewTablesInbox warehouseId={warehouse.id} />
             </>
           )}
         </div>

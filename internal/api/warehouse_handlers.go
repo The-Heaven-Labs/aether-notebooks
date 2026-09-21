@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/chaccess"
 )
 
 // warehouseJSON is the API representation of a warehouse row. It is defined
@@ -1124,4 +1125,167 @@ func (s *Server) handleSetConnectorWarehouse(w http.ResponseWriter, r *http.Requ
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{"id": connUUID.String(), "warehouse_id": value})
+}
+
+// maxWarehouseNewTables bounds the new-tables inbox response. A catalog with
+// more never-granted tables than this needs a review workflow, not a longer
+// list.
+const maxWarehouseNewTables = 200
+
+// recordSchemaSnapshot upserts raw catalog observations for one connector.
+// first_seen_at is preserved on conflict — it is what makes a table "new" to
+// the inbox — while last_seen_at is refreshed. Names that cannot be grant
+// object identifiers are dropped so the inbox can never suggest a name the
+// grants API would reject.
+func (s *Server) recordSchemaSnapshot(ctx context.Context, connectorID uuid.UUID, tables []chaccess.CatalogTable) error {
+	if len(tables) == 0 {
+		return nil
+	}
+	databases := make([]string, 0, len(tables))
+	names := make([]string, 0, len(tables))
+	for _, t := range tables {
+		if _, err := chaccess.QuoteObjectIdent(t.Database); err != nil {
+			continue
+		}
+		if _, err := chaccess.QuoteObjectIdent(t.Table); err != nil {
+			continue
+		}
+		databases = append(databases, t.Database)
+		names = append(names, t.Table)
+	}
+	if len(databases) == 0 {
+		return nil
+	}
+	if _, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO schema_snapshots (connector_id, database_name, table_name)
+		SELECT $1::uuid, d, t FROM unnest($2::text[], $3::text[]) AS x(d, t)
+		ON CONFLICT (connector_id, database_name, table_name)
+		DO UPDATE SET last_seen_at = now()`,
+		connectorID.String(), databases, names); err != nil {
+		return fmt.Errorf("write schema snapshot: %w", err)
+	}
+	return nil
+}
+
+// warehouseNewTableJSON is one table in the new-tables inbox.
+type warehouseNewTableJSON struct {
+	Database    string    `json:"database"`
+	Table       string    `json:"table"`
+	FirstSeenAt time.Time `json:"first_seen_at"`
+}
+
+// warehouseNewTablesJSON is the GET /warehouses/{id}/new-tables response.
+// Since echoes the cutoff actually applied: the caller's ?since= when
+// supplied, otherwise the warehouse's most recent grant-creation time,
+// falling back to the warehouse's creation time when it has no grants yet.
+type warehouseNewTablesJSON struct {
+	WarehouseID string                  `json:"warehouse_id"`
+	Since       time.Time               `json:"since"`
+	Tables      []warehouseNewTableJSON `json:"tables"`
+}
+
+// warehouseLastGrantReview returns the cutoff used when ?since= is absent:
+// the most recent grant creation time for the warehouse, or the warehouse's
+// creation time when no grants exist.
+func (s *Server) warehouseLastGrantReview(ctx context.Context, orgID, warehouseID string, createdAt time.Time) (time.Time, error) {
+	since := createdAt
+	var lastGrant *time.Time
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT max(created_at) FROM warehouse_table_grants
+		WHERE warehouse_id = $1 AND org_id = $2`,
+		warehouseID, orgID).Scan(&lastGrant); err != nil {
+		return time.Time{}, fmt.Errorf("load last grant review: %w", err)
+	}
+	if lastGrant != nil && lastGrant.After(since) {
+		since = *lastGrant
+	}
+	return since, nil
+}
+
+// @Summary List warehouse tables observed since the last grant review
+// @Description List catalog tables first observed on a live warehouse connector after the review cutoff and not yet granted to any subject. The cutoff is the `since` query parameter (RFC3339) when provided, otherwise the warehouse's most recent grant creation time (or its creation time when it has no grants).
+// @Tags warehouses
+// @Produce json
+// @Param id path string true "Warehouse ID"
+// @Param since query string false "RFC3339 cutoff timestamp (defaults to the last grant review)"
+// @Success 200 {object} object
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /warehouses/{id}/new-tables [get]
+func (s *Server) handleWarehouseNewTables(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	ctx := r.Context()
+
+	warehouseUUID, ok := s.loadWarehouseFromPath(w, r, claims.OrgID)
+	if !ok {
+		return
+	}
+
+	wh, err := s.loadWarehouseForOrg(ctx, claims.OrgID, warehouseUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	since := wh.CreatedAt
+	if raw := r.URL.Query().Get("since"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "since must be an RFC3339 timestamp")
+			return
+		}
+		since = parsed
+	} else {
+		since, err = s.warehouseLastGrantReview(ctx, claims.OrgID, warehouseUUID.String(), wh.CreatedAt)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+	}
+
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT s.database_name, s.table_name, min(s.first_seen_at) AS first_seen_at
+		FROM schema_snapshots s
+		JOIN connectors c ON c.id = s.connector_id
+		WHERE c.org_id = $1
+		  AND c.warehouse_id = $2
+		  AND c.type = 'clickhouse'
+		  AND c.deleted_at IS NULL
+		  AND s.first_seen_at > $3
+		  AND NOT EXISTS (
+		      SELECT 1 FROM warehouse_table_grants g
+		      WHERE g.org_id = $1
+		        AND g.warehouse_id = $2
+		        AND g.database_name = s.database_name
+		        AND g.table_name = s.table_name)
+		GROUP BY s.database_name, s.table_name
+		ORDER BY first_seen_at DESC, s.database_name ASC, s.table_name ASC
+		LIMIT $4`,
+		claims.OrgID, warehouseUUID.String(), since, maxWarehouseNewTables)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	defer rows.Close()
+
+	tables := []warehouseNewTableJSON{}
+	for rows.Next() {
+		var t warehouseNewTableJSON
+		if err := rows.Scan(&t.Database, &t.Table, &t.FirstSeenAt); err != nil {
+			writeError(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		tables = append(tables, t)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, warehouseNewTablesJSON{
+		WarehouseID: warehouseUUID.String(),
+		Since:       since,
+		Tables:      tables,
+	})
 }

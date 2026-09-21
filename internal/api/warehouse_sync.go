@@ -126,6 +126,17 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 	}
 	defer conn.Close()
 
+	// Catalog observation powers the new-tables inbox. It is best-effort: a
+	// catalog read or cache write must never block access provisioning, and
+	// the next reconcile retries.
+	if tables, catErr := chaccess.LoadCatalogTables(ctx, conn); catErr != nil {
+		slog.Warn("warehouse catalog snapshot failed",
+			"warehouse_id", warehouseID, "error", catErr)
+	} else if snapErr := s.recordSchemaSnapshot(ctx, *hdr.provisionerID, tables); snapErr != nil {
+		slog.Warn("warehouse catalog snapshot write failed",
+			"warehouse_id", warehouseID, "error", snapErr)
+	}
+
 	desired, err := s.loadWarehouseDesiredState(ctx, warehouseID, hdr.orgID)
 	if err != nil {
 		return s.failWarehouseSync(ctx, warehouseID, err)

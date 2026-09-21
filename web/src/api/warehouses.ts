@@ -80,6 +80,39 @@ export interface WarehouseEffectiveAccess {
   preferred_connector_id: string | null
 }
 
+/** One catalog table first observed since the warehouse's last grant review. */
+export interface WarehouseNewTable {
+  database: string
+  table: string
+  first_seen_at: string
+}
+
+export interface WarehouseNewTables {
+  warehouse_id: string
+  /** Cutoff applied: `since` when passed, otherwise the last grant review. */
+  since: string
+  tables: WarehouseNewTable[]
+}
+
+/** One subject in a validation warning list. */
+export interface WarehouseValidationSubject {
+  subject_type: WarehouseSubjectType
+  subject_id: string
+  subject_name?: string
+  subject_email?: string
+  /** "db.table" entries; set for granted-but-unusable subjects. */
+  tables?: string[]
+  /** Service names; set for subjects that can connect but hold no grants. */
+  services?: string[]
+}
+
+export interface WarehouseValidation {
+  warehouse_id: string
+  truncated: boolean
+  tables_without_service_access: WarehouseValidationSubject[]
+  service_access_without_tables: WarehouseValidationSubject[]
+}
+
 export function listWarehouses(): Promise<Warehouse[]> {
   return api.get<Warehouse[]>('/api/v1/warehouses')
 }
@@ -167,6 +200,15 @@ export function setPreference(
     `/api/v1/warehouses/${warehouseId}/preference`,
     { connector_id: connectorId },
   )
+}
+
+export function listNewTables(warehouseId: string, since?: string): Promise<WarehouseNewTables> {
+  const query = since ? `?since=${encodeURIComponent(since)}` : ''
+  return api.get<WarehouseNewTables>(`/api/v1/warehouses/${warehouseId}/new-tables${query}`)
+}
+
+export function getWarehouseValidation(warehouseId: string): Promise<WarehouseValidation> {
+  return api.get<WarehouseValidation>(`/api/v1/warehouses/${warehouseId}/validation`)
 }
 
 function isServiceChoice(value: unknown): value is WarehouseServiceChoice {

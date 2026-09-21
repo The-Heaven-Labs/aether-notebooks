@@ -825,3 +825,77 @@ func TestNoRowLevelSecurityWithoutPolicies(t *testing.T) {
 		}
 	}
 }
+
+func TestMigration114SchemaSnapshots(t *testing.T) {
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+	}
+
+	db, err := database.Connect(context.Background(), dsn, "")
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	var exists bool
+	if err := db.Pool.QueryRow(ctx,
+		"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='schema_snapshots')").Scan(&exists); err != nil {
+		t.Fatalf("schema_snapshots existence query: %v", err)
+	}
+	if !exists {
+		t.Fatal("schema_snapshots table should exist after migration")
+	}
+
+	rows, err := db.Pool.Query(ctx, `
+		SELECT a.attname
+		FROM pg_constraint c
+		JOIN pg_class t ON t.oid = c.conrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+		JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
+		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+		WHERE t.relname = 'schema_snapshots' AND c.contype = 'p'
+		ORDER BY k.ord`)
+	if err != nil {
+		t.Fatalf("primary key query: %v", err)
+	}
+	defer rows.Close()
+
+	var pkCols []string
+	for rows.Next() {
+		var col string
+		if err := rows.Scan(&col); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		pkCols = append(pkCols, col)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	wantPK := []string{"connector_id", "database_name", "table_name"}
+	if !slices.Equal(pkCols, wantPK) {
+		t.Fatalf("schema_snapshots primary key columns = %v, want %v", pkCols, wantPK)
+	}
+
+	var deleteRule string
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT rc.delete_rule
+		FROM pg_constraint c
+		JOIN pg_class t ON t.oid = c.conrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+		JOIN information_schema.referential_constraints rc
+		  ON rc.constraint_name = c.conname AND rc.constraint_schema = 'public'
+		WHERE t.relname = 'schema_snapshots'
+		  AND c.conname = 'schema_snapshots_connector_id_fkey'`).Scan(&deleteRule); err != nil {
+		t.Fatalf("connector FK lookup: %v", err)
+	}
+	if deleteRule != "CASCADE" {
+		t.Fatalf("schema_snapshots connector FK delete rule = %s, want CASCADE", deleteRule)
+	}
+}

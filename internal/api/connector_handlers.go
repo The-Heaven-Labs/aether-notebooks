@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/chaccess"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
@@ -814,6 +815,23 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 			filtered = append(filtered, t)
 		}
 		schema.Tables = filtered
+	}
+
+	// Snapshot the observed catalog so the warehouse new-tables inbox can
+	// notice tables without waiting for the next reconcile. Only ClickHouse
+	// objects can become warehouse grants, and a failed cache write must never
+	// fail a schema read.
+	if string(connType) == "clickhouse" {
+		tables := make([]chaccess.CatalogTable, 0, len(schema.Tables))
+		for _, t := range schema.Tables {
+			tables = append(tables, chaccess.CatalogTable{Database: t.Schema, Table: t.Name})
+		}
+		if connectorUUID, parseErr := uuid.Parse(connID); parseErr == nil {
+			if cacheErr := s.recordSchemaSnapshot(ctx, connectorUUID, tables); cacheErr != nil {
+				slog.Warn("connector schema snapshot write failed",
+					"connector_id", connID, "error", cacheErr)
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, schema)

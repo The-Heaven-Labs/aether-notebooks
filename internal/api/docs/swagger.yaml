@@ -6361,6 +6361,46 @@ paths:
       summary: Delete a warehouse table grant
       tags:
       - warehouses
+  /warehouses/{id}/new-tables:
+    get:
+      description: List catalog tables first observed on a live warehouse connector
+        after the review cutoff and not yet granted to any subject. The cutoff is
+        the `since` query parameter (RFC3339) when provided, otherwise the warehouse's
+        most recent grant creation time (or its creation time when it has no grants).
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: RFC3339 cutoff timestamp (defaults to the last grant review)
+        in: query
+        name: since
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List warehouse tables observed since the last grant review
+      tags:
+      - warehouses
   /warehouses/{id}/preference:
     put:
       consumes:
@@ -6450,6 +6490,35 @@ paths:
       security:
       - BearerAuth: []
       summary: Set a warehouse provisioner
+      tags:
+      - warehouses
+  /warehouses/{id}/validation:
+    get:
+      description: Report subjects that hold table grants but cannot use any warehouse
+        service (granted but unusable) and subjects that can use a service but hold
+        no table grants (can connect, every query fails).
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List warehouse validation warnings
       tags:
       - warehouses
   /ws/agents/{session_id}:
