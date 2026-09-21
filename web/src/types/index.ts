@@ -151,6 +151,7 @@ export interface Connector {
   type: string
   is_default?: boolean
   folder_id?: string
+  warehouse_id?: string | null
   created_by?: string
   created_at: string
   updated_at?: string

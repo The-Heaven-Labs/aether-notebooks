@@ -12,6 +12,9 @@ import { SectionHeader } from '../components/SectionHeader'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { EmptyState } from '../components/EmptyState'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { Modal } from '../components/Modal'
+import { useAuth } from '../hooks/useAuth'
+import { listWarehouses, setConnectorWarehouse } from '../api/warehouses'
 
 type ConnectorType = 'postgres' | 'clickhouse' | 'opensearch'
 
@@ -41,6 +44,8 @@ const defaultForm = (): ConnectorForm => ({
 export function ConnectorsPage() {
   useEffect(() => { document.title = "Connectors — Aether Notebooks" }, [])
   const qc = useQueryClient()
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
   const [searchParams, setSearchParams] = useSearchParams()
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
@@ -55,10 +60,34 @@ export function ConnectorsPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [permissionsTarget, setPermissionsTarget] = useState<{ type: 'connector'; id: string; name: string } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Connector | null>(null)
+  const [linkTarget, setLinkTarget] = useState<Connector | null>(null)
+  const [linkWarehouseId, setLinkWarehouseId] = useState('')
+  const [linkError, setLinkError] = useState<string | null>(null)
+  const [unlinkTarget, setUnlinkTarget] = useState<Connector | null>(null)
 
   const { data: connectors = [], isLoading } = useQuery({
     queryKey: ['connectors'],
     queryFn: () => api.get<Connector[]>('/api/v1/connectors'),
+  })
+
+  const { data: warehouses = [] } = useQuery({
+    queryKey: ['warehouses'],
+    queryFn: listWarehouses,
+    enabled: isAdmin,
+  })
+
+  const setWarehouseLink = useMutation({
+    mutationFn: ({ connectorId, warehouseId }: { connectorId: string; warehouseId: string | null }) =>
+      setConnectorWarehouse(connectorId, warehouseId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['connectors'] })
+      qc.invalidateQueries({ queryKey: ['warehouses'] })
+      qc.invalidateQueries({ queryKey: ['warehouse'] })
+      setLinkTarget(null)
+      setUnlinkTarget(null)
+      setLinkError(null)
+    },
+    onError: (err: Error) => setLinkError(err.message),
   })
 
   const [autoTested, setAutoTested] = useState(false)
@@ -399,6 +428,7 @@ export function ConnectorsPage() {
         )}
 
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
+        {linkError && !linkTarget && <p style={{ color: 'var(--error)', fontSize: 12 }}>{linkError}</p>}
         {connectors.length === 0 && !isLoading ? (
           <EmptyState
             icon={<Database size={28} />}
@@ -408,7 +438,7 @@ export function ConnectorsPage() {
           />
         ) : (
           <div style={{ overflowX: 'auto' }}>
-          <StyledTable headers={['Name', 'Type', 'Host', 'Database', 'Status', '']}>
+          <StyledTable headers={['Name', 'Type', 'Host', 'Database', 'Access', 'Status', '']}>
             {connectors.map((c) => {
               const test = testResults[c.id]
               return (
@@ -440,6 +470,22 @@ export function ConnectorsPage() {
                   </td>
                   <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                     {c.config?.database ?? '—'}
+                  </td>
+                  <td style={cellStyle}>
+                    {c.warehouse_id ? (
+                      <span
+                        style={styles.managedBadge}
+                        title={`Managed by warehouse "${
+                          warehouses.find((w) => w.id === c.warehouse_id)?.name ?? c.warehouse_id
+                        }" — ClickHouse table grants are enforced`}
+                      >
+                        Managed — table grants enforced
+                      </span>
+                    ) : (
+                      <span style={styles.sharedBadge}>
+                        Shared credential — not table-scoped
+                      </span>
+                    )}
                   </td>
                   <td style={cellStyle}>
                     {testingIds[c.id] ? (
@@ -481,6 +527,21 @@ export function ConnectorsPage() {
                       })
                     }}>Edit</button>
                     <button type="button" style={styles.actionBtn} onClick={() => setPermissionsTarget({ type: 'connector', id: c.id, name: c.name })}>Permissions</button>
+                    {isAdmin && c.type === 'clickhouse' && (
+                      c.warehouse_id ? (
+                        <button type="button" style={styles.actionBtn} onClick={() => setUnlinkTarget(c)}>
+                          Unlink
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          style={styles.editBtn}
+                          onClick={() => { setLinkTarget(c); setLinkWarehouseId(''); setLinkError(null) }}
+                        >
+                          Link to warehouse
+                        </button>
+                      )
+                    )}
                     {!c.is_default && (
                       <button type="button"
                         title="Set as default connector for new notebooks"
@@ -523,6 +584,69 @@ export function ConnectorsPage() {
         onConfirm={() => { if (deleteTarget) deleteConnector.mutate(deleteTarget.id); setDeleteTarget(null) }}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      {linkTarget && (
+        <Modal
+          title="Link connector to warehouse"
+          minWidth={460}
+          onClose={() => { setLinkTarget(null); setLinkError(null) }}
+        >
+          <div style={styles.modalBody}>
+            <p style={styles.modalText}>
+              Linking <strong>{linkTarget.name}</strong> changes its execution mode: queries run as
+              per-user ClickHouse identities and table grants are enforced by the warehouse.
+              Provisioning begins immediately.
+            </p>
+            <label style={styles.label}>
+              Warehouse
+              <select
+                aria-label="Warehouse"
+                style={styles.input}
+                value={linkWarehouseId}
+                onChange={(e) => setLinkWarehouseId(e.target.value)}
+              >
+                <option value="">Select warehouse…</option>
+                {warehouses.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {warehouses.length === 0 && (
+              <p style={styles.modalText}>No warehouses yet. Create one under Settings → Warehouses.</p>
+            )}
+            {linkError && <p style={styles.modalError}>{linkError}</p>}
+            <div style={styles.modalActions}>
+              <button type="button" style={styles.cancelBtn} onClick={() => { setLinkTarget(null); setLinkError(null) }}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                style={{ ...styles.saveBtn, opacity: !linkWarehouseId ? 0.5 : 1, cursor: !linkWarehouseId ? 'not-allowed' : 'pointer' }}
+                disabled={!linkWarehouseId || setWarehouseLink.isPending}
+                onClick={() =>
+                  setWarehouseLink.mutate({ connectorId: linkTarget.id, warehouseId: linkWarehouseId })
+                }
+              >
+                {setWarehouseLink.isPending ? 'Linking…' : 'Link connector'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      <ConfirmDialog
+        open={!!unlinkTarget}
+        title="Unlink connector"
+        message={`Unlink "${unlinkTarget?.name}" from its warehouse? It returns to shared-credential mode; table grants no longer apply.`}
+        confirmLabel="Unlink"
+        destructive
+        onConfirm={() => {
+          if (unlinkTarget) setWarehouseLink.mutate({ connectorId: unlinkTarget.id, warehouseId: null })
+        }}
+        onCancel={() => setUnlinkTarget(null)}
+      />
     </AppShell>
   )
 }
@@ -542,4 +666,48 @@ const styles: Record<string, React.CSSProperties> = {
   actionBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 },
   editBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--accent)', marginRight: 6 },
   deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--error-full)' },
+  managedBadge: {
+    display: 'inline-block',
+    fontSize: 11,
+    fontWeight: 600,
+    color: 'var(--accent)',
+    background: 'var(--accent-light)',
+    border: '1px solid var(--border)',
+    borderRadius: 10,
+    padding: '2px 8px',
+    whiteSpace: 'nowrap' as const,
+  },
+  sharedBadge: {
+    display: 'inline-block',
+    fontSize: 11,
+    color: 'var(--text-muted)',
+    border: '1px solid var(--border)',
+    borderRadius: 10,
+    padding: '2px 8px',
+    whiteSpace: 'nowrap' as const,
+  },
+  modalBody: {
+    padding: '16px 20px',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: 12,
+    width: 420,
+  },
+  modalText: {
+    fontSize: 13,
+    color: 'var(--text-secondary)',
+    lineHeight: 1.5,
+    margin: 0,
+  },
+  modalError: {
+    fontSize: 12,
+    color: 'var(--error)',
+    margin: 0,
+  },
+  modalActions: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: 8,
+    marginTop: 4,
+  },
 }

@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
-import { screen } from '@testing-library/react'
+import { screen, fireEvent, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { server } from './server'
 import { ConnectorsPage } from '../pages/ConnectorsPage'
@@ -51,5 +51,52 @@ describe('ConnectorsPage', () => {
     await screen.findByText('Prod DB')
     const badges = screen.getAllByText('Default')
     expect(badges).toHaveLength(1)
+  })
+
+  test('shows an access-mode badge for managed and unmanaged connectors', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          { id: 'c-managed', name: 'Managed CH', type: 'clickhouse', warehouse_id: 'wh-1', config: {}, created_at: '2026-01-01T00:00:00Z' },
+          { id: 'c-unmanaged', name: 'Shared CH', type: 'clickhouse', warehouse_id: null, config: {}, created_at: '2026-01-01T00:00:00Z' },
+        ]),
+      ),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    await screen.findByText('Managed CH')
+    expect(screen.getByText('Managed — table grants enforced')).toBeInTheDocument()
+    expect(screen.getByText('Shared credential — not table-scoped')).toBeInTheDocument()
+  })
+
+  test('links a clickhouse connector to a warehouse through the confirmation dialog', async () => {
+    let putBody: unknown = null
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          { id: 'c-ch', name: 'CH RW', type: 'clickhouse', warehouse_id: null, config: {}, created_at: '2026-01-01T00:00:00Z' },
+        ]),
+      ),
+      http.get('/api/v1/warehouses', () =>
+        HttpResponse.json([
+          {
+            id: 'wh-1', org_id: 'org-1', name: 'Analytics', provisioner_connector_id: 'c-ch',
+            sync_status: 'pending', sync_error: null, last_synced_at: null,
+            created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.put('/api/v1/connectors/c-ch/warehouse', async ({ request }) => {
+        putBody = await request.json()
+        return HttpResponse.json({ id: 'c-ch', warehouse_id: 'wh-1' })
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+
+    fireEvent.click(await screen.findByText('Link to warehouse'))
+    expect(await screen.findByText('Link connector to warehouse')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Warehouse'), { target: { value: 'wh-1' } })
+    fireEvent.click(screen.getByText('Link connector'))
+
+    await waitFor(() => expect(putBody).toEqual({ warehouse_id: 'wh-1' }))
   })
 })

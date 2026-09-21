@@ -6,6 +6,7 @@ import { LoginPage } from './pages/LoginPage'
 import { HomePage } from './pages/HomePage'
 import { NotebookPage } from './pages/NotebookPage'
 import { ConnectorsPage } from './pages/ConnectorsPage'
+import { WarehouseSettingsPage } from './pages/WarehouseSettingsPage'
 import { DashboardsPage } from './pages/DashboardsPage'
 import { DashboardEditorPage } from './pages/DashboardEditorPage'
 import { DashboardPage } from './pages/DashboardPage'
@@ -66,6 +67,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <ConnectorsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/warehouses"
+        element={
+          <ProtectedRoute>
+            <WarehouseSettingsPage />
           </ProtectedRoute>
         }
       />

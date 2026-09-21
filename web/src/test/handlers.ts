@@ -158,6 +158,9 @@ export const handlers = [
     return HttpResponse.json({ id: params.id, ...body })
   }),
 
+  // Warehouses
+  http.get('/api/v1/warehouses', () => HttpResponse.json([])),
+
   // Dashboards
   http.get('/api/v1/dashboards', () => HttpResponse.json([])),
   http.post('/api/v1/dashboards', async ({ request }) => {
