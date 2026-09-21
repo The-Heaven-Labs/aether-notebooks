@@ -31,7 +31,7 @@ New fields on the SSO provider create/edit form:
 | `auto_sync_groups` | `boolean` | `false` | Master toggle to enable group provisioning for this provider. |
 | `get_user_info` | `boolean` | `false` | Whether to call the UserInfo endpoint for additional claims after token exchange. Some IDPs include groups only in UserInfo, not in the ID token (or hit token size limits). |
 | `sync_empty_groups` | `boolean` | `false` | When enabled (and `auto_sync_groups` is on), an absent/empty groups claim is authoritative: all memberships tracked under this provider for that user are removed. Warning: Keycloak omits the claim entirely when a user has zero groups, so a removed or misconfigured group mapper is indistinguishable from "no groups". |
-| `strip_group_prefix` | `boolean` | `false` | When enabled (and `auto_sync_groups` is on) with `group_prefix` set, the prefix is removed from stored/displayed group names (`Aether Notebooks: Area` → `Area`). Filtering still uses the prefix. |
+| `strip_group_prefix` | `boolean` | `false` | When enabled (and `auto_sync_groups` is on) with `group_prefix` set, the prefix is removed from the stored group name (shown in the UI until an admin sets a display label): `Aether Notebooks: Area` → `Area`. Filtering still uses the prefix. |
 
 ## Database Schema
 
@@ -86,6 +86,8 @@ On each SSO login (both new and returning users):
 - Errors are non-fatal — the login succeeds even if sync fails, errors are audit-logged
 - Each SSO provider tracks its own memberships independently via `provider_id`
 
+**Rollout warning: prefix changes re-key groups.** Enabling `strip_group_prefix` or changing `group_prefix` changes the resolved group names, so the next login creates new group rows under the new names and removes the memberships tracked under the old ones (stale detection compares tracked group names against the resolved list). ACL entries and warehouse grants attached to the old groups silently stop applying — re-grant them to the new groups. With `sync_empty_groups=true`, a prefix change that filters or strips away every group removes all memberships tracked under the provider.
+
 ## Empty Claims and Failed Group Sources
 
 "Zero groups" and "couldn't read the groups" are different states, and Aether keeps them apart:
@@ -113,7 +115,7 @@ The label is presentation-only. The frontend renders `display_name?.trim() || na
 
 Because identity is still `name`, labels survive re-sync: an existing group row is reused and its label is left untouched. An IdP rename still creates a new, unlabeled group, leaving the old group (and its label) behind until cleaned up manually. Example: `aether-notebooks-data-analysts-infra` with `strip_group_prefix` stores `data-analysts-infra`, which an admin can label `Data Analysts Infra`.
 
-`POST /groups` accepts an optional `display_name`. `PUT /groups/{id}` accepts `name` and/or `display_name`: an omitted field keeps its current value, and a blank (`""` or whitespace) label clears it back to `NULL`. Values are trimmed.
+`POST /groups` accepts an optional `display_name`. `PUT /groups/{id}` accepts `name` and/or `display_name`: an omitted field keeps its current value, and a blank (`""` or whitespace) label clears it back to `NULL`. A JSON `null` decodes the same as an omitted field, so it keeps the label — send `""` to clear. Values are trimmed.
 
 ## Development: Testing with Keycloak
 
@@ -186,7 +188,7 @@ Emitted during SSO group provisioning:
 
 ## Migration
 
-Migration `073_sso_group_provisioning.sql` adds the initial columns and table, `V115__sso_group_sync_options.sql` adds `sync_empty_groups` and `strip_group_prefix`, and `V116__group_display_names.sql` adds `groups.display_name`. Migrations run automatically on server startup.
+Migration `V073__sso_group_provisioning.sql` adds the initial columns and table, `V115__sso_group_sync_options.sql` adds `sync_empty_groups` and `strip_group_prefix`, and `V116__group_display_names.sql` adds `groups.display_name`. Migrations run automatically on server startup.
 
 ## Cleaning Up
 
