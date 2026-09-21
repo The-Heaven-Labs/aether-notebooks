@@ -6194,6 +6194,204 @@ paths:
       summary: Update a warehouse
       tags:
       - warehouses
+  /warehouses/{id}/effective-access:
+    get:
+      description: Return the union of table grants for a user in a warehouse, the
+        ClickHouse identity names, and the services the user may route to. Org admins
+        may inspect any member; other members may only inspect themselves.
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: User ID (org admins only; defaults to the caller)
+        in: query
+        name: user_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a subject's effective warehouse access
+      tags:
+      - warehouses
+  /warehouses/{id}/grants:
+    get:
+      description: List the table grants configured for a warehouse
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List warehouse table grants
+      tags:
+      - warehouses
+    post:
+      consumes:
+      - application/json
+      description: Create a table grant for a user, group, or everyone in a warehouse.
+        Replayed duplicates are idempotent and return the existing grant.
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Grant subject and table
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Grant already existed
+          schema:
+            type: object
+        "201":
+          description: Created
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Grant tables to a warehouse subject
+      tags:
+      - warehouses
+  /warehouses/{id}/grants/{grant_id}:
+    delete:
+      description: Delete one table grant from a warehouse
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Grant ID
+        in: path
+        name: grant_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a warehouse table grant
+      tags:
+      - warehouses
+  /warehouses/{id}/preference:
+    put:
+      consumes:
+      - application/json
+      description: Choose which of the caller's permitted services their warehouse
+        queries run on. The connector must belong to the warehouse and the caller
+        must have `use` on it; an explicit null clears the preference.
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Preferred connector (null clears)
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set a user's warehouse service preference
+      tags:
+      - warehouses
   /warehouses/{id}/provisioner:
     put:
       consumes:
