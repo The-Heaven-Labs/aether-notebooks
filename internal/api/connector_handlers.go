@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"regexp"
 
+	"github.com/google/uuid"
 	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/chaccess"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
@@ -166,11 +168,11 @@ func (s *Server) handleGetConnector(w http.ResponseWriter, r *http.Request) {
 	var c models.Connector
 	var encryptedConfig []byte
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, table_allowlist, table_denylist
+		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, warehouse_id, table_allowlist, table_denylist
 		 FROM connectors WHERE id=$1 AND org_id=$2`,
 		id, claims.OrgID,
 	).Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
-		&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.TableAllowlist, &c.TableDenylist)
+		&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.WarehouseID, &c.TableAllowlist, &c.TableDenylist)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "connector not found")
 		return
@@ -196,7 +198,7 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, table_allowlist, table_denylist
+		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, warehouse_id, table_allowlist, table_denylist
 		 FROM connectors WHERE org_id = $1 AND deleted_at IS NULL ORDER BY name ASC`,
 		claims.OrgID,
 	)
@@ -215,7 +217,7 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 		var c models.Connector
 		var encryptedConfig []byte
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
-			&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.TableAllowlist, &c.TableDenylist); err != nil {
+			&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.WarehouseID, &c.TableAllowlist, &c.TableDenylist); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
@@ -403,11 +405,11 @@ func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
 	var c models.Connector
 	var encryptedConfig []byte
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, table_allowlist, table_denylist
+		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, warehouse_id, table_allowlist, table_denylist
 		 FROM connectors WHERE id=$1`,
 		id,
 	).Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
-		&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.TableAllowlist, &c.TableDenylist)
+		&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.WarehouseID, &c.TableAllowlist, &c.TableDenylist)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
@@ -481,9 +483,22 @@ func (s *Server) handleDeleteConnector(w http.ResponseWriter, r *http.Request) {
 	connID := r.PathValue("id")
 	ctx := r.Context()
 
-	result, err := s.db.Pool.Exec(ctx,
+	connUUID, err := uuid.Parse(connID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "connector not found")
+		return
+	}
+
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	result, err := tx.Exec(ctx,
 		`UPDATE connectors SET deleted_at = NOW() WHERE id = $1 AND org_id = $2`,
-		connID, claims.OrgID,
+		connUUID.String(), claims.OrgID,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "delete failed")
@@ -494,9 +509,66 @@ func (s *Server) handleDeleteConnector(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Connectors are soft-deleted, so the preference FK cascade never fires.
+	// Remove the rows explicitly or a preference could keep pointing at a
+	// deleted service.
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM warehouse_service_preferences WHERE connector_id = $1`, connUUID.String(),
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+
+	// A warehouse that used this connector as its provisioner loses it: fail
+	// closed with a pending status so an operator must pick a replacement
+	// instead of pointing at a soft-deleted connector.
+	rows, err := tx.Query(ctx, `
+		UPDATE warehouses
+		SET provisioner_connector_id = NULL, sync_status = 'pending',
+		    sync_error = NULL, updated_at = now()
+		WHERE provisioner_connector_id = $1
+		RETURNING id`, connUUID.String())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+	var orphanedWarehouses []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			writeError(w, http.StatusInternalServerError, "delete failed")
+			return
+		}
+		orphanedWarehouses = append(orphanedWarehouses, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+
+	for _, orphanID := range orphanedWarehouses {
+		s.enqueueWarehouseSyncNow(orphanID)
+	}
+
+	meta := map[string]any{}
+	if len(orphanedWarehouses) > 0 {
+		names := make([]string, 0, len(orphanedWarehouses))
+		for _, id := range orphanedWarehouses {
+			names = append(names, id.String())
+		}
+		meta["orphaned_provisioner_warehouses"] = names
+	}
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
-		Action: "connector.delete", ResourceType: "connector", ResourceID: connID,
+		Action: "connector.delete", ResourceType: "connector", ResourceID: connUUID.String(),
+		Metadata: meta,
 	})
 
 	w.WriteHeader(http.StatusNoContent)
@@ -743,6 +815,24 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 			filtered = append(filtered, t)
 		}
 		schema.Tables = filtered
+	}
+
+	// Snapshot the observed catalog so the warehouse new-tables inbox can
+	// notice tables without waiting for the next reconcile. Touching is
+	// throttled: schema reads are frequent and only first_seen_at matters for
+	// the inbox. Only ClickHouse objects can become warehouse grants, and a
+	// failed cache write must never fail a schema read.
+	if string(connType) == "clickhouse" {
+		tables := make([]chaccess.CatalogTable, 0, len(schema.Tables))
+		for _, t := range schema.Tables {
+			tables = append(tables, chaccess.CatalogTable{Database: t.Schema, Table: t.Name})
+		}
+		if connectorUUID, parseErr := uuid.Parse(connID); parseErr == nil {
+			if cacheErr := s.touchSchemaSnapshot(ctx, connectorUUID, tables); cacheErr != nil {
+				slog.Warn("connector schema snapshot write failed",
+					"connector_id", connID, "error", cacheErr)
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, schema)

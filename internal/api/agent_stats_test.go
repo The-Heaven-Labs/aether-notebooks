@@ -16,11 +16,16 @@ import (
 
 func seedStatsMessages(t *testing.T, srv *api.Server, sessionID string, now time.Time) {
 	t.Helper()
-	for i, tok := range [][3]int{{100, 50, 7}, {40, 10, 3}} {
+	// Anchor every row to the start of the current hour so both messages land
+	// in one hourly bucket. Seeding at now and now-1m split them across two
+	// buckets whenever the test ran within a minute of an hour boundary, and
+	// the hour-grain per-agent endpoint then returned two rows.
+	at := now.Truncate(time.Hour)
+	for _, tok := range [][3]int{{100, 50, 7}, {40, 10, 3}} {
 		_, err := srv.DB().Pool.Exec(context.Background(), `
 			INSERT INTO agent_messages (id, session_id, role, content, tool_calls, tokens_input, tokens_output, tokens_direct, model_calls, duration_ms, created_at)
 			VALUES ($1,$2,'assistant','hi','[]',$3,$4,$5,1,200,$6)
-		`, uuid.New().String(), sessionID, tok[0], tok[1], tok[2], now.Add(time.Duration(-i)*time.Minute))
+		`, uuid.New().String(), sessionID, tok[0], tok[1], tok[2], at)
 		if err != nil {
 			t.Fatalf("seed message: %v", err)
 		}
@@ -28,7 +33,7 @@ func seedStatsMessages(t *testing.T, srv *api.Server, sessionID string, now time
 	_, err := srv.DB().Pool.Exec(context.Background(), `
 		INSERT INTO subagent_tasks (id, parent_session_id, goal, status, result, tokens_input, tokens_output, created_at, completed_at)
 		VALUES ($1,$2,'g','completed','{}',30,20,$3,$3)
-	`, uuid.New().String(), sessionID, now)
+	`, uuid.New().String(), sessionID, at)
 	if err != nil {
 		t.Fatalf("seed subagent task: %v", err)
 	}

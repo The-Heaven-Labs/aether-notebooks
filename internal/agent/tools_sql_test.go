@@ -36,9 +36,10 @@ func runExecuteSQL(t *testing.T, handler ToolHandler, ctx *ToolContext, args map
 	require.NoError(t, err)
 	result, err := handler(raw, ctx)
 	require.NoError(t, err)
-	rs, ok := result.(*executor.ResultSet)
-	require.True(t, ok, "expected *executor.ResultSet, got %T", result)
-	return rs
+	res, ok := result.(*sqlExecutionResult)
+	require.True(t, ok, "expected *sqlExecutionResult, got %T", result)
+	require.NotEmpty(t, res.ExecutionID, "ad-hoc SQL results must carry the execution id")
+	return res.ResultSet
 }
 
 func TestClampSQLRowLimit(t *testing.T) {
@@ -69,12 +70,13 @@ func TestExecuteSQLHandlerThreadsLimit(t *testing.T) {
 	runCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	ctx := &ToolContext{
-		Context:   runCtx,
-		UserID:    userID,
-		OrgID:     orgID,
-		OrgRole:   "admin",
-		DB:        db.Pool,
-		MasterKey: masterKey,
+		Context:             runCtx,
+		UserID:              userID,
+		OrgID:               orgID,
+		OrgRole:             "admin",
+		DB:                  db.Pool,
+		MasterKey:           masterKey,
+		CheckPermissionFunc: allowAllPermissions,
 	}
 
 	t.Run("explicit limit", func(t *testing.T) {
@@ -110,12 +112,13 @@ func TestExecuteSQLToolBudgetGovernsAdHocSQL(t *testing.T) {
 	connID, masterKey := createSQLTestPGConnector(t, db, orgID, userID)
 
 	ctx := &ToolContext{
-		Context:   context.Background(),
-		UserID:    userID,
-		OrgID:     orgID,
-		OrgRole:   "admin",
-		DB:        db.Pool,
-		MasterKey: masterKey,
+		Context:             context.Background(),
+		UserID:              userID,
+		OrgID:               orgID,
+		OrgRole:             "admin",
+		DB:                  db.Pool,
+		MasterKey:           masterKey,
+		CheckPermissionFunc: allowAllPermissions,
 	}
 
 	t.Run("execute_sql", func(t *testing.T) {
@@ -142,4 +145,22 @@ func TestExecuteSQLToolBudgetGovernsAdHocSQL(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), `tool "sql_query" timed out after 200ms`)
 	})
+}
+
+// The tool result persisted in agent_messages must carry the execution ID so
+// the run can be joined to its ClickHouse query_log entry. The embedded
+// ResultSet fields stay at the top level of the JSON.
+func TestSQLExecutionResultCarriesExecutionID(t *testing.T) {
+	res := &sqlExecutionResult{
+		ResultSet: &executor.ResultSet{
+			Columns: []executor.Column{{Name: "n", Type: "UInt8"}},
+			Rows:    [][]interface{}{{1}},
+		},
+		ExecutionID: "exec-123",
+	}
+	raw, err := json.Marshal(res)
+	require.NoError(t, err)
+	require.JSONEq(t,
+		`{"columns":[{"name":"n","type":"UInt8"}],"rows":[[1]],"execution_id":"exec-123"}`,
+		string(raw))
 }

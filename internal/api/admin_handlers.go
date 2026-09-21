@@ -367,6 +367,29 @@ func (s *Server) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture the orgs the user belongs to before the org_members rows cascade
+	// away with the user; each org's warehouses must drop the user's identity.
+	var affectedOrgIDs []string
+	orgRows, err := tx.Query(ctx, `SELECT org_id FROM org_members WHERE user_id = $1`, targetID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load user memberships")
+		return
+	}
+	for orgRows.Next() {
+		var orgID string
+		if err := orgRows.Scan(&orgID); err != nil {
+			orgRows.Close()
+			writeError(w, http.StatusInternalServerError, "failed to scan user memberships")
+			return
+		}
+		affectedOrgIDs = append(affectedOrgIDs, orgID)
+	}
+	orgRows.Close()
+	if err := orgRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read user memberships")
+		return
+	}
+
 	// Remove the user as an ACL subject (their home folder and resource grants).
 	if _, err := tx.Exec(ctx,
 		`DELETE FROM acl_entries WHERE subject_type = 'user' AND subject_id = $1`, targetID,
@@ -480,6 +503,12 @@ func (s *Server) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 	if err := tx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
 		return
+	}
+
+	// Reconcile each org the user belonged to (org-wide: their group and
+	// everyone relationships no longer exist to resolve finer).
+	for _, orgID := range affectedOrgIDs {
+		s.enqueueWarehouseSyncForOrg(ctx, orgID)
 	}
 
 	s.audit.Log(ctx, audit.Entry{

@@ -13,13 +13,15 @@ test.describe('Navigation', () => {
   })
 
   test('sidebar contrast is sufficient in light theme', async ({ page }) => {
-    // Use light theme
-    await page.emulateMedia({ colorScheme: 'light' })
+    // The app defaults to dark and reads the theme from localStorage on boot.
+    await page.addInitScript(() => localStorage.setItem('aether_theme', 'light'))
     await page.goto('/')
-    await loginAsNewUser(page)
 
-    // Expand sidebar to see labels
-    await page.getByTitle('Expand sidebar').click()
+    // Make sure the sidebar is expanded so labels are visible
+    const toggle = page.getByTitle(/Expand sidebar|Collapse sidebar/)
+    if ((await toggle.getAttribute('title')) === 'Expand sidebar') {
+      await toggle.click()
+    }
 
     // Get all non-active nav items (should be muted)
     const navItems = page.locator('nav a')
@@ -33,8 +35,16 @@ test.describe('Navigation', () => {
       const color = await item.evaluate((el) => {
         return window.getComputedStyle(el).color
       })
+      // Nav links have a transparent background; resolve the effective
+      // background from the nearest painted ancestor.
       const bgColor = await item.evaluate((el) => {
-        return window.getComputedStyle(el).backgroundColor
+        let node: Element | null = el
+        while (node) {
+          const bg = window.getComputedStyle(node).backgroundColor
+          if (bg && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)') return bg
+          node = node.parentElement
+        }
+        return 'rgb(255, 255, 255)'
       })
 
       // Parse RGB values
@@ -59,10 +69,9 @@ test.describe('Navigation', () => {
       const textLum = luminance(textRgb)
       const bgLum = luminance(bgRgb)
 
+      // WCAG contrast ratio: (lighter + 0.05) / (darker + 0.05)
       const contrastRatio =
-        textLum > bgLum
-          ? (bgLum + 0.05) / (textLum + 0.05)
-          : (textLum + 0.05) / (bgLum + 0.05)
+        (Math.max(textLum, bgLum) + 0.05) / (Math.min(textLum, bgLum) + 0.05)
 
       // WCAG AA requires 4.5:1 for normal text
       expect(contrastRatio).toBeGreaterThan(4.5)
@@ -70,14 +79,13 @@ test.describe('Navigation', () => {
   })
 
   test('visual: sidebar renders and collapses', async ({ page }) => {
-    await expect(page.getByTitle('Notebooks')).toBeVisible()
-    await expect(page.getByTitle('Dashboards')).toBeVisible()
-    await expect(page.getByTitle('Connectors')).toBeVisible()
-    await expect(page.getByTitle('Members')).toBeVisible()
-    await expect(page.getByTitle('Audit')).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Files' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Dashboards' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Connectors' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Members' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Audit' })).toBeVisible()
 
-    // Expand
-    await page.getByTitle('Expand sidebar').click()
+    // The sidebar starts expanded; collapse and expand it to cover both states.
     await expect(page.getByTitle('Collapse sidebar')).toBeVisible()
 
     // Visual snapshot — expanded
@@ -85,17 +93,24 @@ test.describe('Navigation', () => {
 
     // Collapse back
     await page.getByTitle('Collapse sidebar').click()
+    await expect(page.getByTitle('Expand sidebar')).toBeVisible()
     await expect(page).toHaveScreenshot('sidebar-collapsed.png', { maxDiffPixelRatio: 0.01 })
+
+    // Expand again
+    await page.getByTitle('Expand sidebar').click()
+    await expect(page.getByTitle('Collapse sidebar')).toBeVisible()
   })
 
   test('navigates to Dashboards page', async ({ page }) => {
-    await page.getByTitle('Dashboards').click()
+    await page.getByRole('link', { name: 'Dashboards' }).click()
     await expect(page).toHaveURL('/dashboards')
   })
 
   test('profile dropdown shows name and sign-out', async ({ page }) => {
+    const ts = Date.now().toString()
+    const { name } = await registerAndOnboard(page, ts, 'Nav Tester')
     await page.getByLabel('Profile menu').click()
-    await expect(page.getByText('Nav Tester')).toBeVisible()
+    await expect(page.getByText(name)).toBeVisible()
     await expect(page.getByRole('button', { name: /sign out/i })).toBeVisible()
   })
 

@@ -1,6 +1,28 @@
 package api
 
-import "github.com/the-heaven-labs/aether/internal/agent"
+import (
+	"github.com/google/uuid"
+	"github.com/the-heaven-labs/aether/internal/agent"
+)
+
+// WarehouseSyncerForTest mirrors the warehouse sync trigger surface so
+// external tests can record enqueues without a real sync worker.
+type WarehouseSyncerForTest interface {
+	Enqueue(uuid.UUID)
+}
+
+// SetWarehouseSyncerForTest replaces the server's warehouse sync service. The
+// replaced service is closed when it owns a Close method (the production
+// *chaccess.SyncService does), so worker state cannot leak past the swap;
+// recorders do not implement Close and are left alone.
+func (s *Server) SetWarehouseSyncerForTest(syncer WarehouseSyncerForTest) {
+	if s.warehouseSync != syncer {
+		if closer, ok := s.warehouseSync.(interface{ Close() }); ok {
+			closer.Close()
+		}
+	}
+	s.warehouseSync = syncer
+}
 
 // RegisterToolForTest exposes the agent tool registry so external tests can
 // exercise dispatch paths (e.g. MCP) with custom probe tools.

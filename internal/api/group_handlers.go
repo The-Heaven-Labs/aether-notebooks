@@ -219,6 +219,9 @@ func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "group not found")
 		return
 	}
+	// A deleted group loses its roles: reconcile warehouses holding grants for
+	// it (the grants outlive the group and are ignored by desired state).
+	s.enqueueWarehouseSyncForGroup(ctx, groupID)
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "group.delete", ResourceType: "group", ResourceID: groupID,
@@ -339,6 +342,7 @@ func (s *Server) handleAddGroupMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "insert failed")
 		return
 	}
+	s.enqueueWarehouseSyncForGroup(ctx, groupID)
 
 	var memberEmail string
 	s.db.Pool.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, req.UserID).Scan(&memberEmail)
@@ -397,6 +401,7 @@ func (s *Server) handleRemoveGroupMember(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "delete failed")
 		return
 	}
+	s.enqueueWarehouseSyncForGroup(ctx, groupID)
 
 	var memberEmail string
 	s.db.Pool.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, userID).Scan(&memberEmail)

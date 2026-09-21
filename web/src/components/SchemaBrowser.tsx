@@ -1,24 +1,8 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api } from '../api/client'
+import { connectorSchemaQueryKey, getConnectorSchema } from '../api/schema'
 import { PanelHeader } from './PanelHeader'
 import { TreeItem } from './TreeItem'
-
-interface SchemaColumn {
-  name: string
-  type: string
-  description?: string
-}
-
-interface SchemaTable {
-  name: string
-  description?: string
-  columns: SchemaColumn[]
-}
-
-interface SchemaResponse {
-  tables: SchemaTable[]
-}
 
 interface Props {
   connectorId: string | null
@@ -29,13 +13,9 @@ export function SchemaBrowser({ connectorId, onClose }: Props) {
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = useState('')
 
-  const schemaUrl = connectorId
-    ? `/api/v1/connectors/${connectorId}/schema`
-    : ''
-
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['connector-schema', connectorId],
-    queryFn: () => api.get<SchemaResponse>(schemaUrl),
+    queryKey: connectorSchemaQueryKey(connectorId ?? ''),
+    queryFn: () => getConnectorSchema(connectorId ?? ''),
     enabled: !!connectorId,
   })
 

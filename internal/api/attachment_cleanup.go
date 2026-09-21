@@ -66,4 +66,7 @@ func (s *Server) StartBackgroundJobs(ctx context.Context) {
 			}
 		}
 	}()
+	s.startConnPoolIdleLoop(ctx)
+	s.startWarehouseReconcileLoop(ctx)
+	s.startWarehouseInvalidationSubscriber(ctx)
 }

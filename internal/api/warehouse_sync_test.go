@@ -1,0 +1,1199 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/auth"
+	"github.com/the-heaven-labs/aether/internal/chaccess"
+	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/database"
+	"github.com/the-heaven-labs/aether/internal/models"
+)
+
+// warehouseSyncTestMasterKey mirrors setupTestServer's key so fixture
+// encryption matches the Server under test.
+const warehouseSyncTestMasterKey = "test-master-key-for-tests-only!"
+
+// warehouseSyncTestDSN returns the Postgres DSN used by these tests.
+func warehouseSyncTestDSN() string {
+	if dsn := os.Getenv("AETHER_DATABASE_URL"); dsn != "" {
+		return dsn
+	}
+	return "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+}
+
+// warehouseSyncTestClickHouseConfig is the dev-stack ClickHouse connector
+// config (see docker-compose.dev.yml).
+func warehouseSyncTestClickHouseConfig() models.ConnectorConfig {
+	return models.ConnectorConfig{
+		Host: "localhost", Port: 9000, User: "dev", Password: "dev", Database: "analytics",
+	}
+}
+
+// warehouseSyncFixture holds the DB rows and the provisioner connection
+// backing a reconcile test.
+type warehouseSyncFixture struct {
+	s           *Server
+	conn        clickhouse.Conn
+	orgID       uuid.UUID
+	userID      uuid.UUID
+	groupID     uuid.UUID
+	warehouseID uuid.UUID
+	connectorID uuid.UUID
+}
+
+// newWarehouseSyncTestServer connects to the test Postgres and builds a Server
+// directly: setupTestServer lives in package api_test and is not callable from
+// this file.
+func newWarehouseSyncTestServer(t *testing.T) (*Server, []byte) {
+	t.Helper()
+	db, err := database.Connect(context.Background(), warehouseSyncTestDSN(), "")
+	require.NoError(t, err)
+	t.Cleanup(db.Close)
+	require.NoError(t, db.Migrate(context.Background()))
+	key := crypto.DeriveKey(warehouseSyncTestMasterKey)
+	s := NewServer(db, auth.NewJWTIssuer("test-secret", 15*time.Minute), audit.NewLogger(db), key, nil)
+	// These tests exercise the managed path; the production default is off.
+	s.SetCHTablePermissions(true)
+	// Registered after db.Close's cleanup, so it runs before the pool closes.
+	t.Cleanup(s.Close)
+	return s, key
+}
+
+// setupWarehouseFixture seeds one org, user, group (with membership),
+// clickhouse provisioner connector, warehouse, and a direct user grant plus a
+// group grant. All IDs are random so repeated runs never collide.
+func setupWarehouseFixture(t *testing.T) *warehouseSyncFixture {
+	t.Helper()
+	// Probe before constructing the server so a skipped test does not pay
+	// connection + migration startup.
+	requireClickHouseReachable(t)
+	s, key := newWarehouseSyncTestServer(t)
+	return setupWarehouseFixtureWithServer(t, s, key)
+}
+
+// setupWarehouseFixtureWithServer seeds the fixture against an existing
+// Server, so tests can share one pool across warehouses. It skips the test
+// when the dev ClickHouse service is unreachable.
+func setupWarehouseFixtureWithServer(t *testing.T, s *Server, key []byte) *warehouseSyncFixture {
+	t.Helper()
+	ctx := context.Background()
+
+	cfg := warehouseSyncTestClickHouseConfig()
+	conn, err := openWarehouseProvisionerConn(ctx, cfg)
+	if err != nil {
+		t.Skipf("clickhouse unavailable at %s:%d: %v", cfg.Host, cfg.Port, err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	fx := seedWarehouseFixtureRows(t, s, key)
+	fx.conn = conn
+
+	prefix := chaccess.IdentifierPrefix(fx.warehouseID)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := dropPrefixedEntities(cleanupCtx, conn, "users", "DROP USER IF EXISTS %s", prefix); err != nil {
+			t.Logf("cleanup clickhouse users: %v", err)
+		}
+		if err := dropPrefixedEntities(cleanupCtx, conn, "roles", "DROP ROLE IF EXISTS %s", prefix); err != nil {
+			t.Logf("cleanup clickhouse roles: %v", err)
+		}
+	})
+	return fx
+}
+
+// seedWarehouseFixtureRows seeds one org, user, group (with membership),
+// clickhouse provisioner connector, warehouse, and a direct user grant plus a
+// group grant. It touches only Postgres so resolution tests can reuse the
+// rows without requiring ClickHouse. All IDs are random so repeated runs never
+// collide.
+func seedWarehouseFixtureRows(t *testing.T, s *Server, key []byte) *warehouseSyncFixture {
+	t.Helper()
+	ctx := context.Background()
+
+	cfg := warehouseSyncTestClickHouseConfig()
+
+	suffix := uuid.NewString()
+	orgID := uuid.New()
+	_, err := s.db.Pool.Exec(ctx,
+		`INSERT INTO orgs (id, name, slug) VALUES ($1, $2, $3)`,
+		orgID.String(), "Warehouse Sync Org", "whsync-"+suffix)
+	require.NoError(t, err)
+
+	userID := uuid.New()
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO users (id, email, name) VALUES ($1, $2, $3)`,
+		userID.String(), "whsync-"+suffix+"@test.local", "Warehouse Sync User")
+	require.NoError(t, err)
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin')`,
+		orgID.String(), userID.String())
+	require.NoError(t, err)
+
+	groupID := uuid.New()
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO groups (id, org_id, name) VALUES ($1, $2, $3)`,
+		groupID.String(), orgID.String(), "Warehouse Sync Group")
+	require.NoError(t, err)
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)`,
+		groupID.String(), userID.String())
+	require.NoError(t, err)
+
+	configJSON, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	encrypted, err := crypto.Encrypt(configJSON, key)
+	require.NoError(t, err)
+
+	connectorID := uuid.New()
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted, created_by)
+		VALUES ($1, $2, $3, 'clickhouse', $4, $5)`,
+		connectorID.String(), orgID.String(), "Warehouse Sync Provisioner", encrypted, userID.String())
+	require.NoError(t, err)
+
+	warehouseID := uuid.New()
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouses (id, org_id, name, provisioner_connector_id)
+		VALUES ($1, $2, $3, $4)`,
+		warehouseID.String(), orgID.String(), "Warehouse Sync WH", connectorID.String())
+	require.NoError(t, err)
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE connectors SET warehouse_id = $1 WHERE id = $2`,
+		warehouseID.String(), connectorID.String())
+	require.NoError(t, err)
+
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants
+			(org_id, warehouse_id, subject_type, subject_id, database_name, table_name, created_by)
+		VALUES
+			($1, $2, 'user', $3, 'analytics', 'events', $4),
+			($1, $2, 'group', $5, 'analytics', 'daily_revenue', $4)`,
+		orgID.String(), warehouseID.String(), userID.String(), userID.String(), groupID.String())
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		for _, stmt := range []struct {
+			sql string
+			id  uuid.UUID
+		}{
+			{`DELETE FROM warehouses WHERE id = $1`, warehouseID},
+			{`DELETE FROM connectors WHERE id = $1`, connectorID},
+			{`DELETE FROM groups WHERE id = $1`, groupID},
+			{`DELETE FROM users WHERE id = $1`, userID},
+			{`DELETE FROM orgs WHERE id = $1`, orgID},
+		} {
+			if _, err := s.db.Pool.Exec(cleanupCtx, stmt.sql, stmt.id.String()); err != nil {
+				t.Logf("cleanup %s: %v", stmt.sql, err)
+			}
+		}
+	})
+
+	return &warehouseSyncFixture{
+		s:           s,
+		orgID:       orgID,
+		userID:      userID,
+		groupID:     groupID,
+		warehouseID: warehouseID,
+		connectorID: connectorID,
+	}
+}
+
+// dropPrefixedEntities drops every ClickHouse user/role whose name carries the
+// warehouse prefix, using the given DROP statement template (one %s).
+func dropPrefixedEntities(ctx context.Context, conn clickhouse.Conn, table, dropFmt, prefix string) error {
+	rows, err := conn.Query(ctx, "SELECT name FROM system."+table+" WHERE startsWith(name, ?)", prefix)
+	if err != nil {
+		return err
+	}
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return err
+		}
+		names = append(names, name)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, name := range names {
+		quoted, err := chaccess.QuoteIdent(name)
+		if err != nil {
+			continue
+		}
+		if err := conn.Exec(ctx, fmt.Sprintf(dropFmt, quoted)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// dialProvisioner opens an independent ClickHouse connection from the
+// warehouse's decrypted provisioner connector config.
+func dialProvisioner(t *testing.T, s *Server, warehouseID uuid.UUID) clickhouse.Conn {
+	t.Helper()
+	var encrypted []byte
+	require.NoError(t, s.db.Pool.QueryRow(context.Background(), `
+		SELECT c.config_encrypted
+		FROM warehouses w JOIN connectors c ON c.id = w.provisioner_connector_id
+		WHERE w.id = $1`, warehouseID.String()).Scan(&encrypted))
+	plain, err := crypto.Decrypt(encrypted, s.masterKey)
+	require.NoError(t, err)
+	var cfg models.ConnectorConfig
+	require.NoError(t, json.Unmarshal(plain, &cfg))
+	conn, err := openWarehouseProvisionerConn(context.Background(), cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+	return conn
+}
+
+func requireClickHouseUserExists(t *testing.T, conn clickhouse.Conn, name string) {
+	t.Helper()
+	var n uint64
+	require.NoError(t, conn.QueryRow(context.Background(),
+		"SELECT count() FROM system.users WHERE name = ?", name).Scan(&n))
+	require.Equal(t, uint64(1), n, "clickhouse user %s should exist", name)
+}
+
+func requireClickHouseUserAbsent(t *testing.T, conn clickhouse.Conn, name string) {
+	t.Helper()
+	var n uint64
+	require.NoError(t, conn.QueryRow(context.Background(),
+		"SELECT count() FROM system.users WHERE name = ?", name).Scan(&n))
+	require.Equal(t, uint64(0), n, "clickhouse user %s should not exist", name)
+}
+
+func requireClickHouseRoleExists(t *testing.T, conn clickhouse.Conn, name string) {
+	t.Helper()
+	var n uint64
+	require.NoError(t, conn.QueryRow(context.Background(),
+		"SELECT count() FROM system.roles WHERE name = ?", name).Scan(&n))
+	require.Equal(t, uint64(1), n, "clickhouse role %s should exist", name)
+}
+
+func requireClickHouseGrantExists(t *testing.T, conn clickhouse.Conn, subject, database, table string) {
+	t.Helper()
+	var n uint64
+	require.NoError(t, conn.QueryRow(context.Background(), `
+		SELECT count() FROM system.grants
+		WHERE access_type = 'SELECT' AND database = ? AND table = ?
+		  AND (user_name = ? OR role_name = ?)`,
+		database, table, subject, subject).Scan(&n))
+	require.Equal(t, uint64(1), n, "grant on %s.%s for %s should exist", database, table, subject)
+}
+
+func TestReconcileWarehouseProvisionsUsersAndRoles(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	var status string
+	var syncErr *string
+	var appliedFP *string
+	var lastSynced *time.Time
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT sync_status, sync_error, applied_master_fp, last_synced_at
+		FROM warehouses WHERE id = $1`, fx.warehouseID.String()).
+		Scan(&status, &syncErr, &appliedFP, &lastSynced))
+	require.Equal(t, "ready", status)
+	require.Nil(t, syncErr)
+	require.NotNil(t, lastSynced)
+	require.NotNil(t, appliedFP)
+	require.Equal(t, chaccess.Fingerprint(string(fx.s.masterKey)), *appliedFP)
+
+	conn := dialProvisioner(t, fx.s, fx.warehouseID)
+	userIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID)
+	roleIdent := chaccess.RoleIdent(fx.warehouseID, fx.orgID, fx.groupID)
+	requireClickHouseUserExists(t, conn, userIdent)
+	requireClickHouseRoleExists(t, conn, roleIdent)
+	requireClickHouseGrantExists(t, conn, userIdent, "analytics", "events")
+	requireClickHouseGrantExists(t, conn, roleIdent, "analytics", "daily_revenue")
+
+	// First sync audit carries the applied counts.
+	var statements, users, roles int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE((metadata->>'statements')::int, -1),
+		       COALESCE((metadata->>'users')::int, -1),
+		       COALESCE((metadata->>'roles')::int, -1)
+		FROM audit_logs
+		WHERE org_id = $1 AND action = 'warehouse.sync' AND resource_id = $2
+		ORDER BY id ASC LIMIT 1`, fx.orgID.String(), fx.warehouseID.String()).
+		Scan(&statements, &users, &roles))
+	require.Greater(t, statements, 0)
+	require.Equal(t, 1, users)
+	require.Equal(t, 1, roles)
+
+	countSyncAudits := func() int {
+		t.Helper()
+		var n int
+		require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+			SELECT count(*) FROM audit_logs
+			WHERE org_id = $1 AND action = 'warehouse.sync' AND resource_id = $2`,
+			fx.orgID.String(), fx.warehouseID.String()).Scan(&n))
+		return n
+	}
+	require.Equal(t, 1, countSyncAudits())
+
+	// A second reconcile is a no-op: no error, still ready, no new heartbeat
+	// audit for a clean ready warehouse.
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT sync_status FROM warehouses WHERE id = $1`, fx.warehouseID.String()).Scan(&status))
+	require.Equal(t, "ready", status)
+	require.Equal(t, 1, countSyncAudits(), "a clean ready reconcile must not write another warehouse.sync audit")
+}
+
+func TestReconcileWarehouseFailsClosedOnWildcard(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	// A resident pooled session must be dropped when the warehouse fails
+	// closed, even though the fail-closed path applies no statements.
+	poolWarehouseIdentity(t, fx.s, fx.warehouseID, fx.orgID, fx.userID)
+	require.Equal(t, 1, fx.s.connPool.Len())
+
+	// Inject a database wildcard grant outside Aether's model.
+	userIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID)
+	quotedUser, err := chaccess.QuoteIdent(userIdent)
+	require.NoError(t, err)
+	require.NoError(t, fx.conn.Exec(ctx, "GRANT SELECT ON `analytics`.* TO "+quotedUser))
+
+	err = fx.s.reconcileWarehouse(ctx, fx.warehouseID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "manual remediation")
+	require.Contains(t, err.Error(), userIdent)
+	require.Contains(t, err.Error(), "analytics.*")
+	require.Zero(t, fx.s.connPool.Len(),
+		"failing closed must invalidate resident identities")
+
+	var status string
+	var syncErr *string
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT sync_status, sync_error FROM warehouses WHERE id = $1`, fx.warehouseID.String()).
+		Scan(&status, &syncErr))
+	require.Equal(t, "error", status)
+	require.NotNil(t, syncErr)
+	require.Contains(t, *syncErr, userIdent)
+	require.Contains(t, *syncErr, "analytics.*")
+
+	var driftAudits int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_logs
+		WHERE org_id = $1 AND action = 'warehouse.drift' AND resource_id = $2`,
+		fx.orgID.String(), fx.warehouseID.String()).Scan(&driftAudits))
+	require.Equal(t, 1, driftAudits)
+
+	// The same fail-closed drift on the next tick is one alert, not two.
+	err = fx.s.reconcileWarehouse(ctx, fx.warehouseID)
+	require.Error(t, err)
+	var driftAuditsAfter int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_logs
+		WHERE org_id = $1 AND action = 'warehouse.drift' AND resource_id = $2`,
+		fx.orgID.String(), fx.warehouseID.String()).Scan(&driftAuditsAfter))
+	require.Equal(t, driftAudits, driftAuditsAfter, "unchanged fail-closed drift must not re-audit")
+}
+
+func TestReconcileWarehouseRejectsForeignProvisioner(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+
+	// A second warehouse in the same org owns its own connector. Pointing the
+	// fixture warehouse at that connector must fail closed instead of
+	// provisioning through another warehouse's credential namespace.
+	var encrypted []byte
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT config_encrypted FROM connectors WHERE id = $1`, fx.connectorID.String()).Scan(&encrypted))
+
+	otherWarehouseID := uuid.New()
+	otherConnectorID := uuid.New()
+	_, err := fx.s.db.Pool.Exec(ctx,
+		`INSERT INTO warehouses (id, org_id, name) VALUES ($1, $2, $3)`,
+		otherWarehouseID.String(), fx.orgID.String(), "Foreign Provisioner Warehouse")
+	require.NoError(t, err)
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted, warehouse_id)
+		VALUES ($1, $2, $3, 'clickhouse', $4, $5)`,
+		otherConnectorID.String(), fx.orgID.String(), "Foreign Provisioner Connector",
+		encrypted, otherWarehouseID.String())
+	require.NoError(t, err)
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET provisioner_connector_id = $1 WHERE id = $2`,
+		otherConnectorID.String(), otherWarehouseID.String())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := fx.s.db.Pool.Exec(cleanupCtx,
+			`DELETE FROM warehouses WHERE id = $1`, otherWarehouseID.String()); err != nil {
+			t.Logf("cleanup foreign warehouse: %v", err)
+		}
+		if _, err := fx.s.db.Pool.Exec(cleanupCtx,
+			`DELETE FROM connectors WHERE id = $1`, otherConnectorID.String()); err != nil {
+			t.Logf("cleanup foreign connector: %v", err)
+		}
+	})
+
+	// Cross-wire the fixture warehouse directly, bypassing the write path.
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET provisioner_connector_id = $1 WHERE id = $2`,
+		otherConnectorID.String(), fx.warehouseID.String())
+	require.NoError(t, err)
+
+	err = fx.s.reconcileWarehouse(ctx, fx.warehouseID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "does not belong to warehouse")
+
+	var status string
+	var syncErr *string
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT sync_status, sync_error FROM warehouses WHERE id = $1`, fx.warehouseID.String()).
+		Scan(&status, &syncErr))
+	require.Equal(t, "error", status)
+	require.NotNil(t, syncErr)
+	require.Contains(t, *syncErr, "does not belong to warehouse")
+
+	// Nothing may be provisioned from the foreign connector.
+	requireClickHouseUserAbsent(t, fx.conn, chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID))
+}
+
+// pingWarehouseUser connects as the warehouse-provisioned identity using the
+// derived password and pings. A non-nil error means authentication failed; on
+// success the caller closes the returned connection.
+func pingWarehouseUser(s *Server, warehouseID, orgID, userID uuid.UUID) (clickhouse.Conn, error) {
+	cfg := warehouseSyncTestClickHouseConfig()
+	conn, err := clickhouse.Open(&clickhouse.Options{
+		Addr: []string{fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)},
+		Auth: clickhouse.Auth{
+			Username: chaccess.UserIdent(warehouseID, orgID, userID),
+			Password: chaccess.DerivePassword(s.masterKey, warehouseID, userID),
+		},
+		Protocol: clickhouse.Native,
+	})
+	if err != nil {
+		return nil, err
+	}
+	pingCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := conn.Ping(pingCtx); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+// requireNoPrefixedEntities asserts the warehouse namespace is empty.
+func requireNoPrefixedEntities(t *testing.T, conn clickhouse.Conn, prefix string) {
+	t.Helper()
+	for _, table := range []string{"users", "roles"} {
+		var n uint64
+		require.NoError(t, conn.QueryRow(context.Background(),
+			"SELECT count() FROM system."+table+" WHERE startsWith(name, ?)", prefix).Scan(&n))
+		require.Equal(t, uint64(0), n, "system.%s must have no entities with prefix %s", table, prefix)
+	}
+}
+
+func TestReconcileWarehouseRekeysOnFingerprintMismatch(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	userIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID)
+	quotedUser, err := chaccess.QuoteIdent(userIdent)
+	require.NoError(t, err)
+
+	// Break the stored password so successful authentication after the next
+	// reconcile proves an ALTER USER was emitted.
+	require.NoError(t, fx.conn.Exec(ctx,
+		"ALTER USER "+quotedUser+" IDENTIFIED WITH sha256_password BY 'not-the-derived-password'"))
+	staleConn, err := pingWarehouseUser(fx.s, fx.warehouseID, fx.orgID, fx.userID)
+	require.Error(t, err, "stale password must not authenticate")
+	require.Nil(t, staleConn)
+
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET applied_master_fp = 'stale-fingerprint' WHERE id = $1`, fx.warehouseID.String())
+	require.NoError(t, err)
+
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	var appliedFP *string
+	var status string
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT applied_master_fp, sync_status FROM warehouses WHERE id = $1`, fx.warehouseID.String()).
+		Scan(&appliedFP, &status))
+	require.Equal(t, "ready", status)
+	require.NotNil(t, appliedFP)
+	require.Equal(t, chaccess.Fingerprint(string(fx.s.masterKey)), *appliedFP)
+
+	userConn, err := pingWarehouseUser(fx.s, fx.warehouseID, fx.orgID, fx.userID)
+	require.NoError(t, err, "derived password must authenticate after the rekey")
+	userConn.Close()
+
+	// The rekey is one-shot: the next reconcile emits no statements and writes
+	// no new warehouse.sync heartbeat.
+	countSyncAudits := func() int {
+		t.Helper()
+		var n int
+		require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+			SELECT count(*) FROM audit_logs
+			WHERE org_id = $1 AND action = 'warehouse.sync' AND resource_id = $2`,
+			fx.orgID.String(), fx.warehouseID.String()).Scan(&n))
+		return n
+	}
+	auditsBefore := countSyncAudits()
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+	require.Equal(t, auditsBefore, countSyncAudits(), "a clean ready reconcile must not write a heartbeat audit")
+}
+
+func TestReconcileWarehouseStatementFailureMarksError(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+
+	// A provisioner that can read the actual state it needs and create roles,
+	// but cannot create users: the plan fails mid-way (role created, user
+	// denied), which proves partial execution is reported honestly.
+	limitedUser := "whrev_limited_" + uuid.NewString()[:8]
+	limitedPassword := "limited-password"
+	require.NoError(t, fx.conn.Exec(ctx,
+		fmt.Sprintf("CREATE USER %s IDENTIFIED WITH sha256_password BY '%s'", limitedUser, limitedPassword)))
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := fx.conn.Exec(cleanupCtx, "DROP USER IF EXISTS "+limitedUser); err != nil {
+			t.Logf("cleanup limited user: %v", err)
+		}
+		if err := fx.conn.Exec(cleanupCtx, "DROP ROLE IF EXISTS "+limitedUser); err != nil {
+			t.Logf("cleanup limited role: %v", err)
+		}
+	})
+	for _, grant := range []string{
+		"GRANT SELECT ON system.grants TO " + limitedUser,
+		"GRANT SELECT ON system.users TO " + limitedUser,
+		"GRANT SELECT ON system.roles TO " + limitedUser,
+		"GRANT SELECT ON system.role_grants TO " + limitedUser,
+		"GRANT CREATE ROLE ON *.* TO " + limitedUser,
+		"GRANT SELECT ON analytics.* TO " + limitedUser + " WITH GRANT OPTION",
+	} {
+		require.NoError(t, fx.conn.Exec(ctx, grant))
+	}
+
+	limitedCfg := warehouseSyncTestClickHouseConfig()
+	limitedCfg.User = limitedUser
+	limitedCfg.Password = limitedPassword
+	configJSON, err := json.Marshal(limitedCfg)
+	require.NoError(t, err)
+	encrypted, err := crypto.Encrypt(configJSON, fx.s.masterKey)
+	require.NoError(t, err)
+
+	limitedConnectorID := uuid.New()
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted, warehouse_id)
+		VALUES ($1, $2, $3, 'clickhouse', $4, $5)`,
+		limitedConnectorID.String(), fx.orgID.String(), "Limited Provisioner",
+		encrypted, fx.warehouseID.String())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := fx.s.db.Pool.Exec(cleanupCtx,
+			`DELETE FROM connectors WHERE id = $1`, limitedConnectorID.String()); err != nil {
+			t.Logf("cleanup limited connector: %v", err)
+		}
+	})
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET provisioner_connector_id = $1 WHERE id = $2`,
+		limitedConnectorID.String(), fx.warehouseID.String())
+	require.NoError(t, err)
+
+	// The limited plan creates the role and then fails on the first user, so
+	// DDL was applied before the failure and any resident session for a
+	// desired/actual identity must be invalidated even though the run fails.
+	poolWarehouseIdentity(t, fx.s, fx.warehouseID, fx.orgID, fx.userID)
+	require.Equal(t, 1, fx.s.connPool.Len())
+
+	err = fx.s.reconcileWarehouse(ctx, fx.warehouseID)
+	require.Error(t, err)
+	require.Zero(t, fx.s.connPool.Len(),
+		"a partial DDL failure must still invalidate affected identities")
+
+	var status string
+	var syncErr, appliedFP *string
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT sync_status, sync_error, applied_master_fp FROM warehouses WHERE id = $1`, fx.warehouseID.String()).
+		Scan(&status, &syncErr, &appliedFP))
+	require.Equal(t, "error", status)
+	require.NotNil(t, syncErr)
+	require.NotEmpty(t, *syncErr)
+	require.NotContains(t, *syncErr, "Ae1_", "sync_error must not leak derived passwords")
+	require.NotContains(t, *syncErr, "BY '", "sync_error must not leak DDL")
+	require.Nil(t, appliedFP, "fingerprint must not advance on a failed run")
+
+	// The role from the partial plan exists; the user was never created.
+	requireClickHouseRoleExists(t, fx.conn, chaccess.RoleIdent(fx.warehouseID, fx.orgID, fx.groupID))
+	requireClickHouseUserAbsent(t, fx.conn, chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID))
+}
+
+func TestReconcileWarehouseSoftDeletedProvisioner(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+
+	_, err := fx.s.db.Pool.Exec(ctx,
+		`UPDATE connectors SET deleted_at = now() WHERE id = $1`, fx.connectorID.String())
+	require.NoError(t, err)
+
+	err = fx.s.reconcileWarehouse(ctx, fx.warehouseID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "soft-deleted")
+
+	var status string
+	var syncErr *string
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT sync_status, sync_error FROM warehouses WHERE id = $1`, fx.warehouseID.String()).
+		Scan(&status, &syncErr))
+	require.Equal(t, "error", status)
+	require.NotNil(t, syncErr)
+	require.Contains(t, *syncErr, "soft-deleted")
+
+	requireNoPrefixedEntities(t, fx.conn, chaccess.IdentifierPrefix(fx.warehouseID))
+}
+
+func TestReconcileWarehouseIgnoresForeignSubjects(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+
+	// Replace the fixture grants with ones naming a user and a group that do
+	// not belong to the warehouse's org; neither may be provisioned.
+	_, err := fx.s.db.Pool.Exec(ctx,
+		`DELETE FROM warehouse_table_grants WHERE warehouse_id = $1`, fx.warehouseID.String())
+	require.NoError(t, err)
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants
+			(org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		VALUES
+			($1, $2, 'user', $3, 'analytics', 'events'),
+			($1, $2, 'group', $4, 'analytics', 'daily_revenue')`,
+		fx.orgID.String(), fx.warehouseID.String(), uuid.NewString(), uuid.NewString())
+	require.NoError(t, err)
+
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	var status string
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT sync_status FROM warehouses WHERE id = $1`, fx.warehouseID.String()).Scan(&status))
+	require.Equal(t, "ready", status)
+	requireNoPrefixedEntities(t, fx.conn, chaccess.IdentifierPrefix(fx.warehouseID))
+
+	var users, roles int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE((metadata->>'users')::int, -1), COALESCE((metadata->>'roles')::int, -1)
+		FROM audit_logs
+		WHERE org_id = $1 AND action = 'warehouse.sync' AND resource_id = $2
+		ORDER BY id DESC LIMIT 1`, fx.orgID.String(), fx.warehouseID.String()).Scan(&users, &roles))
+	require.Equal(t, 0, users)
+	require.Equal(t, 0, roles)
+}
+
+func TestReconcileWarehouseAuditsSkippedCatalogNames(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+
+	// "my table" cannot be quoted for a GRANT; the reconcile must audit it as
+	// drift and continue with the rest of the plan.
+	_, err := fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants
+			(org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		VALUES ($1, $2, 'user', $3, 'analytics', 'my table')`,
+		fx.orgID.String(), fx.warehouseID.String(), fx.userID.String())
+	require.NoError(t, err)
+
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	var status string
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT sync_status FROM warehouses WHERE id = $1`, fx.warehouseID.String()).Scan(&status))
+	require.Equal(t, "ready", status)
+
+	// The valid grant still applied, proving the skipped name did not abort.
+	userIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID)
+	requireClickHouseUserExists(t, fx.conn, userIdent)
+	requireClickHouseGrantExists(t, fx.conn, userIdent, "analytics", "events")
+
+	var driftAudits int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_logs
+		WHERE org_id = $1 AND action = 'warehouse.drift' AND resource_id = $2
+		  AND metadata->'skipped' @> $3::jsonb`,
+		fx.orgID.String(), fx.warehouseID.String(), `["analytics.my table"]`).Scan(&driftAudits))
+	require.Equal(t, 1, driftAudits)
+}
+
+func TestReconcileWarehouseSkipsWhenLockHeld(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+
+	lockConn, err := pgx.Connect(ctx, warehouseSyncTestDSN())
+	require.NoError(t, err)
+	t.Cleanup(func() { lockConn.Close(context.Background()) })
+
+	var locked bool
+	require.NoError(t, lockConn.QueryRow(ctx,
+		`SELECT pg_try_advisory_lock(hashtextextended($1::text, 0))`, fx.warehouseID.String()).Scan(&locked))
+	require.True(t, locked, "test must hold the warehouse advisory lock")
+
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	var status string
+	var syncErr *string
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT sync_status, sync_error FROM warehouses WHERE id = $1`, fx.warehouseID.String()).
+		Scan(&status, &syncErr))
+	require.Equal(t, "pending", status, "skipped reconcile must not touch sync_status")
+	require.Nil(t, syncErr)
+	requireNoPrefixedEntities(t, fx.conn, chaccess.IdentifierPrefix(fx.warehouseID))
+
+	var skippedAudits int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_logs
+		WHERE org_id = $1 AND action = 'warehouse.sync.skipped' AND resource_id = $2`,
+		fx.orgID.String(), fx.warehouseID.String()).Scan(&skippedAudits))
+	require.Equal(t, 1, skippedAudits)
+}
+
+func TestRedactSecrets(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "create user statement",
+			in:   "CREATE USER `aether_x_u_y` IDENTIFIED WITH sha256_password BY 'Ae1_supersecret' GRANTEES NONE",
+			want: "CREATE USER `aether_x_u_y` IDENTIFIED WITH sha256_password BY '<redacted>' GRANTEES NONE",
+		},
+		{
+			name: "alter user statement",
+			in:   "ALTER USER u IDENTIFIED BY 'pw'",
+			want: "ALTER USER u IDENTIFIED BY '<redacted>'",
+		},
+		{
+			name: "no secret",
+			in:   "code: 497, message: ACCESS_DENIED: not enough privileges",
+			want: "code: 497, message: ACCESS_DENIED: not enough privileges",
+		},
+		{
+			name: "word containing by is untouched",
+			in:   "standby 'x'",
+			want: "standby 'x'",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, redactSecrets(tc.in))
+		})
+	}
+}
+
+// TestPooledWarehouseUsers pins the affected-identity computation: the union
+// of desired and actual users. Roles contribute no key because the pool is
+// keyed per user, not per role.
+func TestPooledWarehouseUsers(t *testing.T) {
+	desired := chaccess.DesiredState{
+		Roles: map[string]chaccess.RoleState{"role_only": {}},
+		Users: map[string]chaccess.UserState{"want": {}, "both": {}},
+	}
+	actual := chaccess.ActualState{
+		Users: map[string]chaccess.UserActual{"both": {}, "orphan": {}},
+	}
+
+	require.Equal(t, map[string]struct{}{
+		"want": {}, "both": {}, "orphan": {},
+	}, pooledWarehouseUsers(desired, actual))
+	require.Nil(t, pooledWarehouseUsers(chaccess.DesiredState{}, chaccess.ActualState{}))
+}
+
+// poolWarehouseIdentity stores a pooled connection for a warehouse-scoped
+// identity so invalidation tests can observe it being detached. The pool opens
+// connections lazily, so no ClickHouse server is contacted and the identity
+// need not exist yet.
+func poolWarehouseIdentity(t *testing.T, s *Server, warehouseID, orgID, userID uuid.UUID) {
+	t.Helper()
+	cfg := warehouseSyncTestClickHouseConfig()
+	cfg.User = chaccess.UserIdent(warehouseID, orgID, userID)
+	cfg.Password = chaccess.DerivePassword(s.masterKey, warehouseID, userID)
+	_, release, err := s.connPool.Get(fmt.Sprintf("%s:%d", cfg.Host, cfg.Port), cfg.User, cfg)
+	require.NoError(t, err)
+	release()
+}
+
+// TestReconcileInvalidatesPooledWarehouseIdentities proves a reconcile that
+// applied DDL drops the warehouse identities' pooled connections, an
+// idempotent tick leaves them resident, and a failed run neither panics nor
+// touches them.
+func TestReconcileInvalidatesPooledWarehouseIdentities(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+
+	chCfg := warehouseSyncTestClickHouseConfig()
+	endpoint := fmt.Sprintf("%s:%d", chCfg.Host, chCfg.Port)
+
+	// The decoy mirrors a second warehouse sharing the service: invalidation
+	// is scoped by identity name, not by endpoint.
+	decoyWarehouseID, decoyOrgID, decoyUserID := uuid.New(), uuid.New(), uuid.New()
+	decoyUser := chaccess.UserIdent(decoyWarehouseID, decoyOrgID, decoyUserID)
+	decoyCfg := chCfg
+	decoyCfg.User = decoyUser
+	decoyCfg.Password = chaccess.DerivePassword(fx.s.masterKey, decoyWarehouseID, decoyUserID)
+
+	// The first provision creates the identity; then pool a connection for it.
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+	poolUser := func() {
+		t.Helper()
+		poolWarehouseIdentity(t, fx.s, fx.warehouseID, fx.orgID, fx.userID)
+	}
+	poolDecoy := func() {
+		t.Helper()
+		conn, release, err := fx.s.connPool.Get(endpoint, decoyUser, decoyCfg)
+		require.NoError(t, err)
+		require.NotNil(t, conn)
+		release()
+	}
+	poolDecoy()
+	poolUser()
+	require.Equal(t, 2, fx.s.connPool.Len())
+
+	// A grant change makes the next reconcile apply DDL.
+	_, err := fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants
+			(org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		VALUES ($1, $2, 'group', $3, 'analytics', 'users')`,
+		fx.orgID.String(), fx.warehouseID.String(), fx.groupID.String())
+	require.NoError(t, err)
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+	require.Equal(t, 1, fx.s.connPool.Len(),
+		"reconcile must invalidate the warehouse's pooled identities only")
+	poolDecoy()
+	require.Equal(t, 1, fx.s.connPool.Len(), "the decoy must still be resident")
+
+	// A no-op reconcile must not churn resident connections.
+	poolUser()
+	require.Equal(t, 2, fx.s.connPool.Len())
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+	require.Equal(t, 2, fx.s.connPool.Len(), "a no-op reconcile must not invalidate")
+
+	// A connect-before-statements failure leaves the pool untouched, does not
+	// panic, and must not be confused with the partial-DDL path.
+	pointProvisionerAtUnreachableHost(t, fx.s, fx.s.masterKey, fx.connectorID)
+	require.Error(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+	require.Equal(t, 2, fx.s.connPool.Len())
+}
+
+// TestReconcileWarehouseDoesNotStarveSmallPool guards against the sync lock
+// occupying a pooled connection: with MaxConns=2 two concurrent reconciles
+// must still complete instead of self-deadlocking on the pool.
+func TestReconcileWarehouseDoesNotStarveSmallPool(t *testing.T) {
+	ctx := context.Background()
+
+	poolCfg, err := pgxpool.ParseConfig(warehouseSyncTestDSN())
+	require.NoError(t, err)
+	poolCfg.MaxConns = 2
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	db := &database.DB{Pool: pool}
+	require.NoError(t, db.Migrate(ctx))
+
+	key := crypto.DeriveKey(warehouseSyncTestMasterKey)
+	s := NewServer(db, auth.NewJWTIssuer("test-secret", 15*time.Minute), audit.NewLogger(db), key, nil)
+	s.SetCHTablePermissions(true)
+	t.Cleanup(s.Close)
+	fxA := setupWarehouseFixtureWithServer(t, s, key)
+	fxB := setupWarehouseFixtureWithServer(t, s, key)
+
+	runCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	errCh := make(chan error, 2)
+	go func() { errCh <- s.reconcileWarehouse(runCtx, fxA.warehouseID) }()
+	go func() { errCh <- s.reconcileWarehouse(runCtx, fxB.warehouseID) }()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-errCh:
+			require.NoError(t, err)
+		case <-time.After(60 * time.Second):
+			t.Fatal("reconcile starved: concurrent reconciles exhausted the 2-connection pool")
+		}
+	}
+}
+
+func TestDriftDetectionAlertsOnUnexpectedGrant(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+
+	// Provision the desired state first so the only difference is the grant
+	// injected below.
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	userIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID)
+	quotedUser, err := chaccess.QuoteIdent(userIdent)
+	require.NoError(t, err)
+	require.NoError(t, fx.conn.Exec(ctx, "GRANT SELECT ON `analytics`.`secret` TO "+quotedUser))
+
+	report, err := fx.s.detectWarehouseDrift(ctx, fx.warehouseID)
+	require.NoError(t, err)
+	require.Contains(t, report.UnexpectedGrants, "analytics.secret for "+userIdent)
+	require.False(t, report.IsEmpty())
+
+	var driftAudits int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_logs
+		WHERE org_id = $1 AND action = 'warehouse.drift' AND resource_id = $2
+		  AND metadata->'unexpected_grants' @> $3::jsonb`,
+		fx.orgID.String(), fx.warehouseID.String(),
+		`["analytics.secret for `+userIdent+`"]`).Scan(&driftAudits))
+	require.Equal(t, 1, driftAudits)
+}
+
+func TestDriftDetectionReportsMissingGrant(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	// A freshly reconciled warehouse has no drift.
+	report, err := fx.s.detectWarehouseDrift(ctx, fx.warehouseID)
+	require.NoError(t, err)
+	require.True(t, report.IsEmpty(), "clean warehouse must report no drift: %+v", report)
+
+	// Revoke a desired grant outside Aether and detect it as missing. Also
+	// create an orphan user in the warehouse namespace: both are drift.
+	userIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID)
+	quotedUser, err := chaccess.QuoteIdent(userIdent)
+	require.NoError(t, err)
+	require.NoError(t, fx.conn.Exec(ctx, "REVOKE SELECT ON `analytics`.`events` FROM "+quotedUser))
+
+	orphanIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, uuid.New())
+	quotedOrphan, err := chaccess.QuoteIdent(orphanIdent)
+	require.NoError(t, err)
+	require.NoError(t, fx.conn.Exec(ctx, "CREATE USER "+quotedOrphan+" IDENTIFIED WITH no_password"))
+
+	report, err = fx.s.detectWarehouseDrift(ctx, fx.warehouseID)
+	require.NoError(t, err)
+	require.Contains(t, report.MissingGrants, "analytics.events for "+userIdent)
+	require.Contains(t, report.UnexpectedUsers, orphanIdent)
+
+	var driftAudits int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_logs
+		WHERE org_id = $1 AND action = 'warehouse.drift' AND resource_id = $2
+		  AND metadata->'missing_grants' @> $3::jsonb`,
+		fx.orgID.String(), fx.warehouseID.String(),
+		`["analytics.events for `+userIdent+`"]`).Scan(&driftAudits))
+	require.Equal(t, 1, driftAudits)
+}
+
+// TestReconcileWarehouseAuditsDriftForProvisionedWarehouse verifies drift is
+// alerted by the normal reconcile path once a warehouse has been provisioned,
+// and that the first provision does not emit an everything-missing report.
+func TestReconcileWarehouseAuditsDriftForProvisionedWarehouse(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	countDriftAudits := func() int {
+		t.Helper()
+		var n int
+		require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+			SELECT count(*) FROM audit_logs
+			WHERE org_id = $1 AND action = 'warehouse.drift' AND resource_id = $2`,
+			fx.orgID.String(), fx.warehouseID.String()).Scan(&n))
+		return n
+	}
+	require.Zero(t, countDriftAudits(), "a first provision must not emit an everything-missing drift report")
+
+	// Remove a provisioned grant outside Aether; the next reconcile restores
+	// it and audits the drift it observed.
+	userIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID)
+	quotedUser, err := chaccess.QuoteIdent(userIdent)
+	require.NoError(t, err)
+	require.NoError(t, fx.conn.Exec(ctx, "REVOKE SELECT ON `analytics`.`events` FROM "+quotedUser))
+
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+	requireClickHouseGrantExists(t, fx.conn, userIdent, "analytics", "events")
+
+	var driftAudits int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_logs
+		WHERE org_id = $1 AND action = 'warehouse.drift' AND resource_id = $2
+		  AND metadata->'missing_grants' @> $3::jsonb`,
+		fx.orgID.String(), fx.warehouseID.String(),
+		`["analytics.events for `+userIdent+`"]`).Scan(&driftAudits))
+	require.Equal(t, 1, driftAudits)
+}
+
+// TestCompareWarehouseStateReportsAllDriftKinds exercises the pure diff
+// directly so every report field is covered without a provisioner.
+func TestCompareWarehouseStateReportsAllDriftKinds(t *testing.T) {
+	warehouseID := uuid.New()
+	grantPresent := chaccess.Grant{Database: "analytics", Table: "events"}
+	grantMissing := chaccess.Grant{Database: "analytics", Table: "daily"}
+	grantExtra := chaccess.Grant{Database: "analytics", Table: "secret"}
+
+	desired := chaccess.DesiredState{
+		Roles: map[string]chaccess.RoleState{
+			"role_want":   {Grants: map[chaccess.Grant]struct{}{grantPresent: {}}},
+			"role_absent": {Grants: map[chaccess.Grant]struct{}{grantMissing: {}}},
+		},
+		Users: map[string]chaccess.UserState{
+			"user_want": {
+				Roles:        []string{"role_want", "role_absent"},
+				DirectGrants: map[chaccess.Grant]struct{}{grantMissing: {}},
+			},
+			// Role-only access: no direct grants, so an absent identity must
+			// still surface as MissingUsers rather than an empty report.
+			"user_absent": {Roles: []string{"role_want"}},
+		},
+	}
+	actual := chaccess.ActualState{
+		Roles: map[string]map[chaccess.Grant]struct{}{
+			"role_want":   {grantPresent: {}},
+			"role_orphan": {},
+		},
+		Users: map[string]chaccess.UserActual{
+			"user_want": {
+				Roles:           map[string]struct{}{"role_want": {}},
+				DirectGrants:    map[chaccess.Grant]struct{}{grantExtra: {}},
+				DefaultRolesAll: false,
+			},
+			"user_orphan": {},
+		},
+		Wildcards:  []chaccess.WildcardGrant{{Subject: "user_want", Scope: "analytics.*"}},
+		Unexpected: []string{"role x granted to y"},
+	}
+
+	report := compareWarehouseState(warehouseID, desired, actual)
+	require.Equal(t, []string{"analytics.secret for user_want"}, report.UnexpectedGrants)
+	require.Equal(t, []string{
+		"analytics.daily for role_absent",
+		"analytics.daily for user_want",
+	}, report.MissingGrants)
+	require.Equal(t, []string{"user_orphan"}, report.UnexpectedUsers)
+	require.Equal(t, []string{"role_orphan"}, report.UnexpectedRoles)
+	require.Equal(t, []string{"user_absent"}, report.MissingUsers)
+	require.Equal(t, []string{"role_absent"}, report.MissingRoles)
+	require.Equal(t, []string{"role role_absent for user_want"}, report.MissingRoleMemberships)
+	require.Equal(t, []string{"user_want"}, report.DefaultRolesNotAll)
+	require.Equal(t, []chaccess.WildcardGrant{{Subject: "user_want", Scope: "analytics.*"}}, report.Wildcards)
+	require.Equal(t, []string{"role x granted to y"}, report.Unexpected)
+	require.False(t, report.IsEmpty())
+
+	// A state that fully matches desired reports no drift.
+	matched := compareWarehouseState(warehouseID, desired, chaccess.ActualState{
+		Roles: map[string]map[chaccess.Grant]struct{}{
+			"role_want":   {grantPresent: {}},
+			"role_absent": {grantMissing: {}},
+		},
+		Users: map[string]chaccess.UserActual{
+			"user_want": {
+				Roles:           map[string]struct{}{"role_want": {}, "role_absent": {}},
+				DirectGrants:    map[chaccess.Grant]struct{}{grantMissing: {}},
+				DefaultRolesAll: true,
+			},
+			"user_absent": {
+				Roles:           map[string]struct{}{"role_want": {}},
+				DefaultRolesAll: true,
+			},
+		},
+	})
+	require.True(t, matched.IsEmpty(), "matching state must report no drift: %+v", matched)
+}
+
+// loopWarehouseRecorder records enqueues from the reconcile loop.
+type loopWarehouseRecorder struct {
+	mu  sync.Mutex
+	ids []uuid.UUID
+}
+
+func (r *loopWarehouseRecorder) Enqueue(id uuid.UUID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ids = append(r.ids, id)
+}
+
+func (r *loopWarehouseRecorder) count(id uuid.UUID) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, got := range r.ids {
+		if got == id {
+			n++
+		}
+	}
+	return n
+}
+
+func TestWarehouseLoopEnqueuesAllAndStops(t *testing.T) {
+	fx := setupWarehouseFixture(t)
+
+	// A warehouse without a provisioner cannot sync; the loop must skip it.
+	noProvisionerID := uuid.New()
+	_, err := fx.s.db.Pool.Exec(context.Background(), `
+		INSERT INTO warehouses (id, org_id, name) VALUES ($1, $2, $3)`,
+		noProvisionerID.String(), fx.orgID.String(), "Loop No Provisioner "+noProvisionerID.String()[:8])
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := fx.s.db.Pool.Exec(cleanupCtx,
+			`DELETE FROM warehouses WHERE id = $1`, noProvisionerID.String()); err != nil {
+			t.Logf("cleanup provisioner-less warehouse: %v", err)
+		}
+	})
+
+	rec := &loopWarehouseRecorder{}
+	fx.s.SetWarehouseSyncerForTest(rec)
+	// A long interval makes the startup enqueue and the absence of an early
+	// second enqueue observable without racing the ticker.
+	fx.s.SetWarehouseReconcileInterval(10 * time.Second)
+
+	oldJitter := warehouseReconcileJitterFn
+	warehouseReconcileJitterFn = func(time.Duration) time.Duration { return 0 }
+	t.Cleanup(func() { warehouseReconcileJitterFn = oldJitter })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fx.s.StartBackgroundJobs(ctx)
+
+	require.Eventually(t, func() bool { return rec.count(fx.warehouseID) == 1 },
+		2*time.Second, 10*time.Millisecond, "startup enqueue must happen promptly")
+
+	// With a 10s interval, nothing else may be enqueued while we watch.
+	time.Sleep(300 * time.Millisecond)
+	require.Equal(t, 1, rec.count(fx.warehouseID), "loop must not enqueue again before the interval elapses")
+	require.Zero(t, rec.count(noProvisionerID), "loop must skip warehouses without a provisioner")
+
+	// Close joins the loop before returning, so no further enqueues can land.
+	fx.s.Close()
+	require.Equal(t, 1, rec.count(fx.warehouseID))
+	fx.s.Close() // Close is idempotent
+}

@@ -1,12 +1,15 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { Check, Copy, Trash2, Plus, AlertTriangle, Shield } from 'lucide-react'
 import { api } from '../api/client'
+import { listWarehouses, type Warehouse } from '../api/warehouses'
+import { RoutingPreference } from '../components/RoutingPreference'
 import { useAuth } from '../hooks/useAuth'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import type { Connector } from '../types'
 
 interface UserProfile {
   id: string
@@ -73,6 +76,34 @@ export function ProfilePage() {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [adminMode, setAdminMode] = useState(() => localStorage.getItem('aether_admin_mode') === 'true')
   const { user: authUser } = useAuth()
+
+  // Warehouse routing: warehouses are admin-readable, so non-admins derive
+  // the warehouses they can route in from their ClickHouse connectors.
+  const { data: connectors = [] } = useQuery<Connector[]>({
+    queryKey: ['connectors'],
+    queryFn: () => api.get<Connector[]>('/api/v1/connectors'),
+  })
+
+  const { data: adminWarehouses = [] } = useQuery<Warehouse[]>({
+    queryKey: ['warehouses'],
+    queryFn: listWarehouses,
+    enabled: authUser?.role === 'admin',
+  })
+
+  const routingWarehouses = useMemo(() => {
+    const byId = new Map<string, { id: string; serviceNames: string[]; name?: string }>()
+    for (const connector of connectors) {
+      if (connector.type !== 'clickhouse' || !connector.warehouse_id) continue
+      const existing = byId.get(connector.warehouse_id)
+      if (existing) existing.serviceNames.push(connector.name)
+      else byId.set(connector.warehouse_id, { id: connector.warehouse_id, serviceNames: [connector.name] })
+    }
+    for (const warehouse of adminWarehouses) {
+      const existing = byId.get(warehouse.id)
+      if (existing) existing.name = warehouse.name
+    }
+    return Array.from(byId.values())
+  }, [connectors, adminWarehouses])
 
   // Token management state
   const [showTokenForm, setShowTokenForm] = useState(false)
@@ -237,6 +268,24 @@ export function ProfilePage() {
               </div>
             )}
           </div>
+
+          {routingWarehouses.length > 0 && (
+            <div style={{ marginTop: 32, borderTop: '1px solid var(--border-light)', paddingTop: 24 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>Warehouse routing</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12 }}>
+                Choose which service your queries run on in each warehouse.
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {routingWarehouses.map(warehouse => (
+                  <RoutingPreference
+                    key={warehouse.id}
+                    warehouseId={warehouse.id}
+                    warehouseName={warehouse.name ?? warehouse.serviceNames.join(' / ')}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Personal Access Tokens */}
           <div style={{ marginTop: 32, borderTop: '1px solid var(--border-light)', paddingTop: 24 }}>

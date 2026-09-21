@@ -74,6 +74,8 @@ Configuration is done via environment variables:
 	AETHER_PUBLIC_URL           Public-facing URL for link generation (default: "http://localhost:8088")
     AETHER_FRONTEND_URL         Frontend URL for CORS and OIDC redirect (default value of AETHER_PUBLIC_URL)
     AETHER_DISABLE_REGISTRATION Disable new user registration (default: "false")
+    AETHER_CH_TABLE_PERMISSIONS Enables per-user ClickHouse warehouse table permissions (default: "false")
+    AETHER_CH_RECONCILE_INTERVAL Warehouse reconcile catch-up cadence (default: "10m", floor "1m")
 
   Storage:
     AETHER_STORAGE_BACKEND      Storage backend: "local" or "s3" (default: "local")
@@ -240,6 +242,9 @@ func main() {
 
 	// Build HTTP server
 	srv := api.NewServer(db, jwtIssuer, auditLogger, masterKey, redisCache)
+	// Registered after db.Close and redisCache.Close, so it runs before them:
+	// in-flight reconciles still have their dependencies while they drain.
+	defer srv.Close()
 
 	// Configure storage backend
 	var store storage.Storage
@@ -272,6 +277,11 @@ func main() {
 	}
 	srv.SetStorage(store)
 	srv.SetAgentStore(store)
+	srv.SetWarehouseReconcileInterval(cfg.WarehouseReconcileInterval)
+	srv.SetCHTablePermissions(cfg.CHTablePermissions)
+	if !cfg.CHTablePermissions {
+		slog.Info("ClickHouse per-user table permissions disabled (AETHER_CH_TABLE_PERMISSIONS=false); managed connectors execute with their stored credentials")
+	}
 	srv.StartBackgroundJobs(ctx)
 	srv.StartAuditS3Writers(ctx)
 	srv.SetPlatformAdminEmail(cfg.PlatformAdminEmail)

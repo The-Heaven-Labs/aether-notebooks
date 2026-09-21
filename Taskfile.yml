@@ -141,30 +141,30 @@ tasks:
     desc: Run all Go tests
     deps: [infra:up]
     cmds:
-      - go test ./... -count=1
+      - go test -timeout 3m ./... -count=1
 
   test:v:
     desc: Run all Go tests with verbose output
     deps: [infra:up]
     cmds:
-      - go test ./... -v -count=1
+      - go test -timeout 3m ./... -v -count=1
 
   test:watch:
     desc: Re-run tests on file change (requires entr)
     cmds:
-      - find . -name '*.go' | entr -c go test ./... -count=1
+      - find . -name '*.go' | entr -c go test -timeout 3m ./... -count=1
 
   test:api:
     desc: Run only the API package tests
     deps: [infra:up]
     cmds:
-      - go test ./internal/api/... -v -count=1
+      - go test -timeout 3m ./internal/api/... -v -count=1
 
   test:race:
     desc: Run tests with the race detector
     deps: [infra:up]
     cmds:
-      - go test -race ./... -count=1
+      - go test -timeout 3m -race ./... -count=1
 
   test:web:
     desc: Run frontend component tests (Vitest)
@@ -186,8 +186,9 @@ tasks:
 
   test:e2e:
     desc: Run Playwright E2E tests (requires running dev stack on :5173)
+    dir: e2e
     cmds:
-      - npx playwright test --config=e2e/playwright.config.ts
+      - npx playwright test
 
   test:smoke:
     desc: Run end-to-end smoke test against live server (requires running dev stack)
@@ -196,8 +197,9 @@ tasks:
 
   test:e2e:ui:
     desc: Open Playwright UI mode
+    dir: e2e
     cmds:
-      - npx playwright test --ui --config=e2e/playwright.config.ts
+      - npx playwright test --ui
 
   # ── Code quality ─────────────────────────────────────────────────────────────
 

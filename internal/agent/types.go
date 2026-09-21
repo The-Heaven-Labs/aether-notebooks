@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
@@ -28,6 +29,24 @@ type ToolContext struct {
 	MasterKey        []byte
 	OnEvent          func(EngineEvent)
 	BroadcastFunc    func(notebookID string, msg any)
+	// ResolveTarget resolves the acting user's ClickHouse execution target for
+	// a connector (the api.Server implementation is the same resolver HTTP
+	// uses). It is wired by the API server because internal/agent cannot import
+	// internal/api. A nil target with a nil error is equivalent to
+	// executor.ErrUnmanagedConnector: the connector is not warehouse-managed
+	// and the caller selects the legacy stored-credential path. Every other
+	// outcome is a tool error and fails closed — managed ClickHouse execution
+	// never falls back to the connector's stored credential.
+	ResolveTarget func(ctx context.Context, userID, connectorID uuid.UUID, pinned bool) (*executor.ExecutionTarget, error)
+	// ConnPool leases per-user ClickHouse connections for resolved targets. It
+	// is required whenever ResolveTarget returns a managed target.
+	ConnPool *executor.ConnPool
+	// CheckPermissionFunc is the canonical ACL resolver (api.Server.checkPermission).
+	// When set, CheckPermission delegates to it, so agent and MCP executions get
+	// the same group-aware, admin-mode-aware authorization as HTTP. A nil
+	// resolver makes CheckPermission fail closed; bare contexts (tests, tool
+	// handlers invoked outside a server) must wire a stub explicitly.
+	CheckPermissionFunc func(ctx context.Context, userID, orgID, orgRole, resourceType, resourceID, action string) (bool, error)
 	// Running-state hooks wired to the notebook Hub (see internal/api/router.go
 	// and mcp.go). They let agent-driven cell runs participate in the same
 	// running/cancel lifecycle as user-triggered runs: badge, refresh-safe
@@ -129,27 +148,17 @@ func (tc *ToolContext) EmitCellUpdated(cellID string, source string) {
 }
 
 func (tc *ToolContext) CheckPermission(resourceType, resourceID, action string) error {
-	if tc.OrgRole == "admin" {
-		return nil
+	if tc.CheckPermissionFunc == nil {
+		// Fail closed: without the shared resolver there is no way to evaluate
+		// group memberships, folder ancestors, Everyone grants, or admin mode.
+		// A bare context must never authorize a tool action.
+		return fmt.Errorf("permission resolver not configured")
 	}
-
-	var exists bool
-	err := tc.DB.QueryRow(tc.Context, `
-		SELECT EXISTS(
-			SELECT 1 FROM acl_entries
-			WHERE resource_type = $1 AND resource_id = $2::uuid AND org_id = $3
-			AND (
-				(subject_type = 'user' AND subject_id = $4)
-				OR (subject_type = 'org_role' AND subject_id = $5)
-				OR (subject_type = 'org_role' AND subject_id = 'everyone')
-			)
-			AND $6 = ANY(actions)
-		)
-	`, resourceType, resourceID, tc.OrgID, tc.UserID, tc.OrgRole, action).Scan(&exists)
+	allowed, err := tc.CheckPermissionFunc(tc.Context, tc.UserID, tc.OrgID, tc.OrgRole, resourceType, resourceID, action)
 	if err != nil {
 		return fmt.Errorf("permission check: %w", err)
 	}
-	if !exists {
+	if !allowed {
 		return fmt.Errorf("permission denied: %s on %s/%s", action, resourceType, resourceID)
 	}
 	return nil
@@ -201,13 +210,30 @@ func (tc *ToolContext) ResolveCell(cellID string) (*ResolvedCell, error) {
 }
 
 func (tc *ToolContext) AuditLog(action, resourceType, resourceID string) error {
+	return tc.AuditLogWithMetadata(action, resourceType, resourceID, nil)
+}
+
+// AuditLogWithMetadata records an audit entry and merges extra metadata into
+// the agent-session envelope. It is used by execution paths that must record
+// the warehouse identity a run actually used (mirroring the HTTP handler's
+// cell.execute audit fields).
+func (tc *ToolContext) AuditLogWithMetadata(action, resourceType, resourceID string, extra map[string]any) error {
 	if tc.DB == nil {
 		return nil
 	}
-	_, err := tc.DB.Exec(tc.Context, `
+	metadata := make(map[string]any, len(extra)+1)
+	for k, v := range extra {
+		metadata[k] = v
+	}
+	metadata["agent_session_id"] = tc.SessionID
+	payload, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("marshal audit metadata: %w", err)
+	}
+	_, err = tc.DB.Exec(tc.Context, `
 		INSERT INTO audit_logs (org_id, user_id, action, resource_type, resource_id, metadata)
 		VALUES ($1, $2, $3, $4, $5, $6)
-	`, tc.OrgID, tc.UserID, action, resourceType, resourceID, fmt.Sprintf(`{"agent_session_id": "%s"}`, tc.SessionID))
+	`, tc.OrgID, tc.UserID, action, resourceType, resourceID, string(payload))
 	return err
 }
 

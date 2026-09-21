@@ -61,7 +61,7 @@ For local multi-tenancy testing with subdomains (`org1.aether.test` → Org 1):
 
 ## Commands
 
-**Preferred task runner: `task` (Taskfile.yml). `make` provides equivalent commands independently.**
+**Task runner: `task` (Taskfile.yml) — the only task runner in this repo.**
 
 ```bash
 # Infrastructure
@@ -89,7 +89,14 @@ task test              # All Go tests (starts infra first)
 task test:v            # Verbose
 task test:api          # Only internal/api/... tests
 task test:race         # With race detector
-task test:e2e          # Smoke test against live server
+task test:smoke        # Smoke test against live server
+task test:e2e          # Playwright E2E tests (requires dev stack on :5173)
+
+All Go test commands pass an explicit `-timeout 3m` (Taskfile and CI).
+A package that exceeds 3 minutes here is pathological (the shared local dev DB
+accumulates data; CI is faster). Do not raise the timeout — narrow the run with
+`-run` or split/speed up the test. Agent-run test commands must include
+`-timeout 3m` too.
 
 # Code quality
 task fmt               # gofmt
@@ -128,6 +135,8 @@ task db:reset          # Drop + recreate dev DB (data loss!)
 | `AETHER_AGENT_TOOL_TIMEOUT_DEFAULT` | no | `120s` | Global fallback timeout for agent tools that declare no explicit budget (Go duration, floor 1s). |
 | `AETHER_TOOL_ALLOWED_DOMAINS` | no | — | Comma-separated list of allowed domains for webhook tools |
 | `AETHER_DISABLE_REGISTRATION` | no | `false` | If set to `true`, disables new user registration |
+| `AETHER_CH_TABLE_PERMISSIONS` | no | `false` | Enables per-user ClickHouse warehouse table permissions. When unset/false, every connector executes with its stored credential and reconcile is a no-op. |
+| `AETHER_CH_RECONCILE_INTERVAL` | no | `10m` | Warehouse reconcile catch-up cadence (Go duration, floor `1m`): jittered startup enqueue-all plus interval re-enqueues, on top of mutation triggers. |
 
 `Taskfile.yml` sets dev values for `AETHER_DATABASE_URL`, `AETHER_MASTER_KEY`, `AETHER_JWT_SECRET`, and `AETHER_PLATFORM_ADMIN_EMAIL` automatically when using `task`. Other vars rely on defaults or are set in `docker-compose.dev.yml`.
 
@@ -270,6 +279,12 @@ In dev, `Taskfile.yml` sets `AETHER_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com`
 **Vite proxy**: In dev, Vite forwards `/api`, `/internal`, `/docs`, and `/swagger.json` to `localhost:8088`. The `API_URL` env var overrides the target (used inside Docker).
 
 **Connector credentials** are AES-encrypted using `crypto.DeriveKey(masterKey)` before storing in Postgres.
+
+**ClickHouse table permissions (warehouses)**: A connector linked to a `warehouses` row is **managed**: Aether provisions one ClickHouse user per member (`aether_<wh8>_u_<hash(warehouse,org,user)>`), one role per group (`aether_<wh8>_g_<hash>`), plus `aether_<wh8>_everyone`, and enforces table access with explicit per-table rows in `warehouse_table_grants` (subjects: user/group/Everyone; no wildcards). Service (`use`) access stays in `acl_entries`; `warehouse_service_preferences` stores the user's routing preference. An **unmanaged** connector (no `warehouse_id`) is never touched by the sync worker and executes with its stored credential exactly as before. `schema_snapshots` (V114) caches each connector's raw catalog for the new-tables inbox. Everything runs only when `AETHER_CH_TABLE_PERMISSIONS=true`; reconcile is single-flight per warehouse (Postgres advisory lock) and re-runs on mutation triggers, a jittered startup enqueue-all, and the `AETHER_CH_RECONCILE_INTERVAL` catch-up (default 10m).
+
+**Execution routing**: `internal/api/execution_target.go` resolves the target for HTTP/agent/MCP runs; agent tools go through `openAgentExecutor` (`internal/agent/execution_target.go`). Scheduler execution is **not wired yet** — `cmd/aether-server/main.go` installs a no-op scheduler callback — and when it is, it must resolve through `resolveExecutionTarget` with an explicit identity so warehouse runs never fall back to stored credentials. Managed connectors must be `sync_status='ready'` or execution fails closed (HTTP 503) — the stored credential is **never** a fallback. Resolution also fails closed on no `use` on any warehouse service, multiple allowed services without a preference, a pinned service without `use`, and missing/soft-deleted/non-ClickHouse/cross-org connectors. Reconcile invalidates pooled `(endpoint, user)` connections before applying DDL and whenever it fails closed on wildcards/unexpected grants, so a resident session cannot keep old access. Invalidation is local-first, then broadcast on the Redis channel `aether:warehouse-identity-invalidation` (JSON, chunked at ≤1000 identity names per message) so every replica drops its own pooled sessions; the subscriber starts in `StartBackgroundJobs` and stops in `Server.Close`, and a nil Redis client skips it. The broadcast is best-effort: when Redis is unavailable the publisher logs and returns (bounded by a 1s publish deadline) while local invalidation still applies, so a Redis outage window leaves other replicas' resident sessions serving pre-reconcile access until their connections are reopened — restart the affected replicas to close that window. `cache.New` enables `ContextTimeoutEnabled` so callers' context deadlines (including that publish deadline) actually bound Redis operations.
+
+**Warehouse runbook**: *Restore*: after restoring Postgres, enable `AETHER_CH_TABLE_PERMISSIONS`; the startup enqueue reconciles every warehouse, re-creating missing users/roles/grants and re-keying passwords if the master key changed (`warehouses.applied_master_fp`). *Provisioner rotation*: update the provisioner connector's credential; the next reconcile uses it. Rotating `AETHER_MASTER_KEY` re-keys every identity on the next reconcile (no per-user secrets are stored), but it also breaks decryption of every stored connector credential: re-enter the provisioner credential before reconcile can run. *Drift*: reconcile and the drift check emit `warehouse.drift` audit events; a wildcard or unexpected grant sets `sync_status='error'` and blocks managed execution until manually revoked (no auto-heal). *Deleting with the kill switch off* leaves ClickHouse identities behind: a `warehouse.identities.cleanup` audit with `deferred: true` is written; drop them manually (`DROP USER`/`DROP ROLE` matching `aether_<wh8>_%`).
 
 **Hocuspocus relay** fetches/stores Yjs document state via `/internal/yjs/{notebook_id}` on the Go backend (binary `application/octet-stream`). JWT auth is passed inside the Hocuspocus auth message, not as a URL param.
 

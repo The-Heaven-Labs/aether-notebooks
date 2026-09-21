@@ -311,6 +311,8 @@ definitions:
         $ref: '#/definitions/models.ConnectorType'
       updated_at:
         type: string
+      warehouse_id:
+        type: string
     type: object
   models.ConnectorConfig:
     properties:
@@ -1759,7 +1761,8 @@ paths:
       - attachments
   /auth/config:
     get:
-      description: Returns whether self-registration is disabled (unauthenticated)
+      description: 'Returns public server flags: whether self-registration is disabled
+        and whether ClickHouse warehouse table permissions are enabled (unauthenticated)'
       produces:
       - application/json
       responses:
@@ -1769,7 +1772,7 @@ paths:
             additionalProperties:
               type: boolean
             type: object
-      summary: Registration status
+      summary: Public app config
       tags:
       - sso
   /auth/login:
@@ -2288,6 +2291,49 @@ paths:
       security:
       - BearerAuth: []
       summary: Test a connector
+      tags:
+      - connectors
+  /connectors/{id}/warehouse:
+    put:
+      consumes:
+      - application/json
+      description: Set or clear the warehouse a connector belongs to, changing its
+        execution mode. An absent warehouse_id leaves the link unchanged; an explicit
+        null unlinks the connector.
+      parameters:
+      - description: Connector ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Warehouse link (null unlinks)
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Link a connector to a warehouse
       tags:
       - connectors
   /connectors/test:
@@ -4509,7 +4555,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: Execute a cell's SQL query and return results
+      description: Execute a cell's SQL query and return results. Warehouse-routed
+        runs also return a routing object naming the warehouse, service, and ClickHouse
+        identity that served the query. When several services are permitted and no
+        routing preference is set, the request fails with 409 service_choice_required
+        listing the allowed services and their warehouse.
       parameters:
       - description: Notebook ID
         in: path
@@ -4521,7 +4571,8 @@ paths:
         name: cell_id
         required: true
         type: string
-      - description: Execution parameters
+      - description: Execution parameters; pinned=true dials the cell's connector
+          directly
         in: body
         name: request
         schema:
@@ -4530,7 +4581,7 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: outputs, metrics, and routing (warehouse-routed runs only)
           schema:
             additionalProperties: true
             type: object
@@ -4540,11 +4591,22 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
             additionalProperties:
               type: string
+            type: object
+        "409":
+          description: service_choice_required with warehouse_id and services
+          schema:
+            additionalProperties: true
             type: object
       security:
       - BearerAuth: []
@@ -5973,6 +6035,493 @@ paths:
       summary: Ensure home folder
       tags:
       - folders
+  /warehouses:
+    get:
+      description: List all warehouses for the current organization
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List warehouses
+      tags:
+      - warehouses
+    post:
+      consumes:
+      - application/json
+      description: Create a warehouse grouping ClickHouse connectors that share one
+        access namespace
+      parameters:
+      - description: Warehouse details
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a warehouse
+      tags:
+      - warehouses
+  /warehouses/{id}:
+    delete:
+      description: Delete a warehouse. Refuses with 409 while connectors are still
+        linked unless force=true; managed ClickHouse identities are revoked before
+        the row is removed.
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Unlink linked connectors and delete
+        in: query
+        name: force
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a warehouse
+      tags:
+      - warehouses
+    get:
+      description: Get a warehouse and the ClickHouse connectors linked to it
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a warehouse
+      tags:
+      - warehouses
+    put:
+      consumes:
+      - application/json
+      description: Update a warehouse's name and/or provisioner connector. An absent
+        field leaves the value unchanged; an explicit null provisioner_connector_id
+        clears the provisioner.
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Warehouse updates
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a warehouse
+      tags:
+      - warehouses
+  /warehouses/{id}/effective-access:
+    get:
+      description: Return the union of table grants for a user in a warehouse, the
+        ClickHouse identity names, and the services the user may route to. Identity
+        fields appear only when the user has at least one effective grant, and the
+        preference only while it names an allowed service. Org admins may inspect
+        any member; other members may only inspect themselves.
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: User ID (org admins only; defaults to the caller)
+        in: query
+        name: user_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a subject's effective warehouse access
+      tags:
+      - warehouses
+  /warehouses/{id}/grants:
+    get:
+      description: List the table grants configured for a warehouse
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List warehouse table grants
+      tags:
+      - warehouses
+    post:
+      consumes:
+      - application/json
+      description: Create a table grant for a user, group, or everyone in a warehouse.
+        Replayed duplicates are idempotent and return the existing grant.
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Grant subject and table
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Grant already existed
+          schema:
+            type: object
+        "201":
+          description: Created
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Grant tables to a warehouse subject
+      tags:
+      - warehouses
+  /warehouses/{id}/grants/{grant_id}:
+    delete:
+      description: Delete one table grant from a warehouse
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Grant ID
+        in: path
+        name: grant_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a warehouse table grant
+      tags:
+      - warehouses
+  /warehouses/{id}/new-tables:
+    get:
+      description: List catalog tables first observed on a live warehouse connector
+        after the review cutoff and not yet granted to any subject. The cutoff is
+        the `since` query parameter (RFC3339) when provided, otherwise the warehouse's
+        most recent grant creation time (or its creation time when it has no grants).
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: RFC3339 cutoff timestamp (defaults to the last grant review)
+        in: query
+        name: since
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List warehouse tables observed since the last grant review
+      tags:
+      - warehouses
+  /warehouses/{id}/preference:
+    put:
+      consumes:
+      - application/json
+      description: Choose which of the caller's permitted services their warehouse
+        queries run on. The connector must belong to the warehouse and the caller
+        must have `use` on it; an explicit null clears the preference.
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Preferred connector (null clears)
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set a user's warehouse service preference
+      tags:
+      - warehouses
+  /warehouses/{id}/provisioner:
+    put:
+      consumes:
+      - application/json
+      description: Designate the connector used to provision ClickHouse access for
+        a warehouse. connector_id is required; an explicit null clears the provisioner.
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Provisioner connector (null clears)
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set a warehouse provisioner
+      tags:
+      - warehouses
+  /warehouses/{id}/validation:
+    get:
+      description: Report subjects that hold table grants but cannot use any warehouse
+        service (granted but unusable) and subjects that can use a service but hold
+        no table grants (can connect, every query fails).
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List warehouse validation warnings
+      tags:
+      - warehouses
   /ws/agents/{session_id}:
     get:
       description: WebSocket endpoint for real-time agent chat

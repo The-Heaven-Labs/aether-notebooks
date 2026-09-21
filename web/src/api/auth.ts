@@ -30,3 +30,12 @@ export async function register(
 export function logout(): void {
   clearToken()
 }
+
+export interface AuthConfig {
+  registration_disabled: boolean
+  warehouse_table_permissions_enabled?: boolean
+}
+
+export function getAuthConfig(): Promise<AuthConfig> {
+  return api.get<AuthConfig>('/api/v1/auth/config')
+}

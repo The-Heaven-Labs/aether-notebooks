@@ -35,16 +35,29 @@ func setupTestDB(t *testing.T) *database.DB {
 	return db
 }
 
+// permissivePermissionResolver wires the shared ACL resolver for bare test
+// contexts; CheckPermission now fails closed without one.
+func permissivePermissionResolver(context.Context, string, string, string, string, string, string) (bool, error) {
+	return true, nil
+}
+
+// denyAllPermissionResolver models an explicit ACL denial for tests that must
+// not rely on the resolver failing open.
+func denyAllPermissionResolver(context.Context, string, string, string, string, string, string) (bool, error) {
+	return false, nil
+}
+
 func setupToolContext(t *testing.T, db *database.DB, orgID, userID, notebookID string) *agent.ToolContext {
 	t.Helper()
 	return &agent.ToolContext{
-		Context:    context.Background(),
-		UserID:     userID,
-		OrgID:      orgID,
-		OrgRole:    "admin",
-		NotebookID: notebookID,
-		DB:         db.Pool,
-		MasterKey:  nil,
+		Context:             context.Background(),
+		UserID:              userID,
+		OrgID:               orgID,
+		OrgRole:             "admin",
+		NotebookID:          notebookID,
+		DB:                  db.Pool,
+		MasterKey:           nil,
+		CheckPermissionFunc: permissivePermissionResolver,
 	}
 }
 
@@ -696,12 +709,13 @@ func TestAgentCreateNotebookSeedsACLForUser(t *testing.T) {
 
 	// Use non-admin context for the creating user
 	ctx := &agent.ToolContext{
-		Context:   context.Background(),
-		UserID:    userID,
-		OrgID:     orgID,
-		OrgRole:   "editor",
-		DB:        db.Pool,
-		MasterKey: nil,
+		Context:             context.Background(),
+		UserID:              userID,
+		OrgID:               orgID,
+		OrgRole:             "editor",
+		DB:                  db.Pool,
+		MasterKey:           nil,
+		CheckPermissionFunc: permissivePermissionResolver,
 	}
 
 	args, _ := json.Marshal(map[string]any{
@@ -775,13 +789,14 @@ func TestAgentCreateSkillSeedsACLForUser(t *testing.T) {
 	}
 
 	ctx := &agent.ToolContext{
-		Context:   context.Background(),
-		UserID:    userID,
-		OrgID:     orgID,
-		OrgRole:   "editor",
-		SessionID: sessionID,
-		DB:        db.Pool,
-		MasterKey: nil,
+		Context:             context.Background(),
+		UserID:              userID,
+		OrgID:               orgID,
+		OrgRole:             "editor",
+		SessionID:           sessionID,
+		DB:                  db.Pool,
+		MasterKey:           nil,
+		CheckPermissionFunc: permissivePermissionResolver,
 	}
 
 	args, _ := json.Marshal(map[string]any{
@@ -856,12 +871,13 @@ func TestAgentCreateNotebookInFolderWithoutPermissionDenied(t *testing.T) {
 	}
 
 	ctx := &agent.ToolContext{
-		Context:   context.Background(),
-		UserID:    userID,
-		OrgID:     orgID,
-		OrgRole:   "editor",
-		DB:        db.Pool,
-		MasterKey: nil,
+		Context:             context.Background(),
+		UserID:              userID,
+		OrgID:               orgID,
+		OrgRole:             "editor",
+		DB:                  db.Pool,
+		MasterKey:           nil,
+		CheckPermissionFunc: denyAllPermissionResolver,
 	}
 
 	args, _ := json.Marshal(map[string]any{
@@ -1084,11 +1100,12 @@ func TestAgentSetNotebookParametersOrgIsolation(t *testing.T) {
 
 	// Non-admin ctx from org B trying to set params on org A's notebook
 	ctx := &agent.ToolContext{
-		Context: context.Background(),
-		UserID:  userB,
-		OrgID:   orgB,
-		OrgRole: "editor",
-		DB:      db.Pool,
+		Context:             context.Background(),
+		UserID:              userB,
+		OrgID:               orgB,
+		OrgRole:             "editor",
+		DB:                  db.Pool,
+		CheckPermissionFunc: permissivePermissionResolver,
 	}
 	args, _ := json.Marshal(map[string]any{
 		"notebook_id": nbID,
@@ -1100,11 +1117,12 @@ func TestAgentSetNotebookParametersOrgIsolation(t *testing.T) {
 
 	// Admin ctx from org B bypasses ACL but the org-scoped UPDATE must still fail
 	adminCtx := &agent.ToolContext{
-		Context: context.Background(),
-		UserID:  userB,
-		OrgID:   orgB,
-		OrgRole: "admin",
-		DB:      db.Pool,
+		Context:             context.Background(),
+		UserID:              userB,
+		OrgID:               orgB,
+		OrgRole:             "admin",
+		DB:                  db.Pool,
+		CheckPermissionFunc: permissivePermissionResolver,
 	}
 	if _, err := setDef.Handler(args, adminCtx); err == nil {
 		t.Fatalf("expected cross-org set with admin role to fail, got nil")

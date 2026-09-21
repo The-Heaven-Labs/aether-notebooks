@@ -158,6 +158,10 @@ func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "member not found")
 		return
 	}
+	// The membership row is gone, so the removed user's group and everyone
+	// relationships can no longer be resolved from their rows. Reconcile the
+	// whole org; enqueues are debounced and unchanged warehouses are no-ops.
+	s.enqueueWarehouseSyncForOrg(ctx, claims.OrgID)
 
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
@@ -220,6 +224,9 @@ func (s *Server) handleInviteMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to add member")
 		return
 	}
+	// A first-time invite is an org join: reconcile direct, group, and
+	// everyone-scoped warehouse access for the new member.
+	s.enqueueWarehouseSyncForUser(ctx, userID)
 
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,

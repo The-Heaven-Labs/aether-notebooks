@@ -1,0 +1,427 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/chaccess"
+	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/executor"
+)
+
+// executionTargetFixture seeds a ready warehouse with two service connectors
+// ("Service A", "Service B") plus one unmanaged connector. No service carries
+// a `use` grant until a test grants one, so each test controls the routing
+// inputs exactly.
+type executionTargetFixture struct {
+	s             *Server
+	key           []byte
+	orgID         uuid.UUID
+	userID        uuid.UUID
+	groupID       uuid.UUID
+	warehouseID   uuid.UUID
+	provisionerID uuid.UUID
+	connA         uuid.UUID
+	connB         uuid.UUID
+	unmanagedID   uuid.UUID
+}
+
+// setupExecutionTargetFixture reuses the warehouse sync row seeder, so
+// resolution tests need only Postgres (no ClickHouse).
+func setupExecutionTargetFixture(t *testing.T) *executionTargetFixture {
+	t.Helper()
+
+	s, key := sharedWarehouseTestServer(t)
+	seed := seedWarehouseFixtureRows(t, s, key)
+
+	fx := &executionTargetFixture{
+		s:             s,
+		key:           key,
+		orgID:         seed.orgID,
+		userID:        seed.userID,
+		groupID:       seed.groupID,
+		warehouseID:   seed.warehouseID,
+		provisionerID: seed.connectorID,
+		connA:         insertClickHouseService(t, s, seed.orgID, seed.connectorID, "Service A", &seed.warehouseID),
+		connB:         insertClickHouseService(t, s, seed.orgID, seed.connectorID, "Service B", &seed.warehouseID),
+		unmanagedID:   insertClickHouseService(t, s, seed.orgID, seed.connectorID, "Unmanaged", nil),
+	}
+	_, err := s.db.Pool.Exec(context.Background(),
+		`UPDATE warehouses SET sync_status = 'ready' WHERE id = $1`, fx.warehouseID.String())
+	require.NoError(t, err)
+	return fx
+}
+
+// grantUse gives the fixture user the `use` action on one connector.
+func (fx *executionTargetFixture) grantUse(t *testing.T, connectorID uuid.UUID) {
+	t.Helper()
+	grantConnectorUse(t, fx.s, fx.orgID, fx.userID, connectorID)
+}
+
+// grantGroupUse gives the fixture group the `use` action on one connector.
+func (fx *executionTargetFixture) grantGroupUse(t *testing.T, connectorID uuid.UUID) {
+	t.Helper()
+	grantGroupConnectorUse(t, fx.s, fx.orgID, fx.groupID, connectorID)
+}
+
+// revokeUse removes the fixture user's direct `use` grant on a connector.
+func (fx *executionTargetFixture) revokeUse(t *testing.T, connectorID uuid.UUID) {
+	t.Helper()
+	_, err := fx.s.db.Pool.Exec(context.Background(), `
+		DELETE FROM acl_entries
+		WHERE org_id = $1 AND resource_type = 'connector' AND resource_id = $2::uuid
+		  AND subject_type = 'user' AND subject_id = $3`,
+		fx.orgID.String(), connectorID.String(), fx.userID.String())
+	require.NoError(t, err)
+}
+
+// prefer records the user's routing preference for the warehouse.
+func (fx *executionTargetFixture) prefer(t *testing.T, connectorID uuid.UUID) {
+	t.Helper()
+	preferWarehouseService(t, fx.s, fx.userID, fx.warehouseID, connectorID)
+}
+
+func (fx *executionTargetFixture) setSyncStatus(t *testing.T, status string) {
+	t.Helper()
+	_, err := fx.s.db.Pool.Exec(context.Background(),
+		`UPDATE warehouses SET sync_status = $1 WHERE id = $2`,
+		status, fx.warehouseID.String())
+	require.NoError(t, err)
+}
+
+func (fx *executionTargetFixture) resolve(t *testing.T, requested uuid.UUID, pinned bool) (*executor.ExecutionTarget, error) {
+	t.Helper()
+	return fx.s.resolveExecutionTarget(context.Background(), fx.userID, requested, pinned)
+}
+
+func TestResolveExecutionTargetUnmanagedConnector(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	fx.grantUse(t, fx.unmanagedID)
+
+	for _, pinned := range []bool{false, true} {
+		target, err := fx.resolve(t, fx.unmanagedID, pinned)
+		require.ErrorIs(t, err, executor.ErrUnmanagedConnector, "pinned=%v", pinned)
+		require.Nil(t, target)
+	}
+}
+
+func TestResolveExecutionTargetNotReadyFailsClosed(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	fx.grantUse(t, fx.connA)
+
+	for _, status := range []string{"pending", "syncing", "error"} {
+		t.Run(status, func(t *testing.T) {
+			fx.setSyncStatus(t, status)
+			target, err := fx.resolve(t, fx.connA, false)
+			require.ErrorIs(t, err, executor.ErrProvisioningNotReady)
+			require.Nil(t, target)
+
+			target, err = fx.resolve(t, fx.connA, true)
+			require.ErrorIs(t, err, executor.ErrProvisioningNotReady, "pins must not bypass readiness")
+			require.Nil(t, target)
+		})
+	}
+}
+
+func TestResolveExecutionTargetRequiresServiceAccess(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+
+	target, err := fx.resolve(t, fx.provisionerID, false)
+	require.ErrorIs(t, err, executor.ErrServiceAccessDenied)
+	require.Nil(t, target)
+}
+
+func TestResolveExecutionTargetUsesPreference(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	fx.grantUse(t, fx.connA)
+	fx.grantUse(t, fx.connB)
+	fx.prefer(t, fx.connB)
+
+	target, err := fx.resolve(t, fx.connA, false)
+	require.NoError(t, err)
+	require.Equal(t, fx.connB, target.ConnectorID)
+}
+
+func TestResolveExecutionTargetFallsBackToSoleService(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	fx.grantUse(t, fx.connB)
+
+	// The requested connector needs no grant of its own: the warehouse's sole
+	// permitted service is used when nothing is pinned.
+	target, err := fx.resolve(t, fx.connA, false)
+	require.NoError(t, err)
+	require.Equal(t, fx.connB, target.ConnectorID)
+}
+
+func TestResolveExecutionTargetHonorsPin(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	fx.grantUse(t, fx.connA)
+	fx.grantUse(t, fx.connB)
+	fx.prefer(t, fx.connB)
+
+	target, err := fx.resolve(t, fx.connA, true)
+	require.NoError(t, err)
+	require.Equal(t, fx.connA, target.ConnectorID, "a pin must override the stored preference")
+
+	fx.revokeUse(t, fx.connA)
+	target, err = fx.resolve(t, fx.connA, true)
+	require.ErrorIs(t, err, executor.ErrServiceAccessDenied)
+	require.Nil(t, target, "a pin without use must not fall back to another service")
+
+	// Without the pin the warehouse still routes through the permitted service.
+	target, err = fx.resolve(t, fx.connA, false)
+	require.NoError(t, err)
+	require.Equal(t, fx.connB, target.ConnectorID)
+}
+
+func TestResolveExecutionTargetAmbiguousWithoutPreference(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	fx.grantUse(t, fx.connA)
+	fx.grantUse(t, fx.connB)
+
+	target, err := fx.resolve(t, fx.connA, false)
+	require.ErrorIs(t, err, executor.ErrServiceChoiceRequired)
+	require.Nil(t, target)
+
+	var choice *executor.ServiceChoiceError
+	require.ErrorAs(t, err, &choice)
+	require.Equal(t, fx.warehouseID, choice.WarehouseID)
+	require.ElementsMatch(t, []executor.ServiceChoice{
+		{ConnectorID: fx.connA, Name: "Service A"},
+		{ConnectorID: fx.connB, Name: "Service B"},
+	}, choice.Allowed)
+}
+
+func TestResolveExecutionTargetExcludesSoftDeletedConnector(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	fx.grantUse(t, fx.connA)
+	fx.grantUse(t, fx.connB)
+	fx.prefer(t, fx.connA)
+
+	_, err := fx.s.db.Pool.Exec(context.Background(),
+		`UPDATE connectors SET deleted_at = now() WHERE id = $1`, fx.connA.String())
+	require.NoError(t, err)
+
+	// The stale preference and the soft-deleted connector's `use` grant must
+	// both be ignored, leaving Service B as the sole permitted service.
+	target, err := fx.resolve(t, fx.connB, false)
+	require.NoError(t, err)
+	require.Equal(t, fx.connB, target.ConnectorID)
+
+	// Requesting the soft-deleted connector is a domain-level miss, never a
+	// fallback.
+	target, err = fx.resolve(t, fx.connA, false)
+	require.ErrorIs(t, err, executor.ErrConnectorNotFound)
+	require.ErrorIs(t, err, pgx.ErrNoRows)
+	require.Nil(t, target)
+}
+
+func TestResolveExecutionTargetIdentityAndEndpoint(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	fx.grantUse(t, fx.connB)
+
+	target, err := fx.resolve(t, fx.connB, false)
+	require.NoError(t, err)
+	require.Equal(t, fx.warehouseID, target.WarehouseID)
+	require.Equal(t, fx.connB, target.ConnectorID)
+	require.Equal(t, "Service B", target.ConnectorName)
+	require.Equal(t, "localhost:9000", target.Endpoint)
+	require.Equal(t, chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID), target.CHUser)
+	require.Equal(t, chaccess.DerivePassword(fx.key, fx.warehouseID, fx.userID), target.Config.Password)
+
+	// The target carries a usable config with the per-user credentials
+	// substituted for the connector's stored ones.
+	require.Equal(t, "localhost", target.Config.Host)
+	require.Equal(t, 9000, target.Config.Port)
+	require.Equal(t, "analytics", target.Config.Database)
+	require.Equal(t, target.CHUser, target.Config.User)
+	require.NotEqual(t, "dev", target.Config.Password, "the stored connector credential must not leak")
+
+	// String() is the only render that may reach logs or audit context.
+	rendered := target.String()
+	require.Contains(t, rendered, target.CHUser)
+	require.Contains(t, rendered, target.Endpoint)
+	require.NotContains(t, rendered, target.Config.Password, "String() must redact the per-user credential")
+	var nilTarget *executor.ExecutionTarget
+	require.Equal(t, "<nil>", nilTarget.String())
+}
+
+func TestResolveExecutionTargetCarriesRoutedServiceLimits(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	fx.grantUse(t, fx.connB)
+	_, err := fx.s.db.Pool.Exec(context.Background(),
+		`UPDATE connectors SET max_rows = 123, timeout_seconds = 45 WHERE id = $1`,
+		fx.connB.String())
+	require.NoError(t, err)
+
+	// The target must carry the routed service's limits, not the requested
+	// connector's values.
+	target, err := fx.resolve(t, fx.connA, false)
+	require.NoError(t, err)
+	require.Equal(t, fx.connB, target.ConnectorID)
+	require.Equal(t, 123, target.MaxRows)
+	require.Equal(t, 45, target.TimeoutSeconds)
+}
+
+func TestResolveExecutionTargetDefaultEndpointPort(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	ctx := context.Background()
+
+	// A stored config without a port must key the pool to ClickHouse's native
+	// default, matching executor dialing.
+	cfg := warehouseSyncTestClickHouseConfig()
+	cfg.Port = 0
+	plain, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	encrypted, err := crypto.Encrypt(plain, fx.key)
+	require.NoError(t, err)
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE connectors SET config_encrypted = $1 WHERE id = $2`,
+		encrypted, fx.connA.String())
+	require.NoError(t, err)
+	fx.grantUse(t, fx.connA)
+
+	target, err := fx.resolve(t, fx.connA, false)
+	require.NoError(t, err)
+	require.Equal(t, "localhost:9000", target.Endpoint)
+	require.Equal(t, 0, target.Config.Port, "the stored config is preserved; only the endpoint defaults")
+}
+
+func TestResolveExecutionTargetRejectsNonClickHouseConnector(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	ctx := context.Background()
+
+	// A Postgres connector linked to a warehouse is an integrity violation;
+	// it must never become a routable service.
+	var encrypted []byte
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT config_encrypted FROM connectors WHERE id = $1`,
+		fx.provisionerID.String()).Scan(&encrypted))
+	pgID := uuid.New()
+	_, err := fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted, warehouse_id)
+		VALUES ($1, $2, $3, 'postgres', $4, $5)`,
+		pgID.String(), fx.orgID.String(), "Postgres Service", encrypted, fx.warehouseID.String())
+	require.NoError(t, err)
+	fx.grantUse(t, pgID)
+
+	target, err := fx.resolve(t, pgID, false)
+	require.ErrorIs(t, err, executor.ErrConnectorNotFound)
+	require.Nil(t, target)
+
+	// It must not appear in the warehouse's service list either: the sole
+	// clickhouse service still resolves without a choice prompt.
+	fx.grantUse(t, fx.connB)
+	target, err = fx.resolve(t, fx.connB, false)
+	require.NoError(t, err)
+	require.Equal(t, fx.connB, target.ConnectorID)
+}
+
+func TestResolveExecutionTargetInheritsFolderUseGrant(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	ctx := context.Background()
+
+	// A `use` grant on the connector's folder (the ACL ancestor walk) must
+	// authorize routing without a direct connector ACL.
+	folderID := uuid.New()
+	_, err := fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO folders (id, org_id, name, created_by)
+		VALUES ($1, $2, $3, $4)`,
+		folderID.String(), fx.orgID.String(), "Warehouse Services", fx.userID.String())
+	require.NoError(t, err)
+	// Delete the folder before the fixture deletes its creator user.
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := fx.s.db.Pool.Exec(cleanupCtx,
+			`DELETE FROM folders WHERE id = $1`, folderID.String()); err != nil {
+			t.Logf("cleanup folder: %v", err)
+		}
+	})
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE connectors SET folder_id = $1 WHERE id = $2`,
+		folderID.String(), fx.connB.String())
+	require.NoError(t, err)
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		VALUES ($1, 'folder', $2::uuid, 'user', $3, ARRAY['use'])`,
+		fx.orgID.String(), folderID.String(), fx.userID.String())
+	require.NoError(t, err)
+
+	target, err := fx.resolve(t, fx.connB, false)
+	require.NoError(t, err, "use inherited from the connector's folder must authorize routing")
+	require.Equal(t, fx.connB, target.ConnectorID)
+}
+
+func TestResolveExecutionTargetGroupGrantForViewer(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	_, err := fx.s.db.Pool.Exec(context.Background(),
+		`UPDATE org_members SET role = 'non-admin' WHERE org_id = $1 AND user_id = $2`,
+		fx.orgID.String(), fx.userID.String())
+	require.NoError(t, err)
+	fx.grantGroupUse(t, fx.connB)
+
+	target, err := fx.resolve(t, fx.connA, false)
+	require.NoError(t, err, "a viewer's group ACL must authorize warehouse routing")
+	require.Equal(t, fx.connB, target.ConnectorID)
+}
+
+func TestResolveExecutionTargetRejectsNonMember(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	fx.grantUse(t, fx.connB)
+
+	_, err := fx.s.db.Pool.Exec(context.Background(),
+		`DELETE FROM org_members WHERE org_id = $1 AND user_id = $2`,
+		fx.orgID.String(), fx.userID.String())
+	require.NoError(t, err)
+
+	target, err := fx.resolve(t, fx.connA, false)
+	require.ErrorIs(t, err, executor.ErrServiceAccessDenied)
+	require.Nil(t, target)
+}
+
+func TestResolveExecutionTargetRejectsCrossOrgWarehouseConnector(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	ctx := context.Background()
+
+	// A connector injected outside the CRUD validation may not borrow another
+	// org's warehouse, regardless of either org's ACL entries.
+	otherOrgID := uuid.New()
+	_, err := fx.s.db.Pool.Exec(ctx,
+		`INSERT INTO orgs (id, name, slug) VALUES ($1, $2, $3)`,
+		otherOrgID.String(), "Other Org", "other-"+uuid.NewString())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := fx.s.db.Pool.Exec(cleanupCtx,
+			`DELETE FROM orgs WHERE id = $1`, otherOrgID.String()); err != nil {
+			t.Logf("cleanup other org: %v", err)
+		}
+	})
+
+	foreignID := uuid.New()
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted, warehouse_id)
+		VALUES ($1, $2, $3, 'clickhouse', $4, $5)`,
+		foreignID.String(), otherOrgID.String(), "Foreign Service",
+		[]byte("unused"), fx.warehouseID.String())
+	require.NoError(t, err)
+
+	target, err := fx.resolve(t, foreignID, false)
+	require.ErrorIs(t, err, executor.ErrConnectorNotFound)
+	require.ErrorIs(t, err, pgx.ErrNoRows)
+	require.Nil(t, target)
+
+	// The foreign row must not leak into the warehouse's service list either:
+	// a sole permitted service still resolves unambiguously.
+	fx.grantUse(t, fx.connB)
+	target, err = fx.resolve(t, fx.connB, false)
+	require.NoError(t, err)
+	require.Equal(t, fx.connB, target.ConnectorID)
+}

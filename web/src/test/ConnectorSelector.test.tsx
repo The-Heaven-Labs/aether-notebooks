@@ -20,6 +20,9 @@ describe('ConnectorSelector', () => {
   })
 
   test('shows placeholder when value is null', () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json(mockConnectors))
+    )
     render(<ConnectorSelector value={null} onChange={() => {}} placeholder="Select connector" />)
     // The select element has value "" which shows the placeholder option
     const select = screen.getByRole('combobox')
@@ -46,5 +49,42 @@ describe('ConnectorSelector', () => {
     const select = await screen.findByRole('combobox')
     fireEvent.change(select, { target: { value: '' } })
     expect(onChange).toHaveBeenCalledWith(null)
+  })
+
+  test('renders a pin toggle and reports its new state', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json(mockConnectors))
+    )
+    const onTogglePin = vi.fn()
+    render(
+      <ConnectorSelector value="conn-1" onChange={() => {}} pinned={false} onTogglePin={onTogglePin} />,
+    )
+
+    const pin = await screen.findByRole('button', { name: 'Pin connector' })
+    fireEvent.click(pin)
+    expect(onTogglePin).toHaveBeenCalledWith(true)
+  })
+
+  test('shows the pinned state and unpins on click', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json(mockConnectors))
+    )
+    const onTogglePin = vi.fn()
+    render(
+      <ConnectorSelector value="conn-1" onChange={() => {}} pinned onTogglePin={onTogglePin} />,
+    )
+
+    const pin = await screen.findByRole('button', { name: 'Unpin connector' })
+    expect(pin).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(pin)
+    expect(onTogglePin).toHaveBeenCalledWith(false)
+  })
+
+  test('disables the pin toggle without a selected connector', () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json(mockConnectors))
+    )
+    render(<ConnectorSelector value={null} onChange={() => {}} onTogglePin={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Pin connector' })).toBeDisabled()
   })
 })

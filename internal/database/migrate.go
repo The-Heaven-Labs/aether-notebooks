@@ -13,6 +13,20 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
+// upSection returns only the "up" portion of a migration file. Migration files
+// may carry a Flyway/golang-migrate style down section after a line such as
+// "-- +migrate Down"; that section is rollback SQL and must never run on apply.
+func upSection(content string) string {
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		trimmed := strings.ToLower(strings.TrimSpace(line))
+		if strings.HasPrefix(trimmed, "--") && strings.Contains(trimmed, "+migrate down") {
+			return strings.Join(lines[:i], "\n")
+		}
+	}
+	return content
+}
+
 func (db *DB) Migrate(ctx context.Context) error {
 	const lockID = 989898
 
@@ -62,6 +76,8 @@ func (db *DB) Migrate(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", f, err)
 		}
+
+		content = []byte(upSection(string(content)))
 
 		tx, err := db.Pool.Begin(ctx)
 		if err != nil {

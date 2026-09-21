@@ -3,9 +3,11 @@ package executor
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -13,14 +15,48 @@ import (
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
-type ClickHouseExecutor struct {
-	conn clickhouse.Conn
+// clickHouseAccessDeniedCode is ClickHouse's ACCESS_DENIED error code (497),
+// returned when an identity lacks the grant a query needs.
+const clickHouseAccessDeniedCode int32 = 497
+
+// IsClickHouseAccessDenied reports whether err is a ClickHouse access-denied
+// failure, e.g. a per-user identity selecting from a table it was not granted.
+// It is ClickHouse-specific: other drivers' permission errors are not matched.
+// The structural check handles the driver's *clickhouse.Exception; the message
+// fallback covers exceptions wrapped in a way that loses the type.
+func IsClickHouseAccessDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+	var chErr *clickhouse.Exception
+	if errors.As(err, &chErr) {
+		return chErr.Code == clickHouseAccessDeniedCode
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "access_denied") || strings.Contains(msg, "not enough privileges")
 }
 
-func NewClickHouseExecutor(cfg models.ConnectorConfig) (*ClickHouseExecutor, error) {
+type ClickHouseExecutor struct {
+	conn clickhouse.Conn
+
+	pooled    bool
+	release   func()
+	closeOnce sync.Once
+	closeErr  error
+}
+
+// chOptions builds driver options from a connector config. It is shared by
+// NewClickHouseExecutor and the connection pool's default opener so port,
+// database, and TLS handling cannot diverge.
+// DefaultClickHousePort is the native-protocol port used when a connector
+// config leaves Port unset. Keep endpoint construction in sync with this
+// default so the pool never keys a dial to ":0".
+const DefaultClickHousePort = 9000
+
+func chOptions(cfg models.ConnectorConfig) *clickhouse.Options {
 	port := cfg.Port
 	if port == 0 {
-		port = 9000
+		port = DefaultClickHousePort
 	}
 
 	opts := &clickhouse.Options{
@@ -35,13 +71,15 @@ func NewClickHouseExecutor(cfg models.ConnectorConfig) (*ClickHouseExecutor, err
 		opts.Auth.Database = cfg.Database
 	}
 	if cfg.SSLMode == "require" || cfg.SSLMode == "verify-full" {
-		tlsConfig := &tls.Config{
+		opts.TLS = &tls.Config{
 			InsecureSkipVerify: cfg.SSLMode == "require",
 		}
-		opts.TLS = tlsConfig
 	}
+	return opts
+}
 
-	conn, err := clickhouse.Open(opts)
+func NewClickHouseExecutor(cfg models.ConnectorConfig) (*ClickHouseExecutor, error) {
+	conn, err := clickhouse.Open(chOptions(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}
@@ -52,6 +90,14 @@ func NewClickHouseExecutor(cfg models.ConnectorConfig) (*ClickHouseExecutor, err
 		return nil, fmt.Errorf("ping: %w", err)
 	}
 	return &ClickHouseExecutor{conn: conn}, nil
+}
+
+// NewPooledClickHouseExecutor wraps a connection leased from a ConnPool.
+// Close calls release exactly once, returning the connection to the pool
+// without closing it; a nil release is treated as a no-op. The executor does
+// not own the connection.
+func NewPooledClickHouseExecutor(conn clickhouse.Conn, release func()) *ClickHouseExecutor {
+	return &ClickHouseExecutor{conn: conn, pooled: true, release: release}
 }
 
 // chBaseType strips Nullable(...) and LowCardinality(...) wrappers and
@@ -348,16 +394,40 @@ func chExtractValue(dest interface{}) interface{} {
 func (c *ClickHouseExecutor) Execute(ctx context.Context, query string, params map[string]string, limits OutputLimits) (*ResultSet, error) {
 	resolved := ResolveParams(query, params)
 
+	// Classify the user's SQL before any leading comment is prepended below.
+	// hasPrefixAny only inspects the start of the string, so tagging first
+	// would make every statement look like a read and send DDL/DML through
+	// Query, which fails for statements that return no result set.
+	isCommand := hasPrefixAny(strings.TrimSpace(strings.ToUpper(resolved)),
+		[]string{"USE ", "SET ", "CREATE ", "DROP ", "ALTER ",
+			"ATTACH ", "DETACH ", "RENAME ", "TRUNCATE ", "OPTIMIZE ",
+			"INSERT ", "DELETE ", "KILL ", "CHECK ", "EXISTS "})
+
 	// Tag queries with the Aether user email for tracing in the database query_log
 	if userEmail, ok := ctx.Value(CtxUserEmail{}).(string); ok && userEmail != "" {
 		resolved = fmt.Sprintf("/* aether_user:%s */ %s", userEmail, resolved)
 	}
 
+	// Tag queries with the execution ID so system.query_log rows can be joined
+	// back to the Aether audit entry. clickhouse-go carries per-query settings
+	// on the context, which both the Query and Exec paths read.
+	//
+	// WithSettings REPLACES the driver's per-query settings map. Any future
+	// per-query setting must therefore be merged here, inside Execute (via an
+	// explicit argument or a settings builder), never installed on the
+	// incoming context — this call would silently discard it.
+	//
+	// NOTE: when per-user settings profiles land (deferred), log_comment must
+	// stay changeable_in_readonly; otherwise a readonly=1 identity cannot set
+	// it and every tagged execution would fail.
+	if executionID := ExecutionIDFromContext(ctx); executionID != "" {
+		ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
+			"log_comment": "aether:" + executionID,
+		}))
+	}
+
 	// Use Exec for commands that don't return rows
-	upper := strings.TrimSpace(strings.ToUpper(resolved))
-	if hasPrefixAny(upper, []string{"USE ", "SET ", "CREATE ", "DROP ", "ALTER ",
-		"ATTACH ", "DETACH ", "RENAME ", "TRUNCATE ", "OPTIMIZE ",
-		"INSERT ", "DELETE ", "KILL ", "CHECK ", "EXISTS "}) {
+	if isCommand {
 		err := c.conn.Exec(ctx, resolved)
 		if err != nil {
 			return nil, fmt.Errorf("exec: %w", err)
@@ -480,6 +550,18 @@ func (c *ClickHouseExecutor) Databases(ctx context.Context) ([]string, error) {
 	return dbs, rows.Err()
 }
 
+// Close releases the executor's connection. Pooled executors return their
+// lease to the pool; non-pooled executors close the connection they own. Close
+// is idempotent and safe to call more than once.
 func (c *ClickHouseExecutor) Close() error {
-	return c.conn.Close()
+	c.closeOnce.Do(func() {
+		if c.pooled {
+			if c.release != nil {
+				c.release()
+			}
+			return
+		}
+		c.closeErr = c.conn.Close()
+	})
+	return c.closeErr
 }

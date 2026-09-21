@@ -39,13 +39,16 @@ func TestRollupHourlyStats(t *testing.T) {
 		t.Fatalf("session: %v", err)
 	}
 
-	// Two messages in the current in-progress hour bucket.
+	// Two messages in the current in-progress hour bucket, anchored to the
+	// hour start so they cannot straddle a boundary (which would create two
+	// bucket rows and break the single-bucket assertions below).
 	now := time.Now()
-	for i, tok := range [][2]int{{100, 50}, {40, 10}} {
+	at := now.Truncate(time.Hour)
+	for _, tok := range [][2]int{{100, 50}, {40, 10}} {
 		_, err = db.Pool.Exec(ctx, `
 			INSERT INTO agent_messages (id, session_id, role, content, tool_calls, tokens_input, tokens_output, tokens_direct, model_calls, duration_ms, created_at)
 			VALUES ($1,$2,'assistant','hi','[]',$3,$4,7,2,1500,$5)
-		`, uuid.New().String(), sid, tok[0], tok[1], now.Add(time.Duration(-i)*time.Minute))
+		`, uuid.New().String(), sid, tok[0], tok[1], at)
 		if err != nil {
 			t.Fatalf("message: %v", err)
 		}
@@ -54,7 +57,7 @@ func TestRollupHourlyStats(t *testing.T) {
 	_, err = db.Pool.Exec(ctx, `
 		INSERT INTO subagent_tasks (id, parent_session_id, goal, status, result, tokens_input, tokens_output, created_at, completed_at)
 		VALUES ($1,$2,'g','completed','{}',30,20,$3,$3)
-	`, uuid.New().String(), sid, now)
+	`, uuid.New().String(), sid, at)
 	if err != nil {
 		t.Fatalf("subagent task: %v", err)
 	}
@@ -117,9 +120,11 @@ func TestRollupHourlyStats(t *testing.T) {
 		t.Fatalf("re-run must keep values stable, got in=%d out=%d (%v)", tin2, tout2, err)
 	}
 
-	// Bucket bounds cover the current in-progress hour.
-	wantBucket := now.UTC().Truncate(time.Hour)
-	if !res1.BucketTo.Equal(wantBucket) {
-		t.Fatalf("bucket_to = %v, want %v", res1.BucketTo, wantBucket)
+	// Bucket bounds cover the current in-progress hour. BucketTo is the
+	// rollup's own truncation of time.Now(); allow for the rollup having
+	// crossed the hour boundary after the seed.
+	seedBucket := now.UTC().Truncate(time.Hour)
+	if !res1.BucketTo.Equal(seedBucket) && !res1.BucketTo.Equal(seedBucket.Add(time.Hour)) {
+		t.Fatalf("bucket_to = %v, want %v (or the following hour)", res1.BucketTo, seedBucket)
 	}
 }

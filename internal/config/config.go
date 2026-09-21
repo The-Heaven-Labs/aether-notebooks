@@ -10,38 +10,40 @@ import (
 )
 
 type Config struct {
-	Port                    string
-	DatabaseURL             string
-	DatabaseHost            string
-	DatabasePort            string
-	DatabaseName            string
-	DatabaseUser            string
-	DatabasePassword        string
-	DatabaseSSMode          string
-	DatabaseSchema          string // PostgreSQL search_path
-	RedisURL                string
-	MasterKey               string // for encrypting connector credentials
-	JWTSecret               string
-	AttachmentDir           string
-	PlatformAdminEmail      string
-	PublicURL               string // base URL used in OAuth callbacks (e.g. https://app.example.com)
-	FrontendURL             string // base URL for post-auth redirects; defaults to same host as API
-	StorageBackend          string // "local" (default) or "s3"
-	S3Endpoint              string // leave empty for AWS; set for Garage/self-hosted
-	S3Bucket                string
-	S3Region                string
-	S3AccessKey             string
-	S3SecretKey             string
-	MaxAttachmentBytes      int64
-	ToolAllowedDomains      []string      // comma-separated domains allowed for webhook tools (bypasses private IP block)
-	OIDCHostRewrite         string        // "from=to" pair for rewriting OIDC discovery host (e.g. "localhost:5557=host.docker.internal:5557")
-	APIURL                  string        // base URL for REST API from the SPA (empty = same-origin)
-	RelayURL                string        // WebSocket URL of the Hocuspocus relay (empty = derive from origin)
-	DisableRegistration     bool          // when true, new users cannot register via email/password (SSO only)
-	DisableMigrations       bool          // when true, skip embedded migrations on startup (used when pipeline handles migrations)
-	StatsRollupInterval     time.Duration // agent stats rollup cadence (AETHER_AGENT_STATS_ROLLUP_INTERVAL, default 1h, floor 5m)
-	AgentToolTimeoutDefault time.Duration // fallback agent tool execution budget (AETHER_AGENT_TOOL_TIMEOUT_DEFAULT, default 120s, floor 1s)
-	OutputLimitsMaxBytes    int64         // platform ceiling for org-configured output byte caps (AETHER_OUTPUT_LIMITS_MAX_BYTES, default 64MB)
+	Port                       string
+	DatabaseURL                string
+	DatabaseHost               string
+	DatabasePort               string
+	DatabaseName               string
+	DatabaseUser               string
+	DatabasePassword           string
+	DatabaseSSMode             string
+	DatabaseSchema             string // PostgreSQL search_path
+	RedisURL                   string
+	MasterKey                  string // for encrypting connector credentials
+	JWTSecret                  string
+	AttachmentDir              string
+	PlatformAdminEmail         string
+	PublicURL                  string // base URL used in OAuth callbacks (e.g. https://app.example.com)
+	FrontendURL                string // base URL for post-auth redirects; defaults to same host as API
+	StorageBackend             string // "local" (default) or "s3"
+	S3Endpoint                 string // leave empty for AWS; set for Garage/self-hosted
+	S3Bucket                   string
+	S3Region                   string
+	S3AccessKey                string
+	S3SecretKey                string
+	MaxAttachmentBytes         int64
+	ToolAllowedDomains         []string      // comma-separated domains allowed for webhook tools (bypasses private IP block)
+	OIDCHostRewrite            string        // "from=to" pair for rewriting OIDC discovery host (e.g. "localhost:5557=host.docker.internal:5557")
+	APIURL                     string        // base URL for REST API from the SPA (empty = same-origin)
+	RelayURL                   string        // WebSocket URL of the Hocuspocus relay (empty = derive from origin)
+	DisableRegistration        bool          // when true, new users cannot register via email/password (SSO only)
+	DisableMigrations          bool          // when true, skip embedded migrations on startup (used when pipeline handles migrations)
+	StatsRollupInterval        time.Duration // agent stats rollup cadence (AETHER_AGENT_STATS_ROLLUP_INTERVAL, default 1h, floor 5m)
+	AgentToolTimeoutDefault    time.Duration // fallback agent tool execution budget (AETHER_AGENT_TOOL_TIMEOUT_DEFAULT, default 120s, floor 1s)
+	OutputLimitsMaxBytes       int64         // platform ceiling for org-configured output byte caps (AETHER_OUTPUT_LIMITS_MAX_BYTES, default 64MB)
+	WarehouseReconcileInterval time.Duration // warehouse ClickHouse reconcile catch-up cadence (AETHER_CH_RECONCILE_INTERVAL, default 10m, floor 1m)
+	CHTablePermissions         bool          // per-user ClickHouse warehouse table permissions kill switch (AETHER_CH_TABLE_PERMISSIONS, default false)
 }
 
 func parseCommaList(s string) []string {
@@ -97,39 +99,45 @@ func load(migrateOnly bool) (*Config, error) {
 	if outputLimitsMaxBytes < 0 {
 		return nil, fmt.Errorf("AETHER_OUTPUT_LIMITS_MAX_BYTES must be non-negative")
 	}
+	warehouseReconcileInterval, err := parseWarehouseReconcileInterval(os.Getenv("AETHER_CH_RECONCILE_INTERVAL"))
+	if err != nil {
+		return nil, err
+	}
 	cfg := &Config{
-		Port:                    envOrDefault("AETHER_PORT", "8088"),
-		DatabaseURL:             os.Getenv("AETHER_DATABASE_URL"),
-		DatabaseHost:            os.Getenv("AETHER_DATABASE_HOST"),
-		DatabasePort:            os.Getenv("AETHER_DATABASE_PORT"),
-		DatabaseName:            os.Getenv("AETHER_DATABASE_NAME"),
-		DatabaseUser:            resolveEnvRef("AETHER_DATABASE_USER_ENV"),
-		DatabasePassword:        resolveEnvRef("AETHER_DATABASE_PASSWORD_ENV"),
-		DatabaseSSMode:          envOrDefault("AETHER_DATABASE_SSLMODE", "disable"),
-		DatabaseSchema:          envOrDefault("AETHER_DATABASE_SCHEMA", "aether_notebooks"),
-		RedisURL:                envOrDefault("AETHER_REDIS_URL", "redis://localhost:6379"),
-		MasterKey:               os.Getenv("AETHER_MASTER_KEY"),
-		JWTSecret:               os.Getenv("AETHER_JWT_SECRET"),
-		AttachmentDir:           envOrDefault("AETHER_ATTACHMENT_DIR", "./attachments"),
-		PlatformAdminEmail:      os.Getenv("AETHER_PLATFORM_ADMIN_EMAIL"),
-		PublicURL:               os.Getenv("AETHER_PUBLIC_URL"),
-		FrontendURL:             os.Getenv("AETHER_FRONTEND_URL"),
-		StorageBackend:          envOrDefault("AETHER_STORAGE_BACKEND", "local"),
-		S3Endpoint:              os.Getenv("AETHER_S3_ENDPOINT"),
-		S3Bucket:                os.Getenv("AETHER_S3_BUCKET"),
-		S3Region:                envOrDefault("AETHER_S3_REGION", "us-east-1"),
-		S3AccessKey:             os.Getenv("AETHER_S3_ACCESS_KEY"),
-		S3SecretKey:             os.Getenv("AETHER_S3_SECRET_KEY"),
-		MaxAttachmentBytes:      maxAttachmentBytes,
-		ToolAllowedDomains:      parseCommaList(os.Getenv("AETHER_TOOL_ALLOWED_DOMAINS")),
-		OIDCHostRewrite:         os.Getenv("AETHER_OIDC_HOST_REWRITE"),
-		APIURL:                  os.Getenv("AETHER_API_URL"),
-		RelayURL:                os.Getenv("AETHER_RELAY_URL"),
-		DisableRegistration:     envOrDefault("AETHER_DISABLE_REGISTRATION", "false") == "true",
-		DisableMigrations:       envOrDefault("AETHER_DISABLE_MIGRATIONS", "false") == "true",
-		StatsRollupInterval:     statsRollupInterval,
-		AgentToolTimeoutDefault: agentToolTimeoutDefault,
-		OutputLimitsMaxBytes:    outputLimitsMaxBytes,
+		Port:                       envOrDefault("AETHER_PORT", "8088"),
+		DatabaseURL:                os.Getenv("AETHER_DATABASE_URL"),
+		DatabaseHost:               os.Getenv("AETHER_DATABASE_HOST"),
+		DatabasePort:               os.Getenv("AETHER_DATABASE_PORT"),
+		DatabaseName:               os.Getenv("AETHER_DATABASE_NAME"),
+		DatabaseUser:               resolveEnvRef("AETHER_DATABASE_USER_ENV"),
+		DatabasePassword:           resolveEnvRef("AETHER_DATABASE_PASSWORD_ENV"),
+		DatabaseSSMode:             envOrDefault("AETHER_DATABASE_SSLMODE", "disable"),
+		DatabaseSchema:             envOrDefault("AETHER_DATABASE_SCHEMA", "aether_notebooks"),
+		RedisURL:                   envOrDefault("AETHER_REDIS_URL", "redis://localhost:6379"),
+		MasterKey:                  os.Getenv("AETHER_MASTER_KEY"),
+		JWTSecret:                  os.Getenv("AETHER_JWT_SECRET"),
+		AttachmentDir:              envOrDefault("AETHER_ATTACHMENT_DIR", "./attachments"),
+		PlatformAdminEmail:         os.Getenv("AETHER_PLATFORM_ADMIN_EMAIL"),
+		PublicURL:                  os.Getenv("AETHER_PUBLIC_URL"),
+		FrontendURL:                os.Getenv("AETHER_FRONTEND_URL"),
+		StorageBackend:             envOrDefault("AETHER_STORAGE_BACKEND", "local"),
+		S3Endpoint:                 os.Getenv("AETHER_S3_ENDPOINT"),
+		S3Bucket:                   os.Getenv("AETHER_S3_BUCKET"),
+		S3Region:                   envOrDefault("AETHER_S3_REGION", "us-east-1"),
+		S3AccessKey:                os.Getenv("AETHER_S3_ACCESS_KEY"),
+		S3SecretKey:                os.Getenv("AETHER_S3_SECRET_KEY"),
+		MaxAttachmentBytes:         maxAttachmentBytes,
+		ToolAllowedDomains:         parseCommaList(os.Getenv("AETHER_TOOL_ALLOWED_DOMAINS")),
+		OIDCHostRewrite:            os.Getenv("AETHER_OIDC_HOST_REWRITE"),
+		APIURL:                     os.Getenv("AETHER_API_URL"),
+		RelayURL:                   os.Getenv("AETHER_RELAY_URL"),
+		DisableRegistration:        envOrDefault("AETHER_DISABLE_REGISTRATION", "false") == "true",
+		DisableMigrations:          envOrDefault("AETHER_DISABLE_MIGRATIONS", "false") == "true",
+		StatsRollupInterval:        statsRollupInterval,
+		AgentToolTimeoutDefault:    agentToolTimeoutDefault,
+		OutputLimitsMaxBytes:       outputLimitsMaxBytes,
+		WarehouseReconcileInterval: warehouseReconcileInterval,
+		CHTablePermissions:         envOrDefault("AETHER_CH_TABLE_PERMISSIONS", "false") == "true",
 	}
 
 	// If no explicit DatabaseURL, build from individual components.
@@ -208,6 +216,28 @@ func parseAgentToolTimeoutDefault(raw string) (time.Duration, error) {
 	}
 	if d < time.Second {
 		return time.Second, nil
+	}
+	return d, nil
+}
+
+// DefaultWarehouseReconcileInterval is the catch-up cadence used when
+// AETHER_CH_RECONCILE_INTERVAL is unset. Server construction falls back to it
+// so the value has a single source.
+const DefaultWarehouseReconcileInterval = 10 * time.Minute
+
+// parseWarehouseReconcileInterval parses AETHER_CH_RECONCILE_INTERVAL as a Go
+// duration. Empty means the default; values below the 1m floor are raised to
+// it so a misconfigured env var cannot hot-loop the reconcile catch-up.
+func parseWarehouseReconcileInterval(raw string) (time.Duration, error) {
+	if raw == "" {
+		return DefaultWarehouseReconcileInterval, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid AETHER_CH_RECONCILE_INTERVAL %q: %w", raw, err)
+	}
+	if d < time.Minute {
+		return time.Minute, nil
 	}
 	return d, nil
 }

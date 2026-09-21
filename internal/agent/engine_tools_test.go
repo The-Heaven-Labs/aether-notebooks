@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/database"
+	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
@@ -70,6 +71,9 @@ func newTestEngine(db *database.DB) *Engine {
 		streams:            NewStreamManager(),
 		session:            NewSessionStore(db.Pool),
 		toolTimeoutDefault: DefaultToolTimeout,
+		// Tools now fail closed without a permission resolver; bare test
+		// engines wire a permissive one so tool behavior is unchanged.
+		CheckPermissionFunc: allowAllPermissions,
 	}
 	registerBuiltinTools(engine, db.Pool)
 	return engine
@@ -1056,7 +1060,17 @@ func TestRunSubagent_ToolTimeoutSurfaced(t *testing.T) {
 	nbID := createTestNotebook(t, db, orgID, userID)
 	sid := createTestSession(t, db, agentID, nbID, userID)
 
-	probe := &ToolDef{Timeout: 50 * time.Millisecond, Handler: probeTimeoutHandler()}
+	// Subagent tool contexts must carry the parent's actual org role and the
+	// parent session's admin mode into the shared permission resolver.
+	engine.session.SetAdminMode(sid, true)
+	var gotRole string
+	var gotAdminMode bool
+	probe := &ToolDef{Timeout: 50 * time.Millisecond}
+	probe.Handler = func(args json.RawMessage, tc *ToolContext) (any, error) {
+		gotRole = tc.OrgRole
+		gotAdminMode = executor.AdminModeFromContext(tc.Context)
+		return probeTimeoutHandler()(args, tc)
+	}
 	probe.Function.Name = "probe_legacy_timeout"
 	probe.Function.Parameters = `{"type":"object","properties":{}}`
 	engine.registry.Register(probe)
@@ -1095,6 +1109,9 @@ func TestRunSubagent_ToolTimeoutSurfaced(t *testing.T) {
 
 	res := engine.runSubagent(context.Background(), sid, SubagentTaskConfig{Goal: "probe legacy timeout"}, userID, orgID, masterKey)
 	require.Equal(t, "completed", res.Status)
+
+	require.Equal(t, "admin", gotRole, "subagents must carry the parent's actual org role")
+	require.True(t, gotAdminMode, "subagent tool contexts must follow the parent session's admin mode")
 
 	require.GreaterOrEqual(t, len(captured), 2)
 	msgs, _ := captured[1]["messages"].([]any)

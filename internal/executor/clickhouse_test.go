@@ -2,8 +2,11 @@ package executor_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
@@ -93,6 +96,29 @@ func TestClickHouseIntegerWidths(t *testing.T) {
 		default:
 			t.Errorf("col %s scanned as %T, want int64 or uint64", col.Name, row[i])
 		}
+	}
+}
+
+func TestIsClickHouseAccessDenied(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"access denied code", &clickhouse.Exception{Code: 497}, true},
+		{"other clickhouse code", &clickhouse.Exception{Code: 62}, false},
+		{"wrapped access denied", fmt.Errorf("query: %w", &clickhouse.Exception{Code: 497}), true},
+		{"message fallback access_denied", errors.New("Code: 497. DB::Exception: ... (ACCESS_DENIED)"), true},
+		{"message fallback not enough privileges", errors.New("not enough privileges"), true},
+		{"unrelated error", errors.New("syntax error near FROM"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := executor.IsClickHouseAccessDenied(tc.err); got != tc.want {
+				t.Fatalf("IsClickHouseAccessDenied(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 

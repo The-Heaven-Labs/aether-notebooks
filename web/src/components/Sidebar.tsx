@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Home, LayoutDashboard, Database, Users, UserCircle, ClipboardList, ChevronLeft, ChevronRight, Bot, Brain, Wrench, Puzzle, X, Settings, Zap, Trash2, Activity } from 'lucide-react'
+import { Home, LayoutDashboard, Database, Warehouse, Users, UserCircle, ClipboardList, ChevronLeft, ChevronRight, Bot, Brain, Wrench, Puzzle, X, Settings, Zap, Trash2, Activity } from 'lucide-react'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useAuth } from '../hooks/useAuth'
 
@@ -8,6 +8,7 @@ const ALL_NAV_ITEMS = [
   { to: '/',           title: 'Files',       icon: <Home size={16} />,              desc: 'Browse notebooks, dashboards, and connectors organized in folders' },
   { to: '/dashboards', title: 'Dashboards',  icon: <LayoutDashboard size={16} />,   desc: 'Visual dashboards built from notebook query results' },
   { to: '/connectors', title: 'Connectors',  icon: <Database size={16} />,           desc: 'Database connections (PostgreSQL, ClickHouse, OpenSearch)' },
+  { to: '/warehouses', title: 'Warehouses',  icon: <Warehouse size={16} />,          desc: 'ClickHouse access namespaces, provisioners, and table grants' },
   { to: '/members',    title: 'Members',     icon: <UserCircle size={16} />,         desc: 'Organization members and role management' },
   { to: '/groups',     title: 'Groups',      icon: <Users size={16} />,              desc: 'Permission groups for access control' },
   { to: '/audit',      title: 'Audit',       icon: <ClipboardList size={16} />,      desc: 'Audit log of actions across the organization' },
@@ -41,6 +42,7 @@ export function Sidebar() {
     ALL_NAV_ITEMS.filter(item => {
       if (item.to === '/audit') return user?.role === 'admin'
       if (item.to === '/agents/stats') return user?.role === 'admin'
+      if (item.to === '/warehouses') return user?.role === 'admin'
       if (item.to === '/admin') return isPlatformAdmin
       return true
     }),

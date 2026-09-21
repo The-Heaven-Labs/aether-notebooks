@@ -57,6 +57,15 @@ export interface Cell {
   }
 }
 
+/** Endpoint metadata attached to a warehouse-routed cell execution response. */
+export interface ExecuteRouting {
+  warehouse_id: string
+  warehouse_name?: string
+  connector_id: string
+  connector_name: string
+  ch_user?: string
+}
+
 export interface CellVersion {
   id: string
   cell_id: string
@@ -151,6 +160,7 @@ export interface Connector {
   type: string
   is_default?: boolean
   folder_id?: string
+  warehouse_id?: string | null
   created_by?: string
   created_at: string
   updated_at?: string
@@ -166,6 +176,23 @@ export interface Connector {
     ssl_mode?: string
     use_tls?: boolean
   }
+}
+
+export interface SchemaColumn {
+  name: string
+  type: string
+  description?: string
+}
+
+export interface SchemaTable {
+  schema: string
+  name: string
+  description?: string
+  columns: SchemaColumn[]
+}
+
+export interface ConnectorSchema {
+  tables: SchemaTable[]
 }
 
 export interface Dashboard {

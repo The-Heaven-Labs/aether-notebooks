@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/crypto"
@@ -17,19 +19,24 @@ import (
 
 type executeRequest struct {
 	Parameters map[string]string `json:"parameters,omitempty"`
+	// Pinned runs the cell's connector directly, bypassing the user's routing
+	// preference. It still requires `use` on that exact service.
+	Pinned bool `json:"pinned,omitempty"`
 }
 
 // @Summary Execute a cell
-// @Description Execute a cell's SQL query and return results
+// @Description Execute a cell's SQL query and return results. Warehouse-routed runs also return a routing object naming the warehouse, service, and ClickHouse identity that served the query. When several services are permitted and no routing preference is set, the request fails with 409 service_choice_required listing the allowed services and their warehouse.
 // @Tags cells
 // @Accept json
 // @Produce json
 // @Param notebook_id path string true "Notebook ID"
 // @Param cell_id path string true "Cell ID"
-// @Param request body object false "Execution parameters"
-// @Success 200 {object} map[string]interface{}
+// @Param request body object false "Execution parameters; pinned=true dials the cell's connector directly"
+// @Success 200 {object} map[string]interface{} "outputs, metrics, and routing (warehouse-routed runs only)"
 // @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
 // @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]interface{} "service_choice_required with warehouse_id and services"
 // @Security BearerAuth
 // @Router /notebooks/{notebook_id}/cells/{cell_id}/execute [post]
 func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
@@ -105,15 +112,47 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check "use" permission on the connector
-	useOK, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", cell.ConnectorID, "use")
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "permission check failed")
+	// Load the connector before the permission pre-check: whether the check
+	// applies depends on the connector's type and warehouse link.
+	var connType models.ConnectorType
+	var encryptedConfig []byte
+	var maxRows, timeout int
+	var connectorWarehouseID *uuid.UUID
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT type, config_encrypted, max_rows, timeout_seconds, warehouse_id
+		 FROM connectors WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
+		cell.ConnectorID, claims.OrgID,
+	).Scan(&connType, &encryptedConfig, &maxRows, &timeout, &connectorWarehouseID)
+	if err == pgx.ErrNoRows {
+		writeError(w, http.StatusNotFound, "connector not found")
 		return
 	}
-	if !useOK {
-		writeError(w, http.StatusForbidden, "you don't have permission to use this connector")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "load connector failed")
 		return
+	}
+
+	// Check "use" permission on the connector. Managed ClickHouse connectors
+	// are interchangeable services within their warehouse: when the
+	// AETHER_CH_TABLE_PERMISSIONS kill switch is on, service access is
+	// enforced by resolveExecutionTarget against the service that actually
+	// serves the run, which can differ from the cell's connector (routing
+	// preference or sole-allowed-service fallback). Gating here on the cell's
+	// connector would deny a collaborator who holds `use` only on another
+	// service in the same warehouse, even though the agent run_cell path
+	// routes it correctly. Unmanaged connectors, non-ClickHouse connectors,
+	// and the kill-switch-off legacy path keep the connector-level check.
+	managedClickHouse := connType == models.ConnectorClickHouse && connectorWarehouseID != nil
+	if !managedClickHouse || !s.warehouseManagementEnabled() {
+		useOK, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", cell.ConnectorID, "use")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "permission check failed")
+			return
+		}
+		if !useOK {
+			writeError(w, http.StatusForbidden, "you don't have permission to use this connector")
+			return
+		}
 	}
 
 	// Build slug map from all sibling cells in the notebook that have a slug
@@ -161,24 +200,6 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		resolvedSource = executor.ApplyLimit(resolvedSource, *cell.Limit)
 	}
 
-	// Load connector
-	var connType models.ConnectorType
-	var encryptedConfig []byte
-	var maxRows, timeout int
-	err = s.db.Pool.QueryRow(ctx,
-		`SELECT type, config_encrypted, max_rows, timeout_seconds
-		 FROM connectors WHERE id = $1 AND org_id = $2`,
-		cell.ConnectorID, claims.OrgID,
-	).Scan(&connType, &encryptedConfig, &maxRows, &timeout)
-	if err == pgx.ErrNoRows {
-		writeError(w, http.StatusNotFound, "connector not found")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "load connector failed")
-		return
-	}
-
 	// Decrypt connector config
 	plain, err := crypto.Decrypt(encryptedConfig, s.masterKey)
 	if err != nil {
@@ -202,16 +223,93 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ClickHouse connectors linked to a ready warehouse execute as the
+	// requesting user's provisioned ClickHouse identity through the shared
+	// connection pool. Unmanaged ClickHouse connectors and every other type
+	// keep the legacy stored-credential driver path, so routing is gated on
+	// the connector type before warehouse resolution is consulted.
+	var (
+		exec          executor.Executor
+		warehouseID   string
+		warehouseName string
+		serviceName   string
+		chUser        string
+		auditConnID   = cell.ConnectorID
+	)
 	connectStart := time.Now()
-	exec, err := driver.NewExecutor(plain)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to connect to database")
-		return
+	switch {
+	case connType == models.ConnectorClickHouse:
+		userUUID, userErr := uuid.Parse(claims.UserID)
+		if userErr != nil {
+			writeError(w, http.StatusInternalServerError, "invalid user id")
+			return
+		}
+		// cells.connector_id is a UUID column, so parsing cannot fail.
+		connUUID := uuid.MustParse(cell.ConnectorID)
+		target, targetErr := s.resolveExecutionTarget(ctx, userUUID, connUUID, req.Pinned)
+		var choice *executor.ServiceChoiceError
+		switch {
+		case targetErr == nil:
+			conn, release, getErr := s.connPool.Get(target.Endpoint, target.CHUser, target.Config)
+			if getErr != nil {
+				writeError(w, http.StatusBadGateway, "failed to connect to database")
+				return
+			}
+			// The pooled executor owns the lease: Close releases it, so
+			// release must not be deferred separately.
+			exec = executor.NewPooledClickHouseExecutor(conn, release)
+			warehouseID = target.WarehouseID.String()
+			warehouseName = target.WarehouseName
+			chUser = target.CHUser
+			auditConnID = target.ConnectorID.String()
+			serviceName = target.ConnectorName
+			// Limits belong to the service actually dialed: a preference or
+			// sole-service fallback can route to a different connector than
+			// the cell's requested one.
+			maxRows = target.MaxRows
+			timeout = target.TimeoutSeconds
+		case errors.Is(targetErr, executor.ErrUnmanagedConnector):
+			exec, err = driver.NewExecutor(plain)
+			if err != nil {
+				writeError(w, http.StatusBadGateway, "failed to connect to database")
+				return
+			}
+		case errors.Is(targetErr, executor.ErrConnectorNotFound):
+			writeError(w, http.StatusNotFound, "connector not found")
+			return
+		case errors.Is(targetErr, executor.ErrProvisioningNotReady):
+			writeError(w, http.StatusServiceUnavailable, "warehouse provisioning is not ready")
+			return
+		case errors.Is(targetErr, executor.ErrServiceAccessDenied):
+			if req.Pinned {
+				writeError(w, http.StatusForbidden, "you don't have access to the pinned service")
+				return
+			}
+			writeError(w, http.StatusForbidden, "no permitted service in warehouse")
+			return
+		case errors.As(targetErr, &choice):
+			writeServiceChoiceRequired(w, choice)
+			return
+		default:
+			slog.Error("resolve execution target", "connector_id", cell.ConnectorID, "error", targetErr)
+			writeError(w, http.StatusInternalServerError, "failed to resolve execution target")
+			return
+		}
+	default:
+		exec, err = driver.NewExecutor(plain)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "failed to connect to database")
+			return
+		}
 	}
 	defer exec.Close()
 	connectTime := time.Since(connectStart).Milliseconds()
 
 	bgCtx := context.Background()
+
+	// Per-execution ID: tags the ClickHouse query via log_comment and lands in
+	// the cell.execute audit metadata so the two can be correlated.
+	executionID := uuid.New().String()
 
 	// Create cancelable context for query execution
 	execCtx, execCancel := context.WithCancel(bgCtx)
@@ -219,6 +317,7 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 
 	// Tag the context with the user email for ClickHouse query tracing
 	execCtx = context.WithValue(execCtx, executor.CtxUserEmail{}, s.userEmail(bgCtx, claims.UserID))
+	execCtx = executor.WithExecutionID(execCtx, executionID)
 
 	// Set query timeout from connector config (0 = unlimited)
 	var timeoutCancel context.CancelFunc
@@ -277,7 +376,13 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		s.db.Pool.Exec(bgCtx, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, errTotalTime, cellID)
 		s.hub.Broadcast(nbID, map[string]any{"type": "cell_output", "cell_id": cellID, "outputs": []models.Output{errOutput}, "user_email": s.userEmail(bgCtx, claims.UserID)})
 		s.hub.Broadcast(nbID, map[string]any{"type": "cell_cancelled", "cell_id": cellID})
-		writeError(w, http.StatusUnprocessableEntity, errMsg)
+		status := http.StatusUnprocessableEntity
+		if !isCancelled && executor.IsClickHouseAccessDenied(err) {
+			// A per-user warehouse identity hitting an ungranted table is an
+			// authorization failure, not an unprocessable query.
+			status = http.StatusForbidden
+		}
+		writeError(w, status, errMsg)
 		return
 	}
 	queryTime := time.Since(queryStart).Milliseconds()
@@ -305,10 +410,10 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		s.db.Pool.Exec(logCtx,
 			`INSERT INTO cell_execution_logs (cell_id, notebook_id, connector_id, connect_time_ms, query_time_ms, render_time_ms, total_time_ms, row_count)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			cellID, nbID, cell.ConnectorID, connectTime, queryTime, renderTime, totalTime, rowCount)
+			cellID, nbID, auditConnID, connectTime, queryTime, renderTime, totalTime, rowCount)
 	}()
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	response := map[string]interface{}{
 		"outputs": cellOutputs,
 		"metrics": map[string]interface{}{
 			"connect_time_ms": connectTime,
@@ -316,19 +421,66 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 			"render_time_ms":  renderTime,
 			"total_time_ms":   totalTime,
 		},
-	})
+	}
+	// Warehouse-routed runs report the service and warehouse that served them
+	// so the UI can render "ran on <service>"; legacy runs omit routing.
+	if warehouseID != "" {
+		response["routing"] = map[string]interface{}{
+			"warehouse_id":   warehouseID,
+			"warehouse_name": warehouseName,
+			"connector_id":   auditConnID,
+			"connector_name": serviceName,
+			"ch_user":        chUser,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, response)
 
 	s.audit.Log(bgCtx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "cell.execute", ResourceType: "cell", ResourceID: cellID,
-		Metadata: map[string]any{
-			"notebook_id":  nbID,
-			"cell_id":      cellID,
-			"connector_id": cell.ConnectorID,
-			"query":        cell.Source,
-			"row_count":    rowCount,
-			"duration_ms":  totalTime,
-		},
+		Metadata: auditMetadata(nbID, cellID, auditConnID, cell.Source, rowCount, totalTime, warehouseID, chUser, executionID),
+	})
+}
+
+// auditMetadata builds the cell.execute audit payload. warehouse_id and ch_user
+// are present only when the run executed as a warehouse per-user identity;
+// connector_id is the service actually dialed, which can differ from the
+// cell's connector when warehouse routing picks a preferred service.
+// execution_id correlates the row with the query's ClickHouse log_comment.
+func auditMetadata(notebookID, cellID, connectorID, query string, rowCount int, durationMS int64, warehouseID, chUser, executionID string) map[string]any {
+	metadata := map[string]any{
+		"notebook_id":  notebookID,
+		"cell_id":      cellID,
+		"connector_id": connectorID,
+		"query":        query,
+		"row_count":    rowCount,
+		"duration_ms":  durationMS,
+		"execution_id": executionID,
+	}
+	if warehouseID != "" {
+		metadata["warehouse_id"] = warehouseID
+		metadata["ch_user"] = chUser
+	}
+	return metadata
+}
+
+// writeServiceChoiceRequired renders the 409 payload used to prompt for a
+// warehouse service. The caller has already matched the concrete error, so the
+// allowed list is always present. warehouse_id lets the client store the
+// chosen service as the user's preference without another lookup.
+func writeServiceChoiceRequired(w http.ResponseWriter, choice *executor.ServiceChoiceError) {
+	services := make([]map[string]string, 0, len(choice.Allowed))
+	for _, svc := range choice.Allowed {
+		services = append(services, map[string]string{
+			"connector_id": svc.ConnectorID.String(),
+			"name":         svc.Name,
+		})
+	}
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error":        "service_choice_required",
+		"warehouse_id": choice.WarehouseID.String(),
+		"services":     services,
 	})
 }
 

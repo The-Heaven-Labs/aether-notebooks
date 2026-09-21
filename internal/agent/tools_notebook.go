@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
@@ -881,28 +880,24 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 		return nil, fmt.Errorf("get connector: %w", err)
 	}
 
+	// Managed ClickHouse connectors execute as the acting user's warehouse
+	// identity on a pooled connection; unmanaged ClickHouse connectors and
+	// every other type keep the stored-credential driver path.
+	exec, target, err := openAgentExecutor(ctx, connType, *cell.ConnectorID, configEnc)
+	if err != nil {
+		return nil, err
+	}
+	defer exec.Close()
+
+	if target != nil {
+		// The routed service's limits win: a preference or sole-service
+		// fallback can dial a different connector than the cell requested.
+		connectorTimeoutSeconds = target.TimeoutSeconds
+	}
+
 	// timeout_ms wins when supplied; otherwise the connector's timeout_seconds
 	// applies, falling back to the default budget.
 	timeoutMs = cellTimeoutMs(timeoutMs, connectorTimeoutSeconds)
-
-	if ctx.MasterKey == nil {
-		return nil, fmt.Errorf("master key not available")
-	}
-
-	plain, err := crypto.Decrypt(configEnc, ctx.MasterKey)
-	if err != nil {
-		return nil, fmt.Errorf("decrypt credentials: %w", err)
-	}
-
-	driver, ok := executor.GetDriver(connType)
-	if !ok {
-		return nil, fmt.Errorf("unsupported connector type: %s", connType)
-	}
-	exec, err := driver.NewExecutor(plain)
-	if err != nil {
-		return nil, fmt.Errorf("connect: %w", err)
-	}
-	defer exec.Close()
 
 	// Resolve the org's per-cell output byte cap (clamped by the platform
 	// ceiling) before signalling the running state so a lookup failure does not
@@ -929,9 +924,14 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 		ctx.SetRunningFunc(cellID, notebookID, execStart) // Hub + Redis → survives refresh
 	}
 
+	// Per-execution ID: tags the ClickHouse query via log_comment and lands in
+	// the cell.run audit metadata so the two can be correlated.
+	executionID := uuid.New().String()
+
 	// Cancellable execution context: powers the Cancel button via the hub
 	// (same lifecycle as user-triggered runs). The timeout nests inside.
 	execCtx, execCancel := context.WithCancel(ctx.Context)
+	execCtx = executor.WithExecutionID(execCtx, executionID)
 	defer execCancel()
 	if timeoutMs > 0 {
 		var timeoutCancel context.CancelFunc
@@ -966,7 +966,14 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 		db.Exec(persistCtx, "UPDATE cells SET outputs = $1, duration_ms = $2, updated_at = NOW() WHERE id = $3", outJSON, durationMs, cellID)
 	}
 
-	result, err := exec.Execute(execCtx, query, nil, executor.OutputLimits{MaxBytes: maxBytes, MaxRows: cell.Limit})
+	// The cell's own LIMIT bounds the preview; a routed service with a smaller
+	// max_rows cap can lower it further (never raise it).
+	maxRows := cell.Limit
+	if target != nil && target.MaxRows > 0 && (maxRows <= 0 || target.MaxRows < maxRows) {
+		maxRows = target.MaxRows
+	}
+
+	result, err := exec.Execute(execCtx, query, nil, executor.OutputLimits{MaxBytes: maxBytes, MaxRows: maxRows})
 	wasCancelled := execCtx.Err() != nil
 	clearRunning()
 	// Some drivers return empty results instead of context.Canceled when the
@@ -1039,7 +1046,19 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 		})
 	}
 
-	_ = ctx.AuditLog("cell.run", "cell", cellID)
+	// Record the connector actually dialed; a routed warehouse run also records
+	// the warehouse and per-user ClickHouse identity, mirroring the HTTP
+	// cell.execute audit entry.
+	auditMeta := map[string]any{
+		"connector_id": *cell.ConnectorID,
+		"execution_id": executionID,
+	}
+	if target != nil {
+		auditMeta["connector_id"] = target.ConnectorID.String()
+		auditMeta["warehouse_id"] = target.WarehouseID.String()
+		auditMeta["ch_user"] = target.CHUser
+	}
+	_ = ctx.AuditLogWithMetadata("cell.run", "cell", cellID, auditMeta)
 
 	columnNames, data, truncated := previewResult(result, runCellMaxRows)
 	return map[string]any{
@@ -1317,22 +1336,11 @@ func makeExploreSchemaHandler(db *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("get connector: %w", err)
 		}
 
-		if ctx.MasterKey == nil {
-			return nil, fmt.Errorf("master key not available")
-		}
-
-		plain, err := crypto.Decrypt(configEnc, ctx.MasterKey)
+		// Managed ClickHouse connectors explore the schema through the acting
+		// user's pooled warehouse identity, not the stored credential.
+		exec, _, err := openAgentExecutor(ctx, connType, req.ConnectorID, configEnc)
 		if err != nil {
-			return nil, fmt.Errorf("decrypt credentials: %w", err)
-		}
-
-		driver, ok := executor.GetDriver(connType)
-		if !ok {
-			return nil, fmt.Errorf("unsupported connector type: %s", connType)
-		}
-		exec, err := driver.NewExecutor(plain)
-		if err != nil {
-			return nil, fmt.Errorf("connect to connector db: %w", err)
+			return nil, err
 		}
 		defer exec.Close()
 

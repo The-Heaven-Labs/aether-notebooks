@@ -321,6 +321,9 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "failed to commit")
 				return
 			}
+			// Cover the new memberships (including any just materialized
+			// pending groups) once the join transaction has committed.
+			s.enqueueWarehouseSyncForUser(ctx, userID)
 			s.audit.Log(ctx, audit.Entry{
 				OrgID: orgID, UserID: userID,
 				Action: "org.auto_join", ResourceType: "org", ResourceID: orgID,
@@ -396,6 +399,9 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "failed to commit")
 				return
 			}
+			// Cover the new memberships (including any just materialized
+			// pending groups) once the join transaction has committed.
+			s.enqueueWarehouseSyncForUser(ctx, userID)
 			s.audit.Log(ctx, audit.Entry{
 				OrgID: orgID, UserID: userID,
 				Action: "org.auto_join", ResourceType: "org", ResourceID: orgID,
@@ -440,6 +446,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 						tx.Rollback(ctx)
 					} else {
 						tx.Commit(ctx)
+						s.enqueueWarehouseSyncForUser(ctx, userID)
 						s.audit.Log(ctx, audit.Entry{
 							OrgID: targetOrgID, UserID: userID,
 							Action: "org.auto_join", ResourceType: "org", ResourceID: targetOrgID,
@@ -499,6 +506,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 						tx.Rollback(ctx)
 					} else {
 						tx.Commit(ctx)
+						s.enqueueWarehouseSyncForUser(ctx, userID)
 						s.audit.Log(ctx, audit.Entry{
 							OrgID: subdomainOrgID, UserID: userID,
 							Action: "org.auto_join", ResourceType: "org", ResourceID: subdomainOrgID,
@@ -519,9 +527,13 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Reconcile group membership via SSO
+	// Reconcile group membership via SSO. Every group whose membership changed
+	// is enqueued by ID: additions and removals both affect the warehouses
+	// granting that group, and a removed group no longer resolves via the user.
 	if dbProvider.AutoSyncGroups && len(claims.Groups) > 0 {
-		SyncSSOGroups(ctx, s.db.Pool, s.audit, dbProvider, orgID, userID, claims.Groups)
+		for _, groupID := range SyncSSOGroups(ctx, s.db.Pool, s.audit, dbProvider, orgID, userID, claims.Groups) {
+			s.enqueueWarehouseSyncForGroup(ctx, groupID)
+		}
 	}
 
 	var isPlatformAdmin bool

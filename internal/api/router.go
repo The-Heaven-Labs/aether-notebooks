@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -9,45 +10,80 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/auth"
 	"github.com/the-heaven-labs/aether/internal/cache"
+	"github.com/the-heaven-labs/aether/internal/chaccess"
 	"github.com/the-heaven-labs/aether/internal/config"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/database"
+	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/storage"
 )
 
+// warehouseSyncer schedules reconciliation of one warehouse's ClickHouse
+// access state. *chaccess.SyncService is the production implementation; tests
+// inject a recorder.
+type warehouseSyncer interface{ Enqueue(uuid.UUID) }
+
 // Server is the HTTP server for the Aether API, holding all dependencies.
 type Server struct {
-	db                   *database.DB
-	jwt                  *auth.JWTIssuer
-	audit                *audit.Logger
-	masterKey            []byte
-	hub                  *Hub
-	mux                  *http.ServeMux
-	store                storage.Storage
-	platformAdminEmail   string
-	disableRegistration  bool
-	publicURL            string
-	frontendURL          string
-	Cache                *cache.Cache
-	maxAttachmentBytes   int64
-	outputLimitsMaxBytes int64 // platform ceiling for org output byte caps (AETHER_OUTPUT_LIMITS_MAX_BYTES)
-	agentEngine          *agent.Engine
-	upgrader             websocket.Upgrader
-	toolAllowedDomains   []string
-	sessionCancels       sync.Map                        // sessionID -> context.CancelFunc
-	subdomainMW          func(http.Handler) http.Handler // host → org resolution
-	oidcRewriteFrom      string                          // host rewrite for OIDC discovery inside Docker (e.g. "localhost:5557")
-	oidcRewriteTo        string                          // target host rewrite (e.g. "host.docker.internal:5557")
-	frontendHandler      http.Handler                    // embedded web frontend SPA (nil in tests)
-	version              string                          // build version (set via ldflags)
-	commit               string                          // git commit (set via ldflags)
-	buildDate            string                          // build date (set via ldflags)
+	db        *database.DB
+	jwt       *auth.JWTIssuer
+	audit     *audit.Logger
+	masterKey []byte
+	hub       *Hub
+	rdb       *redis.Client // shared Redis client; nil when no cache is configured
+	// warehouseInvalidationChannel is the pub/sub channel for cross-replica
+	// pooled-identity invalidations. It defaults to
+	// defaultWarehouseInvalidationChannel; tests override it so their
+	// subscribers are isolated from other processes on the same Redis.
+	warehouseInvalidationChannel string
+	mux                          *http.ServeMux
+	store                        storage.Storage
+	platformAdminEmail           string
+	disableRegistration          bool
+	publicURL                    string
+	frontendURL                  string
+	Cache                        *cache.Cache
+	maxAttachmentBytes           int64
+	outputLimitsMaxBytes         int64 // platform ceiling for org output byte caps (AETHER_OUTPUT_LIMITS_MAX_BYTES)
+	agentEngine                  *agent.Engine
+	upgrader                     websocket.Upgrader
+	toolAllowedDomains           []string
+	sessionCancels               sync.Map                        // sessionID -> context.CancelFunc
+	subdomainMW                  func(http.Handler) http.Handler // host → org resolution
+	oidcRewriteFrom              string                          // host rewrite for OIDC discovery inside Docker (e.g. "localhost:5557")
+	oidcRewriteTo                string                          // target host rewrite (e.g. "host.docker.internal:5557")
+	frontendHandler              http.Handler                    // embedded web frontend SPA (nil in tests)
+	version                      string                          // build version (set via ldflags)
+	commit                       string                          // git commit (set via ldflags)
+	buildDate                    string                          // build date (set via ldflags)
+	warehouseSync                warehouseSyncer                 // debounced ClickHouse access sync (nil disables triggers)
+	// chTablePermissions is the AETHER_CH_TABLE_PERMISSIONS kill switch. When
+	// false (default), managed connectors execute through the legacy
+	// stored-credential path and the warehouse sync worker stays dormant;
+	// warehouse CRUD and grants remain usable for staged setup.
+	chTablePermissions bool
+	// warehouseReconcileInterval is the periodic catch-up cadence for the
+	// warehouse sync loop (AETHER_CH_RECONCILE_INTERVAL); <= 0 means the
+	// package default.
+	warehouseReconcileInterval time.Duration
+	warehouseLoop              backgroundLoop // periodic catch-up enqueue loop
+	// connPool holds per-user ClickHouse connections leased by warehouse-scoped
+	// HTTP executions. CloseAll runs from Close; CloseIdle runs on a ticker
+	// owned by connPoolLoop.
+	connPool     *executor.ConnPool
+	connPoolLoop backgroundLoop
+	// warehouseInvalidationLoop runs the Redis subscriber that applies other
+	// replicas' pooled-identity invalidations. It stops from Close; it is a
+	// no-op when no Redis client is configured.
+	warehouseInvalidationLoop backgroundLoop
+	closeOnce                 sync.Once // makes Close idempotent
 }
 
 // NewServer creates a new Aether API server with the provided dependencies.
@@ -57,19 +93,32 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 		rdb = redisCache.Client()
 	}
 	s := &Server{
-		db:        db,
-		jwt:       jwt,
-		audit:     auditLogger,
-		masterKey: masterKey,
-		hub:       NewHub(rdb),
-		mux:       http.NewServeMux(),
-		Cache:     redisCache,
-		upgrader:  websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
+		db:                           db,
+		jwt:                          jwt,
+		audit:                        auditLogger,
+		masterKey:                    masterKey,
+		hub:                          NewHub(rdb),
+		rdb:                          rdb,
+		warehouseInvalidationChannel: defaultWarehouseInvalidationChannel,
+		mux:                          http.NewServeMux(),
+		Cache:                        redisCache,
+		upgrader:                     websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
+		warehouseReconcileInterval:   config.DefaultWarehouseReconcileInterval,
 	}
+	s.connPool = executor.NewConnPool(executor.PoolConfig{
+		MaxPools: connPoolMaxPools,
+		IdleTTL:  connPoolIdleTTL,
+	})
 	s.agentEngine = agent.NewEngine(context.Background(), db.Pool, rdb)
 	s.agentEngine.BroadcastFunc = func(notebookID string, msg any) {
 		s.hub.Broadcast(notebookID, msg)
 	}
+	// Agent tool execution resolves warehouse identities and enforces ACLs
+	// through the same server methods HTTP uses; the callbacks are wired here
+	// because internal/agent cannot import internal/api.
+	s.agentEngine.ResolveTarget = s.resolveExecutionTarget
+	s.agentEngine.ConnPool = s.connPool
+	s.agentEngine.CheckPermissionFunc = s.checkPermission
 	// Running-state/cancel lifecycle for agent-driven cell runs (mirrors the
 	// user-triggered execute path so badges, refresh-safe sync, and the Cancel
 	// endpoint all work for agent runs).
@@ -78,6 +127,12 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 	s.agentEngine.SetCancelFunc = s.hub.SetCancelFunc
 	s.agentEngine.DeleteCancelFunc = s.hub.DeleteCancelFunc
 	s.subdomainMW = SubdomainMiddleware(s.db.Pool)
+	// Warehouse access-state worker. Enqueues arrive from membership mutations;
+	// a periodic catch-up loop is added by the server bootstrap.
+	s.warehouseSync = chaccess.NewSyncService(chaccess.SyncConfig{
+		Reconcile: s.reconcileWarehouse,
+		Logger:    slog.Default(),
+	})
 	s.routes()
 	return s
 }
@@ -156,6 +211,63 @@ func (s *Server) orgInlineOutputsMaxBytes(ctx context.Context, orgID string) (in
 func (s *Server) SetToolAllowedDomains(domains []string) {
 	s.toolAllowedDomains = domains
 	s.agentEngine.SetToolAllowedDomains(domains)
+}
+
+// SetWarehouseReconcileInterval sets the periodic warehouse reconciliation
+// cadence. Values <= 0 select config.DefaultWarehouseReconcileInterval. Call it
+// before StartBackgroundJobs.
+func (s *Server) SetWarehouseReconcileInterval(d time.Duration) {
+	if d <= 0 {
+		d = config.DefaultWarehouseReconcileInterval
+	}
+	s.warehouseReconcileInterval = d
+}
+
+// SetCHTablePermissions sets the AETHER_CH_TABLE_PERMISSIONS kill switch. It is
+// a process-start setting: call it exactly once during server construction,
+// before StartBackgroundJobs, and never while requests or background jobs are
+// running. When disabled, every connector executes through the legacy
+// stored-credential path, warehouse reconciliation is dormant, and warehouse
+// deletion is DB-only; warehouse CRUD and grant APIs stay usable so admins can
+// stage configuration before enabling it.
+func (s *Server) SetCHTablePermissions(enabled bool) {
+	s.chTablePermissions = enabled
+}
+
+// warehouseManagementEnabled is the single gate for per-user warehouse
+// execution, background reconciliation, drift detection, and delete-time
+// identity cleanup. Every warehouse-management path must consult it so a
+// rollback cannot leave one path active behind another.
+func (s *Server) warehouseManagementEnabled() bool {
+	return s.chTablePermissions
+}
+
+// Close stops the warehouse reconciliation loop and then closes the sync
+// worker. The worker's context is cancelled, so queued runs are dropped and
+// retries stop; an in-flight reconcile may abort between statements or mid-DDL,
+// leaving a partially applied plan that the next start's catch-up converges.
+// It also stops the connection-pool idle ticker and the cross-replica
+// invalidation subscriber before closing the pool. Close waits for the loop
+// goroutines to exit and for the worker's in-flight run to return. It is safe
+// to call multiple times, and must run before the database and cache are closed
+// because the reconcile path uses both.
+func (s *Server) Close() {
+	s.closeOnce.Do(func() {
+		// Stop new enqueues before draining the worker so the loop cannot
+		// feed work into a closing service.
+		s.warehouseLoop.stop()
+		if closer, ok := s.warehouseSync.(interface{ Close() }); ok {
+			closer.Close()
+		}
+		// Stop the idle-eviction ticker before closing the pool so no
+		// CloseIdle can race CloseAll; connections still leased by an
+		// in-flight execution are closed by their last release.
+		s.connPoolLoop.stop()
+		// Stop the cross-replica invalidation subscriber before the pool so a
+		// late broadcast cannot race CloseAll.
+		s.warehouseInvalidationLoop.stop()
+		s.connPool.CloseAll()
+	})
 }
 
 // SetToolTimeoutDefault sets the fallback execution budget for agent tools
@@ -269,7 +381,7 @@ func (s *Server) routes() {
 		limit:   20,
 		window:  time.Minute,
 	})(http.HandlerFunc(s.handleSSOProbe)))
-	s.mux.HandleFunc("GET /api/v1/auth/config", s.handleRegistrationStatus)
+	s.mux.HandleFunc("GET /api/v1/auth/config", s.handleAuthConfig)
 
 	// Onboarding routes (require auth but allow onboarding role)
 	s.mux.Handle("POST /api/v1/auth/org/create", authMW(http.HandlerFunc(s.handleOrgCreate)))
@@ -393,6 +505,26 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/connectors/{id}/test", authMW(http.HandlerFunc(s.handleTestConnector)))
 	s.mux.Handle("GET /api/v1/connectors/{id}/schema", authMW(http.HandlerFunc(s.handleConnectorSchema)))
 	s.mux.Handle("GET /api/v1/connectors/{id}/databases", authMW(http.HandlerFunc(s.handleListConnectorDatabases)))
+	s.mux.Handle("PUT /api/v1/connectors/{id}/warehouse", authMW(RequireRole("admin")(http.HandlerFunc(s.handleSetConnectorWarehouse))))
+
+	// Warehouse routes (org admin)
+	s.mux.Handle("GET /api/v1/warehouses", authMW(RequireRole("admin")(http.HandlerFunc(s.handleListWarehouses))))
+	s.mux.Handle("POST /api/v1/warehouses", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateWarehouse))))
+	s.mux.Handle("GET /api/v1/warehouses/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleGetWarehouse))))
+	s.mux.Handle("PUT /api/v1/warehouses/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateWarehouse))))
+	s.mux.Handle("DELETE /api/v1/warehouses/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleDeleteWarehouse))))
+	s.mux.Handle("PUT /api/v1/warehouses/{id}/provisioner", authMW(RequireRole("admin")(http.HandlerFunc(s.handleSetWarehouseProvisioner))))
+
+	// Warehouse table grants and service routing (handlers scope by org:
+	// mutations and listing are org admin, effective-access is org admin or
+	// self, preference is self).
+	s.mux.Handle("GET /api/v1/warehouses/{id}/grants", authMW(RequireRole("admin")(http.HandlerFunc(s.handleListWarehouseGrants))))
+	s.mux.Handle("POST /api/v1/warehouses/{id}/grants", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateWarehouseGrant))))
+	s.mux.Handle("DELETE /api/v1/warehouses/{id}/grants/{grant_id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleDeleteWarehouseGrant))))
+	s.mux.Handle("GET /api/v1/warehouses/{id}/effective-access", authMW(http.HandlerFunc(s.handleWarehouseEffectiveAccess)))
+	s.mux.Handle("PUT /api/v1/warehouses/{id}/preference", authMW(http.HandlerFunc(s.handleSetWarehousePreference)))
+	s.mux.Handle("GET /api/v1/warehouses/{id}/new-tables", authMW(RequireRole("admin")(http.HandlerFunc(s.handleWarehouseNewTables))))
+	s.mux.Handle("GET /api/v1/warehouses/{id}/validation", authMW(RequireRole("admin")(http.HandlerFunc(s.handleWarehouseValidation))))
 
 	// Recent route
 	s.mux.Handle("GET /api/v1/recent", authMW(http.HandlerFunc(s.handleGetRecent)))

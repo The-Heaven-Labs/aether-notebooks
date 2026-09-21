@@ -16,6 +16,11 @@ func New(redisURL string) (*Cache, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cache: parse URL: %w", err)
 	}
+	// Honor caller context deadlines on socket reads/writes. Without this the
+	// driver uses only its configured Read/WriteTimeout, so a short publish or
+	// cache deadline (e.g. the warehouse invalidation broadcast) would not
+	// bound the operation.
+	opts.ContextTimeoutEnabled = true
 	return &Cache{client: redis.NewClient(opts)}, nil
 }
 

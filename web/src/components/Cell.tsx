@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard, Code2, AlignLeft } from 'lucide-react'
+import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard, Code2, AlignLeft, Server } from 'lucide-react'
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, history } from '@codemirror/commands'
@@ -15,7 +15,7 @@ import { yCollab, ySyncFacet, YSyncConfig } from 'y-codemirror.next'
 import { OutputRenderer } from './OutputRenderer'
 import { sqlHighlight } from './sqlHighlight'
 const MarkdownView = lazy(() => import('./MarkdownCell').then(m => ({ default: m.MarkdownView })))
-import type { Cell as APICell, Connector } from '../types'
+import type { Cell as APICell, Connector, ExecuteRouting } from '../types'
 import type { ChartConfig } from '../charts'
 import { normalizeChartConfig } from '../charts/normalizeChartConfig'
 
@@ -147,6 +147,7 @@ interface Props {
   saveState?: SaveState
   runAt?: Date
   metrics?: { connect_time_ms: number; query_time_ms: number; render_time_ms: number; total_time_ms: number }
+  routing?: ExecuteRouting
   onUpdateCellMeta?: (cellId: string, updates: Partial<Pick<APICell, 'source_visible' | 'outputs_hidden' | 'cell_collapsed' | 'slide_break' | 'title' | 'slug' | 'limit'>>) => void
   onChartConfigChange?: (cellId: string, config: ChartConfig) => void
   onViewModeChange?: (cellId: string, viewMode: 'table' | 'chart') => void
@@ -171,6 +172,14 @@ function fmtTime(date: Date): string {
   const diffMin = Math.floor(diffSec / 60)
   if (diffMin < 60) return `${diffMin}m ago`
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+/** Tooltip for the "ran on" footer chip: service, warehouse, and CH identity. */
+function routingTitle(routing: ExecuteRouting): string {
+  const parts = [`Served by ${routing.connector_name}`]
+  if (routing.warehouse_name) parts.push(`warehouse: ${routing.warehouse_name}`)
+  if (routing.ch_user) parts.push(`identity: ${routing.ch_user}`)
+  return parts.join(' · ')
 }
 
 // ── CodeEditorView ────────────────────────────────────────────────────────────
@@ -440,6 +449,7 @@ export const Cell = memo(function Cell({
   saveState,
   runAt,
   metrics,
+  routing,
   onUpdateCellMeta,
   onChartConfigChange,
   onViewModeChange,
@@ -840,7 +850,7 @@ export const Cell = memo(function Cell({
       )}
 
       {/* ── Footer ── */}
-      {(saveState || runAt || metrics) && (
+      {(saveState || runAt || metrics || routing) && (
         <div style={styles.footer}>
           <span style={saveState?.error ? styles.footerError : styles.footerMuted}>
             {saveState?.saving
@@ -852,6 +862,16 @@ export const Cell = memo(function Cell({
                   : ''}
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {routing && (
+              <span
+                style={{ ...styles.footerMuted, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                title={routingTitle(routing)}
+              >
+                <Server size={10} aria-hidden="true" />
+                ran on {routing.connector_name}
+                {routing.warehouse_name ? ` · ${routing.warehouse_name}` : ''}
+              </span>
+            )}
             {metrics && (
               <span
                 style={styles.footerMuted}

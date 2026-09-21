@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-heaven-labs/aether/internal/auth"
 	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/executor"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -19,22 +20,14 @@ type contextKey string
 
 const claimsKey contextKey = "claims"
 
-const adminModeKey contextKey = "admin_mode"
-
 const subdomainKey contextKey = "subdomain_org"
 
 // adminModeFromContext returns whether admin mode is enabled.
-// Defaults to false (admin mode OFF) unless explicitly set.
+// Defaults to false (admin mode OFF) unless explicitly set. The flag is stored
+// via executor.WithAdminMode so agent and MCP execution paths can stamp the
+// same signal into their tool contexts.
 func adminModeFromContext(ctx context.Context) bool {
-	if ctx == nil {
-		return false
-	}
-	v := ctx.Value(adminModeKey)
-	if v == nil {
-		return false
-	}
-	enabled, ok := v.(bool)
-	return ok && enabled
+	return executor.AdminModeFromContext(ctx)
 }
 
 // AuthMiddleware validates JWT tokens and sets user claims in the request context.
@@ -82,7 +75,7 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte
 			}
 
 			adminMode := r.Header.Get("X-AETHER-Admin-Mode") == "true" || r.URL.Query().Get("admin_mode") == "true"
-			ctx = context.WithValue(ctx, adminModeKey, adminMode)
+			ctx = executor.WithAdminMode(ctx, adminMode)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -194,7 +187,7 @@ func completeAPITokenAuth(w http.ResponseWriter, r *http.Request, next http.Hand
 
 	ctx := context.WithValue(r.Context(), claimsKey, claims)
 	adminMode := r.Header.Get("X-AETHER-Admin-Mode") == "true" || r.URL.Query().Get("admin_mode") == "true"
-	ctx = context.WithValue(ctx, adminModeKey, adminMode)
+	ctx = executor.WithAdminMode(ctx, adminMode)
 
 	// Update last_used_at in background
 	go func() {
