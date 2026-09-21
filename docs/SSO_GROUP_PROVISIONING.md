@@ -30,8 +30,8 @@ New fields on the SSO provider create/edit form:
 | `group_prefix` | `string` | `""` | Only sync groups whose names start with this prefix. Empty = sync all. E.g., `"aether-"` syncs `aether-analysts` but skips `all-employees`. |
 | `auto_sync_groups` | `boolean` | `false` | Master toggle to enable group provisioning for this provider. |
 | `get_user_info` | `boolean` | `false` | Whether to call the UserInfo endpoint for additional claims after token exchange. Some IDPs include groups only in UserInfo, not in the ID token (or hit token size limits). |
-| `sync_empty_groups` | `boolean` | `false` | When enabled, an absent/empty groups claim is authoritative: all SSO-managed memberships for that user are removed. Warning: Keycloak omits the claim entirely when a user has zero groups, so a removed or misconfigured group mapper is indistinguishable from "no groups". |
-| `strip_group_prefix` | `boolean` | `false` | When enabled and `group_prefix` is set, the prefix is removed from stored/displayed group names (`Aether Notebooks: Area` → `Area`). Filtering still uses the prefix. |
+| `sync_empty_groups` | `boolean` | `false` | When enabled (and `auto_sync_groups` is on), an absent/empty groups claim is authoritative: all memberships tracked under this provider for that user are removed. Warning: Keycloak omits the claim entirely when a user has zero groups, so a removed or misconfigured group mapper is indistinguishable from "no groups". |
+| `strip_group_prefix` | `boolean` | `false` | When enabled (and `auto_sync_groups` is on) with `group_prefix` set, the prefix is removed from stored/displayed group names (`Aether Notebooks: Area` → `Area`). Filtering still uses the prefix. |
 
 ## Database Schema
 
@@ -91,9 +91,9 @@ On each SSO login (both new and returning users):
 "Zero groups" and "couldn't read the groups" are different states, and Aether keeps them apart:
 
 - **Keycloak omission.** Keycloak omits the groups claim entirely when a user has no groups, so a deleted or misconfigured group mapper looks exactly like a user who genuinely belongs to zero groups. OIDC exposes no way to distinguish them, which is why `sync_empty_groups` is opt-in: enabling it declares the IdP authoritative.
-- **Failed or malformed source.** When `get_user_info=true`, a failed UserInfo request — or a groups claim with the wrong shape (for example a string instead of an array) — marks the source unavailable. If the ID token carried no groups either, the claims get `GroupsUnavailable` and the callback **skips group sync entirely** instead of treating the empty list as zero groups. The skip is recorded as a `group.sso.error` audit event (with `provider_id`, `provider_name`, and `user_id`) and a `slog` warning; no memberships are removed.
+- **Failed or malformed source.** When `get_user_info=true`, a failed UserInfo request — or a non-array groups claim (for example a string instead of an array) — marks the source unavailable. An array that contains no strings is not malformed: it is treated as an empty list. If the ID token carried no groups either, the claims get `GroupsUnavailable` and the callback **skips group sync entirely** instead of treating the empty list as zero groups. The skip is recorded as a `group.sso.error` audit event (with `provider_id`, `provider_name`, and `user_id`) and a `slog` warning; no memberships are removed.
 - **ID token fallback.** If the ID token did carry groups, those are used even when UserInfo fails, so sync proceeds normally.
-- **Successful empty is authoritative.** A UserInfo response that succeeds and genuinely contains an empty groups array is *not* marked unavailable — with `sync_empty_groups` enabled it removes SSO-managed memberships as designed.
+- **Successful empty is not unavailable.** A UserInfo response that succeeds and genuinely contains no groups is *not* marked unavailable, but it is only authoritative when the ID token carried no groups either: `Exchange` replaces the ID-token groups with UserInfo's only when UserInfo yields at least one group, so a populated ID token wins over an empty UserInfo. With `sync_empty_groups`, an empty list therefore removes SSO-managed memberships only when neither source produced groups (or the provider isn't using `get_user_info` and the ID token had none).
 
 ## Admin Override
 
@@ -109,7 +109,7 @@ If the IDP renames a group, the old Aether group persists with stale memberships
 
 Group sync creates groups with no label — `display_name` is `NULL` — and never writes it, so repeated logins cannot overwrite an admin edit. Any group except `Everyone` can carry a label; `Everyone` is always rendered as "Everyone" and rejects one with a 400.
 
-The label is presentation-only. The frontend renders `display_name?.trim() || name` everywhere through the shared `groupLabel` helper, while `name` remains the sync identity: matching, stale comparison, the `UNIQUE (org_id, name)` constraint, permission resolution, and audit resource names all use `name`. `display_name` never participates in any lookup.
+The label is presentation-only. The frontend renders `display_name?.trim() || name` everywhere through the shared `groupLabel` helper, while `name` remains the sync identity: matching, stale comparison, the `UNIQUE (org_id, name)` constraint, and audit resource names all use `name`. Permission resolution uses group IDs, with the `Everyone` special case matching on `name`, so `display_name` never participates in an access decision.
 
 Because identity is still `name`, labels survive re-sync: an existing group row is reused and its label is left untouched. An IdP rename still creates a new, unlabeled group, leaving the old group (and its label) behind until cleaned up manually. Example: `aether-notebooks-data-analysts-infra` with `strip_group_prefix` stores `data-analysts-infra`, which an admin can label `Data Analysts Infra`.
 
