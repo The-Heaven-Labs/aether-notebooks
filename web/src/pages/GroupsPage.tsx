@@ -680,28 +680,34 @@ export function GroupsPage() {
                     <ChevronRight size={14} style={{ ...styles.chevron, transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }} />
                     {isRenaming ? (
                       <span style={styles.renameFields} onClick={(e) => e.stopPropagation()}>
-                        <input
-                          autoFocus
-                          style={styles.renameInput}
-                          value={renameValue}
-                          onChange={(e) => setRenameValue(e.target.value)}
-                          aria-label="Group name"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') { e.stopPropagation(); handleRenameSubmit(group.id) }
-                            if (e.key === 'Escape') { e.stopPropagation(); setRenamingId(null) }
-                          }}
-                        />
-                        <input
-                          style={styles.renameLabelInput}
-                          value={renameDisplayValue}
-                          onChange={(e) => setRenameDisplayValue(e.target.value)}
-                          placeholder={`Label (default: ${group.name})`}
-                          aria-label="Group display name"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') { e.stopPropagation(); handleRenameSubmit(group.id) }
-                            if (e.key === 'Escape') { e.stopPropagation(); setRenamingId(null) }
-                          }}
-                        />
+                        <span style={styles.renameField}>
+                          <span style={styles.renameCaption}>Name</span>
+                          <input
+                            autoFocus
+                            style={styles.renameInput}
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            aria-label="Group name"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') { e.stopPropagation(); handleRenameSubmit(group.id) }
+                              if (e.key === 'Escape') { e.stopPropagation(); setRenamingId(null) }
+                            }}
+                          />
+                        </span>
+                        <span style={styles.renameField}>
+                          <span style={styles.renameCaption}>Display label</span>
+                          <input
+                            style={styles.renameLabelInput}
+                            value={renameDisplayValue}
+                            onChange={(e) => setRenameDisplayValue(e.target.value)}
+                            placeholder={`Label (default: ${group.name})`}
+                            aria-label="Group display name"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') { e.stopPropagation(); handleRenameSubmit(group.id) }
+                              if (e.key === 'Escape') { e.stopPropagation(); setRenamingId(null) }
+                            }}
+                          />
+                        </span>
                       </span>
                     ) : (
                       <span style={styles.groupName} title={group.name}>
@@ -1027,6 +1033,20 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 4,
     flex: 1,
     minWidth: 0,
+  },
+  renameField: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+    minWidth: 0,
+  },
+  renameCaption: {
+    fontSize: 10,
+    fontWeight: 600,
+    color: 'var(--text-muted)',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.5px',
+    lineHeight: 1.2,
   },
   renameInput: {
     fontSize: 14,
