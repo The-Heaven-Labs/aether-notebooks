@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/chaccess"
 )
@@ -65,6 +66,27 @@ func seedGrantGroup(t *testing.T, s *Server, orgID uuid.UUID, name string, membe
 		defer cancel()
 		if _, err := s.db.Pool.Exec(cleanupCtx, `DELETE FROM groups WHERE id = $1`, groupID.String()); err != nil {
 			t.Logf("cleanup grant group: %v", err)
+		}
+	})
+	return groupID
+}
+
+// seedGrantEveryoneGroup creates the org's implicit Everyone group. Orgs
+// seeded directly via SQL (as the test fixtures do) do not get one, but
+// permissions.go treats every member as belonging to it.
+func seedGrantEveryoneGroup(t *testing.T, s *Server, orgID uuid.UUID) uuid.UUID {
+	t.Helper()
+	groupID := uuid.New()
+	_, err := s.db.Pool.Exec(context.Background(),
+		`INSERT INTO groups (id, org_id, name) VALUES ($1, $2, 'Everyone')`,
+		groupID.String(), orgID.String())
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := s.db.Pool.Exec(cleanupCtx, `DELETE FROM groups WHERE id = $1`, groupID.String()); err != nil {
+			t.Logf("cleanup everyone group: %v", err)
 		}
 	})
 	return groupID
@@ -402,6 +424,124 @@ func TestWarehouseGrantWarningHonorsFolderServiceAccess(t *testing.T) {
 	var afterGroupGrant warehouseGrantCreateJSON
 	require.NoError(t, json.Unmarshal(afterGroup.Body.Bytes(), &afterGroupGrant))
 	require.Empty(t, afterGroupGrant.Warning, "folder-inherited `use` must clear the group warning")
+}
+
+// TestWarehouseGrantWarningHonorsEveryoneGroupServiceAccess pins the warning
+// check to permissions.go's implicit Everyone membership: a `use` ACL on the
+// org's Everyone group must clear the warning for user, group, and everyone
+// grant subjects alike.
+func TestWarehouseGrantWarningHonorsEveryoneGroupServiceAccess(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Grant Everyone Warning WH")
+	conn := seedWarehouseConnector(t, s, orgID, "Grant Everyone Service")
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, conn, &wh).Code)
+	memberID, _ := seedGrantOrgMember(t, s, orgID, "non-admin")
+	groupID := seedGrantGroup(t, s, orgID, "Grant Everyone Group", memberID)
+	everyoneID := seedGrantEveryoneGroup(t, s, orgID)
+
+	subjects := []struct {
+		subjectType string
+		subjectID   string
+	}{
+		{"user", memberID.String()},
+		{"group", groupID.String()},
+		{"everyone", ""},
+	}
+	for _, subject := range subjects {
+		rec := createGrantViaAPI(t, s, admin, wh,
+			grantBody(subject.subjectType, subject.subjectID, "analytics", "events"))
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		var created warehouseGrantCreateJSON
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+		require.Equal(t, "no_service_access", created.Warning, "subject_type=%s", subject.subjectType)
+	}
+
+	// `use` on the implicit Everyone group reaches every member, so it must
+	// clear the warning for all three subject forms.
+	_, err := s.db.Pool.Exec(context.Background(), `
+		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		VALUES ($1, 'connector', $2::uuid, 'group', $3, ARRAY['use'])`,
+		orgID.String(), conn.String(), everyoneID.String())
+	require.NoError(t, err)
+
+	for _, subject := range subjects {
+		rec := createGrantViaAPI(t, s, admin, wh,
+			grantBody(subject.subjectType, subject.subjectID, "analytics", "events"))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var replayed warehouseGrantCreateJSON
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &replayed))
+		require.Empty(t, replayed.Warning,
+			"Everyone-group `use` must clear the warning for subject_type=%s", subject.subjectType)
+	}
+}
+
+// TestWarehouseGrantEffectiveAccessZeroGrantShape pins the response contract
+// for a member with no effective grants: no ClickHouse identity fields (they
+// are not provisioned), empty unions, and a null preference.
+func TestWarehouseGrantEffectiveAccessZeroGrantShape(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Grant Zero Shape WH")
+	conn := seedWarehouseConnector(t, s, orgID, "Grant Zero Shape Service")
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, conn, &wh).Code)
+	_, member := seedGrantOrgMember(t, s, orgID, "non-admin")
+
+	rec := effectiveAccessViaAPI(t, s, member, wh, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
+	require.NotContains(t, raw, "ch_user", "a zero-grant subject must not look provisioned")
+	require.NotContains(t, raw, "ch_roles")
+	require.JSONEq(t, `[]`, string(raw["tables"]))
+	require.JSONEq(t, `[]`, string(raw["services"]))
+	require.JSONEq(t, `null`, string(raw["preferred_connector_id"]))
+
+	var access warehouseEffectiveAccessJSON
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &access))
+	require.Empty(t, access.CHUser)
+	require.Empty(t, access.CHRoles)
+}
+
+// TestWarehouseGrantEffectiveAccessIgnoresStalePreference covers a stored
+// preference whose connector is no longer an allowed service: routing already
+// ignores it, so effective access must not report it either.
+func TestWarehouseGrantEffectiveAccessIgnoresStalePreference(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Grant Stale Preference WH")
+	connA := seedWarehouseConnector(t, s, orgID, "Grant Stale Service A")
+	connB := seedWarehouseConnector(t, s, orgID, "Grant Stale Service B")
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, connA, &wh).Code)
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, connB, &wh).Code)
+
+	memberID, member := seedGrantOrgMember(t, s, orgID, "non-admin")
+	grantConnectorUse(t, s, orgID, memberID, connA)
+	grantConnectorUse(t, s, orgID, memberID, connB)
+	require.Equal(t, http.StatusOK, putPreferenceViaAPI(t, s, member, wh, &connA).Code)
+
+	// Revoke the preferred service without the handler's preference cleanup:
+	// the row stays behind as a stale preference.
+	_, err := s.db.Pool.Exec(context.Background(),
+		`UPDATE connectors SET deleted_at = now() WHERE id = $1`, connA.String())
+	require.NoError(t, err)
+	require.Equal(t, connA.String(), *warehousePreference(t, s, memberID, wh))
+
+	access := decodeEffectiveAccess(t, effectiveAccessViaAPI(t, s, member, wh, ""))
+	require.Nil(t, access.PreferredConnectorID, "a stale preference must not be reported")
+	require.Len(t, access.Services, 1)
+	require.Equal(t, connB.String(), access.Services[0].ConnectorID)
+	require.False(t, access.Services[0].Preferred)
+}
+
+// TestWarehouseGrantForeignKeyViolationMapping pins the race guard: a grant
+// INSERT whose warehouse vanished mid-request fails the composite FK
+// (SQLSTATE 23503) and must map to the same 404 as the existence pre-check.
+func TestWarehouseGrantForeignKeyViolationMapping(t *testing.T) {
+	require.True(t, isForeignKeyViolation(&pgconn.PgError{Code: "23503"}))
+	require.False(t, isForeignKeyViolation(&pgconn.PgError{Code: "23505"}))
+	require.False(t, isForeignKeyViolation(errors.New("not a pg error")))
 }
 
 func TestWarehouseGrantCrossOrgIsolation(t *testing.T) {

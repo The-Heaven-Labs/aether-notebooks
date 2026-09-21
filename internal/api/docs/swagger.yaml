@@ -6197,8 +6197,10 @@ paths:
   /warehouses/{id}/effective-access:
     get:
       description: Return the union of table grants for a user in a warehouse, the
-        ClickHouse identity names, and the services the user may route to. Org admins
-        may inspect any member; other members may only inspect themselves.
+        ClickHouse identity names, and the services the user may route to. Identity
+        fields appear only when the user has at least one effective grant, and the
+        preference only while it names an allowed service. Org admins may inspect
+        any member; other members may only inspect themselves.
       parameters:
       - description: Warehouse ID
         in: path

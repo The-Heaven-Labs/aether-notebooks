@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/chaccess"
 )
@@ -61,12 +62,15 @@ type warehouseEffectiveServiceJSON struct {
 // warehouseEffectiveAccessJSON answers "what can this subject touch in this
 // warehouse": the union of direct, group, and everyone table grants, the
 // ClickHouse identity names the sync worker uses for this subject, and the
-// services the subject may route to.
+// services the subject may route to. CHUser/CHRoles are emitted only when the
+// grant union is non-empty, matching chaccess.Compute's provisioning
+// condition; a direct-grants-only subject has no CHRoles. PreferredConnectorID
+// is null unless the stored preference still names an allowed service.
 type warehouseEffectiveAccessJSON struct {
 	UserID               string                          `json:"user_id"`
 	WarehouseID          string                          `json:"warehouse_id"`
-	CHUser               string                          `json:"ch_user"`
-	CHRoles              []string                        `json:"ch_roles"`
+	CHUser               string                          `json:"ch_user,omitempty"`
+	CHRoles              []string                        `json:"ch_roles,omitempty"`
 	Tables               []warehouseEffectiveTableJSON   `json:"tables"`
 	Services             []warehouseEffectiveServiceJSON `json:"services"`
 	PreferredConnectorID *string                         `json:"preferred_connector_id"`
@@ -80,6 +84,11 @@ const warehouseGrantSelect = `
 	FROM warehouse_table_grants wtg
 	LEFT JOIN users u ON wtg.subject_type = 'user' AND u.id::text = wtg.subject_id
 	LEFT JOIN groups g ON wtg.subject_type = 'group' AND g.id::text = wtg.subject_id`
+
+// maxWarehouseGrantRows bounds the grant list response. A warehouse with more
+// explicit grants than this is far outside expected use, and the UI cannot
+// render more anyway.
+const maxWarehouseGrantRows = 1000
 
 // grantValidationError marks a request that must be rejected with 400. Any
 // other error from the same helpers is a database failure and maps to 500.
@@ -169,6 +178,14 @@ func validateGrantObjectNames(database, table string) error {
 	return nil
 }
 
+// isForeignKeyViolation reports a SQLSTATE 23503 error. A grant write whose
+// warehouse vanished between the handler's existence check and the INSERT
+// fails its composite FK instead of inserting; callers map it to 404.
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+}
+
 func scanWarehouseGrant(row pgx.Row) (warehouseGrantJSON, error) {
 	var g warehouseGrantJSON
 	err := row.Scan(&g.ID, &g.OrgID, &g.WarehouseID, &g.SubjectType, &g.SubjectID,
@@ -235,8 +252,9 @@ func (s *Server) handleListWarehouseGrants(w http.ResponseWriter, r *http.Reques
 	rows, err := s.db.Pool.Query(ctx, warehouseGrantSelect+`
 		WHERE wtg.warehouse_id = $1 AND wtg.org_id = $2
 		ORDER BY wtg.subject_type ASC, wtg.subject_id ASC,
-		         wtg.database_name ASC, wtg.table_name ASC`,
-		warehouseUUID.String(), claims.OrgID)
+		         wtg.database_name ASC, wtg.table_name ASC
+		LIMIT $3`,
+		warehouseUUID.String(), claims.OrgID, maxWarehouseGrantRows)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -320,13 +338,21 @@ func (s *Server) handleCreateWarehouseGrant(w http.ResponseWriter, r *http.Reque
 	case err == nil:
 		inserted = true
 	case errors.Is(err, pgx.ErrNoRows):
-		// Idempotent replay: return the grant that already exists.
+		// Idempotent replay: return the grant that already exists. A missing
+		// row here means a concurrent delete won the race.
 		err = s.db.Pool.QueryRow(ctx, `
 			SELECT id FROM warehouse_table_grants
 			WHERE warehouse_id = $1 AND org_id = $2 AND subject_type = $3
 			  AND subject_id = $4 AND database_name = $5 AND table_name = $6`,
 			warehouseUUID.String(), claims.OrgID, req.SubjectType, subjectID,
 			req.Database, req.Table).Scan(&grantID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "warehouse not found")
+			return
+		}
+	case isForeignKeyViolation(err):
+		writeError(w, http.StatusNotFound, "warehouse not found")
+		return
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create grant")
@@ -434,10 +460,12 @@ func (s *Server) handleDeleteWarehouseGrant(w http.ResponseWriter, r *http.Reque
 // the caller's admin mode, and so group subjects can be inspected without a
 // user identity.
 //
-// Counting rules mirror execution: for a user, direct, group (including the
-// materialized Everyone group), and org_role everyone entries count; for a
-// group, its own and org_role everyone entries; for everyone, only the
-// org_role everyone entry.
+// Counting rules mirror execution's subject resolution: for a user, direct,
+// group, and org_role everyone entries count; for a group, its own and
+// org_role everyone entries; for everyone, the org's Everyone group and the
+// org_role everyone entry. The org's Everyone group is always included,
+// because permissions.go treats every member as implicitly belonging to it
+// even when no group_members row materializes that membership.
 func (s *Server) subjectHasServiceAccess(ctx context.Context, orgID string, warehouseID uuid.UUID, subjectType, subjectID string) (bool, error) {
 	var (
 		userSubject   string
@@ -446,6 +474,28 @@ func (s *Server) subjectHasServiceAccess(ctx context.Context, orgID string, ware
 	switch subjectType {
 	case "user":
 		userSubject = subjectID
+	case "group":
+		groupSubjects = []string{subjectID}
+	case "everyone":
+		// No concrete subject; the Everyone group and org_role everyone
+		// branches below still apply, while an arbitrary group's ACL must not.
+	default:
+		return false, nil
+	}
+
+	// Mirror permissions.go:52-65, which appends the org's Everyone group to
+	// every user's group set regardless of materialized membership rows.
+	var everyoneGroupID string
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT id::text FROM groups WHERE org_id = $1 AND name = 'Everyone'`, orgID).Scan(&everyoneGroupID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return false, fmt.Errorf("load everyone group: %w", err)
+	}
+	if everyoneGroupID != "" {
+		groupSubjects = append(groupSubjects, everyoneGroupID)
+	}
+
+	if subjectType == "user" {
 		rows, err := s.db.Pool.Query(ctx,
 			`SELECT group_id::text FROM group_members WHERE user_id = $1`, subjectID)
 		if err != nil {
@@ -462,16 +512,10 @@ func (s *Server) subjectHasServiceAccess(ctx context.Context, orgID string, ware
 		if err := rows.Err(); err != nil {
 			return false, fmt.Errorf("iterate group memberships: %w", err)
 		}
-	case "group":
-		groupSubjects = []string{subjectID}
-	case "everyone":
-		// Only the org_role:everyone branch below can match.
-	default:
-		return false, nil
 	}
 
 	var allowed bool
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			FROM connectors c
@@ -511,7 +555,7 @@ func (s *Server) subjectHasServiceAccess(ctx context.Context, orgID string, ware
 }
 
 // @Summary Get a subject's effective warehouse access
-// @Description Return the union of table grants for a user in a warehouse, the ClickHouse identity names, and the services the user may route to. Org admins may inspect any member; other members may only inspect themselves.
+// @Description Return the union of table grants for a user in a warehouse, the ClickHouse identity names, and the services the user may route to. Identity fields appear only when the user has at least one effective grant, and the preference only while it names an allowed service. Org admins may inspect any member; other members may only inspect themselves.
 // @Tags warehouses
 // @Produce json
 // @Param id path string true "Warehouse ID"
@@ -621,44 +665,23 @@ func (s *Server) handleWarehouseEffectiveAccess(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	services, err := s.listWarehouseServices(ctx, warehouseUUID, orgUUID)
+	allowedServices, preferredID, err := s.allowedWarehouseServices(ctx, targetUUID, orgUUID, targetRole, warehouseUUID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	allowedServices := []warehouseEffectiveServiceJSON{}
-	for _, svc := range services {
-		allowed, err := s.connectorUseAllowed(ctx, targetUUID, orgUUID, targetRole, svc.id)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "permission check failed")
-			return
-		}
-		if allowed {
-			allowedServices = append(allowedServices, warehouseEffectiveServiceJSON{
-				ConnectorID: svc.id.String(),
-				Name:        svc.name,
-			})
-		}
-	}
-
-	var preferredID *uuid.UUID
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT connector_id FROM warehouse_service_preferences
-		WHERE user_id = $1 AND warehouse_id = $2`,
-		targetUserID, warehouseUUID.String()).Scan(&preferredID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusInternalServerError, "query failed")
-		return
+	services := make([]warehouseEffectiveServiceJSON, 0, len(allowedServices))
+	for _, svc := range allowedServices {
+		services = append(services, warehouseEffectiveServiceJSON{
+			ConnectorID: svc.id.String(),
+			Name:        svc.name,
+			Preferred:   preferredID != nil && *preferredID == svc.id,
+		})
 	}
 	var preferredValue *string
 	if preferredID != nil {
 		preferred := preferredID.String()
 		preferredValue = &preferred
-		for i := range allowedServices {
-			if allowedServices[i].ConnectorID == preferred {
-				allowedServices[i].Preferred = true
-			}
-		}
 	}
 
 	roles := make([]string, 0, len(roleSet))
@@ -667,15 +690,21 @@ func (s *Server) handleWarehouseEffectiveAccess(w http.ResponseWriter, r *http.R
 	}
 	sort.Strings(roles)
 
-	writeJSON(w, http.StatusOK, warehouseEffectiveAccessJSON{
+	resp := warehouseEffectiveAccessJSON{
 		UserID:               targetUserID,
 		WarehouseID:          warehouseUUID.String(),
-		CHUser:               chaccess.UserIdent(warehouseUUID, orgUUID, targetUUID),
-		CHRoles:              roles,
 		Tables:               tables,
-		Services:             allowedServices,
+		Services:             services,
 		PreferredConnectorID: preferredValue,
-	})
+	}
+	// chaccess.Compute provisions a ClickHouse user only with at least one
+	// effective grant; a subject with none must not look provisioned.
+	if len(tables) > 0 {
+		resp.CHUser = chaccess.UserIdent(warehouseUUID, orgUUID, targetUUID)
+		resp.CHRoles = roles
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // setWarehousePreferenceRequest: connector_id is required; an explicit null

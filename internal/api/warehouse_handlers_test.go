@@ -119,30 +119,12 @@ func seedWarehouseOrgAdmin(t *testing.T, s *Server) (orgID, userID uuid.UUID, to
 	return orgID, userID, token
 }
 
-// seedWarehouseOrgMemberToken adds a non-admin member to an existing org.
+// seedWarehouseOrgMemberToken adds a non-admin member to an existing org and
+// returns a token. The user ID is available through seedGrantOrgMember, which
+// grant tests need for canonical subject IDs.
 func seedWarehouseOrgMemberToken(t *testing.T, s *Server, orgID uuid.UUID, role string) string {
 	t.Helper()
-	ctx := context.Background()
-	suffix := uuid.NewString()
-	userID := uuid.New()
-
-	_, err := s.db.Pool.Exec(ctx, `INSERT INTO users (id, email, name) VALUES ($1, $2, $3)`,
-		userID.String(), "wh-member-"+suffix+"@test.local", "Warehouse Handler Member")
-	require.NoError(t, err)
-	_, err = s.db.Pool.Exec(ctx, `INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, $3)`,
-		orgID.String(), userID.String(), role)
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if _, err := s.db.Pool.Exec(cleanupCtx, `DELETE FROM users WHERE id = $1`, userID.String()); err != nil {
-			t.Logf("cleanup member: %v", err)
-		}
-	})
-
-	token, err := s.jwt.Issue(userID.String(), orgID.String(), role)
-	require.NoError(t, err)
+	_, token := seedGrantOrgMember(t, s, orgID, role)
 	return token
 }
 

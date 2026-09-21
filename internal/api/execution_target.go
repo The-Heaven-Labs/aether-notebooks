@@ -88,15 +88,48 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, r
 		return s.buildExecutionTarget(warehouseID, orgID, userID, requested)
 	}
 
-	services, err := s.listWarehouseServices(ctx, warehouseID, orgID)
+	services, preferredID, err := s.allowedWarehouseServices(ctx, userID, orgID, role, warehouseID)
 	if err != nil {
 		return nil, err
+	}
+	if preferredID != nil {
+		for _, svc := range services {
+			if svc.id == *preferredID {
+				return s.buildExecutionTarget(warehouseID, orgID, userID, svc)
+			}
+		}
+	}
+
+	switch len(services) {
+	case 0:
+		return nil, fmt.Errorf("warehouse %s: %w", warehouseID, executor.ErrServiceAccessDenied)
+	case 1:
+		return s.buildExecutionTarget(warehouseID, orgID, userID, services[0])
+	default:
+		choices := make([]executor.ServiceChoice, 0, len(services))
+		for _, svc := range services {
+			choices = append(choices, executor.ServiceChoice{ConnectorID: svc.id, Name: svc.name})
+		}
+		return nil, &executor.ServiceChoiceError{WarehouseID: warehouseID, Allowed: choices}
+	}
+}
+
+// allowedWarehouseServices returns the warehouse's live ClickHouse services
+// the user may execute on, in stable order, plus the user's effective routing
+// preference: the stored preference only while it still names one of those
+// services, and nil otherwise (unset, revoked, moved, or soft-deleted).
+// Resolving the preference here keeps execution routing and effective-access
+// reporting from disagreeing about stale rows.
+func (s *Server) allowedWarehouseServices(ctx context.Context, userID, orgID uuid.UUID, role string, warehouseID uuid.UUID) ([]warehouseService, *uuid.UUID, error) {
+	services, err := s.listWarehouseServices(ctx, warehouseID, orgID)
+	if err != nil {
+		return nil, nil, err
 	}
 	allowed := make([]warehouseService, 0, len(services))
 	for _, svc := range services {
 		ok, err := s.connectorUseAllowed(ctx, userID, orgID, role, svc.id)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if ok {
 			allowed = append(allowed, svc)
@@ -108,30 +141,23 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, r
 		`SELECT connector_id FROM warehouse_service_preferences WHERE user_id = $1 AND warehouse_id = $2`,
 		userID.String(), warehouseID.String()).Scan(&preferredID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("load service preference: %w", err)
+		return nil, nil, fmt.Errorf("load service preference: %w", err)
 	}
 	if preferredID != nil {
+		inAllowed := false
 		for _, svc := range allowed {
 			if svc.id == *preferredID {
-				return s.buildExecutionTarget(warehouseID, orgID, userID, svc)
+				inAllowed = true
+				break
 			}
 		}
-		// A stale preference (revoked access, moved or soft-deleted service)
-		// is ignored; the normal fallback below still applies.
-	}
-
-	switch len(allowed) {
-	case 0:
-		return nil, fmt.Errorf("warehouse %s: %w", warehouseID, executor.ErrServiceAccessDenied)
-	case 1:
-		return s.buildExecutionTarget(warehouseID, orgID, userID, allowed[0])
-	default:
-		choices := make([]executor.ServiceChoice, 0, len(allowed))
-		for _, svc := range allowed {
-			choices = append(choices, executor.ServiceChoice{ConnectorID: svc.id, Name: svc.name})
+		if !inAllowed {
+			// A stale preference (revoked access, moved or soft-deleted
+			// service) is ignored by routing and must not be reported either.
+			preferredID = nil
 		}
-		return nil, &executor.ServiceChoiceError{WarehouseID: warehouseID, Allowed: choices}
 	}
+	return allowed, preferredID, nil
 }
 
 // loadServiceConnector loads a single connector row for routing along with its
