@@ -37,6 +37,7 @@ type Server struct {
 	audit                *audit.Logger
 	masterKey            []byte
 	hub                  *Hub
+	rdb                  *redis.Client // shared Redis client; nil when no cache is configured
 	mux                  *http.ServeMux
 	store                storage.Storage
 	platformAdminEmail   string
@@ -73,7 +74,11 @@ type Server struct {
 	// owned by connPoolLoop.
 	connPool     *executor.ConnPool
 	connPoolLoop backgroundLoop
-	closeOnce    sync.Once // makes Close idempotent
+	// warehouseInvalidationLoop runs the Redis subscriber that applies other
+	// replicas' pooled-identity invalidations. It stops from Close; it is a
+	// no-op when no Redis client is configured.
+	warehouseInvalidationLoop backgroundLoop
+	closeOnce                 sync.Once // makes Close idempotent
 }
 
 // NewServer creates a new Aether API server with the provided dependencies.
@@ -88,6 +93,7 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 		audit:                      auditLogger,
 		masterKey:                  masterKey,
 		hub:                        NewHub(rdb),
+		rdb:                        rdb,
 		mux:                        http.NewServeMux(),
 		Cache:                      redisCache,
 		upgrader:                   websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
@@ -234,9 +240,11 @@ func (s *Server) warehouseManagementEnabled() bool {
 // worker. The worker's context is cancelled, so queued runs are dropped and
 // retries stop; an in-flight reconcile may abort between statements or mid-DDL,
 // leaving a partially applied plan that the next start's catch-up converges.
-// Close waits for the loop goroutine to exit and for the worker's in-flight
-// run to return. It is safe to call multiple times, and must run before the
-// database and cache are closed because the reconcile path uses both.
+// It also stops the connection-pool idle ticker and the cross-replica
+// invalidation subscriber before closing the pool. Close waits for the loop
+// goroutines to exit and for the worker's in-flight run to return. It is safe
+// to call multiple times, and must run before the database and cache are closed
+// because the reconcile path uses both.
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
 		// Stop new enqueues before draining the worker so the loop cannot
@@ -249,6 +257,9 @@ func (s *Server) Close() {
 		// CloseIdle can race CloseAll; connections still leased by an
 		// in-flight execution are closed by their last release.
 		s.connPoolLoop.stop()
+		// Stop the cross-replica invalidation subscriber before the pool so a
+		// late broadcast cannot race CloseAll.
+		s.warehouseInvalidationLoop.stop()
 		s.connPool.CloseAll()
 	})
 }

@@ -253,13 +253,16 @@ func pooledWarehouseUsers(desired chaccess.DesiredState, actual chaccess.ActualS
 
 // invalidatePooledWarehouseIdentities closes the pooled connections for every
 // identity a reconcile observed. Callers invoke it only when a run applied
-// DDL, so an idempotent tick does not churn resident connections.
+// DDL, so an idempotent tick does not churn resident connections. The local
+// pool is invalidated first as the source-replica fast path, then the affected
+// names are broadcast so every other replica drops its own resident sessions.
 func (s *Server) invalidatePooledWarehouseIdentities(desired chaccess.DesiredState, actual chaccess.ActualState) {
 	if s.connPool == nil {
 		return
 	}
 	if users := pooledWarehouseUsers(desired, actual); len(users) > 0 {
 		s.connPool.InvalidateUsers(users)
+		s.publishWarehouseIdentityInvalidation(users)
 	}
 }
 

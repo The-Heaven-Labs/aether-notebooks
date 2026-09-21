@@ -231,19 +231,25 @@ the user was explicitly granted does not change results — only compute placeme
   cached schema metadata" wording.
 - **Reconcile invalidates pooled identities.** Before a run that will execute DDL, and on any
   fail-closed (wildcard / unexpected grant) run, pooled connections for the affected
-  identities are dropped so a resident session cannot keep serving pre-reconcile access. A
-  no-op tick leaves the pool untouched.
+  identities are dropped so a resident session cannot keep serving pre-reconcile access. The
+  drop is local-first, then broadcast to the other replicas (see the next bullet). A no-op
+  tick leaves the pool untouched.
 - **Kill-switch-off delete is DB-only.** `DELETE /warehouses/{id}` with
   `AETHER_CH_TABLE_PERMISSIONS=false` removes the row without opening a provisioner
   connection; leftover ClickHouse users/roles are recorded by a
   `warehouse.identities.cleanup` audit event (`deferred: true`) and must be dropped manually.
-- **Pool invalidation is process-local.** `connPool` lives inside the API process, so only the
-  replica that applies DDL (or fails closed) drops its pooled identities. On a multi-replica
-  deployment a resident session on another replica keeps serving pre-reconcile access until
-  its connection is reopened — restart the affected replicas; the 10-minute idle TTL only
-  helps if the connection actually goes idle, and a session kept warm by continuous queries
-  is not bounded by it. Cross-replica invalidation (e.g. a Redis broadcast) is a follow-up;
-  run a single API replica until it lands.
+- **Pool invalidation broadcasts across replicas.** `connPool` lives inside the API process,
+  so the replica that applies DDL (or fails closed, or revokes identities on delete) drops
+  its pooled identities first, then publishes their names on the Redis channel
+  `aether:warehouse-identity-invalidation` (JSON, chunked at 1000 names per message). Every
+  replica runs a subscriber that applies each message to its own pool, so a resident session
+  on any replica is closed. The broadcast is best-effort: if Redis is unavailable the publish
+  is logged and swallowed while the source replica's local invalidation still applies, so a
+  Redis outage window can leave other replicas' resident sessions serving pre-reconcile
+  access until their connections are reopened (the 10-minute idle TTL only helps if the
+  connection actually goes idle, and a session kept warm by continuous queries is not bounded
+  by it); restarting the affected replicas closes that window. Without a Redis client the
+  subscriber is skipped and invalidation stays local.
 - **Connection pooling deviation from the Performance constraints.** The implementation keeps
   one connection per `(endpoint, user)` (the design's "small per-user pools (1–2)") with a
   single process-wide cap (`connPoolMaxPools = 100`) and LRU eviction of idle entries after a
