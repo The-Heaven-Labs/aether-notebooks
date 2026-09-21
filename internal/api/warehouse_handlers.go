@@ -51,9 +51,10 @@ var (
 )
 
 // enqueueWarehouseSync schedules a reconcile for one warehouse. It is
-// best-effort, matching the other warehouse sync triggers.
+// best-effort, matching the other warehouse sync triggers, and a no-op while
+// the AETHER_CH_TABLE_PERMISSIONS kill switch is off.
 func (s *Server) enqueueWarehouseSync(warehouseID uuid.UUID) {
-	if s.warehouseSync == nil {
+	if s.warehouseSync == nil || !s.chTablePermissions {
 		return
 	}
 	s.warehouseSync.Enqueue(warehouseID)
@@ -66,9 +67,10 @@ type warehouseSyncForcer interface{ EnqueueNow(uuid.UUID) }
 // enqueueWarehouseSyncNow schedules a reconcile that skips the debounce delay,
 // used when a state change must converge promptly (e.g. a warehouse losing its
 // provisioner). It falls back to a normal enqueue when the worker does not
-// support immediacy.
+// support immediacy, and is a no-op while the AETHER_CH_TABLE_PERMISSIONS kill
+// switch is off.
 func (s *Server) enqueueWarehouseSyncNow(warehouseID uuid.UUID) {
-	if s.warehouseSync == nil {
+	if s.warehouseSync == nil || !s.chTablePermissions {
 		return
 	}
 	if forcer, ok := s.warehouseSync.(warehouseSyncForcer); ok {

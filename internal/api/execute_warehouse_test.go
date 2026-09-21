@@ -233,6 +233,43 @@ func TestExecuteCellUnmanagedClickHouseUsesLegacyCredential(t *testing.T) {
 		"an unmanaged connector must keep using its stored credential")
 }
 
+// With the kill switch off, a connector linked to a ready warehouse must still
+// execute through its stored credential rather than the per-user identity, so
+// an operator can roll back without unlinking warehouses.
+func TestKillSwitchOffRoutesManagedConnectorLegacy(t *testing.T) {
+	fx := setupExecuteWarehouseFixture(t)
+	fx.s.SetCHTablePermissions(false)
+	t.Cleanup(func() { fx.s.SetCHTablePermissions(true) })
+	fx.grantConnectorUse(t, fx.connA)
+
+	nbID, cellID := seedExecuteWarehouseCell(t, fx.s, fx.orgID, fx.userID, fx.connA,
+		"SELECT currentUser() AS ch_user", nil)
+	fx.grantNotebookRun(t, nbID)
+
+	rec := executeWarehouseCell(t, fx.s, fx.userID, fx.orgID, nbID, cellID)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	out := decodeExecuteOutputs(t, rec)
+	require.Len(t, out.Outputs[0].Data.Rows, 1)
+	require.Equal(t, "dev", out.Outputs[0].Data.Rows[0][0],
+		"kill switch off must fall back to the connector's stored credential")
+
+	// The legacy run must not claim a warehouse identity in the audit trail.
+	var metaJSON []byte
+	require.NoError(t, fx.s.db.Pool.QueryRow(context.Background(), `
+		SELECT metadata FROM audit_logs
+		WHERE org_id = $1 AND action = 'cell.execute' AND resource_id = $2
+		ORDER BY id DESC LIMIT 1`,
+		fx.orgID.String(), cellID.String()).Scan(&metaJSON))
+	var meta map[string]any
+	require.NoError(t, json.Unmarshal(metaJSON, &meta))
+	_, hasWarehouse := meta["warehouse_id"]
+	_, hasCHUser := meta["ch_user"]
+	require.False(t, hasWarehouse, "legacy run must not record a warehouse_id")
+	require.False(t, hasCHUser, "legacy run must not record a per-user ch_user")
+	require.Equal(t, fx.connA.String(), meta["connector_id"])
+}
+
 func TestExecuteCellNonClickHouseConnectorKeepsLegacyPath(t *testing.T) {
 	fx := setupExecuteWarehouseFixture(t)
 	// Linked to the warehouse on purpose: the type gate, not the warehouse

@@ -177,6 +177,43 @@ func TestWarehouseReconcileIntervalInvalid(t *testing.T) {
 	}
 }
 
+func TestCHTablePermissionsDefaultOff(t *testing.T) {
+	os.Unsetenv("AETHER_CH_TABLE_PERMISSIONS")
+	cfg, err := LoadMigrateOnly()
+	if err != nil {
+		t.Fatalf("LoadMigrateOnly() failed: %v", err)
+	}
+	if cfg.CHTablePermissions {
+		t.Error("expected CHTablePermissions to default to false")
+	}
+}
+
+func TestCHTablePermissionsEnabled(t *testing.T) {
+	os.Setenv("AETHER_CH_TABLE_PERMISSIONS", "true")
+	defer os.Unsetenv("AETHER_CH_TABLE_PERMISSIONS")
+	cfg, err := LoadMigrateOnly()
+	if err != nil {
+		t.Fatalf("LoadMigrateOnly() failed: %v", err)
+	}
+	if !cfg.CHTablePermissions {
+		t.Error("expected CHTablePermissions to be true when AETHER_CH_TABLE_PERMISSIONS=true")
+	}
+}
+
+func TestCHTablePermissionsOnlyTrueEnables(t *testing.T) {
+	for _, raw := range []string{"false", "1", "yes", "TRUE", ""} {
+		os.Setenv("AETHER_CH_TABLE_PERMISSIONS", raw)
+		cfg, err := LoadMigrateOnly()
+		if err != nil {
+			t.Fatalf("LoadMigrateOnly() failed for %q: %v", raw, err)
+		}
+		if cfg.CHTablePermissions {
+			t.Errorf("for %q: expected CHTablePermissions false", raw)
+		}
+		os.Unsetenv("AETHER_CH_TABLE_PERMISSIONS")
+	}
+}
+
 func TestOutputLimitsMaxBytesDefault(t *testing.T) {
 	os.Unsetenv("AETHER_OUTPUT_LIMITS_MAX_BYTES")
 	cfg, err := LoadMigrateOnly()

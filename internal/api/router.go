@@ -58,6 +58,11 @@ type Server struct {
 	commit               string                          // git commit (set via ldflags)
 	buildDate            string                          // build date (set via ldflags)
 	warehouseSync        warehouseSyncer                 // debounced ClickHouse access sync (nil disables triggers)
+	// chTablePermissions is the AETHER_CH_TABLE_PERMISSIONS kill switch. When
+	// false (default), managed connectors execute through the legacy
+	// stored-credential path and the warehouse sync worker stays dormant;
+	// warehouse CRUD and grants remain usable for staged setup.
+	chTablePermissions bool
 	// warehouseReconcileInterval is the periodic catch-up cadence for the
 	// warehouse sync loop (AETHER_CH_RECONCILE_INTERVAL); <= 0 means the
 	// package default.
@@ -204,6 +209,15 @@ func (s *Server) SetWarehouseReconcileInterval(d time.Duration) {
 		d = config.DefaultWarehouseReconcileInterval
 	}
 	s.warehouseReconcileInterval = d
+}
+
+// SetCHTablePermissions sets the AETHER_CH_TABLE_PERMISSIONS kill switch. When
+// disabled, every connector executes through the legacy stored-credential path
+// and warehouse reconciliation is dormant; warehouse CRUD and grant APIs stay
+// usable so admins can stage configuration before enabling it. Call it before
+// StartBackgroundJobs.
+func (s *Server) SetCHTablePermissions(enabled bool) {
+	s.chTablePermissions = enabled
 }
 
 // Close stops the warehouse reconciliation loop and then closes the sync

@@ -65,6 +65,8 @@ func newWarehouseSyncTestServer(t *testing.T) (*Server, []byte) {
 	require.NoError(t, db.Migrate(context.Background()))
 	key := crypto.DeriveKey(warehouseSyncTestMasterKey)
 	s := NewServer(db, auth.NewJWTIssuer("test-secret", 15*time.Minute), audit.NewLogger(db), key, nil)
+	// These tests exercise the managed path; the production default is off.
+	s.SetCHTablePermissions(true)
 	// Registered after db.Close's cleanup, so it runs before the pool closes.
 	t.Cleanup(s.Close)
 	return s, key
@@ -815,6 +817,7 @@ func TestReconcileWarehouseDoesNotStarveSmallPool(t *testing.T) {
 
 	key := crypto.DeriveKey(warehouseSyncTestMasterKey)
 	s := NewServer(db, auth.NewJWTIssuer("test-secret", 15*time.Minute), audit.NewLogger(db), key, nil)
+	s.SetCHTablePermissions(true)
 	t.Cleanup(s.Close)
 	fxA := setupWarehouseFixtureWithServer(t, s, key)
 	fxB := setupWarehouseFixtureWithServer(t, s, key)

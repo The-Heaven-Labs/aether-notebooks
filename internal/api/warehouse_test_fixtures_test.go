@@ -60,6 +60,9 @@ func buildSharedWarehouseTestServer() sharedWarehouseServer {
 	}
 	key := crypto.DeriveKey(warehouseSyncTestMasterKey)
 	s := NewServer(db, auth.NewJWTIssuer("test-secret", 15*time.Minute), audit.NewLogger(db), key, nil)
+	// Managed execution and background sync are opt-in (AETHER_CH_TABLE_PERMISSIONS);
+	// warehouse tests exercise the enabled mode.
+	s.SetCHTablePermissions(true)
 	return sharedWarehouseServer{server: s, db: db, key: key}
 }
 

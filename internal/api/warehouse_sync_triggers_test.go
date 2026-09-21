@@ -102,6 +102,8 @@ func seedWarehouseMembershipFixture(t *testing.T, s *api.Server) (orgID, userID,
 
 func TestMembershipChangeEnqueuesWarehouseSync(t *testing.T) {
 	s := setupTestServer(t)
+	// Sync triggers only fire in the managed mode.
+	s.SetCHTablePermissions(true)
 	orgID, userID, groupID, warehouseID, _ := seedWarehouseMembershipFixture(t, s)
 
 	rec := &recordingWarehouseSyncer{}
@@ -138,6 +140,8 @@ func TestMembershipChangeEnqueuesWarehouseSync(t *testing.T) {
 // warehouse granted to the just-materialized group.
 func TestOrgJoinEnqueuesWarehouseSyncForUser(t *testing.T) {
 	s := setupTestServer(t)
+	// Sync triggers only fire in the managed mode.
+	s.SetCHTablePermissions(true)
 	ctx := context.Background()
 	suffix := uuid.NewString()
 
@@ -230,6 +234,8 @@ func TestOrgJoinEnqueuesWarehouseSyncForUser(t *testing.T) {
 // warehouse access just like the regular membership endpoint.
 func TestPendingMemberAddEnqueuesWarehouseSync(t *testing.T) {
 	s := setupTestServer(t)
+	// Sync triggers only fire in the managed mode.
+	s.SetCHTablePermissions(true)
 	orgID, _, groupID, warehouseID, email := seedWarehouseMembershipFixture(t, s)
 
 	rec := &recordingWarehouseSyncer{}
@@ -255,6 +261,8 @@ func TestPendingMemberAddEnqueuesWarehouseSync(t *testing.T) {
 // enqueued even though the user no longer resolves to that group.
 func TestSSOGroupRemovalEnqueuesWarehouseSync(t *testing.T) {
 	s := setupTestServer(t)
+	// Sync triggers only fire in the managed mode.
+	s.SetCHTablePermissions(true)
 	ctx := context.Background()
 
 	ts := time.Now().UnixNano()

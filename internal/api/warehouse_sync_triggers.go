@@ -13,14 +13,15 @@ import (
 // best-effort: a lookup failure is logged and swallowed, because managing
 // memberships must never fail due to sync bookkeeping. Enqueues coalesce per
 // warehouse and a reconcile with no changes emits no DDL, so over-enqueuing is
-// cheap.
+// cheap. Every trigger is a no-op while the AETHER_CH_TABLE_PERMISSIONS kill
+// switch is off; re-enabling it enqueues all warehouses at server start.
 
 // enqueueWarehouseSyncForOrg enqueues every warehouse in the org. It is the
 // coarse fallback for mutations after which the affected warehouses cannot be
 // resolved precisely — org membership removal and user deletion destroy the
 // user rows that identify their direct, group, and everyone relationships.
 func (s *Server) enqueueWarehouseSyncForOrg(ctx context.Context, orgID string) {
-	if s.warehouseSync == nil {
+	if s.warehouseSync == nil || !s.chTablePermissions {
 		return
 	}
 	oid, err := uuid.Parse(orgID)
@@ -44,7 +45,7 @@ func (s *Server) enqueueWarehouseSyncForOrg(ctx context.Context, orgID string) {
 // warehouses without one cannot change. Orphaned grants for a deleted group
 // still resolve, which is exactly what makes role removal possible.
 func (s *Server) enqueueWarehouseSyncForGroup(ctx context.Context, groupID string) {
-	if s.warehouseSync == nil {
+	if s.warehouseSync == nil || !s.chTablePermissions {
 		return
 	}
 	gid, err := uuid.Parse(groupID)
@@ -72,7 +73,7 @@ func (s *Server) enqueueWarehouseSyncForGroup(ctx context.Context, groupID strin
 // The everyone clause is what provisions a newly joined member; without it,
 // joining an org with an everyone-granted warehouse would go unsynced.
 func (s *Server) enqueueWarehouseSyncForUser(ctx context.Context, userID string) {
-	if s.warehouseSync == nil {
+	if s.warehouseSync == nil || !s.chTablePermissions {
 		return
 	}
 	uid, err := uuid.Parse(userID)

@@ -60,10 +60,18 @@ const warehouseSyncLockKeySQL = `hashtextextended($1::text, 0)`
 // warehouses.applied_master_fp drives password re-keying after a master-key
 // rotation.
 //
+// When the AETHER_CH_TABLE_PERMISSIONS kill switch is off the run is a no-op:
+// no ClickHouse DDL, no sync_status rewrite. That keeps a rollback from
+// touching state the managed path left behind and makes re-enabling converge
+// through the ordinary startup enqueue.
+//
 // The sync worker wraps calls in a panic recovery; the recover here only
 // records an honest sync_status so a panic cannot leave the warehouse stuck
 // in 'syncing'. The original panic is re-raised for the worker's stack log.
 func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) error {
+	if !s.chTablePermissions {
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(ctx, warehouseSyncTimeout)
 	defer cancel()
 
@@ -881,9 +889,10 @@ func describeWarehouseDrift(actual chaccess.ActualState) string {
 // interval; enqueues are non-blocking and coalesce in the sync service. The
 // jitter spreads replicas started together so they do not contend on the same
 // warehouse advisory locks. The loop stops when ctx is cancelled or Server.Close
-// runs.
+// runs. It does not start while the AETHER_CH_TABLE_PERMISSIONS kill switch is
+// off; re-enabling it at the next server start enqueues everything again.
 func (s *Server) startWarehouseReconcileLoop(ctx context.Context) {
-	if s.warehouseSync == nil {
+	if s.warehouseSync == nil || !s.chTablePermissions {
 		return
 	}
 	interval := s.warehouseReconcileInterval
@@ -932,9 +941,10 @@ func warehouseReconcileJitter(interval time.Duration) time.Duration {
 // reconciliation. Warehouses without one cannot sync; assigning a provisioner
 // is covered by the membership/CRUD triggers. Lookup failures are logged and
 // swallowed: the next tick retries, and sync bookkeeping must never take down
-// the loop. A cancelled context (shutdown) is not logged as a failure.
+// the loop. A cancelled context (shutdown) is not logged as a failure. It is a
+// no-op while the AETHER_CH_TABLE_PERMISSIONS kill switch is off.
 func (s *Server) enqueueAllWarehouses(ctx context.Context) {
-	if s.warehouseSync == nil {
+	if s.warehouseSync == nil || !s.chTablePermissions {
 		return
 	}
 	rows, err := s.db.Pool.Query(ctx,
