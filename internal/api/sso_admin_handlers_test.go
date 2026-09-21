@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/sso"
 )
 
 func TestPlatformAdminSSOProviderCRUD(t *testing.T) {
@@ -79,6 +81,12 @@ func TestPlatformAdminSSOProviderCRUD(t *testing.T) {
 	assert.True(t, found, "created provider should appear in list")
 
 	// 3. Update name → 200, verify name changed
+	// Prime the per-provider cache; the update must evict it.
+	ctx := context.Background()
+	_, err := sso.GetCachedProvider(ctx, s.DB().Pool, s.Cache.Client(), s.MasterKey(), providerID, "")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), s.Cache.Client().Exists(ctx, "sso:provider:"+providerID).Val())
+
 	updateBody := map[string]any{
 		"name":               "Acme Okta Updated",
 		"client_id":          "abc123",
@@ -104,12 +112,21 @@ func TestPlatformAdminSSOProviderCRUD(t *testing.T) {
 	assert.True(t, updated["sync_empty_groups"].(bool))
 	assert.True(t, updated["strip_group_prefix"].(bool))
 
+	require.Equal(t, int64(0), s.Cache.Client().Exists(ctx, "sso:provider:"+providerID).Val(),
+		"update must evict the per-provider cache")
+	reloaded, err := sso.GetCachedProvider(ctx, s.DB().Pool, s.Cache.Client(), s.MasterKey(), providerID, "")
+	require.NoError(t, err)
+	assert.Equal(t, "Acme Okta Updated", reloaded.Name)
+
 	// 4. Delete → 204
 	req = httptest.NewRequest("DELETE", "/api/v1/admin/sso/providers/"+providerID, nil)
 	req = withPlatformAdminClaims(req)
 	rec = httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusNoContent, rec.Code)
+
+	require.Equal(t, int64(0), s.Cache.Client().Exists(ctx, "sso:provider:"+providerID).Val(),
+		"delete must evict the per-provider cache")
 
 	// 5. List again → not present
 	req = httptest.NewRequest("GET", "/api/v1/admin/sso/providers", nil)

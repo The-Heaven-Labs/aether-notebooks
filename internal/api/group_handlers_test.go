@@ -15,6 +15,19 @@ func TestGroupCRUD(t *testing.T) {
 	email := fmt.Sprintf("group-%d@example.com", time.Now().UnixNano())
 	token := registerAndGetToken(t, srv, email, "Group Org")
 
+	// Reserved display name is rejected on create, case-insensitively
+	for _, label := range []string{"Everyone", "everyone", " EVERYONE "} {
+		reservedBody, _ := json.Marshal(map[string]any{"name": "Reserved Label", "display_name": label})
+		reservedReq := httptest.NewRequest("POST", "/api/v1/groups", bytes.NewReader(reservedBody))
+		reservedReq.Header.Set("Content-Type", "application/json")
+		reservedReq.Header.Set("Authorization", "Bearer "+token)
+		reservedRec := httptest.NewRecorder()
+		srv.ServeHTTP(reservedRec, reservedReq)
+		if reservedRec.Code != http.StatusBadRequest {
+			t.Fatalf("create with display_name %q: expected 400, got %d: %s", label, reservedRec.Code, reservedRec.Body.String())
+		}
+	}
+
 	// Create group
 	body, _ := json.Marshal(map[string]any{"name": "Analytics", "display_name": "Analytics Label"})
 	req := httptest.NewRequest("POST", "/api/v1/groups", bytes.NewReader(body))
@@ -129,6 +142,19 @@ func TestGroupCRUD(t *testing.T) {
 	}
 	if labeled["name"] != "Analytics" {
 		t.Fatalf("expected name unchanged, got %v", labeled["name"])
+	}
+
+	// Reserved display name is rejected on update, case-insensitively
+	for _, label := range []string{"everyone", "EvErYoNe"} {
+		reservedUpdateBody, _ := json.Marshal(map[string]any{"display_name": label})
+		reservedUpdateReq := httptest.NewRequest("PUT", "/api/v1/groups/"+groupID, bytes.NewReader(reservedUpdateBody))
+		reservedUpdateReq.Header.Set("Content-Type", "application/json")
+		reservedUpdateReq.Header.Set("Authorization", "Bearer "+token)
+		reservedUpdateRec := httptest.NewRecorder()
+		srv.ServeHTTP(reservedUpdateRec, reservedUpdateReq)
+		if reservedUpdateRec.Code != http.StatusBadRequest {
+			t.Fatalf("update with display_name %q: expected 400, got %d: %s", label, reservedUpdateRec.Code, reservedUpdateRec.Body.String())
+		}
 	}
 
 	// Whitespace-only label clears to NULL

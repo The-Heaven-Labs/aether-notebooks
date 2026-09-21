@@ -114,6 +114,10 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "\"everyone\" is a reserved group name")
 		return
 	}
+	if req.DisplayName != nil && strings.EqualFold(strings.TrimSpace(*req.DisplayName), "everyone") {
+		writeError(w, http.StatusBadRequest, "\"everyone\" is a reserved display name")
+		return
+	}
 
 	var g models.Group
 	err := s.db.Pool.QueryRow(ctx,
@@ -177,6 +181,10 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	if isEveryone && req.DisplayName != nil {
 		writeError(w, http.StatusBadRequest, "the \"Everyone\" group cannot have a display name")
+		return
+	}
+	if req.DisplayName != nil && strings.EqualFold(strings.TrimSpace(*req.DisplayName), "everyone") {
+		writeError(w, http.StatusBadRequest, "\"everyone\" is a reserved display name")
 		return
 	}
 
