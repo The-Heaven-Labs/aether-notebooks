@@ -19,6 +19,9 @@ import (
 
 type executeRequest struct {
 	Parameters map[string]string `json:"parameters,omitempty"`
+	// Pinned runs the cell's connector directly, bypassing the user's routing
+	// preference. It still requires `use` on that exact service.
+	Pinned bool `json:"pinned,omitempty"`
 }
 
 // @Summary Execute a cell
@@ -210,10 +213,12 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	// keep the legacy stored-credential driver path, so routing is gated on
 	// the connector type before warehouse resolution is consulted.
 	var (
-		exec        executor.Executor
-		warehouseID string
-		chUser      string
-		auditConnID = cell.ConnectorID
+		exec          executor.Executor
+		warehouseID   string
+		warehouseName string
+		serviceName   string
+		chUser        string
+		auditConnID   = cell.ConnectorID
 	)
 	connectStart := time.Now()
 	switch {
@@ -225,7 +230,7 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		}
 		// cells.connector_id is a UUID column, so parsing cannot fail.
 		connUUID := uuid.MustParse(cell.ConnectorID)
-		target, targetErr := s.resolveExecutionTarget(ctx, userUUID, connUUID, false)
+		target, targetErr := s.resolveExecutionTarget(ctx, userUUID, connUUID, req.Pinned)
 		var choice *executor.ServiceChoiceError
 		switch {
 		case targetErr == nil:
@@ -238,8 +243,10 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 			// release must not be deferred separately.
 			exec = executor.NewPooledClickHouseExecutor(conn, release)
 			warehouseID = target.WarehouseID.String()
+			warehouseName = target.WarehouseName
 			chUser = target.CHUser
 			auditConnID = target.ConnectorID.String()
+			serviceName = target.ConnectorName
 			// Limits belong to the service actually dialed: a preference or
 			// sole-service fallback can route to a different connector than
 			// the cell's requested one.
@@ -258,6 +265,10 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "warehouse provisioning is not ready")
 			return
 		case errors.Is(targetErr, executor.ErrServiceAccessDenied):
+			if req.Pinned {
+				writeError(w, http.StatusForbidden, "you don't have access to the pinned service")
+				return
+			}
 			writeError(w, http.StatusForbidden, "no permitted service in warehouse")
 			return
 		case errors.As(targetErr, &choice):
@@ -386,7 +397,7 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 			cellID, nbID, auditConnID, connectTime, queryTime, renderTime, totalTime, rowCount)
 	}()
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	response := map[string]interface{}{
 		"outputs": cellOutputs,
 		"metrics": map[string]interface{}{
 			"connect_time_ms": connectTime,
@@ -394,7 +405,20 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 			"render_time_ms":  renderTime,
 			"total_time_ms":   totalTime,
 		},
-	})
+	}
+	// Warehouse-routed runs report the service and warehouse that served them
+	// so the UI can render "ran on <service>"; legacy runs omit routing.
+	if warehouseID != "" {
+		response["routing"] = map[string]interface{}{
+			"warehouse_id":   warehouseID,
+			"warehouse_name": warehouseName,
+			"connector_id":   auditConnID,
+			"connector_name": serviceName,
+			"ch_user":        chUser,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, response)
 
 	s.audit.Log(bgCtx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,

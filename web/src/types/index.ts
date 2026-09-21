@@ -57,6 +57,15 @@ export interface Cell {
   }
 }
 
+/** Endpoint metadata attached to a warehouse-routed cell execution response. */
+export interface ExecuteRouting {
+  warehouse_id: string
+  warehouse_name?: string
+  connector_id: string
+  connector_name: string
+  ch_user?: string
+}
+
 export interface CellVersion {
   id: string
   cell_id: string

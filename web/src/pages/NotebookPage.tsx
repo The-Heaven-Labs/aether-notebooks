@@ -11,7 +11,8 @@ import { AppShell } from '../components/AppShell'
 import { Skeleton } from '../components/Skeleton'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { Notebook, Cell, Output, Connector, Parameter, CellVersion, NotebookSnapshot, Dashboard, Widget } from '../types'
+import { setPreference, serviceChoicesFromError, type WarehouseServiceChoice } from '../api/warehouses'
+import type { Notebook, Cell, Output, Connector, Parameter, CellVersion, NotebookSnapshot, Dashboard, Widget, ExecuteRouting } from '../types'
 import type { ChartConfig } from '../charts'
 import { Cell as NotebookCell, focusCellEditorEnd, collabCache, updateCellScroll, type NotebookCollab } from '../components/Cell'
 import { focusMarkdownCell } from '../utils/editorFocus'
@@ -24,6 +25,7 @@ import { useNotebookKeyboardShortcuts } from '../hooks/useNotebookKeyboardShortc
 import { HistoryPanel } from '../components/HistoryPanel'
 import { NotebookHistoryPanel } from '../components/NotebookHistoryPanel'
 import { ConnectorSelector } from '../components/ConnectorSelector'
+import { ServiceChoiceDialog } from '../components/RoutingPreference'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { useNotebookWs, shouldFlashExecutingCell } from '../hooks/useNotebookWs'
@@ -202,6 +204,18 @@ export function NotebookPage() {
   const notebookConnectorIdRef = useRef(notebookConnectorId)
   notebookConnectorIdRef.current = notebookConnectorId
 
+  // Pin is a per-notebook preference: pinned runs dial the assigned connector
+  // directly instead of routing through the user's service preference. Kept in
+  // localStorage because it is a durable per-notebook choice, not cell state.
+  const pinStorageKey = `aether_notebook_pin:${id ?? ''}`
+  const [notebookPinned, setNotebookPinned] = useState(() => {
+    try { return localStorage.getItem(pinStorageKey) === 'true' } catch { return false }
+  })
+  const toggleNotebookPin = useCallback((pinned: boolean) => {
+    setNotebookPinned(pinned)
+    try { localStorage.setItem(pinStorageKey, String(pinned)) } catch { /* ignore */ }
+  }, [pinStorageKey])
+
   const [following, setFollowing] = useState<{ email: string; name: string } | null>(null)
   const [viewOpen, setViewOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
@@ -219,6 +233,11 @@ export function NotebookPage() {
   }, [id])
 
   const [cellRunAt, setCellRunAt] = useState<Record<string, Date>>({})
+  const [cellRouting, setCellRouting] = useState<Record<string, ExecuteRouting>>({})
+  // 409 service_choice_required: warehouse services the user may pick from.
+  const [serviceChoice, setServiceChoice] = useState<{ cellId: string; services: WarehouseServiceChoice[] } | null>(null)
+  const [serviceChoiceError, setServiceChoiceError] = useState<string | null>(null)
+  const [serviceChoiceSaving, setServiceChoiceSaving] = useState(false)
   const [focusedCellId, setFocusedCellId] = useState<string | null>(null)
   const [allCollapsed, setAllCollapsed] = useState(false)
   const [allCodeHidden, setAllCodeHidden] = useState(false)
@@ -952,15 +971,33 @@ export function NotebookPage() {
       setRunningCells((s) => ({ ...s, [cellId]: Date.now() }))
       pendingExecRef.current.add(cellId)
       try {
-        const result = await api.post<{ outputs: Output[]; metrics?: { connect_time_ms: number; query_time_ms: number; render_time_ms: number; total_time_ms: number } }>(
+        const result = await api.post<{
+          outputs: Output[]
+          metrics?: { connect_time_ms: number; query_time_ms: number; render_time_ms: number; total_time_ms: number }
+          routing?: ExecuteRouting
+        }>(
           `/api/v1/notebooks/${id}/cells/${cellId}/execute`,
-          { parameters: params },
+          { parameters: params, pinned: notebookPinned || undefined },
         )
         setLocalCells((prev) =>
           prev.map((c) => (c.id === cellId ? { ...c, outputs: result.outputs, metrics: result.metrics } : c)),
         )
+        setCellRouting((prev) => {
+          const next = { ...prev }
+          if (result.routing) next[cellId] = result.routing
+          else delete next[cellId]
+          return next
+        })
         setCellRunAt((prev) => ({ ...prev, [cellId]: new Date() }))
       } catch (err: unknown) {
+        const choices = serviceChoicesFromError(err)
+        if (choices) {
+          // Ambiguous warehouse routing: prompt for a service and save the
+          // choice as the user's preference before retrying the run.
+          setServiceChoiceError(null)
+          setServiceChoice({ cellId, services: choices })
+          return
+        }
         const msg = err instanceof Error ? err.message : 'Execution failed'
         setLocalCells((prev) =>
           prev.map((c) =>
@@ -976,7 +1013,46 @@ export function NotebookPage() {
         })
       }
     },
-    [id],
+    [id, notebookPinned],
+  )
+
+  // The 409 payload names services, not their warehouse; resolve the warehouse
+  // from the connectors list (all offered services share it).
+  const warehouseIdForServiceChoice = useCallback(
+    (cellId: string, services: WarehouseServiceChoice[]): string | null => {
+      const cell = localCellsRef.current.find((c) => c.id === cellId)
+      const effectiveConnectorId = cell?.connector_id || notebookConnectorIdRef.current
+      const serviceIds = new Set(services.map((s) => s.connector_id))
+      const match = connectors.find((c) => c.id === effectiveConnectorId)
+        ?? connectors.find((c) => serviceIds.has(c.id))
+      return match?.warehouse_id ?? null
+    },
+    [connectors],
+  )
+
+  const chooseWarehouseService = useCallback(
+    async (connectorId: string) => {
+      const pending = serviceChoice
+      if (!pending) return
+      const warehouseId = warehouseIdForServiceChoice(pending.cellId, pending.services)
+      if (!warehouseId) {
+        setServiceChoiceError('Could not determine which warehouse this connector belongs to.')
+        return
+      }
+      setServiceChoiceSaving(true)
+      try {
+        await setPreference(warehouseId, connectorId)
+        qc.invalidateQueries({ queryKey: ['warehouse-effective-access', warehouseId] })
+        setServiceChoice(null)
+        setServiceChoiceError(null)
+        await saveAndRun(pending.cellId)
+      } catch (err) {
+        setServiceChoiceError(err instanceof Error ? err.message : 'Failed to save preference')
+      } finally {
+        setServiceChoiceSaving(false)
+      }
+    },
+    [serviceChoice, warehouseIdForServiceChoice, saveAndRun, qc],
   )
 
   const runAll = useCallback(async () => {
@@ -1281,6 +1357,8 @@ export function NotebookPage() {
             onChange={applyNotebookConnector}
             placeholder="Select a connector"
             allowClear
+            pinned={notebookPinned}
+            onTogglePin={toggleNotebookPin}
           />
           <CollaboratorAvatars
             provider={collab?.provider}
@@ -1547,6 +1625,7 @@ export function NotebookPage() {
                             saveState={cellSaveState[cell.id]}
                             runAt={cellRunAt[cell.id]}
                             metrics={cell.metrics}
+                            routing={cellRouting[cell.id]}
                             onUpdateCellMeta={readOnly ? undefined : updateCellMeta}
                             onChartConfigChange={readOnly ? undefined : updateCellChartConfig}
                             onViewModeChange={readOnly ? undefined : updateCellViewMode}
@@ -1682,6 +1761,14 @@ export function NotebookPage() {
       destructive
       onConfirm={() => { if (deleteCellTarget) deleteCell.mutate(deleteCellTarget); setDeleteCellTarget(null) }}
       onCancel={() => setDeleteCellTarget(null)}
+    />
+    <ServiceChoiceDialog
+      open={!!serviceChoice}
+      services={serviceChoice?.services ?? []}
+      saving={serviceChoiceSaving}
+      error={serviceChoiceError}
+      onSelect={chooseWarehouseService}
+      onCancel={() => { setServiceChoice(null); setServiceChoiceError(null) }}
     />
     <ConfirmDialog
       open={deleteNotebookConfirm}

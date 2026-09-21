@@ -69,7 +69,10 @@ func (e *ServiceChoiceError) Unwrap() error { return ErrServiceChoiceRequired }
 // no second password copy on the target. Never serialize or log a target
 // wholesale — Config.Password is a live credential.
 type ExecutionTarget struct {
-	WarehouseID   uuid.UUID
+	WarehouseID uuid.UUID
+	// WarehouseName is the display name of the governing warehouse, carried so
+	// execution results can report which warehouse served a run.
+	WarehouseName string
 	ConnectorID   uuid.UUID
 	ConnectorName string
 	// Endpoint is the "host:port" connection key (also what the pool keys on).

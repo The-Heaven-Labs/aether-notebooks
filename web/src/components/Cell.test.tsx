@@ -4,7 +4,7 @@ import { Suspense } from 'react'
 import * as Y from 'yjs'
 import { ResizableImage } from './MarkdownCell'
 import { Cell, collabCache, type NotebookCollab } from './Cell'
-import type { Cell as CellType } from '../types'
+import type { Cell as CellType, ExecuteRouting } from '../types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -713,5 +713,64 @@ describe('CodeEditorView Yjs attach race', () => {
     rerender(cellElement(makeCodeCell('SELECT new')))
 
     await waitFor(() => expect(collabCache.size).toBe(0))
+  })
+})
+
+// ── Run endpoint footer ───────────────────────────────────────────────────────
+
+describe('run endpoint footer', () => {
+  const METRICS = { connect_time_ms: 1, query_time_ms: 2, render_time_ms: 3, total_time_ms: 4 }
+
+  function renderRoutedCell(routing?: ExecuteRouting) {
+    const cell: CellType = {
+      id: 'cell-routing',
+      notebook_id: 'nb-1',
+      type: 'code',
+      language: 'sql',
+      source: 'SELECT 1',
+      outputs: [],
+      position: 0,
+      created_at: '',
+      updated_at: '',
+      source_visible: true,
+      cell_collapsed: false,
+    }
+    return render(
+      <Suspense fallback={null}>
+        <Cell
+          cell={cell}
+          connectors={[]}
+          notebookId="nb-1"
+          onRun={vi.fn()}
+          onDelete={vi.fn()}
+          onSourceChange={vi.fn()}
+          onAssignConnector={vi.fn()}
+          metrics={METRICS}
+          routing={routing}
+        />
+      </Suspense>
+    )
+  }
+
+  it('shows the service, warehouse, and identity that served the run', () => {
+    renderRoutedCell({
+      warehouse_id: 'wh-1',
+      warehouse_name: 'Analytics WH',
+      connector_id: 'c-2',
+      connector_name: 'CH RW',
+      ch_user: 'aether_ab12_u_ef34',
+    })
+
+    const chip = screen.getByText(/ran on CH RW/)
+    expect(chip).toBeInTheDocument()
+    expect(chip).toHaveAttribute('title', expect.stringContaining('warehouse: Analytics WH'))
+    expect(chip).toHaveAttribute('title', expect.stringContaining('identity: aether_ab12_u_ef34'))
+  })
+
+  it('omits the endpoint for a run without warehouse routing', () => {
+    renderRoutedCell(undefined)
+
+    expect(screen.queryByText(/ran on/)).toBeNull()
+    expect(screen.getByText(/⏱/)).toBeInTheDocument()
   })
 })

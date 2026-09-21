@@ -1,4 +1,4 @@
-import { api } from './client'
+import { api, ApiError } from './client'
 
 export type WarehouseSyncStatus = 'pending' | 'syncing' | 'ready' | 'error'
 
@@ -53,6 +53,15 @@ export interface WarehouseEffectiveService {
   connector_id: string
   name: string
   preferred: boolean
+}
+
+/**
+ * One selectable service from an execution 409: the warehouses this user may
+ * route to could not be narrowed to a single service without a preference.
+ */
+export interface WarehouseServiceChoice {
+  connector_id: string
+  name: string
 }
 
 export interface WarehouseEffectiveAccess {
@@ -152,4 +161,24 @@ export function setPreference(
     `/api/v1/warehouses/${warehouseId}/preference`,
     { connector_id: connectorId },
   )
+}
+
+function isServiceChoice(value: unknown): value is WarehouseServiceChoice {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  return typeof record.connector_id === 'string' && typeof record.name === 'string'
+}
+
+/**
+ * Extracts the allowed services from an execute 409
+ * (`{"error":"service_choice_required","services":[...]}`). Returns null for
+ * any other error so callers can fall through to normal error handling.
+ */
+export function serviceChoicesFromError(err: unknown): WarehouseServiceChoice[] | null {
+  if (!(err instanceof ApiError) || err.status !== 409) return null
+  if (typeof err.body !== 'object' || err.body === null) return null
+  const services = (err.body as { services?: unknown }).services
+  if (!Array.isArray(services) || services.length === 0) return null
+  const choices = services.filter(isServiceChoice)
+  return choices.length === services.length ? choices : null
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -108,11 +109,22 @@ func seedExecuteWarehouseCell(t *testing.T, s *Server, orgID, userID, connectorI
 // with a token for the fixture user.
 func executeWarehouseCell(t *testing.T, s *Server, userID, orgID, notebookID, cellID uuid.UUID) *httptest.ResponseRecorder {
 	t.Helper()
+	return executeWarehouseCellBody(t, s, userID, orgID, notebookID, cellID, "")
+}
+
+// executeWarehouseCellBody is executeWarehouseCell with an explicit JSON body,
+// used for request options such as pinned execution. An empty body sends none.
+func executeWarehouseCellBody(t *testing.T, s *Server, userID, orgID, notebookID, cellID uuid.UUID, body string) *httptest.ResponseRecorder {
+	t.Helper()
 	token, err := s.jwt.Issue(userID.String(), orgID.String(), "admin")
 	require.NoError(t, err)
 
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
 	req := httptest.NewRequest(http.MethodPost,
-		"/api/v1/notebooks/"+notebookID.String()+"/cells/"+cellID.String()+"/execute", nil)
+		"/api/v1/notebooks/"+notebookID.String()+"/cells/"+cellID.String()+"/execute", reader)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
@@ -130,6 +142,15 @@ type executeOutputs struct {
 			Rows [][]any `json:"rows"`
 		} `json:"data"`
 	} `json:"outputs"`
+	// Routing is present only for warehouse-routed runs: the service and
+	// warehouse that actually served the query.
+	Routing *struct {
+		WarehouseID   string `json:"warehouse_id"`
+		WarehouseName string `json:"warehouse_name"`
+		ConnectorID   string `json:"connector_id"`
+		ConnectorName string `json:"connector_name"`
+		CHUser        string `json:"ch_user"`
+	} `json:"routing"`
 }
 
 func decodeExecuteOutputs(t *testing.T, rec *httptest.ResponseRecorder) executeOutputs {
@@ -160,6 +181,14 @@ func TestExecuteCellUsesPerUserIdentity(t *testing.T) {
 	userIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID)
 	require.Equal(t, userIdent, out.Outputs[0].Data.Rows[0][0])
 	require.NotEmpty(t, out.Outputs[0].Data.Rows[0][1], "granted table must return rows")
+
+	// The response reports the service and warehouse that served the run.
+	require.NotNil(t, out.Routing, "warehouse-routed runs must include routing metadata")
+	require.Equal(t, fx.warehouseID.String(), out.Routing.WarehouseID)
+	require.Equal(t, "Warehouse Sync WH", out.Routing.WarehouseName)
+	require.Equal(t, fx.connA.String(), out.Routing.ConnectorID)
+	require.Equal(t, "Execute Service A", out.Routing.ConnectorName)
+	require.Equal(t, userIdent, out.Routing.CHUser)
 
 	// The audit entry records the routed warehouse, the service actually
 	// dialed, and the per-user identity.
@@ -231,6 +260,7 @@ func TestExecuteCellUnmanagedClickHouseUsesLegacyCredential(t *testing.T) {
 	require.Len(t, out.Outputs[0].Data.Rows, 1)
 	require.Equal(t, "dev", out.Outputs[0].Data.Rows[0][0],
 		"an unmanaged connector must keep using its stored credential")
+	require.Nil(t, out.Routing, "legacy runs must not report warehouse routing")
 }
 
 // With the kill switch off, a connector linked to a ready warehouse must still
@@ -320,6 +350,28 @@ func TestExecuteCellServiceChoiceRequired(t *testing.T) {
 	require.Equal(t, "Execute Service B", names[fx.connB.String()])
 }
 
+// A pinned run dials the cell's connector directly and ignores a stored
+// preference, so it never hits the ambiguous-routing 409.
+func TestExecuteCellPinnedConnectorBypassesPreference(t *testing.T) {
+	fx := setupExecuteWarehouseFixture(t)
+	fx.grantConnectorUse(t, fx.connA)
+	fx.grantConnectorUse(t, fx.connB)
+	preferWarehouseService(t, fx.s, fx.userID, fx.warehouseID, fx.connB)
+
+	nbID, cellID := seedExecuteWarehouseCell(t, fx.s, fx.orgID, fx.userID, fx.connA,
+		"SELECT currentUser() AS ch_user", nil)
+	fx.grantNotebookRun(t, nbID)
+
+	rec := executeWarehouseCellBody(t, fx.s, fx.userID, fx.orgID, nbID, cellID, `{"pinned":true}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	out := decodeExecuteOutputs(t, rec)
+	require.NotNil(t, out.Routing)
+	require.Equal(t, fx.connA.String(), out.Routing.ConnectorID,
+		"a pinned run must dial the requested service, not the preferred one")
+	require.Equal(t, chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID), out.Routing.CHUser)
+}
+
 func TestExecuteCellWarehouseNotReady(t *testing.T) {
 	fx := setupExecuteWarehouseFixture(t)
 	fx.grantConnectorUse(t, fx.connA)
@@ -393,6 +445,11 @@ func TestExecuteCellPreferenceRoutesAndLogsRoutedService(t *testing.T) {
 
 	rec := executeWarehouseCell(t, fx.s, fx.userID, fx.orgID, nbID, cellID)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	out := decodeExecuteOutputs(t, rec)
+	require.NotNil(t, out.Routing)
+	require.Equal(t, fx.connB.String(), out.Routing.ConnectorID,
+		"the response must report the routed service")
 
 	var metaJSON []byte
 	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `

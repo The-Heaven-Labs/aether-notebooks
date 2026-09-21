@@ -63,10 +63,10 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, r
 	warehouseID := *requestedWarehouseID
 
 	var orgID uuid.UUID
-	var syncStatus string
+	var warehouseName, syncStatus string
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT org_id, sync_status FROM warehouses WHERE id = $1`, warehouseID.String()).
-		Scan(&orgID, &syncStatus)
+		`SELECT org_id, name, sync_status FROM warehouses WHERE id = $1`, warehouseID.String()).
+		Scan(&orgID, &warehouseName, &syncStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("warehouse %s not found for connector %s: %w", warehouseID, requestedConnectorID, err)
 	}
@@ -96,7 +96,7 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, r
 		if !allowed {
 			return nil, fmt.Errorf("pinned connector %s: %w", requestedConnectorID, executor.ErrServiceAccessDenied)
 		}
-		return s.buildExecutionTarget(warehouseID, orgID, userID, requested)
+		return s.buildExecutionTarget(warehouseID, warehouseName, orgID, userID, requested)
 	}
 
 	services, preferredID, err := s.allowedWarehouseServices(ctx, userID, orgID, role, warehouseID)
@@ -106,7 +106,7 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, r
 	if preferredID != nil {
 		for _, svc := range services {
 			if svc.id == *preferredID {
-				return s.buildExecutionTarget(warehouseID, orgID, userID, svc)
+				return s.buildExecutionTarget(warehouseID, warehouseName, orgID, userID, svc)
 			}
 		}
 	}
@@ -115,7 +115,7 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, r
 	case 0:
 		return nil, fmt.Errorf("warehouse %s: %w", warehouseID, executor.ErrServiceAccessDenied)
 	case 1:
-		return s.buildExecutionTarget(warehouseID, orgID, userID, services[0])
+		return s.buildExecutionTarget(warehouseID, warehouseName, orgID, userID, services[0])
 	default:
 		choices := make([]executor.ServiceChoice, 0, len(services))
 		for _, svc := range services {
@@ -281,7 +281,7 @@ func (s *Server) connectorUseAllowed(ctx context.Context, userID, orgID uuid.UUI
 // buildExecutionTarget decrypts the chosen service's endpoint config and
 // replaces its stored credential with the warehouse-scoped per-user
 // ClickHouse identity. The stored credential is never returned to callers.
-func (s *Server) buildExecutionTarget(warehouseID, orgID, userID uuid.UUID, svc warehouseService) (*executor.ExecutionTarget, error) {
+func (s *Server) buildExecutionTarget(warehouseID uuid.UUID, warehouseName string, orgID, userID uuid.UUID, svc warehouseService) (*executor.ExecutionTarget, error) {
 	plain, err := crypto.Decrypt(svc.encrypted, s.masterKey)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt connector %s config: %w", svc.id, err)
@@ -302,6 +302,7 @@ func (s *Server) buildExecutionTarget(warehouseID, orgID, userID uuid.UUID, svc 
 
 	return &executor.ExecutionTarget{
 		WarehouseID:    warehouseID,
+		WarehouseName:  warehouseName,
 		ConnectorID:    svc.id,
 		ConnectorName:  svc.name,
 		Endpoint:       fmt.Sprintf("%s:%d", cfg.Host, port),

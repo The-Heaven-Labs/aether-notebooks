@@ -15,9 +15,12 @@ export function clearToken(): void {
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  /** Parsed JSON error body, when the server sent one (e.g. 409 service choices). */
+  body: unknown
+  constructor(status: number, message: string, body?: unknown) {
     super(message)
     this.status = status
+    this.body = body
   }
 }
 
@@ -50,7 +53,7 @@ async function request<T>(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new ApiError(res.status, err.error || res.statusText)
+    throw new ApiError(res.status, err.error || res.statusText, err)
   }
 
   if (res.status === 204) return undefined as T
