@@ -248,7 +248,9 @@ func collectProviders(rows pgx.Rows, masterKey []byte) ([]Provider, error) {
 	return providers, nil
 }
 
-// UpdateProvider updates name, client_id, client_secret, discovery_url, allowed_domains, enabled.
+// UpdateProvider updates name, client_id, client_secret, discovery_url, allowed_domains,
+// enabled, scopes, groups_claim, group_prefix, auto_sync_groups, get_user_info,
+// sync_empty_groups, strip_group_prefix, provisioning_mode, and default_role.
 // If p.ClientSecret is empty, the stored secret is preserved.
 func UpdateProvider(ctx context.Context, pool *pgxpool.Pool, masterKey []byte, p Provider) (Provider, error) {
 	if p.AllowedDomains == nil {

@@ -135,16 +135,35 @@ func TestUpdateProvider(t *testing.T) {
 
 	created.Name = "Updated Name"
 	created.ClientSecret = "new-secret-value"
+	created.SyncEmptyGroups = true
+	created.StripGroupPrefix = true
 	updated, err := sso.UpdateProvider(ctx, db.Pool, testMasterKey, created)
 	require.NoError(t, err)
 
 	assert.Equal(t, "Updated Name", updated.Name)
 	assert.Equal(t, "new-secret-value", updated.ClientSecret)
+	assert.True(t, updated.SyncEmptyGroups)
+	assert.True(t, updated.StripGroupPrefix)
 
 	got, err := sso.GetProvider(ctx, db.Pool, testMasterKey, created.ID, "")
 	require.NoError(t, err)
 	assert.Equal(t, "Updated Name", got.Name)
 	assert.Equal(t, "new-secret-value", got.ClientSecret)
+	assert.True(t, got.SyncEmptyGroups)
+	assert.True(t, got.StripGroupPrefix)
+
+	list, err := sso.ListPlatformProviders(ctx, db.Pool, testMasterKey)
+	require.NoError(t, err)
+	var listed *sso.Provider
+	for i := range list {
+		if list[i].ID == created.ID {
+			listed = &list[i]
+			break
+		}
+	}
+	require.NotNil(t, listed, "updated provider should appear in platform provider list")
+	assert.True(t, listed.SyncEmptyGroups)
+	assert.True(t, listed.StripGroupPrefix)
 }
 
 func TestDeleteProvider(t *testing.T) {
