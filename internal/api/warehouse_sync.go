@@ -606,10 +606,11 @@ func (s *Server) dropWarehouseIdentitiesLocked(ctx context.Context, warehouseID 
 // auditDeferredWarehouseIdentityCleanup records a warehouse deletion that ran
 // with the AETHER_CH_TABLE_PERMISSIONS kill switch off. The deleted
 // warehouse's ClickHouse identities are namespaced by its warehouse prefix and
-// cannot be revoked without a provisioner connection, so cleanup is deferred:
-// re-enabling the switch and reconciling converges, and the audit plus warning
-// are the operational signal that identities may remain. It is best-effort; a
-// failed audit never fails the delete.
+// cannot be revoked without a provisioner connection, so cleanup is deferred.
+// Because the warehouse row is gone, no later reconcile revisits it: the audit
+// plus warning are the operational signal, and an operator must drop the
+// remaining prefixed users/roles manually (see the rollout runbook). It is
+// best-effort; a failed audit never fails the delete.
 func (s *Server) auditDeferredWarehouseIdentityCleanup(ctx context.Context, orgID string, warehouseID uuid.UUID) {
 	slog.Warn("warehouse deleted with ClickHouse table permissions disabled; provisioned identities may remain in ClickHouse",
 		"warehouse_id", warehouseID.String(), "org_id", orgID)
