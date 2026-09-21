@@ -166,11 +166,11 @@ func (s *Server) handleGetConnector(w http.ResponseWriter, r *http.Request) {
 	var c models.Connector
 	var encryptedConfig []byte
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, table_allowlist, table_denylist
+		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, warehouse_id, table_allowlist, table_denylist
 		 FROM connectors WHERE id=$1 AND org_id=$2`,
 		id, claims.OrgID,
 	).Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
-		&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.TableAllowlist, &c.TableDenylist)
+		&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.WarehouseID, &c.TableAllowlist, &c.TableDenylist)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "connector not found")
 		return
@@ -196,7 +196,7 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, table_allowlist, table_denylist
+		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, warehouse_id, table_allowlist, table_denylist
 		 FROM connectors WHERE org_id = $1 AND deleted_at IS NULL ORDER BY name ASC`,
 		claims.OrgID,
 	)
@@ -215,7 +215,7 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 		var c models.Connector
 		var encryptedConfig []byte
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
-			&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.TableAllowlist, &c.TableDenylist); err != nil {
+			&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.WarehouseID, &c.TableAllowlist, &c.TableDenylist); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
@@ -403,11 +403,11 @@ func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
 	var c models.Connector
 	var encryptedConfig []byte
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, table_allowlist, table_denylist
+		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, warehouse_id, table_allowlist, table_denylist
 		 FROM connectors WHERE id=$1`,
 		id,
 	).Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
-		&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.TableAllowlist, &c.TableDenylist)
+		&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.WarehouseID, &c.TableAllowlist, &c.TableDenylist)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
@@ -481,7 +481,14 @@ func (s *Server) handleDeleteConnector(w http.ResponseWriter, r *http.Request) {
 	connID := r.PathValue("id")
 	ctx := r.Context()
 
-	result, err := s.db.Pool.Exec(ctx,
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	result, err := tx.Exec(ctx,
 		`UPDATE connectors SET deleted_at = NOW() WHERE id = $1 AND org_id = $2`,
 		connID, claims.OrgID,
 	)
@@ -491,6 +498,21 @@ func (s *Server) handleDeleteConnector(w http.ResponseWriter, r *http.Request) {
 	}
 	if result.RowsAffected() == 0 {
 		writeError(w, http.StatusNotFound, "connector not found")
+		return
+	}
+
+	// Connectors are soft-deleted, so the preference FK cascade never fires.
+	// Remove the rows explicitly or a preference could keep pointing at a
+	// deleted service.
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM warehouse_service_preferences WHERE connector_id = $1`, connID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "delete failed")
 		return
 	}
 

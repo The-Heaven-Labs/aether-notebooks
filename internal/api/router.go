@@ -464,6 +464,15 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/connectors/{id}/test", authMW(http.HandlerFunc(s.handleTestConnector)))
 	s.mux.Handle("GET /api/v1/connectors/{id}/schema", authMW(http.HandlerFunc(s.handleConnectorSchema)))
 	s.mux.Handle("GET /api/v1/connectors/{id}/databases", authMW(http.HandlerFunc(s.handleListConnectorDatabases)))
+	s.mux.Handle("PUT /api/v1/connectors/{id}/warehouse", authMW(RequireRole("admin")(http.HandlerFunc(s.handleSetConnectorWarehouse))))
+
+	// Warehouse routes (org admin)
+	s.mux.Handle("GET /api/v1/warehouses", authMW(RequireRole("admin")(http.HandlerFunc(s.handleListWarehouses))))
+	s.mux.Handle("POST /api/v1/warehouses", authMW(RequireRole("admin")(http.HandlerFunc(s.handleCreateWarehouse))))
+	s.mux.Handle("GET /api/v1/warehouses/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleGetWarehouse))))
+	s.mux.Handle("PUT /api/v1/warehouses/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateWarehouse))))
+	s.mux.Handle("DELETE /api/v1/warehouses/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleDeleteWarehouse))))
+	s.mux.Handle("PUT /api/v1/warehouses/{id}/provisioner", authMW(RequireRole("admin")(http.HandlerFunc(s.handleSetWarehouseProvisioner))))
 
 	// Recent route
 	s.mux.Handle("GET /api/v1/recent", authMW(http.HandlerFunc(s.handleGetRecent)))
