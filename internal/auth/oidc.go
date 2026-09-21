@@ -122,6 +122,8 @@ func (p *GenericOIDCProvider) Exchange(ctx context.Context, code string) (*OIDCC
 						if len(uiGroups) > 0 {
 							claims.Groups = uiGroups
 						}
+					} else {
+						userInfoOK = false
 					}
 				}
 			}

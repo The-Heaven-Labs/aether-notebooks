@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,6 +38,8 @@ type testOIDCServer struct {
 	groups           []string
 	idTokenHasGroups bool
 	failUserInfo     bool
+	malformedGroups  bool
+	userInfoHits     atomic.Int64
 }
 
 func newTestOIDCServer(t *testing.T, sub, email, name string, groups []string, idTokenHasGroups bool) *testOIDCServer {
@@ -150,6 +153,7 @@ func (s *testOIDCServer) handleToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *testOIDCServer) handleUserInfo(w http.ResponseWriter, r *http.Request) {
+	s.userInfoHits.Add(1)
 	if s.failUserInfo {
 		http.Error(w, "userinfo unavailable", http.StatusInternalServerError)
 		return
@@ -160,7 +164,9 @@ func (s *testOIDCServer) handleUserInfo(w http.ResponseWriter, r *http.Request) 
 		"email": s.email,
 		"name":  s.name,
 	}
-	if len(s.groups) > 0 {
+	if s.malformedGroups {
+		info["groups"] = "engineering"
+	} else if len(s.groups) > 0 {
 		groups := make([]any, len(s.groups))
 		for i, g := range s.groups {
 			groups[i] = g
@@ -589,6 +595,47 @@ func TestOIDCExchangeUserInfoFailureWithIDTokenGroups(t *testing.T) {
 	assert.False(t, claims.GroupsUnavailable,
 		"ID token groups should be used when UserInfo fails")
 	assert.Equal(t, []string{"aether-x"}, claims.Groups)
+	assert.Greater(t, srv.userInfoHits.Load(), int64(0),
+		"UserInfo must actually be attempted before falling back to ID token groups")
+}
+
+func TestOIDCExchangeUserInfoSuccessEmptyGroups(t *testing.T) {
+	email := fmt.Sprintf("uiempty-%d@test.com", time.Now().UnixNano())
+	srv := newTestOIDCServer(t, "user-uiempty", email, "UI Empty", nil, false)
+
+	provider, err := auth.NewGenericOIDCProvider(context.Background(),
+		"test", srv.baseURL, "test-client-id", "test-client-secret",
+		"http://localhost/callback",
+		[]string{"openid", "profile", "email", "groups"},
+		"groups", true)
+	require.NoError(t, err)
+
+	claims, err := provider.Exchange(context.Background(), "test-code")
+	require.NoError(t, err)
+
+	assert.False(t, claims.GroupsUnavailable,
+		"successful UserInfo without a groups claim is authoritative empty, not unavailable")
+	assert.Empty(t, claims.Groups)
+}
+
+func TestOIDCExchangeUserInfoMalformedGroups(t *testing.T) {
+	email := fmt.Sprintf("uibad-%d@test.com", time.Now().UnixNano())
+	srv := newTestOIDCServer(t, "user-uibad", email, "UI Bad", nil, false)
+	srv.malformedGroups = true
+
+	provider, err := auth.NewGenericOIDCProvider(context.Background(),
+		"test", srv.baseURL, "test-client-id", "test-client-secret",
+		"http://localhost/callback",
+		[]string{"openid", "profile", "email", "groups"},
+		"groups", true)
+	require.NoError(t, err)
+
+	claims, err := provider.Exchange(context.Background(), "test-code")
+	require.NoError(t, err)
+
+	assert.True(t, claims.GroupsUnavailable,
+		"unparseable groups claim with no ID token groups should mark groups unavailable")
+	assert.Empty(t, claims.Groups)
 }
 
 // ─── Full Callback Integration Test ───────────────────────────────────────────
