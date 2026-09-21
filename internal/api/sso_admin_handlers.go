@@ -28,6 +28,8 @@ type providerResponse struct {
 	GroupPrefix      string    `json:"group_prefix"`
 	AutoSyncGroups   bool      `json:"auto_sync_groups"`
 	GetUserInfo      bool      `json:"get_user_info"`
+	SyncEmptyGroups  bool      `json:"sync_empty_groups"`
+	StripGroupPrefix bool      `json:"strip_group_prefix"`
 	ProvisioningMode string    `json:"provisioning_mode"`
 	DefaultRole      string    `json:"default_role"`
 	CallbackURL      string    `json:"callback_url"`
@@ -58,6 +60,8 @@ func (s *Server) providerToResponse(p sso.Provider) providerResponse {
 		GroupPrefix:      p.GroupPrefix,
 		AutoSyncGroups:   p.AutoSyncGroups,
 		GetUserInfo:      p.GetUserInfo,
+		SyncEmptyGroups:  p.SyncEmptyGroups,
+		StripGroupPrefix: p.StripGroupPrefix,
 		ProvisioningMode: p.ProvisioningMode,
 		DefaultRole:      p.DefaultRole,
 		CallbackURL:      s.callbackURLForID(p.ID),
@@ -78,6 +82,8 @@ type ssoProviderRequest struct {
 	GroupPrefix      string   `json:"group_prefix"`
 	AutoSyncGroups   bool     `json:"auto_sync_groups"`
 	GetUserInfo      bool     `json:"get_user_info"`
+	SyncEmptyGroups  bool     `json:"sync_empty_groups"`
+	StripGroupPrefix bool     `json:"strip_group_prefix"`
 	ProvisioningMode string   `json:"provisioning_mode"`
 	DefaultRole      string   `json:"default_role"`
 }
@@ -151,6 +157,8 @@ func (s *Server) handleAdminCreateSSOProvider(w http.ResponseWriter, r *http.Req
 		GroupPrefix:      req.GroupPrefix,
 		AutoSyncGroups:   req.AutoSyncGroups,
 		GetUserInfo:      req.GetUserInfo,
+		SyncEmptyGroups:  req.SyncEmptyGroups,
+		StripGroupPrefix: req.StripGroupPrefix,
 		ProvisioningMode: req.ProvisioningMode,
 		DefaultRole:      req.DefaultRole,
 	}
@@ -219,6 +227,8 @@ func (s *Server) handleAdminUpdateSSOProvider(w http.ResponseWriter, r *http.Req
 		GroupPrefix:      req.GroupPrefix,
 		AutoSyncGroups:   req.AutoSyncGroups,
 		GetUserInfo:      req.GetUserInfo,
+		SyncEmptyGroups:  req.SyncEmptyGroups,
+		StripGroupPrefix: req.StripGroupPrefix,
 		ProvisioningMode: req.ProvisioningMode,
 		DefaultRole:      req.DefaultRole,
 	}
@@ -233,7 +243,7 @@ func (s *Server) handleAdminUpdateSSOProvider(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	s.invalidateSSOPlatformCache(r)
+	s.invalidateSSOPlatformCache(r, id)
 	s.audit.Log(r.Context(), audit.Entry{
 		UserID: claims.UserID,
 		Action: "sso_provider.update", ResourceType: "sso_provider", ResourceID: id, ResourceName: req.Name,
@@ -259,7 +269,7 @@ func (s *Server) handleAdminDeleteSSOProvider(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	s.invalidateSSOPlatformCache(r)
+	s.invalidateSSOPlatformCache(r, id)
 	s.audit.Log(r.Context(), audit.Entry{
 		UserID: claims.UserID,
 		Action: "sso_provider.delete", ResourceType: "sso_provider", ResourceID: id,
@@ -267,11 +277,19 @@ func (s *Server) handleAdminDeleteSSOProvider(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// invalidateSSOPlatformCache deletes the platform SSO provider cache key.
-func (s *Server) invalidateSSOPlatformCache(r *http.Request) {
-	if s.Cache != nil {
-		s.Cache.Client().Del(r.Context(), "sso:providers:platform")
+// invalidateSSOPlatformCache deletes the platform SSO provider list cache key,
+// plus the per-provider cache key for any provider IDs given.
+func (s *Server) invalidateSSOPlatformCache(r *http.Request, providerIDs ...string) {
+	if s.Cache == nil {
+		return
 	}
+	keys := []string{"sso:providers:platform"}
+	for _, id := range providerIDs {
+		if id != "" {
+			keys = append(keys, "sso:provider:"+id)
+		}
+	}
+	s.Cache.Client().Del(r.Context(), keys...)
 }
 
 // @Summary Test SSO provider

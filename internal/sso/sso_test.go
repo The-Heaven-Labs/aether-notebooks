@@ -135,16 +135,35 @@ func TestUpdateProvider(t *testing.T) {
 
 	created.Name = "Updated Name"
 	created.ClientSecret = "new-secret-value"
+	created.SyncEmptyGroups = true
+	created.StripGroupPrefix = true
 	updated, err := sso.UpdateProvider(ctx, db.Pool, testMasterKey, created)
 	require.NoError(t, err)
 
 	assert.Equal(t, "Updated Name", updated.Name)
 	assert.Equal(t, "new-secret-value", updated.ClientSecret)
+	assert.True(t, updated.SyncEmptyGroups)
+	assert.True(t, updated.StripGroupPrefix)
 
 	got, err := sso.GetProvider(ctx, db.Pool, testMasterKey, created.ID, "")
 	require.NoError(t, err)
 	assert.Equal(t, "Updated Name", got.Name)
 	assert.Equal(t, "new-secret-value", got.ClientSecret)
+	assert.True(t, got.SyncEmptyGroups)
+	assert.True(t, got.StripGroupPrefix)
+
+	list, err := sso.ListPlatformProviders(ctx, db.Pool, testMasterKey)
+	require.NoError(t, err)
+	var listed *sso.Provider
+	for i := range list {
+		if list[i].ID == created.ID {
+			listed = &list[i]
+			break
+		}
+	}
+	require.NotNil(t, listed, "updated provider should appear in platform provider list")
+	assert.True(t, listed.SyncEmptyGroups)
+	assert.True(t, listed.StripGroupPrefix)
 }
 
 func TestDeleteProvider(t *testing.T) {
@@ -203,19 +222,21 @@ func TestCreateProviderWithGroupSettings(t *testing.T) {
 	ctx := context.Background()
 
 	input := sso.Provider{
-		Scope:          "platform",
-		Name:           "groups-test",
-		ProviderType:   "oidc",
-		ClientID:       "groups-client",
-		ClientSecret:   "groups-secret",
-		DiscoveryURL:   "https://accounts.example.com/.well-known/openid-configuration",
-		AllowedDomains: []string{},
-		Enabled:        true,
-		Scopes:         []string{"openid", "profile", "email", "groups"},
-		GroupsClaim:    "custom_groups",
-		GroupPrefix:    "aether-",
-		AutoSyncGroups: true,
-		GetUserInfo:    true,
+		Scope:            "platform",
+		Name:             "groups-test",
+		ProviderType:     "oidc",
+		ClientID:         "groups-client",
+		ClientSecret:     "groups-secret",
+		DiscoveryURL:     "https://accounts.example.com/.well-known/openid-configuration",
+		AllowedDomains:   []string{},
+		Enabled:          true,
+		Scopes:           []string{"openid", "profile", "email", "groups"},
+		GroupsClaim:      "custom_groups",
+		GroupPrefix:      "aether-",
+		AutoSyncGroups:   true,
+		GetUserInfo:      true,
+		SyncEmptyGroups:  true,
+		StripGroupPrefix: true,
 	}
 
 	created, err := sso.CreateProvider(ctx, db.Pool, testMasterKey, input)
@@ -229,6 +250,8 @@ func TestCreateProviderWithGroupSettings(t *testing.T) {
 	assert.Equal(t, input.GroupPrefix, created.GroupPrefix)
 	assert.Equal(t, input.AutoSyncGroups, created.AutoSyncGroups)
 	assert.Equal(t, input.GetUserInfo, created.GetUserInfo)
+	assert.True(t, created.SyncEmptyGroups)
+	assert.True(t, created.StripGroupPrefix)
 
 	got, err := sso.GetProvider(ctx, db.Pool, testMasterKey, created.ID, "")
 	require.NoError(t, err)
@@ -237,6 +260,8 @@ func TestCreateProviderWithGroupSettings(t *testing.T) {
 	assert.Equal(t, input.GroupPrefix, got.GroupPrefix)
 	assert.Equal(t, input.AutoSyncGroups, got.AutoSyncGroups)
 	assert.Equal(t, input.GetUserInfo, got.GetUserInfo)
+	assert.True(t, got.SyncEmptyGroups)
+	assert.True(t, got.StripGroupPrefix)
 }
 
 func TestListEnabledProvidersForOrg(t *testing.T) {

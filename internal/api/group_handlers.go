@@ -10,7 +10,25 @@ import (
 )
 
 type createGroupRequest struct {
-	Name string `json:"name"`
+	Name        string  `json:"name"`
+	DisplayName *string `json:"display_name"`
+}
+
+type updateGroupRequest struct {
+	Name        *string `json:"name"`
+	DisplayName *string `json:"display_name"`
+}
+
+// normalizeDisplayName trims a label and maps blank to nil (SQL NULL).
+func normalizeDisplayName(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*v)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 // @Summary List groups
@@ -29,21 +47,21 @@ func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 	var args []any
 
 	if r.URL.Query().Get("member") == "me" {
-		query = `SELECT g.id, g.org_id, g.name, g.created_at, COUNT(gm2.user_id) AS member_count
+		query = `SELECT g.id, g.org_id, g.name, g.display_name, g.created_at, COUNT(gm2.user_id) AS member_count
                  FROM groups g
                  JOIN group_members gm ON gm.group_id = g.id AND gm.user_id = $2
                  LEFT JOIN group_members gm2 ON gm2.group_id = g.id
                  WHERE g.org_id = $1
                  GROUP BY g.id
-                 ORDER BY g.name`
+                 ORDER BY COALESCE(g.display_name, g.name)`
 		args = []any{claims.OrgID, claims.UserID}
 	} else {
-		query = `SELECT g.id, g.org_id, g.name, g.created_at, COUNT(gm.user_id) AS member_count
+		query = `SELECT g.id, g.org_id, g.name, g.display_name, g.created_at, COUNT(gm.user_id) AS member_count
                  FROM groups g
                  LEFT JOIN group_members gm ON gm.group_id = g.id
                  WHERE g.org_id = $1
                  GROUP BY g.id
-                 ORDER BY g.name`
+                 ORDER BY COALESCE(g.display_name, g.name)`
 		args = []any{claims.OrgID}
 	}
 
@@ -57,7 +75,7 @@ func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 	var groups []models.Group
 	for rows.Next() {
 		var g models.Group
-		if err := rows.Scan(&g.ID, &g.OrgID, &g.Name, &g.CreatedAt, &g.MemberCount); err != nil {
+		if err := rows.Scan(&g.ID, &g.OrgID, &g.Name, &g.DisplayName, &g.CreatedAt, &g.MemberCount); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
@@ -96,13 +114,17 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "\"everyone\" is a reserved group name")
 		return
 	}
+	if req.DisplayName != nil && strings.EqualFold(strings.TrimSpace(*req.DisplayName), "everyone") {
+		writeError(w, http.StatusBadRequest, "\"everyone\" is a reserved display name")
+		return
+	}
 
 	var g models.Group
 	err := s.db.Pool.QueryRow(ctx,
-		`INSERT INTO groups (org_id, name) VALUES ($1, $2)
-		 RETURNING id, org_id, name, created_at`,
-		claims.OrgID, req.Name,
-	).Scan(&g.ID, &g.OrgID, &g.Name, &g.CreatedAt)
+		`INSERT INTO groups (org_id, name, display_name) VALUES ($1, $2, $3)
+		 RETURNING id, org_id, name, display_name, created_at`,
+		claims.OrgID, req.Name, normalizeDisplayName(req.DisplayName),
+	).Scan(&g.ID, &g.OrgID, &g.Name, &g.DisplayName, &g.CreatedAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "insert failed")
 		return
@@ -115,7 +137,7 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Summary Update a group
-// @Description Update a group's name
+// @Description Update a group's name and/or display name
 // @Tags groups
 // @Accept json
 // @Produce json
@@ -136,38 +158,57 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "group not found")
 		return
 	}
-	if isEveryone {
-		writeError(w, http.StatusBadRequest, "the \"Everyone\" group cannot be renamed")
-		return
-	}
-
-	var req createGroupRequest
+	var req updateGroupRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		if strings.EqualFold(name, "everyone") {
+			writeError(w, http.StatusBadRequest, "\"everyone\" is a reserved group name")
+			return
+		}
+		if isEveryone {
+			writeError(w, http.StatusBadRequest, "the \"Everyone\" group cannot be renamed")
+			return
+		}
+		req.Name = &name
+	}
+	if isEveryone && req.DisplayName != nil {
+		writeError(w, http.StatusBadRequest, "the \"Everyone\" group cannot have a display name")
 		return
 	}
-	if strings.EqualFold(req.Name, "everyone") {
-		writeError(w, http.StatusBadRequest, "\"everyone\" is a reserved group name")
+	if req.DisplayName != nil && strings.EqualFold(strings.TrimSpace(*req.DisplayName), "everyone") {
+		writeError(w, http.StatusBadRequest, "\"everyone\" is a reserved display name")
 		return
 	}
 
+	display := ""
+	if req.DisplayName != nil {
+		display = strings.TrimSpace(*req.DisplayName)
+	}
 	var g models.Group
 	err = s.db.Pool.QueryRow(ctx,
-		`UPDATE groups SET name=$1 WHERE id=$2 AND org_id=$3
-		 RETURNING id, org_id, name, created_at`,
-		req.Name, groupID, claims.OrgID,
-	).Scan(&g.ID, &g.OrgID, &g.Name, &g.CreatedAt)
+		`UPDATE groups
+		    SET name = COALESCE($1, name),
+		        display_name = CASE WHEN $2 THEN NULLIF($3, '') ELSE display_name END
+		  WHERE id=$4 AND org_id=$5
+		  RETURNING id, org_id, name, display_name, created_at`,
+		req.Name, req.DisplayName != nil, display, groupID, claims.OrgID,
+	).Scan(&g.ID, &g.OrgID, &g.Name, &g.DisplayName, &g.CreatedAt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "group not found")
 		return
 	}
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
-		Action: "group.update", ResourceType: "group", ResourceID: groupID, ResourceName: req.Name,
+		Action: "group.update", ResourceType: "group", ResourceID: groupID, ResourceName: g.Name,
+		Metadata: map[string]any{"display_name": g.DisplayName},
 	})
 	writeJSON(w, http.StatusOK, g)
 }

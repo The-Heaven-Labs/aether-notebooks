@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/sso"
 )
 
 // registerOrgAndGetAdminToken registers a new org + user and returns (orgID, token).
@@ -59,12 +61,14 @@ func TestOrgAdminSSOProviderCRUD(t *testing.T) {
 	}
 
 	createBody := map[string]any{
-		"name":            "Corp OIDC",
-		"client_id":       "cid-org-1",
-		"client_secret":   "org-secret",
-		"discovery_url":   "https://corp.example.com/.well-known/openid-configuration",
-		"allowed_domains": []string{"corp.example.com"},
-		"enabled":         true,
+		"name":               "Corp OIDC",
+		"client_id":          "cid-org-1",
+		"client_secret":      "org-secret",
+		"discovery_url":      "https://corp.example.com/.well-known/openid-configuration",
+		"allowed_domains":    []string{"corp.example.com"},
+		"enabled":            true,
+		"sync_empty_groups":  true,
+		"strip_group_prefix": true,
 	}
 
 	// 1. Create provider → 201
@@ -86,6 +90,8 @@ func TestOrgAdminSSOProviderCRUD(t *testing.T) {
 	assert.Equal(t, "cid-org-1", created["client_id"])
 	assert.Nil(t, created["client_secret"], "client_secret must not be returned")
 	assert.True(t, created["enabled"].(bool))
+	assert.True(t, created["sync_empty_groups"].(bool))
+	assert.True(t, created["strip_group_prefix"].(bool))
 
 	// 2. List providers → includes created one
 	req = httptest.NewRequest("GET", "/api/v1/sso/providers", nil)
@@ -109,13 +115,21 @@ func TestOrgAdminSSOProviderCRUD(t *testing.T) {
 	assert.True(t, found, "created provider should appear in list")
 
 	// 3. Update → 200
+	// Prime the per-provider cache; the update must evict it.
+	ctx := context.Background()
+	_, err := sso.GetCachedProvider(ctx, s.DB().Pool, s.Cache.Client(), s.MasterKey(), providerID, "")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), s.Cache.Client().Exists(ctx, "sso:provider:"+providerID).Val())
+
 	updateBody := map[string]any{
-		"name":            "Corp OIDC Updated",
-		"client_id":       "cid-org-1",
-		"client_secret":   "org-secret",
-		"discovery_url":   "https://corp.example.com/.well-known/openid-configuration",
-		"allowed_domains": []string{"corp.example.com"},
-		"enabled":         false,
+		"name":               "Corp OIDC Updated",
+		"client_id":          "cid-org-1",
+		"client_secret":      "org-secret",
+		"discovery_url":      "https://corp.example.com/.well-known/openid-configuration",
+		"allowed_domains":    []string{"corp.example.com"},
+		"enabled":            false,
+		"sync_empty_groups":  false,
+		"strip_group_prefix": false,
 	}
 	body, _ = json.Marshal(updateBody)
 	req = httptest.NewRequest("PUT", "/api/v1/sso/providers/"+providerID, bytes.NewReader(body))
@@ -130,6 +144,14 @@ func TestOrgAdminSSOProviderCRUD(t *testing.T) {
 	assert.Equal(t, "Corp OIDC Updated", updated["name"])
 	assert.False(t, updated["enabled"].(bool))
 	assert.Nil(t, updated["client_secret"])
+	assert.False(t, updated["sync_empty_groups"].(bool))
+	assert.False(t, updated["strip_group_prefix"].(bool))
+
+	require.Equal(t, int64(0), s.Cache.Client().Exists(ctx, "sso:provider:"+providerID).Val(),
+		"update must evict the per-provider cache")
+	reloaded, err := sso.GetCachedProvider(ctx, s.DB().Pool, s.Cache.Client(), s.MasterKey(), providerID, "")
+	require.NoError(t, err)
+	assert.Equal(t, "Corp OIDC Updated", reloaded.Name)
 
 	// 4. Delete → 204
 	req = httptest.NewRequest("DELETE", "/api/v1/sso/providers/"+providerID, nil)
@@ -137,6 +159,9 @@ func TestOrgAdminSSOProviderCRUD(t *testing.T) {
 	rec = httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusNoContent, rec.Code)
+
+	require.Equal(t, int64(0), s.Cache.Client().Exists(ctx, "sso:provider:"+providerID).Val(),
+		"delete must evict the per-provider cache")
 
 	// 5. List again → not present
 	req = httptest.NewRequest("GET", "/api/v1/sso/providers", nil)

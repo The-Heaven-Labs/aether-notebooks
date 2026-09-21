@@ -311,3 +311,96 @@ describe('Delete group', () => {
     expect(deleteCalled).toBe(false)
   })
 })
+
+// ── T8.8 Group display names ────────────────────────────────────────────────
+
+describe('Display names', () => {
+  test('listing renders the label when set and the name otherwise', async () => {
+    server.use(
+      http.get('/api/v1/groups', () => HttpResponse.json([
+        { id: 'g-1', org_id: 'org-1', name: 'aether-analysts',
+          display_name: 'Data Analysts', member_count: 1, created_at: '2026-01-01T00:00:00Z' },
+        { id: 'g-2', org_id: 'org-1', name: 'CSIRT',
+          display_name: null, member_count: 0, created_at: '2026-01-01T00:00:00Z' },
+      ])),
+    )
+    renderWithProviders(<GroupsPage />)
+    const label = await screen.findByText('Data Analysts')
+    expect(label).toHaveAttribute('title', 'aether-analysts')
+    expect(screen.getByText('CSIRT')).toBeInTheDocument()
+    expect(screen.queryByText('aether-analysts')).toBeNull()
+  })
+
+  test('creating with a display name sends it in the POST payload', async () => {
+    let posted: Record<string, unknown> = {}
+    server.use(
+      http.post('/api/v1/groups', async ({ request }) => {
+        posted = await request.json() as Record<string, unknown>
+        return HttpResponse.json(
+          { id: 'g-new', org_id: 'org-1', name: posted.name,
+            display_name: posted.display_name, member_count: 0, created_at: '2026-01-01T00:00:00Z' },
+          { status: 201 }
+        )
+      })
+    )
+    renderWithProviders(<GroupsPage />)
+    await screen.findByText('Data Team')
+    fireEvent.change(screen.getByPlaceholderText('New group name'), { target: { value: 'Analytics' } })
+    fireEvent.change(screen.getByLabelText('New group display name'), { target: { value: 'Data Analysts' } })
+    fireEvent.click(screen.getByText('+ New Group'))
+    await waitFor(() => expect(posted).toEqual({ name: 'Analytics', display_name: 'Data Analysts' }))
+  })
+
+  test('renaming sends name and display_name, and clearing sends an empty label', async () => {
+    let putBody: Record<string, unknown> = {}
+    server.use(
+      http.get('/api/v1/groups', () => HttpResponse.json([
+        { id: 'g-1', org_id: 'org-1', name: 'Data Team',
+          display_name: 'Core Data', member_count: 1, created_at: '2026-01-01T00:00:00Z' },
+        { id: 'g-2', org_id: 'org-1', name: 'CSIRT',
+          display_name: null, member_count: 0, created_at: '2026-01-01T00:00:00Z' },
+      ])),
+      http.put('/api/v1/groups/g-1', async ({ request }) => {
+        putBody = await request.json() as Record<string, unknown>
+        return HttpResponse.json(
+          { id: 'g-1', org_id: 'org-1', name: putBody.name,
+            display_name: putBody.display_name, member_count: 1, created_at: '2026-01-01T00:00:00Z' }
+        )
+      })
+    )
+    renderWithProviders(<GroupsPage />)
+    await screen.findByText('Core Data')
+
+    // Setting a label sends it alongside the identity name.
+    fireEvent.click(screen.getAllByTitle('Group actions')[0])
+    fireEvent.click(screen.getByText('Rename'))
+    const labelInput = screen.getByLabelText('Group display name')
+    expect(labelInput).toHaveValue('Core Data')
+    fireEvent.change(labelInput, { target: { value: 'Core Data 2' } })
+    fireEvent.keyDown(labelInput, { key: 'Enter' })
+    await waitFor(() => expect(putBody).toEqual({ name: 'Data Team', display_name: 'Core Data 2' }))
+
+    // Clearing the label sends an explicit blank.
+    fireEvent.click(screen.getAllByTitle('Group actions')[0])
+    fireEvent.click(screen.getByText('Rename'))
+    const clearInput = screen.getByLabelText('Group display name')
+    fireEvent.change(clearInput, { target: { value: '' } })
+    fireEvent.keyDown(clearInput, { key: 'Enter' })
+    await waitFor(() => expect(putBody).toEqual({ name: 'Data Team', display_name: '' }))
+  })
+
+  test('the Everyone group exposes no label control', async () => {
+    server.use(
+      http.get('/api/v1/groups', () => HttpResponse.json([
+        { id: 'g-everyone', org_id: 'org-1', name: 'Everyone',
+          display_name: 'All Staff', member_count: 3, created_at: '2026-01-01T00:00:00Z' },
+      ])),
+    )
+    renderWithProviders(<GroupsPage />)
+    await screen.findByText('Everyone')
+    expect(screen.getByText('System')).toBeInTheDocument()
+    expect(screen.queryByTitle('Group actions')).toBeNull()
+    expect(screen.queryByLabelText('Group display name')).toBeNull()
+    expect(screen.queryByText('All Staff')).toBeNull()
+  })
+})

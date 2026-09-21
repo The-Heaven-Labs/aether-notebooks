@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useId } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { AppShell } from '../components/AppShell'
@@ -32,6 +32,8 @@ interface ProviderFormValues {
   group_prefix: string
   auto_sync_groups: boolean
   get_user_info: boolean
+  sync_empty_groups: boolean
+  strip_group_prefix: boolean
   provisioning_mode: 'create_org' | 'join_provider_org' | 'deny'
   default_role: 'admin' | 'non-admin' | 'viewer'
 }
@@ -48,6 +50,8 @@ const emptyForm: ProviderFormValues = {
   group_prefix: '',
   auto_sync_groups: false,
   get_user_info: false,
+  sync_empty_groups: false,
+  strip_group_prefix: false,
   provisioning_mode: 'create_org',
   default_role: 'non-admin',
 }
@@ -65,6 +69,8 @@ function providerToForm(p: SSOProvider): ProviderFormValues {
     group_prefix: p.group_prefix ?? '',
     auto_sync_groups: p.auto_sync_groups ?? false,
     get_user_info: p.get_user_info ?? false,
+    sync_empty_groups: p.sync_empty_groups ?? false,
+    strip_group_prefix: p.strip_group_prefix ?? false,
     provisioning_mode: p.provisioning_mode ?? 'create_org',
     default_role: p.default_role ?? 'non-admin',
   }
@@ -88,10 +94,12 @@ function ProviderForm({
   error: string | null
 }) {
   const [values, setValues] = useState<ProviderFormValues>(initial)
+  const syncEmptyGroupsId = useId()
+  const stripGroupPrefixId = useId()
 
   const set = (field: keyof ProviderFormValues) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-      setValues(v => ({ ...v, [field]: field === 'enabled' || field === 'auto_sync_groups' || field === 'get_user_info' ? (e.target as HTMLInputElement).checked : e.target.value }))
+      setValues(v => ({ ...v, [field]: field === 'enabled' || field === 'auto_sync_groups' || field === 'get_user_info' || field === 'sync_empty_groups' || field === 'strip_group_prefix' ? (e.target as HTMLInputElement).checked : e.target.value }))
 
   return (
     <div style={formStyles.container}>
@@ -160,6 +168,24 @@ function ProviderForm({
           <input type="checkbox" checked={values.get_user_info} onChange={set('get_user_info')} />
           Call UserInfo Endpoint
         </label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label htmlFor={syncEmptyGroupsId} style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <input id={syncEmptyGroupsId} type="checkbox" checked={values.sync_empty_groups} onChange={set('sync_empty_groups')} />
+            Sync Empty Groups
+          </label>
+          <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: 11 }}>
+            Requires Auto-sync Groups. When enabled, an IdP report of zero groups removes all SSO-managed memberships for that user. A removed or misconfigured mapper is indistinguishable from zero groups.
+          </span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label htmlFor={stripGroupPrefixId} style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <input id={stripGroupPrefixId} type="checkbox" checked={values.strip_group_prefix} onChange={set('strip_group_prefix')} />
+            Strip Group Prefix
+          </label>
+          <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: 11 }}>
+            Requires Group Prefix. Stores names without the prefix (Aether Notebooks: Area → Area); filtering still uses the prefix.
+          </span>
+        </div>
         <label style={formStyles.label}>
           Provisioning Mode
           <select style={formStyles.input} value={values.provisioning_mode} onChange={set('provisioning_mode')}>
@@ -528,6 +554,8 @@ function SSOProvidersTab() {
       group_prefix: values.group_prefix,
       auto_sync_groups: values.auto_sync_groups,
       get_user_info: values.get_user_info,
+      sync_empty_groups: values.sync_empty_groups,
+      strip_group_prefix: values.strip_group_prefix,
       provisioning_mode: values.provisioning_mode,
       default_role: values.default_role,
     }
@@ -549,6 +577,8 @@ function SSOProvidersTab() {
       group_prefix: values.group_prefix,
       auto_sync_groups: values.auto_sync_groups,
       get_user_info: values.get_user_info,
+      sync_empty_groups: values.sync_empty_groups,
+      strip_group_prefix: values.strip_group_prefix,
       provisioning_mode: values.provisioning_mode,
       default_role: values.default_role,
     }

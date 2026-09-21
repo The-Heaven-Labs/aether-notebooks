@@ -114,6 +114,8 @@ func (s *Server) handleOrgCreateSSOProvider(w http.ResponseWriter, r *http.Reque
 		GroupPrefix:      req.GroupPrefix,
 		AutoSyncGroups:   req.AutoSyncGroups,
 		GetUserInfo:      req.GetUserInfo,
+		SyncEmptyGroups:  req.SyncEmptyGroups,
+		StripGroupPrefix: req.StripGroupPrefix,
 		ProvisioningMode: req.ProvisioningMode,
 		DefaultRole:      req.DefaultRole,
 	}
@@ -198,6 +200,8 @@ func (s *Server) handleOrgUpdateSSOProvider(w http.ResponseWriter, r *http.Reque
 		GroupPrefix:      req.GroupPrefix,
 		AutoSyncGroups:   req.AutoSyncGroups,
 		GetUserInfo:      req.GetUserInfo,
+		SyncEmptyGroups:  req.SyncEmptyGroups,
+		StripGroupPrefix: req.StripGroupPrefix,
 		ProvisioningMode: req.ProvisioningMode,
 		DefaultRole:      req.DefaultRole,
 	}
@@ -212,7 +216,7 @@ func (s *Server) handleOrgUpdateSSOProvider(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	s.invalidateSSOOrgCache(r, claims.OrgID)
+	s.invalidateSSOOrgCache(r, claims.OrgID, id)
 	s.audit.Log(r.Context(), audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "sso_provider.update", ResourceType: "sso_provider", ResourceID: id, ResourceName: req.Name,
@@ -255,7 +259,7 @@ func (s *Server) handleOrgDeleteSSOProvider(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	s.invalidateSSOOrgCache(r, claims.OrgID)
+	s.invalidateSSOOrgCache(r, claims.OrgID, id)
 	s.audit.Log(r.Context(), audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "sso_provider.delete", ResourceType: "sso_provider", ResourceID: id, ResourceName: existing.Name,
@@ -558,9 +562,17 @@ func (s *Server) handleOrgTestSSOProvider(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// invalidateSSOOrgCache deletes the org-specific SSO provider cache key.
-func (s *Server) invalidateSSOOrgCache(r *http.Request, orgID string) {
-	if s.Cache != nil {
-		s.Cache.Client().Del(r.Context(), fmt.Sprintf("sso:providers:%s", orgID))
+// invalidateSSOOrgCache deletes the org-specific SSO provider list cache key,
+// plus the per-provider cache key for any provider IDs given.
+func (s *Server) invalidateSSOOrgCache(r *http.Request, orgID string, providerIDs ...string) {
+	if s.Cache == nil {
+		return
 	}
+	keys := []string{fmt.Sprintf("sso:providers:%s", orgID)}
+	for _, id := range providerIDs {
+		if id != "" {
+			keys = append(keys, "sso:provider:"+id)
+		}
+	}
+	s.Cache.Client().Del(r.Context(), keys...)
 }

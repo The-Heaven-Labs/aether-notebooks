@@ -9,7 +9,8 @@ import { listWarehouses, type Warehouse } from '../api/warehouses'
 import { RoutingPreference } from '../components/RoutingPreference'
 import { useAuth } from '../hooks/useAuth'
 import { ConfirmDialog } from '../components/ConfirmDialog'
-import type { Connector } from '../types'
+import { groupLabel } from '../utils/groupLabel'
+import type { Connector, Group } from '../types'
 
 interface UserProfile {
   id: string
@@ -42,7 +43,7 @@ export function ProfilePage() {
     queryFn: () => api.get('/api/v1/users/me'),
   })
 
-  const { data: myGroups = [] } = useQuery<Array<{ id: string; name: string }>>({
+  const { data: myGroups = [] } = useQuery<Group[]>({
     queryKey: ['groups', 'mine'],
     queryFn: () => api.get('/api/v1/groups?member=me'),
   })
@@ -263,7 +264,7 @@ export function ProfilePage() {
             ) : (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {myGroups.map(g => (
-                  <span key={g.id} style={styles.groupTag}>{g.name}</span>
+                  <span key={g.id} style={styles.groupTag} title={g.name}>{groupLabel(g)}</span>
                 ))}
               </div>
             )}

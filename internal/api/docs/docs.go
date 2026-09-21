@@ -3638,7 +3638,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Update a group's name",
+                "description": "Update a group's name and/or display name",
                 "consumes": [
                     "application/json"
                 ],
@@ -9410,6 +9410,12 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "strip_group_prefix": {
+                    "type": "boolean"
+                },
+                "sync_empty_groups": {
+                    "type": "boolean"
                 },
                 "updated_at": {
                     "type": "string"

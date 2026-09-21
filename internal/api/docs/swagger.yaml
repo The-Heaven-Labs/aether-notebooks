@@ -110,6 +110,10 @@ definitions:
         items:
           type: string
         type: array
+      strip_group_prefix:
+        type: boolean
+      sync_empty_groups:
+        type: boolean
       updated_at:
         type: string
     type: object
@@ -2974,7 +2978,7 @@ paths:
     put:
       consumes:
       - application/json
-      description: Update a group's name
+      description: Update a group's name and/or display name
       parameters:
       - description: Group ID
         in: path

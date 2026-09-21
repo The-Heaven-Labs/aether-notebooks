@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,6 +37,9 @@ type testOIDCServer struct {
 	name             string
 	groups           []string
 	idTokenHasGroups bool
+	failUserInfo     bool
+	malformedGroups  bool
+	userInfoHits     atomic.Int64
 }
 
 func newTestOIDCServer(t *testing.T, sub, email, name string, groups []string, idTokenHasGroups bool) *testOIDCServer {
@@ -149,13 +153,20 @@ func (s *testOIDCServer) handleToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *testOIDCServer) handleUserInfo(w http.ResponseWriter, r *http.Request) {
+	s.userInfoHits.Add(1)
+	if s.failUserInfo {
+		http.Error(w, "userinfo unavailable", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	info := map[string]any{
 		"sub":   s.sub,
 		"email": s.email,
 		"name":  s.name,
 	}
-	if len(s.groups) > 0 {
+	if s.malformedGroups {
+		info["groups"] = "engineering"
+	} else if len(s.groups) > 0 {
 		groups := make([]any, len(s.groups))
 		for i, g := range s.groups {
 			groups[i] = g
@@ -217,28 +228,72 @@ func TestSyncSSOGroups_EmptyGroups(t *testing.T) {
 
 	logger := audit.NewLogger(s.DB())
 
-	api.SyncSSOGroups(ctx, s.DB().Pool, logger, provider, orgID, userID, nil)
+	// Seed an SSO-managed membership.
+	api.SyncSSOGroups(ctx, s.DB().Pool, logger, provider, orgID, userID, []string{"engineering"})
 
 	var count int
 	err = s.DB().Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM group_members gm
-		 JOIN groups g ON g.id = gm.group_id
-		 WHERE gm.user_id=$1 AND g.org_id=$2`,
-		userID, orgID,
+		`SELECT COUNT(*) FROM group_members WHERE user_id=$1`, userID,
 	).Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 0, count, "nil groups should not create any memberships")
+	require.Equal(t, 1, count)
 
-	api.SyncSSOGroups(ctx, s.DB().Pool, logger, provider, orgID, userID, []string{})
+	// Flag off (default): empty groups is a no-op.
+	api.SyncSSOGroups(ctx, s.DB().Pool, logger, provider, orgID, userID, nil)
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM group_members WHERE user_id=$1`, userID,
+	).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "empty groups should be a no-op when sync_empty_groups is off")
+
+	// A manual (admin-added) membership must survive the authoritative empty sync.
+	var manualGroupID string
+	err = s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO groups (org_id, name) VALUES ($1, 'manual-group') RETURNING id`, orgID,
+	).Scan(&manualGroupID)
+	require.NoError(t, err)
+	_, err = s.DB().Pool.Exec(ctx,
+		`INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)`,
+		manualGroupID, userID,
+	)
+	require.NoError(t, err)
+
+	// Flag on: empty groups removes all SSO-managed memberships.
+	provider.SyncEmptyGroups = true
+	api.SyncSSOGroups(ctx, s.DB().Pool, logger, provider, orgID, userID, nil)
+
+	var ssoGroupID string
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT id FROM groups WHERE org_id=$1 AND name='engineering'`, orgID,
+	).Scan(&ssoGroupID)
+	require.NoError(t, err)
 
 	err = s.DB().Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM group_members gm
-		 JOIN groups g ON g.id = gm.group_id
-		 WHERE gm.user_id=$1 AND g.org_id=$2`,
-		userID, orgID,
+		`SELECT COUNT(*) FROM group_members WHERE group_id=$1 AND user_id=$2`,
+		ssoGroupID, userID,
 	).Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 0, count, "empty groups should not create any memberships")
+	assert.Equal(t, 0, count, "empty groups should remove SSO-managed memberships")
+
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM group_members WHERE group_id=$1 AND user_id=$2`,
+		manualGroupID, userID,
+	).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "manual memberships must survive")
+
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM sso_group_memberships WHERE provider_id=$1 AND user_id=$2`,
+		provider.ID, userID,
+	).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count, "tracking rows should be removed")
+
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM groups WHERE org_id=$1`, orgID,
+	).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count, "groups are never deleted")
 }
 
 func TestSyncSSOGroups_CaseInsensitiveMatching(t *testing.T) {
@@ -262,9 +317,10 @@ func TestSyncSSOGroups_CaseInsensitiveMatching(t *testing.T) {
 	require.NoError(t, err)
 
 	// FindOrCreateGroup should return the existing group when queried with different case
-	foundID, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "engineering")
+	foundID, created, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "engineering")
 	require.NoError(t, err)
 	assert.Equal(t, existingID, foundID, "should find existing group case-insensitively")
+	assert.False(t, created)
 
 	// Verify group name is preserved (case from DB)
 	var name string
@@ -294,9 +350,10 @@ func TestFindOrCreateGroup_Existing(t *testing.T) {
 	require.NoError(t, err)
 
 	// Find the same group — should return existing ID
-	foundID, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "my-group")
+	foundID, created, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "my-group")
 	require.NoError(t, err)
 	assert.Equal(t, existingID, foundID, "should return existing group ID")
+	assert.False(t, created, "existing group should report created=false")
 }
 
 func TestFindOrCreateGroup_CaseInsensitive(t *testing.T) {
@@ -319,9 +376,28 @@ func TestFindOrCreateGroup_CaseInsensitive(t *testing.T) {
 	require.NoError(t, err)
 
 	// Find with different case
-	foundID, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "mygroup")
+	foundID, created, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "mygroup")
 	require.NoError(t, err)
 	assert.Equal(t, existingID, foundID, "should find existing group case-insensitively")
+	assert.False(t, created)
+}
+
+func TestFindOrCreateGroup_Creates(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+
+	slug := fmt.Sprintf("test-org-%d", time.Now().UnixNano())
+	var orgID string
+	err := s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
+		slug, slug,
+	).Scan(&orgID)
+	require.NoError(t, err)
+
+	id, created, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "brand-new")
+	require.NoError(t, err)
+	assert.NotEmpty(t, id)
+	assert.True(t, created, "new group should report created=true")
 }
 
 func TestFindStaleSSOGroups(t *testing.T) {
@@ -480,6 +556,88 @@ func TestOIDCExchangeUserInfoOverridesIDToken(t *testing.T) {
 	assert.Equal(t, []string{"from-userinfo-only"}, claims.Groups)
 }
 
+func TestOIDCExchangeUserInfoFailure(t *testing.T) {
+	email := fmt.Sprintf("uifail-%d@test.com", time.Now().UnixNano())
+	srv := newTestOIDCServer(t, "user-uifail", email, "UI Fail", nil, false)
+	srv.failUserInfo = true
+
+	provider, err := auth.NewGenericOIDCProvider(context.Background(),
+		"test", srv.baseURL, "test-client-id", "test-client-secret",
+		"http://localhost/callback",
+		[]string{"openid", "profile", "email", "groups"},
+		"groups", true)
+	require.NoError(t, err)
+
+	claims, err := provider.Exchange(context.Background(), "test-code")
+	require.NoError(t, err)
+
+	assert.True(t, claims.GroupsUnavailable,
+		"failed UserInfo with no ID token groups should mark groups unavailable")
+	assert.Empty(t, claims.Groups)
+}
+
+func TestOIDCExchangeUserInfoFailureWithIDTokenGroups(t *testing.T) {
+	email := fmt.Sprintf("uifail2-%d@test.com", time.Now().UnixNano())
+	srv := newTestOIDCServer(t, "user-uifail2", email, "UI Fail 2",
+		[]string{"aether-x"}, true)
+	srv.failUserInfo = true
+
+	provider, err := auth.NewGenericOIDCProvider(context.Background(),
+		"test", srv.baseURL, "test-client-id", "test-client-secret",
+		"http://localhost/callback",
+		[]string{"openid", "profile", "email", "groups"},
+		"groups", true)
+	require.NoError(t, err)
+
+	claims, err := provider.Exchange(context.Background(), "test-code")
+	require.NoError(t, err)
+
+	assert.False(t, claims.GroupsUnavailable,
+		"ID token groups should be used when UserInfo fails")
+	assert.Equal(t, []string{"aether-x"}, claims.Groups)
+	assert.Greater(t, srv.userInfoHits.Load(), int64(0),
+		"UserInfo must actually be attempted before falling back to ID token groups")
+}
+
+func TestOIDCExchangeUserInfoSuccessEmptyGroups(t *testing.T) {
+	email := fmt.Sprintf("uiempty-%d@test.com", time.Now().UnixNano())
+	srv := newTestOIDCServer(t, "user-uiempty", email, "UI Empty", nil, false)
+
+	provider, err := auth.NewGenericOIDCProvider(context.Background(),
+		"test", srv.baseURL, "test-client-id", "test-client-secret",
+		"http://localhost/callback",
+		[]string{"openid", "profile", "email", "groups"},
+		"groups", true)
+	require.NoError(t, err)
+
+	claims, err := provider.Exchange(context.Background(), "test-code")
+	require.NoError(t, err)
+
+	assert.False(t, claims.GroupsUnavailable,
+		"successful UserInfo without a groups claim is authoritative empty, not unavailable")
+	assert.Empty(t, claims.Groups)
+}
+
+func TestOIDCExchangeUserInfoMalformedGroups(t *testing.T) {
+	email := fmt.Sprintf("uibad-%d@test.com", time.Now().UnixNano())
+	srv := newTestOIDCServer(t, "user-uibad", email, "UI Bad", nil, false)
+	srv.malformedGroups = true
+
+	provider, err := auth.NewGenericOIDCProvider(context.Background(),
+		"test", srv.baseURL, "test-client-id", "test-client-secret",
+		"http://localhost/callback",
+		[]string{"openid", "profile", "email", "groups"},
+		"groups", true)
+	require.NoError(t, err)
+
+	claims, err := provider.Exchange(context.Background(), "test-code")
+	require.NoError(t, err)
+
+	assert.True(t, claims.GroupsUnavailable,
+		"unparseable groups claim with no ID token groups should mark groups unavailable")
+	assert.Empty(t, claims.Groups)
+}
+
 // ─── Full Callback Integration Test ───────────────────────────────────────────
 
 func TestFullOIDCCallbackWithGroupSync(t *testing.T) {
@@ -568,6 +726,157 @@ func TestFullOIDCCallbackWithGroupSync(t *testing.T) {
 		names = append(names, name)
 	}
 	assert.Equal(t, []string{"aether-analysts", "aether-engineering"}, names)
+}
+
+func TestFullOIDCCallbackEmptyGroupsAuthoritative(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("emptyfull-%d@example.com", ts)
+	name := fmt.Sprintf("Empty Full %d", ts)
+
+	oidcSrv := newTestOIDCServer(t, "empty-full-user", email, name,
+		[]string{"aether-analysts"}, true)
+
+	dbProvider := sso.Provider{
+		Scope:           "platform",
+		Name:            "Empty Full OIDC",
+		ProviderType:    "oidc",
+		ClientID:        "test-client-id",
+		ClientSecret:    "test-secret",
+		DiscoveryURL:    oidcSrv.baseURL,
+		AllowedDomains:  []string{},
+		Scopes:          []string{"openid", "profile", "email", "groups"},
+		Enabled:         true,
+		AutoSyncGroups:  true,
+		SyncEmptyGroups: true,
+		GroupsClaim:     "groups",
+		GroupPrefix:     "aether-",
+	}
+	created, err := sso.CreateProvider(ctx, s.DB().Pool, s.MasterKey(), dbProvider)
+	require.NoError(t, err)
+
+	callback := func() {
+		state := fmt.Sprintf("empty-state-%d", time.Now().UnixNano())
+		_, err := s.Cache.Client().SetNX(ctx, "oidc:state:"+state, "1", 10*time.Minute).Result()
+		require.NoError(t, err)
+		req := httptest.NewRequest("GET",
+			fmt.Sprintf("/api/v1/auth/oidc/%s/callback?code=test-code&state=%s", created.ID, state), nil)
+		req.Host = "localhost"
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusFound, rec.Code, "callback body: %s", rec.Body.String())
+	}
+
+	callback()
+
+	var userID string
+	err = s.DB().Pool.QueryRow(ctx, `SELECT id FROM users WHERE email=$1`, email).Scan(&userID)
+	require.NoError(t, err)
+
+	var count int
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM group_members WHERE user_id=$1`, userID).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 1, count, "first login should sync one group")
+
+	// IdP now reports no groups at all (Keycloak omits the claim).
+	oidcSrv.groups = nil
+	callback()
+
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM group_members WHERE user_id=$1`, userID).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count, "empty groups should remove SSO-managed memberships")
+
+	var tracked int
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM sso_group_memberships WHERE user_id=$1`, userID).Scan(&tracked)
+	require.NoError(t, err)
+	assert.Equal(t, 0, tracked, "tracking rows should be removed")
+}
+
+func TestFullOIDCCallbackUserInfoFailureSkipsGroupSync(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("skipfull-%d@example.com", ts)
+	name := fmt.Sprintf("Skip Full %d", ts)
+
+	oidcSrv := newTestOIDCServer(t, "skip-full-user", email, name,
+		[]string{"aether-analysts"}, false)
+
+	dbProvider := sso.Provider{
+		Scope:           "platform",
+		Name:            "Skip Full OIDC",
+		ProviderType:    "oidc",
+		ClientID:        "test-client-id",
+		ClientSecret:    "test-secret",
+		DiscoveryURL:    oidcSrv.baseURL,
+		AllowedDomains:  []string{},
+		Scopes:          []string{"openid", "profile", "email", "groups"},
+		Enabled:         true,
+		AutoSyncGroups:  true,
+		SyncEmptyGroups: true,
+		GroupsClaim:     "groups",
+		GroupPrefix:     "aether-",
+		GetUserInfo:     true,
+	}
+	created, err := sso.CreateProvider(ctx, s.DB().Pool, s.MasterKey(), dbProvider)
+	require.NoError(t, err)
+
+	callback := func() {
+		state := fmt.Sprintf("skip-state-%d", time.Now().UnixNano())
+		_, err := s.Cache.Client().SetNX(ctx, "oidc:state:"+state, "1", 10*time.Minute).Result()
+		require.NoError(t, err)
+		req := httptest.NewRequest("GET",
+			fmt.Sprintf("/api/v1/auth/oidc/%s/callback?code=test-code&state=%s", created.ID, state), nil)
+		req.Host = "localhost"
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusFound, rec.Code, "callback body: %s", rec.Body.String())
+	}
+
+	callback() // groups only in UserInfo → membership created
+
+	var userID string
+	err = s.DB().Pool.QueryRow(ctx, `SELECT id FROM users WHERE email=$1`, email).Scan(&userID)
+	require.NoError(t, err)
+
+	var orgID string
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT org_id FROM org_members WHERE user_id=$1`, userID).Scan(&orgID)
+	require.NoError(t, err)
+
+	var count int
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM group_members WHERE user_id=$1`, userID).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+
+	// UserInfo breaks and ID token has no groups → sync must be skipped, not wipe.
+	oidcSrv.failUserInfo = true
+	callback()
+
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM group_members WHERE user_id=$1`, userID).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "UserInfo failure must not wipe memberships")
+
+	var audited int
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM audit_logs WHERE org_id=$1 AND action='group.sso.error'`,
+		orgID).Scan(&audited)
+	require.NoError(t, err)
+	assert.Equal(t, 1, audited, "skipped sync should be audited once")
+
+	var tracked int
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM sso_group_memberships WHERE user_id=$1`, userID).Scan(&tracked)
+	require.NoError(t, err)
+	assert.Equal(t, 1, tracked, "tracking row must survive the skipped sync")
 }
 
 // ─── Provisioning-mode callback tests ──────────────────────────────────────

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { groupLabel } from '../utils/groupLabel'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -93,6 +94,7 @@ interface Member {
 interface Group {
   id: string
   name: string
+  display_name?: string | null
 }
 
 export interface PermissionsPanelProps {
@@ -128,7 +130,7 @@ function Avatar({ name, type }: { name: string; type: 'user' | 'group' | 'org_ro
 
 interface SubjectSearchProps {
   members: Array<{ user_id: string; email: string; name?: string }>
-  groups: Array<{ id: string; name: string }>
+  groups: Array<{ id: string; name: string; display_name?: string | null }>
   resourceOwnerId?: string
   value: string
   onChange: (key: string) => void
@@ -143,6 +145,9 @@ function SubjectSearch({ members, groups, resourceOwnerId, value, onChange }: Su
   const listRef = useRef<HTMLUListElement>(null)
 
   const availableMembers = members.filter(m => m.user_id !== resourceOwnerId)
+  const selectedGroup = value?.startsWith('group:')
+    ? groups.find(g => 'group:' + g.id === value)
+    : undefined
   const displayLabel = value === 'org_role:everyone'
     ? 'Everyone (all members)'
     : value?.startsWith('user:')
@@ -150,7 +155,7 @@ function SubjectSearch({ members, groups, resourceOwnerId, value, onChange }: Su
         || availableMembers.find(m => 'user:' + m.user_id === value)?.email
         || 'Selected'
       : value?.startsWith('group:')
-        ? groups.find(g => 'group:' + g.id === value)?.name || 'Selected'
+        ? (selectedGroup ? groupLabel(selectedGroup) : 'Selected')
         : 'Select user, group, or Everyone…'
 
   const q = query.toLowerCase().trim()
@@ -160,8 +165,8 @@ function SubjectSearch({ members, groups, resourceOwnerId, value, onChange }: Su
       .filter(m => !q || (m.name?.toLowerCase() || '').includes(q) || m.email.toLowerCase().includes(q))
       .map(m => ({ key: 'user:' + m.user_id, label: m.name || m.email, group: 'Users' })),
     ...groups
-      .filter(g => !q || g.name.toLowerCase().includes(q))
-      .map(g => ({ key: 'group:' + g.id, label: g.name, group: 'Groups' })),
+      .filter(g => !q || groupLabel(g).toLowerCase().includes(q) || g.name.toLowerCase().includes(q))
+      .map(g => ({ key: 'group:' + g.id, label: groupLabel(g), group: 'Groups' })),
   ]
 
   const selectOption = useCallback((key: string) => {
@@ -422,7 +427,7 @@ export function PermissionsPanel({
       return entry.subject_id === 'everyone' ? 'Everyone (all members)' : entry.subject_id
     } else {
       const g = groups.find((g) => g.id === entry.subject_id)
-      return g ? g.name : entry.subject_id
+      return g ? groupLabel(g) : entry.subject_id
     }
   }
 

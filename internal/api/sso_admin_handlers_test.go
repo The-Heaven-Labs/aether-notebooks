@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,20 +10,25 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/sso"
 )
 
 func TestPlatformAdminSSOProviderCRUD(t *testing.T) {
 	s := setupTestServer(t)
 
 	createBody := map[string]any{
-		"name":              "Acme Okta",
-		"client_id":         "abc123",
-		"client_secret":     "super-secret",
-		"discovery_url":     "https://acme.okta.com/.well-known/openid-configuration",
-		"allowed_domains":   []string{"acme.com", "acme.org"},
-		"enabled":           true,
-		"provisioning_mode": "join_provider_org",
-		"default_role":      "viewer",
+		"name":               "Acme Okta",
+		"client_id":          "abc123",
+		"client_secret":      "super-secret",
+		"discovery_url":      "https://acme.okta.com/.well-known/openid-configuration",
+		"allowed_domains":    []string{"acme.com", "acme.org"},
+		"enabled":            true,
+		"provisioning_mode":  "join_provider_org",
+		"default_role":       "viewer",
+		"auto_sync_groups":   true,
+		"get_user_info":      true,
+		"sync_empty_groups":  true,
+		"strip_group_prefix": true,
 	}
 
 	// 1. Create a platform provider → 201
@@ -49,6 +55,10 @@ func TestPlatformAdminSSOProviderCRUD(t *testing.T) {
 	assert.Equal(t, "viewer", created["default_role"])
 	_, hasCallback := created["callback_url"]
 	assert.True(t, hasCallback, "callback_url should be present in the response")
+	assert.True(t, created["auto_sync_groups"].(bool))
+	assert.True(t, created["get_user_info"].(bool))
+	assert.True(t, created["sync_empty_groups"].(bool))
+	assert.True(t, created["strip_group_prefix"].(bool))
 
 	// 2. List providers → includes the created one
 	req = httptest.NewRequest("GET", "/api/v1/admin/sso/providers", nil)
@@ -71,13 +81,21 @@ func TestPlatformAdminSSOProviderCRUD(t *testing.T) {
 	assert.True(t, found, "created provider should appear in list")
 
 	// 3. Update name → 200, verify name changed
+	// Prime the per-provider cache; the update must evict it.
+	ctx := context.Background()
+	_, err := sso.GetCachedProvider(ctx, s.DB().Pool, s.Cache.Client(), s.MasterKey(), providerID, "")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), s.Cache.Client().Exists(ctx, "sso:provider:"+providerID).Val())
+
 	updateBody := map[string]any{
-		"name":            "Acme Okta Updated",
-		"client_id":       "abc123",
-		"client_secret":   "super-secret",
-		"discovery_url":   "https://acme.okta.com/.well-known/openid-configuration",
-		"allowed_domains": []string{"acme.com"},
-		"enabled":         true,
+		"name":               "Acme Okta Updated",
+		"client_id":          "abc123",
+		"client_secret":      "super-secret",
+		"discovery_url":      "https://acme.okta.com/.well-known/openid-configuration",
+		"allowed_domains":    []string{"acme.com"},
+		"enabled":            true,
+		"sync_empty_groups":  true,
+		"strip_group_prefix": true,
 	}
 	body, _ = json.Marshal(updateBody)
 	req = httptest.NewRequest("PUT", "/api/v1/admin/sso/providers/"+providerID, bytes.NewReader(body))
@@ -91,6 +109,14 @@ func TestPlatformAdminSSOProviderCRUD(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&updated))
 	assert.Equal(t, "Acme Okta Updated", updated["name"])
 	assert.Nil(t, updated["client_secret"], "client_secret must not be returned on update")
+	assert.True(t, updated["sync_empty_groups"].(bool))
+	assert.True(t, updated["strip_group_prefix"].(bool))
+
+	require.Equal(t, int64(0), s.Cache.Client().Exists(ctx, "sso:provider:"+providerID).Val(),
+		"update must evict the per-provider cache")
+	reloaded, err := sso.GetCachedProvider(ctx, s.DB().Pool, s.Cache.Client(), s.MasterKey(), providerID, "")
+	require.NoError(t, err)
+	assert.Equal(t, "Acme Okta Updated", reloaded.Name)
 
 	// 4. Delete → 204
 	req = httptest.NewRequest("DELETE", "/api/v1/admin/sso/providers/"+providerID, nil)
@@ -98,6 +124,9 @@ func TestPlatformAdminSSOProviderCRUD(t *testing.T) {
 	rec = httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusNoContent, rec.Code)
+
+	require.Equal(t, int64(0), s.Cache.Client().Exists(ctx, "sso:provider:"+providerID).Val(),
+		"delete must evict the per-provider cache")
 
 	// 5. List again → not present
 	req = httptest.NewRequest("GET", "/api/v1/admin/sso/providers", nil)

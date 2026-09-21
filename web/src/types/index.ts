@@ -290,6 +290,7 @@ export interface Group {
   id: string
   org_id: string
   name: string
+  display_name: string | null
   member_count: number
   created_at: string
 }
@@ -330,6 +331,8 @@ export interface SSOProvider {
   group_prefix: string
   auto_sync_groups: boolean
   get_user_info: boolean
+  sync_empty_groups: boolean
+  strip_group_prefix: boolean
   provisioning_mode?: 'create_org' | 'join_provider_org' | 'deny'
   default_role?: 'admin' | 'non-admin' | 'viewer'
   callback_url?: string
