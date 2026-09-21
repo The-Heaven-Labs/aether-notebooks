@@ -330,6 +330,8 @@ export interface SSOProvider {
   group_prefix: string
   auto_sync_groups: boolean
   get_user_info: boolean
+  sync_empty_groups: boolean
+  strip_group_prefix: boolean
   provisioning_mode?: 'create_org' | 'join_provider_org' | 'deny'
   default_role?: 'admin' | 'non-admin' | 'viewer'
   callback_url?: string

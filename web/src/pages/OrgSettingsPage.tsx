@@ -21,6 +21,8 @@ interface ProviderFormValues {
   group_prefix: string
   auto_sync_groups: boolean
   get_user_info: boolean
+  sync_empty_groups: boolean
+  strip_group_prefix: boolean
   provisioning_mode: 'create_org' | 'join_provider_org' | 'deny'
   default_role: 'admin' | 'non-admin' | 'viewer'
 }
@@ -37,6 +39,8 @@ const emptyForm: ProviderFormValues = {
   group_prefix: '',
   auto_sync_groups: false,
   get_user_info: false,
+  sync_empty_groups: false,
+  strip_group_prefix: false,
   provisioning_mode: 'create_org',
   default_role: 'non-admin',
 }
@@ -54,6 +58,8 @@ function providerToForm(p: SSOProvider): ProviderFormValues {
     group_prefix: p.group_prefix ?? '',
     auto_sync_groups: p.auto_sync_groups ?? false,
     get_user_info: p.get_user_info ?? false,
+    sync_empty_groups: p.sync_empty_groups ?? false,
+    strip_group_prefix: p.strip_group_prefix ?? false,
     provisioning_mode: p.provisioning_mode ?? 'create_org',
     default_role: p.default_role ?? 'non-admin',
   }
@@ -82,7 +88,7 @@ function ProviderForm({
 
   const set = (field: keyof ProviderFormValues) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-      setValues(v => ({ ...v, [field]: field === 'enabled' || field === 'auto_sync_groups' || field === 'get_user_info' ? (e.target as HTMLInputElement).checked : e.target.value }))
+      setValues(v => ({ ...v, [field]: field === 'enabled' || field === 'auto_sync_groups' || field === 'get_user_info' || field === 'sync_empty_groups' || field === 'strip_group_prefix' ? (e.target as HTMLInputElement).checked : e.target.value }))
 
   return (
     <div style={formStyles.container}>
@@ -150,6 +156,14 @@ function ProviderForm({
         <label style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <input type="checkbox" checked={values.get_user_info} onChange={set('get_user_info')} />
           Call UserInfo Endpoint
+        </label>
+        <label style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <input type="checkbox" checked={values.sync_empty_groups} onChange={set('sync_empty_groups')} />
+          Sync Empty Groups
+        </label>
+        <label style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <input type="checkbox" checked={values.strip_group_prefix} onChange={set('strip_group_prefix')} />
+          Strip Group Prefix
         </label>
         <label style={formStyles.label}>
           Provisioning Mode
@@ -501,6 +515,8 @@ export function OrgSettingsPage() {
       group_prefix: values.group_prefix,
       auto_sync_groups: values.auto_sync_groups,
       get_user_info: values.get_user_info,
+      sync_empty_groups: values.sync_empty_groups,
+      strip_group_prefix: values.strip_group_prefix,
       provisioning_mode: values.provisioning_mode,
       default_role: values.default_role,
     }
@@ -522,6 +538,8 @@ export function OrgSettingsPage() {
       group_prefix: values.group_prefix,
       auto_sync_groups: values.auto_sync_groups,
       get_user_info: values.get_user_info,
+      sync_empty_groups: values.sync_empty_groups,
+      strip_group_prefix: values.strip_group_prefix,
       provisioning_mode: values.provisioning_mode,
       default_role: values.default_role,
     }
