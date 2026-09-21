@@ -237,6 +237,24 @@ the user was explicitly granted does not change results — only compute placeme
   `AETHER_CH_TABLE_PERMISSIONS=false` removes the row without opening a provisioner
   connection; leftover ClickHouse users/roles are recorded by a
   `warehouse.identities.cleanup` audit event (`deferred: true`) and must be dropped manually.
+- **Pool invalidation is process-local.** `connPool` lives inside the API process, so only the
+  replica that applies DDL (or fails closed) drops its pooled identities. On a multi-replica
+  deployment a resident session on another replica keeps serving pre-reconcile access until
+  its connection is reopened; restart the affected replicas or wait out the pool idle TTL
+  (10 min). Cross-replica invalidation (e.g. a Redis broadcast) is a follow-up; run a single
+  API replica until it lands.
+- **Connection pooling deviation from the Performance constraints.** The implementation keeps
+  one connection per `(endpoint, user)` (the design's "small per-user pools (1–2)") with a
+  single process-wide cap (`connPoolMaxPools = 100`) and LRU eviction of idle entries after a
+  10-minute idle TTL, instead of a per-connector cap with a bounded wait queue. A `Get` can
+  briefly exceed the cap while entries are leased; the overage resolves on release.
+- **Drift helper reserved for an admin surface.** `detectWarehouseDrift` is exercised by tests
+  only; reconcile performs its own inline drift comparison. It is retained for a future admin
+  drift-report endpoint. Drift is still audited (`warehouse.drift`), and wildcards or
+  unexpected grants fail the warehouse closed.
+- **`cell.execute` audit omits the endpoint host.** The audit row records the routed connector
+  id, warehouse id, and per-user identity, but not the host that served the query; the host is
+  derivable from the connector row at read time.
 - **Settings profiles and quotas remain deferred** (Security controls and Out of scope still
   apply to the interim posture).
 - **Swagger regenerated** for the warehouse endpoints (`internal/api/docs`).
