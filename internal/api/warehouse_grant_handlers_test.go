@@ -323,6 +323,7 @@ func TestWarehouseGrantValidation(t *testing.T) {
 	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
 	wh := createWarehouseViaAPI(t, s, admin, "Grant Validation WH")
 	memberID, _ := seedGrantOrgMember(t, s, orgID, "non-admin")
+	everyoneID := seedGrantEveryoneGroup(t, s, orgID)
 
 	orgB, _, _ := seedWarehouseOrgAdmin(t, s)
 	foreignUser, _ := seedGrantOrgMember(t, s, orgB, "non-admin")
@@ -345,6 +346,7 @@ func TestWarehouseGrantValidation(t *testing.T) {
 		{"malformed group subject", grantBody("group", "not-a-uuid", "analytics", "events")},
 		{"unknown group subject", grantBody("group", uuid.NewString(), "analytics", "events")},
 		{"cross-org group subject", grantBody("group", foreignGroup.String(), "analytics", "events")},
+		{"everyone group subject", grantBody("group", everyoneID.String(), "analytics", "events")},
 		{"everyone with foreign subject id", grantBody("everyone", memberID.String(), "analytics", "events")},
 	}
 	for _, tc := range cases {
@@ -361,6 +363,32 @@ func TestWarehouseGrantValidation(t *testing.T) {
 		grantBody("user", memberID.String(), "my-db.v2", "Events.2024-Q1$"))
 	require.Equal(t, http.StatusCreated, okRec.Code, okRec.Body.String())
 	require.Equal(t, 1, countWarehouseGrants(t, s, wh), "only the accepted grant exists")
+}
+
+// A group-subject grant naming the org's Everyone group is rejected: the
+// group is an implicit ACL subject (permissions.go) that chaccess.Compute
+// only applies to materialized group_members rows, so accepting it would
+// silently diverge from service-access resolution. The canonical spelling of
+// that audience is subject_type "everyone".
+func TestWarehouseGrantRejectsEveryoneGroupSubject(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Grant Everyone Subject WH")
+	everyoneID := seedGrantEveryoneGroup(t, s, orgID)
+
+	rec := createGrantViaAPI(t, s, admin, wh,
+		grantBody("group", everyoneID.String(), "analytics", "events"))
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	var errResp map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &errResp))
+	require.Contains(t, errResp["error"], `subject_type "everyone"`,
+		"the 400 must point at the canonical everyone subject")
+	require.Zero(t, countWarehouseGrants(t, s, wh), "the rejected grant must not be stored")
+
+	// The canonical everyone subject is still accepted for the same table.
+	okRec := createGrantViaAPI(t, s, admin, wh, grantBody("everyone", "", "analytics", "events"))
+	require.Equal(t, http.StatusCreated, okRec.Code, okRec.Body.String())
+	require.Equal(t, 1, countWarehouseGrants(t, s, wh))
 }
 
 // TestWarehouseGrantWarningHonorsFolderServiceAccess pins the warning check to

@@ -116,6 +116,12 @@ func writeGrantValidationError(w http.ResponseWriter, err error) {
 // group, and "everyone" carries the fixed canonical ID. subject_id is stored
 // as text with no foreign key, so this validation is the only thing keeping a
 // grant from naming a subject in another org.
+//
+// The org's "Everyone" group is rejected as a group subject: permissions.go
+// treats it as an implicit membership for every member while chaccess.Compute
+// only grants it to materialized group_members rows, so a grant spelled that
+// way would provision only part of the audience it names. The canonical
+// spelling of that audience is subject_type "everyone".
 func (s *Server) validateGrantSubject(ctx context.Context, orgID, subjectType, subjectID string) (string, error) {
 	switch subjectType {
 	case "everyone":
@@ -143,14 +149,15 @@ func (s *Server) validateGrantSubject(ctx context.Context, orgID, subjectType, s
 		if err != nil {
 			return "", invalidGrant("subject_id must be a UUID for subject_type group")
 		}
-		var exists bool
-		if err := s.db.Pool.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM groups WHERE id = $1 AND org_id = $2)`,
-			parsed.String(), orgID).Scan(&exists); err != nil {
+		isEveryone, err := s.isEveryoneGroup(ctx, parsed.String(), orgID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", invalidGrant("subject group does not belong to this organization")
+		}
+		if err != nil {
 			return "", fmt.Errorf("check group: %w", err)
 		}
-		if !exists {
-			return "", invalidGrant("subject group does not belong to this organization")
+		if isEveryone {
+			return "", invalidGrant(`subject_type "group" cannot target the "Everyone" group — use subject_type "everyone" for all members`)
 		}
 		return parsed.String(), nil
 	default:
