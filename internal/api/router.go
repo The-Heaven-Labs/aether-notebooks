@@ -32,33 +32,38 @@ type warehouseSyncer interface{ Enqueue(uuid.UUID) }
 
 // Server is the HTTP server for the Aether API, holding all dependencies.
 type Server struct {
-	db                   *database.DB
-	jwt                  *auth.JWTIssuer
-	audit                *audit.Logger
-	masterKey            []byte
-	hub                  *Hub
-	rdb                  *redis.Client // shared Redis client; nil when no cache is configured
-	mux                  *http.ServeMux
-	store                storage.Storage
-	platformAdminEmail   string
-	disableRegistration  bool
-	publicURL            string
-	frontendURL          string
-	Cache                *cache.Cache
-	maxAttachmentBytes   int64
-	outputLimitsMaxBytes int64 // platform ceiling for org output byte caps (AETHER_OUTPUT_LIMITS_MAX_BYTES)
-	agentEngine          *agent.Engine
-	upgrader             websocket.Upgrader
-	toolAllowedDomains   []string
-	sessionCancels       sync.Map                        // sessionID -> context.CancelFunc
-	subdomainMW          func(http.Handler) http.Handler // host → org resolution
-	oidcRewriteFrom      string                          // host rewrite for OIDC discovery inside Docker (e.g. "localhost:5557")
-	oidcRewriteTo        string                          // target host rewrite (e.g. "host.docker.internal:5557")
-	frontendHandler      http.Handler                    // embedded web frontend SPA (nil in tests)
-	version              string                          // build version (set via ldflags)
-	commit               string                          // git commit (set via ldflags)
-	buildDate            string                          // build date (set via ldflags)
-	warehouseSync        warehouseSyncer                 // debounced ClickHouse access sync (nil disables triggers)
+	db        *database.DB
+	jwt       *auth.JWTIssuer
+	audit     *audit.Logger
+	masterKey []byte
+	hub       *Hub
+	rdb       *redis.Client // shared Redis client; nil when no cache is configured
+	// warehouseInvalidationChannel is the pub/sub channel for cross-replica
+	// pooled-identity invalidations. It defaults to
+	// defaultWarehouseInvalidationChannel; tests override it so their
+	// subscribers are isolated from other processes on the same Redis.
+	warehouseInvalidationChannel string
+	mux                          *http.ServeMux
+	store                        storage.Storage
+	platformAdminEmail           string
+	disableRegistration          bool
+	publicURL                    string
+	frontendURL                  string
+	Cache                        *cache.Cache
+	maxAttachmentBytes           int64
+	outputLimitsMaxBytes         int64 // platform ceiling for org output byte caps (AETHER_OUTPUT_LIMITS_MAX_BYTES)
+	agentEngine                  *agent.Engine
+	upgrader                     websocket.Upgrader
+	toolAllowedDomains           []string
+	sessionCancels               sync.Map                        // sessionID -> context.CancelFunc
+	subdomainMW                  func(http.Handler) http.Handler // host → org resolution
+	oidcRewriteFrom              string                          // host rewrite for OIDC discovery inside Docker (e.g. "localhost:5557")
+	oidcRewriteTo                string                          // target host rewrite (e.g. "host.docker.internal:5557")
+	frontendHandler              http.Handler                    // embedded web frontend SPA (nil in tests)
+	version                      string                          // build version (set via ldflags)
+	commit                       string                          // git commit (set via ldflags)
+	buildDate                    string                          // build date (set via ldflags)
+	warehouseSync                warehouseSyncer                 // debounced ClickHouse access sync (nil disables triggers)
 	// chTablePermissions is the AETHER_CH_TABLE_PERMISSIONS kill switch. When
 	// false (default), managed connectors execute through the legacy
 	// stored-credential path and the warehouse sync worker stays dormant;
@@ -88,16 +93,17 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 		rdb = redisCache.Client()
 	}
 	s := &Server{
-		db:                         db,
-		jwt:                        jwt,
-		audit:                      auditLogger,
-		masterKey:                  masterKey,
-		hub:                        NewHub(rdb),
-		rdb:                        rdb,
-		mux:                        http.NewServeMux(),
-		Cache:                      redisCache,
-		upgrader:                   websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
-		warehouseReconcileInterval: config.DefaultWarehouseReconcileInterval,
+		db:                           db,
+		jwt:                          jwt,
+		audit:                        auditLogger,
+		masterKey:                    masterKey,
+		hub:                          NewHub(rdb),
+		rdb:                          rdb,
+		warehouseInvalidationChannel: defaultWarehouseInvalidationChannel,
+		mux:                          http.NewServeMux(),
+		Cache:                        redisCache,
+		upgrader:                     websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
+		warehouseReconcileInterval:   config.DefaultWarehouseReconcileInterval,
 	}
 	s.connPool = executor.NewConnPool(executor.PoolConfig{
 		MaxPools: connPoolMaxPools,

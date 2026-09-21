@@ -8,12 +8,13 @@ import (
 	"time"
 )
 
-// warehouseIdentityInvalidationChannel is the Redis pub/sub channel carrying
+// defaultWarehouseInvalidationChannel is the Redis pub/sub channel carrying
 // pooled-identity invalidation notices between replicas. The connPool that
 // serves per-user ClickHouse executions is process-local, so a reconcile (or a
 // warehouse delete) on one replica must broadcast the affected identity names
-// so every other replica drops its resident sessions too.
-const warehouseIdentityInvalidationChannel = "aether:warehouse-identity-invalidation"
+// so every other replica drops its resident sessions too. Servers override
+// Server.warehouseInvalidationChannel for isolation in tests.
+const defaultWarehouseInvalidationChannel = "aether:warehouse-identity-invalidation"
 
 // warehouseIdentityInvalidationChunkSize bounds how many identity names travel
 // in one pub/sub message. A large org can affect more identities than a single
@@ -33,6 +34,16 @@ type warehouseIdentityInvalidationMessage struct {
 	Users []string `json:"users"`
 }
 
+// warehouseInvalidationChannelName returns the channel this server broadcasts
+// and subscribes on. The zero value falls back to the default so a Server
+// built without NewServer still works.
+func (s *Server) warehouseInvalidationChannelName() string {
+	if s.warehouseInvalidationChannel != "" {
+		return s.warehouseInvalidationChannel
+	}
+	return defaultWarehouseInvalidationChannel
+}
+
 // publishWarehouseIdentityInvalidation broadcasts the affected identity names
 // to every replica, deduplicated and split into at most
 // warehouseIdentityInvalidationChunkSize names per message. It is best-effort:
@@ -44,6 +55,7 @@ func (s *Server) publishWarehouseIdentityInvalidation(users map[string]struct{})
 	if s.rdb == nil || len(users) == 0 {
 		return
 	}
+	channel := s.warehouseInvalidationChannelName()
 	names := make([]string, 0, len(users))
 	for name := range users {
 		names = append(names, name)
@@ -64,7 +76,7 @@ func (s *Server) publishWarehouseIdentityInvalidation(users map[string]struct{})
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), warehouseIdentityInvalidationPublishTimeout)
-		err = s.rdb.Publish(ctx, warehouseIdentityInvalidationChannel, payload).Err()
+		err = s.rdb.Publish(ctx, channel, payload).Err()
 		cancel()
 		if err != nil {
 			slog.Warn("warehouse identity invalidation publish failed",
@@ -94,8 +106,9 @@ func (s *Server) startWarehouseInvalidationSubscriber(ctx context.Context) {
 // payloads are logged and skipped; an unparseable message must never panic or
 // invalidate an arbitrary (or empty) set.
 func (s *Server) runWarehouseInvalidationSubscriber(ctx context.Context) {
+	channel := s.warehouseInvalidationChannelName()
 	for {
-		pubsub := s.rdb.Subscribe(ctx, warehouseIdentityInvalidationChannel)
+		pubsub := s.rdb.Subscribe(ctx, channel)
 		ch := pubsub.Channel()
 		for {
 			select {
