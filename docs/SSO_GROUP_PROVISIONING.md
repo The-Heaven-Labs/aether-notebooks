@@ -12,9 +12,10 @@ User clicks "Login with {provider}"
   → Aether exchanges code for ID token (+ optionally calls UserInfo)
   → Aether creates/finds user by email
   → Aether syncs group memberships:
-       1. Filter groups by prefix (if configured)
+       1. Filter groups by prefix (if configured), optionally stripping it from stored names
        2. For each matching group: find-or-create in Aether, add user
        3. Remove user from groups the IDP no longer lists them in
+       4. Empty result: skip by default, or treat as authoritative when sync_empty_groups is on
   → Login complete, user redirected to frontend with token
 ```
 
@@ -29,17 +30,21 @@ New fields on the SSO provider create/edit form:
 | `group_prefix` | `string` | `""` | Only sync groups whose names start with this prefix. Empty = sync all. E.g., `"aether-"` syncs `aether-analysts` but skips `all-employees`. |
 | `auto_sync_groups` | `boolean` | `false` | Master toggle to enable group provisioning for this provider. |
 | `get_user_info` | `boolean` | `false` | Whether to call the UserInfo endpoint for additional claims after token exchange. Some IDPs include groups only in UserInfo, not in the ID token (or hit token size limits). |
+| `sync_empty_groups` | `boolean` | `false` | When enabled, an absent/empty groups claim is authoritative: all SSO-managed memberships for that user are removed. Warning: Keycloak omits the claim entirely when a user has zero groups, so a removed or misconfigured group mapper is indistinguishable from "no groups". |
+| `strip_group_prefix` | `boolean` | `false` | When enabled and `group_prefix` is set, the prefix is removed from stored/displayed group names (`Aether Notebooks: Area` → `Area`). Filtering still uses the prefix. |
 
 ## Database Schema
 
 ### `sso_providers` — new columns
 
 ```sql
-scopes           text[]   NOT NULL DEFAULT '{}'
-groups_claim     text     NOT NULL DEFAULT 'groups'
-group_prefix     text     NOT NULL DEFAULT ''
-auto_sync_groups bool     NOT NULL DEFAULT false
-get_user_info    bool     NOT NULL DEFAULT false
+scopes             text[]   NOT NULL DEFAULT '{}'
+groups_claim       text     NOT NULL DEFAULT 'groups'
+group_prefix       text     NOT NULL DEFAULT ''
+auto_sync_groups   bool     NOT NULL DEFAULT false
+get_user_info      bool     NOT NULL DEFAULT false
+sync_empty_groups  bool     NOT NULL DEFAULT false
+strip_group_prefix bool     NOT NULL DEFAULT false
 ```
 
 ### `sso_group_memberships` — new table
@@ -55,21 +60,40 @@ updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 PRIMARY KEY (provider_id, group_id, user_id)
 ```
 
+### `groups` — new column
+
+```sql
+display_name text
+```
+
+An admin-owned label rendered in the UI instead of `name`. It never participates in matching or permission resolution — see [Display Names](#display-names).
+
 ## Reconciliation Logic
 
 On each SSO login (both new and returning users):
 
-1. **Filter**: Apply `group_prefix`. If empty, all groups pass through.
-2. **Find or create**: For each matching group name, do a case-insensitive lookup in the user's org. If not found, create the group.
+1. **Resolve**: Apply `group_prefix`. If set, groups whose names don't start with it are dropped. When `strip_group_prefix` is also on, the prefix is removed from the name that is looked up and stored (`Aether Notebooks: Area` → `Area`); filtering always uses the full prefixed name, and names that become empty are dropped.
+2. **Find or create**: For each resolved group name, do a case-insensitive lookup in the user's org. If not found, create the group. New groups are created with no display name — see [Display Names](#display-names).
 3. **Add**: Insert into `group_members` (`ON CONFLICT DO NOTHING`).
 4. **Track**: Insert into `sso_group_memberships` (`ON CONFLICT DO NOTHING`).
-5. **Remove stale**: Query `sso_group_memberships` for memberships tracked under this provider but whose group names aren't in the current IDP group list. Delete those memberships.
+5. **Remove stale**: Query `sso_group_memberships` for memberships tracked under this provider but whose group names aren't in the current resolved list. Delete those memberships.
+6. **Empty result**: If the resolved list is empty and `sync_empty_groups` is `true`, the empty list is authoritative and step 5 removes every membership tracked under this provider for that user. With the default `false`, an empty list skips reconciliation entirely (steps 2–5 do not run).
 
 **Key behaviors:**
 - Groups are never deleted — only memberships are removed
 - Manual memberships (no corresponding `sso_group_memberships` row) are never touched
+- With `sync_empty_groups`, an IdP reporting zero groups removes all SSO-managed memberships for that user — manual memberships and group rows are preserved
 - Errors are non-fatal — the login succeeds even if sync fails, errors are audit-logged
 - Each SSO provider tracks its own memberships independently via `provider_id`
+
+## Empty Claims and Failed Group Sources
+
+"Zero groups" and "couldn't read the groups" are different states, and Aether keeps them apart:
+
+- **Keycloak omission.** Keycloak omits the groups claim entirely when a user has no groups, so a deleted or misconfigured group mapper looks exactly like a user who genuinely belongs to zero groups. OIDC exposes no way to distinguish them, which is why `sync_empty_groups` is opt-in: enabling it declares the IdP authoritative.
+- **Failed or malformed source.** When `get_user_info=true`, a failed UserInfo request — or a groups claim with the wrong shape (for example a string instead of an array) — marks the source unavailable. If the ID token carried no groups either, the claims get `GroupsUnavailable` and the callback **skips group sync entirely** instead of treating the empty list as zero groups. The skip is recorded as a `group.sso.error` audit event (with `provider_id`, `provider_name`, and `user_id`) and a `slog` warning; no memberships are removed.
+- **ID token fallback.** If the ID token did carry groups, those are used even when UserInfo fails, so sync proceeds normally.
+- **Successful empty is authoritative.** A UserInfo response that succeeds and genuinely contains an empty groups array is *not* marked unavailable — with `sync_empty_groups` enabled it removes SSO-managed memberships as designed.
 
 ## Admin Override
 
@@ -80,6 +104,16 @@ If an admin **adds** a user to a group that isn't in the IDP's list, the sync ne
 ## Group Renames
 
 If the IDP renames a group, the old Aether group persists with stale memberships and a new group is created. There is no rename tracking — the old group must be cleaned up manually. This is a known limitation.
+
+## Display Names
+
+Group sync creates groups with no label — `display_name` is `NULL` — and never writes it, so repeated logins cannot overwrite an admin edit. Any group except `Everyone` can carry a label; `Everyone` is always rendered as "Everyone" and rejects one with a 400.
+
+The label is presentation-only. The frontend renders `display_name?.trim() || name` everywhere through the shared `groupLabel` helper, while `name` remains the sync identity: matching, stale comparison, the `UNIQUE (org_id, name)` constraint, permission resolution, and audit resource names all use `name`. `display_name` never participates in any lookup.
+
+Because identity is still `name`, labels survive re-sync: an existing group row is reused and its label is left untouched. An IdP rename still creates a new, unlabeled group, leaving the old group (and its label) behind until cleaned up manually. Example: `aether-notebooks-data-analysts-infra` with `strip_group_prefix` stores `data-analysts-infra`, which an admin can label `Data Analysts Infra`.
+
+`POST /groups` accepts an optional `display_name`. `PUT /groups/{id}` accepts `name` and/or `display_name`: an omitted field keeps its current value, and a blank (`""` or whitespace) label clears it back to `NULL`. Values are trimmed.
 
 ## Development: Testing with Keycloak
 
@@ -133,26 +167,26 @@ For production OIDC providers using a real URL, the custom transport is not appl
 
 | Test file | Tests | What it covers |
 |---|---|---|
-| `internal/api/oidc_handlers_test.go` | 13 | OIDC Exchange with groups, UserInfo fallback, full callback + group sync, edge cases (empty, case-insensitive, stale) |
-| `internal/api/sso_group_sync_test.go` | 3 | Group creation, prefix filter, manual membership preservation |
-| `internal/sso/sso_test.go` | 7 | Provider CRUD round-trip with new fields |
+| `internal/api/oidc_handlers_test.go` | 20 | OIDC exchange with groups, UserInfo fallback and unavailable-source guard, full callback + group sync (empty-authoritative, skip-on-unavailable), edge cases (empty, case-insensitive, stale) |
+| `internal/api/sso_group_sync_test.go` | 7 | Group creation, prefix filter/stripping, empty-claim removal, display-name preservation, manual membership preservation, audit events |
+| `internal/sso/sso_test.go` | 10 | Provider CRUD round-trip with new fields |
 
 All tests hit a real PostgreSQL database (no mocks).
 
 ## Audit Events
 
-New audit event types:
+Emitted during SSO group provisioning:
 
 | Event | When |
 |---|---|
 | `group.sso.create` | Auto-creating a group from an IDP group claim |
-| `group.sso.add_member` | Adding user to a group via SSO sync |
-| `group.sso.remove_member` | Removing user from a group via SSO sync |
-| `group.sso.error` | Group reconciliation failure (non-fatal) |
+| `group.sso.add_member` | Adding a user to a group via SSO sync (only when the membership is newly inserted) |
+| `group.sso.remove_member` | Removing a user from a group via SSO sync (only when a tracked membership is actually deleted) |
+| `group.sso.error` | Group reconciliation failure (non-fatal), including a skipped sync when the groups source is unavailable |
 
 ## Migration
 
-Migration `073_sso_group_provisioning.sql` adds the new columns and table. Migrations run automatically on server startup.
+Migration `073_sso_group_provisioning.sql` adds the initial columns and table, `V115__sso_group_sync_options.sql` adds `sync_empty_groups` and `strip_group_prefix`, and `V116__group_display_names.sql` adds `groups.display_name`. Migrations run automatically on server startup.
 
 ## Cleaning Up
 

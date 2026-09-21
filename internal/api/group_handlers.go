@@ -133,7 +133,7 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Summary Update a group
-// @Description Update a group's name
+// @Description Update a group's name and/or display name
 // @Tags groups
 // @Accept json
 // @Produce json
