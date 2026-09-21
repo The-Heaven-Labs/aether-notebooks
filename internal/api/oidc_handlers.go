@@ -530,9 +530,21 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	// Reconcile group membership via SSO. Every group whose membership changed
 	// is enqueued by ID: additions and removals both affect the warehouses
 	// granting that group, and a removed group no longer resolves via the user.
-	if dbProvider.AutoSyncGroups && len(claims.Groups) > 0 {
-		for _, groupID := range SyncSSOGroups(ctx, s.db.Pool, s.audit, dbProvider, orgID, userID, claims.Groups) {
-			s.enqueueWarehouseSyncForGroup(ctx, groupID)
+	// When the groups source failed, its empty result is not authoritative:
+	// skip the sync so a transient outage cannot wipe SSO-managed memberships.
+	if dbProvider.AutoSyncGroups {
+		if claims.GroupsUnavailable {
+			s.audit.Log(ctx, audit.Entry{
+				OrgID: orgID, UserID: userID,
+				Action: "group.sso.error", ResourceType: "group",
+				Metadata: map[string]any{
+					"error": "groups source unavailable (UserInfo failed); skipping group sync",
+				},
+			})
+		} else {
+			for _, groupID := range SyncSSOGroups(ctx, s.db.Pool, s.audit, dbProvider, orgID, userID, claims.Groups) {
+				s.enqueueWarehouseSyncForGroup(ctx, groupID)
+			}
 		}
 	}
 
