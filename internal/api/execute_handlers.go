@@ -112,15 +112,47 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check "use" permission on the connector
-	useOK, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", cell.ConnectorID, "use")
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "permission check failed")
+	// Load the connector before the permission pre-check: whether the check
+	// applies depends on the connector's type and warehouse link.
+	var connType models.ConnectorType
+	var encryptedConfig []byte
+	var maxRows, timeout int
+	var connectorWarehouseID *uuid.UUID
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT type, config_encrypted, max_rows, timeout_seconds, warehouse_id
+		 FROM connectors WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
+		cell.ConnectorID, claims.OrgID,
+	).Scan(&connType, &encryptedConfig, &maxRows, &timeout, &connectorWarehouseID)
+	if err == pgx.ErrNoRows {
+		writeError(w, http.StatusNotFound, "connector not found")
 		return
 	}
-	if !useOK {
-		writeError(w, http.StatusForbidden, "you don't have permission to use this connector")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "load connector failed")
 		return
+	}
+
+	// Check "use" permission on the connector. Managed ClickHouse connectors
+	// are interchangeable services within their warehouse: when the
+	// AETHER_CH_TABLE_PERMISSIONS kill switch is on, service access is
+	// enforced by resolveExecutionTarget against the service that actually
+	// serves the run, which can differ from the cell's connector (routing
+	// preference or sole-allowed-service fallback). Gating here on the cell's
+	// connector would deny a collaborator who holds `use` only on another
+	// service in the same warehouse, even though the agent run_cell path
+	// routes it correctly. Unmanaged connectors, non-ClickHouse connectors,
+	// and the kill-switch-off legacy path keep the connector-level check.
+	managedClickHouse := connType == models.ConnectorClickHouse && connectorWarehouseID != nil
+	if !managedClickHouse || !s.warehouseManagementEnabled() {
+		useOK, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", cell.ConnectorID, "use")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "permission check failed")
+			return
+		}
+		if !useOK {
+			writeError(w, http.StatusForbidden, "you don't have permission to use this connector")
+			return
+		}
 	}
 
 	// Build slug map from all sibling cells in the notebook that have a slug
@@ -166,24 +198,6 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	// Apply cell-level LIMIT
 	if cell.Limit != nil {
 		resolvedSource = executor.ApplyLimit(resolvedSource, *cell.Limit)
-	}
-
-	// Load connector
-	var connType models.ConnectorType
-	var encryptedConfig []byte
-	var maxRows, timeout int
-	err = s.db.Pool.QueryRow(ctx,
-		`SELECT type, config_encrypted, max_rows, timeout_seconds
-		 FROM connectors WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
-		cell.ConnectorID, claims.OrgID,
-	).Scan(&connType, &encryptedConfig, &maxRows, &timeout)
-	if err == pgx.ErrNoRows {
-		writeError(w, http.StatusNotFound, "connector not found")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "load connector failed")
-		return
 	}
 
 	// Decrypt connector config

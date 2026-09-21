@@ -263,6 +263,70 @@ func TestExecuteCellUnmanagedClickHouseUsesLegacyCredential(t *testing.T) {
 	require.Nil(t, out.Routing, "legacy runs must not report warehouse routing")
 }
 
+// Services in a warehouse are interchangeable: a collaborator holding `use`
+// only on Service B must be able to run a cell wired to Service A, because
+// routing sends the query to B. The connector-level pre-check must not gate
+// managed connectors; resolveExecutionTarget enforces service access.
+func TestExecuteCellRoutesByServiceAccessNotCellConnector(t *testing.T) {
+	ctx := context.Background()
+	fx := setupExecuteWarehouseFixture(t)
+	fx.grantConnectorUse(t, fx.connB)
+
+	nbID, cellID := seedExecuteWarehouseCell(t, fx.s, fx.orgID, fx.userID, fx.connA,
+		"SELECT currentUser() AS ch_user", nil)
+	fx.grantNotebookRun(t, nbID)
+
+	rec := executeWarehouseCell(t, fx.s, fx.userID, fx.orgID, nbID, cellID)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	out := decodeExecuteOutputs(t, rec)
+	require.Equal(t, chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID),
+		out.Outputs[0].Data.Rows[0][0], "the run must execute as the warehouse identity")
+	require.NotNil(t, out.Routing)
+	require.Equal(t, fx.connB.String(), out.Routing.ConnectorID,
+		"the run must route to the only service the user may use")
+
+	var metaJSON []byte
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT metadata FROM audit_logs
+		WHERE org_id = $1 AND action = 'cell.execute' AND resource_id = $2
+		ORDER BY id DESC LIMIT 1`,
+		fx.orgID.String(), cellID.String()).Scan(&metaJSON))
+	var meta map[string]any
+	require.NoError(t, json.Unmarshal(metaJSON, &meta))
+	require.Equal(t, fx.connB.String(), meta["connector_id"],
+		"audit must record the service actually dialed")
+}
+
+// Without `use` on any service in the warehouse, managed routing fails closed
+// even though handleExecuteCell no longer gates on the cell's connector.
+func TestExecuteCellManagedNoServiceAccessDenied(t *testing.T) {
+	fx := setupExecuteWarehouseFixture(t)
+
+	nbID, cellID := seedExecuteWarehouseCell(t, fx.s, fx.orgID, fx.userID, fx.connA,
+		"SELECT 1", nil)
+	fx.grantNotebookRun(t, nbID)
+
+	rec := executeWarehouseCell(t, fx.s, fx.userID, fx.orgID, nbID, cellID)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "no permitted service in warehouse")
+}
+
+// Unmanaged connectors keep the connector-level `use` pre-check: access to a
+// service in some warehouse must not leak into running an unmanaged connector.
+func TestExecuteCellUnmanagedConnectorStillRequiresUse(t *testing.T) {
+	fx := setupExecuteWarehouseFixture(t)
+	fx.grantConnectorUse(t, fx.connB)
+
+	nbID, cellID := seedExecuteWarehouseCell(t, fx.s, fx.orgID, fx.userID, fx.unmanagedID,
+		"SELECT currentUser()", nil)
+	fx.grantNotebookRun(t, nbID)
+
+	rec := executeWarehouseCell(t, fx.s, fx.userID, fx.orgID, nbID, cellID)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "permission to use this connector")
+}
+
 // With the kill switch off, a connector linked to a ready warehouse must still
 // execute through its stored credential rather than the per-user identity, so
 // an operator can roll back without unlinking warehouses. It runs on a
