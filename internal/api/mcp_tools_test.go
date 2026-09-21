@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,10 +11,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/agent"
 )
 
 func mcpToolsCall(t *testing.T, srv http.Handler, token, tool string, args map[string]any) (int, map[string]any) {
+	t.Helper()
+	return mcpToolsCallWithHeaders(t, srv, token, tool, args, nil)
+}
+
+// mcpToolsCallWithHeaders is mcpToolsCall plus extra request headers (e.g.
+// X-AETHER-Admin-Mode) for tests that exercise the middleware-stamped flags.
+func mcpToolsCallWithHeaders(t *testing.T, srv http.Handler, token, tool string, args map[string]any, headers map[string]string) (int, map[string]any) {
 	t.Helper()
 	argsJSON, _ := json.Marshal(args)
 	body, _ := json.Marshal(map[string]any{
@@ -25,6 +34,9 @@ func mcpToolsCall(t *testing.T, srv http.Handler, token, tool string, args map[s
 	req := httptest.NewRequest("POST", "/api/v1/mcp", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	var resp map[string]any
@@ -115,6 +127,49 @@ func TestMCPToolsCallRunCellCancel(t *testing.T) {
 	case <-time.After(25 * time.Second):
 		t.Fatal("MCP run did not finish after cancel")
 	}
+}
+
+// MCP dispatches the same run_cell handler as the agent, so an unmanaged
+// connector without `use` must be denied there too; an org admin with admin
+// mode on keeps the same ACL bypass the HTTP paths get from the middleware.
+func TestMCPRunCellRequiresConnectorUse(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	email := fmt.Sprintf("mcp-use-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "MCP Use Org")
+	nbID := createNotebook(t, srv, token, "MCP Use NB")
+	connID := createConnector(t, srv, token)
+	cellID := createCell(t, srv, token, nbID, "sql", "SELECT 1 AS x", connID)
+
+	// The creator's seeded view+use entry is the only connector ACL; drop it.
+	var userID string
+	require.NoError(t, db.Pool.QueryRow(ctx,
+		`SELECT id FROM users WHERE email = $1`, email).Scan(&userID))
+	_, err := db.Pool.Exec(ctx, `
+		DELETE FROM acl_entries
+		WHERE resource_type = 'connector' AND resource_id = $1
+		  AND subject_type = 'user' AND subject_id = $2`, connID, userID)
+	require.NoError(t, err)
+
+	// An org admin without admin mode does not bypass ACLs: denied.
+	code, resp := mcpToolsCall(t, srv, token, "run_cell", map[string]any{"cell_id": cellID, "force": true})
+	require.Equal(t, http.StatusOK, code, "tools/call: %v", resp)
+	result, _ := resp["result"].(map[string]any)
+	require.Equal(t, true, result["isError"], "missing connector use must deny the run: %v", resp)
+	require.Contains(t, mcpResultText(t, resp), "permission denied",
+		"run_cell must fail on the connector ACL, not execute with the stored credential")
+
+	// Admin mode restores the bypass for the same run.
+	code, resp = mcpToolsCallWithHeaders(t, srv, token, "run_cell",
+		map[string]any{"cell_id": cellID, "force": true},
+		map[string]string{"X-AETHER-Admin-Mode": "true"})
+	require.Equal(t, http.StatusOK, code, "tools/call with admin mode: %v", resp)
+	result, _ = resp["result"].(map[string]any)
+	require.NotEqual(t, true, result["isError"], "admin mode must bypass the connector ACL: %v", resp)
+	require.Contains(t, mcpResultText(t, resp), `"status":"completed"`)
 }
 
 // MCP dispatch must honor ToolDef.Timeout: a hanging probe is cut off by

@@ -64,7 +64,8 @@ func resolveClickHouseTarget(tc *ToolContext, connectorID string) (*executor.Exe
 // openAgentExecutor builds the executor for an agent-driven query. ClickHouse
 // connectors linked to a ready warehouse execute as the acting user's
 // provisioned identity on a pooled connection; unmanaged ClickHouse connectors
-// and every other type keep the stored-credential driver path.
+// and every other type keep the stored-credential driver path and require the
+// acting user to hold `use` on the connector.
 //
 // The returned target is non-nil only on the managed route, so callers can
 // apply the routed service's limits and audit the warehouse identity. The
@@ -85,6 +86,16 @@ func openAgentExecutor(tc *ToolContext, connType models.ConnectorType, connector
 			}
 			return executor.NewPooledClickHouseExecutor(conn, release), target, nil
 		}
+	}
+
+	// Legacy stored-credential path: unmanaged ClickHouse connectors, the
+	// kill-switch-off route, and every non-ClickHouse connector. Execution
+	// dials the connector with its stored credential, so the acting user must
+	// hold `use` on it exactly as handleExecuteCell requires for the same
+	// branch. Managed ClickHouse returned above is enforced by warehouse
+	// service routing instead and must not be double-checked here.
+	if err := tc.CheckPermission("connector", connectorID, "use"); err != nil {
+		return nil, nil, err
 	}
 
 	if tc.MasterKey == nil {

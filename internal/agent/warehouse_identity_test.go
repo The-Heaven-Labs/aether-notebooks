@@ -500,6 +500,187 @@ func TestAgentRoutedServiceLimitsApply(t *testing.T) {
 	})
 }
 
+// A user who can run a notebook must also hold `use` on an unmanaged
+// connector before run_cell executes through it: the legacy stored-credential
+// path is the same authorization branch handleExecuteCell gates.
+func TestAgentRunCellUnmanagedRequiresConnectorUse(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	connID, masterKey := createIdentityTestCHConnector(t, db, orgID, userID, storedCredentialCfg())
+
+	nbID := createTestNotebook(t, db, orgID, userID)
+	cellID := uuid.New().String()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO cells (id, notebook_id, type, language, connector_id, source, position, created_at, updated_at)
+		VALUES ($1, $2, 'code', 'sql', $3, 'SELECT 1', 0, NOW(), NOW())
+	`, cellID, nbID, connID)
+	require.NoError(t, err)
+
+	tc := &ToolContext{
+		Context: context.Background(), UserID: userID, OrgID: orgID, OrgRole: "editor",
+		DB: db.Pool, MasterKey: masterKey,
+		ResolveTarget: func(context.Context, uuid.UUID, uuid.UUID, bool) (*executor.ExecutionTarget, error) {
+			return nil, fmt.Errorf("connector: %w", executor.ErrUnmanagedConnector)
+		},
+		CheckPermissionFunc: func(_ context.Context, _, _, _, resourceType, _, action string) (bool, error) {
+			if resourceType == "connector" && action == "use" {
+				return false, nil
+			}
+			return true, nil
+		},
+	}
+
+	handler := makeRunCellHandler(db.Pool)
+	args, err := json.Marshal(map[string]any{"cell_id": cellID})
+	require.NoError(t, err)
+	_, err = handler(args, tc)
+	require.ErrorContains(t, err, "permission denied: use on connector/"+connID)
+	require.NotContains(t, err.Error(), "stored-credential.invalid", "the denial must precede any dial")
+
+	var outputs []byte
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT outputs FROM cells WHERE id = $1`, cellID).Scan(&outputs))
+	require.JSONEq(t, "[]", string(outputs), "a denied run must not persist outputs")
+
+	// create_cell(run=true) funnels through the same chokepoint: the created
+	// cell must report the denial instead of executing through the connector.
+	createHandler := makeCreateCellHandler(db.Pool)
+	createArgs, err := json.Marshal(map[string]any{
+		"notebook_id":  nbID,
+		"type":         "code",
+		"language":     "sql",
+		"title":        "Denied run",
+		"source":       "SELECT 2",
+		"connector_id": connID,
+		"run":          true,
+	})
+	require.NoError(t, err)
+	createResult, err := createHandler(createArgs, tc)
+	require.NoError(t, err)
+	created := createResult.(map[string]any)
+	require.Equal(t, "error", created["run_status"])
+	require.Contains(t, created["error"], "permission denied: use on connector/"+connID)
+}
+
+// With `use` granted, an unmanaged ClickHouse connector still executes with
+// its stored credential through run_cell.
+func TestAgentRunCellUnmanagedUsesStoredCredential(t *testing.T) {
+	requireIdentityClickHouse(t)
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	connID, masterKey := createIdentityTestCHConnector(t, db, orgID, userID, models.ConnectorConfig{
+		Host: "localhost", Port: 9000, User: "dev", Password: "dev", Database: "analytics",
+	})
+
+	nbID := createTestNotebook(t, db, orgID, userID)
+	cellID := uuid.New().String()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO cells (id, notebook_id, type, language, connector_id, source, position, created_at, updated_at)
+		VALUES ($1, $2, 'code', 'sql', $3, 'SELECT currentUser() AS ch_user', 0, NOW(), NOW())
+	`, cellID, nbID, connID)
+	require.NoError(t, err)
+
+	capture := &identityCapture{}
+	tc := &ToolContext{
+		Context: context.Background(), UserID: userID, OrgID: orgID, OrgRole: "editor",
+		DB: db.Pool, MasterKey: masterKey,
+		ResolveTarget: func(context.Context, uuid.UUID, uuid.UUID, bool) (*executor.ExecutionTarget, error) {
+			return nil, fmt.Errorf("connector: %w", executor.ErrUnmanagedConnector)
+		},
+		ConnPool:            newIdentityCapturePool(capture),
+		CheckPermissionFunc: allowAllPermissions,
+	}
+
+	handler := makeRunCellHandler(db.Pool)
+	args, err := json.Marshal(map[string]any{"cell_id": cellID})
+	require.NoError(t, err)
+	result, err := handler(args, tc)
+	require.NoError(t, err)
+	m := result.(map[string]any)
+	require.Equal(t, "completed", m["status"])
+	require.False(t, capture.used, "unmanaged connectors must not use the warehouse pool")
+	data, ok := m["data"].([][]interface{})
+	require.True(t, ok, "expected a data preview, got %T", m["data"])
+	require.Len(t, data, 1)
+	require.Equal(t, "dev", data[0][0], "unmanaged connectors keep the stored credential")
+}
+
+// Managed ClickHouse execution authorizes the service that actually serves the
+// run, not the cell's connector: a denied connector-level `use` must not block
+// a run that warehouse routing allows (a collaborator may `use` another
+// service in the same warehouse).
+func TestAgentRunCellManagedRouteSkipsConnectorUseCheck(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	connID, masterKey := createIdentityTestCHConnector(t, db, orgID, userID, storedCredentialCfg())
+
+	nbID := createTestNotebook(t, db, orgID, userID)
+	cellID := uuid.New().String()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO cells (id, notebook_id, type, language, connector_id, source, position, created_at, updated_at)
+		VALUES ($1, $2, 'code', 'sql', $3, 'SELECT 1', 0, NOW(), NOW())
+	`, cellID, nbID, connID)
+	require.NoError(t, err)
+
+	const chUser = "aether_test_wh_u_routed"
+	capture := &identityCapture{result: true, rows: 1}
+	tc := &ToolContext{
+		Context: context.Background(), UserID: userID, OrgID: orgID, OrgRole: "editor",
+		DB: db.Pool, MasterKey: masterKey,
+		ResolveTarget: func(context.Context, uuid.UUID, uuid.UUID, bool) (*executor.ExecutionTarget, error) {
+			return &executor.ExecutionTarget{
+				Endpoint: "warehouse.invalid:9000",
+				CHUser:   chUser,
+				Config: models.ConnectorConfig{
+					Host: "warehouse.invalid", Port: 9000, User: chUser, Password: "derived_secret", Database: "analytics",
+				},
+			}, nil
+		},
+		ConnPool: newIdentityCapturePool(capture),
+		CheckPermissionFunc: func(_ context.Context, _, _, _, resourceType, _, action string) (bool, error) {
+			if resourceType == "connector" && action == "use" {
+				return false, nil
+			}
+			return true, nil
+		},
+	}
+
+	handler := makeRunCellHandler(db.Pool)
+	args, err := json.Marshal(map[string]any{"cell_id": cellID})
+	require.NoError(t, err)
+	result, err := handler(args, tc)
+	require.NoError(t, err)
+	require.Equal(t, "completed", result.(map[string]any)["status"])
+	require.True(t, capture.used, "the managed route must serve the run without a connector-level check")
+}
+
+// explore_schema on an unmanaged connector also requires `use` on that
+// connector now that it dials it, mirroring handleConnectorSchema's `use`
+// gate for the same introspection over HTTP.
+func TestAgentExploreSchemaUnmanagedRequiresConnectorUse(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	connID, masterKey := createIdentityTestCHConnector(t, db, orgID, userID, storedCredentialCfg())
+
+	tc := &ToolContext{
+		Context: context.Background(), UserID: userID, OrgID: orgID, OrgRole: "editor",
+		DB: db.Pool, MasterKey: masterKey,
+		ResolveTarget: func(context.Context, uuid.UUID, uuid.UUID, bool) (*executor.ExecutionTarget, error) {
+			return nil, fmt.Errorf("connector: %w", executor.ErrUnmanagedConnector)
+		},
+		CheckPermissionFunc: func(_ context.Context, _, _, _, resourceType, _, action string) (bool, error) {
+			return !(resourceType == "connector" && action == "use"), nil
+		},
+	}
+
+	handler := makeExploreSchemaHandler(db.Pool)
+	args, err := json.Marshal(map[string]any{"connector_id": connID})
+	require.NoError(t, err)
+	_, err = handler(args, tc)
+	require.ErrorContains(t, err, "permission denied: use on connector/"+connID)
+	require.NotContains(t, err.Error(), "stored-credential.invalid", "the denial must precede any dial")
+}
+
 // explore_schema must open its connection through the pooled per-user identity
 // for managed ClickHouse connectors.
 func TestAgentExploreSchemaUsesUserIdentity(t *testing.T) {
