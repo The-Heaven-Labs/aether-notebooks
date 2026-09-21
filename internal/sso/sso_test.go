@@ -203,19 +203,21 @@ func TestCreateProviderWithGroupSettings(t *testing.T) {
 	ctx := context.Background()
 
 	input := sso.Provider{
-		Scope:          "platform",
-		Name:           "groups-test",
-		ProviderType:   "oidc",
-		ClientID:       "groups-client",
-		ClientSecret:   "groups-secret",
-		DiscoveryURL:   "https://accounts.example.com/.well-known/openid-configuration",
-		AllowedDomains: []string{},
-		Enabled:        true,
-		Scopes:         []string{"openid", "profile", "email", "groups"},
-		GroupsClaim:    "custom_groups",
-		GroupPrefix:    "aether-",
-		AutoSyncGroups: true,
-		GetUserInfo:    true,
+		Scope:            "platform",
+		Name:             "groups-test",
+		ProviderType:     "oidc",
+		ClientID:         "groups-client",
+		ClientSecret:     "groups-secret",
+		DiscoveryURL:     "https://accounts.example.com/.well-known/openid-configuration",
+		AllowedDomains:   []string{},
+		Enabled:          true,
+		Scopes:           []string{"openid", "profile", "email", "groups"},
+		GroupsClaim:      "custom_groups",
+		GroupPrefix:      "aether-",
+		AutoSyncGroups:   true,
+		GetUserInfo:      true,
+		SyncEmptyGroups:  true,
+		StripGroupPrefix: true,
 	}
 
 	created, err := sso.CreateProvider(ctx, db.Pool, testMasterKey, input)
@@ -229,6 +231,8 @@ func TestCreateProviderWithGroupSettings(t *testing.T) {
 	assert.Equal(t, input.GroupPrefix, created.GroupPrefix)
 	assert.Equal(t, input.AutoSyncGroups, created.AutoSyncGroups)
 	assert.Equal(t, input.GetUserInfo, created.GetUserInfo)
+	assert.True(t, created.SyncEmptyGroups)
+	assert.True(t, created.StripGroupPrefix)
 
 	got, err := sso.GetProvider(ctx, db.Pool, testMasterKey, created.ID, "")
 	require.NoError(t, err)
@@ -237,6 +241,8 @@ func TestCreateProviderWithGroupSettings(t *testing.T) {
 	assert.Equal(t, input.GroupPrefix, got.GroupPrefix)
 	assert.Equal(t, input.AutoSyncGroups, got.AutoSyncGroups)
 	assert.Equal(t, input.GetUserInfo, got.GetUserInfo)
+	assert.True(t, got.SyncEmptyGroups)
+	assert.True(t, got.StripGroupPrefix)
 }
 
 func TestListEnabledProvidersForOrg(t *testing.T) {
