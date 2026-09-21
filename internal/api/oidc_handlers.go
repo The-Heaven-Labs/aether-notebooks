@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -534,11 +535,20 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	// skip the sync so a transient outage cannot wipe SSO-managed memberships.
 	if dbProvider.AutoSyncGroups {
 		if claims.GroupsUnavailable {
+			slog.Warn("skipping SSO group sync: groups source unavailable",
+				"provider_id", dbProvider.ID,
+				"provider_name", dbProvider.Name,
+				"org_id", orgID,
+				"user_id", userID,
+			)
 			s.audit.Log(ctx, audit.Entry{
 				OrgID: orgID, UserID: userID,
 				Action: "group.sso.error", ResourceType: "group",
 				Metadata: map[string]any{
-					"error": "groups source unavailable (UserInfo failed); skipping group sync",
+					"error":         "groups source unavailable (UserInfo failed or malformed groups claim); skipping group sync",
+					"provider_id":   dbProvider.ID,
+					"provider_name": dbProvider.Name,
+					"user_id":       userID,
 				},
 			})
 		} else {

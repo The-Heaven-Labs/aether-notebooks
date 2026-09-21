@@ -845,6 +845,11 @@ func TestFullOIDCCallbackUserInfoFailureSkipsGroupSync(t *testing.T) {
 	err = s.DB().Pool.QueryRow(ctx, `SELECT id FROM users WHERE email=$1`, email).Scan(&userID)
 	require.NoError(t, err)
 
+	var orgID string
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT org_id FROM org_members WHERE user_id=$1`, userID).Scan(&orgID)
+	require.NoError(t, err)
+
 	var count int
 	err = s.DB().Pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM group_members WHERE user_id=$1`, userID).Scan(&count)
@@ -859,6 +864,19 @@ func TestFullOIDCCallbackUserInfoFailureSkipsGroupSync(t *testing.T) {
 		`SELECT COUNT(*) FROM group_members WHERE user_id=$1`, userID).Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count, "UserInfo failure must not wipe memberships")
+
+	var audited int
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM audit_logs WHERE org_id=$1 AND action='group.sso.error'`,
+		orgID).Scan(&audited)
+	require.NoError(t, err)
+	assert.Equal(t, 1, audited, "skipped sync should be audited once")
+
+	var tracked int
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM sso_group_memberships WHERE user_id=$1`, userID).Scan(&tracked)
+	require.NoError(t, err)
+	assert.Equal(t, 1, tracked, "tracking row must survive the skipped sync")
 }
 
 // ─── Provisioning-mode callback tests ──────────────────────────────────────
