@@ -44,10 +44,7 @@ func setupWarehouseRBACE2EFixture(t *testing.T) *warehouseRBACE2EFixture {
 	t.Helper()
 	requireClickHouseReachable(t)
 	s, recorder := warehouseHandlersServer(t)
-	// Run before the fixture's ClickHouse cleanup (LIFO), so no idle pooled
-	// connection outlives the identity it authenticated as. The immediate
-	// CloseAll starts pool accounting from a clean slate.
-	t.Cleanup(func() { s.connPool.CloseAll() })
+	// Start pool accounting from a clean slate.
 	s.connPool.CloseAll()
 
 	ctx := context.Background()
@@ -123,6 +120,10 @@ func setupWarehouseRBACE2EFixture(t *testing.T) *warehouseRBACE2EFixture {
 			t.Logf("cleanup clickhouse database: %v", err)
 		}
 	})
+
+	// Registered after the ClickHouse cleanup: Cleanup runs LIFO, so the pool
+	// closes before the identities it authenticated as are dropped.
+	t.Cleanup(func() { s.connPool.CloseAll() })
 
 	return &warehouseRBACE2EFixture{
 		s:           s,

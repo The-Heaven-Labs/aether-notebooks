@@ -342,6 +342,64 @@ func TestPoolInvalidateUsersWhileInUseClosesOnLastRelease(t *testing.T) {
 	require.True(t, c1.(*fakeConn).closed, "last release must close the invalidated conn")
 }
 
+// TestPoolInvalidateUsersConcurrentWithGet pins the Get/InvalidateUsers
+// interleaving contract: a Get racing an invalidation must always see a
+// consistent entry, and releases must leave the pool consistent. Run with
+// -race.
+func TestPoolInvalidateUsersConcurrentWithGet(t *testing.T) {
+	p := NewConnPool(PoolConfig{
+		MaxPools: 16,
+		Open: func(models.ConnectorConfig) (clickhouse.Conn, error) {
+			return &fakeConn{}, nil
+		},
+	})
+
+	cfg := models.ConnectorConfig{Host: "h", Port: 9000}
+	users := []string{"u0", "u1", "u2", "u3"}
+	all := make(map[string]struct{}, len(users))
+	for _, u := range users {
+		all[u] = struct{}{}
+	}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for _, user := range users {
+		wg.Add(1)
+		go func(user string) {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				_, release, err := p.Get("ep", user, cfg)
+				if err != nil {
+					t.Errorf("concurrent Get(%s): %v", user, err)
+					return
+				}
+				release()
+			}
+		}(user)
+	}
+
+	for i := 0; i < 500; i++ {
+		p.InvalidateUsers(all)
+	}
+	close(stop)
+	wg.Wait()
+
+	// The pool must still be usable and invalidation still effective after the
+	// race.
+	p.InvalidateUsers(all)
+	require.Zero(t, p.Len())
+	conn, release, err := p.Get("ep", users[0], cfg)
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+	require.Equal(t, 1, p.Len())
+	release()
+}
+
 func TestPoolEvictionSkipsInUseAndResolvesOverage(t *testing.T) {
 	var opened atomic.Int64
 	p := NewConnPool(PoolConfig{

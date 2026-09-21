@@ -161,6 +161,11 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 	// role wiring / grant options are outside Aether's model. Never mark
 	// ready while they exist; remediation is manual in this iteration.
 	if actual.HasWildcard() || len(actual.Unexpected) > 0 {
+		// Drop resident sessions before recording the error. If the status
+		// write itself fails, the stored status could still be ready, so a
+		// live session must not keep serving access this run refuses to bless.
+		s.invalidatePooledWarehouseIdentities(chaccess.DesiredState{}, actual)
+
 		syncErr := fmt.Errorf("warehouse %s clickhouse drift requires manual remediation: %s",
 			warehouseID, describeWarehouseDrift(actual))
 		if err := s.setWarehouseSyncStatus(ctx, warehouseID, "error", syncErr.Error(), ""); err != nil {
@@ -181,6 +186,17 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 	if !auditReport.IsEmpty() || len(skipped) > 0 {
 		s.auditWarehouseDriftReport(ctx, hdr.orgID, warehouseID, auditReport, skipped)
 	}
+	// Invalidate before executing: this run intends to change access, and a
+	// failure part-way through the plan must not leave a resident session
+	// serving the old access. ClickHouse evaluates a session's roles from the
+	// set activated at login, so a pooled connection opened before this run
+	// would keep enforcing the old roles/grants until it is reused or
+	// evicted. A genuinely empty plan (a no-op tick) changes nothing and must
+	// not churn resident connections; connect-before-statements failures
+	// return earlier and likewise leave the pool untouched.
+	if len(stmts) > 0 {
+		s.invalidatePooledWarehouseIdentities(desired, actual)
+	}
 	// Never embed the statement text: CREATE/ALTER USER statements carry the
 	// derived ClickHouse password, and the error reaches sync_error, worker
 	// logs, and the admin UI. redactSecrets is belt-and-braces in case a
@@ -190,17 +206,6 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 			return s.failWarehouseSync(ctx, warehouseID, fmt.Errorf(
 				"execute statement %d of %d: %s", i+1, len(stmts), redactSecrets(execErr.Error())))
 		}
-	}
-
-	// DDL changed these identities' roles, grants, or existence. ClickHouse
-	// evaluates a session's roles from the set activated at login, so a pooled
-	// connection opened before this run would keep enforcing the old access
-	// until it is reused or evicted. Drop the affected identities' pooled
-	// connections now so the next execution re-authenticates with the access
-	// this run applied and a revoked identity cannot keep querying through a
-	// live session.
-	if len(stmts) > 0 {
-		s.invalidatePooledWarehouseIdentities(desired, actual)
 	}
 
 	if err := s.setWarehouseSyncStatus(ctx, warehouseID, "ready", "", fingerprint); err != nil {

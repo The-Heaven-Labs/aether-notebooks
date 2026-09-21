@@ -827,11 +827,20 @@ func TestWarehouseDeleteRevokesIdentities(t *testing.T) {
 	requireClickHouseUserExists(t, fx.conn, userIdent)
 	requireClickHouseRoleExists(t, fx.conn, roleIdent)
 
+	// A resident pooled session must be dropped by the delete-time revocation:
+	// no later reconcile revisits a deleted warehouse. The immediate CloseAll
+	// makes the pool count exact.
+	s.connPool.CloseAll()
+	poolWarehouseIdentity(t, s, fx.warehouseID, fx.orgID, fx.userID)
+	require.Equal(t, 1, s.connPool.Len())
+
 	rec := warehouseAPIRequest(t, s, http.MethodDelete,
 		"/api/v1/warehouses/"+fx.warehouseID.String()+"?force=true", token, nil)
 	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 
 	require.False(t, warehouseExists(t, s, fx.warehouseID))
+	require.Zero(t, s.connPool.Len(),
+		"deleting the warehouse must invalidate its pooled identities")
 	requireNoPrefixedEntities(t, fx.conn, chaccess.IdentifierPrefix(fx.warehouseID))
 }
 

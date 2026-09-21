@@ -368,6 +368,11 @@ func TestReconcileWarehouseFailsClosedOnWildcard(t *testing.T) {
 
 	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
 
+	// A resident pooled session must be dropped when the warehouse fails
+	// closed, even though the fail-closed path applies no statements.
+	poolWarehouseIdentity(t, fx.s, fx.warehouseID, fx.orgID, fx.userID)
+	require.Equal(t, 1, fx.s.connPool.Len())
+
 	// Inject a database wildcard grant outside Aether's model.
 	userIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID)
 	quotedUser, err := chaccess.QuoteIdent(userIdent)
@@ -379,6 +384,8 @@ func TestReconcileWarehouseFailsClosedOnWildcard(t *testing.T) {
 	require.Contains(t, err.Error(), "manual remediation")
 	require.Contains(t, err.Error(), userIdent)
 	require.Contains(t, err.Error(), "analytics.*")
+	require.Zero(t, fx.s.connPool.Len(),
+		"failing closed must invalidate resident identities")
 
 	var status string
 	var syncErr *string
@@ -620,8 +627,16 @@ func TestReconcileWarehouseStatementFailureMarksError(t *testing.T) {
 		limitedConnectorID.String(), fx.warehouseID.String())
 	require.NoError(t, err)
 
+	// The limited plan creates the role and then fails on the first user, so
+	// DDL was applied before the failure and any resident session for a
+	// desired/actual identity must be invalidated even though the run fails.
+	poolWarehouseIdentity(t, fx.s, fx.warehouseID, fx.orgID, fx.userID)
+	require.Equal(t, 1, fx.s.connPool.Len())
+
 	err = fx.s.reconcileWarehouse(ctx, fx.warehouseID)
 	require.Error(t, err)
+	require.Zero(t, fx.s.connPool.Len(),
+		"a partial DDL failure must still invalidate affected identities")
 
 	var status string
 	var syncErr, appliedFP *string
@@ -800,9 +815,6 @@ func TestRedactSecrets(t *testing.T) {
 	}
 }
 
-// TestReconcileWarehouseDoesNotStarveSmallPool guards against the sync lock
-// occupying a pooled connection: with MaxConns=2 two concurrent reconciles
-// must still complete instead of self-deadlocking on the pool.
 // TestPooledWarehouseUsers pins the affected-identity computation: the union
 // of desired and actual users. Roles contribute no key because the pool is
 // keyed per user, not per role.
@@ -821,6 +833,20 @@ func TestPooledWarehouseUsers(t *testing.T) {
 	require.Nil(t, pooledWarehouseUsers(chaccess.DesiredState{}, chaccess.ActualState{}))
 }
 
+// poolWarehouseIdentity stores a pooled connection for a warehouse-scoped
+// identity so invalidation tests can observe it being detached. The pool opens
+// connections lazily, so no ClickHouse server is contacted and the identity
+// need not exist yet.
+func poolWarehouseIdentity(t *testing.T, s *Server, warehouseID, orgID, userID uuid.UUID) {
+	t.Helper()
+	cfg := warehouseSyncTestClickHouseConfig()
+	cfg.User = chaccess.UserIdent(warehouseID, orgID, userID)
+	cfg.Password = chaccess.DerivePassword(s.masterKey, warehouseID, userID)
+	_, release, err := s.connPool.Get(fmt.Sprintf("%s:%d", cfg.Host, cfg.Port), cfg.User, cfg)
+	require.NoError(t, err)
+	release()
+}
+
 // TestReconcileInvalidatesPooledWarehouseIdentities proves a reconcile that
 // applied DDL drops the warehouse identities' pooled connections, an
 // idempotent tick leaves them resident, and a failed run neither panics nor
@@ -831,7 +857,6 @@ func TestReconcileInvalidatesPooledWarehouseIdentities(t *testing.T) {
 
 	chCfg := warehouseSyncTestClickHouseConfig()
 	endpoint := fmt.Sprintf("%s:%d", chCfg.Host, chCfg.Port)
-	userIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID)
 
 	// The decoy mirrors a second warehouse sharing the service: invalidation
 	// is scoped by identity name, not by endpoint.
@@ -845,12 +870,7 @@ func TestReconcileInvalidatesPooledWarehouseIdentities(t *testing.T) {
 	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
 	poolUser := func() {
 		t.Helper()
-		cfg := chCfg
-		cfg.User = userIdent
-		cfg.Password = chaccess.DerivePassword(fx.s.masterKey, fx.warehouseID, fx.userID)
-		_, release, err := fx.s.connPool.Get(endpoint, userIdent, cfg)
-		require.NoError(t, err)
-		release()
+		poolWarehouseIdentity(t, fx.s, fx.warehouseID, fx.orgID, fx.userID)
 	}
 	poolDecoy := func() {
 		t.Helper()
@@ -882,12 +902,16 @@ func TestReconcileInvalidatesPooledWarehouseIdentities(t *testing.T) {
 	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
 	require.Equal(t, 2, fx.s.connPool.Len(), "a no-op reconcile must not invalidate")
 
-	// A failing reconcile leaves the pool untouched and does not panic.
+	// A connect-before-statements failure leaves the pool untouched, does not
+	// panic, and must not be confused with the partial-DDL path.
 	pointProvisionerAtUnreachableHost(t, fx.s, fx.s.masterKey, fx.connectorID)
 	require.Error(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
 	require.Equal(t, 2, fx.s.connPool.Len())
 }
 
+// TestReconcileWarehouseDoesNotStarveSmallPool guards against the sync lock
+// occupying a pooled connection: with MaxConns=2 two concurrent reconciles
+// must still complete instead of self-deadlocking on the pool.
 func TestReconcileWarehouseDoesNotStarveSmallPool(t *testing.T) {
 	ctx := context.Background()
 
