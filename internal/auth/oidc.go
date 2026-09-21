@@ -9,10 +9,11 @@ import (
 )
 
 type OIDCClaims struct {
-	Subject string
-	Email   string
-	Name    string
-	Groups  []string
+	Subject           string
+	Email             string
+	Name              string
+	Groups            []string
+	GroupsUnavailable bool // true when the configured groups source (UserInfo) failed and no fallback groups exist
 }
 
 type OIDCProvider interface {
@@ -104,10 +105,12 @@ func (p *GenericOIDCProvider) Exchange(ctx context.Context, code string) (*OIDCC
 	}
 
 	if p.getUserInfo && p.oidcProvider != nil {
+		userInfoOK := false
 		userInfo, err := p.oidcProvider.UserInfo(ctx, oauth2.StaticTokenSource(token))
 		if err == nil {
 			var uiClaims map[string]any
 			if err := userInfo.Claims(&uiClaims); err == nil {
+				userInfoOK = true
 				if groupsRaw, ok := uiClaims[p.groupsClaim]; ok {
 					if groupsArr, ok := groupsRaw.([]any); ok {
 						var uiGroups []string
@@ -122,6 +125,9 @@ func (p *GenericOIDCProvider) Exchange(ctx context.Context, code string) (*OIDCC
 					}
 				}
 			}
+		}
+		if !userInfoOK && len(claims.Groups) == 0 {
+			claims.GroupsUnavailable = true
 		}
 	}
 

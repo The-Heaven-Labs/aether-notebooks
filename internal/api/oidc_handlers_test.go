@@ -36,6 +36,7 @@ type testOIDCServer struct {
 	name             string
 	groups           []string
 	idTokenHasGroups bool
+	failUserInfo     bool
 }
 
 func newTestOIDCServer(t *testing.T, sub, email, name string, groups []string, idTokenHasGroups bool) *testOIDCServer {
@@ -149,6 +150,10 @@ func (s *testOIDCServer) handleToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *testOIDCServer) handleUserInfo(w http.ResponseWriter, r *http.Request) {
+	if s.failUserInfo {
+		http.Error(w, "userinfo unavailable", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	info := map[string]any{
 		"sub":   s.sub,
@@ -543,6 +548,47 @@ func TestOIDCExchangeUserInfoOverridesIDToken(t *testing.T) {
 	// so they should match
 	assert.NotEmpty(t, claims.Groups)
 	assert.Equal(t, []string{"from-userinfo-only"}, claims.Groups)
+}
+
+func TestOIDCExchangeUserInfoFailure(t *testing.T) {
+	email := fmt.Sprintf("uifail-%d@test.com", time.Now().UnixNano())
+	srv := newTestOIDCServer(t, "user-uifail", email, "UI Fail", nil, false)
+	srv.failUserInfo = true
+
+	provider, err := auth.NewGenericOIDCProvider(context.Background(),
+		"test", srv.baseURL, "test-client-id", "test-client-secret",
+		"http://localhost/callback",
+		[]string{"openid", "profile", "email", "groups"},
+		"groups", true)
+	require.NoError(t, err)
+
+	claims, err := provider.Exchange(context.Background(), "test-code")
+	require.NoError(t, err)
+
+	assert.True(t, claims.GroupsUnavailable,
+		"failed UserInfo with no ID token groups should mark groups unavailable")
+	assert.Empty(t, claims.Groups)
+}
+
+func TestOIDCExchangeUserInfoFailureWithIDTokenGroups(t *testing.T) {
+	email := fmt.Sprintf("uifail2-%d@test.com", time.Now().UnixNano())
+	srv := newTestOIDCServer(t, "user-uifail2", email, "UI Fail 2",
+		[]string{"aether-x"}, true)
+	srv.failUserInfo = true
+
+	provider, err := auth.NewGenericOIDCProvider(context.Background(),
+		"test", srv.baseURL, "test-client-id", "test-client-secret",
+		"http://localhost/callback",
+		[]string{"openid", "profile", "email", "groups"},
+		"groups", true)
+	require.NoError(t, err)
+
+	claims, err := provider.Exchange(context.Background(), "test-code")
+	require.NoError(t, err)
+
+	assert.False(t, claims.GroupsUnavailable,
+		"ID token groups should be used when UserInfo fails")
+	assert.Equal(t, []string{"aether-x"}, claims.Groups)
 }
 
 // ─── Full Callback Integration Test ───────────────────────────────────────────
