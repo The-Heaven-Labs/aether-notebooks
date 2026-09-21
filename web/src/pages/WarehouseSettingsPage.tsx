@@ -15,6 +15,7 @@ import {
   createWarehouse,
   deleteWarehouse,
   getWarehouse,
+  getWarehouseValidation,
   listWarehouses,
   setConnectorWarehouse,
   setWarehouseProvisioner,
@@ -356,6 +357,18 @@ function WarehouseCard({
     enabled: expanded,
   })
 
+  // Shares the new-tables inbox's query: expanding the card is what loads
+  // validation, so the header hint never triggers extra fetching.
+  const { data: validation } = useQuery({
+    queryKey: ['warehouse-validation', warehouse.id],
+    queryFn: () => getWarehouseValidation(warehouse.id),
+    enabled: expanded,
+  })
+
+  const validationWarnings = validation
+    ? validation.tables_without_service_access.length + validation.service_access_without_tables.length
+    : 0
+
   const linked = detail?.connectors ?? []
   const unlinked = clickhouseConnectors.filter((c) => !c.warehouse_id)
 
@@ -405,8 +418,16 @@ function WarehouseCard({
             onBlur={submitRename}
           />
         )}
-        <span title={warehouse.sync_status === 'error' ? warehouse.sync_error ?? 'Sync failed' : undefined}>
-          <SyncBadge status={warehouse.sync_status} />
+        <span style={styles.syncWrap}>
+          <SyncBadge status={warehouse.sync_status} title={syncStatusTitle(warehouse)} />
+          {validationWarnings > 0 && (
+            <span
+              style={styles.warningsHint}
+              title={`${validationWarnings} validation warning${validationWarnings !== 1 ? 's' : ''}: some subjects are missing table grants or service access.`}
+            >
+              with warnings
+            </span>
+          )}
         </span>
         <div style={styles.actions}>
           <button
@@ -525,16 +546,29 @@ function WarehouseCard({
   )
 }
 
-function SyncBadge({ status }: { status: WarehouseSyncStatus }) {
+function syncStatusTitle(warehouse: Warehouse): string {
+  switch (warehouse.sync_status) {
+    case 'ready':
+      return 'Provisioning succeeded: per-user ClickHouse identities are in place. Table access still depends on each subject\'s table grants and service access.'
+    case 'error':
+      return warehouse.sync_error ?? 'Sync failed'
+    case 'syncing':
+      return 'Reconciling ClickHouse identities and table grants…'
+    default:
+      return 'Waiting to reconcile ClickHouse identities and table grants.'
+  }
+}
+
+function SyncBadge({ status, title }: { status: WarehouseSyncStatus; title?: string }) {
   switch (status) {
     case 'ready':
-      return <StatusBadge status="success" label="Ready" />
+      return <StatusBadge status="success" label="Ready" title={title} />
     case 'error':
-      return <StatusBadge status="error" label="Error" />
+      return <StatusBadge status="error" label="Error" title={title} />
     case 'syncing':
-      return <StatusBadge status="neutral" label="Syncing…" />
+      return <StatusBadge status="neutral" label="Syncing…" title={title} />
     default:
-      return <StatusBadge status="neutral" label="Pending" />
+      return <StatusBadge status="neutral" label="Pending" title={title} />
   }
 }
 
@@ -545,6 +579,8 @@ const styles: Record<string, React.CSSProperties> = {
   list: { display: 'flex', flexDirection: 'column', gap: 8 },
   card: { border: '1px solid var(--border)', borderRadius: 4, background: 'var(--bg-card)' },
   cardHeader: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px' },
+  syncWrap: { display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 },
+  warningsHint: { fontSize: 10, fontWeight: 700, color: 'var(--warning-text)', background: 'var(--warning-light)', border: '1px solid var(--warning-border)', borderRadius: 10, padding: '1px 8px', textTransform: 'uppercase' as const, letterSpacing: '0.05em', whiteSpace: 'nowrap' as const },
   expandBtn: { display: 'flex', alignItems: 'center', gap: 8, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, flex: 1, textAlign: 'left' as const, minWidth: 0 },
   chevron: { color: 'var(--text-secondary)', transition: 'transform 0.15s ease', flexShrink: 0 },
   warehouseName: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' },

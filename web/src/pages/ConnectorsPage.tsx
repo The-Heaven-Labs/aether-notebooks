@@ -471,7 +471,7 @@ export function ConnectorsPage() {
                     {c.config?.host ?? '—'}
                   </td>
                   <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                    {c.config?.database ?? '—'}
+                    {c.config?.database || '—'}
                   </td>
                   <td style={cellStyle}>
                     {c.warehouse_id ? (

@@ -271,6 +271,13 @@ describe('WarehouseTableGrants', () => {
     await waitFor(() => expect(screen.getByLabelText('Connector')).toHaveValue('c-1'))
   })
 
+  test('renders the empty state in a neutral secondary color', async () => {
+    server.use(http.get('/api/v1/warehouses/wh-1/grants', () => HttpResponse.json([])))
+    renderGrants()
+    const empty = await screen.findByText('No table grants yet.')
+    expect(empty).toHaveStyle('color: var(--text-secondary)')
+  })
+
   test('shows an error state when grants fail to load', async () => {
     server.use(
       http.get('/api/v1/warehouses/wh-1/grants', () =>

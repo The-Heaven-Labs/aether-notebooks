@@ -53,6 +53,24 @@ describe('ConnectorsPage', () => {
     expect(badges).toHaveLength(1)
   })
 
+  test('renders a dash when a connector has no database', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch', name: 'CH No DB', type: 'clickhouse', is_default: false,
+            config: { host: 'localhost', port: 9000, database: '' },
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    const row = (await screen.findByText('CH No DB')).closest('tr')
+    expect(row).not.toBeNull()
+    expect(within(row as HTMLElement).getByText('—')).toBeInTheDocument()
+  })
+
   test('shows an access-mode badge for managed and unmanaged connectors', async () => {
     server.use(
       http.get('/api/v1/connectors', () =>

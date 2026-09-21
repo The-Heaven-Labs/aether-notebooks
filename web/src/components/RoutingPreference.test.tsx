@@ -50,6 +50,14 @@ describe('RoutingPreference', () => {
     expect(screen.getByRole('option', { name: /Automatic/ })).toBeInTheDocument()
   })
 
+  test('fits the full automatic option without clipping', async () => {
+    renderPreference()
+
+    const select = await screen.findByLabelText('Preferred service for Analytics WH')
+    expect(screen.getByRole('option', { name: 'Automatic (choose when needed)' })).toBeInTheDocument()
+    expect(select).toHaveStyle('max-width: 320px')
+  })
+
   test('saves the chosen service and refetches effective access', async () => {
     let preferred: string | null = 'c-2'
     let puts: Array<Record<string, unknown>> = []

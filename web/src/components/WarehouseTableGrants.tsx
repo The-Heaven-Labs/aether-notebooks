@@ -428,7 +428,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   loading: { fontSize: 13, color: 'var(--text-muted)', padding: '4px 0' },
   errorText: { fontSize: 13, color: 'var(--error-full)' },
-  empty: { fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', padding: '4px 0' },
+  empty: { fontSize: 13, color: 'var(--text-secondary)', fontStyle: 'italic', padding: '4px 0' },
   tableWrap: { marginBottom: 12, overflowX: 'auto' },
   warningBanner: {
     fontSize: 12,

@@ -75,6 +75,46 @@ describe('WarehouseSettingsPage', () => {
     expect(screen.getByText('Error')).toBeInTheDocument()
   })
 
+  test('ready badge explains that provisioning does not imply usable grants', async () => {
+    renderWithProviders(<WarehouseSettingsPage />)
+    const ready = await screen.findByText('Ready')
+    expect(ready).toHaveAttribute('title', expect.stringContaining('Table access still depends'))
+    expect(ready).toHaveAccessibleName(expect.stringContaining('Table access still depends'))
+  })
+
+  test('flags a ready warehouse that has validation warnings', async () => {
+    server.use(
+      http.get('/api/v1/warehouses/:id/validation', ({ params }) =>
+        HttpResponse.json({
+          warehouse_id: params.id,
+          truncated: false,
+          tables_without_service_access: [
+            {
+              subject_type: 'everyone', subject_id: 'everyone', subject_name: 'Everyone',
+              tables: ['analytics.events'],
+            },
+          ],
+          service_access_without_tables: [],
+        }),
+      ),
+    )
+    renderWithProviders(<WarehouseSettingsPage />)
+    fireEvent.click(await screen.findByText('Analytics'))
+
+    expect(await screen.findByText('with warnings')).toBeInTheDocument()
+    expect(screen.getByText('with warnings')).toHaveAttribute(
+      'title',
+      expect.stringContaining('1 validation warning'),
+    )
+  })
+
+  test('does not flag a warehouse without validation warnings', async () => {
+    renderWithProviders(<WarehouseSettingsPage />)
+    fireEvent.click(await screen.findByText('Analytics'))
+    await screen.findByLabelText('Provisioner connector')
+    await waitFor(() => expect(screen.queryByText('with warnings')).toBeNull())
+  })
+
   test('does not claim enforcement while table permissions are disabled', async () => {
     server.use(
       http.get('/api/v1/auth/config', () =>

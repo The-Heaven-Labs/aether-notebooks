@@ -180,7 +180,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-mono)',
     background: 'var(--bg-input)',
     color: 'var(--text-primary)',
-    maxWidth: 240,
+    // Wide enough for "Automatic (choose when needed)" without clipping.
+    maxWidth: 320,
   },
   dialogBody: {
     display: 'flex',

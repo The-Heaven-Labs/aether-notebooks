@@ -6,6 +6,8 @@ interface Props {
   status: Status
   label: string
   icon?: React.ReactNode
+  /** Longer explanation surfaced as a tooltip and to assistive tech. */
+  title?: string
 }
 
 const colorMap: Record<Status, string> = {
@@ -14,7 +16,7 @@ const colorMap: Record<Status, string> = {
   neutral: 'var(--text-muted)',
 }
 
-export function StatusBadge({ status, label, icon }: Props) {
+export function StatusBadge({ status, label, icon, title }: Props) {
   const style: React.CSSProperties = {
     display: 'inline-flex',
     alignItems: 'center',
@@ -25,7 +27,13 @@ export function StatusBadge({ status, label, icon }: Props) {
   }
 
   return (
-    <span style={style} role="status" aria-live="polite">
+    <span
+      style={style}
+      role="status"
+      aria-live="polite"
+      title={title}
+      aria-label={title ? `${label}: ${title}` : undefined}
+    >
       {icon}
       {label}
     </span>
