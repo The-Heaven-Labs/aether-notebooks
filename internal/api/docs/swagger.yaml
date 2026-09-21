@@ -4554,7 +4554,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: Execute a cell's SQL query and return results
+      description: Execute a cell's SQL query and return results. Warehouse-routed
+        runs also return a routing object naming the warehouse, service, and ClickHouse
+        identity that served the query. When several services are permitted and no
+        routing preference is set, the request fails with 409 service_choice_required
+        listing the allowed services and their warehouse.
       parameters:
       - description: Notebook ID
         in: path
@@ -4566,7 +4570,8 @@ paths:
         name: cell_id
         required: true
         type: string
-      - description: Execution parameters
+      - description: Execution parameters; pinned=true dials the cell's connector
+          directly
         in: body
         name: request
         schema:
@@ -4575,7 +4580,7 @@ paths:
       - application/json
       responses:
         "200":
-          description: OK
+          description: outputs, metrics, and routing (warehouse-routed runs only)
           schema:
             additionalProperties: true
             type: object
@@ -4585,11 +4590,22 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
         "404":
           description: Not Found
           schema:
             additionalProperties:
               type: string
+            type: object
+        "409":
+          description: service_choice_required with warehouse_id and services
+          schema:
+            additionalProperties: true
             type: object
       security:
       - BearerAuth: []

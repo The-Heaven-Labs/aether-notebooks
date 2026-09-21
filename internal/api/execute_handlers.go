@@ -25,16 +25,18 @@ type executeRequest struct {
 }
 
 // @Summary Execute a cell
-// @Description Execute a cell's SQL query and return results
+// @Description Execute a cell's SQL query and return results. Warehouse-routed runs also return a routing object naming the warehouse, service, and ClickHouse identity that served the query. When several services are permitted and no routing preference is set, the request fails with 409 service_choice_required listing the allowed services and their warehouse.
 // @Tags cells
 // @Accept json
 // @Produce json
 // @Param notebook_id path string true "Notebook ID"
 // @Param cell_id path string true "Cell ID"
-// @Param request body object false "Execution parameters"
-// @Success 200 {object} map[string]interface{}
+// @Param request body object false "Execution parameters; pinned=true dials the cell's connector directly"
+// @Success 200 {object} map[string]interface{} "outputs, metrics, and routing (warehouse-routed runs only)"
 // @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
 // @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]interface{} "service_choice_required with warehouse_id and services"
 // @Security BearerAuth
 // @Router /notebooks/{notebook_id}/cells/{cell_id}/execute [post]
 func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
@@ -451,7 +453,8 @@ func auditMetadata(notebookID, cellID, connectorID, query string, rowCount int, 
 
 // writeServiceChoiceRequired renders the 409 payload used to prompt for a
 // warehouse service. The caller has already matched the concrete error, so the
-// allowed list is always present.
+// allowed list is always present. warehouse_id lets the client store the
+// chosen service as the user's preference without another lookup.
 func writeServiceChoiceRequired(w http.ResponseWriter, choice *executor.ServiceChoiceError) {
 	services := make([]map[string]string, 0, len(choice.Allowed))
 	for _, svc := range choice.Allowed {
@@ -461,8 +464,9 @@ func writeServiceChoiceRequired(w http.ResponseWriter, choice *executor.ServiceC
 		})
 	}
 	writeJSON(w, http.StatusConflict, map[string]any{
-		"error":    "service_choice_required",
-		"services": services,
+		"error":        "service_choice_required",
+		"warehouse_id": choice.WarehouseID.String(),
+		"services":     services,
 	})
 }
 

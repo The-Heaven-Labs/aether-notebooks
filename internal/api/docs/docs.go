@@ -6191,7 +6191,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Execute a cell's SQL query and return results",
+                "description": "Execute a cell's SQL query and return results. Warehouse-routed runs also return a routing object naming the warehouse, service, and ClickHouse identity that served the query. When several services are permitted and no routing preference is set, the request fails with 409 service_choice_required listing the allowed services and their warehouse.",
                 "consumes": [
                     "application/json"
                 ],
@@ -6218,7 +6218,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Execution parameters",
+                        "description": "Execution parameters; pinned=true dials the cell's connector directly",
                         "name": "request",
                         "in": "body",
                         "schema": {
@@ -6228,7 +6228,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "OK",
+                        "description": "outputs, metrics, and routing (warehouse-routed runs only)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -6243,6 +6243,15 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -6250,6 +6259,13 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "409": {
+                        "description": "service_choice_required with warehouse_id and services",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     }
                 }

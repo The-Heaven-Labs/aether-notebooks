@@ -333,14 +333,17 @@ func TestExecuteCellServiceChoiceRequired(t *testing.T) {
 	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 
 	var body struct {
-		Error    string `json:"error"`
-		Services []struct {
+		Error       string `json:"error"`
+		WarehouseID string `json:"warehouse_id"`
+		Services    []struct {
 			ConnectorID string `json:"connector_id"`
 			Name        string `json:"name"`
 		} `json:"services"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, "service_choice_required", body.Error)
+	require.Equal(t, fx.warehouseID.String(), body.WarehouseID,
+		"the 409 must name the warehouse so the choice can be stored")
 	require.Len(t, body.Services, 2)
 	names := map[string]string{}
 	for _, svc := range body.Services {
