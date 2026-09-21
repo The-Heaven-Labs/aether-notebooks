@@ -677,7 +677,7 @@ type setWarehouseProvisionerRequest struct {
 }
 
 // @Summary Set a warehouse provisioner
-// @Description Designate the connector used to provision ClickHouse access for a warehouse
+// @Description Designate the connector used to provision ClickHouse access for a warehouse. connector_id is required; an explicit null clears the provisioner.
 // @Tags warehouses
 // @Accept json
 // @Produce json
@@ -877,6 +877,32 @@ func (s *Server) deleteWarehouseRow(ctx context.Context, orgID string, warehouse
 	}
 	defer tx.Rollback(ctx)
 
+	// Lock the warehouse's connectors before the warehouse row. Every other
+	// path that touches both (move, soft-delete, set-provisioner) takes
+	// connector locks first, and DELETE's ON DELETE SET NULL would otherwise
+	// lock connectors after the warehouse and deadlock (40P01). The filter
+	// deliberately includes soft-deleted rows so the FK action needs no new
+	// locks.
+	connRows, err := tx.Query(ctx, `
+		SELECT id FROM connectors
+		WHERE warehouse_id = $1 AND org_id = $2
+		ORDER BY id FOR UPDATE`,
+		warehouseID.String(), orgID)
+	if err != nil {
+		return 0, err
+	}
+	for connRows.Next() {
+		var connectorID uuid.UUID
+		if err := connRows.Scan(&connectorID); err != nil {
+			connRows.Close()
+			return 0, err
+		}
+	}
+	connRows.Close()
+	if err := connRows.Err(); err != nil {
+		return 0, err
+	}
+
 	var lockedID string
 	if err := tx.QueryRow(ctx, `
 		SELECT id FROM warehouses WHERE id = $1 AND org_id = $2 FOR UPDATE`,
@@ -913,7 +939,7 @@ type setConnectorWarehouseRequest struct {
 }
 
 // @Summary Link a connector to a warehouse
-// @Description Set or clear the warehouse a connector belongs to, changing its execution mode
+// @Description Set or clear the warehouse a connector belongs to, changing its execution mode. An absent warehouse_id leaves the link unchanged; an explicit null unlinks the connector.
 // @Tags connectors
 // @Accept json
 // @Produce json

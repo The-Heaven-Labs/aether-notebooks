@@ -1018,3 +1018,72 @@ func TestWarehouseProvisionerRechecksConnector(t *testing.T) {
 	require.ErrorIs(t, err, errProvisionerConnectorForeign)
 	require.Nil(t, warehouseProvisioner(t, s, whA))
 }
+
+// TestWarehouseDeleteLocksConnectorsBeforeWarehouse pins the lock order that
+// prevents deadlocks with the connector-move/set-provisioner paths: while the
+// delete is blocked on a held connector lock, the warehouse row must still be
+// free. If the delete locked the warehouse first (the inversion), the NOWAIT
+// lock below would fail with SQLSTATE 55P03.
+func TestWarehouseDeleteLocksConnectorsBeforeWarehouse(t *testing.T) {
+	ctx := context.Background()
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Lock Order WH")
+	conn := seedWarehouseConnector(t, s, orgID, "Lock Order Service")
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, conn, &wh).Code)
+
+	holder, err := pgx.Connect(ctx, warehouseSyncTestDSN())
+	require.NoError(t, err)
+	t.Cleanup(func() { holder.Close(context.Background()) })
+
+	holderTx, err := holder.Begin(ctx)
+	require.NoError(t, err)
+	defer holderTx.Rollback(ctx)
+
+	var held string
+	require.NoError(t, holderTx.QueryRow(ctx,
+		`SELECT id FROM connectors WHERE id = $1 FOR UPDATE`, conn.String()).Scan(&held))
+
+	// The delete request runs concurrently and must block on the connector
+	// lock before touching the warehouse row.
+	deleteDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		req := httptest.NewRequest(http.MethodDelete,
+			"/api/v1/warehouses/"+wh.String()+"?force=true", nil)
+		req.Header.Set("Authorization", "Bearer "+admin)
+		req.Header.Set("X-AETHER-Admin-Mode", "true")
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		deleteDone <- rec
+	}()
+
+	require.Eventually(t, func() bool {
+		var blocked int
+		if err := holderTx.QueryRow(ctx, `
+			SELECT count(*) FROM pg_stat_activity
+			WHERE pid <> pg_backend_pid()
+			  AND pg_backend_pid() = ANY(pg_blocking_pids(pid))`).Scan(&blocked); err != nil {
+			return false
+		}
+		return blocked > 0
+	}, 5*time.Second, 20*time.Millisecond, "delete must block on the connector row lock")
+
+	// Holding the warehouse lock would mean the delete acquired it before the
+	// connector (the deadlock inversion). It must be free here.
+	var warehouseLocked string
+	err = holderTx.QueryRow(ctx,
+		`SELECT id FROM warehouses WHERE id = $1 FOR UPDATE NOWAIT`, wh.String()).Scan(&warehouseLocked)
+	require.NoError(t, err, "delete must not hold the warehouse lock while waiting on connectors")
+
+	require.NoError(t, holderTx.Rollback(ctx))
+
+	select {
+	case rec := <-deleteDone:
+		// A deadlock (40P01) surfaces as a 500 "delete failed"; the expected
+		// outcome is the clean delete.
+		require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	case <-time.After(10 * time.Second):
+		t.Fatal("delete did not finish after the connector lock was released")
+	}
+	require.False(t, warehouseExists(t, s, wh))
+}

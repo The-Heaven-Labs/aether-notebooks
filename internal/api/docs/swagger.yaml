@@ -2297,7 +2297,8 @@ paths:
       consumes:
       - application/json
       description: Set or clear the warehouse a connector belongs to, changing its
-        execution mode
+        execution mode. An absent warehouse_id leaves the link unchanged; an explicit
+        null unlinks the connector.
       parameters:
       - description: Connector ID
         in: path
@@ -6198,7 +6199,7 @@ paths:
       consumes:
       - application/json
       description: Designate the connector used to provision ClickHouse access for
-        a warehouse
+        a warehouse. connector_id is required; an explicit null clears the provisioner.
       parameters:
       - description: Warehouse ID
         in: path

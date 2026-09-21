@@ -2643,7 +2643,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Set or clear the warehouse a connector belongs to, changing its execution mode",
+                "description": "Set or clear the warehouse a connector belongs to, changing its execution mode. An absent warehouse_id leaves the link unchanged; an explicit null unlinks the connector.",
                 "consumes": [
                     "application/json"
                 ],
@@ -8711,7 +8711,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Designate the connector used to provision ClickHouse access for a warehouse",
+                "description": "Designate the connector used to provision ClickHouse access for a warehouse. connector_id is required; an explicit null clears the provisioner.",
                 "consumes": [
                     "application/json"
                 ],
