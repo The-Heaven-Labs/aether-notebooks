@@ -2,11 +2,13 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -38,15 +40,39 @@ type warehouseConnectorJSON struct {
 
 const warehouseSelectColumns = `id, org_id, name, provisioner_connector_id, sync_status, sync_error, last_synced_at, created_at, updated_at`
 
+const maxWarehouseNameLength = 255
+
 var (
 	errProvisionerConnectorMissing = errors.New("provisioner connector not found in this organization")
 	errProvisionerConnectorForeign = errors.New("provisioner connector must belong to the warehouse")
+	errProvisionerConnectorType    = errors.New("provisioner connector must be a clickhouse connector")
+	errWarehouseDeleteRefused      = errors.New("warehouse has linked connectors")
+	errWarehouseIdentityCleanup    = errors.New("warehouse identity cleanup failed; warehouse not deleted")
 )
 
 // enqueueWarehouseSync schedules a reconcile for one warehouse. It is
 // best-effort, matching the other warehouse sync triggers.
 func (s *Server) enqueueWarehouseSync(warehouseID uuid.UUID) {
 	if s.warehouseSync == nil {
+		return
+	}
+	s.warehouseSync.Enqueue(warehouseID)
+}
+
+// warehouseSyncForcer is implemented by the production sync worker; test
+// recorders without it fall back to the debounced Enqueue.
+type warehouseSyncForcer interface{ EnqueueNow(uuid.UUID) }
+
+// enqueueWarehouseSyncNow schedules a reconcile that skips the debounce delay,
+// used when a state change must converge promptly (e.g. a warehouse losing its
+// provisioner). It falls back to a normal enqueue when the worker does not
+// support immediacy.
+func (s *Server) enqueueWarehouseSyncNow(warehouseID uuid.UUID) {
+	if s.warehouseSync == nil {
+		return
+	}
+	if forcer, ok := s.warehouseSync.(warehouseSyncForcer); ok {
+		forcer.EnqueueNow(warehouseID)
 		return
 	}
 	s.warehouseSync.Enqueue(warehouseID)
@@ -61,30 +87,90 @@ func scanWarehouseRow(row pgx.Row) (warehouseJSON, error) {
 
 // loadWarehouseForOrg returns a warehouse scoped to its org. pgx.ErrNoRows is
 // returned unwrapped so callers can map it to 404.
-func (s *Server) loadWarehouseForOrg(ctx context.Context, orgID, warehouseID string) (warehouseJSON, error) {
+func (s *Server) loadWarehouseForOrg(ctx context.Context, orgID string, warehouseID uuid.UUID) (warehouseJSON, error) {
 	return scanWarehouseRow(s.db.Pool.QueryRow(ctx,
 		`SELECT `+warehouseSelectColumns+` FROM warehouses WHERE id = $1 AND org_id = $2`,
-		warehouseID, orgID))
+		warehouseID.String(), orgID))
 }
 
-// validateWarehouseProvisioner checks that connectorID exists in orgID and is
-// already linked to warehouseID. A provisioner is adopted by linking the
-// connector first (or passing it at create time), so a connector from another
-// warehouse can never adopt a credential namespace it does not own.
-func (s *Server) validateWarehouseProvisioner(ctx context.Context, orgID, warehouseID string, connectorID uuid.UUID) error {
+// parsePathUUID parses an {id} path value. A malformed ID is reported as not
+// found rather than surfacing a Postgres cast error as a 500.
+func parsePathUUID(id string) (uuid.UUID, bool) {
+	parsed, err := uuid.Parse(id)
+	return parsed, err == nil
+}
+
+// parseOptionalUUID decodes a RawMessage that is either a quoted UUID or JSON
+// null. Missing (nil raw) is treated as null.
+func parseOptionalUUID(raw json.RawMessage) (*uuid.UUID, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, err
+	}
+	parsed, err := uuid.Parse(value)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
+}
+
+func uuidPointersEqual(a, b *uuid.UUID) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// parseWarehouseName trims and validates a warehouse name.
+func parseWarehouseName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", errors.New("name is required")
+	}
+	if utf8.RuneCountInString(name) > maxWarehouseNameLength {
+		return "", fmt.Errorf("name must be %d characters or fewer", maxWarehouseNameLength)
+	}
+	return name, nil
+}
+
+// countWarehouseConnectors counts the live connectors linked to a warehouse,
+// scoped to the warehouse's org so a foreign warehouse's links can never leak
+// into a delete decision.
+func (s *Server) countWarehouseConnectors(ctx context.Context, orgID string, warehouseID uuid.UUID) (int, error) {
+	var n int
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM connectors
+		WHERE warehouse_id = $1 AND org_id = $2 AND deleted_at IS NULL`,
+		warehouseID.String(), orgID).Scan(&n)
+	return n, err
+}
+
+// validateWarehouseProvisioner checks that connectorID exists in orgID, is a
+// ClickHouse connector, and is already linked to warehouseID. A provisioner is
+// adopted by linking the connector first (or passing it at create time), so a
+// connector from another warehouse can never adopt a credential namespace it
+// does not own.
+func (s *Server) validateWarehouseProvisioner(ctx context.Context, orgID string, warehouseID, connectorID uuid.UUID) error {
+	var connectorType string
 	var connectorWarehouseID *uuid.UUID
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT warehouse_id FROM connectors
+		SELECT type, warehouse_id FROM connectors
 		WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
 		connectorID.String(), orgID,
-	).Scan(&connectorWarehouseID)
+	).Scan(&connectorType, &connectorWarehouseID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errProvisionerConnectorMissing
 	}
 	if err != nil {
 		return fmt.Errorf("load provisioner connector: %w", err)
 	}
-	if connectorWarehouseID == nil || connectorWarehouseID.String() != warehouseID {
+	if connectorType != "clickhouse" {
+		return errProvisionerConnectorType
+	}
+	if connectorWarehouseID == nil || *connectorWarehouseID != warehouseID {
 		return errProvisionerConnectorForeign
 	}
 	return nil
@@ -93,11 +179,26 @@ func (s *Server) validateWarehouseProvisioner(ctx context.Context, orgID, wareho
 // writeProvisionerValidationError maps a provisioner validation failure to a
 // 400 for user errors and a 500 for lookup failures.
 func writeProvisionerValidationError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errProvisionerConnectorMissing) || errors.Is(err, errProvisionerConnectorForeign) {
+	switch {
+	case errors.Is(err, errProvisionerConnectorMissing),
+		errors.Is(err, errProvisionerConnectorForeign),
+		errors.Is(err, errProvisionerConnectorType):
 		writeError(w, http.StatusBadRequest, err.Error())
-		return
+	default:
+		writeError(w, http.StatusInternalServerError, "failed to validate provisioner connector")
 	}
-	writeError(w, http.StatusInternalServerError, "failed to validate provisioner connector")
+}
+
+// writeWarehouseDeleteConflict reports that connectors are still linked and an
+// explicit confirmation is required. force=true bypasses only this check; the
+// managed ClickHouse identities are revoked either way.
+func writeWarehouseDeleteConflict(w http.ResponseWriter, linked int) {
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error": fmt.Sprintf(
+			"warehouse has %d linked connector(s); deleting it unlinks them and returns them to shared-credential mode. Re-send with force=true to confirm (managed ClickHouse identities are revoked in either case)",
+			linked),
+		"connector_count": linked,
+	})
 }
 
 // @Summary List warehouses
@@ -138,9 +239,13 @@ func (s *Server) handleListWarehouses(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, warehouses)
 }
 
+// createWarehouseRequest: provisioner_connector_id may be omitted or null
+// (the warehouse starts without a provisioner) or name a ClickHouse connector
+// in the same org that is not yet linked, which is adopted as the warehouse's
+// first service.
 type createWarehouseRequest struct {
-	Name                   string  `json:"name"`
-	ProvisionerConnectorID *string `json:"provisioner_connector_id"`
+	Name                   string          `json:"name"`
+	ProvisionerConnectorID json.RawMessage `json:"provisioner_connector_id"`
 }
 
 // @Summary Create a warehouse
@@ -163,20 +268,16 @@ func (s *Server) handleCreateWarehouse(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
+	name, err := parseWarehouseName(req.Name)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	var provisionerID *uuid.UUID
-	if req.ProvisionerConnectorID != nil && strings.TrimSpace(*req.ProvisionerConnectorID) != "" {
-		id, err := uuid.Parse(*req.ProvisionerConnectorID)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid provisioner_connector_id")
-			return
-		}
-		provisionerID = &id
+	provisionerID, err := parseOptionalUUID(req.ProvisionerConnectorID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid provisioner_connector_id")
+		return
 	}
 
 	tx, err := s.db.Pool.Begin(ctx)
@@ -188,7 +289,7 @@ func (s *Server) handleCreateWarehouse(w http.ResponseWriter, r *http.Request) {
 
 	wh, err := scanWarehouseRow(tx.QueryRow(ctx,
 		`INSERT INTO warehouses (org_id, name) VALUES ($1, $2) RETURNING `+warehouseSelectColumns,
-		claims.OrgID, req.Name))
+		claims.OrgID, name))
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "a warehouse with this name already exists in your organization")
@@ -205,7 +306,8 @@ func (s *Server) handleCreateWarehouse(w http.ResponseWriter, r *http.Request) {
 	if provisionerID != nil {
 		tag, err := tx.Exec(ctx, `
 			UPDATE connectors SET warehouse_id = $1, updated_at = now()
-			WHERE id = $2 AND org_id = $3 AND deleted_at IS NULL AND warehouse_id IS NULL`,
+			WHERE id = $2 AND org_id = $3 AND type = 'clickhouse'
+			  AND deleted_at IS NULL AND warehouse_id IS NULL`,
 			wh.ID, provisionerID.String(), claims.OrgID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "db error")
@@ -213,14 +315,16 @@ func (s *Server) handleCreateWarehouse(w http.ResponseWriter, r *http.Request) {
 		}
 		if tag.RowsAffected() == 0 {
 			writeError(w, http.StatusBadRequest,
-				"provisioner connector not found, soft-deleted, or already linked to another warehouse")
+				"provisioner connector must be a clickhouse connector in this organization that is not linked to another warehouse")
 			return
 		}
 		if _, err := tx.Exec(ctx, `UPDATE warehouses SET provisioner_connector_id = $1 WHERE id = $2`, provisionerID.String(), wh.ID); err != nil {
 			writeError(w, http.StatusInternalServerError, "db error")
 			return
 		}
-		wh.ProvisionerConnectorID = req.ProvisionerConnectorID
+		// Echo the canonical parsed UUID, not the request spelling.
+		canonical := provisionerID.String()
+		wh.ProvisionerConnectorID = &canonical
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -229,21 +333,26 @@ func (s *Server) handleCreateWarehouse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if provisionerID != nil {
-		if warehouseUUID, err := uuid.Parse(wh.ID); err == nil {
+		if warehouseUUID, parseErr := uuid.Parse(wh.ID); parseErr == nil {
 			s.enqueueWarehouseSync(warehouseUUID)
 		}
 	}
 
+	meta := map[string]any{"name": name}
+	if provisionerID != nil {
+		meta["provisioner_connector_id"] = provisionerID.String()
+	}
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "warehouse.create", ResourceType: "warehouse", ResourceID: wh.ID,
+		Metadata: meta,
 	})
 
 	writeJSON(w, http.StatusCreated, wh)
 }
 
 // @Summary Get a warehouse
-// @Description Get a warehouse and the connectors linked to it
+// @Description Get a warehouse and the ClickHouse connectors linked to it
 // @Tags warehouses
 // @Produce json
 // @Param id path string true "Warehouse ID"
@@ -254,9 +363,14 @@ func (s *Server) handleCreateWarehouse(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetWarehouse(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
-	id := r.PathValue("id")
 
-	wh, err := s.loadWarehouseForOrg(ctx, claims.OrgID, id)
+	warehouseUUID, ok := parsePathUUID(r.PathValue("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "warehouse not found")
+		return
+	}
+
+	wh, err := s.loadWarehouseForOrg(ctx, claims.OrgID, warehouseUUID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "warehouse not found")
 		return
@@ -268,8 +382,8 @@ func (s *Server) handleGetWarehouse(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, type FROM connectors
-		WHERE warehouse_id = $1 AND org_id = $2 AND deleted_at IS NULL
-		ORDER BY name ASC, id ASC`, id, claims.OrgID)
+		WHERE warehouse_id = $1 AND org_id = $2 AND type = 'clickhouse' AND deleted_at IS NULL
+		ORDER BY name ASC, id ASC`, warehouseUUID.String(), claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -292,9 +406,12 @@ func (s *Server) handleGetWarehouse(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, wh)
 }
 
+// updateWarehouseRequest: an absent field leaves the value unchanged; an
+// explicit null provisioner_connector_id clears the provisioner. name must be
+// a string (it cannot be nulled) and an empty body is rejected.
 type updateWarehouseRequest struct {
-	Name                   *string `json:"name"`
-	ProvisionerConnectorID *string `json:"provisioner_connector_id"`
+	Name                   json.RawMessage `json:"name"`
+	ProvisionerConnectorID json.RawMessage `json:"provisioner_connector_id"`
 }
 
 // @Summary Update a warehouse
@@ -313,31 +430,84 @@ type updateWarehouseRequest struct {
 func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
-	id := r.PathValue("id")
+
+	warehouseUUID, ok := parsePathUUID(r.PathValue("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "warehouse not found")
+		return
+	}
 
 	var req updateWarehouseRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-
-	if _, err := s.loadWarehouseForOrg(ctx, claims.OrgID, id); errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "warehouse not found")
-		return
-	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+	if req.Name == nil && req.ProvisionerConnectorID == nil {
+		writeError(w, http.StatusBadRequest, "at least one field must be provided")
 		return
 	}
 
+	var name *string
 	if req.Name != nil {
-		name := strings.TrimSpace(*req.Name)
-		if name == "" {
-			writeError(w, http.StatusBadRequest, "name is required")
+		var raw string
+		if err := json.Unmarshal(req.Name, &raw); err != nil {
+			writeError(w, http.StatusBadRequest, "name must be a string")
 			return
 		}
-		if _, err := s.db.Pool.Exec(ctx,
+		parsed, err := parseWarehouseName(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		name = &parsed
+	}
+
+	var provisionerID *uuid.UUID
+	provisionerSet := req.ProvisionerConnectorID != nil
+	if provisionerSet {
+		parsed, err := parseOptionalUUID(req.ProvisionerConnectorID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid provisioner_connector_id")
+			return
+		}
+		if parsed != nil {
+			if err := s.validateWarehouseProvisioner(ctx, claims.OrgID, warehouseUUID, *parsed); err != nil {
+				writeProvisionerValidationError(w, err)
+				return
+			}
+		}
+		provisionerID = parsed
+	}
+
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	var oldName string
+	var oldProvisioner *uuid.UUID
+	err = tx.QueryRow(ctx, `
+		SELECT name, provisioner_connector_id FROM warehouses
+		WHERE id = $1 AND org_id = $2 FOR UPDATE`,
+		warehouseUUID.String(), claims.OrgID).Scan(&oldName, &oldProvisioner)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "warehouse not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	changedName := name != nil && *name != oldName
+	changedProvisioner := provisionerSet && !uuidPointersEqual(oldProvisioner, provisionerID)
+
+	if changedName {
+		if _, err := tx.Exec(ctx,
 			`UPDATE warehouses SET name = $1, updated_at = now() WHERE id = $2 AND org_id = $3`,
-			name, id, claims.OrgID); err != nil {
+			*name, warehouseUUID.String(), claims.OrgID); err != nil {
 			if isUniqueViolation(err) {
 				writeError(w, http.StatusConflict, "a warehouse with this name already exists in your organization")
 				return
@@ -346,37 +516,46 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-
-	var provisionerID *uuid.UUID
-	if req.ProvisionerConnectorID != nil && strings.TrimSpace(*req.ProvisionerConnectorID) != "" {
-		parsed, err := uuid.Parse(*req.ProvisionerConnectorID)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid provisioner_connector_id")
-			return
-		}
-		if err := s.validateWarehouseProvisioner(ctx, claims.OrgID, id, parsed); err != nil {
-			writeProvisionerValidationError(w, err)
-			return
-		}
-		provisionerID = &parsed
-	}
-	if req.ProvisionerConnectorID != nil {
-		if err := s.writeWarehouseProvisioner(ctx, claims.OrgID, id, provisionerID); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				writeError(w, http.StatusNotFound, "warehouse not found")
-				return
-			}
+	if changedProvisioner {
+		if err := s.writeWarehouseProvisioner(ctx, tx, claims.OrgID, warehouseUUID, provisionerID); err != nil {
 			writeError(w, http.StatusInternalServerError, "db error")
 			return
 		}
-		if provisionerID != nil {
-			if warehouseUUID, parseErr := uuid.Parse(id); parseErr == nil {
-				s.enqueueWarehouseSync(warehouseUUID)
-			}
-		}
 	}
 
-	wh, err := s.loadWarehouseForOrg(ctx, claims.OrgID, id)
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	if changedProvisioner && provisionerID != nil {
+		s.enqueueWarehouseSync(warehouseUUID)
+	}
+
+	if changedName || changedProvisioner {
+		meta := map[string]any{}
+		if changedName {
+			meta["name"] = *name
+			meta["previous_name"] = oldName
+		}
+		if changedProvisioner {
+			if provisionerID != nil {
+				meta["provisioner_connector_id"] = provisionerID.String()
+			} else {
+				meta["provisioner_connector_id"] = nil
+			}
+			if oldProvisioner != nil {
+				meta["previous_provisioner_connector_id"] = oldProvisioner.String()
+			}
+		}
+		s.audit.Log(ctx, audit.Entry{
+			OrgID: claims.OrgID, UserID: claims.UserID,
+			Action: "warehouse.update", ResourceType: "warehouse", ResourceID: warehouseUUID.String(),
+			Metadata: meta,
+		})
+	}
+
+	wh, err := s.loadWarehouseForOrg(ctx, claims.OrgID, warehouseUUID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "warehouse not found")
 		return
@@ -386,29 +565,24 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.audit.Log(ctx, audit.Entry{
-		OrgID: claims.OrgID, UserID: claims.UserID,
-		Action: "warehouse.update", ResourceType: "warehouse", ResourceID: id,
-	})
-
 	writeJSON(w, http.StatusOK, wh)
 }
 
-// writeWarehouseProvisioner applies a provisioner change, resetting sync state
-// so the next reconcile provisions through the new connector. A nil
+// writeWarehouseProvisioner applies a provisioner change on tx, resetting sync
+// state so the next reconcile provisions through the new connector. A nil
 // connectorID clears the provisioner.
-func (s *Server) writeWarehouseProvisioner(ctx context.Context, orgID, warehouseID string, connectorID *uuid.UUID) error {
+func (s *Server) writeWarehouseProvisioner(ctx context.Context, tx pgx.Tx, orgID string, warehouseID uuid.UUID, connectorID *uuid.UUID) error {
 	var value any
 	if connectorID != nil {
 		value = connectorID.String()
 	}
-	tag, err := s.db.Pool.Exec(ctx, `
+	tag, err := tx.Exec(ctx, `
 		UPDATE warehouses
 		SET provisioner_connector_id = $1,
 		    sync_status = 'pending',
 		    sync_error = NULL,
 		    updated_at = now()
-		WHERE id = $2 AND org_id = $3`, value, warehouseID, orgID)
+		WHERE id = $2 AND org_id = $3`, value, warehouseID.String(), orgID)
 	if err != nil {
 		return err
 	}
@@ -416,6 +590,49 @@ func (s *Server) writeWarehouseProvisioner(ctx context.Context, orgID, warehouse
 		return pgx.ErrNoRows
 	}
 	return nil
+}
+
+// setWarehouseProvisioner updates the provisioner under a row lock and reports
+// whether the value actually changed.
+func (s *Server) setWarehouseProvisioner(ctx context.Context, orgID string, warehouseID uuid.UUID, connectorID *uuid.UUID) (bool, error) {
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+
+	var old *uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		SELECT provisioner_connector_id FROM warehouses
+		WHERE id = $1 AND org_id = $2 FOR UPDATE`,
+		warehouseID.String(), orgID).Scan(&old); err != nil {
+		return false, err
+	}
+	changed := !uuidPointersEqual(old, connectorID)
+	if changed {
+		if err := s.writeWarehouseProvisioner(ctx, tx, orgID, warehouseID, connectorID); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return changed, nil
+}
+
+// setWarehouseSyncPending marks a warehouse for reconciliation after its
+// identities were revoked but the delete was refused.
+func (s *Server) setWarehouseSyncPending(ctx context.Context, orgID string, warehouseID uuid.UUID) error {
+	_, err := s.db.Pool.Exec(ctx, `
+		UPDATE warehouses SET sync_status = 'pending', sync_error = NULL, updated_at = now()
+		WHERE id = $1 AND org_id = $2`, warehouseID.String(), orgID)
+	return err
+}
+
+// setWarehouseProvisionerRequest: connector_id is required; an explicit null
+// clears the provisioner, while a missing key is rejected.
+type setWarehouseProvisionerRequest struct {
+	ConnectorID json.RawMessage `json:"connector_id"`
 }
 
 // @Summary Set a warehouse provisioner
@@ -433,63 +650,61 @@ func (s *Server) writeWarehouseProvisioner(ctx context.Context, orgID, warehouse
 func (s *Server) handleSetWarehouseProvisioner(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
-	id := r.PathValue("id")
+
+	warehouseUUID, ok := parsePathUUID(r.PathValue("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "warehouse not found")
+		return
+	}
 
 	var req setWarehouseProvisionerRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-
-	if _, err := s.loadWarehouseForOrg(ctx, claims.OrgID, id); errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "warehouse not found")
-		return
-	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+	if req.ConnectorID == nil {
+		writeError(w, http.StatusBadRequest, "connector_id is required (use null to clear)")
 		return
 	}
-
-	var connectorID *uuid.UUID
-	if req.ConnectorID != nil && strings.TrimSpace(*req.ConnectorID) != "" {
-		parsed, err := uuid.Parse(*req.ConnectorID)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid connector_id")
-			return
-		}
-		if err := s.validateWarehouseProvisioner(ctx, claims.OrgID, id, parsed); err != nil {
+	connectorID, err := parseOptionalUUID(req.ConnectorID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid connector_id")
+		return
+	}
+	if connectorID != nil {
+		if err := s.validateWarehouseProvisioner(ctx, claims.OrgID, warehouseUUID, *connectorID); err != nil {
 			writeProvisionerValidationError(w, err)
 			return
 		}
-		connectorID = &parsed
 	}
 
-	if err := s.writeWarehouseProvisioner(ctx, claims.OrgID, id, connectorID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "warehouse not found")
-			return
-		}
+	changed, err := s.setWarehouseProvisioner(ctx, claims.OrgID, warehouseUUID, connectorID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "warehouse not found")
+		return
+	}
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
-	if connectorID != nil {
-		if warehouseUUID, parseErr := uuid.Parse(id); parseErr == nil {
-			s.enqueueWarehouseSync(warehouseUUID)
+	if changed && connectorID != nil {
+		s.enqueueWarehouseSync(warehouseUUID)
+	}
+	if changed {
+		meta := map[string]any{}
+		if connectorID != nil {
+			meta["provisioner_connector_id"] = connectorID.String()
+		} else {
+			meta["provisioner_connector_id"] = nil
 		}
+		s.audit.Log(ctx, audit.Entry{
+			OrgID: claims.OrgID, UserID: claims.UserID,
+			Action: "warehouse.provisioner.set", ResourceType: "warehouse", ResourceID: warehouseUUID.String(),
+			Metadata: meta,
+		})
 	}
 
-	meta := map[string]any{}
-	if connectorID != nil {
-		meta["provisioner_connector_id"] = connectorID.String()
-	} else {
-		meta["provisioner_connector_id"] = nil
-	}
-	s.audit.Log(ctx, audit.Entry{
-		OrgID: claims.OrgID, UserID: claims.UserID,
-		Action: "warehouse.provisioner.set", ResourceType: "warehouse", ResourceID: id,
-		Metadata: meta,
-	})
-
-	wh, err := s.loadWarehouseForOrg(ctx, claims.OrgID, id)
+	wh, err := s.loadWarehouseForOrg(ctx, claims.OrgID, warehouseUUID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -497,12 +712,8 @@ func (s *Server) handleSetWarehouseProvisioner(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, wh)
 }
 
-type setWarehouseProvisionerRequest struct {
-	ConnectorID *string `json:"connector_id"`
-}
-
 // @Summary Delete a warehouse
-// @Description Delete a warehouse. Refuses with 409 while connectors are still linked unless force=true.
+// @Description Delete a warehouse. Refuses with 409 while connectors are still linked unless force=true; managed ClickHouse identities are revoked before the row is removed.
 // @Tags warehouses
 // @Produce json
 // @Param id path string true "Warehouse ID"
@@ -510,52 +721,137 @@ type setWarehouseProvisionerRequest struct {
 // @Success 204
 // @Failure 404 {object} map[string]string
 // @Failure 409 {object} map[string]string
+// @Failure 503 {object} map[string]string
 // @Security BearerAuth
 // @Router /warehouses/{id} [delete]
 func (s *Server) handleDeleteWarehouse(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
-	id := r.PathValue("id")
 
-	// connectors.warehouse_id is ON DELETE SET NULL, so an unconfirmed delete
-	// would silently downgrade linked connectors to shared-credential mode.
-	var linked int
-	if err := s.db.Pool.QueryRow(ctx,
-		`SELECT count(*) FROM connectors WHERE warehouse_id = $1`, id).Scan(&linked); err != nil {
+	warehouseUUID, ok := parsePathUUID(r.PathValue("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "warehouse not found")
+		return
+	}
+	force := r.URL.Query().Get("force") == "true"
+
+	wh, err := s.loadWarehouseForOrg(ctx, claims.OrgID, warehouseUUID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "warehouse not found")
+		return
+	}
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	if linked > 0 && r.URL.Query().Get("force") != "true" {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"error": fmt.Sprintf(
-				"warehouse has %d linked connector(s); deleting it unlinks them and returns them to shared-credential mode. Re-send with force=true to confirm",
-				linked),
-			"connector_count": linked,
-		})
+
+	// Refuse before revoking identities so a confirmation refusal never
+	// leaves the warehouse without its managed identities.
+	linked, err := s.countWarehouseConnectors(ctx, claims.OrgID, warehouseUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	if linked > 0 && !force {
+		writeWarehouseDeleteConflict(w, linked)
 		return
 	}
 
-	tag, err := s.db.Pool.Exec(ctx, `DELETE FROM warehouses WHERE id = $1 AND org_id = $2`, id, claims.OrgID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "delete failed")
-		return
+	// Fail closed: never delete the row while live ClickHouse identities
+	// remain, and never let force skip this step. The per-warehouse sync lock
+	// is held across the drop and the delete so a reconcile cannot recreate
+	// identities in between.
+	var deleteErr error
+	if wh.ProvisionerConnectorID != nil {
+		lockCtx, cancel := context.WithTimeout(ctx, warehouseSyncTimeout)
+		defer cancel()
+		deleteErr = s.withWarehouseSyncLock(lockCtx, warehouseUUID, func(lockCtx context.Context) error {
+			if cleanupErr := s.dropWarehouseIdentitiesLocked(lockCtx, warehouseUUID); cleanupErr != nil {
+				return fmt.Errorf("%w: %s", errWarehouseIdentityCleanup, redactSecrets(cleanupErr.Error()))
+			}
+			var rowErr error
+			linked, rowErr = s.deleteWarehouseRow(lockCtx, claims.OrgID, warehouseUUID, force)
+			return rowErr
+		})
+	} else {
+		linked, deleteErr = s.deleteWarehouseRow(ctx, claims.OrgID, warehouseUUID, force)
 	}
-	if tag.RowsAffected() == 0 {
+
+	switch {
+	case errors.Is(deleteErr, errWarehouseIdentityCleanup):
+		writeError(w, http.StatusServiceUnavailable, deleteErr.Error())
+		return
+	case errors.Is(deleteErr, errWarehouseDeleteRefused):
+		// A connector was linked after the pre-check; the identities were
+		// already revoked, so schedule a reconcile to restore them.
+		if wh.ProvisionerConnectorID != nil {
+			if pendingErr := s.setWarehouseSyncPending(ctx, claims.OrgID, warehouseUUID); pendingErr == nil {
+				s.enqueueWarehouseSyncNow(warehouseUUID)
+			}
+		}
+		writeWarehouseDeleteConflict(w, linked)
+		return
+	case errors.Is(deleteErr, pgx.ErrNoRows):
 		writeError(w, http.StatusNotFound, "warehouse not found")
+		return
+	case deleteErr != nil:
+		writeError(w, http.StatusInternalServerError, "delete failed")
 		return
 	}
 
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
-		Action: "warehouse.delete", ResourceType: "warehouse", ResourceID: id,
-		Metadata: map[string]any{"connector_count": linked},
+		Action: "warehouse.delete", ResourceType: "warehouse", ResourceID: warehouseUUID.String(),
+		Metadata: map[string]any{"force": force, "connector_count": linked},
 	})
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// deleteWarehouseRow deletes a warehouse under a row lock, re-checking linked
+// connectors so a link that lands after the pre-check cannot be silently
+// unlinked by a concurrent delete. It returns errWarehouseDeleteRefused (with
+// the connector count) when confirmation is still required.
+func (s *Server) deleteWarehouseRow(ctx context.Context, orgID string, warehouseID uuid.UUID, force bool) (int, error) {
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	var lockedID string
+	if err := tx.QueryRow(ctx, `
+		SELECT id FROM warehouses WHERE id = $1 AND org_id = $2 FOR UPDATE`,
+		warehouseID.String(), orgID).Scan(&lockedID); err != nil {
+		return 0, err
+	}
+
+	var linked int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM connectors
+		WHERE warehouse_id = $1 AND org_id = $2 AND deleted_at IS NULL`,
+		warehouseID.String(), orgID).Scan(&linked); err != nil {
+		return 0, err
+	}
+	if linked > 0 && !force {
+		return linked, errWarehouseDeleteRefused
+	}
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM warehouses WHERE id = $1 AND org_id = $2`,
+		warehouseID.String(), orgID); err != nil {
+		return linked, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return linked, err
+	}
+	return linked, nil
+}
+
+// setConnectorWarehouseRequest: an absent warehouse_id leaves the link
+// unchanged; an explicit null unlinks the connector.
 type setConnectorWarehouseRequest struct {
-	WarehouseID *string `json:"warehouse_id"`
+	WarehouseID json.RawMessage `json:"warehouse_id"`
 }
 
 // @Summary Link a connector to a warehouse
@@ -573,25 +869,50 @@ type setConnectorWarehouseRequest struct {
 func (s *Server) handleSetConnectorWarehouse(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
-	connID := r.PathValue("id")
+
+	connUUID, ok := parsePathUUID(r.PathValue("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "connector not found")
+		return
+	}
 
 	var req setConnectorWarehouseRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-
-	var newWarehouseID *uuid.UUID
-	if req.WarehouseID != nil && strings.TrimSpace(*req.WarehouseID) != "" {
-		parsed, err := uuid.Parse(*req.WarehouseID)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid warehouse_id")
+	if req.WarehouseID == nil {
+		// Absent field = no change: echo the current link without mutating.
+		var current *uuid.UUID
+		err := s.db.Pool.QueryRow(ctx, `
+			SELECT warehouse_id FROM connectors
+			WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
+			connUUID.String(), claims.OrgID).Scan(&current)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "connector not found")
 			return
 		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+		var currentValue any
+		if current != nil {
+			currentValue = current.String()
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"id": connUUID.String(), "warehouse_id": currentValue})
+		return
+	}
+	newWarehouseID, err := parseOptionalUUID(req.WarehouseID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid warehouse_id")
+		return
+	}
+	if newWarehouseID != nil {
 		var exists bool
 		if err := s.db.Pool.QueryRow(ctx,
 			`SELECT EXISTS(SELECT 1 FROM warehouses WHERE id = $1 AND org_id = $2)`,
-			parsed.String(), claims.OrgID).Scan(&exists); err != nil {
+			newWarehouseID.String(), claims.OrgID).Scan(&exists); err != nil {
 			writeError(w, http.StatusInternalServerError, "query failed")
 			return
 		}
@@ -599,20 +920,31 @@ func (s *Server) handleSetConnectorWarehouse(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusBadRequest, "warehouse not found in this organization")
 			return
 		}
-		newWarehouseID = &parsed
 	}
 
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	defer tx.Rollback(ctx)
+
 	var oldWarehouseID *uuid.UUID
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT warehouse_id FROM connectors
-		WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
-		connID, claims.OrgID).Scan(&oldWarehouseID)
+	var connType string
+	err = tx.QueryRow(ctx, `
+		SELECT warehouse_id, type FROM connectors
+		WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL FOR UPDATE`,
+		connUUID.String(), claims.OrgID).Scan(&oldWarehouseID, &connType)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "connector not found")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	if newWarehouseID != nil && connType != "clickhouse" {
+		writeError(w, http.StatusBadRequest, "only clickhouse connectors can be linked to a warehouse")
 		return
 	}
 
@@ -620,29 +952,67 @@ func (s *Server) handleSetConnectorWarehouse(w http.ResponseWriter, r *http.Requ
 	if newWarehouseID != nil {
 		value = newWarehouseID.String()
 	}
-	tag, err := s.db.Pool.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 		UPDATE connectors SET warehouse_id = $1, updated_at = now()
 		WHERE id = $2 AND org_id = $3 AND deleted_at IS NULL`,
-		value, connID, claims.OrgID)
+		value, connUUID.String(), claims.OrgID); err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	// A preference is scoped to the connector's warehouse; stale rows for any
+	// other warehouse can never be satisfied and must not survive the move.
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM warehouse_service_preferences
+		WHERE connector_id = $1 AND warehouse_id IS DISTINCT FROM $2`,
+		connUUID.String(), value); err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	// A warehouse that used this connector as its provisioner loses it: fail
+	// closed with a pending status so an operator must pick a replacement.
+	orphans, err := tx.Query(ctx, `
+		UPDATE warehouses
+		SET provisioner_connector_id = NULL, sync_status = 'pending',
+		    sync_error = NULL, updated_at = now()
+		WHERE provisioner_connector_id = $1 AND id IS DISTINCT FROM $2
+		RETURNING id`,
+		connUUID.String(), value)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "connector not found")
+	var orphanedWarehouses []uuid.UUID
+	for orphans.Next() {
+		var id uuid.UUID
+		if err := orphans.Scan(&id); err != nil {
+			orphans.Close()
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+		orphanedWarehouses = append(orphanedWarehouses, id)
+	}
+	orphans.Close()
+	if err := orphans.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
 
-	// Routing (and, for a provisioner, provisioning) changes on both sides of
-	// a move, so converge both warehouses.
-	if oldWarehouseID != nil && (newWarehouseID == nil || oldWarehouseID.String() != newWarehouseID.String()) {
-		s.enqueueWarehouseSync(*oldWarehouseID)
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
 	}
-	if newWarehouseID != nil && (oldWarehouseID == nil || oldWarehouseID.String() != newWarehouseID.String()) {
+
+	for _, orphanID := range orphanedWarehouses {
+		s.enqueueWarehouseSyncNow(orphanID)
+	}
+	moved := newWarehouseID != nil && (oldWarehouseID == nil || *oldWarehouseID != *newWarehouseID)
+	if moved {
 		s.enqueueWarehouseSync(*newWarehouseID)
 	}
 
-	meta := map[string]any{"connector_id": connID}
+	meta := map[string]any{"connector_id": connUUID.String()}
 	if oldWarehouseID != nil {
 		meta["previous_warehouse_id"] = oldWarehouseID.String()
 	}
@@ -653,9 +1023,9 @@ func (s *Server) handleSetConnectorWarehouse(w http.ResponseWriter, r *http.Requ
 	}
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
-		Action: "connector.warehouse.set", ResourceType: "connector", ResourceID: connID,
+		Action: "connector.warehouse.set", ResourceType: "connector", ResourceID: connUUID.String(),
 		Metadata: meta,
 	})
 
-	writeJSON(w, http.StatusOK, map[string]any{"id": connID, "warehouse_id": value})
+	writeJSON(w, http.StatusOK, map[string]any{"id": connUUID.String(), "warehouse_id": value})
 }

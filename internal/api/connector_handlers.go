@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 
+	"github.com/google/uuid"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/executor"
@@ -481,6 +482,12 @@ func (s *Server) handleDeleteConnector(w http.ResponseWriter, r *http.Request) {
 	connID := r.PathValue("id")
 	ctx := r.Context()
 
+	connUUID, err := uuid.Parse(connID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "connector not found")
+		return
+	}
+
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "delete failed")
@@ -490,7 +497,7 @@ func (s *Server) handleDeleteConnector(w http.ResponseWriter, r *http.Request) {
 
 	result, err := tx.Exec(ctx,
 		`UPDATE connectors SET deleted_at = NOW() WHERE id = $1 AND org_id = $2`,
-		connID, claims.OrgID,
+		connUUID.String(), claims.OrgID,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "delete failed")
@@ -505,8 +512,37 @@ func (s *Server) handleDeleteConnector(w http.ResponseWriter, r *http.Request) {
 	// Remove the rows explicitly or a preference could keep pointing at a
 	// deleted service.
 	if _, err := tx.Exec(ctx,
-		`DELETE FROM warehouse_service_preferences WHERE connector_id = $1`, connID,
+		`DELETE FROM warehouse_service_preferences WHERE connector_id = $1`, connUUID.String(),
 	); err != nil {
+		writeError(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+
+	// A warehouse that used this connector as its provisioner loses it: fail
+	// closed with a pending status so an operator must pick a replacement
+	// instead of pointing at a soft-deleted connector.
+	rows, err := tx.Query(ctx, `
+		UPDATE warehouses
+		SET provisioner_connector_id = NULL, sync_status = 'pending',
+		    sync_error = NULL, updated_at = now()
+		WHERE provisioner_connector_id = $1
+		RETURNING id`, connUUID.String())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+	var orphanedWarehouses []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			writeError(w, http.StatusInternalServerError, "delete failed")
+			return
+		}
+		orphanedWarehouses = append(orphanedWarehouses, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "delete failed")
 		return
 	}
@@ -516,9 +552,22 @@ func (s *Server) handleDeleteConnector(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for _, orphanID := range orphanedWarehouses {
+		s.enqueueWarehouseSyncNow(orphanID)
+	}
+
+	meta := map[string]any{}
+	if len(orphanedWarehouses) > 0 {
+		names := make([]string, 0, len(orphanedWarehouses))
+		for _, id := range orphanedWarehouses {
+			names = append(names, id.String())
+		}
+		meta["orphaned_provisioner_warehouses"] = names
+	}
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
-		Action: "connector.delete", ResourceType: "connector", ResourceID: connID,
+		Action: "connector.delete", ResourceType: "connector", ResourceID: connUUID.String(),
+		Metadata: meta,
 	})
 
 	w.WriteHeader(http.StatusNoContent)

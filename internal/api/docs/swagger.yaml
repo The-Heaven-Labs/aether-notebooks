@@ -311,6 +311,8 @@ definitions:
         $ref: '#/definitions/models.ConnectorType'
       updated_at:
         type: string
+      warehouse_id:
+        type: string
     type: object
   models.ConnectorConfig:
     properties:
@@ -2288,6 +2290,48 @@ paths:
       security:
       - BearerAuth: []
       summary: Test a connector
+      tags:
+      - connectors
+  /connectors/{id}/warehouse:
+    put:
+      consumes:
+      - application/json
+      description: Set or clear the warehouse a connector belongs to, changing its
+        execution mode
+      parameters:
+      - description: Connector ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Warehouse link (null unlinks)
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Link a connector to a warehouse
       tags:
       - connectors
   /connectors/test:
@@ -5973,6 +6017,222 @@ paths:
       summary: Ensure home folder
       tags:
       - folders
+  /warehouses:
+    get:
+      description: List all warehouses for the current organization
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List warehouses
+      tags:
+      - warehouses
+    post:
+      consumes:
+      - application/json
+      description: Create a warehouse grouping ClickHouse connectors that share one
+        access namespace
+      parameters:
+      - description: Warehouse details
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a warehouse
+      tags:
+      - warehouses
+  /warehouses/{id}:
+    delete:
+      description: Delete a warehouse. Refuses with 409 while connectors are still
+        linked unless force=true; managed ClickHouse identities are revoked before
+        the row is removed.
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Unlink linked connectors and delete
+        in: query
+        name: force
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a warehouse
+      tags:
+      - warehouses
+    get:
+      description: Get a warehouse and the ClickHouse connectors linked to it
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a warehouse
+      tags:
+      - warehouses
+    put:
+      consumes:
+      - application/json
+      description: Update a warehouse's name and/or provisioner connector
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Warehouse updates
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a warehouse
+      tags:
+      - warehouses
+  /warehouses/{id}/provisioner:
+    put:
+      consumes:
+      - application/json
+      description: Designate the connector used to provision ClickHouse access for
+        a warehouse
+      parameters:
+      - description: Warehouse ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Provisioner connector (null clears)
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set a warehouse provisioner
+      tags:
+      - warehouses
   /ws/agents/{session_id}:
     get:
       description: WebSocket endpoint for real-time agent chat

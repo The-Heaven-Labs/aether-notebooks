@@ -48,6 +48,7 @@ type SyncService struct {
 	queued map[uuid.UUID]struct{}
 	active map[uuid.UUID]struct{}
 	rerun  map[uuid.UUID]struct{}
+	kicks  map[uuid.UUID]chan struct{}
 	sem    chan struct{}
 	wg     sync.WaitGroup
 	closed bool
@@ -83,6 +84,7 @@ func NewSyncService(cfg SyncConfig) *SyncService {
 		queued: map[uuid.UUID]struct{}{},
 		active: map[uuid.UUID]struct{}{},
 		rerun:  map[uuid.UUID]struct{}{},
+		kicks:  map[uuid.UUID]chan struct{}{},
 		sem:    make(chan struct{}, cfg.MaxConcurrent),
 	}
 }
@@ -92,10 +94,34 @@ func NewSyncService(cfg SyncConfig) *SyncService {
 // lost; a request that lands while one is already queued collapses into it.
 // After Close, Enqueue is a no-op.
 func (s *SyncService) Enqueue(warehouseID uuid.UUID) {
+	s.enqueue(warehouseID, false)
+}
+
+// EnqueueNow schedules a warehouse sync that skips the debounce delay. It is
+// used for state changes that must converge promptly, such as a warehouse
+// losing its provisioner mid-move. A run already in flight still completes
+// first; the immediate request schedules a rerun that starts as soon as it
+// settles. After Close, EnqueueNow is a no-op.
+func (s *SyncService) EnqueueNow(warehouseID uuid.UUID) {
+	s.enqueue(warehouseID, true)
+}
+
+func (s *SyncService) enqueue(warehouseID uuid.UUID, now bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return
+	}
+	// Wake a debouncing worker before the queued/active checks: an active run
+	// will honor the rerun flag below, and a queued run would otherwise sleep
+	// out its debounce with the kick already buffered for the next loop.
+	if now {
+		if kick, ok := s.kicks[warehouseID]; ok {
+			select {
+			case kick <- struct{}{}:
+			default:
+			}
+		}
 	}
 	if _, ok := s.active[warehouseID]; ok {
 		s.rerun[warehouseID] = struct{}{}
@@ -105,18 +131,33 @@ func (s *SyncService) Enqueue(warehouseID uuid.UUID) {
 		return
 	}
 	s.queued[warehouseID] = struct{}{}
+	kick := make(chan struct{}, 1)
+	s.kicks[warehouseID] = kick
+	if now {
+		kick <- struct{}{}
+	}
 	s.wg.Add(1)
-	go s.worker(warehouseID)
+	go s.worker(warehouseID, kick)
 }
 
 // worker drains one warehouse's queued/rerun work. It is a single wg unit:
 // Close waits for the whole drain, including follow-up runs. Each run holds a
 // global concurrency slot, so at most MaxConcurrent reconciles are in flight
 // across all warehouses.
-func (s *SyncService) worker(warehouseID uuid.UUID) {
+func (s *SyncService) worker(warehouseID uuid.UUID, kick <-chan struct{}) {
 	defer s.wg.Done()
+	defer func() {
+		s.mu.Lock()
+		if s.kicks[warehouseID] == kick {
+			delete(s.kicks, warehouseID)
+		}
+		s.mu.Unlock()
+	}()
 	for {
-		time.Sleep(s.cfg.Debounce)
+		select {
+		case <-time.After(s.cfg.Debounce):
+		case <-kick:
+		}
 
 		s.mu.Lock()
 		delete(s.queued, warehouseID)

@@ -482,6 +482,80 @@ func (s *Server) detectWarehouseDrift(ctx context.Context, warehouseID uuid.UUID
 	return report, nil
 }
 
+// withWarehouseSyncLock runs fn while holding the per-warehouse reconcile
+// lock. It fails closed when a reconcile already holds the lock instead of
+// waiting, so callers can surface a retryable error.
+func (s *Server) withWarehouseSyncLock(ctx context.Context, warehouseID uuid.UUID, fn func(context.Context) error) error {
+	lockConn, locked, err := s.acquireWarehouseSyncLock(ctx, warehouseID)
+	if err != nil {
+		return err
+	}
+	if !locked {
+		return fmt.Errorf("warehouse %s: a sync is in progress", warehouseID)
+	}
+	defer releaseWarehouseSyncLock(lockConn, warehouseID)
+	return fn(ctx)
+}
+
+// dropWarehouseIdentitiesLocked revokes every ClickHouse identity in a
+// warehouse's namespace by computing an empty desired state against the
+// observed actual state; the orphan-drop ordering (users before roles) handles
+// dependencies. Callers must hold the per-warehouse sync lock (the delete path
+// holds it across this drop and the row delete) so a concurrent reconcile
+// cannot recreate identities mid-drop. It returns an error (fail closed) when
+// the provisioner is missing/unreachable or any statement fails. The warehouse
+// row is not touched here.
+func (s *Server) dropWarehouseIdentitiesLocked(ctx context.Context, warehouseID uuid.UUID) error {
+	hdr, err := s.loadWarehouseHeader(ctx, warehouseID)
+	if err != nil {
+		return fmt.Errorf("load warehouse header: %w", err)
+	}
+	if hdr.provisionerID == nil {
+		return nil
+	}
+	cfg, err := s.loadProvisionerConfig(ctx, warehouseID, hdr.orgID, hdr.provisionerID)
+	if err != nil {
+		return err
+	}
+
+	conn, err := openWarehouseProvisionerConn(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("connect provisioner: %w", err)
+	}
+	defer conn.Close()
+
+	actual, err := chaccess.LoadActual(ctx, conn, warehouseID)
+	if err != nil {
+		return fmt.Errorf("load clickhouse actual state: %w", err)
+	}
+	stmts, skipped := chaccess.Statements(chaccess.DesiredState{}, actual)
+	for i, stmt := range stmts {
+		if execErr := conn.Exec(ctx, stmt); execErr != nil {
+			return fmt.Errorf("execute drop statement %d of %d: %s", i+1, len(stmts), redactSecrets(execErr.Error()))
+		}
+	}
+
+	meta := map[string]any{
+		"warehouse_id": warehouseID.String(),
+		"statements":   len(stmts),
+		"users":        len(actual.Users),
+		"roles":        len(actual.Roles),
+	}
+	if len(skipped) > 0 {
+		meta["skipped"] = skipped
+	}
+	if err := s.audit.Log(ctx, audit.Entry{
+		OrgID:        hdr.orgID.String(),
+		Action:       "warehouse.identities.cleanup",
+		ResourceType: "warehouse",
+		ResourceID:   warehouseID.String(),
+		Metadata:     meta,
+	}); err != nil {
+		slog.Warn("warehouse identity cleanup audit failed", "warehouse_id", warehouseID, "error", err)
+	}
+	return nil
+}
+
 // compareWarehouseState diffs desired against actual. It is pure so it can be
 // unit-tested without ClickHouse.
 func compareWarehouseState(warehouseID uuid.UUID, desired chaccess.DesiredState, actual chaccess.ActualState) DriftReport {

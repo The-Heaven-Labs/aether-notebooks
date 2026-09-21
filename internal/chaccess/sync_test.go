@@ -40,6 +40,40 @@ func TestSyncDebouncesAndRunsOnce(t *testing.T) {
 	require.Equal(t, 1, runs)
 }
 
+func TestSyncEnqueueNowSkipsDebounce(t *testing.T) {
+	ran := make(chan struct{})
+	s := NewSyncService(SyncConfig{
+		Debounce:  time.Hour,
+		Reconcile: func(ctx context.Context, warehouseID uuid.UUID) error { close(ran); return nil },
+		Logger:    discardSyncLogger(),
+	})
+	s.EnqueueNow(uuid.New())
+	select {
+	case <-ran:
+	case <-time.After(2 * time.Second):
+		t.Fatal("EnqueueNow must not wait for the debounce interval")
+	}
+	s.Close()
+}
+
+func TestSyncEnqueueNowWakesQueuedRun(t *testing.T) {
+	ran := make(chan struct{})
+	s := NewSyncService(SyncConfig{
+		Debounce:  time.Hour,
+		Reconcile: func(ctx context.Context, warehouseID uuid.UUID) error { close(ran); return nil },
+		Logger:    discardSyncLogger(),
+	})
+	wh := uuid.New()
+	s.Enqueue(wh)
+	s.EnqueueNow(wh)
+	select {
+	case <-ran:
+	case <-time.After(2 * time.Second):
+		t.Fatal("EnqueueNow must wake a run already waiting out the debounce")
+	}
+	s.Close()
+}
+
 func TestSyncRetriesWithBackoff(t *testing.T) {
 	var attempts int
 	exhausted := make(chan struct{})
