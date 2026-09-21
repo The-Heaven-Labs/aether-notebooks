@@ -7,6 +7,7 @@ import type { Group, GroupMember, Member, PendingGroupMember, PendingGroupMember
 import { useAuth } from '../hooks/useAuth'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { groupLabel } from '../utils/groupLabel'
 
 // ─── MemberDropdown ──────────────────────────────────────────────────────────
 
@@ -326,9 +327,11 @@ export function GroupsPage() {
   // Rename state: groupId → new name being edited
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
+  const [renameDisplayValue, setRenameDisplayValue] = useState('')
 
   // New group form
   const [newGroupName, setNewGroupName] = useState('')
+  const [newGroupDisplayName, setNewGroupDisplayName] = useState('')
   const [newGroupMembers, setNewGroupMembers] = useState<string[]>([])
   const [createError, setCreateError] = useState<string | null>(null)
   const [mutateError, setMutateError] = useState<string | null>(null)
@@ -352,8 +355,8 @@ export function GroupsPage() {
   })
 
   const updateGroup = useMutation({
-    mutationFn: ({ id, name }: { id: string; name: string }) =>
-      api.put<Group>(`/api/v1/groups/${id}`, { name }),
+    mutationFn: ({ id, name, display_name }: { id: string; name: string; display_name: string }) =>
+      api.put<Group>(`/api/v1/groups/${id}`, { name, display_name }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['groups'] })
       setRenamingId(null)
@@ -489,6 +492,7 @@ export function GroupsPage() {
   const handleRename = (group: Group) => {
     setRenamingId(group.id)
     setRenameValue(group.name)
+    setRenameDisplayValue(group.display_name ?? '')
   }
 
   const handleRenameSubmit = (id: string) => {
@@ -498,7 +502,7 @@ export function GroupsPage() {
       setMutateError('"everyone" is a reserved group name')
       return
     }
-    updateGroup.mutate({ id, name: trimmed })
+    updateGroup.mutate({ id, name: trimmed, display_name: renameDisplayValue.trim() })
   }
 
   const [deleteGroupConfirm, setDeleteGroupConfirm] = useState<Group | null>(null)
@@ -520,12 +524,16 @@ export function GroupsPage() {
       return
     }
     try {
-      const group = await api.post<Group>('/api/v1/groups', { name: trimmed })
+      const group = await api.post<Group>('/api/v1/groups', {
+        name: trimmed,
+        display_name: newGroupDisplayName.trim(),
+      })
       for (const userId of newGroupMembers) {
         await api.post(`/api/v1/groups/${group.id}/members`, { user_id: userId })
       }
       qc.invalidateQueries({ queryKey: ['groups'] })
       setNewGroupName('')
+      setNewGroupDisplayName('')
       setNewGroupMembers([])
       setCreateError(null)
     } catch (err) {
@@ -573,6 +581,17 @@ export function GroupsPage() {
                 value={newGroupName}
                 onChange={(e) => setNewGroupName(e.target.value)}
                 placeholder="New group name"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && newGroupName.trim()) handleCreateGroup()
+                }}
+              />
+              <input
+                style={styles.input}
+                type="text"
+                value={newGroupDisplayName}
+                onChange={(e) => setNewGroupDisplayName(e.target.value)}
+                placeholder={newGroupName.trim() || 'Display name (optional)'}
+                aria-label="New group display name"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && newGroupName.trim()) handleCreateGroup()
                 }}
@@ -660,19 +679,34 @@ export function GroupsPage() {
                   >
                     <ChevronRight size={14} style={{ ...styles.chevron, transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }} />
                     {isRenaming ? (
-                      <input
-                        autoFocus
-                        style={styles.renameInput}
-                        value={renameValue}
-                        onChange={(e) => setRenameValue(e.target.value)}
-                        onClick={(e) => e.stopPropagation()}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') { e.stopPropagation(); handleRenameSubmit(group.id) }
-                          if (e.key === 'Escape') { e.stopPropagation(); setRenamingId(null) }
-                        }}
-                      />
+                      <span style={styles.renameFields} onClick={(e) => e.stopPropagation()}>
+                        <input
+                          autoFocus
+                          style={styles.renameInput}
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          aria-label="Group name"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') { e.stopPropagation(); handleRenameSubmit(group.id) }
+                            if (e.key === 'Escape') { e.stopPropagation(); setRenamingId(null) }
+                          }}
+                        />
+                        <input
+                          style={styles.renameLabelInput}
+                          value={renameDisplayValue}
+                          onChange={(e) => setRenameDisplayValue(e.target.value)}
+                          placeholder={`Label (default: ${group.name})`}
+                          aria-label="Group display name"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') { e.stopPropagation(); handleRenameSubmit(group.id) }
+                            if (e.key === 'Escape') { e.stopPropagation(); setRenamingId(null) }
+                          }}
+                        />
+                      </span>
                     ) : (
-                      <span style={styles.groupName}>{group.name}</span>
+                      <span style={styles.groupName} title={group.name}>
+                        {isEveryone ? group.name : groupLabel(group)}
+                      </span>
                     )}
                     {isEveryone && (
                       <span style={styles.systemBadge}>System</span>
@@ -880,7 +914,7 @@ export function GroupsPage() {
       <ConfirmDialog
         open={!!deleteGroupConfirm}
         title="Delete group"
-        message={`Delete group "${deleteGroupConfirm?.name}"? This cannot be undone.`}
+        message={`Delete group "${deleteGroupConfirm ? groupLabel(deleteGroupConfirm) : ''}"? This cannot be undone.`}
         confirmLabel="Delete"
         destructive
         onConfirm={() => { if (deleteGroupConfirm) deleteGroup.mutate(deleteGroupConfirm.id); setDeleteGroupConfirm(null) }}
@@ -987,6 +1021,13 @@ const styles: Record<string, React.CSSProperties> = {
     marginLeft: 8,
     fontWeight: 400,
   },
+  renameFields: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+    flex: 1,
+    minWidth: 0,
+  },
   renameInput: {
     fontSize: 14,
     fontWeight: 600,
@@ -996,6 +1037,17 @@ const styles: Record<string, React.CSSProperties> = {
     outline: 'none',
     background: 'var(--bg-input)',
     color: 'var(--text-primary)',
+    caretColor: 'var(--text-primary)',
+    minWidth: 160,
+  },
+  renameLabelInput: {
+    fontSize: 12,
+    padding: '2px 6px',
+    border: '1px solid var(--border)',
+    borderRadius: 3,
+    outline: 'none',
+    background: 'var(--bg-input)',
+    color: 'var(--text-secondary)',
     caretColor: 'var(--text-primary)',
     minWidth: 160,
   },

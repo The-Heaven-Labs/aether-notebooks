@@ -13,6 +13,7 @@ import {
 import { ErrorBanner } from './ErrorBanner'
 import { StyledTable, rowStyle, cellStyle } from './StyledTable'
 import { useWarehouseTablePermissions } from '../hooks/useWarehouseTablePermissions'
+import { groupLabel } from '../utils/groupLabel'
 import type { Group, Member } from '../types'
 
 interface Props {
@@ -120,7 +121,7 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
 
   const groupNames = useMemo(() => {
     const map = new Map<string, string>()
-    for (const g of groups) map.set(g.id, g.name)
+    for (const g of groups) map.set(g.id, groupLabel(g))
     return map
   }, [groups])
 
@@ -326,7 +327,7 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
               .filter((g) => !/^everyone$/i.test(g.name))
               .map((g) => (
                 <option key={g.id} value={subjectKey('group', g.id)}>
-                  {g.name}
+                  {groupLabel(g)}
                 </option>
               ))}
           </optgroup>

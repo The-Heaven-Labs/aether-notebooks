@@ -290,6 +290,7 @@ export interface Group {
   id: string
   org_id: string
   name: string
+  display_name: string | null
   member_count: number
   created_at: string
 }

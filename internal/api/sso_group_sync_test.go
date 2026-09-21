@@ -16,6 +16,35 @@ import (
 
 var testMasterKey = crypto.DeriveKey("test-master-key-for-tests-only!")
 
+func TestFindOrCreateGroup_PreservesDisplayName(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+
+	slug := fmt.Sprintf("test-org-%d", time.Now().UnixNano())
+	var orgID string
+	err := s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
+		slug, slug,
+	).Scan(&orgID)
+	require.NoError(t, err)
+
+	groupID, _, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "aether-analysts")
+	require.NoError(t, err)
+
+	_, err = s.DB().Pool.Exec(ctx, `UPDATE groups SET display_name=$1 WHERE id=$2`, "Data Analysts", groupID)
+	require.NoError(t, err)
+
+	again, created, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "AETHER-ANALYSTS")
+	require.NoError(t, err)
+	require.False(t, created)
+	require.Equal(t, groupID, again)
+
+	var label *string
+	require.NoError(t, s.DB().Pool.QueryRow(ctx, `SELECT display_name FROM groups WHERE id=$1`, groupID).Scan(&label))
+	require.NotNil(t, label)
+	require.Equal(t, "Data Analysts", *label)
+}
+
 func TestSyncSSOGroups_CreatesGroups(t *testing.T) {
 	s := setupTestServer(t)
 	ctx := context.Background()

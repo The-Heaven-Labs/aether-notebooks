@@ -97,6 +97,44 @@ func TestGroupCRUD(t *testing.T) {
 		t.Fatalf("rename: expected 200, got %d: %s", rec5.Code, rec5.Body.String())
 	}
 
+	// Display names: set on update, rendered alongside the identity name
+	labelBody, _ := json.Marshal(map[string]any{"name": "Analytics", "display_name": "Data Analysts Infra"})
+	labelReq := httptest.NewRequest("PUT", "/api/v1/groups/"+groupID, bytes.NewReader(labelBody))
+	labelReq.Header.Set("Content-Type", "application/json")
+	labelReq.Header.Set("Authorization", "Bearer "+token)
+	labelRec := httptest.NewRecorder()
+	srv.ServeHTTP(labelRec, labelReq)
+	if labelRec.Code != http.StatusOK {
+		t.Fatalf("set display name: expected 200, got %d: %s", labelRec.Code, labelRec.Body.String())
+	}
+	var labeled map[string]any
+	json.NewDecoder(labelRec.Body).Decode(&labeled)
+	if labeled["display_name"] != "Data Analysts Infra" {
+		t.Fatalf("expected display_name to be set, got %v", labeled["display_name"])
+	}
+	if labeled["name"] != "Analytics" {
+		t.Fatalf("expected name unchanged, got %v", labeled["name"])
+	}
+
+	// Label-only update keeps the name
+	clearBody, _ := json.Marshal(map[string]any{"display_name": ""})
+	clearReq := httptest.NewRequest("PUT", "/api/v1/groups/"+groupID, bytes.NewReader(clearBody))
+	clearReq.Header.Set("Content-Type", "application/json")
+	clearReq.Header.Set("Authorization", "Bearer "+token)
+	clearRec := httptest.NewRecorder()
+	srv.ServeHTTP(clearRec, clearReq)
+	if clearRec.Code != http.StatusOK {
+		t.Fatalf("clear display name: expected 200, got %d: %s", clearRec.Code, clearRec.Body.String())
+	}
+	var cleared map[string]any
+	json.NewDecoder(clearRec.Body).Decode(&cleared)
+	if cleared["display_name"] != nil {
+		t.Fatalf("expected cleared display_name null, got %v", cleared["display_name"])
+	}
+	if cleared["name"] != "Analytics" {
+		t.Fatalf("expected name kept on label-only update, got %v", cleared["name"])
+	}
+
 	// Delete group
 	req6 := httptest.NewRequest("DELETE", "/api/v1/groups/"+groupID, nil)
 	req6.Header.Set("Authorization", "Bearer "+token)
@@ -104,5 +142,47 @@ func TestGroupCRUD(t *testing.T) {
 	srv.ServeHTTP(rec6, req6)
 	if rec6.Code != http.StatusNoContent {
 		t.Fatalf("delete group: expected 204, got %d: %s", rec6.Code, rec6.Body.String())
+	}
+}
+
+func TestUpdateEveryoneGroupRejectsNameAndLabel(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("everyone-label-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Everyone Label Org")
+
+	listReq := httptest.NewRequest("GET", "/api/v1/groups", nil)
+	listReq.Header.Set("Authorization", "Bearer "+token)
+	listRec := httptest.NewRecorder()
+	srv.ServeHTTP(listRec, listReq)
+	var groups []map[string]any
+	json.NewDecoder(listRec.Body).Decode(&groups)
+	var everyoneID string
+	for _, g := range groups {
+		if g["name"] == "Everyone" {
+			everyoneID = g["id"].(string)
+		}
+	}
+	if everyoneID == "" {
+		t.Fatal("expected the org's Everyone group")
+	}
+
+	labelBody, _ := json.Marshal(map[string]any{"display_name": "All Staff"})
+	labelReq := httptest.NewRequest("PUT", "/api/v1/groups/"+everyoneID, bytes.NewReader(labelBody))
+	labelReq.Header.Set("Content-Type", "application/json")
+	labelReq.Header.Set("Authorization", "Bearer "+token)
+	labelRec := httptest.NewRecorder()
+	srv.ServeHTTP(labelRec, labelReq)
+	if labelRec.Code != http.StatusBadRequest {
+		t.Fatalf("label on Everyone: expected 400, got %d: %s", labelRec.Code, labelRec.Body.String())
+	}
+
+	renameBody, _ := json.Marshal(map[string]any{"name": "Staff"})
+	renameReq := httptest.NewRequest("PUT", "/api/v1/groups/"+everyoneID, bytes.NewReader(renameBody))
+	renameReq.Header.Set("Content-Type", "application/json")
+	renameReq.Header.Set("Authorization", "Bearer "+token)
+	renameRec := httptest.NewRecorder()
+	srv.ServeHTTP(renameRec, renameReq)
+	if renameRec.Code != http.StatusBadRequest {
+		t.Fatalf("rename Everyone: expected 400, got %d: %s", renameRec.Code, renameRec.Body.String())
 	}
 }
