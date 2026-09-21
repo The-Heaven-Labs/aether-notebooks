@@ -94,7 +94,7 @@ func TestSSOProbe_RateLimit(t *testing.T) {
 
 	// Use a distinct IP via X-Forwarded-For to isolate this test.
 	testIP := fmt.Sprintf("10.0.%d.%d", time.Now().UnixNano()%255, (time.Now().UnixNano()/255)%255)
-	rateLimitKey := fmt.Sprintf("ratelimit:sso-probe:%s", testIP)
+	rateLimitKey := fmt.Sprintf("ratelimit:%s:/api/v1/auth/sso-providers", testIP)
 
 	// Clean up the key before and after the test.
 	s.Cache.Client().Del(ctx, rateLimitKey)
@@ -117,4 +117,30 @@ func TestSSOProbe_RateLimit(t *testing.T) {
 	// 21st request should be rate limited.
 	code := makeProbeRequest()
 	assert.Equal(t, http.StatusTooManyRequests, code, "21st request should be rate limited")
+}
+
+func TestSSOProbe_RateLimitRepairsMissingTTL(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+
+	testIP := fmt.Sprintf("10.1.%d.%d", time.Now().UnixNano()%255, (time.Now().UnixNano()/255)%255)
+	rateLimitKey := fmt.Sprintf("ratelimit:%s:/api/v1/auth/sso-providers", testIP)
+	s.Cache.Client().Del(ctx, rateLimitKey)
+	t.Cleanup(func() { s.Cache.Client().Del(ctx, rateLimitKey) })
+
+	// Simulate a leaked counter: the key exists with no expiry (e.g. the
+	// request that created it was canceled before EXPIRE landed).
+	require.NoError(t, s.Cache.Client().Set(ctx, rateLimitKey, 25, 0).Err())
+	require.Equal(t, time.Duration(-1), s.Cache.Client().TTL(ctx, rateLimitKey).Val())
+
+	req := httptest.NewRequest("GET", "/api/v1/auth/sso-providers?email=user@example.com", nil)
+	req.Header.Set("X-Forwarded-For", testIP)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+
+	// The counter is still over the limit, but the key must now expire instead
+	// of permanently rate-limiting the caller.
+	assert.Equal(t, http.StatusTooManyRequests, rec.Code)
+	assert.Greater(t, s.Cache.Client().TTL(ctx, rateLimitKey).Val(), time.Duration(0),
+		"a counter key without a TTL must be repaired on the next request")
 }
