@@ -323,13 +323,17 @@ export function NotebookPage() {
     })
     // A WS output is a newer run (possibly from another user): the HTTP
     // routing metadata we hold for this cell is stale and must not keep
-    // attributing the new outputs to an older endpoint.
-    setCellRouting((prev) => {
-      if (!(cellId in prev)) return prev
-      const next = { ...prev }
-      delete next[cellId]
-      return next
-    })
+    // attributing the new outputs to an older endpoint. The runner's own
+    // broadcast is exempt: it is a second transport for the same HTTP result
+    // and can arrive after the execute response set the routing.
+    if (!pendingExecRef.current.has(cellId)) {
+      setCellRouting((prev) => {
+        if (!(cellId in prev)) return prev
+        const next = { ...prev }
+        delete next[cellId]
+        return next
+      })
+    }
     setRunningCells((prev) => {
       const next = { ...prev }
       delete next[cellId]
@@ -1038,6 +1042,14 @@ export function NotebookPage() {
             c.id === cellId ? { ...c, outputs: [{ type: 'error', data: msg }] } : c,
           ),
         )
+        // The failed run produced no endpoint: drop any chip from an earlier
+        // successful run so it cannot be read as this run's routing.
+        setCellRouting((prev) => {
+          if (!(cellId in prev)) return prev
+          const next = { ...prev }
+          delete next[cellId]
+          return next
+        })
         return false
       } finally {
         setTimeout(() => pendingExecRef.current.delete(cellId), 3000)
