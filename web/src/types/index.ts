@@ -169,6 +169,23 @@ export interface Connector {
   }
 }
 
+export interface SchemaColumn {
+  name: string
+  type: string
+  description?: string
+}
+
+export interface SchemaTable {
+  schema: string
+  name: string
+  description?: string
+  columns: SchemaColumn[]
+}
+
+export interface ConnectorSchema {
+  tables: SchemaTable[]
+}
+
 export interface Dashboard {
   id: string
   org_id: string

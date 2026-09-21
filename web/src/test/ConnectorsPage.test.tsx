@@ -92,11 +92,18 @@ describe('ConnectorsPage', () => {
     )
     renderWithProviders(<ConnectorsPage />)
 
-    fireEvent.click(await screen.findByText('Link to warehouse'))
-    expect(await screen.findByText('Link connector to warehouse')).toBeInTheDocument()
+    const linkButton = await screen.findByText('Link to warehouse')
+    linkButton.focus()
+    fireEvent.click(linkButton)
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveAccessibleName('Link connector to warehouse')
+    expect(dialog).toHaveFocus()
     fireEvent.change(screen.getByLabelText('Warehouse'), { target: { value: 'wh-1' } })
     fireEvent.click(screen.getByText('Link connector'))
 
     await waitFor(() => expect(putBody).toEqual({ warehouse_id: 'wh-1' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    // Focus returns to the control that opened the dialog.
+    expect(linkButton).toHaveFocus()
   })
 })

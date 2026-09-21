@@ -65,11 +65,6 @@ export interface WarehouseEffectiveAccess {
   preferred_connector_id: string | null
 }
 
-export interface WarehouseDeleteConflict {
-  error: string
-  connector_count: number
-}
-
 export function listWarehouses(): Promise<Warehouse[]> {
   return api.get<Warehouse[]>('/api/v1/warehouses')
 }

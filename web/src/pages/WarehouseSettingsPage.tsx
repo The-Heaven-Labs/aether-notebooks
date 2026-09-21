@@ -62,10 +62,10 @@ export function WarehouseSettingsPage() {
     [connectors],
   )
 
-  const invalidateWarehouses = (warehouseId?: string) => {
+  const invalidateWarehouses = () => {
     qc.invalidateQueries({ queryKey: ['warehouses'] })
     qc.invalidateQueries({ queryKey: ['connectors'] })
-    if (warehouseId) qc.invalidateQueries({ queryKey: ['warehouse', warehouseId] })
+    qc.invalidateQueries({ queryKey: ['warehouse'] })
   }
 
   const createMutation = useMutation({
@@ -75,7 +75,7 @@ export function WarehouseSettingsPage() {
         provisioner_connector_id: form.provisioner_connector_id || null,
       }),
     onSuccess: (warehouse) => {
-      invalidateWarehouses(warehouse.id)
+      invalidateWarehouses()
       setCreating(false)
       setForm({ name: '', provisioner_connector_id: '' })
       setCreateError(null)
@@ -86,8 +86,8 @@ export function WarehouseSettingsPage() {
 
   const renameMutation = useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) => updateWarehouse(id, { name }),
-    onSuccess: (_, { id }) => {
-      invalidateWarehouses(id)
+    onSuccess: () => {
+      invalidateWarehouses()
       setError(null)
     },
     onError: (err: Error) => setError(err.message),
@@ -96,8 +96,8 @@ export function WarehouseSettingsPage() {
   const provisionerMutation = useMutation({
     mutationFn: ({ id, connectorId }: { id: string; connectorId: string | null }) =>
       setWarehouseProvisioner(id, connectorId),
-    onSuccess: (_, { id }) => {
-      invalidateWarehouses(id)
+    onSuccess: () => {
+      invalidateWarehouses()
       setError(null)
     },
     onError: (err: Error) => setError(err.message),
@@ -106,8 +106,8 @@ export function WarehouseSettingsPage() {
   const linkMutation = useMutation({
     mutationFn: ({ connectorId, warehouseId }: { connectorId: string; warehouseId: string | null }) =>
       setConnectorWarehouse(connectorId, warehouseId),
-    onSuccess: (_, { warehouseId }) => {
-      invalidateWarehouses(warehouseId ?? undefined)
+    onSuccess: () => {
+      invalidateWarehouses()
       setError(null)
     },
     onError: (err: Error) => setError(err.message),
@@ -116,8 +116,8 @@ export function WarehouseSettingsPage() {
   const deleteMutation = useMutation({
     mutationFn: ({ warehouse, force }: { warehouse: Warehouse; force: boolean }) =>
       deleteWarehouse(warehouse.id, force),
-    onSuccess: (_, { warehouse }) => {
-      invalidateWarehouses(warehouse.id)
+    onSuccess: () => {
+      invalidateWarehouses()
       setDeleteTarget(null)
       setForceTarget(null)
       setError(null)
@@ -217,7 +217,6 @@ export function WarehouseSettingsPage() {
         {listFailed && (
           <ErrorBanner
             message={listError instanceof Error ? listError.message : 'Failed to load warehouses'}
-            onDismiss={() => setError(null)}
           />
         )}
 
@@ -262,6 +261,7 @@ export function WarehouseSettingsPage() {
         message={`Delete "${deleteTarget?.name}"? Linked connectors return to shared-credential mode and managed ClickHouse identities are revoked.`}
         confirmLabel="Delete"
         destructive
+        confirmDisabled={deleteMutation.isPending}
         onConfirm={() => {
           if (deleteTarget) deleteMutation.mutate({ warehouse: deleteTarget, force: false })
           setDeleteTarget(null)
@@ -275,6 +275,7 @@ export function WarehouseSettingsPage() {
         message={forceTarget?.message}
         confirmLabel="Delete and unlink"
         destructive
+        confirmDisabled={deleteMutation.isPending}
         onConfirm={() => {
           if (forceTarget) deleteMutation.mutate({ warehouse: forceTarget.warehouse, force: true })
         }}
@@ -354,7 +355,7 @@ function WarehouseCard({
       <div style={styles.cardHeader}>
         <button
           type="button"
-          style={styles.expandBtn}
+          style={{ ...styles.expandBtn, flex: renaming ? '0 0 auto' : 1 }}
           onClick={onToggle}
           aria-expanded={expanded}
           title={expanded ? 'Collapse' : 'Expand'}
@@ -363,23 +364,25 @@ function WarehouseCard({
             size={14}
             style={{ ...styles.chevron, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
           />
-          {renaming ? (
-            <input
-              autoFocus
-              style={styles.renameInput}
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.stopPropagation(); submitRename() }
-                if (e.key === 'Escape') { e.stopPropagation(); setRenaming(false); setRenameValue(warehouse.name) }
-              }}
-              onBlur={submitRename}
-            />
-          ) : (
-            <span style={styles.warehouseName}>{warehouse.name}</span>
-          )}
+          {!renaming && <span style={styles.warehouseName}>{warehouse.name}</span>}
         </button>
+        {renaming && (
+          <input
+            autoFocus
+            aria-label="Warehouse name"
+            style={{ ...styles.renameInput, flex: 1 }}
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submitRename()
+              if (e.key === 'Escape') {
+                setRenaming(false)
+                setRenameValue(warehouse.name)
+              }
+            }}
+            onBlur={submitRename}
+          />
+        )}
         <span title={warehouse.sync_status === 'error' ? warehouse.sync_error ?? 'Sync failed' : undefined}>
           <SyncBadge status={warehouse.sync_status} />
         </span>

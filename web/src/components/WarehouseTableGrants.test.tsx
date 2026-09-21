@@ -69,9 +69,14 @@ describe('WarehouseTableGrants', () => {
     expect(screen.getByRole('option', { name: 'Everyone' })).toBeInTheDocument()
   })
 
-  test('posts a grant for the selected subject and table', async () => {
+  test('posts a grant for the selected subject and table and refetches grants', async () => {
     let posted: Record<string, unknown> | null = null
+    let grantsCalls = 0
     server.use(
+      http.get('/api/v1/warehouses/wh-1/grants', () => {
+        grantsCalls++
+        return HttpResponse.json(GRANTS)
+      }),
       http.post('/api/v1/warehouses/wh-1/grants', async ({ request }) => {
         posted = await request.json() as Record<string, unknown>
         return HttpResponse.json(
@@ -87,6 +92,7 @@ describe('WarehouseTableGrants', () => {
     )
     renderGrants()
     await screen.findAllByText('Data Team')
+    expect(grantsCalls).toBe(1)
 
     fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'group:g-1' } })
     await screen.findByRole('option', { name: 'analytics' })
@@ -105,6 +111,7 @@ describe('WarehouseTableGrants', () => {
         table: 'users',
       }),
     )
+    await waitFor(() => expect(grantsCalls).toBeGreaterThanOrEqual(2))
   })
 
   test('shows the "no service access" warning after a warned grant', async () => {
@@ -136,6 +143,81 @@ describe('WarehouseTableGrants', () => {
     expect((await screen.findAllByText(/no service access/i)).length).toBeGreaterThan(0)
   })
 
+  test('clears the warning after a later warning-free grant', async () => {
+    let posts = 0
+    server.use(
+      http.post('/api/v1/warehouses/wh-1/grants', async ({ request }) => {
+        posts++
+        const body = await request.json() as Record<string, unknown>
+        return HttpResponse.json(
+          {
+            id: `gr-${posts}`, org_id: 'org-1', warehouse_id: 'wh-1',
+            subject_type: body.subject_type, subject_id: body.subject_id,
+            subject_name: 'Data Team', database: body.database, table: body.table,
+            created_by: 'user-1', created_at: '2026-01-01T00:00:00Z',
+            warning: posts === 1 ? 'no_service_access' : undefined,
+          },
+          { status: 201 },
+        )
+      }),
+    )
+    renderGrants()
+    await screen.findAllByText('Data Team')
+
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'group:g-1' } })
+    await screen.findByRole('option', { name: 'analytics' })
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
+    await waitFor(() =>
+      expect(screen.getByRole('option', { name: 'events' })).toBeInTheDocument(),
+    )
+    fireEvent.change(screen.getByLabelText('Table'), { target: { value: 'events' } })
+    fireEvent.click(screen.getByText('Add grant'))
+    expect((await screen.findAllByText(/no service access/i)).length).toBeGreaterThan(0)
+
+    fireEvent.change(screen.getByLabelText('Table'), { target: { value: 'users' } })
+    fireEvent.click(screen.getByText('Add grant'))
+
+    await waitFor(() => expect(screen.queryByText(/no service access/i)).toBeNull())
+  })
+
+  test('clears the warning when the last grant of a subject is removed', async () => {
+    server.use(
+      http.post('/api/v1/warehouses/wh-1/grants', async ({ request }) => {
+        const body = await request.json() as Record<string, unknown>
+        return HttpResponse.json(
+          {
+            id: 'gr-warned', org_id: 'org-1', warehouse_id: 'wh-1',
+            subject_type: body.subject_type, subject_id: body.subject_id,
+            subject_name: 'Data Team', database: body.database, table: body.table,
+            created_by: 'user-1', created_at: '2026-01-01T00:00:00Z',
+            warning: 'no_service_access',
+          },
+          { status: 201 },
+        )
+      }),
+      http.delete(
+        '/api/v1/warehouses/wh-1/grants/:grantId',
+        () => new HttpResponse(null, { status: 204 }),
+      ),
+    )
+    renderGrants()
+    await screen.findAllByText('Data Team')
+
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'group:g-1' } })
+    await screen.findByRole('option', { name: 'analytics' })
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
+    await waitFor(() =>
+      expect(screen.getByRole('option', { name: 'events' })).toBeInTheDocument(),
+    )
+    fireEvent.change(screen.getByLabelText('Table'), { target: { value: 'events' } })
+    fireEvent.click(screen.getByText('Add grant'))
+    expect((await screen.findAllByText(/no service access/i)).length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getAllByTitle('Remove grant')[0])
+
+    await waitFor(() => expect(screen.queryByText(/no service access/i)).toBeNull())
+  })
+
   test('removes a grant when its chip is dismissed', async () => {
     let deletedId = ''
     server.use(
@@ -149,6 +231,27 @@ describe('WarehouseTableGrants', () => {
 
     fireEvent.click(screen.getAllByTitle('Remove grant')[0])
     await waitFor(() => expect(deletedId).toBe('gr-1'))
+  })
+
+  test('falls back to the default connector when the selected one is unlinked', async () => {
+    const twoConnectors: WarehouseConnector[] = [
+      { id: 'c-1', name: 'CH RW', type: 'clickhouse', is_provisioner: true },
+      { id: 'c-2', name: 'CH RO', type: 'clickhouse', is_provisioner: false },
+    ]
+    server.use(
+      http.get('/api/v1/connectors/c-2/schema', () => HttpResponse.json(SCHEMA)),
+    )
+    const { rerender } = renderWithProviders(
+      <WarehouseTableGrants warehouseId="wh-1" connectors={twoConnectors} />,
+    )
+    await screen.findAllByText('Data Team')
+
+    fireEvent.change(screen.getByLabelText('Connector'), { target: { value: 'c-2' } })
+    expect(screen.getByLabelText('Connector')).toHaveValue('c-2')
+
+    rerender(<WarehouseTableGrants warehouseId="wh-1" connectors={[CONNECTORS[0]]} />)
+
+    await waitFor(() => expect(screen.getByLabelText('Connector')).toHaveValue('c-1'))
   })
 
   test('shows an error state when grants fail to load', async () => {

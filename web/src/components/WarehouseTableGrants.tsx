@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { connectorSchemaQueryKey, getConnectorSchema } from '../api/schema'
 import {
   createGrant,
   deleteGrant,
@@ -12,22 +13,6 @@ import {
 import { ErrorBanner } from './ErrorBanner'
 import { StyledTable, rowStyle, cellStyle } from './StyledTable'
 import type { Group, Member } from '../types'
-
-interface SchemaColumn {
-  name: string
-  type: string
-}
-
-interface SchemaTable {
-  schema: string
-  name: string
-  description?: string
-  columns: SchemaColumn[]
-}
-
-interface SchemaResponse {
-  tables: SchemaTable[]
-}
 
 interface Props {
   warehouseId: string
@@ -90,11 +75,25 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
     return provisioner?.id ?? connectors[0]?.id ?? ''
   }, [connectors])
 
-  const activeConnectorId = connectorId || defaultConnectorId
+  // A manually selected connector that is no longer linked falls back to the
+  // provisioner/default instead of a dead connector.
+  const selectionLinked = !connectorId || connectors.some((c) => c.id === connectorId)
+  const activeConnectorId = (selectionLinked && connectorId) || defaultConnectorId
+
+  // Clear object pickers when the effective connector changes (including when
+  // the manual selection was unlinked). This is the React "adjust state while
+  // rendering" pattern, not an effect.
+  const [lastConnectorId, setLastConnectorId] = useState(activeConnectorId)
+  if (lastConnectorId !== activeConnectorId) {
+    setLastConnectorId(activeConnectorId)
+    setDatabase('')
+    setTable('')
+    if (!selectionLinked) setConnectorId('')
+  }
 
   const { data: schema, isLoading: schemaLoading } = useQuery({
-    queryKey: ['connector-schema', activeConnectorId],
-    queryFn: () => api.get<SchemaResponse>(`/api/v1/connectors/${activeConnectorId}/schema`),
+    queryKey: connectorSchemaQueryKey(activeConnectorId),
+    queryFn: () => getConnectorSchema(activeConnectorId),
     enabled: !!activeConnectorId,
   })
 
@@ -165,6 +164,21 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
     return Array.from(byKey.values())
   }, [grants, memberNames, groupNames])
 
+  const invalidateAfterGrantChange = () => {
+    qc.invalidateQueries({ queryKey: ['warehouse-grants', warehouseId] })
+    qc.invalidateQueries({ queryKey: ['warehouses'] })
+    qc.invalidateQueries({ queryKey: ['warehouse', warehouseId] })
+  }
+
+  const clearWarning = (key: string) => {
+    setWarnings((prev) => {
+      if (!(key in prev)) return prev
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }
+
   const addGrant = useMutation({
     mutationFn: () => {
       const parsed = parseSubjectKey(subjectSelection)
@@ -178,21 +192,32 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
       })
     },
     onSuccess: (grant) => {
+      const key = subjectKey(grant.subject_type, grant.subject_id)
       if (grant.warning) {
-        const key = subjectKey(grant.subject_type, grant.subject_id)
         setWarnings((prev) => ({ ...prev, [key]: true }))
+      } else {
+        // A warning-free response proves the subject can use a service now.
+        clearWarning(key)
       }
       setTable('')
-      qc.invalidateQueries({ queryKey: ['warehouse-grants', warehouseId] })
+      invalidateAfterGrantChange()
       setError(null)
     },
     onError: (err: Error) => setError(err.message),
   })
 
   const removeGrant = useMutation({
-    mutationFn: (grantId: string) => deleteGrant(warehouseId, grantId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['warehouse-grants', warehouseId] })
+    mutationFn: (grant: WarehouseGrant) => deleteGrant(warehouseId, grant.id),
+    onSuccess: (_, grant) => {
+      const key = subjectKey(grant.subject_type, grant.subject_id)
+      const remaining = grants.filter(
+        (g) =>
+          g.subject_type === grant.subject_type &&
+          g.subject_id === grant.subject_id &&
+          g.id !== grant.id,
+      )
+      if (remaining.length === 0) clearWarning(key)
+      invalidateAfterGrantChange()
       setError(null)
     },
     onError: (err: Error) => setError(err.message),
@@ -231,7 +256,7 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
       ) : rows.length === 0 ? (
         <div style={styles.empty}>No table grants yet.</div>
       ) : (
-        <div style={{ marginBottom: 12 }}>
+        <div style={styles.tableWrap}>
           <StyledTable headers={['Subject', 'Tables', '']}>
             {rows.map((row) => (
               <tr key={row.key} style={rowStyle}>
@@ -260,7 +285,7 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
                           title="Remove grant"
                           aria-label={`Remove grant ${grant.database}.${grant.table}`}
                           disabled={removeGrant.isPending}
-                          onClick={() => removeGrant.mutate(grant.id)}
+                          onClick={() => removeGrant.mutate(grant)}
                         >
                           ×
                         </button>
@@ -398,6 +423,7 @@ const styles: Record<string, React.CSSProperties> = {
   loading: { fontSize: 13, color: 'var(--text-muted)', padding: '4px 0' },
   errorText: { fontSize: 13, color: 'var(--error-full)' },
   empty: { fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', padding: '4px 0' },
+  tableWrap: { marginBottom: 12, overflowX: 'auto' },
   warningBanner: {
     fontSize: 12,
     color: 'var(--warning-text)',
@@ -442,6 +468,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     fontFamily: 'var(--font-mono)',
     color: 'var(--text-primary)',
+    overflowWrap: 'anywhere' as const,
   },
   chipRemove: {
     background: 'none',

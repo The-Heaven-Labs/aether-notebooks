@@ -614,7 +614,7 @@ export function ConnectorsPage() {
               </select>
             </label>
             {warehouses.length === 0 && (
-              <p style={styles.modalText}>No warehouses yet. Create one under Settings → Warehouses.</p>
+              <p style={styles.modalText}>No warehouses yet. Create one from the Warehouses page.</p>
             )}
             {linkError && <p style={styles.modalError}>{linkError}</p>}
             <div style={styles.modalActions}>
