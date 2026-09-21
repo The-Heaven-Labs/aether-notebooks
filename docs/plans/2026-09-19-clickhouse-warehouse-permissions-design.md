@@ -1,7 +1,7 @@
 # ClickHouse Warehouse Table Permissions — Design
 
 **Date:** 2026-09-19
-**Status:** Approved
+**Status:** ✅ Implemented
 
 ## Problem
 
@@ -214,6 +214,35 @@ the user was explicitly granted does not change results — only compute placeme
 4. Per-user execution + routing, then disable shared-credential execution path.
 5. Existing connectors stay unmanaged; admins opt into managed mode by creating a warehouse
    and linking connectors. No automatic backfill.
+
+## Implementation deltas
+
+- **Kill switch named and defaulted off.** `AETHER_CH_TABLE_PERMISSIONS` (default `false`)
+  gates provisioning, reconcile, and managed execution. With it off, every connector
+  executes with its stored credential and reconcile is a no-op, so rollback needs no schema
+  or config change; re-enabling converges through the startup enqueue.
+- **Periodic reconcile catch-up added.** `AETHER_CH_RECONCILE_INTERVAL` (default `10m`, floor
+  `1m`) drives a jittered startup enqueue-all and interval re-enqueues on top of the
+  design's debounced mutation triggers. This is what re-converges a warehouse after a
+  database restore or a period with the kill switch off.
+- **New-tables inbox backed by a snapshot table.** `schema_snapshots` (V114) stores raw
+  catalog rows per connector with `first_seen_at`/`last_seen_at`; the inbox is derived per
+  subject against `warehouse_table_grants` at read time. Replaces the design's "derived from
+  cached schema metadata" wording.
+- **Reconcile invalidates pooled identities.** Before a run that will execute DDL, and on any
+  fail-closed (wildcard / unexpected grant) run, pooled connections for the affected
+  identities are dropped so a resident session cannot keep serving pre-reconcile access. A
+  no-op tick leaves the pool untouched.
+- **Kill-switch-off delete is DB-only.** `DELETE /warehouses/{id}` with
+  `AETHER_CH_TABLE_PERMISSIONS=false` removes the row without opening a provisioner
+  connection; leftover ClickHouse users/roles are recorded by a
+  `warehouse.identities.cleanup` audit event (`deferred: true`) and must be dropped manually.
+- **Settings profiles and quotas remain deferred** (Security controls and Out of scope still
+  apply to the interim posture).
+- **Swagger regenerated** for the warehouse endpoints (`internal/api/docs`).
+- **Test convention:** Go test runs are capped at `-timeout 3m` (Taskfile and CI).
+  `internal/api` can exceed that locally on the long-lived shared dev database; CI runs on a
+  fresh database. Do not raise the cap.
 
 ## Open items to verify
 
