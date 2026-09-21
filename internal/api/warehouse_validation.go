@@ -29,8 +29,8 @@ type warehouseValidationSubjectJSON struct {
 }
 
 // warehouseValidationJSON is the GET /warehouses/{id}/validation response.
-// Truncated reports that one of the lists stopped at
-// maxWarehouseValidationWarnings.
+// Truncated reports that a list stopped at maxWarehouseValidationWarnings or
+// that the grant source hit maxWarehouseGrantRows.
 type warehouseValidationJSON struct {
 	WarehouseID           string                           `json:"warehouse_id"`
 	Truncated             bool                             `json:"truncated"`

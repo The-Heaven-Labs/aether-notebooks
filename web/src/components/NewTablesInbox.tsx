@@ -240,8 +240,8 @@ export function NewTablesInbox({ warehouseId }: Props) {
           </div>
           {inbox?.truncated && (
             <div style={styles.truncatedNote} role="status">
-              Showing the first {inbox.tables.length} new tables. Grant or review these to reveal
-              the rest.
+              Showing the first {inbox.tables.length} new tables. Granting a table advances the
+              review cutoff, so use the API&apos;s since parameter to list the remainder.
             </div>
           )}
         </>
