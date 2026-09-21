@@ -44,13 +44,15 @@ func LoadCatalogTables(ctx context.Context, conn clickhouse.Conn) ([]CatalogTabl
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read system.tables: %w", err)
 	}
-	return sanitizeCatalogTables(raw), nil
+	return SanitizeCatalogTables(raw), nil
 }
 
-// sanitizeCatalogTables drops names that QuoteObjectIdent rejects (they could
-// never be grant rows) and deduplicates pairs, returning a sorted copy. It is
-// pure so the snapshot path can be tested without ClickHouse.
-func sanitizeCatalogTables(in []CatalogTable) []CatalogTable {
+// SanitizeCatalogTables drops names that QuoteObjectIdent rejects (they could
+// never be grant rows), deduplicates pairs, and returns a sorted copy. It is
+// exported so snapshot writers can reuse the same validation: duplicate pairs
+// in one INSERT..ON CONFLICT batch are a Postgres error ("cannot affect row a
+// second time"), not a benign replay.
+func SanitizeCatalogTables(in []CatalogTable) []CatalogTable {
 	seen := make(map[CatalogTable]struct{}, len(in))
 	out := make([]CatalogTable, 0, len(in))
 	for _, t := range in {

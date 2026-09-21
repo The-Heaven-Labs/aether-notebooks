@@ -15,7 +15,7 @@ func TestSanitizeCatalogTablesDropsUnrepresentableNames(t *testing.T) {
 		{Database: "raw", Table: "$clicks-v2"},
 		{Database: "analytics", Table: "events_daily"},
 	}
-	out := sanitizeCatalogTables(in)
+	out := SanitizeCatalogTables(in)
 	require.Equal(t, []CatalogTable{
 		{Database: "analytics", Table: "events"},
 		{Database: "analytics", Table: "events_daily"},
@@ -24,5 +24,5 @@ func TestSanitizeCatalogTablesDropsUnrepresentableNames(t *testing.T) {
 }
 
 func TestSanitizeCatalogTablesEmpty(t *testing.T) {
-	require.Empty(t, sanitizeCatalogTables(nil))
+	require.Empty(t, SanitizeCatalogTables(nil))
 }

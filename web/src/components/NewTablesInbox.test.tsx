@@ -1,14 +1,21 @@
 import { describe, test, expect, beforeEach } from 'vitest'
-import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { renderWithProviders } from '../test/utils'
 import { NewTablesInbox } from './NewTablesInbox'
+import { WarehouseTableGrants } from './WarehouseTableGrants'
 
 const TABLES = [
   { database: 'analytics', table: 'events', first_seen_at: '2026-01-02T00:00:00Z' },
   { database: 'raw', table: 'clicks', first_seen_at: '2026-01-01T00:00:00Z' },
 ]
+
+const CONNECTORS = [{ id: 'c-1', name: 'CH RW', type: 'clickhouse', is_provisioner: true }]
+
+const SCHEMA = {
+  tables: [{ schema: 'analytics', name: 'events', columns: [{ name: 'id', type: 'UInt64' }] }],
+}
 
 const EMPTY_VALIDATION = {
   warehouse_id: 'wh-1',
@@ -24,7 +31,12 @@ function renderInbox() {
 beforeEach(() => {
   server.use(
     http.get('/api/v1/warehouses/wh-1/new-tables', () =>
-      HttpResponse.json({ warehouse_id: 'wh-1', since: '2025-12-31T00:00:00Z', tables: TABLES }),
+      HttpResponse.json({
+        warehouse_id: 'wh-1',
+        since: '2025-12-31T00:00:00Z',
+        truncated: false,
+        tables: TABLES,
+      }),
     ),
     http.get('/api/v1/warehouses/wh-1/validation', () => HttpResponse.json(EMPTY_VALIDATION)),
   )
@@ -48,7 +60,12 @@ describe('NewTablesInbox', () => {
     server.use(
       http.get('/api/v1/warehouses/wh-1/new-tables', () => {
         inboxCalls++
-        return HttpResponse.json({ warehouse_id: 'wh-1', since: '2025-12-31T00:00:00Z', tables: TABLES })
+        return HttpResponse.json({
+          warehouse_id: 'wh-1',
+          since: '2025-12-31T00:00:00Z',
+          truncated: false,
+          tables: TABLES,
+        })
       }),
       http.post('/api/v1/warehouses/wh-1/grants', async ({ request }) => {
         posted = (await request.json()) as Record<string, unknown>
@@ -138,7 +155,12 @@ describe('NewTablesInbox', () => {
   test('shows an empty state when there are no new tables', async () => {
     server.use(
       http.get('/api/v1/warehouses/wh-1/new-tables', () =>
-        HttpResponse.json({ warehouse_id: 'wh-1', since: '2026-01-01T00:00:00Z', tables: [] }),
+        HttpResponse.json({
+          warehouse_id: 'wh-1',
+          since: '2026-01-01T00:00:00Z',
+          truncated: false,
+          tables: [],
+        }),
       ),
     )
     renderInbox()
@@ -160,5 +182,105 @@ describe('NewTablesInbox', () => {
     fireEvent.click(screen.getAllByText('Add grant')[0])
 
     expect(await screen.findByText('invalid database name')).toBeInTheDocument()
+  })
+
+  test('shows a truncation notice when the inbox list is capped', async () => {
+    server.use(
+      http.get('/api/v1/warehouses/wh-1/new-tables', () =>
+        HttpResponse.json({
+          warehouse_id: 'wh-1',
+          since: '2026-01-01T00:00:00Z',
+          truncated: true,
+          tables: TABLES,
+        }),
+      ),
+    )
+    renderInbox()
+    await screen.findByText('analytics.events')
+
+    expect(
+      await screen.findByText(/Showing the first 2 new tables/),
+    ).toBeInTheDocument()
+  })
+
+  test('shows a truncation hint when validation warnings are capped', async () => {
+    server.use(
+      http.get('/api/v1/warehouses/wh-1/validation', () =>
+        HttpResponse.json({ ...EMPTY_VALIDATION, truncated: true }),
+      ),
+    )
+    renderInbox()
+    await screen.findByText('analytics.events')
+
+    expect(await screen.findByText(/Some validation warnings may be missing/)).toBeInTheDocument()
+  })
+
+  test('grant changes refetch the other surface in both directions', async () => {
+    let inboxCalls = 0
+    let validationCalls = 0
+    let grantsCalls = 0
+    server.use(
+      http.get('/api/v1/warehouses/wh-1/new-tables', () => {
+        inboxCalls++
+        return HttpResponse.json({
+          warehouse_id: 'wh-1',
+          since: '2025-12-31T00:00:00Z',
+          truncated: false,
+          tables: TABLES,
+        })
+      }),
+      http.get('/api/v1/warehouses/wh-1/validation', () => {
+        validationCalls++
+        return HttpResponse.json(EMPTY_VALIDATION)
+      }),
+      http.get('/api/v1/warehouses/wh-1/grants', () => {
+        grantsCalls++
+        return HttpResponse.json([])
+      }),
+      http.get('/api/v1/connectors/c-1/schema', () => HttpResponse.json(SCHEMA)),
+      http.post('/api/v1/warehouses/wh-1/grants', () =>
+        HttpResponse.json(
+          {
+            id: 'gr-new', org_id: 'org-1', warehouse_id: 'wh-1',
+            subject_type: 'everyone', subject_id: 'everyone', subject_name: 'Everyone',
+            database: 'analytics', table: 'events', created_by: 'user-1',
+            created_at: '2026-01-01T00:00:00Z',
+          },
+          { status: 201 },
+        ),
+      ),
+    )
+    renderWithProviders(
+      <>
+        <WarehouseTableGrants warehouseId="wh-1" connectors={CONNECTORS} />
+        <NewTablesInbox warehouseId="wh-1" />
+      </>,
+    )
+    await screen.findByText('analytics.events')
+    await screen.findByText('No table grants yet.')
+    expect(inboxCalls).toBe(1)
+    expect(validationCalls).toBe(1)
+    expect(grantsCalls).toBe(1)
+
+    // Inbox grant -> the grants matrix refetches.
+    fireEvent.change(screen.getByLabelText('Subject for analytics.events'), {
+      target: { value: 'everyone:everyone' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Add grant for analytics.events' }))
+    await waitFor(() => expect(grantsCalls).toBeGreaterThanOrEqual(2))
+
+    // Matrix grant -> the inbox and the warnings refetch.
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'everyone:everyone' } })
+    await screen.findByRole('option', { name: 'analytics' })
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
+    await waitFor(() =>
+      expect(screen.getByRole('option', { name: 'events' })).toBeInTheDocument(),
+    )
+    fireEvent.change(screen.getByLabelText('Table'), { target: { value: 'events' } })
+    fireEvent.click(
+      within(screen.getByRole('region', { name: 'Table grants' })).getByText('Add grant'),
+    )
+    await waitFor(() => expect(inboxCalls).toBeGreaterThanOrEqual(2))
+    await waitFor(() => expect(validationCalls).toBeGreaterThanOrEqual(2))
   })
 })

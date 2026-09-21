@@ -61,9 +61,11 @@ func addService(m map[string]map[string]struct{}, subjectID, connectorName strin
 	set[connectorName] = struct{}{}
 }
 
-// loadWarehouseServiceAccessIndex preloads service access for one warehouse.
-// It replaces the per-subject lookup the grant-create warning used to do; the
-// validation endpoint needs the same rules for every subject at once.
+// loadWarehouseServiceAccessIndex preloads service access for every subject of
+// one warehouse; the validation endpoint needs the same rules for all subjects
+// at once. Grant creation uses the targeted subjectHasServiceAccess lookup
+// (warehouse_grant_handlers.go) instead of paying for a whole-org load; the
+// counting rules must stay in sync between the two.
 func (s *Server) loadWarehouseServiceAccessIndex(ctx context.Context, orgID string, warehouseID uuid.UUID) (*warehouseServiceAccessIndex, error) {
 	idx := &warehouseServiceAccessIndex{
 		userServices:     map[string]map[string]struct{}{},
@@ -190,13 +192,17 @@ func (idx *warehouseServiceAccessIndex) hasServiceAccess(subjectType, subjectID 
 	return len(idx.subjectServices(subjectType, subjectID)) > 0
 }
 
-// warehouseGrantIndex summarizes table grants for validation: which subjects
-// hold any grant, plus their table lists for the "tables without service
-// access" warning.
+// warehouseGrantIndex summarizes table grants for validation. The subject sets
+// answer "does this subject hold any grant" independently of the capped
+// listing query, so a subject whose only grant row fell past the listing cap
+// is still known to hold tables; the table lists are display-only.
 type warehouseGrantIndex struct {
 	userTables     map[string][]string
 	groupTables    map[string][]string
 	everyoneTables []string
+	users          map[string]struct{}
+	groups         map[string]struct{}
+	everyone       bool
 }
 
 // subjectHasTables reports whether a subject can read at least one table,
@@ -205,35 +211,24 @@ type warehouseGrantIndex struct {
 func (g *warehouseGrantIndex) subjectHasTables(idx *warehouseServiceAccessIndex, subjectType, subjectID string) bool {
 	switch subjectType {
 	case "user":
-		if len(g.userTables[subjectID]) > 0 {
+		if _, ok := g.users[subjectID]; ok {
 			return true
 		}
 		for _, groupID := range idx.userGroups[subjectID] {
-			if len(g.groupTables[groupID]) > 0 {
+			if _, ok := g.groups[groupID]; ok {
 				return true
 			}
 		}
-		return len(g.everyoneTables) > 0
+		return g.everyone
 	case "group":
-		if len(g.groupTables[subjectID]) > 0 {
+		if _, ok := g.groups[subjectID]; ok {
 			return true
 		}
-		return len(g.everyoneTables) > 0
+		return g.everyone
 	case "everyone":
-		return len(g.everyoneTables) > 0
+		return g.everyone
 	}
 	return false
-}
-
-// subjectHasServiceAccess reports whether a warehouse grant subject can use at
-// least one live ClickHouse service today. It is the warning check used by
-// grant creation.
-func (s *Server) subjectHasServiceAccess(ctx context.Context, orgID string, warehouseID uuid.UUID, subjectType, subjectID string) (bool, error) {
-	idx, err := s.loadWarehouseServiceAccessIndex(ctx, orgID, warehouseID)
-	if err != nil {
-		return false, err
-	}
-	return idx.hasServiceAccess(subjectType, subjectID), nil
 }
 
 // @Summary List warehouse validation warnings
@@ -263,51 +258,115 @@ func (s *Server) handleWarehouseValidation(w http.ResponseWriter, r *http.Reques
 	grants := &warehouseGrantIndex{
 		userTables:  map[string][]string{},
 		groupTables: map[string][]string{},
+		users:       map[string]struct{}{},
+		groups:      map[string]struct{}{},
 	}
+
+	// The subject set is loaded without a row cap on purpose: the distinct
+	// subject count is bounded by the org's members and groups, while the
+	// capped listing query below must not make a subject look grant-less when
+	// its rows were cut off.
+	subjectRows, err := s.db.Pool.Query(ctx, `
+		SELECT DISTINCT subject_type, subject_id
+		FROM warehouse_table_grants
+		WHERE warehouse_id = $1 AND org_id = $2`,
+		warehouseUUID.String(), claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	for subjectRows.Next() {
+		var subjectType, subjectID string
+		if err := subjectRows.Scan(&subjectType, &subjectID); err != nil {
+			subjectRows.Close()
+			writeError(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		switch subjectType {
+		case "user":
+			grants.users[subjectID] = struct{}{}
+		case "group":
+			grants.groups[subjectID] = struct{}{}
+		case "everyone":
+			grants.everyone = true
+		}
+	}
+	subjectRows.Close()
+	if err := subjectRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	// One row past the cap detects truncation; that row is discarded and the
+	// subject it might belong to is dropped below, because its table list
+	// could be partial.
 	rows, err := s.db.Pool.Query(ctx, warehouseGrantSelect+`
 		WHERE wtg.warehouse_id = $1 AND wtg.org_id = $2
 		ORDER BY wtg.subject_type ASC, wtg.subject_id ASC,
 		         wtg.database_name ASC, wtg.table_name ASC
 		LIMIT $3`,
-		warehouseUUID.String(), claims.OrgID, maxWarehouseGrantRows)
+		warehouseUUID.String(), claims.OrgID, maxWarehouseGrantRows+1)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
 	defer rows.Close()
 
-	grantSubjects := []warehouseValidationSubjectJSON{}
-	seenSubjects := map[string]int{}
+	type grantRow struct {
+		subject warehouseValidationSubjectJSON
+		table   string
+	}
+	listing := []grantRow{}
+	truncated := false
 	for rows.Next() {
+		if len(listing) == maxWarehouseGrantRows {
+			truncated = true
+			break
+		}
 		grant, err := scanWarehouseGrant(rows)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		table := grant.Database + "." + grant.Table
-		key := grant.SubjectType + ":" + grant.SubjectID
-		switch grant.SubjectType {
-		case "user":
-			grants.userTables[grant.SubjectID] = append(grants.userTables[grant.SubjectID], table)
-		case "group":
-			grants.groupTables[grant.SubjectID] = append(grants.groupTables[grant.SubjectID], table)
-		case "everyone":
-			grants.everyoneTables = append(grants.everyoneTables, table)
-		}
-		if _, ok := seenSubjects[key]; ok {
-			continue
-		}
-		seenSubjects[key] = len(grantSubjects)
-		grantSubjects = append(grantSubjects, warehouseValidationSubjectJSON{
-			SubjectType:  grant.SubjectType,
-			SubjectID:    grant.SubjectID,
-			SubjectName:  grant.SubjectName,
-			SubjectEmail: grant.SubjectEmail,
+		listing = append(listing, grantRow{
+			subject: warehouseValidationSubjectJSON{
+				SubjectType:  grant.SubjectType,
+				SubjectID:    grant.SubjectID,
+				SubjectName:  grant.SubjectName,
+				SubjectEmail: grant.SubjectEmail,
+			},
+			table: grant.Database + "." + grant.Table,
 		})
 	}
 	if err := rows.Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
+	}
+
+	grantSubjects := []warehouseValidationSubjectJSON{}
+	seenSubjects := map[string]struct{}{}
+	for _, row := range listing {
+		grant := row.subject
+		switch grant.SubjectType {
+		case "user":
+			grants.userTables[grant.SubjectID] = append(grants.userTables[grant.SubjectID], row.table)
+		case "group":
+			grants.groupTables[grant.SubjectID] = append(grants.groupTables[grant.SubjectID], row.table)
+		case "everyone":
+			grants.everyoneTables = append(grants.everyoneTables, row.table)
+		}
+		key := grant.SubjectType + ":" + grant.SubjectID
+		if _, ok := seenSubjects[key]; ok {
+			continue
+		}
+		seenSubjects[key] = struct{}{}
+		grantSubjects = append(grantSubjects, grant)
+	}
+	if truncated && len(grantSubjects) > 0 {
+		// The cap may have cut the last subject's rows short; it stays in the
+		// subject sets (so it is not falsely warned as grant-less) but is not
+		// reported with a possibly-partial table list.
+		grantSubjects = grantSubjects[:len(grantSubjects)-1]
 	}
 
 	tablesWithoutService := []warehouseValidationSubjectJSON{}
@@ -357,14 +416,14 @@ func (s *Server) handleWarehouseValidation(w http.ResponseWriter, r *http.Reques
 		appendServiceWarning("everyone", "everyone")
 	}
 
-	truncated := false
+	truncated = truncated ||
+		len(tablesWithoutService) > maxWarehouseValidationWarnings ||
+		len(servicesWithoutTables) > maxWarehouseValidationWarnings
 	if len(tablesWithoutService) > maxWarehouseValidationWarnings {
 		tablesWithoutService = tablesWithoutService[:maxWarehouseValidationWarnings]
-		truncated = true
 	}
 	if len(servicesWithoutTables) > maxWarehouseValidationWarnings {
 		servicesWithoutTables = servicesWithoutTables[:maxWarehouseValidationWarnings]
-		truncated = true
 	}
 
 	writeJSON(w, http.StatusOK, warehouseValidationJSON{

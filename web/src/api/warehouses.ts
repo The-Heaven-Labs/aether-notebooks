@@ -91,6 +91,8 @@ export interface WarehouseNewTables {
   warehouse_id: string
   /** Cutoff applied: `since` when passed, otherwise the last grant review. */
   since: string
+  /** True when the response stopped at the server's new-tables cap. */
+  truncated: boolean
   tables: WarehouseNewTable[]
 }
 

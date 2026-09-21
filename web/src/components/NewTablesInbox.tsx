@@ -160,6 +160,13 @@ export function NewTablesInbox({ warehouseId }: Props) {
         </div>
       )}
 
+      {validation?.truncated && (
+        <div style={styles.truncatedNote} role="status">
+          Some validation warnings may be missing because the list is truncated. Resolve these and
+          reload to see the rest.
+        </div>
+      )}
+
       {isLoading ? (
         <div style={styles.loading}>Loading new tables…</div>
       ) : isError ? (
@@ -167,68 +174,77 @@ export function NewTablesInbox({ warehouseId }: Props) {
       ) : (inbox?.tables.length ?? 0) === 0 ? (
         <div style={styles.empty}>No new tables since your last review.</div>
       ) : (
-        <div style={styles.tableWrap}>
-          <StyledTable headers={['Table', 'First seen', 'Grant to', '']}>
-            {inbox?.tables.map((table) => {
-              const key = tableKey(table)
-              const selection = selections[key] ?? ''
-              const pending = pendingKey === key
-              return (
-                <tr key={key} style={rowStyle}>
-                  <td style={cellStyle}>
-                    <code style={styles.tableName}>
-                      {table.database}.{table.table}
-                    </code>
-                  </td>
-                  <td style={styles.mutedCell}>{formatTimestamp(table.first_seen_at)}</td>
-                  <td style={styles.selectCell}>
-                    <select
-                      aria-label={`Subject for ${key}`}
-                      style={styles.input}
-                      value={selection}
-                      onChange={(e) =>
-                        setSelections((prev) => ({ ...prev, [key]: e.target.value }))
-                      }
-                    >
-                      <option value="">Select subject…</option>
-                      <optgroup label="Users">
-                        {members.map((m) => (
-                          <option key={m.user_id} value={`user:${m.user_id}`}>
-                            {m.name || m.email}
-                          </option>
-                        ))}
-                      </optgroup>
-                      <optgroup label="Groups">
-                        {groups
-                          .filter((g) => !/^everyone$/i.test(g.name))
-                          .map((g) => (
-                            <option key={g.id} value={`group:${g.id}`}>
-                              {g.name}
+        <>
+          <div style={styles.tableWrap}>
+            <StyledTable headers={['Table', 'First seen', 'Grant to', '']}>
+              {inbox?.tables.map((table) => {
+                const key = tableKey(table)
+                const selection = selections[key] ?? ''
+                const pending = pendingKey === key
+                return (
+                  <tr key={key} style={rowStyle}>
+                    <td style={cellStyle}>
+                      <code style={styles.tableName}>
+                        {table.database}.{table.table}
+                      </code>
+                    </td>
+                    <td style={styles.mutedCell}>{formatTimestamp(table.first_seen_at)}</td>
+                    <td style={styles.selectCell}>
+                      <select
+                        aria-label={`Subject for ${key}`}
+                        style={styles.input}
+                        value={selection}
+                        onChange={(e) =>
+                          setSelections((prev) => ({ ...prev, [key]: e.target.value }))
+                        }
+                      >
+                        <option value="">Select subject…</option>
+                        <optgroup label="Users">
+                          {members.map((m) => (
+                            <option key={m.user_id} value={`user:${m.user_id}`}>
+                              {m.name || m.email}
                             </option>
                           ))}
-                      </optgroup>
-                      <option value="everyone:everyone">Everyone</option>
-                    </select>
-                  </td>
-                  <td style={styles.actionCell}>
-                    <button
-                      type="button"
-                      style={{
-                        ...styles.addBtn,
-                        opacity: selection && !pending ? 1 : 0.5,
-                        cursor: selection && !pending ? 'pointer' : 'not-allowed',
-                      }}
-                      disabled={!selection || pending}
-                      onClick={() => addGrant.mutate({ table, selection })}
-                    >
-                      {pending ? 'Adding…' : 'Add grant'}
-                    </button>
-                  </td>
-                </tr>
-              )
-            })}
-          </StyledTable>
-        </div>
+                        </optgroup>
+                        <optgroup label="Groups">
+                          {groups
+                            .filter((g) => !/^everyone$/i.test(g.name))
+                            .map((g) => (
+                              <option key={g.id} value={`group:${g.id}`}>
+                                {g.name}
+                              </option>
+                            ))}
+                        </optgroup>
+                        <option value="everyone:everyone">Everyone</option>
+                      </select>
+                    </td>
+                    <td style={styles.actionCell}>
+                      <button
+                        type="button"
+                        aria-label={`Add grant for ${key}`}
+                        style={{
+                          ...styles.addBtn,
+                          opacity: selection && !pending ? 1 : 0.5,
+                          cursor: selection && !pending ? 'pointer' : 'not-allowed',
+                        }}
+                        disabled={!selection || pending}
+                        onClick={() => addGrant.mutate({ table, selection })}
+                      >
+                        {pending ? 'Adding…' : 'Add grant'}
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </StyledTable>
+          </div>
+          {inbox?.truncated && (
+            <div style={styles.truncatedNote} role="status">
+              Showing the first {inbox.tables.length} new tables. Grant or review these to reveal
+              the rest.
+            </div>
+          )}
+        </>
       )}
     </section>
   )
@@ -304,6 +320,14 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     padding: '6px 10px',
     lineHeight: 1.6,
+  },
+  truncatedNote: {
+    fontSize: 12,
+    color: 'var(--text-muted)',
+    border: '1px dashed var(--border)',
+    borderRadius: 4,
+    padding: '5px 10px',
+    lineHeight: 1.5,
   },
   input: {
     padding: '6px 10px',

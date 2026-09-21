@@ -48,7 +48,12 @@ beforeEach(() => {
     }),
     http.get('/api/v1/warehouses/:id/grants', () => HttpResponse.json([])),
     http.get('/api/v1/warehouses/:id/new-tables', ({ params }) =>
-      HttpResponse.json({ warehouse_id: params.id, since: '2026-01-01T00:00:00Z', tables: [] }),
+      HttpResponse.json({
+        warehouse_id: params.id,
+        since: '2026-01-01T00:00:00Z',
+        truncated: false,
+        tables: [],
+      }),
     ),
     http.get('/api/v1/warehouses/:id/validation', ({ params }) =>
       HttpResponse.json({

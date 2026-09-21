@@ -296,3 +296,265 @@ func TestWarehouseValidationRequiresAdmin(t *testing.T) {
 		"/api/v1/warehouses/"+wh.String()+"/validation", member, nil)
 	require.Equal(t, http.StatusForbidden, rec.Code)
 }
+
+func TestWarehouseNewTablesNoGrantsUsesWarehouseCreatedAt(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "New Tables Zero Grants WH")
+	conn := seedWarehouseConnector(t, s, orgID, "Zero Grants Service")
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, conn, &wh).Code)
+
+	now := time.Now().UTC()
+	createdAt := now.Add(-2 * time.Hour)
+	_, err := s.db.Pool.Exec(context.Background(),
+		`UPDATE warehouses SET created_at = $1 WHERE id = $2`, createdAt, wh.String())
+	require.NoError(t, err)
+	insertSchemaSnapshot(t, s, conn, "analytics", "before_creation", now.Add(-3*time.Hour))
+	insertSchemaSnapshot(t, s, conn, "analytics", "after_creation", now.Add(-time.Hour))
+
+	resp := listNewTablesViaAPI(t, s, admin, wh, "")
+	require.WithinDuration(t, createdAt, resp.Since, 2*time.Second)
+	require.False(t, resp.Truncated)
+	require.Len(t, resp.Tables, 1)
+	require.Equal(t, "after_creation", resp.Tables[0].Table)
+}
+
+func TestWarehouseNewTablesFirstSeenBoundary(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "New Tables Boundary WH")
+	conn := seedWarehouseConnector(t, s, orgID, "Boundary Service")
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, conn, &wh).Code)
+
+	since := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Microsecond)
+	insertSchemaSnapshot(t, s, conn, "analytics", "at_cutoff", since)
+	insertSchemaSnapshot(t, s, conn, "analytics", "after_cutoff", since.Add(time.Microsecond))
+
+	resp := listNewTablesViaAPI(t, s, admin, wh, since.Format(time.RFC3339Nano))
+	require.WithinDuration(t, since, resp.Since, time.Microsecond)
+	require.Len(t, resp.Tables, 1, "a table first seen exactly at the cutoff was already reviewed")
+	require.Equal(t, "after_cutoff", resp.Tables[0].Table)
+}
+
+func TestWarehouseNewTablesMultiConnectorMinFirstSeen(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "New Tables Multi Service WH")
+	connA := seedWarehouseConnector(t, s, orgID, "Multi Service A")
+	connB := seedWarehouseConnector(t, s, orgID, "Multi Service B")
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, connA, &wh).Code)
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, connB, &wh).Code)
+
+	now := time.Now().UTC()
+	// The same table was first seen long ago on A and recently on B. The true
+	// first sighting is the minimum across connectors, so the old one wins.
+	insertSchemaSnapshot(t, s, connA, "analytics", "shared", now.Add(-3*time.Hour))
+	insertSchemaSnapshot(t, s, connB, "analytics", "shared", now.Add(-30*time.Minute))
+	insertSchemaSnapshot(t, s, connA, "analytics", "fresh", now.Add(-30*time.Minute))
+
+	resp := listNewTablesViaAPI(t, s, admin, wh, now.Add(-time.Hour).Format(time.RFC3339))
+	require.Len(t, resp.Tables, 1)
+	require.Equal(t, "fresh", resp.Tables[0].Table)
+}
+
+func TestWarehouseNewTablesSoftDeletedConnectorExcluded(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "New Tables Soft Delete WH")
+	conn := seedWarehouseConnector(t, s, orgID, "Soft Delete Service")
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, conn, &wh).Code)
+
+	now := time.Now().UTC()
+	insertSchemaSnapshot(t, s, conn, "analytics", "events", now.Add(-30*time.Minute))
+
+	resp := listNewTablesViaAPI(t, s, admin, wh, now.Add(-time.Hour).Format(time.RFC3339))
+	require.Len(t, resp.Tables, 1)
+
+	_, err := s.db.Pool.Exec(context.Background(),
+		`UPDATE connectors SET deleted_at = now() WHERE id = $1`, conn.String())
+	require.NoError(t, err)
+
+	resp = listNewTablesViaAPI(t, s, admin, wh, now.Add(-time.Hour).Format(time.RFC3339))
+	require.Empty(t, resp.Tables, "soft-deleted services must not feed the inbox")
+}
+
+func TestWarehouseNewTablesTruncated(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "New Tables Truncated WH")
+	conn := seedWarehouseConnector(t, s, orgID, "Truncated Service")
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, conn, &wh).Code)
+
+	_, err := s.db.Pool.Exec(context.Background(), `
+		INSERT INTO schema_snapshots (connector_id, database_name, table_name)
+		SELECT $1, 'bulk', 't' || g FROM generate_series(1, $2) g`,
+		conn.String(), maxWarehouseNewTables+1)
+	require.NoError(t, err)
+
+	resp := listNewTablesViaAPI(t, s, admin, wh, time.Now().UTC().Add(-time.Hour).Format(time.RFC3339))
+	require.True(t, resp.Truncated)
+	require.Len(t, resp.Tables, maxWarehouseNewTables)
+}
+
+func TestSchemaSnapshotWritesThrottleAndDedupe(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, _ := seedWarehouseOrgAdmin(t, s)
+	conn := seedWarehouseConnector(t, s, orgID, "Snapshot Throttle Service")
+	ctx := context.Background()
+
+	// Duplicate pairs and unrepresentable names in one batch must not abort
+	// the upsert.
+	require.NoError(t, s.recordSchemaSnapshot(ctx, conn, []chaccess.CatalogTable{
+		{Database: "analytics", Table: "events"},
+		{Database: "analytics", Table: "events"},
+		{Database: "analytics", Table: "bad name"},
+	}))
+	var count int
+	require.NoError(t, s.db.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM schema_snapshots WHERE connector_id = $1`, conn.String()).Scan(&count))
+	require.Equal(t, 1, count)
+
+	// A row touched inside the throttle window is left alone by the schema
+	// path...
+	fresh := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
+	_, err := s.db.Pool.Exec(ctx,
+		`UPDATE schema_snapshots SET last_seen_at = $1 WHERE connector_id = $2`,
+		fresh, conn.String())
+	require.NoError(t, err)
+	require.NoError(t, s.touchSchemaSnapshot(ctx, conn, []chaccess.CatalogTable{
+		{Database: "analytics", Table: "events"},
+	}))
+	var afterTouch time.Time
+	require.NoError(t, s.db.Pool.QueryRow(ctx,
+		`SELECT last_seen_at FROM schema_snapshots WHERE connector_id = $1`, conn.String()).Scan(&afterTouch))
+	require.WithinDuration(t, fresh, afterTouch, time.Microsecond)
+
+	// ...the full path refreshes regardless of recency...
+	require.NoError(t, s.recordSchemaSnapshot(ctx, conn, []chaccess.CatalogTable{
+		{Database: "analytics", Table: "events"},
+	}))
+	var afterRecord time.Time
+	require.NoError(t, s.db.Pool.QueryRow(ctx,
+		`SELECT last_seen_at FROM schema_snapshots WHERE connector_id = $1`, conn.String()).Scan(&afterRecord))
+	require.True(t, afterRecord.After(fresh))
+
+	// ...and a stale row is refreshed by the throttled path.
+	stale := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE schema_snapshots SET last_seen_at = $1 WHERE connector_id = $2`,
+		stale, conn.String())
+	require.NoError(t, err)
+	require.NoError(t, s.touchSchemaSnapshot(ctx, conn, []chaccess.CatalogTable{
+		{Database: "analytics", Table: "events"},
+	}))
+	var afterStale time.Time
+	require.NoError(t, s.db.Pool.QueryRow(ctx,
+		`SELECT last_seen_at FROM schema_snapshots WHERE connector_id = $1`, conn.String()).Scan(&afterStale))
+	require.True(t, afterStale.After(stale))
+
+	// New tables are always inserted, even while existing rows are throttled.
+	require.NoError(t, s.touchSchemaSnapshot(ctx, conn, []chaccess.CatalogTable{
+		{Database: "analytics", Table: "logs"},
+	}))
+	require.NoError(t, s.db.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM schema_snapshots WHERE connector_id = $1`, conn.String()).Scan(&count))
+	require.Equal(t, 2, count)
+}
+
+func TestConnectorSchemaRecordsSnapshots(t *testing.T) {
+	fx := setupWarehouseFixture(t)
+	ctx := context.Background()
+
+	database := "aether_snap_" + uuid.NewString()[:8]
+	table := "snap_table"
+	quotedDB, err := chaccess.QuoteObjectIdent(database)
+	require.NoError(t, err)
+	quotedTable, err := chaccess.QuoteObjectIdent(table)
+	require.NoError(t, err)
+	require.NoError(t, fx.conn.Exec(ctx, "CREATE DATABASE IF NOT EXISTS "+quotedDB))
+	require.NoError(t, fx.conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS "+quotedDB+"."+quotedTable+
+		" (id UInt64) ENGINE = MergeTree ORDER BY id"))
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := fx.conn.Exec(cleanupCtx, "DROP DATABASE IF EXISTS "+quotedDB); err != nil {
+			t.Logf("cleanup clickhouse database: %v", err)
+		}
+	})
+
+	token, err := fx.s.jwt.Issue(fx.userID.String(), fx.orgID.String(), "admin")
+	require.NoError(t, err)
+	rec := warehouseAPIRequest(t, fx.s, http.MethodGet,
+		"/api/v1/connectors/"+fx.connectorID.String()+"/schema", token, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var firstSeen time.Time
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT first_seen_at FROM schema_snapshots
+		WHERE connector_id = $1 AND database_name = $2 AND table_name = $3`,
+		fx.connectorID.String(), database, table).Scan(&firstSeen))
+	require.WithinDuration(t, time.Now().UTC(), firstSeen, 2*time.Minute)
+}
+
+func TestWarehouseValidationTruncated(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Validation Truncated WH")
+	conn := seedWarehouseConnector(t, s, orgID, "Validation Truncated Service")
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, conn, &wh).Code)
+
+	// Fixed UUIDs make the listing order deterministic: the bulk subject sorts
+	// first and fills the cap, the covered subject's single grant row falls
+	// past it.
+	bulkUser := uuid.MustParse("00000000-0000-0000-0000-0000000000b1")
+	coveredUser := uuid.MustParse("ffffffff-ffff-4fff-bfff-ffffffffff01")
+	warnedUser := uuid.MustParse("ffffffff-ffff-4fff-bfff-ffffffffff02")
+	seedGrantMemberWithID(t, s, orgID, bulkUser)
+	seedGrantMemberWithID(t, s, orgID, coveredUser)
+	seedGrantMemberWithID(t, s, orgID, warnedUser)
+	grantConnectorUse(t, s, orgID, coveredUser, conn)
+	grantConnectorUse(t, s, orgID, warnedUser, conn)
+
+	_, err := s.db.Pool.Exec(context.Background(), `
+		INSERT INTO warehouse_table_grants
+			(org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		SELECT $1, $2, 'user', $3, 'bulk', 't' || g FROM generate_series(1, $4) g`,
+		orgID.String(), wh.String(), bulkUser.String(), maxWarehouseGrantRows+1)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated,
+		createGrantViaAPI(t, s, admin, wh, grantBody("user", coveredUser.String(), "analytics", "events")).Code)
+
+	resp := getWarehouseValidation(t, s, admin, wh)
+	require.True(t, resp.Truncated)
+	// The bulk subject's listing is partial, so it is not reported with a
+	// possibly incomplete table list.
+	for _, subject := range resp.TablesWithoutService {
+		require.NotEqual(t, bulkUser.String(), subject.SubjectID)
+	}
+	// The covered subject is known to hold a grant from the uncapped subject
+	// set even though its row was cut off, so it is not falsely warned.
+	require.Len(t, resp.ServicesWithoutTables, 1)
+	require.Equal(t, warnedUser.String(), resp.ServicesWithoutTables[0].SubjectID)
+}
+
+// seedGrantMemberWithID adds an org member with a caller-chosen UUID so grant
+// listing order (which sorts by subject_id) is deterministic.
+func seedGrantMemberWithID(t *testing.T, s *Server, orgID, userID uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	_, err := s.db.Pool.Exec(ctx, `INSERT INTO users (id, email, name) VALUES ($1, $2, $3)`,
+		userID.String(), userID.String()+"@test.local", "Validation Member")
+	require.NoError(t, err)
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'editor')`,
+		orgID.String(), userID.String())
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := s.db.Pool.Exec(cleanupCtx, `DELETE FROM users WHERE id = $1`, userID.String()); err != nil {
+			t.Logf("cleanup validation member: %v", err)
+		}
+	})
+}

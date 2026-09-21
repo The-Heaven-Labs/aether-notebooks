@@ -1132,36 +1132,52 @@ func (s *Server) handleSetConnectorWarehouse(w http.ResponseWriter, r *http.Requ
 // list.
 const maxWarehouseNewTables = 200
 
-// recordSchemaSnapshot upserts raw catalog observations for one connector.
-// first_seen_at is preserved on conflict — it is what makes a table "new" to
-// the inbox — while last_seen_at is refreshed. Names that cannot be grant
-// object identifiers are dropped so the inbox can never suggest a name the
-// grants API would reject.
+// schemaSnapshotTouchInterval throttles last_seen_at refreshes from the
+// connector schema path. Schema reads are frequent (every schema browser open)
+// and the inbox only needs recency ordering, so an existing row is left alone
+// until this interval elapses. New tables are always inserted; the reconcile
+// path refreshes unconditionally.
+const schemaSnapshotTouchInterval = "15 minutes"
+
+// recordSchemaSnapshot upserts raw catalog observations for one connector,
+// refreshing last_seen_at on every call. The reconcile worker uses it; schema
+// reads use touchSchemaSnapshot instead.
 func (s *Server) recordSchemaSnapshot(ctx context.Context, connectorID uuid.UUID, tables []chaccess.CatalogTable) error {
+	return s.writeSchemaSnapshot(ctx, connectorID, tables, false)
+}
+
+// touchSchemaSnapshot records catalog observations from a schema read without
+// rewriting last_seen_at more than once per schemaSnapshotTouchInterval.
+func (s *Server) touchSchemaSnapshot(ctx context.Context, connectorID uuid.UUID, tables []chaccess.CatalogTable) error {
+	return s.writeSchemaSnapshot(ctx, connectorID, tables, true)
+}
+
+// writeSchemaSnapshot performs the shared upsert. Sanitizing first is
+// load-bearing: a duplicate pair in the batch would otherwise abort the whole
+// statement with "ON CONFLICT DO UPDATE command cannot affect row a second
+// time", and names that cannot be grant object identifiers are dropped so the
+// inbox can never suggest a name the grants API would reject.
+func (s *Server) writeSchemaSnapshot(ctx context.Context, connectorID uuid.UUID, tables []chaccess.CatalogTable, throttled bool) error {
+	tables = chaccess.SanitizeCatalogTables(tables)
 	if len(tables) == 0 {
 		return nil
 	}
 	databases := make([]string, 0, len(tables))
 	names := make([]string, 0, len(tables))
 	for _, t := range tables {
-		if _, err := chaccess.QuoteObjectIdent(t.Database); err != nil {
-			continue
-		}
-		if _, err := chaccess.QuoteObjectIdent(t.Table); err != nil {
-			continue
-		}
 		databases = append(databases, t.Database)
 		names = append(names, t.Table)
 	}
-	if len(databases) == 0 {
-		return nil
-	}
-	if _, err := s.db.Pool.Exec(ctx, `
+	query := `
 		INSERT INTO schema_snapshots (connector_id, database_name, table_name)
 		SELECT $1::uuid, d, t FROM unnest($2::text[], $3::text[]) AS x(d, t)
 		ON CONFLICT (connector_id, database_name, table_name)
-		DO UPDATE SET last_seen_at = now()`,
-		connectorID.String(), databases, names); err != nil {
+		DO UPDATE SET last_seen_at = now()`
+	if throttled {
+		query += `
+		WHERE schema_snapshots.last_seen_at < now() - interval '` + schemaSnapshotTouchInterval + `'`
+	}
+	if _, err := s.db.Pool.Exec(ctx, query, connectorID.String(), databases, names); err != nil {
 		return fmt.Errorf("write schema snapshot: %w", err)
 	}
 	return nil
@@ -1178,9 +1194,11 @@ type warehouseNewTableJSON struct {
 // Since echoes the cutoff actually applied: the caller's ?since= when
 // supplied, otherwise the warehouse's most recent grant-creation time,
 // falling back to the warehouse's creation time when it has no grants yet.
+// Truncated reports that the response stopped at maxWarehouseNewTables.
 type warehouseNewTablesJSON struct {
 	WarehouseID string                  `json:"warehouse_id"`
 	Since       time.Time               `json:"since"`
+	Truncated   bool                    `json:"truncated"`
 	Tables      []warehouseNewTableJSON `json:"tables"`
 }
 
@@ -1217,12 +1235,16 @@ func (s *Server) handleWarehouseNewTables(w http.ResponseWriter, r *http.Request
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
 
-	warehouseUUID, ok := s.loadWarehouseFromPath(w, r, claims.OrgID)
+	warehouseUUID, ok := parsePathUUID(r.PathValue("id"))
 	if !ok {
+		writeError(w, http.StatusNotFound, "warehouse not found")
 		return
 	}
-
 	wh, err := s.loadWarehouseForOrg(ctx, claims.OrgID, warehouseUUID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "warehouse not found")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -1244,6 +1266,10 @@ func (s *Server) handleWarehouseNewTables(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	// The HAVING clause is deliberate: filtering per-snapshot first would let a
+	// table seen long ago on one service and recently on another pass the
+	// cutoff on the min over the surviving rows. Aggregating first, then
+	// applying the cutoff to min(first_seen_at), uses the true first sighting.
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT s.database_name, s.table_name, min(s.first_seen_at) AS first_seen_at
 		FROM schema_snapshots s
@@ -1252,7 +1278,6 @@ func (s *Server) handleWarehouseNewTables(w http.ResponseWriter, r *http.Request
 		  AND c.warehouse_id = $2
 		  AND c.type = 'clickhouse'
 		  AND c.deleted_at IS NULL
-		  AND s.first_seen_at > $3
 		  AND NOT EXISTS (
 		      SELECT 1 FROM warehouse_table_grants g
 		      WHERE g.org_id = $1
@@ -1260,9 +1285,10 @@ func (s *Server) handleWarehouseNewTables(w http.ResponseWriter, r *http.Request
 		        AND g.database_name = s.database_name
 		        AND g.table_name = s.table_name)
 		GROUP BY s.database_name, s.table_name
+		HAVING min(s.first_seen_at) > $3
 		ORDER BY first_seen_at DESC, s.database_name ASC, s.table_name ASC
 		LIMIT $4`,
-		claims.OrgID, warehouseUUID.String(), since, maxWarehouseNewTables)
+		claims.OrgID, warehouseUUID.String(), since, maxWarehouseNewTables+1)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -1270,7 +1296,13 @@ func (s *Server) handleWarehouseNewTables(w http.ResponseWriter, r *http.Request
 	defer rows.Close()
 
 	tables := []warehouseNewTableJSON{}
+	truncated := false
 	for rows.Next() {
+		if len(tables) == maxWarehouseNewTables {
+			// One row past the cap is enough to know the list is incomplete.
+			truncated = true
+			break
+		}
 		var t warehouseNewTableJSON
 		if err := rows.Scan(&t.Database, &t.Table, &t.FirstSeenAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
@@ -1286,6 +1318,7 @@ func (s *Server) handleWarehouseNewTables(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, warehouseNewTablesJSON{
 		WarehouseID: warehouseUUID.String(),
 		Since:       since,
+		Truncated:   truncated,
 		Tables:      tables,
 	})
 }

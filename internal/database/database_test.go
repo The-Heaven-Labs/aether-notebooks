@@ -898,4 +898,37 @@ func TestMigration114SchemaSnapshots(t *testing.T) {
 	if deleteRule != "CASCADE" {
 		t.Fatalf("schema_snapshots connector FK delete rule = %s, want CASCADE", deleteRule)
 	}
+
+	// Deleting a connector must remove its snapshots, not orphan them.
+	var orgID, connectorID string
+	if err := db.Pool.QueryRow(ctx, `
+		INSERT INTO orgs (name, slug)
+		VALUES ('Snapshot FK Org', 'snap-fk-' || substr(gen_random_uuid()::text, 1, 8))
+		RETURNING id`).Scan(&orgID); err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	defer func() { _, _ = db.Pool.Exec(ctx, `DELETE FROM orgs WHERE id = $1`, orgID) }()
+
+	if err := db.Pool.QueryRow(ctx, `
+		INSERT INTO connectors (org_id, name, type, config_encrypted)
+		VALUES ($1, 'Snapshot FK Connector', 'clickhouse', '{}')
+		RETURNING id`, orgID).Scan(&connectorID); err != nil {
+		t.Fatalf("seed connector: %v", err)
+	}
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO schema_snapshots (connector_id, database_name, table_name)
+		VALUES ($1, 'analytics', 'events')`, connectorID); err != nil {
+		t.Fatalf("seed snapshot: %v", err)
+	}
+	if _, err := db.Pool.Exec(ctx, `DELETE FROM connectors WHERE id = $1`, connectorID); err != nil {
+		t.Fatalf("delete connector: %v", err)
+	}
+	var remaining int
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM schema_snapshots WHERE connector_id = $1`, connectorID).Scan(&remaining); err != nil {
+		t.Fatalf("count snapshots: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("schema_snapshots rows after connector delete = %d, want 0", remaining)
+	}
 }

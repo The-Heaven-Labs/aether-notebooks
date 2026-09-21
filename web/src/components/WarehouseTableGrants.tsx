@@ -166,6 +166,8 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
 
   const invalidateAfterGrantChange = () => {
     qc.invalidateQueries({ queryKey: ['warehouse-grants', warehouseId] })
+    qc.invalidateQueries({ queryKey: ['warehouse-new-tables', warehouseId] })
+    qc.invalidateQueries({ queryKey: ['warehouse-validation', warehouseId] })
     qc.invalidateQueries({ queryKey: ['warehouses'] })
     qc.invalidateQueries({ queryKey: ['warehouse', warehouseId] })
   }

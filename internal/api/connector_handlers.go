@@ -818,16 +818,17 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Snapshot the observed catalog so the warehouse new-tables inbox can
-	// notice tables without waiting for the next reconcile. Only ClickHouse
-	// objects can become warehouse grants, and a failed cache write must never
-	// fail a schema read.
+	// notice tables without waiting for the next reconcile. Touching is
+	// throttled: schema reads are frequent and only first_seen_at matters for
+	// the inbox. Only ClickHouse objects can become warehouse grants, and a
+	// failed cache write must never fail a schema read.
 	if string(connType) == "clickhouse" {
 		tables := make([]chaccess.CatalogTable, 0, len(schema.Tables))
 		for _, t := range schema.Tables {
 			tables = append(tables, chaccess.CatalogTable{Database: t.Schema, Table: t.Name})
 		}
 		if connectorUUID, parseErr := uuid.Parse(connID); parseErr == nil {
-			if cacheErr := s.recordSchemaSnapshot(ctx, connectorUUID, tables); cacheErr != nil {
+			if cacheErr := s.touchSchemaSnapshot(ctx, connectorUUID, tables); cacheErr != nil {
 				slog.Warn("connector schema snapshot write failed",
 					"connector_id", connID, "error", cacheErr)
 			}
