@@ -217,28 +217,46 @@ func TestSyncSSOGroups_EmptyGroups(t *testing.T) {
 
 	logger := audit.NewLogger(s.DB())
 
-	api.SyncSSOGroups(ctx, s.DB().Pool, logger, provider, orgID, userID, nil)
+	// Seed an SSO-managed membership.
+	api.SyncSSOGroups(ctx, s.DB().Pool, logger, provider, orgID, userID, []string{"engineering"})
 
 	var count int
 	err = s.DB().Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM group_members gm
-		 JOIN groups g ON g.id = gm.group_id
-		 WHERE gm.user_id=$1 AND g.org_id=$2`,
-		userID, orgID,
+		`SELECT COUNT(*) FROM group_members WHERE user_id=$1`, userID,
 	).Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 0, count, "nil groups should not create any memberships")
+	require.Equal(t, 1, count)
 
-	api.SyncSSOGroups(ctx, s.DB().Pool, logger, provider, orgID, userID, []string{})
+	// Flag off (default): empty groups is a no-op.
+	api.SyncSSOGroups(ctx, s.DB().Pool, logger, provider, orgID, userID, nil)
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM group_members WHERE user_id=$1`, userID,
+	).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "empty groups should be a no-op when sync_empty_groups is off")
+
+	// Flag on: empty groups removes all SSO-managed memberships.
+	provider.SyncEmptyGroups = true
+	api.SyncSSOGroups(ctx, s.DB().Pool, logger, provider, orgID, userID, nil)
 
 	err = s.DB().Pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM group_members gm
-		 JOIN groups g ON g.id = gm.group_id
-		 WHERE gm.user_id=$1 AND g.org_id=$2`,
-		userID, orgID,
+		`SELECT COUNT(*) FROM group_members WHERE user_id=$1`, userID,
 	).Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 0, count, "empty groups should not create any memberships")
+	assert.Equal(t, 0, count, "empty groups should remove SSO-managed memberships")
+
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM sso_group_memberships WHERE provider_id=$1 AND user_id=$2`,
+		provider.ID, userID,
+	).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count, "tracking rows should be removed")
+
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM groups WHERE org_id=$1`, orgID,
+	).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "groups are never deleted")
 }
 
 func TestSyncSSOGroups_CaseInsensitiveMatching(t *testing.T) {

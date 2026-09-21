@@ -211,3 +211,128 @@ func TestSyncSSOGroups_PreservesManualMemberships(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, count, "manual membership should be preserved")
 }
+
+func TestSyncSSOGroups_StripGroupPrefix(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+
+	slug := fmt.Sprintf("test-org-%d", time.Now().UnixNano())
+	var orgID string
+	err := s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
+		slug, slug,
+	).Scan(&orgID)
+	require.NoError(t, err)
+
+	var userID string
+	err = s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO users (email, name) VALUES ($1, $2) RETURNING id`,
+		fmt.Sprintf("strip-%d@test.com", time.Now().UnixNano()), "Strip",
+	).Scan(&userID)
+	require.NoError(t, err)
+
+	_, err = s.DB().Pool.Exec(ctx,
+		`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin')`,
+		orgID, userID,
+	)
+	require.NoError(t, err)
+
+	provider, err := sso.CreateProvider(ctx, s.DB().Pool, testMasterKey, sso.Provider{
+		Scope:            "org",
+		OrgID:            &orgID,
+		Name:             "strip-test",
+		ProviderType:     "oidc",
+		ClientID:         "test-client",
+		ClientSecret:     "test-secret",
+		DiscoveryURL:     "https://example.com/",
+		AllowedDomains:   []string{},
+		Scopes:           []string{},
+		Enabled:          true,
+		AutoSyncGroups:   true,
+		GroupPrefix:      "Aether Notebooks: ",
+		StripGroupPrefix: true,
+	})
+	require.NoError(t, err)
+
+	logger := audit.NewLogger(s.DB())
+
+	api.SyncSSOGroups(ctx, s.DB().Pool, logger, provider, orgID, userID, []string{
+		"Aether Notebooks: Area Name",
+		"Aether Notebooks: Engineering",
+		"all-employees",
+		"Aether Notebooks: ",
+	})
+
+	rows, err := s.DB().Pool.Query(ctx,
+		`SELECT g.name FROM group_members gm
+		 JOIN groups g ON g.id = gm.group_id
+		 WHERE gm.user_id=$1 ORDER BY g.name`,
+		userID,
+	)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var name string
+		require.NoError(t, rows.Scan(&name))
+		names = append(names, name)
+	}
+	assert.Equal(t, []string{"Area Name", "Engineering"}, names,
+		"prefix should be stripped, unrelated and empty names dropped")
+}
+
+func TestSyncSSOGroups_StaleCaseInsensitive(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+
+	slug := fmt.Sprintf("test-org-%d", time.Now().UnixNano())
+	var orgID string
+	err := s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`,
+		slug, slug,
+	).Scan(&orgID)
+	require.NoError(t, err)
+
+	var userID string
+	err = s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO users (email, name) VALUES ($1, $2) RETURNING id`,
+		fmt.Sprintf("case-%d@test.com", time.Now().UnixNano()), "Case",
+	).Scan(&userID)
+	require.NoError(t, err)
+
+	_, err = s.DB().Pool.Exec(ctx,
+		`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin')`,
+		orgID, userID,
+	)
+	require.NoError(t, err)
+
+	provider, err := sso.CreateProvider(ctx, s.DB().Pool, testMasterKey, sso.Provider{
+		Scope:          "org",
+		OrgID:          &orgID,
+		Name:           "case-test",
+		ProviderType:   "oidc",
+		ClientID:       "test-client",
+		ClientSecret:   "test-secret",
+		DiscoveryURL:   "https://example.com/",
+		AllowedDomains: []string{},
+		Scopes:         []string{},
+		Enabled:        true,
+		AutoSyncGroups: true,
+	})
+	require.NoError(t, err)
+
+	logger := audit.NewLogger(s.DB())
+
+	api.SyncSSOGroups(ctx, s.DB().Pool, logger, provider, orgID, userID, []string{"Engineering"})
+
+	// Different casing must not churn the membership.
+	api.SyncSSOGroups(ctx, s.DB().Pool, logger, provider, orgID, userID, []string{"engineering"})
+
+	var count int
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM group_members WHERE user_id=$1`, userID,
+	).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "casing change should not remove the membership")
+}
