@@ -99,7 +99,7 @@ describe('WarehouseTableGrants', () => {
         return HttpResponse.json(
           {
             id: 'gr-new', org_id: 'org-1', warehouse_id: 'wh-1',
-            subject_type: 'group', subject_id: 'g-1', subject_name: 'Data Team',
+            subject_type: 'group', subject_id: 'g-2', subject_name: 'CSIRT',
             database: 'analytics', table: 'users', created_by: 'user-1',
             created_at: '2026-01-01T00:00:00Z',
           },
@@ -111,24 +111,108 @@ describe('WarehouseTableGrants', () => {
     await screen.findAllByText('Data Team')
     expect(grantsCalls).toBe(1)
 
-    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'group:g-1' } })
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'group:g-2' } })
     await screen.findByRole('option', { name: 'analytics' })
     fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
     await waitFor(() =>
-      expect(screen.getByRole('option', { name: 'users' })).toBeInTheDocument(),
+      expect(screen.getByLabelText('users')).toBeInTheDocument(),
     )
-    fireEvent.change(screen.getByLabelText('Table'), { target: { value: 'users' } })
+    fireEvent.click(screen.getByLabelText('users'))
     fireEvent.click(screen.getByText('Add grant'))
 
     await waitFor(() =>
       expect(posted).toEqual({
         subject_type: 'group',
-        subject_id: 'g-1',
+        subject_id: 'g-2',
         database: 'analytics',
         table: 'users',
       }),
     )
     await waitFor(() => expect(grantsCalls).toBeGreaterThanOrEqual(2))
+  })
+
+  test('marks already-granted tables and disables their checkboxes', async () => {
+    renderGrants()
+    await screen.findAllByText('Data Team')
+
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'group:g-1' } })
+    await screen.findByRole('option', { name: 'analytics' })
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
+    await waitFor(() => expect(screen.getByLabelText('events')).toBeInTheDocument())
+
+    expect(screen.getByLabelText('events')).toBeChecked()
+    expect(screen.getByLabelText('events')).toBeDisabled()
+    expect(screen.getByLabelText('users')).not.toBeDisabled()
+    expect(screen.getByText('already granted')).toBeInTheDocument()
+  })
+
+  test('adds every checked table in one action and reports per-table failures', async () => {
+    const posted: Record<string, unknown>[] = []
+    server.use(
+      http.post('/api/v1/warehouses/wh-1/grants', async ({ request }) => {
+        const body = await request.json() as Record<string, unknown>
+        posted.push(body)
+        if (body.table === 'users') {
+          return HttpResponse.json({ error: 'bad table name' }, { status: 400 })
+        }
+        return HttpResponse.json(
+          {
+            id: `gr-${posted.length}`, org_id: 'org-1', warehouse_id: 'wh-1',
+            subject_type: body.subject_type, subject_id: body.subject_id,
+            subject_name: 'Everyone', database: body.database, table: body.table,
+            created_by: 'user-1', created_at: '2026-01-01T00:00:00Z',
+          },
+          { status: 201 },
+        )
+      }),
+    )
+    renderGrants()
+    await screen.findAllByText('Data Team')
+
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'everyone:everyone' } })
+    await screen.findByRole('option', { name: 'analytics' })
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
+    await waitFor(() => expect(screen.getByLabelText('events')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByLabelText('events'))
+    fireEvent.click(screen.getByLabelText('users'))
+    expect(screen.getByText('Add 2 grants')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Add 2 grants'))
+
+    await waitFor(() => expect(posted).toHaveLength(2))
+    expect(posted.map((p) => p.table).sort()).toEqual(['events', 'users'])
+    expect(await screen.findByText(/1 of 2 grants failed: bad table name/)).toBeInTheDocument()
+  })
+
+  test('selects all visible non-granted tables and clears them', async () => {
+    renderGrants()
+    await screen.findAllByText('Data Team')
+
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'everyone:everyone' } })
+    await screen.findByRole('option', { name: 'analytics' })
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
+    await waitFor(() => expect(screen.getByLabelText('events')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByText('Select all'))
+    expect(screen.getByText('2 selected')).toBeInTheDocument()
+    expect(screen.getByText('Add 2 grants')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('Clear'))
+    expect(screen.getByText('0 selected')).toBeInTheDocument()
+  })
+
+  test('filters the table checklist', async () => {
+    renderGrants()
+    await screen.findAllByText('Data Team')
+
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'everyone:everyone' } })
+    await screen.findByRole('option', { name: 'analytics' })
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
+    await waitFor(() => expect(screen.getByLabelText('events')).toBeInTheDocument())
+
+    fireEvent.change(screen.getByLabelText('Filter tables'), { target: { value: 'user' } })
+    expect(screen.queryByLabelText('events')).toBeNull()
+    expect(screen.getByLabelText('users')).toBeInTheDocument()
   })
 
   test('shows the "no service access" warning after a warned grant', async () => {
@@ -152,12 +236,14 @@ describe('WarehouseTableGrants', () => {
     await screen.findByRole('option', { name: 'analytics' })
     fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
     await waitFor(() =>
-      expect(screen.getByRole('option', { name: 'events' })).toBeInTheDocument(),
+      expect(screen.getByLabelText('events')).toBeInTheDocument(),
     )
-    fireEvent.change(screen.getByLabelText('Table'), { target: { value: 'events' } })
+    fireEvent.click(screen.getByLabelText('events'))
     fireEvent.click(screen.getByText('Add grant'))
 
     expect((await screen.findAllByText(/no service access/i)).length).toBeGreaterThan(0)
+    const link = screen.getByRole('link', { name: 'Manage service access' })
+    expect(link).toHaveAttribute('href', '/connectors?permissions=c-1')
   })
 
   test('clears the warning after a later warning-free grant', async () => {
@@ -170,7 +256,7 @@ describe('WarehouseTableGrants', () => {
           {
             id: `gr-${posts}`, org_id: 'org-1', warehouse_id: 'wh-1',
             subject_type: body.subject_type, subject_id: body.subject_id,
-            subject_name: 'Data Team', database: body.database, table: body.table,
+            subject_name: 'CSIRT', database: body.database, table: body.table,
             created_by: 'user-1', created_at: '2026-01-01T00:00:00Z',
             warning: posts === 1 ? 'no_service_access' : undefined,
           },
@@ -181,56 +267,60 @@ describe('WarehouseTableGrants', () => {
     renderGrants()
     await screen.findAllByText('Data Team')
 
-    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'group:g-1' } })
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'group:g-2' } })
     await screen.findByRole('option', { name: 'analytics' })
     fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
     await waitFor(() =>
-      expect(screen.getByRole('option', { name: 'events' })).toBeInTheDocument(),
+      expect(screen.getByLabelText('events')).toBeInTheDocument(),
     )
-    fireEvent.change(screen.getByLabelText('Table'), { target: { value: 'events' } })
+    fireEvent.click(screen.getByLabelText('events'))
     fireEvent.click(screen.getByText('Add grant'))
     expect((await screen.findAllByText(/no service access/i)).length).toBeGreaterThan(0)
 
-    fireEvent.change(screen.getByLabelText('Table'), { target: { value: 'users' } })
+    fireEvent.click(screen.getByLabelText('users'))
     fireEvent.click(screen.getByText('Add grant'))
 
     await waitFor(() => expect(screen.queryByText(/no service access/i)).toBeNull())
   })
 
   test('clears the warning when the last grant of a subject is removed', async () => {
+    let currentGrants: WarehouseGrant[] = []
     server.use(
+      http.get('/api/v1/warehouses/wh-1/grants', () => HttpResponse.json(currentGrants)),
       http.post('/api/v1/warehouses/wh-1/grants', async ({ request }) => {
         const body = await request.json() as Record<string, unknown>
-        return HttpResponse.json(
-          {
-            id: 'gr-warned', org_id: 'org-1', warehouse_id: 'wh-1',
-            subject_type: body.subject_type, subject_id: body.subject_id,
-            subject_name: 'Data Team', database: body.database, table: body.table,
-            created_by: 'user-1', created_at: '2026-01-01T00:00:00Z',
-            warning: 'no_service_access',
-          },
-          { status: 201 },
-        )
+        const grant: WarehouseGrant = {
+          id: 'gr-warned', org_id: 'org-1', warehouse_id: 'wh-1',
+          subject_type: body.subject_type as WarehouseGrant['subject_type'],
+          subject_id: body.subject_id as string,
+          subject_name: 'CSIRT', database: body.database as string, table: body.table as string,
+          created_by: 'user-1', created_at: '2026-01-01T00:00:00Z',
+        }
+        currentGrants = [grant]
+        return HttpResponse.json({ ...grant, warning: 'no_service_access' }, { status: 201 })
       }),
       http.delete(
         '/api/v1/warehouses/wh-1/grants/:grantId',
-        () => new HttpResponse(null, { status: 204 }),
+        () => {
+          currentGrants = []
+          return new HttpResponse(null, { status: 204 })
+        },
       ),
     )
     renderGrants()
-    await screen.findAllByText('Data Team')
+    await screen.findByText('No table grants yet.')
 
-    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'group:g-1' } })
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'group:g-2' } })
     await screen.findByRole('option', { name: 'analytics' })
     fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
     await waitFor(() =>
-      expect(screen.getByRole('option', { name: 'events' })).toBeInTheDocument(),
+      expect(screen.getByLabelText('events')).toBeInTheDocument(),
     )
-    fireEvent.change(screen.getByLabelText('Table'), { target: { value: 'events' } })
+    fireEvent.click(screen.getByLabelText('events'))
     fireEvent.click(screen.getByText('Add grant'))
     expect((await screen.findAllByText(/no service access/i)).length).toBeGreaterThan(0)
 
-    fireEvent.click(screen.getAllByTitle('Remove grant')[0])
+    fireEvent.click(await screen.findByTitle('Remove grant'))
 
     await waitFor(() => expect(screen.queryByText(/no service access/i)).toBeNull())
   })
@@ -263,12 +353,14 @@ describe('WarehouseTableGrants', () => {
     )
     await screen.findAllByText('Data Team')
 
-    fireEvent.change(screen.getByLabelText('Connector'), { target: { value: 'c-2' } })
-    expect(screen.getByLabelText('Connector')).toHaveValue('c-2')
+    // The schema-source picker only exists while several connectors are linked.
+    fireEvent.change(screen.getByLabelText('Schema source'), { target: { value: 'c-2' } })
+    expect(screen.getByLabelText('Schema source')).toHaveValue('c-2')
 
     rerender(<WarehouseTableGrants warehouseId="wh-1" connectors={[CONNECTORS[0]]} />)
 
-    await waitFor(() => expect(screen.getByLabelText('Connector')).toHaveValue('c-1'))
+    await waitFor(() => expect(screen.queryByLabelText('Schema source')).toBeNull())
+    expect(screen.getByText(/Tables are browsed from CH RW/)).toBeInTheDocument()
   })
 
   test('renders the empty state in a neutral secondary color', async () => {
@@ -301,11 +393,11 @@ describe('WarehouseTableGrants', () => {
     await screen.findByRole('option', { name: 'analytics' })
     fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
     await waitFor(() =>
-      expect(screen.getByRole('option', { name: 'users' })).toBeInTheDocument(),
+      expect(screen.getByLabelText('users')).toBeInTheDocument(),
     )
-    fireEvent.change(screen.getByLabelText('Table'), { target: { value: 'users' } })
+    fireEvent.click(screen.getByLabelText('users'))
     fireEvent.click(screen.getByText('Add grant'))
 
-    expect(await screen.findByText('invalid database name')).toBeInTheDocument()
+    expect(await screen.findByText(/invalid database name/)).toBeInTheDocument()
   })
 })

@@ -39,6 +39,7 @@ beforeEach(() => {
       }),
     ),
     http.get('/api/v1/warehouses/wh-1/validation', () => HttpResponse.json(EMPTY_VALIDATION)),
+    http.get('/api/v1/warehouses/wh-1/grants', () => HttpResponse.json([])),
   )
 })
 
@@ -215,6 +216,27 @@ describe('NewTablesInbox', () => {
     expect(await screen.findByText(/Some validation warnings may be missing/)).toBeInTheDocument()
   })
 
+  test('renders tables that already have a grant as granted instead of offering a duplicate', async () => {
+    server.use(
+      http.get('/api/v1/warehouses/wh-1/grants', () =>
+        HttpResponse.json([
+          {
+            id: 'gr-1', org_id: 'org-1', warehouse_id: 'wh-1', subject_type: 'group', subject_id: 'g-1',
+            subject_name: 'Data Team', database: 'analytics', table: 'events',
+            created_by: 'user-1', created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+    )
+    renderInbox()
+    await screen.findByText('analytics.events')
+
+    expect(screen.getByText('already granted')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Subject for analytics.events')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Add grant for analytics.events' })).toBeNull()
+    expect(screen.getByLabelText('Subject for raw.clicks')).toBeInTheDocument()
+  })
+
   test('grant changes refetch the other surface in both directions', async () => {
     let inboxCalls = 0
     let validationCalls = 0
@@ -274,9 +296,9 @@ describe('NewTablesInbox', () => {
     await screen.findByRole('option', { name: 'analytics' })
     fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
     await waitFor(() =>
-      expect(screen.getByRole('option', { name: 'events' })).toBeInTheDocument(),
+      expect(screen.getByLabelText('events')).toBeInTheDocument(),
     )
-    fireEvent.change(screen.getByLabelText('Table'), { target: { value: 'events' } })
+    fireEvent.click(screen.getByLabelText('events'))
     fireEvent.click(
       within(screen.getByRole('region', { name: 'Table grants' })).getByText('Add grant'),
     )

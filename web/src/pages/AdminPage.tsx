@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useId } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api/client'
+import { api, ApiError } from '../api/client'
 import { AppShell } from '../components/AppShell'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Pagination } from '../components/Pagination'
@@ -16,6 +16,23 @@ interface User {
 interface AuditS3Config {
   endpoint: string; region: string; bucket: string
   use_role: boolean; batch_size: number; flush_interval_secs: number; enabled: boolean
+}
+
+// Redacted IDP payload captured while a provider's Debug Claims flag is on.
+// Token strings are stripped server-side; claim JSON is served as-is.
+interface SSODebugCapture {
+  captured_at: string
+  provider_id: string
+  subject: string
+  email: string
+  name: string
+  granted_scopes: string[] | null
+  id_token_claims: Record<string, unknown> | null
+  user_info_claims?: Record<string, unknown> | null
+  user_info_error?: string
+  groups_claim: string
+  groups_claim_value?: unknown
+  parsed_groups: string[] | null
 }
 
 // ─── Provider form state ─────────────────────────────────────────────────────
@@ -34,6 +51,7 @@ interface ProviderFormValues {
   get_user_info: boolean
   sync_empty_groups: boolean
   strip_group_prefix: boolean
+  debug_claims: boolean
   provisioning_mode: 'create_org' | 'join_provider_org' | 'deny'
   default_role: 'admin' | 'non-admin' | 'viewer'
 }
@@ -52,6 +70,7 @@ const emptyForm: ProviderFormValues = {
   get_user_info: false,
   sync_empty_groups: false,
   strip_group_prefix: false,
+  debug_claims: false,
   provisioning_mode: 'create_org',
   default_role: 'non-admin',
 }
@@ -71,6 +90,7 @@ function providerToForm(p: SSOProvider): ProviderFormValues {
     get_user_info: p.get_user_info ?? false,
     sync_empty_groups: p.sync_empty_groups ?? false,
     strip_group_prefix: p.strip_group_prefix ?? false,
+    debug_claims: p.debug_claims ?? false,
     provisioning_mode: p.provisioning_mode ?? 'create_org',
     default_role: p.default_role ?? 'non-admin',
   }
@@ -96,10 +116,11 @@ function ProviderForm({
   const [values, setValues] = useState<ProviderFormValues>(initial)
   const syncEmptyGroupsId = useId()
   const stripGroupPrefixId = useId()
+  const debugClaimsId = useId()
 
   const set = (field: keyof ProviderFormValues) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-      setValues(v => ({ ...v, [field]: field === 'enabled' || field === 'auto_sync_groups' || field === 'get_user_info' || field === 'sync_empty_groups' || field === 'strip_group_prefix' ? (e.target as HTMLInputElement).checked : e.target.value }))
+      setValues(v => ({ ...v, [field]: field === 'enabled' || field === 'auto_sync_groups' || field === 'get_user_info' || field === 'sync_empty_groups' || field === 'strip_group_prefix' || field === 'debug_claims' ? (e.target as HTMLInputElement).checked : e.target.value }))
 
   return (
     <div style={formStyles.container}>
@@ -184,6 +205,15 @@ function ProviderForm({
           </label>
           <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: 11 }}>
             Requires Group Prefix. Stores names without the prefix (Aether Notebooks: Area → Area); filtering still uses the prefix.
+          </span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label htmlFor={debugClaimsId} style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <input id={debugClaimsId} type="checkbox" checked={values.debug_claims} onChange={set('debug_claims')} />
+            Debug Claims
+          </label>
+          <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: 11 }}>
+            Capture the redacted IDP payload (claims, granted scopes, group-claim parsing) from the next login. Kept for 1 hour; token material is never captured. View it from the provider row.
           </span>
         </div>
         <label style={formStyles.label}>
@@ -478,6 +508,23 @@ function SSOProvidersTab() {
   const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string }>>({})
   const [createdProvider, setCreatedProvider] = useState<SSOProvider | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [debugCaptureId, setDebugCaptureId] = useState<string | null>(null)
+
+  // Latest-wins capture written by the callback while debug_claims is on; a 404
+  // means no login has happened since it was enabled.
+  const debugCapture = useQuery({
+    queryKey: ['admin', 'sso', 'debug-claims', debugCaptureId],
+    queryFn: async () => {
+      try {
+        return await api.get<SSODebugCapture>(`/api/v1/admin/sso/providers/${debugCaptureId}/debug-claims`)
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return null
+        throw e
+      }
+    },
+    enabled: !!debugCaptureId,
+    retry: false,
+  })
 
   async function copyText(text: string, key?: string) {
     try { await navigator.clipboard.writeText(text) } catch { /* ignore clipboard errors */ }
@@ -556,6 +603,7 @@ function SSOProvidersTab() {
       get_user_info: values.get_user_info,
       sync_empty_groups: values.sync_empty_groups,
       strip_group_prefix: values.strip_group_prefix,
+      debug_claims: values.debug_claims,
       provisioning_mode: values.provisioning_mode,
       default_role: values.default_role,
     }
@@ -579,6 +627,7 @@ function SSOProvidersTab() {
       get_user_info: values.get_user_info,
       sync_empty_groups: values.sync_empty_groups,
       strip_group_prefix: values.strip_group_prefix,
+      debug_claims: values.debug_claims,
       provisioning_mode: values.provisioning_mode,
       default_role: values.default_role,
     }
@@ -676,6 +725,14 @@ function SSOProvidersTab() {
                   >
                     Edit
                   </button>
+                  {p.debug_claims && (
+                    <button
+                      style={ssoStyles.iconBtn}
+                      onClick={() => setDebugCaptureId(debugCaptureId === p.id ? null : p.id)}
+                    >
+                      {debugCaptureId === p.id ? 'Hide Debug' : 'Debug Claims'}
+                    </button>
+                  )}
                   <button
                     style={ssoStyles.iconBtn}
                     onClick={() => handleTest(p.id)}
@@ -726,12 +783,110 @@ function SSOProvidersTab() {
                   error={editFormError}
                 />
               )}
+              {debugCaptureId === p.id && (
+                <DebugClaimsPanel
+                  provider={p}
+                  capture={debugCapture.data ?? null}
+                  loading={debugCapture.isLoading}
+                  error={debugCapture.error ? String(debugCapture.error) : null}
+                />
+              )}
             </div>
           ))}
         </div>
       )}
     </div>
   )
+}
+
+// ─── Debug claims panel ──────────────────────────────────────────────────────
+
+function DebugClaimsPanel({ provider, capture, loading, error }: {
+  provider: SSOProvider
+  capture: SSODebugCapture | null
+  loading: boolean
+  error: string | null
+}) {
+  if (loading) return <div style={ssoStyles.debugPanel}>Loading capture…</div>
+  if (error) {
+    return (
+      <div style={ssoStyles.debugPanel}>
+        <span style={{ color: 'var(--error)' }}>{error}</span>
+      </div>
+    )
+  }
+  if (!capture) {
+    return (
+      <div style={ssoStyles.debugPanel}>
+        No capture yet — have a user log in through this provider while Debug Claims is enabled.
+      </div>
+    )
+  }
+
+  const prefix = provider.group_prefix || ''
+  const parsedGroups = capture.parsed_groups ?? []
+  const filtered = prefix ? parsedGroups.filter(g => g.startsWith(prefix)) : parsedGroups
+  const scopes = capture.granted_scopes ?? []
+
+  return (
+    <div style={ssoStyles.debugPanel}>
+      <div style={ssoStyles.debugMeta}>
+        Captured {new Date(capture.captured_at).toLocaleString()} ·{' '}
+        {capture.email || capture.subject}
+        {capture.name ? ` (${capture.name})` : ''}
+      </div>
+      <div style={ssoStyles.debugRow}>
+        <span style={ssoStyles.debugLabel}>Granted scopes</span>
+        <span>{scopes.length > 0 ? scopes.join(', ') : '(none reported)'}</span>
+      </div>
+
+      <div style={ssoStyles.debugSectionTitle}>Groups claim</div>
+      <div style={ssoStyles.debugRow}>
+        <span style={ssoStyles.debugLabel}>Claim</span>
+        <code style={ssoStyles.debugCode}>{capture.groups_claim}</code>
+      </div>
+      <div style={ssoStyles.debugRow}>
+        <span style={ssoStyles.debugLabel}>Raw value</span>
+        <code style={ssoStyles.debugCode}>{formatDebugValue(capture.groups_claim_value)}</code>
+      </div>
+      <div style={ssoStyles.debugRow}>
+        <span style={ssoStyles.debugLabel}>Parsed groups</span>
+        <span>{parsedGroups.length > 0 ? parsedGroups.join(', ') : '(none)'}</span>
+      </div>
+      <div style={ssoStyles.debugRow}>
+        <span style={ssoStyles.debugLabel}>After prefix filter</span>
+        <span>
+          {prefix
+            ? (filtered.length > 0 ? filtered.join(', ') : `(none match "${prefix}")`)
+            : 'No group prefix configured'}
+        </span>
+      </div>
+
+      {capture.user_info_error && (
+        <div style={ssoStyles.debugError}>UserInfo error: {capture.user_info_error}</div>
+      )}
+
+      <div style={ssoStyles.debugSectionTitle}>ID token claims</div>
+      <pre style={ssoStyles.debugPre}>{JSON.stringify(capture.id_token_claims ?? {}, null, 2)}</pre>
+
+      <div style={ssoStyles.debugSectionTitle}>UserInfo claims</div>
+      {capture.user_info_claims ? (
+        <pre style={ssoStyles.debugPre}>{JSON.stringify(capture.user_info_claims, null, 2)}</pre>
+      ) : (
+        <div style={ssoStyles.debugMuted}>
+          {provider.get_user_info
+            ? 'No UserInfo claims captured.'
+            : 'UserInfo endpoint is disabled for this provider.'}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function formatDebugValue(value: unknown): string {
+  if (value === undefined) return '(absent)'
+  if (typeof value === 'string') return value
+  return JSON.stringify(value)
 }
 
 const ssoStyles: Record<string, React.CSSProperties> = {
@@ -857,6 +1012,67 @@ const ssoStyles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     cursor: 'pointer',
     flexShrink: 0,
+  },
+  debugPanel: {
+    marginTop: 10,
+    padding: '12px 14px',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    background: 'var(--bg-secondary)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+    fontSize: 12,
+    color: 'var(--text-primary)',
+  },
+  debugMeta: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: 'var(--text-primary)',
+  },
+  debugRow: {
+    display: 'flex',
+    gap: 8,
+    alignItems: 'baseline',
+  },
+  debugLabel: {
+    minWidth: 130,
+    color: 'var(--text-muted)',
+    flexShrink: 0,
+  },
+  debugCode: {
+    fontFamily: 'var(--font-mono)',
+    fontSize: 12,
+    overflowWrap: 'anywhere',
+  },
+  debugSectionTitle: {
+    marginTop: 6,
+    fontSize: 11,
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
+    color: 'var(--text-muted)',
+  },
+  debugPre: {
+    margin: 0,
+    padding: '8px 10px',
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    fontFamily: 'var(--font-mono)',
+    fontSize: 11,
+    maxHeight: 260,
+    overflow: 'auto',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-all',
+  },
+  debugError: {
+    color: 'var(--error)',
+    fontSize: 12,
+  },
+  debugMuted: {
+    color: 'var(--text-muted)',
+    fontStyle: 'italic',
   },
 }
 

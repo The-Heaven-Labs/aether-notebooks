@@ -30,6 +30,7 @@ type providerResponse struct {
 	GetUserInfo      bool      `json:"get_user_info"`
 	SyncEmptyGroups  bool      `json:"sync_empty_groups"`
 	StripGroupPrefix bool      `json:"strip_group_prefix"`
+	DebugClaims      bool      `json:"debug_claims"`
 	ProvisioningMode string    `json:"provisioning_mode"`
 	DefaultRole      string    `json:"default_role"`
 	CallbackURL      string    `json:"callback_url"`
@@ -62,6 +63,7 @@ func (s *Server) providerToResponse(p sso.Provider) providerResponse {
 		GetUserInfo:      p.GetUserInfo,
 		SyncEmptyGroups:  p.SyncEmptyGroups,
 		StripGroupPrefix: p.StripGroupPrefix,
+		DebugClaims:      p.DebugClaims,
 		ProvisioningMode: p.ProvisioningMode,
 		DefaultRole:      p.DefaultRole,
 		CallbackURL:      s.callbackURLForID(p.ID),
@@ -84,6 +86,7 @@ type ssoProviderRequest struct {
 	GetUserInfo      bool     `json:"get_user_info"`
 	SyncEmptyGroups  bool     `json:"sync_empty_groups"`
 	StripGroupPrefix bool     `json:"strip_group_prefix"`
+	DebugClaims      bool     `json:"debug_claims"`
 	ProvisioningMode string   `json:"provisioning_mode"`
 	DefaultRole      string   `json:"default_role"`
 }
@@ -159,6 +162,7 @@ func (s *Server) handleAdminCreateSSOProvider(w http.ResponseWriter, r *http.Req
 		GetUserInfo:      req.GetUserInfo,
 		SyncEmptyGroups:  req.SyncEmptyGroups,
 		StripGroupPrefix: req.StripGroupPrefix,
+		DebugClaims:      req.DebugClaims,
 		ProvisioningMode: req.ProvisioningMode,
 		DefaultRole:      req.DefaultRole,
 	}
@@ -229,6 +233,7 @@ func (s *Server) handleAdminUpdateSSOProvider(w http.ResponseWriter, r *http.Req
 		GetUserInfo:      req.GetUserInfo,
 		SyncEmptyGroups:  req.SyncEmptyGroups,
 		StripGroupPrefix: req.StripGroupPrefix,
+		DebugClaims:      req.DebugClaims,
 		ProvisioningMode: req.ProvisioningMode,
 		DefaultRole:      req.DefaultRole,
 	}
@@ -352,4 +357,50 @@ func (s *Server) handleAdminTestSSOProvider(w http.ResponseWriter, r *http.Reque
 		"message":     "Discovery document fetched successfully",
 		"status_code": resp.StatusCode,
 	})
+}
+
+// @Summary Get SSO debug claims capture
+// @Description Returns the latest redacted IDP payload captured for a provider while Debug claims was enabled
+// @Tags sso
+// @Produce json
+// @Param id path string true "Provider ID"
+// @Success 200 {object} ssoDebugCapture
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /admin/sso/providers/{id}/debug-claims [get]
+func (s *Server) handleAdminGetSSODebugClaims(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	claims := ClaimsFromContext(r.Context())
+
+	// Confirm the provider exists and capture its org for the audit entry.
+	var orgID *string
+	err := s.db.Pool.QueryRow(r.Context(), `SELECT org_id FROM sso_providers WHERE id = $1`, id).Scan(&orgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "provider not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load provider")
+		return
+	}
+
+	capture, err := s.loadSSODebugCapture(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load debug claims capture")
+		return
+	}
+	if capture == nil {
+		writeError(w, http.StatusNotFound, "no capture yet — enable Debug claims on this provider, then have a user log in")
+		return
+	}
+
+	entry := audit.Entry{
+		UserID: claims.UserID,
+		Action: "sso.debug_claims.view", ResourceType: "sso_provider", ResourceID: id,
+	}
+	if orgID != nil {
+		entry.OrgID = *orgID
+	}
+	s.audit.Log(r.Context(), entry)
+
+	writeJSON(w, http.StatusOK, capture)
 }

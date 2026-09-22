@@ -139,8 +139,11 @@ test.describe('ClickHouse warehouse permissions', () => {
       // Grant one table to the group through the grant matrix.
       await page.getByLabel('Subject', { exact: true }).selectOption({ label: groupName })
       await page.getByLabel('Database', { exact: true }).selectOption('analytics')
-      await page.getByLabel('Table', { exact: true }).selectOption(tableGranted)
+      await page.getByLabel(tableGranted, { exact: true }).check()
       await page.getByRole('button', { name: 'Add grant', exact: true }).click()
+
+      // The granted table is now checked + disabled in the checklist.
+      await expect(page.getByText('already granted')).toBeVisible()
 
       // Advisory warning: the grant is saved but the group cannot run queries.
       await expect(page.getByText(/No service access: /)).toBeVisible()

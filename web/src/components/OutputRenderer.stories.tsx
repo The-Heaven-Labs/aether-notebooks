@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { fireEvent } from 'storybook/test'
 import { OutputRenderer } from './OutputRenderer'
 
 const meta: Meta<typeof OutputRenderer> = {
@@ -72,6 +73,53 @@ export const UUIDAndJsonColumns: Story = {
 export const UUIDAndJsonColumnsDark: Story = {
   ...UUIDAndJsonColumns,
   name: 'UUID and JSON Columns — Dark',
+  parameters: { theme: 'dark' },
+}
+
+// Drag across cells to build a rectangular selection (Ctrl/Cmd+C copies it as
+// TSV), and drag a column edge to resize it (double-click resets the width).
+export const SelectionAndColumnResize: Story = {
+  name: 'Selection & Column Resize',
+  args: {
+    outputs: [{
+      type: 'table',
+      data: {
+        columns: [
+          { name: 'id', type: 'int4' },
+          { name: 'name', type: 'text' },
+          { name: 'active', type: 'bool' },
+          { name: 'score', type: 'float8' },
+        ],
+        rows: [
+          [1, 'Alice', true, 98.5],
+          [2, 'Bob', false, 72.1],
+          [3, 'Carol', true, 85.0],
+          [4, 'Dave', false, 61.4],
+          [5, 'Erin', true, 90.2],
+          [6, 'Frank', false, 55.9],
+        ],
+      },
+    }],
+  },
+  play: async ({ canvasElement }) => {
+    const cells = canvasElement.querySelectorAll<HTMLElement>('td[data-row][data-col]')
+    if (cells.length < 6) return
+    fireEvent.mouseDown(cells[0], { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseMove(cells[5], { clientX: 320, clientY: 90 })
+    fireEvent.mouseUp(window)
+
+    const handle = canvasElement.querySelector<HTMLElement>('.col-resize-handle')
+    if (handle) {
+      fireEvent.mouseDown(handle, { clientX: 100 })
+      fireEvent.mouseMove(window, { clientX: 160 })
+      fireEvent.mouseUp(window)
+    }
+  },
+}
+
+export const SelectionAndColumnResizeDark: Story = {
+  ...SelectionAndColumnResize,
+  name: 'Selection & Column Resize — Dark',
   parameters: { theme: 'dark' },
 }
 

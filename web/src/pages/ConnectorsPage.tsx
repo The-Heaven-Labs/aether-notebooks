@@ -127,6 +127,19 @@ export function ConnectorsPage() {
     }
   }, [searchParams, connectors, setSearchParams])
 
+  // Deep link from warehouse grant warnings: /connectors?permissions=<id>
+  // opens the connector's ACL panel directly.
+  useEffect(() => {
+    const permissionsId = searchParams.get('permissions')
+    if (permissionsId && connectors.length > 0) {
+      const c = connectors.find(x => x.id === permissionsId)
+      if (c) {
+        setPermissionsTarget({ type: 'connector', id: c.id, name: c.name })
+        setSearchParams({})
+      }
+    }
+  }, [searchParams, connectors, setSearchParams])
+
   const updateConnector = useMutation({
     mutationFn: (id: string) => api.put<Connector>(`/api/v1/connectors/${id}`, {
       name: editForm.name,

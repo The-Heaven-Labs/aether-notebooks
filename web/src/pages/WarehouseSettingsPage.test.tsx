@@ -283,9 +283,9 @@ describe('WarehouseSettingsPage', () => {
     await screen.findByRole('option', { name: 'analytics' })
     fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
     await waitFor(() =>
-      expect(screen.getByRole('option', { name: 'events' })).toBeInTheDocument(),
+      expect(screen.getByLabelText('events')).toBeInTheDocument(),
     )
-    fireEvent.change(screen.getByLabelText('Table'), { target: { value: 'events' } })
+    fireEvent.click(screen.getByLabelText('events'))
     fireEvent.click(screen.getByText('Add grant'))
 
     await waitFor(() => expect(listCalls).toBeGreaterThanOrEqual(2))

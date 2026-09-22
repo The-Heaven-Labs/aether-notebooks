@@ -51,6 +51,53 @@ function useActiveDetailCell() {
   return isActive
 }
 
+// Selection ownership: only the last table output the user pressed down on
+// responds to selection shortcuts (Ctrl/Cmd+A, Escape), mirroring the
+// activeDetailCellId mechanism above. Selection state itself stays local to
+// each table output.
+let activeSelectionTableId: number | null = null
+let nextSelectionTableId = 0
+
+export interface CellPos {
+  row: number
+  col: number
+}
+
+export interface CellRange {
+  anchor: CellPos
+  extent: CellPos
+}
+
+export function selectionBounds(range: CellRange): { rowStart: number; rowEnd: number; colStart: number; colEnd: number } {
+  return {
+    rowStart: Math.min(range.anchor.row, range.extent.row),
+    rowEnd: Math.max(range.anchor.row, range.extent.row),
+    colStart: Math.min(range.anchor.col, range.extent.col),
+    colEnd: Math.max(range.anchor.col, range.extent.col),
+  }
+}
+
+// TSV cell coercion mirrors exportCSV: null/undefined → empty, objects → JSON.
+// Values containing tabs/newlines are copied raw (spreadsheet-app behavior).
+export function selectionToTSV(rows: unknown[][], range: CellRange): string {
+  const { rowStart, rowEnd, colStart, colEnd } = selectionBounds(range)
+  const lines: string[] = []
+  for (let r = rowStart; r <= rowEnd; r++) {
+    const row = rows[r] as unknown[] | undefined
+    const cells: string[] = []
+    for (let c = colStart; c <= colEnd; c++) {
+      cells.push(clipboardCellText(row?.[c]))
+    }
+    lines.push(cells.join('\t'))
+  }
+  return lines.join('\n')
+}
+
+function clipboardCellText(cell: unknown): string {
+  if (cell === null || cell === undefined) return ''
+  return typeof cell === 'object' ? JSON.stringify(cell) : String(cell)
+}
+
 interface Props {
   outputs: Output[]
   fixedView?: 'table' | 'chart'
@@ -235,7 +282,11 @@ const OUTPUT_DEFAULT_HEIGHT = 340
 // of result size (see UPSTREAM_FIX_TABLE_VIRTUALIZATION design).
 const ROW_HEIGHT = 32
 const COL_WIDTH = 140
+const COL_MIN_WIDTH = 60
+const COL_MAX_WIDTH = 600
 const ROW_NUM_WIDTH = 40
+// Pointer travel (px) before a press becomes a drag instead of a click.
+const DRAG_THRESHOLD = 4
 
 type SortDirection = 'none' | 'asc' | 'desc'
 
@@ -377,27 +428,13 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
   const theadRef = useRef<HTMLTableSectionElement | null>(null)
   const [copied, setCopied] = useState(false)
   const scrollAreaRef = useRef<HTMLDivElement | null>(null)
-
-  // Imperative cell highlighting to avoid re-rendering all rows on detail change
-  useEffect(() => {
-    if (!scrollAreaRef.current) return
-    scrollAreaRef.current.querySelectorAll<HTMLElement>('[data-row][data-col]').forEach(el => {
-      el.style.background = ''
-      el.style.outline = ''
-      el.style.outlineOffset = ''
-    })
-    if (detail && isDetailActive) {
-      const cell = scrollAreaRef.current.querySelector<HTMLElement>(
-        `[data-row="${detail.rowIndex}"][data-col="${detail.colIndex}"]`,
-      )
-      if (cell) {
-        cell.style.background = 'var(--accent-light)'
-        cell.style.outline = '1px solid var(--accent)'
-        cell.style.outlineOffset = '-1px'
-        activeCellRef.current = cell
-      }
-    }
-  }, [detail, isDetailActive])
+  const [selection, setSelection] = useState<CellRange | null>(null)
+  const [columnWidths, setColumnWidths] = useState<Record<number, number>>({})
+  // Set on mouseup after a real drag so the synthesised click does not also
+  // open the detail panel.
+  const suppressCellClickRef = useRef(false)
+  const tableIdRef = useRef(0)
+  if (tableIdRef.current === 0) tableIdRef.current = ++nextSelectionTableId
 
   const copyDetail = useCallback(() => {
     if (!detail) return
@@ -462,10 +499,131 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
   const columnVirtualizer = useVirtualizer({
     count: rs.columns.length,
     getScrollElement: () => scrollAreaRef.current,
-    estimateSize: () => COL_WIDTH,
+    estimateSize: (index: number) => columnWidths[index] ?? COL_WIDTH,
     horizontal: true,
     overscan: 4,
   })
+
+  const virtualRows = rowVirtualizer.getVirtualItems()
+  const virtualColumns = columnVirtualizer.getVirtualItems()
+  const virtualRangeKey = `${virtualRows[0]?.index ?? -1}:${virtualRows.length}:${virtualColumns[0]?.index ?? -1}:${virtualColumns.length}`
+
+  // Imperative cell highlighting to avoid re-rendering all rows on detail or
+  // selection change. The virtual range key makes the repaint re-run whenever
+  // the virtual window changes, so newly mounted cells get their highlight.
+  useEffect(() => {
+    const area = scrollAreaRef.current
+    if (!area) return
+    area.querySelectorAll<HTMLElement>('[data-row][data-col]').forEach(el => {
+      el.style.background = ''
+      el.style.outline = ''
+      el.style.outlineOffset = ''
+    })
+    if (selection) {
+      const { rowStart, rowEnd, colStart, colEnd } = selectionBounds(selection)
+      area.querySelectorAll<HTMLElement>('[data-row][data-col]').forEach(el => {
+        const row = Number(el.dataset.row)
+        const col = Number(el.dataset.col)
+        if (row >= rowStart && row <= rowEnd && col >= colStart && col <= colEnd) {
+          el.style.background = 'var(--accent-light)'
+        }
+      })
+    }
+    if (detail && isDetailActive) {
+      const cell = area.querySelector<HTMLElement>(
+        `[data-row="${detail.rowIndex}"][data-col="${detail.colIndex}"]`,
+      )
+      if (cell) {
+        cell.style.background = 'var(--accent-light)'
+        cell.style.outline = '1px solid var(--accent)'
+        cell.style.outlineOffset = '-1px'
+        activeCellRef.current = cell
+      }
+    }
+  }, [detail, isDetailActive, selection, virtualRangeKey])
+
+  // Row indices address displayRows, so re-sorting or receiving a new result
+  // set silently changes what a selection means — drop it instead of letting
+  // copy produce the wrong cells.
+  const [selectionScope, setSelectionScope] = useState<{ sort: SortState; rows: unknown[][] }>({ sort, rows: rs.rows })
+  if (selectionScope.sort !== sort || selectionScope.rows !== rs.rows) {
+    setSelectionScope({ sort, rows: rs.rows })
+    if (selection) setSelection(null)
+  }
+
+  // Re-measure after a width commit, once the virtualizer options reflect the
+  // new estimateSize. Doing it in the same tick as the state update would use
+  // the previous closure and wipe the resize.
+  useEffect(() => {
+    columnVirtualizer.measure()
+  }, [columnWidths, columnVirtualizer])
+
+  const beginCellSelection = useCallback((e: React.MouseEvent, row: number, col: number) => {
+    if (e.button !== 0) return
+    // Suppress native text selection while dragging; click still fires.
+    e.preventDefault()
+    const anchor = e.shiftKey && selection ? selection.anchor : { row, col }
+    activeSelectionTableId = tableIdRef.current
+    setSelection({ anchor, extent: { row, col } })
+    suppressCellClickRef.current = false
+    const startX = e.clientX
+    const startY = e.clientY
+    let moved = false
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!moved && Math.abs(ev.clientX - startX) < DRAG_THRESHOLD && Math.abs(ev.clientY - startY) < DRAG_THRESHOLD) return
+      moved = true
+      const el = ev.target
+      const td = el instanceof HTMLElement ? el.closest<HTMLElement>('td[data-row][data-col]') : null
+      if (!td || !scrollAreaRef.current?.contains(td)) return
+      const r = Number(td.dataset.row)
+      const c = Number(td.dataset.col)
+      if (!Number.isInteger(r) || !Number.isInteger(c)) return
+      setSelection({ anchor, extent: { row: r, col: c } })
+    }
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+      if (moved) suppressCellClickRef.current = true
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }, [selection])
+
+  const onColumnResizeMouseDown = useCallback((e: React.MouseEvent, colIndex: number) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX
+    const startWidth = columnWidths[colIndex] ?? COL_WIDTH
+    let finalWidth = startWidth
+    const applyWidth = (width: number) => {
+      finalWidth = width
+      setColumnWidths(prev => ({ ...prev, [colIndex]: width }))
+      columnVirtualizer.resizeItem(colIndex, width)
+    }
+    const onMouseMove = (ev: MouseEvent) => {
+      applyWidth(Math.min(COL_MAX_WIDTH, Math.max(COL_MIN_WIDTH, startWidth + (ev.clientX - startX))))
+    }
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      setColumnWidths(prev => ({ ...prev, [colIndex]: finalWidth }))
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }, [columnWidths, columnVirtualizer])
+
+  const resetColumnWidth = useCallback((colIndex: number) => {
+    columnVirtualizer.resizeItem(colIndex, COL_WIDTH)
+    setColumnWidths(prev => {
+      const next = { ...prev }
+      delete next[colIndex]
+      return next
+    })
+  }, [columnVirtualizer])
 
   // Bring a target row/col into the virtual window (used by detail navigation).
   const scrollToCell = useCallback((row: number, col: number) => {
@@ -520,8 +678,15 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
     })
   }, [detail, displayRows, rs.columns, scrollToCell])
 
-  const virtualRows = rowVirtualizer.getVirtualItems()
-  const virtualColumns = columnVirtualizer.getVirtualItems()
+  const handleCellClick = useCallback((e: React.MouseEvent, row: number, col: number, value: string, rawValue: unknown) => {
+    if (suppressCellClickRef.current) {
+      suppressCellClickRef.current = false
+      return
+    }
+    // Shift+click only extends the selection; it never opens the panel.
+    if (e.shiftKey) return
+    openDetail(row, col, value, rawValue)
+  }, [openDetail])
 
   const virtualTbody = (
     <tbody style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
@@ -550,7 +715,8 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
                   data-col={vc.index}
                   style={{ ...styles.virtualTd, left: ROW_NUM_WIDTH + vc.start, width: vc.size, height: vr.size }}
                   title={strValue}
-                  onClick={() => openDetail(vr.index, vc.index, strValue, cell)}
+                  onMouseDown={(e) => beginCellSelection(e, vr.index, vc.index)}
+                  onClick={(e) => handleCellClick(e, vr.index, vc.index, strValue, cell)}
                 >
                   <span style={isObj ? { ...styles.cellText, ...styles.json } : styles.cellText}>
                     {cell === null ? <span style={styles.null}>null</span> : strValue}
@@ -573,9 +739,30 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
   }, [detail?.rowIndex, detail?.colIndex])
 
   useEffect(() => {
-    if (!detail || !isDetailActive) return
+    if (!detail && !selection) return
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { closeDetail(); return }
+      // Ownership is evaluated per event: another table output may have become
+      // the active selection target since this listener was installed.
+      const detailActive = !!detail && isDetailActive
+      const selectionOwned = !!selection && activeSelectionTableId === tableIdRef.current
+      if (!detailActive && !selectionOwned) return
+      const target = e.target instanceof HTMLElement ? e.target : null
+      if (target?.closest('.cm-editor') || target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && selectionOwned) {
+        if (displayRows.length === 0 || rs.columns.length === 0) return
+        e.preventDefault()
+        setSelection({
+          anchor: { row: 0, col: 0 },
+          extent: { row: displayRows.length - 1, col: rs.columns.length - 1 },
+        })
+        return
+      }
+      if (e.key === 'Escape') {
+        if (selectionOwned) setSelection(null)
+        if (detailActive) closeDetail()
+        return
+      }
+      if (!detailActive) return
       if (e.key === 'ArrowDown') { e.preventDefault(); navigateDetail(1, 0) }
       if (e.key === 'ArrowUp') { e.preventDefault(); navigateDetail(-1, 0) }
       if (e.key === 'ArrowRight') { e.preventDefault(); navigateDetail(0, 1) }
@@ -583,21 +770,31 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [detail, isDetailActive, navigateDetail, closeDetail])
+  }, [detail, isDetailActive, selection, displayRows.length, rs.columns.length, navigateDetail, closeDetail])
 
   useEffect(() => {
-    if (!detail || !isDetailActive) return
+    if (!detail && !selection) return
     const onCopy = (e: ClipboardEvent) => {
+      const detailActive = !!detail && isDetailActive
+      const selectionOwned = !!selection && activeSelectionTableId === tableIdRef.current
+      if (!detailActive && !selectionOwned) return
       const target = e.target instanceof HTMLElement ? e.target : null
       if (target?.closest('.cm-editor') || target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return
       const sel = window.getSelection()
       if (sel && !sel.isCollapsed && sel.toString().length > 0) return
-      e.preventDefault()
-      e.clipboardData?.setData('text/plain', detail.value)
+      if (selectionOwned) {
+        e.preventDefault()
+        e.clipboardData?.setData('text/plain', selectionToTSV(displayRows, selection))
+        return
+      }
+      if (detailActive) {
+        e.preventDefault()
+        e.clipboardData?.setData('text/plain', detail.value)
+      }
     }
     document.addEventListener('copy', onCopy)
     return () => document.removeEventListener('copy', onCopy)
-  }, [detail, isDetailActive])
+  }, [detail, isDetailActive, selection, displayRows])
 
   useEffect(() => () => {
     if (activeDetailCellId === cellId) setActiveDetailCell(null)
@@ -671,12 +868,12 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
                   <th style={{ ...styles.th, ...styles.rowNumTh, width: ROW_NUM_WIDTH, cursor: 'default' }}>
                     <span style={styles.colName}>#</span>
                   </th>
-                  {rs.columns.map((col) => {
+                  {rs.columns.map((col, colIndex) => {
                     const isSorted = sort.column === col.name
                     return (
                       <th
                         key={col.name}
-                        style={{ ...styles.th, width: COL_WIDTH, cursor: 'pointer', userSelect: 'none' }}
+                        style={{ ...styles.th, width: columnWidths[colIndex] ?? COL_WIDTH, cursor: 'pointer', userSelect: 'none' }}
                         onClick={() => handleColumnClick(col.name)}
                         title={`Sort by ${col.name}`}
                       >
@@ -693,6 +890,16 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
                             <span style={{ width: 12, flexShrink: 0, opacity: 0 }}><ChevronUp size={12} /></span>
                           )}
                         </span>
+                        <span
+                          role="separator"
+                          aria-label={`Resize column ${col.name}`}
+                          className="col-resize-handle"
+                          style={styles.colResizeHandle}
+                          title="Drag to resize; double-click to reset"
+                          onMouseDown={(e) => onColumnResizeMouseDown(e, colIndex)}
+                          onClick={(e) => e.stopPropagation()}
+                          onDoubleClick={(e) => { e.stopPropagation(); resetColumnWidth(colIndex) }}
+                        />
                       </th>
                     )
                   })}
@@ -986,12 +1193,26 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-mono)',
     fontSize: 12,
   },
+  colResizeHandle: {
+    position: 'absolute',
+    top: 0,
+    // Keep the hit area inside this th: a handle extending past the right edge
+    // overlaps the next (equal z-index, later-in-DOM) th, which wins hit
+    // testing and swallows the drag.
+    right: 0,
+    width: 7,
+    height: '100%',
+    cursor: 'col-resize',
+    zIndex: 3,
+    userSelect: 'none',
+  },
   virtualTd: {
     position: 'absolute',
     borderBottom: '1px solid var(--border-light)',
     padding: 0,
     overflow: 'hidden',
     cursor: 'pointer',
+    userSelect: 'none',
   },
   cellText: {
     display: 'flex',

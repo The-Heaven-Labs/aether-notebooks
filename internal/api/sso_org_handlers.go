@@ -116,6 +116,7 @@ func (s *Server) handleOrgCreateSSOProvider(w http.ResponseWriter, r *http.Reque
 		GetUserInfo:      req.GetUserInfo,
 		SyncEmptyGroups:  req.SyncEmptyGroups,
 		StripGroupPrefix: req.StripGroupPrefix,
+		DebugClaims:      req.DebugClaims,
 		ProvisioningMode: req.ProvisioningMode,
 		DefaultRole:      req.DefaultRole,
 	}
@@ -202,6 +203,7 @@ func (s *Server) handleOrgUpdateSSOProvider(w http.ResponseWriter, r *http.Reque
 		GetUserInfo:      req.GetUserInfo,
 		SyncEmptyGroups:  req.SyncEmptyGroups,
 		StripGroupPrefix: req.StripGroupPrefix,
+		DebugClaims:      req.DebugClaims,
 		ProvisioningMode: req.ProvisioningMode,
 		DefaultRole:      req.DefaultRole,
 	}

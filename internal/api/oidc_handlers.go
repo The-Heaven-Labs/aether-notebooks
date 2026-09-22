@@ -236,6 +236,12 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture the redacted IDP payload for troubleshooting before any later
+	// step can fail (denied provisioning, org resolution, …).
+	if dbProvider.DebugClaims {
+		s.storeSSODebugCapture(ctx, providerID, claims)
+	}
+
 	// Look up existing user by email
 	var userID, orgID, role string
 	err = s.db.Pool.QueryRow(ctx,
