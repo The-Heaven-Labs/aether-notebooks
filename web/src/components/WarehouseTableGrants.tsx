@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { connectorSchemaQueryKey, getConnectorSchema } from '../api/schema'
@@ -8,6 +9,7 @@ import {
   listGrants,
   type WarehouseConnector,
   type WarehouseGrant,
+  type WarehouseGrantCreateResult,
   type WarehouseSubjectType,
 } from '../api/warehouses'
 import { ErrorBanner } from './ErrorBanner'
@@ -54,7 +56,8 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
   const [subjectSelection, setSubjectSelection] = useState('')
   const [connectorId, setConnectorId] = useState('')
   const [database, setDatabase] = useState('')
-  const [table, setTable] = useState('')
+  const [tableFilter, setTableFilter] = useState('')
+  const [checkedTables, setCheckedTables] = useState<Set<string>>(new Set())
   const [warnings, setWarnings] = useState<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
 
@@ -90,7 +93,6 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
   if (lastConnectorId !== activeConnectorId) {
     setLastConnectorId(activeConnectorId)
     setDatabase('')
-    setTable('')
     if (!selectionLinked) setConnectorId('')
   }
 
@@ -112,6 +114,63 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
     () => (schema?.tables ?? []).filter((t) => t.schema === database).map((t) => t.name).sort(),
     [schema, database],
   )
+
+  // Tables already granted to the currently selected subject in the selected
+  // database — rendered as checked + disabled instead of offering a duplicate.
+  const grantedTables = useMemo(() => {
+    const parsed = parseSubjectKey(subjectSelection)
+    const set = new Set<string>()
+    if (!parsed) return set
+    for (const grant of grants) {
+      if (
+        grant.subject_type === parsed.subjectType &&
+        grant.subject_id === parsed.subjectId &&
+        grant.database === database
+      ) {
+        set.add(grant.table)
+      }
+    }
+    return set
+  }, [grants, subjectSelection, database])
+
+  const filteredTables = useMemo(() => {
+    const query = tableFilter.trim().toLowerCase()
+    if (!query) return tables
+    return tables.filter((t) => t.toLowerCase().includes(query))
+  }, [tables, tableFilter])
+
+  const pendingTables = useMemo(
+    () => Array.from(checkedTables).filter((t) => !grantedTables.has(t)),
+    [checkedTables, grantedTables],
+  )
+
+  // Switching subject or database invalidates what the checked set refers to.
+  const [pickerScope, setPickerScope] = useState('')
+  const currentScope = `${subjectSelection}|${database}`
+  if (pickerScope !== currentScope) {
+    setPickerScope(currentScope)
+    if (checkedTables.size > 0) setCheckedTables(new Set())
+    if (tableFilter) setTableFilter('')
+  }
+
+  const toggleTable = (name: string) => {
+    setCheckedTables((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
+  const selectAllVisible = () => {
+    setCheckedTables((prev) => {
+      const next = new Set(prev)
+      for (const t of filteredTables) {
+        if (!grantedTables.has(t)) next.add(t)
+      }
+      return next
+    })
+  }
 
   const memberNames = useMemo(() => {
     const map = new Map<string, string>()
@@ -184,29 +243,50 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
     })
   }
 
-  const addGrant = useMutation({
-    mutationFn: () => {
+  const addGrants = useMutation({
+    mutationFn: async () => {
       const parsed = parseSubjectKey(subjectSelection)
       if (!parsed) throw new Error('Select a subject')
-      if (!database || !table) throw new Error('Select a database and table')
-      return createGrant(warehouseId, {
-        subject_type: parsed.subjectType,
-        subject_id: parsed.subjectId,
-        database,
-        table,
-      })
+      if (!database) throw new Error('Select a database')
+      const targets = Array.from(checkedTables).filter((t) => !grantedTables.has(t))
+      if (targets.length === 0) throw new Error('Select at least one table')
+      // The endpoint is idempotent per grant, so allSettled retries are safe
+      // and one bad table name does not abort the rest.
+      const settled = await Promise.allSettled(
+        targets.map((table) =>
+          createGrant(warehouseId, {
+            subject_type: parsed.subjectType,
+            subject_id: parsed.subjectId,
+            database,
+            table,
+          }),
+        ),
+      )
+      const fulfilled = settled
+        .filter((r): r is PromiseFulfilledResult<WarehouseGrantCreateResult> => r.status === 'fulfilled')
+        .map((r) => r.value)
+      const failures = settled
+        .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+        .map((r) => (r.reason instanceof Error ? r.reason.message : String(r.reason)))
+      return { parsed, fulfilled, failures, requested: targets.length }
     },
-    onSuccess: (grant) => {
-      const key = subjectKey(grant.subject_type, grant.subject_id)
-      if (grant.warning) {
-        setWarnings((prev) => ({ ...prev, [key]: true }))
-      } else {
-        // A warning-free response proves the subject can use a service now.
-        clearWarning(key)
+    onSuccess: ({ parsed, fulfilled, failures, requested }) => {
+      const key = subjectKey(parsed.subjectType, parsed.subjectId)
+      if (fulfilled.length > 0) {
+        if (fulfilled.some((g) => g.warning)) {
+          setWarnings((prev) => ({ ...prev, [key]: true }))
+        } else {
+          // A warning-free response proves the subject can use a service now.
+          clearWarning(key)
+        }
       }
-      setTable('')
+      setCheckedTables(new Set())
       invalidateAfterGrantChange()
-      setError(null)
+      if (failures.length > 0) {
+        setError(`${failures.length} of ${requested} grants failed: ${failures.join('; ')}`)
+      } else {
+        setError(null)
+      }
     },
     onError: (err: Error) => setError(err.message),
   })
@@ -234,7 +314,7 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
     return subjectLabel(parsed.subjectType, parsed.subjectId)
   })
 
-  const canSubmit = !!subjectSelection && !!database && !!table && !addGrant.isPending
+  const canSubmit = !!subjectSelection && !!database && pendingTables.length > 0 && !addGrants.isPending
 
   return (
     <section style={styles.section} aria-label="Table grants">
@@ -253,6 +333,14 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
         <div style={styles.warningBanner} role="status">
           No service access: {warnedSubjects.join(', ')} — table grants are saved, but these
           subjects cannot run queries on any warehouse service yet.
+          {defaultConnectorId && (
+            <>
+              {' '}
+              <Link style={styles.warningLink} to={`/connectors?permissions=${defaultConnectorId}`}>
+                Manage service access
+              </Link>
+            </>
+          )}
         </div>
       )}
 
@@ -308,92 +396,149 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
       )}
 
       <div style={styles.addForm}>
-        <select
-          aria-label="Subject"
-          style={styles.input}
-          value={subjectSelection}
-          onChange={(e) => setSubjectSelection(e.target.value)}
-        >
-          <option value="">Select subject…</option>
-          <optgroup label="Users">
-            {members.map((m) => (
-              <option key={m.user_id} value={subjectKey('user', m.user_id)}>
-                {m.name || m.email}
-              </option>
-            ))}
-          </optgroup>
-          <optgroup label="Groups">
-            {groups
-              .filter((g) => !/^everyone$/i.test(g.name))
-              .map((g) => (
-                <option key={g.id} value={subjectKey('group', g.id)}>
-                  {groupLabel(g)}
+        <label style={styles.field}>
+          <span style={styles.fieldLabel}>Subject</span>
+          <select
+            aria-label="Subject"
+            style={styles.input}
+            value={subjectSelection}
+            onChange={(e) => setSubjectSelection(e.target.value)}
+          >
+            <option value="">Select subject…</option>
+            <optgroup label="Users">
+              {members.map((m) => (
+                <option key={m.user_id} value={subjectKey('user', m.user_id)}>
+                  {m.name || m.email}
                 </option>
               ))}
-          </optgroup>
-          <option value={subjectKey('everyone', 'everyone')}>Everyone</option>
-        </select>
+            </optgroup>
+            <optgroup label="Groups">
+              {groups
+                .filter((g) => !/^everyone$/i.test(g.name))
+                .map((g) => (
+                  <option key={g.id} value={subjectKey('group', g.id)}>
+                    {groupLabel(g)}
+                  </option>
+                ))}
+            </optgroup>
+            <option value={subjectKey('everyone', 'everyone')}>Everyone</option>
+          </select>
+        </label>
 
-        <select
-          aria-label="Connector"
-          style={styles.input}
-          value={activeConnectorId}
-          onChange={(e) => {
-            setConnectorId(e.target.value)
-            setDatabase('')
-            setTable('')
-          }}
-        >
-          {connectors.length === 0 && <option value="">No connector linked</option>}
-          {connectors.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
+        {connectors.length > 1 && (
+          <label style={styles.field}>
+            <span style={styles.fieldLabel}>Schema source</span>
+            <select
+              aria-label="Schema source"
+              style={styles.input}
+              value={activeConnectorId}
+              onChange={(e) => {
+                setConnectorId(e.target.value)
+                setDatabase('')
+              }}
+            >
+              {connectors.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
-        <select
-          aria-label="Database"
-          style={styles.input}
-          value={database}
-          disabled={!activeConnectorId || schemaLoading}
-          onChange={(e) => {
-            setDatabase(e.target.value)
-            setTable('')
-          }}
-        >
-          <option value="">{schemaLoading ? 'Loading…' : 'Database…'}</option>
-          {databases.map((db) => (
-            <option key={db} value={db}>
-              {db}
-            </option>
-          ))}
-        </select>
-
-        <select
-          aria-label="Table"
-          style={styles.input}
-          value={table}
-          disabled={!database}
-          onChange={(e) => setTable(e.target.value)}
-        >
-          <option value="">Table…</option>
-          {tables.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
+        <label style={styles.field}>
+          <span style={styles.fieldLabel}>Database</span>
+          <select
+            aria-label="Database"
+            style={styles.input}
+            value={database}
+            disabled={!activeConnectorId || schemaLoading}
+            onChange={(e) => setDatabase(e.target.value)}
+          >
+            <option value="">{schemaLoading ? 'Loading…' : 'Database…'}</option>
+            {databases.map((db) => (
+              <option key={db} value={db}>
+                {db}
+              </option>
+            ))}
+          </select>
+        </label>
 
         <button
           type="button"
           style={{ ...styles.addBtn, opacity: canSubmit ? 1 : 0.5, cursor: canSubmit ? 'pointer' : 'not-allowed' }}
           disabled={!canSubmit}
-          onClick={() => addGrant.mutate()}
+          onClick={() => addGrants.mutate()}
         >
-          {addGrant.isPending ? 'Adding…' : 'Add grant'}
+          {addGrants.isPending
+            ? 'Adding…'
+            : pendingTables.length > 1
+              ? `Add ${pendingTables.length} grants`
+              : 'Add grant'}
         </button>
       </div>
+
+      <p style={styles.hint}>
+        Grants apply to the whole warehouse regardless of service; services are controlled via
+        connector permissions (ACL).
+        {connectors.length === 1 && ` Tables are browsed from ${connectors[0].name}.`}
+      </p>
+
+      {database && (
+        <div style={styles.checklistWrap}>
+          <div style={styles.checklistHeader}>
+            <input
+              aria-label="Filter tables"
+              style={{ ...styles.input, flex: 1, minWidth: 140 }}
+              placeholder={`Filter ${tables.length} tables…`}
+              value={tableFilter}
+              onChange={(e) => setTableFilter(e.target.value)}
+            />
+            <button
+              type="button"
+              style={styles.linkBtn}
+              onClick={selectAllVisible}
+              disabled={filteredTables.every((t) => grantedTables.has(t))}
+            >
+              Select all
+            </button>
+            <button
+              type="button"
+              style={styles.linkBtn}
+              onClick={() => setCheckedTables(new Set())}
+              disabled={checkedTables.size === 0}
+            >
+              Clear
+            </button>
+            <span style={styles.checkedCount}>{checkedTables.size} selected</span>
+          </div>
+          <div style={styles.checklist} role="group" aria-label="Tables">
+            {filteredTables.map((t) => {
+              const granted = grantedTables.has(t)
+              return (
+                <label
+                  key={t}
+                  style={granted ? { ...styles.checkItem, ...styles.checkItemGranted } : styles.checkItem}
+                >
+                  <input
+                    type="checkbox"
+                    aria-label={t}
+                    checked={granted || checkedTables.has(t)}
+                    disabled={granted}
+                    onChange={() => toggleTable(t)}
+                  />
+                  <code style={styles.checkTableName}>{t}</code>
+                  {granted && <span style={styles.grantedBadge}>already granted</span>}
+                </label>
+              )
+            })}
+            {filteredTables.length === 0 && (
+              <div style={styles.empty}>No tables match this filter.</div>
+            )}
+          </div>
+        </div>
+      )}
+
       {connectors.length === 0 && (
         <p style={styles.hint}>
           Link a ClickHouse connector to this warehouse to pick tables from its schema.
@@ -452,6 +597,11 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '1px 8px',
     verticalAlign: 'middle',
   },
+  warningLink: {
+    color: 'var(--warning-text)',
+    fontWeight: 600,
+    textDecoration: 'underline',
+  },
   detail: {
     marginLeft: 8,
     fontSize: 12,
@@ -494,7 +644,83 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
     gap: 8,
+    alignItems: 'end',
+  },
+  field: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+    minWidth: 0,
+  },
+  fieldLabel: {
+    fontSize: 11,
+    fontWeight: 600,
+    color: 'var(--text-secondary)',
+  },
+  checklistWrap: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    padding: 8,
+    background: 'var(--bg-secondary)',
+  },
+  checklistHeader: {
+    display: 'flex',
     alignItems: 'center',
+    gap: 8,
+  },
+  checklist: {
+    display: 'flex',
+    flexDirection: 'column',
+    maxHeight: 220,
+    overflowY: 'auto',
+    border: '1px solid var(--border-light)',
+    borderRadius: 4,
+    background: 'var(--bg-card)',
+  },
+  checkItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '4px 10px',
+    cursor: 'pointer',
+  },
+  checkItemGranted: {
+    cursor: 'default',
+    opacity: 0.75,
+  },
+  checkTableName: {
+    fontSize: 12,
+    fontFamily: 'var(--font-mono)',
+    color: 'var(--text-primary)',
+    overflowWrap: 'anywhere' as const,
+  },
+  grantedBadge: {
+    marginLeft: 'auto',
+    fontSize: 10,
+    fontWeight: 600,
+    color: 'var(--text-muted)',
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
+    borderRadius: 10,
+    padding: '1px 8px',
+    whiteSpace: 'nowrap' as const,
+  },
+  checkedCount: {
+    fontSize: 11,
+    color: 'var(--text-muted)',
+    whiteSpace: 'nowrap' as const,
+  },
+  linkBtn: {
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    fontSize: 12,
+    fontWeight: 600,
+    color: 'var(--accent)',
+    cursor: 'pointer',
   },
   input: {
     padding: '6px 10px',

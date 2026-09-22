@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import {
   createGrant,
   getWarehouseValidation,
+  listGrants,
   listNewTables,
   type WarehouseNewTable,
   type WarehouseSubjectType,
@@ -60,6 +61,20 @@ export function NewTablesInbox({ warehouseId }: Props) {
     queryKey: ['warehouse-validation', warehouseId],
     queryFn: () => getWarehouseValidation(warehouseId),
   })
+
+  // The inbox only lists tables observed without grants, but grants can land
+  // between refreshes (or from another admin). Mark those rows as granted
+  // instead of offering a duplicate add.
+  const { data: grants = [] } = useQuery({
+    queryKey: ['warehouse-grants', warehouseId],
+    queryFn: () => listGrants(warehouseId),
+  })
+
+  const grantedTables = useMemo(() => {
+    const set = new Set<string>()
+    for (const grant of grants) set.add(`${grant.database}.${grant.table}`)
+    return set
+  }, [grants])
 
   const { data: members = [] } = useQuery({
     queryKey: ['members'],
@@ -182,6 +197,7 @@ export function NewTablesInbox({ warehouseId }: Props) {
                 const key = tableKey(table)
                 const selection = selections[key] ?? ''
                 const pending = pendingKey === key
+                const granted = grantedTables.has(key)
                 return (
                   <tr key={key} style={rowStyle}>
                     <td style={cellStyle}>
@@ -191,48 +207,54 @@ export function NewTablesInbox({ warehouseId }: Props) {
                     </td>
                     <td style={styles.mutedCell}>{formatTimestamp(table.first_seen_at)}</td>
                     <td style={styles.selectCell}>
-                      <select
-                        aria-label={`Subject for ${key}`}
-                        style={styles.input}
-                        value={selection}
-                        onChange={(e) =>
-                          setSelections((prev) => ({ ...prev, [key]: e.target.value }))
-                        }
-                      >
-                        <option value="">Select subject…</option>
-                        <optgroup label="Users">
-                          {members.map((m) => (
-                            <option key={m.user_id} value={`user:${m.user_id}`}>
-                              {m.name || m.email}
-                            </option>
-                          ))}
-                        </optgroup>
-                        <optgroup label="Groups">
-                          {groups
-                            .filter((g) => !/^everyone$/i.test(g.name))
-                            .map((g) => (
-                              <option key={g.id} value={`group:${g.id}`}>
-                                {groupLabel(g)}
+                      {granted ? (
+                        <span style={styles.grantedBadge}>already granted</span>
+                      ) : (
+                        <select
+                          aria-label={`Subject for ${key}`}
+                          style={styles.input}
+                          value={selection}
+                          onChange={(e) =>
+                            setSelections((prev) => ({ ...prev, [key]: e.target.value }))
+                          }
+                        >
+                          <option value="">Select subject…</option>
+                          <optgroup label="Users">
+                            {members.map((m) => (
+                              <option key={m.user_id} value={`user:${m.user_id}`}>
+                                {m.name || m.email}
                               </option>
                             ))}
-                        </optgroup>
-                        <option value="everyone:everyone">Everyone</option>
-                      </select>
+                          </optgroup>
+                          <optgroup label="Groups">
+                            {groups
+                              .filter((g) => !/^everyone$/i.test(g.name))
+                              .map((g) => (
+                                <option key={g.id} value={`group:${g.id}`}>
+                                  {groupLabel(g)}
+                                </option>
+                              ))}
+                          </optgroup>
+                          <option value="everyone:everyone">Everyone</option>
+                        </select>
+                      )}
                     </td>
                     <td style={styles.actionCell}>
-                      <button
-                        type="button"
-                        aria-label={`Add grant for ${key}`}
-                        style={{
-                          ...styles.addBtn,
-                          opacity: selection && !pending ? 1 : 0.5,
-                          cursor: selection && !pending ? 'pointer' : 'not-allowed',
-                        }}
-                        disabled={!selection || pending}
-                        onClick={() => addGrant.mutate({ table, selection })}
-                      >
-                        {pending ? 'Adding…' : 'Add grant'}
-                      </button>
+                      {!granted && (
+                        <button
+                          type="button"
+                          aria-label={`Add grant for ${key}`}
+                          style={{
+                            ...styles.addBtn,
+                            opacity: selection && !pending ? 1 : 0.5,
+                            cursor: selection && !pending ? 'pointer' : 'not-allowed',
+                          }}
+                          disabled={!selection || pending}
+                          onClick={() => addGrant.mutate({ table, selection })}
+                        >
+                          {pending ? 'Adding…' : 'Add grant'}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 )
@@ -313,6 +335,17 @@ const styles: Record<string, React.CSSProperties> = {
   },
   selectCell: { padding: '8px 16px', minWidth: 180 },
   actionCell: { padding: '8px 16px', width: 1, whiteSpace: 'nowrap' as const },
+  grantedBadge: {
+    display: 'inline-block',
+    fontSize: 11,
+    fontWeight: 600,
+    color: 'var(--text-muted)',
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
+    borderRadius: 10,
+    padding: '2px 8px',
+    whiteSpace: 'nowrap' as const,
+  },
   warningBanner: {
     fontSize: 12,
     color: 'var(--warning-text)',
