@@ -333,6 +333,7 @@ export interface SSOProvider {
   get_user_info: boolean
   sync_empty_groups: boolean
   strip_group_prefix: boolean
+  debug_claims: boolean
   provisioning_mode?: 'create_org' | 'join_provider_org' | 'deny'
   default_role?: 'admin' | 'non-admin' | 'viewer'
   callback_url?: string

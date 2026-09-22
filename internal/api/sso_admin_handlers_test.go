@@ -29,6 +29,7 @@ func TestPlatformAdminSSOProviderCRUD(t *testing.T) {
 		"get_user_info":      true,
 		"sync_empty_groups":  true,
 		"strip_group_prefix": true,
+		"debug_claims":       true,
 	}
 
 	// 1. Create a platform provider → 201
@@ -59,6 +60,7 @@ func TestPlatformAdminSSOProviderCRUD(t *testing.T) {
 	assert.True(t, created["get_user_info"].(bool))
 	assert.True(t, created["sync_empty_groups"].(bool))
 	assert.True(t, created["strip_group_prefix"].(bool))
+	assert.True(t, created["debug_claims"].(bool))
 
 	// 2. List providers → includes the created one
 	req = httptest.NewRequest("GET", "/api/v1/admin/sso/providers", nil)
@@ -96,6 +98,7 @@ func TestPlatformAdminSSOProviderCRUD(t *testing.T) {
 		"enabled":            true,
 		"sync_empty_groups":  true,
 		"strip_group_prefix": true,
+		"debug_claims":       false,
 	}
 	body, _ = json.Marshal(updateBody)
 	req = httptest.NewRequest("PUT", "/api/v1/admin/sso/providers/"+providerID, bytes.NewReader(body))
@@ -111,6 +114,7 @@ func TestPlatformAdminSSOProviderCRUD(t *testing.T) {
 	assert.Nil(t, updated["client_secret"], "client_secret must not be returned on update")
 	assert.True(t, updated["sync_empty_groups"].(bool))
 	assert.True(t, updated["strip_group_prefix"].(bool))
+	assert.False(t, updated["debug_claims"].(bool))
 
 	require.Equal(t, int64(0), s.Cache.Client().Exists(ctx, "sso:provider:"+providerID).Val(),
 		"update must evict the per-provider cache")

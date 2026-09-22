@@ -497,6 +497,49 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/sso/providers/{id}/debug-claims": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the latest redacted IDP payload captured for a provider while Debug claims was enabled",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sso"
+                ],
+                "summary": "Get SSO debug claims capture",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Provider ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.ssoDebugCapture"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/sso/providers/{id}/test": {
             "post": {
                 "security": [
@@ -9372,6 +9415,9 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
+                "debug_claims": {
+                    "type": "boolean"
+                },
                 "default_role": {
                     "type": "string"
                 },
@@ -9449,6 +9495,53 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.ssoDebugCapture": {
+            "type": "object",
+            "properties": {
+                "captured_at": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "granted_scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "groups_claim": {
+                    "type": "string"
+                },
+                "groups_claim_value": {},
+                "id_token_claims": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "name": {
+                    "type": "string"
+                },
+                "parsed_groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "provider_id": {
+                    "type": "string"
+                },
+                "subject": {
+                    "type": "string"
+                },
+                "user_info_claims": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "user_info_error": {
                     "type": "string"
                 }
             }
