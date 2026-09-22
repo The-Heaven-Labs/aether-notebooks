@@ -133,6 +133,13 @@ body {
   caret-color: var(--text-primary) !important;
 }
 
+/* Result-table column resize handles (OutputRenderer) */
+.col-resize-handle:hover,
+.col-resize-handle:active {
+  background: var(--accent);
+  opacity: 0.5;
+}
+
 :root {
   --text-primary: #111;
   caret-color: var(--text-primary);

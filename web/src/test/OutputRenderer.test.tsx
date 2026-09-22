@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
-import { OutputRenderer, isAnyDetailActive } from '../components/OutputRenderer'
+import { OutputRenderer, isAnyDetailActive, selectionBounds, selectionToTSV } from '../components/OutputRenderer'
 import type { Output } from '../types'
 
 const makeTableOutput = (colType: string): Output => ({
@@ -348,5 +348,260 @@ describe('OutputRenderer truncation', () => {
     await waitFor(() => expect(screen.getByText(/Truncated — 1 of 5 rows \/ 1\.0 KB/)).toBeDefined())
     expect(screen.queryByLabelText('Download full result')).toBeNull()
     expect(screen.queryByLabelText('Download as CSV')).toBeNull()
+  })
+})
+
+// ── Multi-cell selection & TSV copy ──────────────────────────────────────────
+
+describe('selection rectangle helpers', () => {
+  it('normalizes anchor/extent in any drag direction', () => {
+    expect(selectionBounds({ anchor: { row: 5, col: 4 }, extent: { row: 2, col: 1 } }))
+      .toEqual({ rowStart: 2, rowEnd: 5, colStart: 1, colEnd: 4 })
+  })
+
+  it('coerces null/undefined to empty and objects to JSON, mirroring CSV export', () => {
+    const rows: unknown[][] = [
+      [1, 'a', null, { x: 1 }],
+      [undefined, 'b', 'c', [1, 2]],
+    ]
+    expect(selectionToTSV(rows, { anchor: { row: 0, col: 0 }, extent: { row: 1, col: 3 } }))
+      .toBe('1\ta\t\t{"x":1}\n\tb\tc\t[1,2]')
+  })
+
+  it('copies embedded tabs/newlines raw, matching spreadsheet paste behavior', () => {
+    const rows: unknown[][] = [['a\tb', 'line1\nline2']]
+    expect(selectionToTSV(rows, { anchor: { row: 0, col: 0 }, extent: { row: 0, col: 1 } }))
+      .toBe('a\tb\tline1\nline2')
+  })
+})
+
+describe('TableOutput selection & TSV copy', () => {
+  const ROWS: unknown[][] = [
+    [1, 'a', null],
+    [2, 'b', { x: 1 }],
+    [3, 'c', 'z'],
+  ]
+
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 300 })
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 800 })
+  })
+  afterEach(() => {
+    delete (HTMLElement.prototype as { offsetHeight?: unknown }).offsetHeight
+    delete (HTMLElement.prototype as { offsetWidth?: unknown }).offsetWidth
+    window.getSelection()?.removeAllRanges()
+  })
+
+  function makeOutput(): Output {
+    return {
+      type: 'table',
+      data: {
+        columns: [
+          { name: 'id', type: 'int4' },
+          { name: 'name', type: 'text' },
+          { name: 'meta', type: 'jsonb' },
+        ],
+        rows: ROWS,
+      },
+    }
+  }
+
+  function cell(container: HTMLElement, row: number, col: number): HTMLElement {
+    return container.querySelector<HTMLElement>(`td[data-row="${row}"][data-col="${col}"]`)!
+  }
+
+  async function renderTable(cellId: string) {
+    const utils = render(<OutputRenderer outputs={[makeOutput()]} cellId={cellId} />)
+    await waitFor(() => expect(cell(utils.container, 0, 0)).toBeTruthy())
+    return utils
+  }
+
+  function dispatchCopy(): { event: Event; data: Record<string, string> } {
+    const data: Record<string, string> = {}
+    const event = new Event('copy', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', {
+      value: { setData: (k: string, v: string) => { data[k] = v } },
+    })
+    document.dispatchEvent(event)
+    return { event, data }
+  }
+
+  it('copies a dragged rectangle as TSV from the data model', async () => {
+    const { container } = await renderTable('cell-sel-drag')
+    fireEvent.mouseDown(cell(container, 0, 0), { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseMove(cell(container, 1, 2), { clientX: 300, clientY: 60 })
+    fireEvent.mouseUp(window)
+
+    const { event, data } = dispatchCopy()
+    expect(event.defaultPrevented).toBe(true)
+    expect(data['text/plain']).toBe('1\ta\t\n2\tb\t{"x":1}')
+  })
+
+  it('does not open the detail panel after a drag, but keeps a plain click opening it', async () => {
+    const { container } = await renderTable('cell-sel-click')
+    fireEvent.mouseDown(cell(container, 0, 0), { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseMove(cell(container, 1, 1), { clientX: 300, clientY: 60 })
+    fireEvent.mouseUp(window)
+    fireEvent.click(cell(container, 1, 1), { clientX: 300, clientY: 60 })
+    expect(screen.queryByLabelText('Copy value')).toBeNull()
+
+    fireEvent.mouseDown(cell(container, 2, 0), { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseUp(window)
+    fireEvent.click(cell(container, 2, 0))
+    await waitFor(() => expect(screen.getByLabelText('Copy value')).toBeDefined())
+  })
+
+  it('extends the selection with Shift+click', async () => {
+    const { container } = await renderTable('cell-sel-shift')
+    fireEvent.mouseDown(cell(container, 0, 0), { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseUp(window)
+    fireEvent.mouseDown(cell(container, 1, 2), { button: 0, shiftKey: true, clientX: 10, clientY: 10 })
+    fireEvent.mouseUp(window)
+
+    const { data } = dispatchCopy()
+    expect(data['text/plain']).toBe('1\ta\t\n2\tb\t{"x":1}')
+  })
+
+  it('selects the full rectangle with Ctrl+A', async () => {
+    const { container } = await renderTable('cell-sel-ctrl-a')
+    fireEvent.mouseDown(cell(container, 0, 0), { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseUp(window)
+    fireEvent.keyDown(window, { key: 'a', ctrlKey: true })
+
+    const { data } = dispatchCopy()
+    expect(data['text/plain']).toBe('1\ta\t\n2\tb\t{"x":1}\n3\tc\tz')
+  })
+
+  it('clears the selection on Escape', async () => {
+    const { container } = await renderTable('cell-sel-escape')
+    fireEvent.mouseDown(cell(container, 0, 0), { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseUp(window)
+    fireEvent.keyDown(window, { key: 'Escape' })
+
+    const { event, data } = dispatchCopy()
+    expect(event.defaultPrevented).toBe(false)
+    expect(data['text/plain']).toBeUndefined()
+  })
+
+  it('drops the selection when the sort order changes', async () => {
+    const { container } = await renderTable('cell-sel-sort')
+    fireEvent.mouseDown(cell(container, 0, 0), { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseUp(window)
+
+    fireEvent.click(container.querySelectorAll('thead th')[1])
+
+    const { event, data } = dispatchCopy()
+    expect(event.defaultPrevented).toBe(false)
+    expect(data['text/plain']).toBeUndefined()
+  })
+
+  it('only the last-interacted table responds to selection shortcuts', async () => {
+    const { container } = render(
+      <>
+        <OutputRenderer outputs={[{ type: 'table', data: { columns: [{ name: 'a', type: 'text' }], rows: [['a1'], ['a2']] } }]} />
+        <OutputRenderer outputs={[{ type: 'table', data: { columns: [{ name: 'b', type: 'text' }], rows: [['b1'], ['b2']] } }]} />
+      </>,
+    )
+    await waitFor(() => expect(container.querySelectorAll('td[data-row="0"][data-col="0"]').length).toBe(2))
+    const tables = container.querySelectorAll<HTMLElement>('.output-scroll-area')
+    const cellIn = (tableIndex: number, row: number, col: number) =>
+      tables[tableIndex].querySelector<HTMLElement>(`td[data-row="${row}"][data-col="${col}"]`)!
+
+    fireEvent.mouseDown(cellIn(0, 0, 0), { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseUp(window)
+    fireEvent.mouseDown(cellIn(1, 0, 0), { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseUp(window)
+
+    fireEvent.keyDown(window, { key: 'a', ctrlKey: true })
+
+    const calls: string[] = []
+    const event = new Event('copy', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', {
+      value: { setData: (_k: string, v: string) => { calls.push(v) } },
+    })
+    document.dispatchEvent(event)
+    expect(calls).toEqual(['b1\nb2'])
+  })
+})
+
+// ── Column resizing ──────────────────────────────────────────────────────────
+
+describe('TableOutput column resize', () => {
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 300 })
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 800 })
+  })
+  afterEach(() => {
+    delete (HTMLElement.prototype as { offsetHeight?: unknown }).offsetHeight
+    delete (HTMLElement.prototype as { offsetWidth?: unknown }).offsetWidth
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  })
+
+  async function renderTable(cellId: string, rows: unknown[][] = [['b'], ['a']]) {
+    const utils = render(
+      <OutputRenderer
+        outputs={[{ type: 'table', data: { columns: [{ name: 'val', type: 'string' }], rows } }]}
+        cellId={cellId}
+      />,
+    )
+    await waitFor(() => expect(utils.container.querySelector('td[data-row="0"][data-col="0"]')).toBeTruthy())
+    return utils
+  }
+
+  function headerWidth(container: HTMLElement): string {
+    return (container.querySelectorAll('thead th')[1] as HTMLElement).style.width
+  }
+
+  it('resizes a column by dragging its handle and keeps the body aligned', async () => {
+    const { container } = await renderTable('cell-col-resize')
+    const handle = screen.getByLabelText('Resize column val')
+    fireEvent.mouseDown(handle, { clientX: 100 })
+    fireEvent.mouseMove(window, { clientX: 160 })
+    fireEvent.mouseUp(window)
+
+    await waitFor(() => expect(headerWidth(container)).toBe('200px'))
+    await waitFor(() =>
+      expect((container.querySelector('td[data-row="0"][data-col="0"]') as HTMLElement).style.width).toBe('200px'),
+    )
+  })
+
+  it('clamps the width to the minimum and maximum', async () => {
+    const { container } = await renderTable('cell-col-clamp')
+    const handle = screen.getByLabelText('Resize column val')
+
+    fireEvent.mouseDown(handle, { clientX: 100 })
+    fireEvent.mouseMove(window, { clientX: -500 })
+    fireEvent.mouseUp(window)
+    await waitFor(() => expect(headerWidth(container)).toBe('60px'))
+
+    fireEvent.mouseDown(handle, { clientX: 100 })
+    fireEvent.mouseMove(window, { clientX: 5000 })
+    fireEvent.mouseUp(window)
+    await waitFor(() => expect(headerWidth(container)).toBe('600px'))
+  })
+
+  it('resets the width to the default on double-click', async () => {
+    const { container } = await renderTable('cell-col-reset')
+    const handle = screen.getByLabelText('Resize column val')
+    fireEvent.mouseDown(handle, { clientX: 100 })
+    fireEvent.mouseMove(window, { clientX: 200 })
+    fireEvent.mouseUp(window)
+    await waitFor(() => expect(headerWidth(container)).toBe('240px'))
+
+    fireEvent.doubleClick(handle)
+    await waitFor(() => expect(headerWidth(container)).toBe('140px'))
+  })
+
+  it('does not toggle sorting when the handle is clicked', async () => {
+    const { container } = await renderTable('cell-col-sort')
+    const firstCell = () => container.querySelector('td[data-row="0"][data-col="0"]')!.textContent
+    expect(firstCell()).toBe('b')
+
+    fireEvent.click(screen.getByLabelText('Resize column val'))
+    expect(firstCell()).toBe('b')
+
+    fireEvent.click(container.querySelectorAll('thead th')[1])
+    await waitFor(() => expect(firstCell()).toBe('a'))
   })
 })
