@@ -2,10 +2,11 @@ import { useState, useEffect, useId } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
-import { api } from '../api/client'
+import { api, ApiError } from '../api/client'
 import { Loader2, CheckCircle2, XCircle } from 'lucide-react'
-import type { SSOProvider, PlatformSSOProvider, SSOSettings } from '../types'
+import type { SSOProvider, PlatformSSOProvider, SSOSettings, SSODebugCapture } from '../types'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { DebugClaimsPanel } from '../components/SSODebugClaimsPanel'
 
 // ─── Provider form state ────────────────────────────────────────────────────
 
@@ -23,6 +24,7 @@ interface ProviderFormValues {
   get_user_info: boolean
   sync_empty_groups: boolean
   strip_group_prefix: boolean
+  debug_claims: boolean
   provisioning_mode: 'create_org' | 'join_provider_org' | 'deny'
   default_role: 'admin' | 'non-admin' | 'viewer'
 }
@@ -41,6 +43,7 @@ const emptyForm: ProviderFormValues = {
   get_user_info: false,
   sync_empty_groups: false,
   strip_group_prefix: false,
+  debug_claims: false,
   provisioning_mode: 'create_org',
   default_role: 'non-admin',
 }
@@ -60,6 +63,7 @@ function providerToForm(p: SSOProvider): ProviderFormValues {
     get_user_info: p.get_user_info ?? false,
     sync_empty_groups: p.sync_empty_groups ?? false,
     strip_group_prefix: p.strip_group_prefix ?? false,
+    debug_claims: p.debug_claims ?? false,
     provisioning_mode: p.provisioning_mode ?? 'create_org',
     default_role: p.default_role ?? 'non-admin',
   }
@@ -85,12 +89,13 @@ function ProviderForm({
   const [values, setValues] = useState<ProviderFormValues>(initial)
   const syncEmptyGroupsId = useId()
   const stripGroupPrefixId = useId()
+  const debugClaimsId = useId()
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [testing, setTesting] = useState(false)
 
   const set = (field: keyof ProviderFormValues) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-      setValues(v => ({ ...v, [field]: field === 'enabled' || field === 'auto_sync_groups' || field === 'get_user_info' || field === 'sync_empty_groups' || field === 'strip_group_prefix' ? (e.target as HTMLInputElement).checked : e.target.value }))
+      setValues(v => ({ ...v, [field]: field === 'enabled' || field === 'auto_sync_groups' || field === 'get_user_info' || field === 'sync_empty_groups' || field === 'strip_group_prefix' || field === 'debug_claims' ? (e.target as HTMLInputElement).checked : e.target.value }))
 
   return (
     <div style={formStyles.container}>
@@ -175,6 +180,15 @@ function ProviderForm({
           </label>
           <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: 11 }}>
             Requires Group Prefix. Stores names without the prefix (Aether Notebooks: Area → Area); filtering still uses the prefix.
+          </span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label htmlFor={debugClaimsId} style={{ ...formStyles.label, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <input id={debugClaimsId} type="checkbox" checked={values.debug_claims} onChange={set('debug_claims')} />
+            Debug Claims
+          </label>
+          <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: 11 }}>
+            Capture the redacted IDP payload (claims, granted scopes, group-claim parsing) from the next login. Kept for 1 hour; token material is never captured. View it from the provider row.
           </span>
         </div>
         <label style={formStyles.label}>
@@ -362,6 +376,23 @@ export function OrgSettingsPage() {
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
   const [createdProvider, setCreatedProvider] = useState<SSOProvider | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [debugCaptureId, setDebugCaptureId] = useState<string | null>(null)
+
+  // Latest-wins capture written by the callback while debug_claims is on; a 404
+  // means no login has happened since it was enabled.
+  const debugCapture = useQuery({
+    queryKey: ['sso', 'debug-claims', debugCaptureId],
+    queryFn: async () => {
+      try {
+        return await api.get<SSODebugCapture>(`/api/v1/sso/providers/${debugCaptureId}/debug-claims`)
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return null
+        throw e
+      }
+    },
+    enabled: !!debugCaptureId,
+    retry: false,
+  })
 
   async function copyText(text: string, key?: string) {
     try { await navigator.clipboard.writeText(text) } catch { /* ignore clipboard errors */ }
@@ -529,6 +560,7 @@ export function OrgSettingsPage() {
       get_user_info: values.get_user_info,
       sync_empty_groups: values.sync_empty_groups,
       strip_group_prefix: values.strip_group_prefix,
+      debug_claims: values.debug_claims,
       provisioning_mode: values.provisioning_mode,
       default_role: values.default_role,
     }
@@ -552,6 +584,7 @@ export function OrgSettingsPage() {
       get_user_info: values.get_user_info,
       sync_empty_groups: values.sync_empty_groups,
       strip_group_prefix: values.strip_group_prefix,
+      debug_claims: values.debug_claims,
       provisioning_mode: values.provisioning_mode,
       default_role: values.default_role,
     }
@@ -914,6 +947,14 @@ const formInput: React.CSSProperties = {
                       >
                         Edit
                       </button>
+                      {p.debug_claims && (
+                        <button
+                          style={styles.iconBtn}
+                          onClick={() => setDebugCaptureId(debugCaptureId === p.id ? null : p.id)}
+                        >
+                          {debugCaptureId === p.id ? 'Hide Debug' : 'Debug Claims'}
+                        </button>
+                      )}
                       {confirmDeleteId === p.id ? (
                         <>
                           <button
@@ -945,6 +986,14 @@ const formInput: React.CSSProperties = {
                       onCancel={() => { setEditingId(null); setFormError(null) }}
                       saving={updateProvider.isPending}
                       error={formError}
+                    />
+                  )}
+                  {debugCaptureId === p.id && (
+                    <DebugClaimsPanel
+                      provider={p}
+                      capture={debugCapture.data ?? null}
+                      loading={debugCapture.isLoading}
+                      error={debugCapture.error ? String(debugCapture.error) : null}
                     />
                   )}
                 </div>

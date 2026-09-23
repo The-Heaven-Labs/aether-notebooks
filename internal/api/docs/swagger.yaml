@@ -5526,6 +5526,40 @@ paths:
       summary: Update org SSO provider
       tags:
       - sso
+  /sso/providers/{id}/debug-claims:
+    get:
+      description: Returns the latest redacted IDP payload captured for an org-scoped
+        provider while Debug claims was enabled
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.ssoDebugCapture'
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get org SSO debug claims capture
+      tags:
+      - sso
   /sso/providers/test:
     post:
       consumes:

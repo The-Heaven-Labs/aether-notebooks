@@ -594,6 +594,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/sso/providers", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgCreateSSOProvider))))
 	s.mux.Handle("PUT /api/v1/sso/providers/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgUpdateSSOProvider))))
 	s.mux.Handle("DELETE /api/v1/sso/providers/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgDeleteSSOProvider))))
+	s.mux.Handle("GET /api/v1/sso/providers/{id}/debug-claims", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgGetSSODebugClaims))))
 	s.mux.Handle("GET /api/v1/sso/platform-providers", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgListPlatformProviders))))
 	s.mux.Handle("POST /api/v1/sso/platform-providers/{id}/enable", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgEnablePlatformProvider))))
 	s.mux.Handle("DELETE /api/v1/sso/platform-providers/{id}/enable", authMW(RequireRole("admin")(http.HandlerFunc(s.handleOrgDisablePlatformProvider))))

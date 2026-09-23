@@ -7631,6 +7631,58 @@
                 }
             }
         },
+        "/sso/providers/{id}/debug-claims": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the latest redacted IDP payload captured for an org-scoped provider while Debug claims was enabled",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sso"
+                ],
+                "summary": "Get org SSO debug claims capture",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Provider ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.ssoDebugCapture"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/sso/settings": {
             "get": {
                 "security": [

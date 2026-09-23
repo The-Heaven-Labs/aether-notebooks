@@ -352,6 +352,23 @@ export interface PlatformSSOProvider extends SSOProvider {
   enabled_for_org: boolean
 }
 
+// Redacted IDP payload captured while a provider's Debug Claims flag is on.
+// Token strings are stripped server-side; claim JSON is served as-is.
+export interface SSODebugCapture {
+  captured_at: string
+  provider_id: string
+  subject: string
+  email: string
+  name: string
+  granted_scopes: string[] | null
+  id_token_claims: Record<string, unknown> | null
+  user_info_claims?: Record<string, unknown> | null
+  user_info_error?: string
+  groups_claim: string
+  groups_claim_value?: unknown
+  parsed_groups: string[] | null
+}
+
 export interface SSOSettings {
   sso_password_login: boolean
 }

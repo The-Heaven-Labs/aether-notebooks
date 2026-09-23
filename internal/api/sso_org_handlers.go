@@ -269,6 +269,55 @@ func (s *Server) handleOrgDeleteSSOProvider(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// @Summary Get org SSO debug claims capture
+// @Description Returns the latest redacted IDP payload captured for an org-scoped provider while Debug claims was enabled
+// @Tags sso
+// @Produce json
+// @Param id path string true "Provider ID"
+// @Success 200 {object} ssoDebugCapture
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /sso/providers/{id}/debug-claims [get]
+func (s *Server) handleOrgGetSSODebugClaims(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	id := r.PathValue("id")
+
+	// Only org-scoped providers owned by the caller's org are inspectable here.
+	// Platform-provider captures are shared across orgs, so they stay platform-admin only.
+	var scope string
+	var orgID *string
+	err := s.db.Pool.QueryRow(r.Context(), `SELECT scope, org_id FROM sso_providers WHERE id = $1`, id).Scan(&scope, &orgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "provider not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load provider")
+		return
+	}
+	if scope != "org" || orgID == nil || *orgID != claims.OrgID {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	capture, err := s.loadSSODebugCapture(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load debug claims capture")
+		return
+	}
+	if capture == nil {
+		writeError(w, http.StatusNotFound, "no capture yet — enable Debug claims on this provider, then have a user log in")
+		return
+	}
+
+	s.audit.Log(r.Context(), audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "sso.debug_claims.view", ResourceType: "sso_provider", ResourceID: id,
+	})
+
+	writeJSON(w, http.StatusOK, capture)
+}
+
 // @Summary List platform SSO providers
 // @Description List all platform-scoped SSO providers with enabled_for_org status
 // @Tags sso

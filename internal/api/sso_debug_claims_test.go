@@ -47,6 +47,14 @@ func newSSODebugTestServer(t *testing.T) *Server {
 
 func seedSSODebugProvider(t *testing.T, s *Server, debug bool) string {
 	t.Helper()
+	id, _ := seedSSODebugOrgProvider(t, s, debug)
+	return id
+}
+
+// seedSSODebugOrgProvider inserts an org plus an org-scoped provider in it,
+// returning both IDs.
+func seedSSODebugOrgProvider(t *testing.T, s *Server, debug bool) (string, string) {
+	t.Helper()
 	ctx := context.Background()
 	var orgID string
 	require.NoError(t, s.db.Pool.QueryRow(ctx,
@@ -66,7 +74,7 @@ func seedSSODebugProvider(t *testing.T, s *Server, debug bool) string {
 		s.db.Pool.Exec(ctx, `DELETE FROM orgs WHERE id=$1`, orgID)
 		s.Cache.Client().Del(ctx, ssoDebugClaimsKey(id))
 	})
-	return id
+	return id, orgID
 }
 
 // seedSSODebugAdmin inserts a user and returns a platform-admin token for it.
@@ -82,6 +90,23 @@ func seedSSODebugAdmin(t *testing.T, s *Server) string {
 		s.db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1`, userID)
 	})
 	token, err := s.jwt.IssuePlatformAdmin(userID, uuid.NewString(), "admin")
+	require.NoError(t, err)
+	return token
+}
+
+// seedSSODebugOrgAdmin inserts a user and returns an org-admin token scoped to orgID.
+func seedSSODebugOrgAdmin(t *testing.T, s *Server, orgID string) string {
+	t.Helper()
+	userID := uuid.NewString()
+	_, err := s.db.Pool.Exec(context.Background(),
+		`INSERT INTO users (id, email, name) VALUES ($1, $2, $3)`,
+		userID, "sso-debug-"+userID+"@test.local", "SSO Debug Org Admin",
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		s.db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1`, userID)
+	})
+	token, err := s.jwt.Issue(userID, orgID, "admin")
 	require.NoError(t, err)
 	return token
 }
@@ -213,4 +238,84 @@ func TestAdminGetSSODebugClaims(t *testing.T) {
 	require.NoError(t, err)
 	rec = get(orgAdminToken, providerID)
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+}
+
+func TestOrgGetSSODebugClaims(t *testing.T) {
+	s := newSSODebugTestServer(t)
+	ctx := context.Background()
+	providerID, orgID := seedSSODebugOrgProvider(t, s, true)
+	otherProviderID, otherOrgID := seedSSODebugOrgProvider(t, s, true)
+
+	// A platform-scoped provider is never inspectable through the org route.
+	var platformProviderID string
+	require.NoError(t, s.db.Pool.QueryRow(ctx,
+		`INSERT INTO sso_providers (scope, name, provider_type, client_id, client_secret_enc, discovery_url, allowed_domains, enabled, scopes, groups_claim, debug_claims)
+		 VALUES ('platform', $1, 'oidc', 'client', 'deadbeef', 'https://idp.example.com', '{}', true, '{}', 'groups', true)
+		 RETURNING id`,
+		"sso-debug-platform-"+uuid.NewString(),
+	).Scan(&platformProviderID))
+	t.Cleanup(func() {
+		s.db.Pool.Exec(ctx, `DELETE FROM sso_providers WHERE id=$1`, platformProviderID)
+		s.Cache.Client().Del(ctx, ssoDebugClaimsKey(platformProviderID))
+	})
+
+	adminToken := seedSSODebugOrgAdmin(t, s, orgID)
+	otherAdminToken := seedSSODebugOrgAdmin(t, s, otherOrgID)
+
+	get := func(token string, id string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/api/v1/sso/providers/"+id+"/debug-claims", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// No capture yet → 404.
+	rec := get(adminToken, providerID)
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+
+	// Unknown provider → 404.
+	rec = get(adminToken, uuid.NewString())
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+
+	// Another org's provider → 403.
+	rec = get(otherAdminToken, providerID)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	rec = get(adminToken, otherProviderID)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+	// Platform providers stay platform-admin only → 403.
+	rec = get(adminToken, platformProviderID)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+	s.storeSSODebugCapture(ctx, providerID, &auth.OIDCClaims{
+		Subject: "user-1",
+		Email:   "alice@example.com",
+		Debug: &auth.OIDCExchangeDebug{
+			GroupsClaim:      "groups",
+			RawIDTokenClaims: map[string]any{"email": "alice@example.com", "access_token": "nope"},
+			GrantedScopes:    []string{"openid"},
+			ParsedGroups:     []string{"aether-analysts"},
+		},
+	})
+
+	// Owning org admin → 200 with the redacted capture.
+	rec = get(adminToken, providerID)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var got map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&got))
+	assert.Equal(t, "user-1", got["subject"])
+	assert.Equal(t, []any{"aether-analysts"}, got["parsed_groups"])
+	idClaims, ok := got["id_token_claims"].(map[string]any)
+	require.True(t, ok)
+	_, hasToken := idClaims["access_token"]
+	assert.False(t, hasToken, "access_token must not be served")
+
+	// Viewing is audit-logged against the org.
+	var count int
+	require.NoError(t, s.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM audit_logs WHERE action='sso.debug_claims.view' AND resource_id=$1 AND org_id=$2`,
+		providerID, orgID,
+	).Scan(&count))
+	assert.Equal(t, 1, count)
 }
