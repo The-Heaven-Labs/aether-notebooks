@@ -932,3 +932,82 @@ func TestMigration114SchemaSnapshots(t *testing.T) {
 		t.Fatalf("schema_snapshots rows after connector delete = %d, want 0", remaining)
 	}
 }
+
+func TestMigration119GroupSource(t *testing.T) {
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+	}
+
+	db, err := database.Connect(context.Background(), dsn, "")
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	var dataType, nullable string
+	var def *string
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT data_type, is_nullable, column_default
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'groups' AND column_name = 'source'`).
+		Scan(&dataType, &nullable, &def); err != nil {
+		t.Fatalf("groups.source missing: %v", err)
+	}
+	if dataType != "text" || nullable != "NO" || def == nil || *def != "'manual'::text" {
+		t.Fatalf("groups.source = (%s, nullable=%s, default=%v), want (text, NO, 'manual'::text)", dataType, nullable, def)
+	}
+
+	var checkCount int
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM information_schema.table_constraints
+		WHERE table_schema = 'public' AND table_name = 'groups'
+		  AND constraint_name = 'groups_source_check' AND constraint_type = 'CHECK'`).Scan(&checkCount); err != nil {
+		t.Fatalf("groups_source_check lookup: %v", err)
+	}
+	if checkCount != 1 {
+		t.Fatalf("groups_source_check constraint count = %d, want 1", checkCount)
+	}
+
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var orgID string
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO orgs (name, slug) VALUES ('V119 Group Source Org', 'v119-group-source-org') RETURNING id::text`).Scan(&orgID); err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+
+	var source string
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO groups (org_id, name) VALUES ($1, 'V119 Default Group') RETURNING source`, orgID).Scan(&source); err != nil {
+		t.Fatalf("default group insert: %v", err)
+	}
+	if source != "manual" {
+		t.Fatalf("groups.source default = %q, want manual", source)
+	}
+
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		t.Fatalf("savepoint: %v", err)
+	}
+	_, err = sp.Exec(ctx,
+		`INSERT INTO groups (org_id, name, source) VALUES ($1, 'V119 Bad Group', 'bogus')`, orgID)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Fatalf("invalid source insert = %v, want SQLSTATE 23514", err)
+	}
+	if err := sp.Rollback(ctx); err != nil {
+		t.Fatalf("rollback savepoint: %v", err)
+	}
+}
