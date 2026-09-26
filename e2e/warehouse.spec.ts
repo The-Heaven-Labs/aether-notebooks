@@ -101,7 +101,9 @@ test.describe('ClickHouse warehouse permissions', () => {
       // Create a warehouse from the UI, then link the connector and assign it
       // as provisioner through the expanded card.
       await page.goto('/warehouses')
-      await page.getByRole('button', { name: '+ New Warehouse' }).click()
+      // Both the section header and the empty state render a "+ New
+      // Warehouse" button; pick the header one deterministically.
+      await page.getByRole('button', { name: '+ New Warehouse' }).first().click()
       await page.getByPlaceholder('Analytics Warehouse').fill(whName)
       await page.getByRole('button', { name: 'Create', exact: true }).click()
 
