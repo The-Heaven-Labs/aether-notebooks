@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/chaccess"
+	"github.com/the-heaven-labs/aether/internal/executor"
 )
 
 // The provisioner execution override defaults to off and is part of the
@@ -85,4 +87,53 @@ func TestUpdateWarehouseTogglesAllowProvisionerExecution(t *testing.T) {
 
 	// An empty body is still rejected.
 	require.Equal(t, http.StatusBadRequest, put(`{}`).Code)
+}
+
+// A provisioner connector must fail closed for user execution, and must never
+// be reported as unmanaged (which would mean the stored-credential path).
+func TestResolveExecutionTargetBlocksProvisionerByDefault(t *testing.T) {
+	s, key := newWarehouseSyncTestServer(t)
+	fx := seedWarehouseFixtureRows(t, s, key)
+
+	_, err := s.resolveExecutionTarget(context.Background(), fx.userID, fx.connectorID, false)
+	require.ErrorIs(t, err, executor.ErrProvisionerNotExecutable)
+	require.NotErrorIs(t, err, executor.ErrUnmanagedConnector)
+}
+
+// With the override on and managed mode enabled, the provisioner resolves as a
+// normal managed service: per-user identity, never the stored credential.
+func TestResolveExecutionTargetAllowsProvisionerWhenEnabled(t *testing.T) {
+	s, key := newWarehouseSyncTestServer(t)
+	fx := seedWarehouseFixtureRows(t, s, key)
+	ctx := context.Background()
+
+	_, err := s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET sync_status = 'ready', allow_provisioner_execution = true WHERE id = $1`,
+		fx.warehouseID.String())
+	require.NoError(t, err)
+	grantConnectorUse(t, s, fx.orgID, fx.userID, fx.connectorID)
+
+	target, err := s.resolveExecutionTarget(ctx, fx.userID, fx.connectorID, false)
+	require.NoError(t, err)
+	require.Equal(t, fx.connectorID, target.ConnectorID)
+	require.Equal(t, chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID), target.CHUser)
+	require.NotEqual(t, "dev", target.Config.Password,
+		"the provisioner's stored credential must never reach execution")
+}
+
+// The override cannot unblock the kill-switch-off stored-credential fallback.
+func TestResolveExecutionTargetBlocksProvisionerWhenKillSwitchOff(t *testing.T) {
+	s, key := newWarehouseSyncTestServer(t)
+	s.SetCHTablePermissions(false)
+	fx := seedWarehouseFixtureRows(t, s, key)
+	ctx := context.Background()
+
+	_, err := s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET allow_provisioner_execution = true WHERE id = $1`,
+		fx.warehouseID.String())
+	require.NoError(t, err)
+
+	_, err = s.resolveExecutionTarget(ctx, fx.userID, fx.connectorID, false)
+	require.ErrorIs(t, err, executor.ErrProvisionerNotExecutable)
+	require.NotErrorIs(t, err, executor.ErrUnmanagedConnector)
 }

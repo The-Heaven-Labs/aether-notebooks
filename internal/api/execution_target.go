@@ -26,6 +26,10 @@ type warehouseService struct {
 	encrypted      []byte
 	maxRows        int
 	timeoutSeconds int
+	isProvisioner  bool
+	// allowProvisionerExecution is the warehouse's admin override; meaningful
+	// only when isProvisioner is true.
+	allowProvisionerExecution bool
 }
 
 // resolveExecutionTarget implements the routing rules:
@@ -52,6 +56,16 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, r
 	requested, requestedWarehouseID, err := s.loadServiceConnector(ctx, requestedConnectorID)
 	if err != nil {
 		return nil, err
+	}
+	// A warehouse provisioner is reserved for the reconcile worker. Fail
+	// closed before the kill-switch fallback: user execution may only proceed
+	// through managed routing when the admin override is on, management is
+	// enabled, and the connector's warehouse link is intact.
+	if requested.isProvisioner &&
+		(!requested.allowProvisionerExecution || !s.warehouseManagementEnabled() || requestedWarehouseID == nil) {
+		slog.Warn("blocked execution through warehouse provisioner connector",
+			"connector_id", requestedConnectorID.String(), "user_id", userID.String())
+		return nil, fmt.Errorf("connector %s: %w", requestedConnectorID, executor.ErrProvisionerNotExecutable)
 	}
 	if !s.warehouseManagementEnabled() {
 		return nil, fmt.Errorf("connector %s: per-user ClickHouse table permissions are disabled: %w",
@@ -185,14 +199,18 @@ func (s *Server) loadServiceConnector(ctx context.Context, connectorID uuid.UUID
 	var svc warehouseService
 	var warehouseID *uuid.UUID
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT c.id, c.name, c.config_encrypted, c.max_rows, c.timeout_seconds, c.warehouse_id
+		SELECT c.id, c.name, c.config_encrypted, c.max_rows, c.timeout_seconds, c.warehouse_id,
+		       (wprov.id IS NOT NULL) AS is_provisioner,
+		       COALESCE(wprov.allow_provisioner_execution, false) AS allow_provisioner_execution
 		FROM connectors c
 		LEFT JOIN warehouses w ON w.id = c.warehouse_id
+		LEFT JOIN warehouses wprov ON wprov.provisioner_connector_id = c.id
 		WHERE c.id = $1
 		  AND c.deleted_at IS NULL
 		  AND c.type = 'clickhouse'
 		  AND (c.warehouse_id IS NULL OR w.org_id = c.org_id)`, connectorID.String()).
-		Scan(&svc.id, &svc.name, &svc.encrypted, &svc.maxRows, &svc.timeoutSeconds, &warehouseID)
+		Scan(&svc.id, &svc.name, &svc.encrypted, &svc.maxRows, &svc.timeoutSeconds,
+			&warehouseID, &svc.isProvisioner, &svc.allowProvisionerExecution)
 	if errors.Is(err, pgx.ErrNoRows) {
 		s.warnRejectedConnectorLink(ctx, connectorID)
 		return warehouseService{}, nil, fmt.Errorf("connector %s: %w: %w",

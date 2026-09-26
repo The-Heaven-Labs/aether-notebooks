@@ -37,6 +37,13 @@ var (
 	// linked across org boundaries. Where the underlying cause is a missing
 	// row, the returned error also wraps pgx.ErrNoRows.
 	ErrConnectorNotFound = errors.New("execution connector not found")
+
+	// ErrProvisionerNotExecutable reports a connector that is its warehouse's
+	// provisioner. The provisioner credential is reserved for the reconcile
+	// worker; user-facing execution must fail closed instead of falling back
+	// to the stored credential. Org admins can opt a warehouse into managed
+	// execution through warehouses.allow_provisioner_execution.
+	ErrProvisionerNotExecutable = errors.New("warehouse provisioner cannot execute user queries")
 )
 
 // ServiceChoice is one selectable service in a ServiceChoiceError, carrying
