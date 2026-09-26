@@ -35,7 +35,7 @@ func normalizeDisplayName(v *string) *string {
 // @Description List all groups in the organization
 // @Tags groups
 // @Produce json
-// @Success 200 {array} object
+// @Success 200 {array} models.Group
 // @Failure 401 {object} map[string]string
 // @Security BearerAuth
 // @Router /groups [get]
@@ -93,7 +93,7 @@ func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 // @Accept json
 // @Produce json
 // @Param request body object true "Group details"
-// @Success 201 {object} object
+// @Success 201 {object} models.Group
 // @Failure 400 {object} map[string]string
 // @Security BearerAuth
 // @Router /groups [post]
@@ -143,7 +143,7 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 // @Produce json
 // @Param id path string true "Group ID"
 // @Param request body object true "Group updates"
-// @Success 200 {object} object
+// @Success 200 {object} models.Group
 // @Failure 400 {object} map[string]string
 // @Failure 404 {object} map[string]string
 // @Security BearerAuth

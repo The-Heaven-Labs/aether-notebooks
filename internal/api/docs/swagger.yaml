@@ -409,6 +409,23 @@ definitions:
           type: string
         type: object
     type: object
+  models.Group:
+    properties:
+      created_at:
+        type: string
+      display_name:
+        type: string
+      id:
+        type: string
+      member_count:
+        type: integer
+      name:
+        type: string
+      org_id:
+        type: string
+      source:
+        type: string
+    type: object
   models.JSONMap:
     additionalProperties: {}
     type: object
@@ -2972,7 +2989,7 @@ paths:
           description: OK
           schema:
             items:
-              type: object
+              $ref: '#/definitions/models.Group'
             type: array
         "401":
           description: Unauthorized
@@ -3002,7 +3019,7 @@ paths:
         "201":
           description: Created
           schema:
-            type: object
+            $ref: '#/definitions/models.Group'
         "400":
           description: Bad Request
           schema:
@@ -3059,7 +3076,7 @@ paths:
         "200":
           description: OK
           schema:
-            type: object
+            $ref: '#/definitions/models.Group'
         "400":
           description: Bad Request
           schema:
