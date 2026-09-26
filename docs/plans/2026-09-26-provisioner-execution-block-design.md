@@ -64,7 +64,8 @@ warehouse row is the single source of truth; no connector state is duplicated.
 | Mode | Provisioner behavior |
 |---|---|
 | Warehouse management enabled (`AETHER_CH_TABLE_PERMISSIONS=true`), override **off** | Blocked on every user-facing path; excluded from service lists, `can_use`, and preferences. |
-| Management enabled, override **on** | Usable as a normal managed service: routed per-user identity through the connection pool, table grants enforced. Introspection endpoints (`/test`, `/schema`, `/databases`) stay blocked because they use the stored credential. |
+| Management enabled, override **on** | Usable as a normal managed service: routed per-user identity through the connection pool, table grants enforced. |
+| Introspection endpoints (`/test`, `/schema`, `/databases`) | Always blocked for everyone; org admins keep access (they use the stored credential) so the warehouse grant-management table browser keeps working when the provisioner is a warehouse's only linked connector. |
 | Management disabled (kill switch off) | Blocked regardless of the override — managed execution does not exist, and the stored-credential fallback must never run with the provisioner credential. |
 | Worker (`reconcileWarehouse`, `detectWarehouseDrift`, `dropWarehouseIdentitiesLocked`) | Unaffected: raw clickhouse-go connection from the decrypted provisioner config, never the executor/HTTP path. |
 
@@ -84,8 +85,12 @@ warehouse row is the single source of truth; no connector state is duplicated.
   sentinel to a tool-facing message. All agent tools (`execute_sql`, `sql_query`, `run_cell`,
   `create_cell(run=true)`, `explore_schema`) and the MCP endpoint share these handlers.
 - **Introspection**: `/connectors/{id}/test`, `/schema`, `/databases`
-  (`internal/api/connector_handlers.go`) reject provisioner connectors (403 / `{ok:false}`),
-  independent of the override; blocked attempts log a warning.
+  (`internal/api/connector_handlers.go`) reject provisioner connectors for non-admins
+  (403 / `{ok:false}`) independent of the override; org admins (`claims.Role == "admin"`) keep
+  access and bypass the connector `use` check for this case, matching the `RequireRole("admin")`
+  warehouse routes. Blocked attempts log a warning.
+- **UI coupling**: `WarehouseTableGrants` intentionally prefers the provisioner for schema
+  browsing; no change needed now that admins retain introspection.
 - **Listing/routing**: `listWarehouseServices` (`internal/api/execution_target.go:245`) excludes
   the provisioner unless the override is on. This fixes routing, `effective-access`,
   stale-preference handling, and grant warnings in one place.
@@ -117,8 +122,8 @@ warehouse row is the single source of truth; no connector state is duplicated.
 - Routing matrix: kill switch on/off × override on/off; assert
   `ErrProvisionerNotExecutable` vs managed target, and that kill-switch-off provisioner never
   reaches `ErrUnmanagedConnector`.
-- `handleExecuteCell` 403; agent error mapping; introspection endpoints blocked with override
-  both off and on.
+- `handleExecuteCell` 403; agent error mapping; introspection endpoints blocked for
+  non-admin callers (override both off and on) and still allowed for org admins.
 - Service list / `effective-access` / preference rejection; `handleListConnectors` fields;
   warehouse update persistence + audit.
 - Existing suite must stay green (`task check`), plus frontend `tsc --noEmit`, web and relay
