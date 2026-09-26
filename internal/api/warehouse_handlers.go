@@ -228,10 +228,8 @@ func (s *Server) handleListWarehouses(w http.ResponseWriter, r *http.Request) {
 
 	warehouses := []warehouseJSON{}
 	for rows.Next() {
-		var wh warehouseJSON
-		if err := rows.Scan(&wh.ID, &wh.OrgID, &wh.Name, &wh.ProvisionerConnectorID,
-			&wh.AllowProvisionerExecution, &wh.SyncStatus, &wh.SyncError,
-			&wh.LastSyncedAt, &wh.CreatedAt, &wh.UpdatedAt); err != nil {
+		wh, err := scanWarehouseRow(rows)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}

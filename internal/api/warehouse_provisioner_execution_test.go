@@ -8,7 +8,7 @@ import (
 )
 
 // The provisioner execution override defaults to off and is part of the
-// warehouse read model the admin UI toggles.
+// warehouse read model the admin UI will toggle.
 func TestWarehouseDefaultsAllowProvisionerExecutionFalse(t *testing.T) {
 	s, key := newWarehouseSyncTestServer(t)
 	fx := seedWarehouseFixtureRows(t, s, key)
