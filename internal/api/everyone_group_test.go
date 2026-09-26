@@ -32,6 +32,9 @@ func TestEveryoneGroupExists(t *testing.T) {
 	for _, g := range groups {
 		if g["name"] == "Everyone" {
 			found = true
+			if g["source"] != "system" {
+				t.Errorf("Everyone source = %v, want system", g["source"])
+			}
 		}
 	}
 	if !found {

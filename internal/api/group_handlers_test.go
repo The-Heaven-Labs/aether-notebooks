@@ -44,6 +44,9 @@ func TestGroupCRUD(t *testing.T) {
 	if g["display_name"] != "Analytics Label" {
 		t.Fatalf("expected create to return display_name, got %v", g["display_name"])
 	}
+	if g["source"] != "manual" {
+		t.Fatalf("expected create to return source=manual, got %v", g["source"])
+	}
 
 	// List groups
 	req2 := httptest.NewRequest("GET", "/api/v1/groups", nil)
@@ -69,6 +72,9 @@ func TestGroupCRUD(t *testing.T) {
 	}
 	if listed["display_name"] != "Analytics Label" {
 		t.Fatalf("expected list to return display_name, got %v", listed["display_name"])
+	}
+	if listed["source"] != "manual" {
+		t.Fatalf("expected list to return source=manual, got %v", listed["source"])
 	}
 
 	// Get current user ID
@@ -142,6 +148,9 @@ func TestGroupCRUD(t *testing.T) {
 	}
 	if labeled["name"] != "Analytics" {
 		t.Fatalf("expected name unchanged, got %v", labeled["name"])
+	}
+	if labeled["source"] != "manual" {
+		t.Fatalf("expected update to return source=manual, got %v", labeled["source"])
 	}
 
 	// Reserved display name is rejected on update, case-insensitively

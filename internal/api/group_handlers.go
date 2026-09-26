@@ -47,7 +47,7 @@ func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 	var args []any
 
 	if r.URL.Query().Get("member") == "me" {
-		query = `SELECT g.id, g.org_id, g.name, g.display_name, g.created_at, COUNT(gm2.user_id) AS member_count
+		query = `SELECT g.id, g.org_id, g.name, g.display_name, g.source, g.created_at, COUNT(gm2.user_id) AS member_count
                  FROM groups g
                  JOIN group_members gm ON gm.group_id = g.id AND gm.user_id = $2
                  LEFT JOIN group_members gm2 ON gm2.group_id = g.id
@@ -56,7 +56,7 @@ func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
                  ORDER BY COALESCE(g.display_name, g.name)`
 		args = []any{claims.OrgID, claims.UserID}
 	} else {
-		query = `SELECT g.id, g.org_id, g.name, g.display_name, g.created_at, COUNT(gm.user_id) AS member_count
+		query = `SELECT g.id, g.org_id, g.name, g.display_name, g.source, g.created_at, COUNT(gm.user_id) AS member_count
                  FROM groups g
                  LEFT JOIN group_members gm ON gm.group_id = g.id
                  WHERE g.org_id = $1
@@ -75,7 +75,7 @@ func (s *Server) handleListGroups(w http.ResponseWriter, r *http.Request) {
 	var groups []models.Group
 	for rows.Next() {
 		var g models.Group
-		if err := rows.Scan(&g.ID, &g.OrgID, &g.Name, &g.DisplayName, &g.CreatedAt, &g.MemberCount); err != nil {
+		if err := rows.Scan(&g.ID, &g.OrgID, &g.Name, &g.DisplayName, &g.Source, &g.CreatedAt, &g.MemberCount); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
@@ -122,9 +122,9 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 	var g models.Group
 	err := s.db.Pool.QueryRow(ctx,
 		`INSERT INTO groups (org_id, name, display_name) VALUES ($1, $2, $3)
-		 RETURNING id, org_id, name, display_name, created_at`,
+		 RETURNING id, org_id, name, display_name, source, created_at`,
 		claims.OrgID, req.Name, normalizeDisplayName(req.DisplayName),
-	).Scan(&g.ID, &g.OrgID, &g.Name, &g.DisplayName, &g.CreatedAt)
+	).Scan(&g.ID, &g.OrgID, &g.Name, &g.DisplayName, &g.Source, &g.CreatedAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "insert failed")
 		return
@@ -198,9 +198,9 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 		    SET name = COALESCE($1, name),
 		        display_name = CASE WHEN $2 THEN NULLIF($3, '') ELSE display_name END
 		  WHERE id=$4 AND org_id=$5
-		  RETURNING id, org_id, name, display_name, created_at`,
+		  RETURNING id, org_id, name, display_name, source, created_at`,
 		req.Name, req.DisplayName != nil, display, groupID, claims.OrgID,
-	).Scan(&g.ID, &g.OrgID, &g.Name, &g.DisplayName, &g.CreatedAt)
+	).Scan(&g.ID, &g.OrgID, &g.Name, &g.DisplayName, &g.Source, &g.CreatedAt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "group not found")
 		return

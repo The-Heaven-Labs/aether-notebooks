@@ -298,7 +298,7 @@ func (s *Server) handleAdminCreateOrg(w http.ResponseWriter, r *http.Request) {
 
 	// Ensure Everyone group
 	s.db.Pool.Exec(r.Context(),
-		`INSERT INTO groups (org_id, name) VALUES ($1, 'Everyone') ON CONFLICT DO NOTHING`, orgID,
+		`INSERT INTO groups (org_id, name, source) VALUES ($1, 'Everyone', 'system') ON CONFLICT DO NOTHING`, orgID,
 	)
 	s.db.Pool.Exec(r.Context(),
 		`INSERT INTO group_members (group_id, user_id)
