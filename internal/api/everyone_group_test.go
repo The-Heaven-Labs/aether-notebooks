@@ -41,3 +41,34 @@ func TestEveryoneGroupExists(t *testing.T) {
 		t.Error("expected 'Everyone' group to exist after org creation")
 	}
 }
+
+func TestEveryoneGroupIsUndeletableWithForce(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("everyone-force-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Everyone Force Org")
+
+	listReq := httptest.NewRequest("GET", "/api/v1/groups", nil)
+	listReq.Header.Set("Authorization", "Bearer "+token)
+	listRec := httptest.NewRecorder()
+	srv.ServeHTTP(listRec, listReq)
+	var groups []map[string]any
+	json.NewDecoder(listRec.Body).Decode(&groups)
+
+	var everyoneID string
+	for _, g := range groups {
+		if g["name"] == "Everyone" {
+			everyoneID = g["id"].(string)
+		}
+	}
+	if everyoneID == "" {
+		t.Fatal("expected the org's Everyone group")
+	}
+
+	req := httptest.NewRequest("DELETE", "/api/v1/groups/"+everyoneID+"?force=true", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("delete Everyone with force: expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

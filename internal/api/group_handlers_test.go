@@ -2,12 +2,15 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestGroupCRUD(t *testing.T) {
@@ -231,6 +234,71 @@ func TestGroupCRUD(t *testing.T) {
 	srv.ServeHTTP(rec6, req6)
 	if rec6.Code != http.StatusNoContent {
 		t.Fatalf("delete group: expected 204, got %d: %s", rec6.Code, rec6.Body.String())
+	}
+}
+
+func TestDeleteGroupSourceGuards(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("group-source-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Group Source Org")
+	ctx := context.Background()
+
+	create := func(name string) string {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"name": name})
+		req := httptest.NewRequest("POST", "/api/v1/groups", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create group: %d %s", rec.Code, rec.Body.String())
+		}
+		var g map[string]any
+		json.NewDecoder(rec.Body).Decode(&g)
+		if g["source"] != "manual" {
+			t.Fatalf("created group source = %v, want manual", g["source"])
+		}
+		return g["id"].(string)
+	}
+
+	del := func(id, query string) int {
+		t.Helper()
+		req := httptest.NewRequest("DELETE", "/api/v1/groups/"+id+query, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// SSO group: blocked without force, deletable with force.
+	ssoID := create("SSO Managed")
+	_, err := srv.DB().Pool.Exec(ctx, `UPDATE groups SET source='sso' WHERE id=$1`, ssoID)
+	require.NoError(t, err)
+	if code := del(ssoID, ""); code != http.StatusBadRequest {
+		t.Fatalf("sso delete without force: got %d, want 400", code)
+	}
+	if code := del(ssoID, "?force=true"); code != http.StatusNoContent {
+		t.Fatalf("sso delete with force: got %d, want 204", code)
+	}
+	var forcedAudits int
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM audit_logs WHERE action='group.delete.forced' AND resource_id=$1`, ssoID,
+	).Scan(&forcedAudits))
+	require.Equal(t, 1, forcedAudits)
+
+	// System group: force cannot delete it.
+	systemID := create("System Managed")
+	_, err = srv.DB().Pool.Exec(ctx, `UPDATE groups SET source='system' WHERE id=$1`, systemID)
+	require.NoError(t, err)
+	if code := del(systemID, "?force=true"); code != http.StatusBadRequest {
+		t.Fatalf("system delete with force: got %d, want 400", code)
+	}
+
+	// Manual group: unchanged behavior.
+	manualID := create("Manual Group")
+	if code := del(manualID, ""); code != http.StatusNoContent {
+		t.Fatalf("manual delete: got %d, want 204", code)
 	}
 }
 

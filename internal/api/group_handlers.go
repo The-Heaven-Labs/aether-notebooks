@@ -238,13 +238,24 @@ func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	groupID := r.PathValue("id")
 	ctx := r.Context()
 
-	isEveryone, err := s.isEveryoneGroup(ctx, groupID, claims.OrgID)
+	var name, source string
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT name, source FROM groups WHERE id=$1 AND org_id=$2`,
+		groupID, claims.OrgID,
+	).Scan(&name, &source)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "group not found")
 		return
 	}
-	if isEveryone {
-		writeError(w, http.StatusBadRequest, "the \"Everyone\" group cannot be deleted")
+	// The name check is defense-in-depth for rows that predate the source
+	// backfill; source='system' is the durable marker.
+	if strings.EqualFold(name, "everyone") || source == "system" {
+		writeError(w, http.StatusBadRequest, "this group cannot be deleted")
+		return
+	}
+	force := r.URL.Query().Get("force") == "true"
+	if source == "sso" && !force {
+		writeError(w, http.StatusBadRequest, "group is managed by SSO; pass force=true to delete")
 		return
 	}
 
@@ -263,9 +274,13 @@ func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	// A deleted group loses its roles: reconcile warehouses holding grants for
 	// it (the grants outlive the group and are ignored by desired state).
 	s.enqueueWarehouseSyncForGroup(ctx, groupID)
+	action := "group.delete"
+	if source == "sso" {
+		action = "group.delete.forced"
+	}
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
-		Action: "group.delete", ResourceType: "group", ResourceID: groupID,
+		Action: action, ResourceType: "group", ResourceID: groupID,
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
