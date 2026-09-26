@@ -414,8 +414,9 @@ func (s *Server) handleGetWarehouse(w http.ResponseWriter, r *http.Request) {
 // explicit null provisioner_connector_id clears the provisioner. name must be
 // a string (it cannot be nulled) and an empty body is rejected.
 type updateWarehouseRequest struct {
-	Name                   json.RawMessage `json:"name"`
-	ProvisionerConnectorID json.RawMessage `json:"provisioner_connector_id"`
+	Name                      json.RawMessage `json:"name"`
+	ProvisionerConnectorID    json.RawMessage `json:"provisioner_connector_id"`
+	AllowProvisionerExecution *bool           `json:"allow_provisioner_execution,omitempty"`
 }
 
 // @Summary Update a warehouse
@@ -446,7 +447,7 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Name == nil && req.ProvisionerConnectorID == nil {
+	if req.Name == nil && req.ProvisionerConnectorID == nil && req.AllowProvisionerExecution == nil {
 		writeError(w, http.StatusBadRequest, "at least one field must be provided")
 		return
 	}
@@ -503,10 +504,11 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 
 	var oldName string
 	var oldProvisioner *uuid.UUID
+	var oldAllow bool
 	err = tx.QueryRow(ctx, `
-		SELECT name, provisioner_connector_id FROM warehouses
+		SELECT name, provisioner_connector_id, allow_provisioner_execution FROM warehouses
 		WHERE id = $1 AND org_id = $2 FOR UPDATE`,
-		warehouseUUID.String(), claims.OrgID).Scan(&oldName, &oldProvisioner)
+		warehouseUUID.String(), claims.OrgID).Scan(&oldName, &oldProvisioner, &oldAllow)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "warehouse not found")
 		return
@@ -518,6 +520,7 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 
 	changedName := name != nil && *name != oldName
 	changedProvisioner := provisionerSet && !uuidPointersEqual(oldProvisioner, provisionerID)
+	changedAllow := req.AllowProvisionerExecution != nil && *req.AllowProvisionerExecution != oldAllow
 
 	if changedName {
 		if _, err := tx.Exec(ctx,
@@ -537,6 +540,14 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if changedAllow {
+		if _, err := tx.Exec(ctx,
+			`UPDATE warehouses SET allow_provisioner_execution = $1, updated_at = now() WHERE id = $2 AND org_id = $3`,
+			*req.AllowProvisionerExecution, warehouseUUID.String(), claims.OrgID); err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
@@ -547,7 +558,7 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 		s.enqueueWarehouseSync(warehouseUUID)
 	}
 
-	if changedName || changedProvisioner {
+	if changedName || changedProvisioner || changedAllow {
 		meta := map[string]any{}
 		if changedName {
 			meta["name"] = *name
@@ -562,6 +573,9 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 			if oldProvisioner != nil {
 				meta["previous_provisioner_connector_id"] = oldProvisioner.String()
 			}
+		}
+		if changedAllow {
+			meta["allow_provisioner_execution"] = *req.AllowProvisionerExecution
 		}
 		s.audit.Log(ctx, audit.Entry{
 			OrgID: claims.OrgID, UserID: claims.UserID,
