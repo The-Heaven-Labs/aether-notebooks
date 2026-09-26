@@ -12,11 +12,13 @@ vi.mock('../components/AppShell', () => ({
 const WAREHOUSES = [
   {
     id: 'wh-1', org_id: 'org-1', name: 'Analytics', provisioner_connector_id: 'c-1',
+    allow_provisioner_execution: true,
     sync_status: 'ready', sync_error: null, last_synced_at: '2026-01-01T00:00:00Z',
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
   },
   {
     id: 'wh-2', org_id: 'org-1', name: 'Beta', provisioner_connector_id: null,
+    allow_provisioner_execution: false,
     sync_status: 'error', sync_error: 'wildcard grant detected', last_synced_at: null,
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
   },
@@ -147,6 +149,7 @@ describe('WarehouseSettingsPage', () => {
         return HttpResponse.json(
           {
             id: 'wh-new', org_id: 'org-1', name: 'New Wh', provisioner_connector_id: null,
+            allow_provisioner_execution: false,
             sync_status: 'pending', sync_error: null, last_synced_at: null,
             created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
           },
@@ -173,6 +176,9 @@ describe('WarehouseSettingsPage', () => {
     fireEvent.click(await screen.findByText('Analytics'))
 
     expect(await screen.findByLabelText('Provisioner connector')).toBeInTheDocument()
+    const allow = screen.getByLabelText('Allow queries through the provisioner')
+    expect(allow).toBeEnabled()
+    expect(allow).toBeChecked()
     expect(screen.getByText('Provisioner')).toBeInTheDocument()
     expect(screen.getAllByText('CH RW').length).toBeGreaterThan(0)
     expect(await screen.findByText('Table grants')).toBeInTheDocument()
@@ -342,5 +348,46 @@ describe('WarehouseSettingsPage', () => {
     )
     renderWithProviders(<WarehouseSettingsPage />)
     expect(await screen.findByText('boom')).toBeInTheDocument()
+  })
+
+  test('toggles provisioner execution and reflects the saved value', async () => {
+    let putBody: Record<string, unknown> | null = null
+    let allowed = false
+    server.use(
+      http.get('/api/v1/warehouses/:id', ({ params }) => {
+        const warehouse = WAREHOUSES.find((w) => w.id === params.id)
+        if (!warehouse) return HttpResponse.json({ error: 'warehouse not found' }, { status: 404 })
+        return HttpResponse.json({
+          ...warehouse,
+          allow_provisioner_execution:
+            params.id === 'wh-1' ? allowed : warehouse.allow_provisioner_execution,
+          connectors: params.id === 'wh-1' ? DETAIL_CONNECTORS : [],
+        })
+      }),
+      http.put('/api/v1/warehouses/wh-1', async ({ request }) => {
+        putBody = await request.json() as Record<string, unknown>
+        allowed = true
+        return HttpResponse.json({ ...WAREHOUSES[0], allow_provisioner_execution: allowed })
+      }),
+    )
+    renderWithProviders(<WarehouseSettingsPage />)
+    fireEvent.click(await screen.findByText('Analytics'))
+
+    const checkbox = await screen.findByLabelText('Allow queries through the provisioner')
+    expect(checkbox).toBeEnabled()
+    expect(checkbox).not.toBeChecked()
+
+    fireEvent.click(checkbox)
+
+    await waitFor(() => expect(putBody).toEqual({ allow_provisioner_execution: true }))
+    await waitFor(() => expect(checkbox).toBeChecked())
+  })
+
+  test('disables the provisioner execution toggle without a provisioner', async () => {
+    renderWithProviders(<WarehouseSettingsPage />)
+    fireEvent.click(await screen.findByText('Beta'))
+
+    const checkbox = await screen.findByLabelText('Allow queries through the provisioner')
+    expect(checkbox).toBeDisabled()
   })
 })

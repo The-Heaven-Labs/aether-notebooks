@@ -274,6 +274,7 @@ export function WarehouseSettingsPage() {
                 onSetAllowProvisionerExecution={(allow) =>
                   allowProvisionerMutation.mutate({ id: warehouse.id, allow })
                 }
+                allowProvisionerPending={allowProvisionerMutation.isPending}
                 onAddConnector={(connectorId) =>
                   linkMutation.mutate({ connectorId, warehouseId: warehouse.id })
                 }
@@ -344,6 +345,7 @@ interface WarehouseCardProps {
   onDelete: () => void
   onSetProvisioner: (connectorId: string | null) => void
   onSetAllowProvisionerExecution: (allow: boolean) => void
+  allowProvisionerPending: boolean
   onAddConnector: (connectorId: string) => void
   onRemoveConnector: (connector: WarehouseConnector) => void
 }
@@ -357,6 +359,7 @@ function WarehouseCard({
   onDelete,
   onSetProvisioner,
   onSetAllowProvisionerExecution,
+  allowProvisionerPending,
   onAddConnector,
   onRemoveConnector,
 }: WarehouseCardProps) {
@@ -498,19 +501,21 @@ function WarehouseCard({
               </div>
 
               <div style={styles.field}>
-                <label style={{ ...styles.label, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ ...styles.label, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <input
                     type="checkbox"
                     aria-label="Allow queries through the provisioner"
-                    checked={detail?.allow_provisioner_execution ?? warehouse.allow_provisioner_execution}
-                    disabled={!detail?.provisioner_connector_id}
+                    checked={detail?.allow_provisioner_execution ?? warehouse.allow_provisioner_execution ?? false}
+                    disabled={!detail?.provisioner_connector_id || allowProvisionerPending}
+                    aria-describedby={`allow-provisioner-hint-${warehouse.id}`}
                     onChange={(e) => onSetAllowProvisionerExecution(e.target.checked)}
                   />
                   Allow queries through the provisioner
                 </label>
-                <span style={styles.hint}>
+                <span id={`allow-provisioner-hint-${warehouse.id}`} style={styles.hint}>
                   Off by default. The provisioner credential is reserved for background provisioning;
                   when off, notebook and agent queries cannot run through this connector.
+                  {!tablePermissionsEnabled && ' Takes effect once ClickHouse table permissions are enabled.'}
                 </span>
               </div>
 

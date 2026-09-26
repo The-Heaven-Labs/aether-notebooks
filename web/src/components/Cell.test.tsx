@@ -810,7 +810,7 @@ describe('connector picker provisioner handling', () => {
     )
 
     fireEvent.click(await screen.findByTitle('Click to change connector'))
-    const option = await screen.findByRole('option', { name: 'Provisioner (provisioner)' })
+    const option = await screen.findByRole('option', { name: 'Provisioner (provisioner — no access)' })
     expect(option).toBeDisabled()
   })
 })
