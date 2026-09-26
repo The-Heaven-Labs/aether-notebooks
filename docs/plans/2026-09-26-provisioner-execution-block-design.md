@@ -65,7 +65,7 @@ warehouse row is the single source of truth; no connector state is duplicated.
 |---|---|
 | Warehouse management enabled (`AETHER_CH_TABLE_PERMISSIONS=true`), override **off** | Blocked on every user-facing path; excluded from service lists, `can_use`, and preferences. |
 | Management enabled, override **on** | Usable as a normal managed service: routed per-user identity through the connection pool, table grants enforced. |
-| Introspection endpoints (`/test`, `/schema`, `/databases`) | Always blocked for everyone; org admins keep access (they use the stored credential) so the warehouse grant-management table browser keeps working when the provisioner is a warehouse's only linked connector. |
+| Introspection endpoints (`/test`, `/schema`, `/databases`) | Always blocked for non-admins; org admins keep access (they use the stored credential) so the warehouse grant-management table browser keeps working when the provisioner is a warehouse's only linked connector. |
 | Management disabled (kill switch off) | Blocked regardless of the override — managed execution does not exist, and the stored-credential fallback must never run with the provisioner credential. |
 | Worker (`reconcileWarehouse`, `detectWarehouseDrift`, `dropWarehouseIdentitiesLocked`) | Unaffected: raw clickhouse-go connection from the decrypted provisioner config, never the executor/HTTP path. |
 
@@ -92,8 +92,10 @@ warehouse row is the single source of truth; no connector state is duplicated.
 - **UI coupling**: `WarehouseTableGrants` intentionally prefers the provisioner for schema
   browsing; no change needed now that admins retain introspection.
 - **Listing/routing**: `listWarehouseServices` (`internal/api/execution_target.go:245`) excludes
-  the provisioner unless the override is on. This fixes routing, `effective-access`,
-  stale-preference handling, and grant warnings in one place.
+  the provisioner unless the override is on. This fixes routing, `effective-access`, and
+  stale-preference handling in one place; the two service-access counting queries for
+  grant warnings (`subjectHasServiceAccess`, `loadWarehouseServiceAccessIndex`) were updated in
+  lockstep with the same predicate and must stay in sync.
 - **Preference**: `handleSetWarehousePreference` rejects preferring a blocked provisioner.
 - **Inventory**: `handleListConnectors` returns `is_provisioner` and forces `can_use=false`
   while blocked.
@@ -133,6 +135,9 @@ warehouse row is the single source of truth; no connector state is duplicated.
 
 - Unlink/soft-delete a provisioner: the link clears (existing handlers) and the connector becomes
   a normal connector again automatically.
+- `allow_provisioner_execution` is a per-warehouse policy, not per-connector: it persists when the
+  provisioner connector is cleared or replaced, a newly designated provisioner inherits it, and
+  admins can flip it off at any time.
 - Override on + warehouse not `ready`: normal `ErrProvisioningNotReady` (503) path.
 - A user's stored preference pointing at a provisioner that becomes blocked is ignored by routing
   (existing stale-preference logic) and cannot be re-set while blocked.

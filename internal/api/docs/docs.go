@@ -9114,7 +9114,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Choose which of the caller's permitted services their warehouse queries run on. The connector must belong to the warehouse and the caller must have ` + "`" + `use` + "`" + ` on it; an explicit null clears the preference.",
+                "description": "Choose which of the caller's permitted services their warehouse queries run on. The connector must belong to the warehouse and the caller must have ` + "`" + `use` + "`" + ` on it; an explicit null clears the preference. The warehouse provisioner is rejected while its allow_provisioner_execution override is off.",
                 "consumes": [
                     "application/json"
                 ],
