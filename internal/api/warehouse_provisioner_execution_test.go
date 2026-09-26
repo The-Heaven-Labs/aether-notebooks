@@ -251,9 +251,11 @@ func TestProvisionerIntrospectionBlockedForNonAdmin(t *testing.T) {
 
 	rec := connectorIntrospectionRequest(t, s, http.MethodGet, base+"/schema", token)
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "provisioner")
 
 	rec = connectorIntrospectionRequest(t, s, http.MethodGet, base+"/databases", token)
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "provisioner")
 
 	rec = connectorIntrospectionRequest(t, s, http.MethodPost, base+"/test", token)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())

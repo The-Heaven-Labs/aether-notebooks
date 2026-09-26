@@ -611,15 +611,20 @@ func (s *Server) buildExecutor(connType models.ConnectorType, configEnc []byte) 
 	return driver.NewExecutor(plain)
 }
 
-// connectorIsProvisioner reports whether a connector is the provisioner of its
-// warehouse. Provisioner connectors are reserved for the reconcile worker:
-// stored-credential introspection rejects them for everyone except org admins,
-// who need the warehouse grant-management table browser to keep working.
-func (s *Server) connectorIsProvisioner(ctx context.Context, connectorID string) (bool, error) {
+// connectorIsProvisioner reports whether a connector in orgID is the
+// provisioner of one of that org's warehouses. Provisioner connectors are
+// reserved for the reconcile worker: stored-credential introspection rejects
+// them for everyone except org admins, who need the warehouse grant-management
+// table browser to keep working. An invalid connector id is not a provisioner
+// (downstream ACL/load handling keeps its usual 403/404 semantics).
+func (s *Server) connectorIsProvisioner(ctx context.Context, orgID, connectorID string) (bool, error) {
+	if !isValidUUID(connectorID) {
+		return false, nil
+	}
 	var exists bool
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM warehouses WHERE provisioner_connector_id = $1)`,
-		connectorID).Scan(&exists)
+		`SELECT EXISTS(SELECT 1 FROM warehouses WHERE org_id = $2 AND provisioner_connector_id = $1)`,
+		connectorID, orgID).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("check provisioner connector %s: %w", connectorID, err)
 	}
@@ -674,7 +679,7 @@ func (s *Server) handleListConnectorDatabases(w http.ResponseWriter, r *http.Req
 	connID := r.PathValue("id")
 	ctx := r.Context()
 
-	isProvisioner, err := s.connectorIsProvisioner(ctx, connID)
+	isProvisioner, err := s.connectorIsProvisioner(ctx, claims.OrgID, connID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to check connector")
 		return
@@ -733,7 +738,7 @@ func (s *Server) handleTestConnector(w http.ResponseWriter, r *http.Request) {
 	connID := r.PathValue("id")
 	ctx := r.Context()
 
-	isProvisioner, err := s.connectorIsProvisioner(ctx, connID)
+	isProvisioner, err := s.connectorIsProvisioner(ctx, claims.OrgID, connID)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "failed to check connector"})
 		return
@@ -787,7 +792,7 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 	connID := r.PathValue("id")
 	ctx := r.Context()
 
-	isProvisioner, err := s.connectorIsProvisioner(ctx, connID)
+	isProvisioner, err := s.connectorIsProvisioner(ctx, claims.OrgID, connID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to check connector")
 		return
