@@ -164,18 +164,22 @@ func TestExecuteCellOnProvisionerReturns403(t *testing.T) {
 	s, key := newWarehouseSyncTestServer(t)
 	fx := seedWarehouseFixtureRows(t, s, key)
 
+	// No grantConnectorUse: with the kill switch on, a managed ClickHouse
+	// connector skips the connector-level `use` pre-check in the handler.
 	nbID, cellID := seedExecuteWarehouseCell(t, s, fx.orgID, fx.userID, fx.connectorID,
 		"SELECT currentUser()", nil)
 	grantNotebookRun(t, s, fx.orgID, fx.userID, nbID)
 
 	rec := executeWarehouseCell(t, s, fx.userID, fx.orgID, nbID, cellID)
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
-	require.Contains(t, strings.ToLower(rec.Body.String()), "provisioner")
+	body := strings.ToLower(rec.Body.String())
+	require.Contains(t, body, "provisioner")
+	require.Contains(t, body, "cannot run queries")
 }
 
 // With the kill switch off the handler would normally fall back to the stored
 // credential. The provisioner config points at an unreachable host, so a
-// fallback would surface as a gateway error (502) instead of the block.
+// fallback would surface as a connection/gateway error instead of the block.
 func TestExecuteCellOnProvisionerKillSwitchOffReturns403(t *testing.T) {
 	s, key := newWarehouseSyncTestServer(t)
 	s.SetCHTablePermissions(false)
@@ -189,5 +193,7 @@ func TestExecuteCellOnProvisionerKillSwitchOffReturns403(t *testing.T) {
 
 	rec := executeWarehouseCell(t, s, fx.userID, fx.orgID, nbID, cellID)
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
-	require.Contains(t, strings.ToLower(rec.Body.String()), "provisioner")
+	body := strings.ToLower(rec.Body.String())
+	require.Contains(t, body, "provisioner")
+	require.Contains(t, body, "cannot run queries")
 }
