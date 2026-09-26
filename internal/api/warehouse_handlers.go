@@ -19,16 +19,17 @@ import (
 // warehouseJSON is the API representation of a warehouse row. It is defined
 // here rather than in models because no other package consumes it.
 type warehouseJSON struct {
-	ID                     string                   `json:"id"`
-	OrgID                  string                   `json:"org_id"`
-	Name                   string                   `json:"name"`
-	ProvisionerConnectorID *string                  `json:"provisioner_connector_id"`
-	SyncStatus             string                   `json:"sync_status"`
-	SyncError              *string                  `json:"sync_error"`
-	LastSyncedAt           *time.Time               `json:"last_synced_at"`
-	CreatedAt              time.Time                `json:"created_at"`
-	UpdatedAt              time.Time                `json:"updated_at"`
-	Connectors             []warehouseConnectorJSON `json:"connectors,omitempty"`
+	ID                        string                   `json:"id"`
+	OrgID                     string                   `json:"org_id"`
+	Name                      string                   `json:"name"`
+	ProvisionerConnectorID    *string                  `json:"provisioner_connector_id"`
+	AllowProvisionerExecution bool                     `json:"allow_provisioner_execution"`
+	SyncStatus                string                   `json:"sync_status"`
+	SyncError                 *string                  `json:"sync_error"`
+	LastSyncedAt              *time.Time               `json:"last_synced_at"`
+	CreatedAt                 time.Time                `json:"created_at"`
+	UpdatedAt                 time.Time                `json:"updated_at"`
+	Connectors                []warehouseConnectorJSON `json:"connectors,omitempty"`
 }
 
 // warehouseConnectorJSON describes one connector linked to a warehouse.
@@ -39,7 +40,7 @@ type warehouseConnectorJSON struct {
 	IsProvisioner bool   `json:"is_provisioner"`
 }
 
-const warehouseSelectColumns = `id, org_id, name, provisioner_connector_id, sync_status, sync_error, last_synced_at, created_at, updated_at`
+const warehouseSelectColumns = `id, org_id, name, provisioner_connector_id, allow_provisioner_execution, sync_status, sync_error, last_synced_at, created_at, updated_at`
 
 const maxWarehouseNameLength = 255
 
@@ -84,7 +85,8 @@ func (s *Server) enqueueWarehouseSyncNow(warehouseID uuid.UUID) {
 func scanWarehouseRow(row pgx.Row) (warehouseJSON, error) {
 	var wh warehouseJSON
 	err := row.Scan(&wh.ID, &wh.OrgID, &wh.Name, &wh.ProvisionerConnectorID,
-		&wh.SyncStatus, &wh.SyncError, &wh.LastSyncedAt, &wh.CreatedAt, &wh.UpdatedAt)
+		&wh.AllowProvisionerExecution, &wh.SyncStatus, &wh.SyncError,
+		&wh.LastSyncedAt, &wh.CreatedAt, &wh.UpdatedAt)
 	return wh, err
 }
 
@@ -228,7 +230,8 @@ func (s *Server) handleListWarehouses(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var wh warehouseJSON
 		if err := rows.Scan(&wh.ID, &wh.OrgID, &wh.Name, &wh.ProvisionerConnectorID,
-			&wh.SyncStatus, &wh.SyncError, &wh.LastSyncedAt, &wh.CreatedAt, &wh.UpdatedAt); err != nil {
+			&wh.AllowProvisionerExecution, &wh.SyncStatus, &wh.SyncError,
+			&wh.LastSyncedAt, &wh.CreatedAt, &wh.UpdatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
