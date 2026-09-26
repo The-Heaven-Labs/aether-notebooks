@@ -384,6 +384,37 @@ describe('WarehouseSettingsPage', () => {
     await waitFor(() => expect(checkbox).toBeChecked())
   })
 
+  test('reverts the provisioner execution toggle when the update fails', async () => {
+    let putBody: Record<string, unknown> | null = null
+    server.use(
+      http.get('/api/v1/warehouses/:id', ({ params }) => {
+        const warehouse = WAREHOUSES.find((w) => w.id === params.id)
+        if (!warehouse) return HttpResponse.json({ error: 'warehouse not found' }, { status: 404 })
+        return HttpResponse.json({
+          ...warehouse,
+          allow_provisioner_execution: false,
+          connectors: params.id === 'wh-1' ? DETAIL_CONNECTORS : [],
+        })
+      }),
+      http.put('/api/v1/warehouses/wh-1', async ({ request }) => {
+        putBody = await request.json() as Record<string, unknown>
+        return HttpResponse.json({ error: 'update rejected' }, { status: 500 })
+      }),
+    )
+    renderWithProviders(<WarehouseSettingsPage />)
+    fireEvent.click(await screen.findByText('Analytics'))
+
+    const checkbox = await screen.findByLabelText('Allow queries through the provisioner')
+    expect(checkbox).not.toBeChecked()
+
+    fireEvent.click(checkbox)
+    expect(checkbox).toBeChecked()
+
+    await waitFor(() => expect(putBody).toEqual({ allow_provisioner_execution: true }))
+    expect(await screen.findByText('update rejected')).toBeInTheDocument()
+    await waitFor(() => expect(checkbox).not.toBeChecked())
+  })
+
   test('disables the provisioner execution toggle without a provisioner', async () => {
     renderWithProviders(<WarehouseSettingsPage />)
     fireEvent.click(await screen.findByText('Beta'))

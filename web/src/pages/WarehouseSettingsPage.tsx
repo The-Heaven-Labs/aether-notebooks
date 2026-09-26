@@ -40,6 +40,7 @@ export function WarehouseSettingsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Warehouse | null>(null)
   const [forceTarget, setForceTarget] = useState<{ warehouse: Warehouse; message: string } | null>(null)
   const [unlinkTarget, setUnlinkTarget] = useState<{ warehouse: Warehouse; connector: WarehouseConnector } | null>(null)
+  const [allowProvisionerSettled, setAllowProvisionerSettled] = useState(0)
 
   const {
     data: warehouses = [],
@@ -116,9 +117,11 @@ export function WarehouseSettingsPage() {
       if (context?.previous) {
         qc.setQueryData<Warehouse>(['warehouse', id], context.previous)
       }
+      setAllowProvisionerSettled((n) => n + 1)
       setError(err.message)
     },
     onSuccess: () => {
+      setAllowProvisionerSettled((n) => n + 1)
       invalidateWarehouses()
       setError(null)
     },
@@ -291,6 +294,7 @@ export function WarehouseSettingsPage() {
                   allowProvisionerMutation.mutate({ id: warehouse.id, allow })
                 }
                 allowProvisionerPending={allowProvisionerMutation.isPending}
+                allowProvisionerSettled={allowProvisionerSettled}
                 onAddConnector={(connectorId) =>
                   linkMutation.mutate({ connectorId, warehouseId: warehouse.id })
                 }
@@ -362,6 +366,7 @@ interface WarehouseCardProps {
   onSetProvisioner: (connectorId: string | null) => void
   onSetAllowProvisionerExecution: (allow: boolean) => void
   allowProvisionerPending: boolean
+  allowProvisionerSettled: number
   onAddConnector: (connectorId: string) => void
   onRemoveConnector: (connector: WarehouseConnector) => void
 }
@@ -376,6 +381,7 @@ function WarehouseCard({
   onSetProvisioner,
   onSetAllowProvisionerExecution,
   allowProvisionerPending,
+  allowProvisionerSettled,
   onAddConnector,
   onRemoveConnector,
 }: WarehouseCardProps) {
@@ -404,7 +410,7 @@ function WarehouseCard({
   const [allowProvisionerOverride, setAllowProvisionerOverride] = useState<boolean | null>(null)
   useEffect(() => {
     setAllowProvisionerOverride(null)
-  }, [serverAllowProvisioner])
+  }, [serverAllowProvisioner, allowProvisionerSettled])
   const allowProvisionerChecked = allowProvisionerOverride ?? serverAllowProvisioner
 
   const validationWarnings = validation
