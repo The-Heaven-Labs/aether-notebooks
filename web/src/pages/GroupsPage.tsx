@@ -716,11 +716,11 @@ export function GroupsPage() {
                         {isEveryone ? group.name : groupLabel(group)}
                       </span>
                     )}
-                    {isEveryone && (
+                    {isSystem && (
                       <span style={styles.systemBadge}>System</span>
                     )}
                     {group.source === 'sso' && (
-                      <span style={styles.ssoBadge}>SSO</span>
+                      <span style={styles.ssoBadge} title="Managed by your SSO provider">SSO</span>
                     )}
                     <span style={styles.memberCount}>
                       {group.member_count} {group.member_count === 1 ? 'member' : 'members'}

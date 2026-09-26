@@ -392,7 +392,7 @@ describe('Display names', () => {
   test('the Everyone group exposes no label control', async () => {
     server.use(
       http.get('/api/v1/groups', () => HttpResponse.json([
-        { id: 'g-everyone', org_id: 'org-1', name: 'Everyone',
+        { id: 'g-everyone', org_id: 'org-1', name: 'Everyone', source: 'system',
           display_name: 'All Staff', member_count: 3, created_at: '2026-01-01T00:00:00Z' },
       ])),
     )
@@ -475,6 +475,21 @@ describe('Group provenance', () => {
     )
     renderWithProviders(<GroupsPage />)
     await screen.findByText('Platform')
+    const badge = await screen.findByText('System')
+    expect(badge).toBeInTheDocument()
+    expect(screen.queryByTitle('Group actions')).toBeNull()
+  })
+
+  test('source-less Everyone payload still hides actions', async () => {
+    server.use(
+      http.get('/api/v1/groups', () => HttpResponse.json([
+        { id: 'g-everyone', org_id: 'org-1', name: 'Everyone',
+          display_name: null, member_count: 3, created_at: '2026-01-01T00:00:00Z' },
+      ])),
+    )
+    renderWithProviders(<GroupsPage />)
+    await screen.findByText('Everyone')
+    expect(screen.getByText('System')).toBeInTheDocument()
     expect(screen.queryByTitle('Group actions')).toBeNull()
   })
 })
