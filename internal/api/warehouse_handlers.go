@@ -411,16 +411,18 @@ func (s *Server) handleGetWarehouse(w http.ResponseWriter, r *http.Request) {
 }
 
 // updateWarehouseRequest: an absent field leaves the value unchanged; an
-// explicit null provisioner_connector_id clears the provisioner. name must be
-// a string (it cannot be nulled) and an empty body is rejected.
+// explicit null provisioner_connector_id clears the provisioner.
+// allow_provisioner_execution is an optional bool with no null semantics
+// (absent or null leaves it unchanged). name must be a string (it cannot be
+// nulled) and an empty body is rejected.
 type updateWarehouseRequest struct {
 	Name                      json.RawMessage `json:"name"`
 	ProvisionerConnectorID    json.RawMessage `json:"provisioner_connector_id"`
-	AllowProvisionerExecution *bool           `json:"allow_provisioner_execution,omitempty"`
+	AllowProvisionerExecution *bool           `json:"allow_provisioner_execution"`
 }
 
 // @Summary Update a warehouse
-// @Description Update a warehouse's name and/or provisioner connector. An absent field leaves the value unchanged; an explicit null provisioner_connector_id clears the provisioner.
+// @Description Update a warehouse's name, provisioner connector, and/or provisioner execution override. An absent field leaves the value unchanged; an explicit null provisioner_connector_id clears the provisioner.
 // @Tags warehouses
 // @Accept json
 // @Produce json
@@ -576,6 +578,7 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 		}
 		if changedAllow {
 			meta["allow_provisioner_execution"] = *req.AllowProvisionerExecution
+			meta["previous_allow_provisioner_execution"] = oldAllow
 		}
 		s.audit.Log(ctx, audit.Entry{
 			OrgID: claims.OrgID, UserID: claims.UserID,
