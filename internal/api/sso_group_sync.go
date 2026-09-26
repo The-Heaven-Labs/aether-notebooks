@@ -179,8 +179,8 @@ func FindOrCreateGroup(ctx context.Context, pool *pgxpool.Pool, orgID, name stri
 			return id, false, false, nil
 		}
 		tag, uerr := pool.Exec(ctx,
-			`UPDATE groups SET source='sso' WHERE id=$1 AND source='manual'`,
-			id,
+			`UPDATE groups SET source='sso' WHERE id=$1 AND org_id=$2 AND source='manual'`,
+			id, orgID,
 		)
 		if uerr != nil {
 			return "", false, false, fmt.Errorf("adopt group: %w", uerr)

@@ -564,4 +564,11 @@ func TestSyncSSOGroups_AdoptsManualGroup(t *testing.T) {
 		`SELECT COUNT(*) FROM audit_logs WHERE org_id=$1 AND action='group.sso.adopt' AND user_id=$2`,
 		orgID, userID).Scan(&n))
 	assert.Equal(t, 1, n, "adoption must emit group.sso.adopt")
+
+	api.SyncSSOGroups(ctx, s.DB().Pool, logger, provider, orgID, userID, []string{"engineering"})
+
+	require.NoError(t, s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM audit_logs WHERE org_id=$1 AND action='group.sso.adopt' AND user_id=$2`,
+		orgID, userID).Scan(&n))
+	assert.Equal(t, 1, n, "repeat sync must not re-emit adoption")
 }
