@@ -97,6 +97,29 @@ func TestGroupCRUD(t *testing.T) {
 		t.Fatalf("add member: expected 201, got %d: %s", rec3.Code, rec3.Body.String())
 	}
 
+	// The ?member=me variant must expose the same source contract.
+	myGroupsReq := httptest.NewRequest("GET", "/api/v1/groups?member=me", nil)
+	myGroupsReq.Header.Set("Authorization", "Bearer "+token)
+	myGroupsRec := httptest.NewRecorder()
+	srv.ServeHTTP(myGroupsRec, myGroupsReq)
+	if myGroupsRec.Code != http.StatusOK {
+		t.Fatalf("list my groups: expected 200, got %d: %s", myGroupsRec.Code, myGroupsRec.Body.String())
+	}
+	var myGroups []map[string]any
+	json.NewDecoder(myGroupsRec.Body).Decode(&myGroups)
+	myFound := false
+	for _, g := range myGroups {
+		if g["id"] == groupID {
+			myFound = true
+			if g["source"] != "manual" {
+				t.Fatalf("expected ?member=me list to return source=manual, got %v", g["source"])
+			}
+		}
+	}
+	if !myFound {
+		t.Fatal("created group missing from ?member=me list")
+	}
+
 	// List members
 	req3b := httptest.NewRequest("GET", "/api/v1/groups/"+groupID+"/members", nil)
 	req3b.Header.Set("Authorization", "Bearer "+token)
