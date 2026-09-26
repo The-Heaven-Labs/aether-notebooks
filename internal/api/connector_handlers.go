@@ -198,8 +198,12 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, warehouse_id, table_allowlist, table_denylist
-		 FROM connectors WHERE org_id = $1 AND deleted_at IS NULL ORDER BY name ASC`,
+		`SELECT c.id, c.org_id, c.name, c.type, c.config_encrypted, c.max_rows, c.timeout_seconds, c.is_default, c.created_at, c.updated_at, c.folder_id, c.warehouse_id, c.table_allowlist, c.table_denylist,
+		        EXISTS (SELECT 1 FROM warehouses wp WHERE wp.provisioner_connector_id = c.id) AS is_provisioner,
+		        CASE WHEN w.provisioner_connector_id = c.id THEN w.allow_provisioner_execution ELSE false END AS allow_provisioner_execution
+		 FROM connectors c
+		 LEFT JOIN warehouses w ON w.id = c.warehouse_id
+		 WHERE c.org_id = $1 AND c.deleted_at IS NULL ORDER BY c.name ASC`,
 		claims.OrgID,
 	)
 	if err != nil {
@@ -210,14 +214,17 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 
 	type connectorWithPerms struct {
 		models.Connector
-		CanUse bool `json:"can_use"`
+		CanUse        bool `json:"can_use"`
+		IsProvisioner bool `json:"is_provisioner"`
 	}
 	var result []connectorWithPerms
 	for rows.Next() {
 		var c models.Connector
 		var encryptedConfig []byte
+		var isProvisioner, allowProvisionerExecution bool
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
-			&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.WarehouseID, &c.TableAllowlist, &c.TableDenylist); err != nil {
+			&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.WarehouseID, &c.TableAllowlist, &c.TableDenylist,
+			&isProvisioner, &allowProvisionerExecution); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
@@ -227,12 +234,15 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		canUse, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "use")
+		if isProvisioner && (!allowProvisionerExecution || !s.warehouseManagementEnabled()) {
+			canUse = false
+		}
 		// Decrypt and mask password
 		if plain, err := crypto.Decrypt(encryptedConfig, s.masterKey); err == nil {
 			json.Unmarshal(plain, &c.Config)
 			c.Config.Password = "***"
 		}
-		result = append(result, connectorWithPerms{Connector: c, CanUse: canUse})
+		result = append(result, connectorWithPerms{Connector: c, CanUse: canUse, IsProvisioner: isProvisioner})
 	}
 
 	if result == nil {
