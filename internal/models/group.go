@@ -7,6 +7,7 @@ type Group struct {
 	OrgID       string    `json:"org_id"`
 	Name        string    `json:"name"`
 	DisplayName *string   `json:"display_name"`
+	Source      string    `json:"source"`
 	MemberCount int       `json:"member_count"`
 	CreatedAt   time.Time `json:"created_at"`
 }
