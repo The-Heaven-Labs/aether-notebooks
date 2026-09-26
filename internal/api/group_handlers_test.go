@@ -294,6 +294,19 @@ func TestDeleteGroupSourceGuards(t *testing.T) {
 	if code := del(systemID, "?force=true"); code != http.StatusBadRequest {
 		t.Fatalf("system delete with force: got %d, want 400", code)
 	}
+	var systemExists bool
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM groups WHERE id=$1)`, systemID,
+	).Scan(&systemExists))
+	require.True(t, systemExists, "blocked system delete must not remove the row")
+
+	// Unknown group: 404, with and without force.
+	if code := del("00000000-0000-0000-0000-000000000000", ""); code != http.StatusNotFound {
+		t.Fatalf("unknown group delete: got %d, want 404", code)
+	}
+	if code := del("00000000-0000-0000-0000-000000000000", "?force=true"); code != http.StatusNotFound {
+		t.Fatalf("unknown group delete with force: got %d, want 404", code)
+	}
 
 	// Manual group: unchanged behavior.
 	manualID := create("Manual Group")

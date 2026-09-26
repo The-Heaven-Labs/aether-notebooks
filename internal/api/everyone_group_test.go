@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -70,5 +71,14 @@ func TestEveryoneGroupIsUndeletableWithForce(t *testing.T) {
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("delete Everyone with force: expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var exists bool
+	if err := srv.DB().Pool.QueryRow(context.Background(),
+		`SELECT EXISTS (SELECT 1 FROM groups WHERE id=$1)`, everyoneID,
+	).Scan(&exists); err != nil {
+		t.Fatalf("check Everyone existence: %v", err)
+	}
+	if !exists {
+		t.Fatal("blocked Everyone delete must not remove the row")
 	}
 }
