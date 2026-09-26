@@ -65,7 +65,10 @@ func addService(m map[string]map[string]struct{}, subjectID, connectorName strin
 // one warehouse; the validation endpoint needs the same rules for all subjects
 // at once. Grant creation uses the targeted subjectHasServiceAccess lookup
 // (warehouse_grant_handlers.go) instead of paying for a whole-org load; the
-// counting rules must stay in sync between the two.
+// counting rules must stay in sync between the two. The provisioner predicate
+// below must also stay in sync with listWarehouseServices (execution_target.go):
+// a warehouse's provisioner is not a usable service while
+// allow_provisioner_execution is off or warehouse management is disabled.
 func (s *Server) loadWarehouseServiceAccessIndex(ctx context.Context, orgID string, warehouseID uuid.UUID) (*warehouseServiceAccessIndex, error) {
 	idx := &warehouseServiceAccessIndex{
 		userServices:     map[string]map[string]struct{}{},
@@ -86,6 +89,7 @@ func (s *Server) loadWarehouseServiceAccessIndex(ctx context.Context, orgID stri
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT DISTINCT ae.subject_type, ae.subject_id, c.name
 		FROM connectors c
+		JOIN warehouses w ON w.id = c.warehouse_id
 		JOIN acl_entries ae
 		  ON ae.org_id = $1
 		 AND 'use' = ANY(ae.actions)
@@ -103,8 +107,11 @@ func (s *Server) loadWarehouseServiceAccessIndex(ctx context.Context, orgID stri
 		WHERE c.org_id = $1
 		  AND c.warehouse_id = $2
 		  AND c.type = 'clickhouse'
-		  AND c.deleted_at IS NULL`,
-		orgID, warehouseID.String())
+		  AND c.deleted_at IS NULL
+		  AND (w.provisioner_connector_id IS NULL
+		       OR w.provisioner_connector_id <> c.id
+		       OR (w.allow_provisioner_execution AND $3))`,
+		orgID, warehouseID.String(), s.warehouseManagementEnabled())
 	if err != nil {
 		return nil, fmt.Errorf("load service access: %w", err)
 	}

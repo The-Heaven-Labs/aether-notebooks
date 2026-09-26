@@ -8693,7 +8693,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Update a warehouse's name and/or provisioner connector. An absent field leaves the value unchanged; an explicit null provisioner_connector_id clears the provisioner.",
+                "description": "Update a warehouse's name, provisioner connector, and/or provisioner execution override. An absent field leaves the value unchanged; an explicit null provisioner_connector_id clears the provisioner.",
                 "consumes": [
                     "application/json"
                 ],
@@ -9114,7 +9114,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Choose which of the caller's permitted services their warehouse queries run on. The connector must belong to the warehouse and the caller must have ` + "`" + `use` + "`" + ` on it; an explicit null clears the preference.",
+                "description": "Choose which of the caller's permitted services their warehouse queries run on. The connector must belong to the warehouse and the caller must have ` + "`" + `use` + "`" + ` on it; an explicit null clears the preference. The warehouse provisioner is rejected unless allow_provisioner_execution is on and ClickHouse table permissions are enabled.",
                 "consumes": [
                     "application/json"
                 ],

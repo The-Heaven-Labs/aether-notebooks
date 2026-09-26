@@ -72,8 +72,9 @@ func TestAuthConfigExposesWarehouseKillSwitch(t *testing.T) {
 func TestKillSwitchOffResolveExecutionTargetIsUnmanaged(t *testing.T) {
 	s, key := newKillSwitchTestServer(t)
 	fx := seedWarehouseFixtureRows(t, s, key)
+	serviceID := insertClickHouseService(t, s, fx.orgID, fx.connectorID, "Kill Switch Service", &fx.warehouseID)
 
-	_, err := s.resolveExecutionTarget(context.Background(), fx.userID, fx.connectorID, false)
+	_, err := s.resolveExecutionTarget(context.Background(), fx.userID, serviceID, false)
 	require.ErrorIs(t, err, executor.ErrUnmanagedConnector)
 }
 

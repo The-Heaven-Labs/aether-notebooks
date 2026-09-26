@@ -19,16 +19,17 @@ import (
 // warehouseJSON is the API representation of a warehouse row. It is defined
 // here rather than in models because no other package consumes it.
 type warehouseJSON struct {
-	ID                     string                   `json:"id"`
-	OrgID                  string                   `json:"org_id"`
-	Name                   string                   `json:"name"`
-	ProvisionerConnectorID *string                  `json:"provisioner_connector_id"`
-	SyncStatus             string                   `json:"sync_status"`
-	SyncError              *string                  `json:"sync_error"`
-	LastSyncedAt           *time.Time               `json:"last_synced_at"`
-	CreatedAt              time.Time                `json:"created_at"`
-	UpdatedAt              time.Time                `json:"updated_at"`
-	Connectors             []warehouseConnectorJSON `json:"connectors,omitempty"`
+	ID                        string                   `json:"id"`
+	OrgID                     string                   `json:"org_id"`
+	Name                      string                   `json:"name"`
+	ProvisionerConnectorID    *string                  `json:"provisioner_connector_id"`
+	AllowProvisionerExecution bool                     `json:"allow_provisioner_execution"`
+	SyncStatus                string                   `json:"sync_status"`
+	SyncError                 *string                  `json:"sync_error"`
+	LastSyncedAt              *time.Time               `json:"last_synced_at"`
+	CreatedAt                 time.Time                `json:"created_at"`
+	UpdatedAt                 time.Time                `json:"updated_at"`
+	Connectors                []warehouseConnectorJSON `json:"connectors,omitempty"`
 }
 
 // warehouseConnectorJSON describes one connector linked to a warehouse.
@@ -39,7 +40,7 @@ type warehouseConnectorJSON struct {
 	IsProvisioner bool   `json:"is_provisioner"`
 }
 
-const warehouseSelectColumns = `id, org_id, name, provisioner_connector_id, sync_status, sync_error, last_synced_at, created_at, updated_at`
+const warehouseSelectColumns = `id, org_id, name, provisioner_connector_id, allow_provisioner_execution, sync_status, sync_error, last_synced_at, created_at, updated_at`
 
 const maxWarehouseNameLength = 255
 
@@ -84,7 +85,8 @@ func (s *Server) enqueueWarehouseSyncNow(warehouseID uuid.UUID) {
 func scanWarehouseRow(row pgx.Row) (warehouseJSON, error) {
 	var wh warehouseJSON
 	err := row.Scan(&wh.ID, &wh.OrgID, &wh.Name, &wh.ProvisionerConnectorID,
-		&wh.SyncStatus, &wh.SyncError, &wh.LastSyncedAt, &wh.CreatedAt, &wh.UpdatedAt)
+		&wh.AllowProvisionerExecution, &wh.SyncStatus, &wh.SyncError,
+		&wh.LastSyncedAt, &wh.CreatedAt, &wh.UpdatedAt)
 	return wh, err
 }
 
@@ -226,9 +228,8 @@ func (s *Server) handleListWarehouses(w http.ResponseWriter, r *http.Request) {
 
 	warehouses := []warehouseJSON{}
 	for rows.Next() {
-		var wh warehouseJSON
-		if err := rows.Scan(&wh.ID, &wh.OrgID, &wh.Name, &wh.ProvisionerConnectorID,
-			&wh.SyncStatus, &wh.SyncError, &wh.LastSyncedAt, &wh.CreatedAt, &wh.UpdatedAt); err != nil {
+		wh, err := scanWarehouseRow(rows)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
@@ -410,15 +411,18 @@ func (s *Server) handleGetWarehouse(w http.ResponseWriter, r *http.Request) {
 }
 
 // updateWarehouseRequest: an absent field leaves the value unchanged; an
-// explicit null provisioner_connector_id clears the provisioner. name must be
-// a string (it cannot be nulled) and an empty body is rejected.
+// explicit null provisioner_connector_id clears the provisioner.
+// allow_provisioner_execution is an optional bool with no null semantics
+// (absent or null leaves it unchanged). name must be a string (it cannot be
+// nulled) and an empty body is rejected.
 type updateWarehouseRequest struct {
-	Name                   json.RawMessage `json:"name"`
-	ProvisionerConnectorID json.RawMessage `json:"provisioner_connector_id"`
+	Name                      json.RawMessage `json:"name"`
+	ProvisionerConnectorID    json.RawMessage `json:"provisioner_connector_id"`
+	AllowProvisionerExecution *bool           `json:"allow_provisioner_execution"`
 }
 
 // @Summary Update a warehouse
-// @Description Update a warehouse's name and/or provisioner connector. An absent field leaves the value unchanged; an explicit null provisioner_connector_id clears the provisioner.
+// @Description Update a warehouse's name, provisioner connector, and/or provisioner execution override. An absent field leaves the value unchanged; an explicit null provisioner_connector_id clears the provisioner.
 // @Tags warehouses
 // @Accept json
 // @Produce json
@@ -445,7 +449,7 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Name == nil && req.ProvisionerConnectorID == nil {
+	if req.Name == nil && req.ProvisionerConnectorID == nil && req.AllowProvisionerExecution == nil {
 		writeError(w, http.StatusBadRequest, "at least one field must be provided")
 		return
 	}
@@ -502,10 +506,11 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 
 	var oldName string
 	var oldProvisioner *uuid.UUID
+	var oldAllow bool
 	err = tx.QueryRow(ctx, `
-		SELECT name, provisioner_connector_id FROM warehouses
+		SELECT name, provisioner_connector_id, allow_provisioner_execution FROM warehouses
 		WHERE id = $1 AND org_id = $2 FOR UPDATE`,
-		warehouseUUID.String(), claims.OrgID).Scan(&oldName, &oldProvisioner)
+		warehouseUUID.String(), claims.OrgID).Scan(&oldName, &oldProvisioner, &oldAllow)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "warehouse not found")
 		return
@@ -517,6 +522,7 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 
 	changedName := name != nil && *name != oldName
 	changedProvisioner := provisionerSet && !uuidPointersEqual(oldProvisioner, provisionerID)
+	changedAllow := req.AllowProvisionerExecution != nil && *req.AllowProvisionerExecution != oldAllow
 
 	if changedName {
 		if _, err := tx.Exec(ctx,
@@ -536,6 +542,14 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if changedAllow {
+		if _, err := tx.Exec(ctx,
+			`UPDATE warehouses SET allow_provisioner_execution = $1, updated_at = now() WHERE id = $2 AND org_id = $3`,
+			*req.AllowProvisionerExecution, warehouseUUID.String(), claims.OrgID); err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
@@ -546,7 +560,7 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 		s.enqueueWarehouseSync(warehouseUUID)
 	}
 
-	if changedName || changedProvisioner {
+	if changedName || changedProvisioner || changedAllow {
 		meta := map[string]any{}
 		if changedName {
 			meta["name"] = *name
@@ -561,6 +575,10 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 			if oldProvisioner != nil {
 				meta["previous_provisioner_connector_id"] = oldProvisioner.String()
 			}
+		}
+		if changedAllow {
+			meta["allow_provisioner_execution"] = *req.AllowProvisionerExecution
+			meta["previous_allow_provisioner_execution"] = oldAllow
 		}
 		s.audit.Log(ctx, audit.Entry{
 			OrgID: claims.OrgID, UserID: claims.UserID,

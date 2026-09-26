@@ -101,7 +101,9 @@ test.describe('ClickHouse warehouse permissions', () => {
       // Create a warehouse from the UI, then link the connector and assign it
       // as provisioner through the expanded card.
       await page.goto('/warehouses')
-      await page.getByRole('button', { name: '+ New Warehouse' }).click()
+      // Both the section header and the empty state render a "+ New
+      // Warehouse" button; pick the header one deterministically.
+      await page.getByRole('button', { name: '+ New Warehouse' }).first().click()
       await page.getByPlaceholder('Analytics Warehouse').fill(whName)
       await page.getByRole('button', { name: 'Create', exact: true }).click()
 
@@ -116,6 +118,24 @@ test.describe('ClickHouse warehouse permissions', () => {
       const warehouse = await findWarehouse(request, headers, whName)
       expect(warehouse).toBeTruthy()
       warehouseId = warehouse!.id
+
+      // The provisioner is this warehouse's only connector, so user execution
+      // is blocked until the admin override is on. Enable it through the new
+      // toggle and confirm it persists server-side.
+      const allowProvisioner = page.getByLabel('Allow queries through the provisioner')
+      await expect(allowProvisioner).not.toBeChecked()
+      await allowProvisioner.check()
+      await expect
+        .poll(
+          async () => {
+            const resp = await request.get(`/api/v1/warehouses/${warehouseId}`, { headers })
+            const body = await resp.json()
+            return body.allow_provisioner_execution
+          },
+          { timeout: 20_000, intervals: [500, 1_000, 2_000], message: 'override did not persist' },
+        )
+        .toBe(true)
+
       await expect
         .poll(
           async () => {
@@ -172,6 +192,18 @@ test.describe('ClickHouse warehouse permissions', () => {
       const routing = page.getByLabel(`Preferred service for ${whName}`)
       await expect(routing).toBeVisible()
       await routing.selectOption({ label: connName })
+      // The select is controlled by the effective-access query, so wait for
+      // the save to land server-side before reloading.
+      await expect
+        .poll(
+          async () => {
+            const resp = await request.get(`/api/v1/warehouses/${warehouseId}/effective-access`, { headers })
+            const body = await resp.json()
+            return body.preferred_connector_id
+          },
+          { timeout: 20_000, intervals: [500, 1_000, 2_000], message: 'routing preference did not persist' },
+        )
+        .toBe(connectorId)
       await page.reload()
       await expect(page.getByLabel(`Preferred service for ${whName}`)).toHaveValue(connectorId)
 

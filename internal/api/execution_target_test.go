@@ -131,7 +131,7 @@ func TestResolveExecutionTargetNotReadyFailsClosed(t *testing.T) {
 func TestResolveExecutionTargetRequiresServiceAccess(t *testing.T) {
 	fx := setupExecutionTargetFixture(t)
 
-	target, err := fx.resolve(t, fx.provisionerID, false)
+	target, err := fx.resolve(t, fx.connA, false)
 	require.ErrorIs(t, err, executor.ErrServiceAccessDenied)
 	require.Nil(t, target)
 }

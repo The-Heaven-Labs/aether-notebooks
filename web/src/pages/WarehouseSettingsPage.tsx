@@ -40,6 +40,7 @@ export function WarehouseSettingsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Warehouse | null>(null)
   const [forceTarget, setForceTarget] = useState<{ warehouse: Warehouse; message: string } | null>(null)
   const [unlinkTarget, setUnlinkTarget] = useState<{ warehouse: Warehouse; connector: WarehouseConnector } | null>(null)
+  const [allowProvisionerSettled, setAllowProvisionerSettled] = useState(0)
 
   const {
     data: warehouses = [],
@@ -96,6 +97,34 @@ export function WarehouseSettingsPage() {
       setError(null)
     },
     onError: (err: Error) => setError(err.message),
+  })
+
+  const allowProvisionerMutation = useMutation({
+    mutationFn: ({ id, allow }: { id: string; allow: boolean }) =>
+      updateWarehouse(id, { allow_provisioner_execution: allow }),
+    onMutate: ({ id, allow }) => {
+      const previous = qc.getQueryData<Warehouse>(['warehouse', id])
+      void qc.cancelQueries({ queryKey: ['warehouse', id] })
+      if (previous) {
+        qc.setQueryData<Warehouse>(['warehouse', id], {
+          ...previous,
+          allow_provisioner_execution: allow,
+        })
+      }
+      return { previous }
+    },
+    onError: (err: Error, { id }, context) => {
+      if (context?.previous) {
+        qc.setQueryData<Warehouse>(['warehouse', id], context.previous)
+      }
+      setAllowProvisionerSettled((n) => n + 1)
+      setError(err.message)
+    },
+    onSuccess: () => {
+      setAllowProvisionerSettled((n) => n + 1)
+      invalidateWarehouses()
+      setError(null)
+    },
   })
 
   const provisionerMutation = useMutation({
@@ -261,6 +290,11 @@ export function WarehouseSettingsPage() {
                 onSetProvisioner={(connectorId) =>
                   provisionerMutation.mutate({ id: warehouse.id, connectorId })
                 }
+                onSetAllowProvisionerExecution={(allow) =>
+                  allowProvisionerMutation.mutate({ id: warehouse.id, allow })
+                }
+                allowProvisionerPending={allowProvisionerMutation.isPending}
+                allowProvisionerSettled={allowProvisionerSettled}
                 onAddConnector={(connectorId) =>
                   linkMutation.mutate({ connectorId, warehouseId: warehouse.id })
                 }
@@ -330,6 +364,9 @@ interface WarehouseCardProps {
   onRename: (name: string) => void
   onDelete: () => void
   onSetProvisioner: (connectorId: string | null) => void
+  onSetAllowProvisionerExecution: (allow: boolean) => void
+  allowProvisionerPending: boolean
+  allowProvisionerSettled: number
   onAddConnector: (connectorId: string) => void
   onRemoveConnector: (connector: WarehouseConnector) => void
 }
@@ -342,6 +379,9 @@ function WarehouseCard({
   onRename,
   onDelete,
   onSetProvisioner,
+  onSetAllowProvisionerExecution,
+  allowProvisionerPending,
+  allowProvisionerSettled,
   onAddConnector,
   onRemoveConnector,
 }: WarehouseCardProps) {
@@ -364,6 +404,14 @@ function WarehouseCard({
     queryFn: () => getWarehouseValidation(warehouse.id),
     enabled: expanded,
   })
+
+  const serverAllowProvisioner =
+    detail?.allow_provisioner_execution ?? warehouse.allow_provisioner_execution ?? false
+  const [allowProvisionerOverride, setAllowProvisionerOverride] = useState<boolean | null>(null)
+  useEffect(() => {
+    setAllowProvisionerOverride(null)
+  }, [serverAllowProvisioner, allowProvisionerSettled])
+  const allowProvisionerChecked = allowProvisionerOverride ?? serverAllowProvisioner
 
   const validationWarnings = validation
     ? validation.tables_without_service_access.length + validation.service_access_without_tables.length
@@ -478,7 +526,29 @@ function WarehouseCard({
                 <span style={styles.hint}>
                   {tablePermissionsEnabled
                     ? 'Runs the DDL that provisions per-user ClickHouse access.'
-                    : 'ClickHouse table permissions are disabled; runs keep using the stored credential.'}
+                    : 'ClickHouse table permissions are disabled; linked services keep using the stored credential. The provisioner never runs user queries while they are disabled.'}
+                </span>
+              </div>
+
+              <div style={styles.field}>
+                <label style={{ ...styles.label, display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    aria-label="Allow queries through the provisioner"
+                    checked={allowProvisionerChecked}
+                    disabled={!detail?.provisioner_connector_id || allowProvisionerPending}
+                    aria-describedby={`allow-provisioner-hint-${warehouse.id}`}
+                    onChange={(e) => {
+                      setAllowProvisionerOverride(e.target.checked)
+                      onSetAllowProvisionerExecution(e.target.checked)
+                    }}
+                  />
+                  Allow queries through the provisioner
+                </label>
+                <span id={`allow-provisioner-hint-${warehouse.id}`} style={styles.hint}>
+                  Off by default. The provisioner credential is reserved for background provisioning;
+                  when off, notebook and agent queries cannot run through this connector.
+                  {!tablePermissionsEnabled && ' Takes effect once ClickHouse table permissions are enabled.'}
                 </span>
               </div>
 

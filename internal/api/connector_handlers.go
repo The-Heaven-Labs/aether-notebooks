@@ -198,8 +198,12 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, warehouse_id, table_allowlist, table_denylist
-		 FROM connectors WHERE org_id = $1 AND deleted_at IS NULL ORDER BY name ASC`,
+		`SELECT c.id, c.org_id, c.name, c.type, c.config_encrypted, c.max_rows, c.timeout_seconds, c.is_default, c.created_at, c.updated_at, c.folder_id, c.warehouse_id, c.table_allowlist, c.table_denylist,
+		        EXISTS (SELECT 1 FROM warehouses wp WHERE wp.provisioner_connector_id = c.id AND wp.org_id = c.org_id) AS is_provisioner,
+		        CASE WHEN w.provisioner_connector_id = c.id THEN w.allow_provisioner_execution ELSE false END AS allow_provisioner_execution
+		 FROM connectors c
+		 LEFT JOIN warehouses w ON w.id = c.warehouse_id
+		 WHERE c.org_id = $1 AND c.deleted_at IS NULL ORDER BY c.name ASC`,
 		claims.OrgID,
 	)
 	if err != nil {
@@ -210,14 +214,17 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 
 	type connectorWithPerms struct {
 		models.Connector
-		CanUse bool `json:"can_use"`
+		CanUse        bool `json:"can_use"`
+		IsProvisioner bool `json:"is_provisioner"`
 	}
 	var result []connectorWithPerms
 	for rows.Next() {
 		var c models.Connector
 		var encryptedConfig []byte
+		var isProvisioner, allowProvisionerExecution bool
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
-			&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.WarehouseID, &c.TableAllowlist, &c.TableDenylist); err != nil {
+			&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.WarehouseID, &c.TableAllowlist, &c.TableDenylist,
+			&isProvisioner, &allowProvisionerExecution); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
@@ -227,12 +234,15 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		canUse, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "use")
+		if isProvisioner && (!allowProvisionerExecution || !s.warehouseManagementEnabled()) {
+			canUse = false
+		}
 		// Decrypt and mask password
 		if plain, err := crypto.Decrypt(encryptedConfig, s.masterKey); err == nil {
 			json.Unmarshal(plain, &c.Config)
 			c.Config.Password = "***"
 		}
-		result = append(result, connectorWithPerms{Connector: c, CanUse: canUse})
+		result = append(result, connectorWithPerms{Connector: c, CanUse: canUse, IsProvisioner: isProvisioner})
 	}
 
 	if result == nil {
@@ -611,6 +621,26 @@ func (s *Server) buildExecutor(connType models.ConnectorType, configEnc []byte) 
 	return driver.NewExecutor(plain)
 }
 
+// connectorIsProvisioner reports whether a connector in orgID is the
+// provisioner of one of that org's warehouses. Provisioner connectors are
+// reserved for the reconcile worker: stored-credential introspection rejects
+// them for everyone except org admins, who need the warehouse grant-management
+// table browser to keep working. An invalid connector id is not a provisioner
+// (downstream ACL/load handling keeps its usual 403/404 semantics).
+func (s *Server) connectorIsProvisioner(ctx context.Context, orgID, connectorID string) (bool, error) {
+	if !isValidUUID(connectorID) {
+		return false, nil
+	}
+	var exists bool
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM warehouses WHERE org_id = $2 AND provisioner_connector_id = $1)`,
+		connectorID, orgID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check provisioner connector %s: %w", connectorID, err)
+	}
+	return exists, nil
+}
+
 // @Summary Test a connector configuration
 // @Description Test a database connection using raw config before saving
 // @Tags connectors
@@ -659,10 +689,25 @@ func (s *Server) handleListConnectorDatabases(w http.ResponseWriter, r *http.Req
 	connID := r.PathValue("id")
 	ctx := r.Context()
 
-	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", connID, "use")
-	if err != nil || !allowed {
-		writeError(w, http.StatusForbidden, "insufficient permissions")
+	isProvisioner, err := s.connectorIsProvisioner(ctx, claims.OrgID, connID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check connector")
 		return
+	}
+	if isProvisioner {
+		if claims.Role != "admin" {
+			slog.Warn("blocked provisioner connector introspection",
+				"connector_id", connID, "user_id", claims.UserID, "path", r.URL.Path)
+			writeError(w, http.StatusForbidden,
+				"the warehouse provisioner connector is reserved for background provisioning")
+			return
+		}
+	} else {
+		allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", connID, "use")
+		if err != nil || !allowed {
+			writeError(w, http.StatusForbidden, "insufficient permissions")
+			return
+		}
 	}
 
 	connType, configEnc, err := s.loadConnectorRow(ctx, connID, claims.OrgID)
@@ -703,10 +748,25 @@ func (s *Server) handleTestConnector(w http.ResponseWriter, r *http.Request) {
 	connID := r.PathValue("id")
 	ctx := r.Context()
 
-	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", connID, "use")
-	if err != nil || !allowed {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "insufficient permissions"})
+	isProvisioner, err := s.connectorIsProvisioner(ctx, claims.OrgID, connID)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "failed to check connector"})
 		return
+	}
+	if isProvisioner {
+		if claims.Role != "admin" {
+			slog.Warn("blocked provisioner connector introspection",
+				"connector_id", connID, "user_id", claims.UserID, "path", r.URL.Path)
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false,
+				"error": "the warehouse provisioner connector is reserved for background provisioning"})
+			return
+		}
+	} else {
+		allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", connID, "use")
+		if err != nil || !allowed {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "insufficient permissions"})
+			return
+		}
 	}
 
 	connType, configEnc, err := s.loadConnectorRow(ctx, connID, claims.OrgID)
@@ -742,10 +802,25 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 	connID := r.PathValue("id")
 	ctx := r.Context()
 
-	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", connID, "use")
-	if err != nil || !allowed {
-		writeError(w, http.StatusForbidden, "insufficient permissions")
+	isProvisioner, err := s.connectorIsProvisioner(ctx, claims.OrgID, connID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check connector")
 		return
+	}
+	if isProvisioner {
+		if claims.Role != "admin" {
+			slog.Warn("blocked provisioner connector introspection",
+				"connector_id", connID, "user_id", claims.UserID, "path", r.URL.Path)
+			writeError(w, http.StatusForbidden,
+				"the warehouse provisioner connector is reserved for background provisioning")
+			return
+		}
+	} else {
+		allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", connID, "use")
+		if err != nil || !allowed {
+			writeError(w, http.StatusForbidden, "insufficient permissions")
+			return
+		}
 	}
 
 	connType, configEnc, allowlist, denylist, err := s.loadConnectorWithFilters(ctx, connID, claims.OrgID)

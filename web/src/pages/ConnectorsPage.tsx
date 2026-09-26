@@ -478,6 +478,23 @@ export function ConnectorsPage() {
                         Default
                       </span>
                     )}
+                    {c.is_provisioner && (
+                      <span style={{
+                        fontSize: 11,
+                        background: 'var(--bg-input)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 10,
+                        padding: '2px 8px',
+                        color: 'var(--text-secondary)',
+                        fontWeight: 600,
+                        marginLeft: 8,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 3,
+                      }}>
+                        Provisioner
+                      </span>
+                    )}
                   </td>
                   <td style={cellStyle}><code style={styles.badge}>{c.type}</code></td>
                   <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
