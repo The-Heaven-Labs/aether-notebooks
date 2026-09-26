@@ -159,3 +159,35 @@ func TestResolveExecutionTargetBlocksProvisionerWithMissingWarehouseLink(t *test
 	require.ErrorIs(t, err, executor.ErrProvisionerNotExecutable)
 	require.NotErrorIs(t, err, executor.ErrUnmanagedConnector)
 }
+
+func TestExecuteCellOnProvisionerReturns403(t *testing.T) {
+	s, key := newWarehouseSyncTestServer(t)
+	fx := seedWarehouseFixtureRows(t, s, key)
+
+	nbID, cellID := seedExecuteWarehouseCell(t, s, fx.orgID, fx.userID, fx.connectorID,
+		"SELECT currentUser()", nil)
+	grantNotebookRun(t, s, fx.orgID, fx.userID, nbID)
+
+	rec := executeWarehouseCell(t, s, fx.userID, fx.orgID, nbID, cellID)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.Contains(t, strings.ToLower(rec.Body.String()), "provisioner")
+}
+
+// With the kill switch off the handler would normally fall back to the stored
+// credential. The provisioner config points at an unreachable host, so a
+// fallback would surface as a gateway error (502) instead of the block.
+func TestExecuteCellOnProvisionerKillSwitchOffReturns403(t *testing.T) {
+	s, key := newWarehouseSyncTestServer(t)
+	s.SetCHTablePermissions(false)
+	fx := seedWarehouseFixtureRows(t, s, key)
+	pointProvisionerAtUnreachableHost(t, s, key, fx.connectorID)
+	grantConnectorUse(t, s, fx.orgID, fx.userID, fx.connectorID)
+
+	nbID, cellID := seedExecuteWarehouseCell(t, s, fx.orgID, fx.userID, fx.connectorID,
+		"SELECT currentUser()", nil)
+	grantNotebookRun(t, s, fx.orgID, fx.userID, nbID)
+
+	rec := executeWarehouseCell(t, s, fx.userID, fx.orgID, nbID, cellID)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.Contains(t, strings.ToLower(rec.Body.String()), "provisioner")
+}

@@ -268,6 +268,10 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 			// the cell's requested one.
 			maxRows = target.MaxRows
 			timeout = target.TimeoutSeconds
+		case errors.Is(targetErr, executor.ErrProvisionerNotExecutable):
+			writeError(w, http.StatusForbidden,
+				"this connector is the warehouse provisioner and cannot run queries; choose another service or ask an admin to enable queries through the provisioner")
+			return
 		case errors.Is(targetErr, executor.ErrUnmanagedConnector):
 			exec, err = driver.NewExecutor(plain)
 			if err != nil {
