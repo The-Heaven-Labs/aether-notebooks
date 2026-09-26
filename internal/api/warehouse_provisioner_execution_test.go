@@ -285,3 +285,41 @@ func TestProvisionerIntrospectionAllowedForOrgAdmin(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), `"ok":false`)
 }
+
+func TestListWarehouseServicesExcludesBlockedProvisioner(t *testing.T) {
+	s, key := newWarehouseSyncTestServer(t)
+	fx := seedWarehouseFixtureRows(t, s, key)
+	ctx := context.Background()
+	serviceID := insertClickHouseService(t, s, fx.orgID, fx.connectorID, "Listed Service", &fx.warehouseID)
+
+	services, err := s.listWarehouseServices(ctx, fx.warehouseID, fx.orgID)
+	require.NoError(t, err)
+	require.Len(t, services, 1)
+	require.Equal(t, serviceID, services[0].id)
+
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET allow_provisioner_execution = true WHERE id = $1`, fx.warehouseID.String())
+	require.NoError(t, err)
+	services, err = s.listWarehouseServices(ctx, fx.warehouseID, fx.orgID)
+	require.NoError(t, err)
+	require.Len(t, services, 2)
+}
+
+func TestSetWarehousePreferenceRejectsBlockedProvisioner(t *testing.T) {
+	s, key := newWarehouseSyncTestServer(t)
+	fx := seedWarehouseFixtureRows(t, s, key)
+	ctx := context.Background()
+	grantConnectorUse(t, s, fx.orgID, fx.userID, fx.connectorID)
+
+	token, err := s.jwt.Issue(fx.userID.String(), fx.orgID.String(), "admin")
+	require.NoError(t, err)
+
+	rec := putPreferenceViaAPI(t, s, token, fx.warehouseID, &fx.connectorID)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET allow_provisioner_execution = true WHERE id = $1`, fx.warehouseID.String())
+	require.NoError(t, err)
+	rec = putPreferenceViaAPI(t, s, token, fx.warehouseID, &fx.connectorID)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}

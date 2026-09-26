@@ -790,6 +790,21 @@ func (s *Server) handleSetWarehousePreference(w http.ResponseWriter, r *http.Req
 			writeError(w, http.StatusBadRequest, "connector does not belong to this warehouse")
 			return
 		}
+		var provisionerBlocked bool
+		if err := s.db.Pool.QueryRow(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM warehouses
+				WHERE id = $1 AND provisioner_connector_id = $2
+				  AND NOT allow_provisioner_execution)`,
+			warehouseUUID.String(), connectorID.String()).Scan(&provisionerBlocked); err != nil {
+			writeError(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+		if provisionerBlocked {
+			writeError(w, http.StatusBadRequest,
+				"the provisioner connector cannot be selected as a service; enable queries through the provisioner in warehouse settings first")
+			return
+		}
 		allowed, err := s.connectorUseAllowed(ctx, userUUID, orgUUID, claims.Role, *connectorID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "permission check failed")

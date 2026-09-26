@@ -101,6 +101,13 @@ func setupWarehouseRBACE2EFixture(t *testing.T) *warehouseRBACE2EFixture {
 	require.True(t, recorder.contains(warehouseID),
 		"creating a warehouse with a provisioner must enqueue its first sync")
 
+	// The provisioner is this warehouse's only connector; users execute as
+	// their per-user identities, which requires the admin override.
+	rec = warehouseAPIRequest(t, s, http.MethodPut,
+		"/api/v1/warehouses/"+warehouseID.String(), adminToken,
+		map[string]any{"allow_provisioner_execution": true})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
 	// Both execution subjects need service access; the tables stay
 	// ClickHouse-enforced.
 	grantConnectorUse(t, s, orgID, memberID, connectorID)

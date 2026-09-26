@@ -268,10 +268,15 @@ func (s *Server) warnRejectedConnectorLink(ctx context.Context, connectorID uuid
 // here too.
 func (s *Server) listWarehouseServices(ctx context.Context, warehouseID, orgID uuid.UUID) ([]warehouseService, error) {
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, name, config_encrypted, max_rows, timeout_seconds
-		FROM connectors
-		WHERE warehouse_id = $1 AND org_id = $2 AND type = 'clickhouse' AND deleted_at IS NULL
-		ORDER BY name ASC, id ASC`, warehouseID.String(), orgID.String())
+		SELECT c.id, c.name, c.config_encrypted, c.max_rows, c.timeout_seconds
+		FROM connectors c
+		JOIN warehouses w ON w.id = c.warehouse_id
+		WHERE c.warehouse_id = $1 AND c.org_id = $2
+		  AND c.type = 'clickhouse' AND c.deleted_at IS NULL
+		  AND (w.provisioner_connector_id IS NULL
+		       OR w.provisioner_connector_id <> c.id
+		       OR w.allow_provisioner_execution)
+		ORDER BY c.name ASC, c.id ASC`, warehouseID.String(), orgID.String())
 	if err != nil {
 		return nil, fmt.Errorf("list warehouse %s services: %w", warehouseID, err)
 	}
