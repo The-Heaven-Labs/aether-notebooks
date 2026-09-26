@@ -230,3 +230,56 @@ func TestAgentExecuteSQLBlocksProvisioner(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "is the warehouse provisioner and cannot run queries")
 }
+
+func connectorIntrospectionRequest(t *testing.T, s *Server, method, path, token string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestProvisionerIntrospectionBlockedForNonAdmin(t *testing.T) {
+	s, key := newWarehouseSyncTestServer(t)
+	fx := seedWarehouseFixtureRows(t, s, key)
+	grantConnectorUse(t, s, fx.orgID, fx.userID, fx.connectorID)
+
+	token, err := s.jwt.Issue(fx.userID.String(), fx.orgID.String(), "non-admin")
+	require.NoError(t, err)
+	base := "/api/v1/connectors/" + fx.connectorID.String()
+
+	rec := connectorIntrospectionRequest(t, s, http.MethodGet, base+"/schema", token)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+	rec = connectorIntrospectionRequest(t, s, http.MethodGet, base+"/databases", token)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+	rec = connectorIntrospectionRequest(t, s, http.MethodPost, base+"/test", token)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"ok":false`)
+}
+
+// Org admins keep introspection so the warehouse grant-management table
+// browser keeps working when the provisioner is the only linked connector.
+// The connector config points at an unreachable host: getting past the guard
+// surfaces as a gateway error, not a 403.
+func TestProvisionerIntrospectionAllowedForOrgAdmin(t *testing.T) {
+	s, key := newWarehouseSyncTestServer(t)
+	fx := seedWarehouseFixtureRows(t, s, key)
+	pointProvisionerAtUnreachableHost(t, s, key, fx.connectorID)
+
+	token, err := s.jwt.Issue(fx.userID.String(), fx.orgID.String(), "admin")
+	require.NoError(t, err)
+	base := "/api/v1/connectors/" + fx.connectorID.String()
+
+	rec := connectorIntrospectionRequest(t, s, http.MethodGet, base+"/schema", token)
+	require.Equal(t, http.StatusBadGateway, rec.Code, rec.Body.String())
+
+	rec = connectorIntrospectionRequest(t, s, http.MethodGet, base+"/databases", token)
+	require.Equal(t, http.StatusBadGateway, rec.Code, rec.Body.String())
+
+	rec = connectorIntrospectionRequest(t, s, http.MethodPost, base+"/test", token)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"ok":false`)
+}
