@@ -49,11 +49,11 @@ export const FOLDER_ENG: FolderContents = {
 
 export const GROUPS = [
   {
-    id: 'g-1', org_id: 'org-1', name: 'Data Team', member_count: 1,
+    id: 'g-1', org_id: 'org-1', name: 'Data Team', source: 'manual', member_count: 1,
     created_at: '2026-01-01T00:00:00Z',
   },
   {
-    id: 'g-2', org_id: 'org-1', name: 'CSIRT', member_count: 0,
+    id: 'g-2', org_id: 'org-1', name: 'CSIRT', source: 'manual', member_count: 0,
     created_at: '2026-01-01T00:00:00Z',
   },
 ]
@@ -198,7 +198,7 @@ export const handlers = [
     const body = await request.json() as Record<string, unknown>
     return HttpResponse.json(
       {
-        id: 'g-new', org_id: 'org-1', name: body.name, member_count: 0,
+        id: 'g-new', org_id: 'org-1', name: body.name, source: 'manual', member_count: 0,
         created_at: '2026-01-01T00:00:00Z',
       },
       { status: 201 }
@@ -207,7 +207,7 @@ export const handlers = [
   http.put('/api/v1/groups/:id', async ({ params, request }) => {
     const body = await request.json() as Record<string, unknown>
     return HttpResponse.json({
-      id: params.id, org_id: 'org-1', name: body.name,
+      id: params.id, org_id: 'org-1', name: body.name, source: 'manual',
       member_count: 0, created_at: '2026-01-01T00:00:00Z',
     })
   }),

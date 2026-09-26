@@ -366,8 +366,9 @@ export function GroupsPage() {
   })
 
   const deleteGroup = useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/groups/${id}`),
-    onSuccess: (_, id) => {
+    mutationFn: ({ id, force }: { id: string; force?: boolean }) =>
+      api.delete(`/api/v1/groups/${id}${force ? '?force=true' : ''}`),
+    onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ['groups'] })
       if (expandedId === id) setExpandedId(null)
       setGroupMembers((prev) => {
@@ -656,6 +657,7 @@ export function GroupsPage() {
           {groups.map((group) => {
             const isExpanded = expandedId === group.id
             const isEveryone = /^everyone$/i.test(group.name)
+            const isSystem = group.source === 'system' || isEveryone
             const currentMembers = groupMembers[group.id] ?? []
             const currentPending = pendingMembers[group.id] ?? []
             const isLoadingGroup = loadingMembers[group.id] ?? false
@@ -717,13 +719,16 @@ export function GroupsPage() {
                     {isEveryone && (
                       <span style={styles.systemBadge}>System</span>
                     )}
+                    {group.source === 'sso' && (
+                      <span style={styles.ssoBadge}>SSO</span>
+                    )}
                     <span style={styles.memberCount}>
                       {group.member_count} {group.member_count === 1 ? 'member' : 'members'}
                       {currentPending.length > 0 && ` · ${currentPending.length} pending`}
                     </span>
                   </button>
 
-                  {isAdmin && !isEveryone && (
+                  {isAdmin && !isSystem && (
                     <div style={styles.actions}>
                       {isRenaming ? (
                         <>
@@ -801,7 +806,7 @@ export function GroupsPage() {
                       <div key={m.user_id} style={styles.memberRow}>
                         <span style={styles.memberName}>{m.name || m.email}</span>
                         <span style={styles.memberEmail}>{m.email}</span>
-                        {isAdmin && !isEveryone && (
+                        {isAdmin && !isSystem && (
 <button
                           type="button"
                           style={styles.removeBtn}
@@ -820,7 +825,7 @@ export function GroupsPage() {
                       <div key={`pending:${p.email}`} style={styles.memberRow}>
                         <span style={styles.memberName}>{p.email}</span>
                         <span style={styles.pendingBadge}>Pending — awaiting first login</span>
-                        {isAdmin && !isEveryone && (
+                        {isAdmin && !isSystem && (
                           <button
                             type="button"
                             style={styles.removeBtn}
@@ -834,7 +839,7 @@ export function GroupsPage() {
                       </div>
                     ))}
 
-                    {isAdmin && !isEveryone && (
+                    {isAdmin && !isSystem && (
                       <>
                         <div style={styles.addMemberRow}>
                           <MemberDropdown
@@ -919,11 +924,20 @@ export function GroupsPage() {
       {/* Confirm dialogs */}
       <ConfirmDialog
         open={!!deleteGroupConfirm}
-        title="Delete group"
-        message={`Delete group "${deleteGroupConfirm ? groupLabel(deleteGroupConfirm) : ''}"? This cannot be undone.`}
-        confirmLabel="Delete"
+        title={deleteGroupConfirm?.source === 'sso' ? 'Delete SSO-managed group' : 'Delete group'}
+        message={
+          deleteGroupConfirm?.source === 'sso'
+            ? `"${groupLabel(deleteGroupConfirm)}" is managed by SSO. Deleting it won't stop your identity provider from recreating it if it still sends a group named "${deleteGroupConfirm.name}". Delete anyway?`
+            : `Delete group "${deleteGroupConfirm ? groupLabel(deleteGroupConfirm) : ''}"? This cannot be undone.`
+        }
+        confirmLabel={deleteGroupConfirm?.source === 'sso' ? 'Delete anyway' : 'Delete'}
         destructive
-        onConfirm={() => { if (deleteGroupConfirm) deleteGroup.mutate(deleteGroupConfirm.id); setDeleteGroupConfirm(null) }}
+        onConfirm={() => {
+          if (deleteGroupConfirm) {
+            deleteGroup.mutate({ id: deleteGroupConfirm.id, force: deleteGroupConfirm.source === 'sso' })
+          }
+          setDeleteGroupConfirm(null)
+        }}
         onCancel={() => setDeleteGroupConfirm(null)}
       />
       <ConfirmDialog
@@ -1125,6 +1139,19 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     color: 'var(--text-muted)',
     background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
+    borderRadius: 3,
+    padding: '1px 6px',
+    marginLeft: 6,
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.5px',
+    lineHeight: '18px',
+  },
+  ssoBadge: {
+    fontSize: 10,
+    fontWeight: 600,
+    color: 'var(--accent)',
+    background: 'var(--accent-light)',
     border: '1px solid var(--border)',
     borderRadius: 3,
     padding: '1px 6px',

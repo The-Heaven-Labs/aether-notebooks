@@ -404,3 +404,77 @@ describe('Display names', () => {
     expect(screen.queryByText('All Staff')).toBeNull()
   })
 })
+
+// ── Group provenance ────────────────────────────────────────────────────────
+
+describe('Group provenance', () => {
+  test('shows an SSO badge only for SSO-managed groups', async () => {
+    server.use(
+      http.get('/api/v1/groups', () => HttpResponse.json([
+        { id: 'g-sso', org_id: 'org-1', name: 'aether-analysts', source: 'sso',
+          display_name: null, member_count: 0, created_at: '2026-01-01T00:00:00Z' },
+        { id: 'g-manual', org_id: 'org-1', name: 'Manual Group', source: 'manual',
+          display_name: null, member_count: 0, created_at: '2026-01-01T00:00:00Z' },
+      ])),
+    )
+    renderWithProviders(<GroupsPage />)
+    await screen.findByText('aether-analysts')
+    expect(screen.getAllByText('SSO')).toHaveLength(1)
+  })
+
+  test('force-deletes an SSO group after the warning dialog', async () => {
+    let deletedPath = ''
+    server.use(
+      http.get('/api/v1/groups', () => HttpResponse.json([
+        { id: 'g-sso', org_id: 'org-1', name: 'aether-analysts', source: 'sso',
+          display_name: null, member_count: 0, created_at: '2026-01-01T00:00:00Z' },
+      ])),
+      http.delete('/api/v1/groups/:id', ({ request }) => {
+        const url = new URL(request.url)
+        deletedPath = url.pathname + url.search
+        return new HttpResponse(null, { status: 204 })
+      })
+    )
+    renderWithProviders(<GroupsPage />)
+    await screen.findByText('aether-analysts')
+    fireEvent.click(screen.getByTitle('Group actions'))
+    fireEvent.click(screen.getByText('Delete'))
+    expect(await screen.findByText(/managed by SSO/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete anyway' }))
+    await waitFor(() => expect(deletedPath).toBe('/api/v1/groups/g-sso?force=true'))
+  })
+
+  test('manual groups keep the regular delete dialog and request', async () => {
+    let deletedPath = ''
+    server.use(
+      http.get('/api/v1/groups', () => HttpResponse.json([
+        { id: 'g-manual', org_id: 'org-1', name: 'Manual Group', source: 'manual',
+          display_name: null, member_count: 0, created_at: '2026-01-01T00:00:00Z' },
+      ])),
+      http.delete('/api/v1/groups/:id', ({ request }) => {
+        const url = new URL(request.url)
+        deletedPath = url.pathname + url.search
+        return new HttpResponse(null, { status: 204 })
+      })
+    )
+    renderWithProviders(<GroupsPage />)
+    await screen.findByText('Manual Group')
+    fireEvent.click(screen.getByTitle('Group actions'))
+    fireEvent.click(screen.getByText('Delete'))
+    expect(await screen.findByText(/This cannot be undone/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(deletedPath).toBe('/api/v1/groups/g-manual'))
+  })
+
+  test('system groups expose no actions menu', async () => {
+    server.use(
+      http.get('/api/v1/groups', () => HttpResponse.json([
+        { id: 'g-system', org_id: 'org-1', name: 'Platform', source: 'system',
+          display_name: null, member_count: 1, created_at: '2026-01-01T00:00:00Z' },
+      ])),
+    )
+    renderWithProviders(<GroupsPage />)
+    await screen.findByText('Platform')
+    expect(screen.queryByTitle('Group actions')).toBeNull()
+  })
+})
