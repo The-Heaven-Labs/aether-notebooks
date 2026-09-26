@@ -424,6 +424,10 @@ definitions:
       org_id:
         type: string
       source:
+        enum:
+        - manual
+        - sso
+        - system
         type: string
     type: object
   models.JSONMap:

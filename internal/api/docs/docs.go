@@ -9966,7 +9966,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "source": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "manual",
+                        "sso",
+                        "system"
+                    ]
                 }
             }
         },

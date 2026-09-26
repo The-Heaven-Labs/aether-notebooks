@@ -174,14 +174,14 @@ For production OIDC providers using a real URL, the custom transport is not appl
 | Test file | Tests | What it covers |
 |---|---|---|
 | `internal/api/oidc_handlers_test.go` | 20 | OIDC exchange with groups, UserInfo fallback and unavailable-source guard, full callback + group sync (empty-authoritative, skip-on-unavailable), edge cases (empty, case-insensitive, stale) |
-| `internal/api/sso_group_sync_test.go` | 7 | Group creation, prefix filter/stripping, empty-claim removal, display-name preservation, manual membership preservation, audit events |
+| `internal/api/sso_group_sync_test.go` | 9 | Group creation, prefix filter/stripping, empty-claim removal, display-name preservation, manual membership preservation, audit events |
 | `internal/sso/sso_test.go` | 10 | Provider CRUD round-trip with new fields |
 
 All tests hit a real PostgreSQL database (no mocks).
 
 ## Audit Events
 
-Emitted during SSO group provisioning:
+Emitted by SSO group provisioning and management:
 
 | Event | When |
 |---|---|
@@ -194,7 +194,7 @@ Emitted during SSO group provisioning:
 
 ## Migration
 
-Migration `V073__sso_group_provisioning.sql` adds the initial columns and table, `V115__sso_group_sync_options.sql` adds `sync_empty_groups` and `strip_group_prefix`, `V116__group_display_names.sql` adds `groups.display_name`, and `V119__group_source.sql` adds `groups.source`. The V119 backfill is best-effort: groups with active `sso_group_memberships` rows become `sso`, `Everyone` becomes `system`, and the rest stay `manual`. Migrations run automatically on server startup.
+Migration `V073__sso_group_provisioning.sql` adds the initial columns and table, `V115__sso_group_sync_options.sql` adds `sync_empty_groups` and `strip_group_prefix`, `V116__group_display_names.sql` adds `groups.display_name`, and `V119__group_source.sql` adds `groups.source`. V119 performs a one-time heuristic backfill: groups with active `sso_group_memberships` rows become `sso`, `Everyone` becomes `system`, and the rest stay `manual`. Migrations run automatically on server startup.
 
 ## Cleaning Up
 
