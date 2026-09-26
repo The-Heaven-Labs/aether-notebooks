@@ -207,7 +207,7 @@ func (s *Server) loadServiceConnector(ctx context.Context, connectorID uuid.UUID
 	var warehouseID *uuid.UUID
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT c.id, c.name, c.config_encrypted, c.max_rows, c.timeout_seconds, c.warehouse_id,
-		       EXISTS (SELECT 1 FROM warehouses wp WHERE wp.provisioner_connector_id = c.id) AS is_provisioner,
+		       EXISTS (SELECT 1 FROM warehouses wp WHERE wp.provisioner_connector_id = c.id AND wp.org_id = c.org_id) AS is_provisioner,
 		       CASE WHEN w.provisioner_connector_id = c.id THEN w.allow_provisioner_execution ELSE false END AS allow_provisioner_execution
 		FROM connectors c
 		LEFT JOIN warehouses w ON w.id = c.warehouse_id
@@ -265,8 +265,11 @@ func (s *Server) warnRejectedConnectorLink(ctx context.Context, connectorID uuid
 // listWarehouseServices lists the non-deleted ClickHouse connectors of a
 // warehouse in a stable order (name, then ID) for deterministic choice
 // prompts. orgID is the warehouse's org, so cross-org rows are filtered out
-// here too.
+// here too. A provisioner is excluded unless both the admin override is on and
+// warehouse management is enabled: with the kill switch off the override is
+// inert, matching handleListConnectors and resolveExecutionTarget.
 func (s *Server) listWarehouseServices(ctx context.Context, warehouseID, orgID uuid.UUID) ([]warehouseService, error) {
+	allowProvisioner := s.warehouseManagementEnabled()
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT c.id, c.name, c.config_encrypted, c.max_rows, c.timeout_seconds
 		FROM connectors c
@@ -275,8 +278,8 @@ func (s *Server) listWarehouseServices(ctx context.Context, warehouseID, orgID u
 		  AND c.type = 'clickhouse' AND c.deleted_at IS NULL
 		  AND (w.provisioner_connector_id IS NULL
 		       OR w.provisioner_connector_id <> c.id
-		       OR w.allow_provisioner_execution)
-		ORDER BY c.name ASC, c.id ASC`, warehouseID.String(), orgID.String())
+		       OR (w.allow_provisioner_execution AND $3))
+		ORDER BY c.name ASC, c.id ASC`, warehouseID.String(), orgID.String(), allowProvisioner)
 	if err != nil {
 		return nil, fmt.Errorf("list warehouse %s services: %w", warehouseID, err)
 	}

@@ -199,7 +199,7 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT c.id, c.org_id, c.name, c.type, c.config_encrypted, c.max_rows, c.timeout_seconds, c.is_default, c.created_at, c.updated_at, c.folder_id, c.warehouse_id, c.table_allowlist, c.table_denylist,
-		        EXISTS (SELECT 1 FROM warehouses wp WHERE wp.provisioner_connector_id = c.id) AS is_provisioner,
+		        EXISTS (SELECT 1 FROM warehouses wp WHERE wp.provisioner_connector_id = c.id AND wp.org_id = c.org_id) AS is_provisioner,
 		        CASE WHEN w.provisioner_connector_id = c.id THEN w.allow_provisioner_execution ELSE false END AS allow_provisioner_execution
 		 FROM connectors c
 		 LEFT JOIN warehouses w ON w.id = c.warehouse_id

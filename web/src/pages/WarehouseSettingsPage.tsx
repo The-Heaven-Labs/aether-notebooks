@@ -496,7 +496,7 @@ function WarehouseCard({
                 <span style={styles.hint}>
                   {tablePermissionsEnabled
                     ? 'Runs the DDL that provisions per-user ClickHouse access.'
-                    : 'ClickHouse table permissions are disabled; runs keep using the stored credential.'}
+                    : 'ClickHouse table permissions are disabled; linked services keep using the stored credential. The provisioner never runs user queries while they are disabled.'}
                 </span>
               </div>
 

@@ -68,7 +68,7 @@ func addService(m map[string]map[string]struct{}, subjectID, connectorName strin
 // counting rules must stay in sync between the two. The provisioner predicate
 // below must also stay in sync with listWarehouseServices (execution_target.go):
 // a warehouse's provisioner is not a usable service while
-// allow_provisioner_execution is off.
+// allow_provisioner_execution is off or warehouse management is disabled.
 func (s *Server) loadWarehouseServiceAccessIndex(ctx context.Context, orgID string, warehouseID uuid.UUID) (*warehouseServiceAccessIndex, error) {
 	idx := &warehouseServiceAccessIndex{
 		userServices:     map[string]map[string]struct{}{},
@@ -110,8 +110,8 @@ func (s *Server) loadWarehouseServiceAccessIndex(ctx context.Context, orgID stri
 		  AND c.deleted_at IS NULL
 		  AND (w.provisioner_connector_id IS NULL
 		       OR w.provisioner_connector_id <> c.id
-		       OR w.allow_provisioner_execution)`,
-		orgID, warehouseID.String())
+		       OR (w.allow_provisioner_execution AND $3))`,
+		orgID, warehouseID.String(), s.warehouseManagementEnabled())
 	if err != nil {
 		return nil, fmt.Errorf("load service access: %w", err)
 	}

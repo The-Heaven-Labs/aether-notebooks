@@ -308,6 +308,41 @@ func TestListWarehouseServicesExcludesBlockedProvisioner(t *testing.T) {
 		[]uuid.UUID{services[0].id, services[1].id})
 }
 
+// With the kill switch off the override is inert: the provisioner must not be
+// reported as a usable service even when allow_provisioner_execution is true.
+func TestListWarehouseServicesKillSwitchOffExcludesEnabledProvisioner(t *testing.T) {
+	s, key := newWarehouseSyncTestServer(t)
+	s.SetCHTablePermissions(false)
+	fx := seedWarehouseFixtureRows(t, s, key)
+	ctx := context.Background()
+	serviceID := insertClickHouseService(t, s, fx.orgID, fx.connectorID, "KS Off Service", &fx.warehouseID)
+
+	_, err := s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET allow_provisioner_execution = true WHERE id = $1`, fx.warehouseID.String())
+	require.NoError(t, err)
+
+	services, err := s.listWarehouseServices(ctx, fx.warehouseID, fx.orgID)
+	require.NoError(t, err)
+	require.Len(t, services, 1)
+	require.Equal(t, serviceID, services[0].id)
+}
+
+// Override on + management on still honors readiness: a pending warehouse
+// fails closed with ErrProvisioningNotReady, not a bypass.
+func TestResolveExecutionTargetProvisionerNotReady(t *testing.T) {
+	s, key := newWarehouseSyncTestServer(t)
+	fx := seedWarehouseFixtureRows(t, s, key)
+	ctx := context.Background()
+	grantConnectorUse(t, s, fx.orgID, fx.userID, fx.connectorID)
+
+	_, err := s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET allow_provisioner_execution = true WHERE id = $1`, fx.warehouseID.String())
+	require.NoError(t, err)
+
+	_, err = s.resolveExecutionTarget(ctx, fx.userID, fx.connectorID, false)
+	require.ErrorIs(t, err, executor.ErrProvisioningNotReady)
+}
+
 func TestSetWarehousePreferenceRejectsBlockedProvisioner(t *testing.T) {
 	s, key := newWarehouseSyncTestServer(t)
 	fx := seedWarehouseFixtureRows(t, s, key)
@@ -330,6 +365,68 @@ func TestSetWarehousePreferenceRejectsBlockedProvisioner(t *testing.T) {
 	preferred := warehousePreference(t, s, fx.userID, fx.warehouseID)
 	require.NotNil(t, preferred)
 	require.Equal(t, fx.connectorID.String(), *preferred)
+}
+
+// The kill switch keeps the override inert on the preference route too: even
+// with allow_provisioner_execution on, the provisioner cannot be selected while
+// warehouse management is disabled.
+func TestSetWarehousePreferenceKillSwitchOffRejectsEnabledProvisioner(t *testing.T) {
+	s, key := newWarehouseSyncTestServer(t)
+	s.SetCHTablePermissions(false)
+	fx := seedWarehouseFixtureRows(t, s, key)
+	ctx := context.Background()
+	grantConnectorUse(t, s, fx.orgID, fx.userID, fx.connectorID)
+
+	_, err := s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET allow_provisioner_execution = true WHERE id = $1`, fx.warehouseID.String())
+	require.NoError(t, err)
+
+	token, err := s.jwt.Issue(fx.userID.String(), fx.orgID.String(), "admin")
+	require.NoError(t, err)
+
+	rec := putPreferenceViaAPI(t, s, token, fx.warehouseID, &fx.connectorID)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Nil(t, warehousePreference(t, s, fx.userID, fx.warehouseID),
+		"a rejected preference must not be stored")
+}
+
+// The kill switch makes the override inert for grant warnings and validation
+// too: a subject whose only `use` grant is the override-enabled provisioner
+// still lacks service access while management is disabled.
+func TestGrantWarningAndValidationFlagBlockedProvisionerKillSwitchOff(t *testing.T) {
+	s, key := newWarehouseSyncTestServer(t)
+	s.SetCHTablePermissions(false)
+	fx := seedWarehouseFixtureRows(t, s, key)
+	ctx := context.Background()
+	grantConnectorUse(t, s, fx.orgID, fx.userID, fx.connectorID)
+
+	// Start from a clean slate so the created grant is a fresh insert and the
+	// fixture's group grant does not add a second unusable subject.
+	_, err := s.db.Pool.Exec(ctx,
+		`DELETE FROM warehouse_table_grants WHERE warehouse_id = $1`, fx.warehouseID.String())
+	require.NoError(t, err)
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET allow_provisioner_execution = true WHERE id = $1`, fx.warehouseID.String())
+	require.NoError(t, err)
+
+	token, err := s.jwt.Issue(fx.userID.String(), fx.orgID.String(), "admin")
+	require.NoError(t, err)
+
+	rec := createGrantViaAPI(t, s, token, fx.warehouseID,
+		grantBody("user", fx.userID.String(), "analytics", "events"))
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var created warehouseGrantCreateJSON
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	require.Equal(t, "no_service_access", created.Warning,
+		"the kill switch must keep the provisioner out of service-access reporting")
+
+	rec = warehouseAPIRequest(t, s, http.MethodGet,
+		"/api/v1/warehouses/"+fx.warehouseID.String()+"/validation", token, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var validation warehouseValidationJSON
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &validation))
+	require.Len(t, validation.TablesWithoutService, 1)
+	require.Equal(t, fx.userID.String(), validation.TablesWithoutService[0].SubjectID)
 }
 
 // A subject whose only `use` grant is the blocked provisioner must not be
