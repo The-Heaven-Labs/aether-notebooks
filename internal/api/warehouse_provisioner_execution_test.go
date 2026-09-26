@@ -401,10 +401,10 @@ func TestListConnectorsMarksBlockedProvisioner(t *testing.T) {
 	token, err := s.jwt.Issue(fx.userID.String(), fx.orgID.String(), "admin")
 	require.NoError(t, err)
 
-	listConnectors := func() []listedConnector {
+	listConnectors := func(tok string) []listedConnector {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/connectors", nil)
-		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Authorization", "Bearer "+tok)
 		rec := httptest.NewRecorder()
 		s.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -422,7 +422,7 @@ func TestListConnectorsMarksBlockedProvisioner(t *testing.T) {
 		return nil
 	}
 
-	row := find(listConnectors())
+	row := find(listConnectors(token))
 	require.NotNil(t, row)
 	require.True(t, row.IsProvisioner)
 	require.False(t, row.CanUse, "a blocked provisioner must not be offered as usable")
@@ -431,10 +431,14 @@ func TestListConnectorsMarksBlockedProvisioner(t *testing.T) {
 		`UPDATE warehouses SET allow_provisioner_execution = true WHERE id = $1`, fx.warehouseID.String())
 	require.NoError(t, err)
 
-	row = find(listConnectors())
+	row = find(listConnectors(token))
 	require.NotNil(t, row)
 	require.True(t, row.IsProvisioner)
 	require.True(t, row.CanUse, "the override restores managed usability")
+
+	// No connector view ⇒ the provisioner must not even be disclosed.
+	_, memberToken := seedGrantOrgMember(t, s, fx.orgID, "non-admin")
+	require.Nil(t, find(listConnectors(memberToken)))
 }
 
 // listConnectorsForOrg lists connectors over the API and keys them by ID.
@@ -455,14 +459,16 @@ func listConnectorsForOrg(t *testing.T, s *Server, token string) map[string]list
 }
 
 // The kill switch off alone blocks a provisioner even when the warehouse
-// override is on, while a non-provisioner keeps its ACL-derived can_use.
+// override is on, while a warehouse-linked non-provisioner keeps its
+// ACL-derived can_use: the isProvisioner=false short-circuit must preserve
+// normal managed behavior.
 func TestListConnectorsKillSwitchOffBlocksOnlyProvisioners(t *testing.T) {
 	s, key := newWarehouseSyncTestServer(t)
 	s.SetCHTablePermissions(false)
 	fx := seedWarehouseFixtureRows(t, s, key)
 	ctx := context.Background()
 
-	plainID := insertClickHouseService(t, s, fx.orgID, fx.connectorID, "Plain Service", nil)
+	plainID := insertClickHouseService(t, s, fx.orgID, fx.connectorID, "Plain Service", &fx.warehouseID)
 	grantConnectorUse(t, s, fx.orgID, fx.userID, fx.connectorID)
 	grantConnectorUse(t, s, fx.orgID, fx.userID, plainID)
 
@@ -470,8 +476,10 @@ func TestListConnectorsKillSwitchOffBlocksOnlyProvisioners(t *testing.T) {
 	require.NoError(t, err)
 
 	rows := listConnectorsForOrg(t, s, token)
+	require.Contains(t, rows, plainID.String())
 	require.False(t, rows[plainID.String()].IsProvisioner)
-	require.True(t, rows[plainID.String()].CanUse, "a non-provisioner keeps its ACL use")
+	require.True(t, rows[plainID.String()].CanUse, "a warehouse-linked non-provisioner keeps its ACL use")
+	require.Contains(t, rows, fx.connectorID.String())
 	require.False(t, rows[fx.connectorID.String()].CanUse)
 
 	_, err = s.db.Pool.Exec(ctx,
@@ -479,8 +487,10 @@ func TestListConnectorsKillSwitchOffBlocksOnlyProvisioners(t *testing.T) {
 	require.NoError(t, err)
 
 	rows = listConnectorsForOrg(t, s, token)
+	require.Contains(t, rows, fx.connectorID.String())
 	require.True(t, rows[fx.connectorID.String()].IsProvisioner)
 	require.False(t, rows[fx.connectorID.String()].CanUse,
 		"the kill switch must keep the provisioner unusable even with the override on")
+	require.Contains(t, rows, plainID.String())
 	require.True(t, rows[plainID.String()].CanUse)
 }
