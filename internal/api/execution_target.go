@@ -52,6 +52,13 @@ type warehouseService struct {
 // reported as unmanaged so execution falls back to the stored credential. The
 // validation must not be skipped: agent and MCP callers rely on resolution to
 // reject a connector the cell-level HTTP load would have caught.
+//
+// A connector whose warehouse names it provisioner_connector_id fails closed
+// with executor.ErrProvisionerNotExecutable unless the warehouse sets
+// allow_provisioner_execution, warehouse management is enabled, and the
+// connector's warehouse link is intact. This check runs before the
+// kill-switch fallback so a provisioner can never execute with its stored
+// credential.
 func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, requestedConnectorID uuid.UUID, pinned bool) (*executor.ExecutionTarget, error) {
 	requested, requestedWarehouseID, err := s.loadServiceConnector(ctx, requestedConnectorID)
 	if err != nil {
@@ -200,11 +207,10 @@ func (s *Server) loadServiceConnector(ctx context.Context, connectorID uuid.UUID
 	var warehouseID *uuid.UUID
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT c.id, c.name, c.config_encrypted, c.max_rows, c.timeout_seconds, c.warehouse_id,
-		       (wprov.id IS NOT NULL) AS is_provisioner,
-		       COALESCE(wprov.allow_provisioner_execution, false) AS allow_provisioner_execution
+		       EXISTS (SELECT 1 FROM warehouses wp WHERE wp.provisioner_connector_id = c.id) AS is_provisioner,
+		       CASE WHEN w.provisioner_connector_id = c.id THEN w.allow_provisioner_execution ELSE false END AS allow_provisioner_execution
 		FROM connectors c
 		LEFT JOIN warehouses w ON w.id = c.warehouse_id
-		LEFT JOIN warehouses wprov ON wprov.provisioner_connector_id = c.id
 		WHERE c.id = $1
 		  AND c.deleted_at IS NULL
 		  AND c.type = 'clickhouse'

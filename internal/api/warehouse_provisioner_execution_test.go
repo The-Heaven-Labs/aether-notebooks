@@ -137,3 +137,25 @@ func TestResolveExecutionTargetBlocksProvisionerWhenKillSwitchOff(t *testing.T) 
 	require.ErrorIs(t, err, executor.ErrProvisionerNotExecutable)
 	require.NotErrorIs(t, err, executor.ErrUnmanagedConnector)
 }
+
+// Even with the override on, a provisioner whose warehouse link is missing
+// (an integrity violation no API path can produce) must fail closed rather
+// than fall through to the stored-credential path.
+func TestResolveExecutionTargetBlocksProvisionerWithMissingWarehouseLink(t *testing.T) {
+	s, key := newWarehouseSyncTestServer(t)
+	fx := seedWarehouseFixtureRows(t, s, key)
+	ctx := context.Background()
+
+	_, err := s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET sync_status = 'ready', allow_provisioner_execution = true WHERE id = $1`,
+		fx.warehouseID.String())
+	require.NoError(t, err)
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE connectors SET warehouse_id = NULL WHERE id = $1`, fx.connectorID.String())
+	require.NoError(t, err)
+	grantConnectorUse(t, s, fx.orgID, fx.userID, fx.connectorID)
+
+	_, err = s.resolveExecutionTarget(ctx, fx.userID, fx.connectorID, false)
+	require.ErrorIs(t, err, executor.ErrProvisionerNotExecutable)
+	require.NotErrorIs(t, err, executor.ErrUnmanagedConnector)
+}
