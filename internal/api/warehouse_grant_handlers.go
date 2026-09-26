@@ -464,7 +464,9 @@ func (s *Server) handleDeleteWarehouseGrant(w http.ResponseWriter, r *http.Reque
 // live ClickHouse service of the warehouse today. It is the targeted
 // single-subject lookup used by grant creation; the validation endpoint
 // evaluates every subject through loadWarehouseServiceAccessIndex instead.
-// The counting rules must stay in sync between the two:
+// The counting rules must stay in sync between the two, and both must exclude
+// the warehouse's provisioner while allow_provisioner_execution is off, exactly
+// like listWarehouseServices (execution_target.go).
 //
 // For a user, direct, group, and org_role everyone entries count; for a group,
 // its own and org_role everyone entries; for everyone, the org's Everyone
@@ -529,10 +531,14 @@ func (s *Server) subjectHasServiceAccess(ctx context.Context, orgID string, ware
 		SELECT EXISTS (
 			SELECT 1
 			FROM connectors c
+			JOIN warehouses w ON w.id = c.warehouse_id
 			WHERE c.org_id = $1
 			  AND c.warehouse_id = $2
 			  AND c.type = 'clickhouse'
 			  AND c.deleted_at IS NULL
+			  AND (w.provisioner_connector_id IS NULL
+			       OR w.provisioner_connector_id <> c.id
+			       OR w.allow_provisioner_execution)
 			  AND EXISTS (
 			    SELECT 1
 			    FROM acl_entries ae
@@ -724,7 +730,7 @@ type setWarehousePreferenceRequest struct {
 }
 
 // @Summary Set a user's warehouse service preference
-// @Description Choose which of the caller's permitted services their warehouse queries run on. The connector must belong to the warehouse and the caller must have `use` on it; an explicit null clears the preference.
+// @Description Choose which of the caller's permitted services their warehouse queries run on. The connector must belong to the warehouse and the caller must have `use` on it; an explicit null clears the preference. The warehouse provisioner is rejected while its allow_provisioner_execution override is off.
 // @Tags warehouses
 // @Accept json
 // @Produce json

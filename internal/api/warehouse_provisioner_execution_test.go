@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/chaccess"
@@ -303,6 +304,8 @@ func TestListWarehouseServicesExcludesBlockedProvisioner(t *testing.T) {
 	services, err = s.listWarehouseServices(ctx, fx.warehouseID, fx.orgID)
 	require.NoError(t, err)
 	require.Len(t, services, 2)
+	require.ElementsMatch(t, []uuid.UUID{serviceID, fx.connectorID},
+		[]uuid.UUID{services[0].id, services[1].id})
 }
 
 func TestSetWarehousePreferenceRejectsBlockedProvisioner(t *testing.T) {
@@ -316,10 +319,69 @@ func TestSetWarehousePreferenceRejectsBlockedProvisioner(t *testing.T) {
 
 	rec := putPreferenceViaAPI(t, s, token, fx.warehouseID, &fx.connectorID)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Nil(t, warehousePreference(t, s, fx.userID, fx.warehouseID),
+		"a rejected preference must not be stored")
 
 	_, err = s.db.Pool.Exec(ctx,
 		`UPDATE warehouses SET allow_provisioner_execution = true WHERE id = $1`, fx.warehouseID.String())
 	require.NoError(t, err)
 	rec = putPreferenceViaAPI(t, s, token, fx.warehouseID, &fx.connectorID)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	preferred := warehousePreference(t, s, fx.userID, fx.warehouseID)
+	require.NotNil(t, preferred)
+	require.Equal(t, fx.connectorID.String(), *preferred)
+}
+
+// A subject whose only `use` grant is the blocked provisioner must not be
+// reported as having service access: grant creation warns and the validation
+// endpoint flags the unusable table grants.
+func TestGrantWarningAndValidationFlagBlockedProvisioner(t *testing.T) {
+	s, key := newWarehouseSyncTestServer(t)
+	fx := seedWarehouseFixtureRows(t, s, key)
+	ctx := context.Background()
+	grantConnectorUse(t, s, fx.orgID, fx.userID, fx.connectorID)
+
+	// The fixture pre-seeds user and group table grants. Start from a clean
+	// slate so the created grant is a fresh insert and the group's grant does
+	// not add a second "granted but unusable" subject to the validation list.
+	_, err := s.db.Pool.Exec(ctx,
+		`DELETE FROM warehouse_table_grants WHERE warehouse_id = $1`, fx.warehouseID.String())
+	require.NoError(t, err)
+
+	token, err := s.jwt.Issue(fx.userID.String(), fx.orgID.String(), "admin")
+	require.NoError(t, err)
+
+	rec := createGrantViaAPI(t, s, token, fx.warehouseID,
+		grantBody("user", fx.userID.String(), "analytics", "events"))
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var created warehouseGrantCreateJSON
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	require.Equal(t, "no_service_access", created.Warning,
+		"the blocked provisioner must not count as service access")
+
+	rec = warehouseAPIRequest(t, s, http.MethodGet,
+		"/api/v1/warehouses/"+fx.warehouseID.String()+"/validation", token, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var validation warehouseValidationJSON
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &validation))
+	require.Len(t, validation.TablesWithoutService, 1)
+	require.Equal(t, fx.userID.String(), validation.TablesWithoutService[0].SubjectID)
+
+	// With the override on, the provisioner is a usable service again.
+	_, err = s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET allow_provisioner_execution = true WHERE id = $1`, fx.warehouseID.String())
+	require.NoError(t, err)
+
+	rec = createGrantViaAPI(t, s, token, fx.warehouseID,
+		grantBody("user", fx.userID.String(), "analytics", "daily_revenue"))
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var afterOverride warehouseGrantCreateJSON
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &afterOverride))
+	require.Empty(t, afterOverride.Warning, "with the override on the provisioner is a service")
+
+	rec = warehouseAPIRequest(t, s, http.MethodGet,
+		"/api/v1/warehouses/"+fx.warehouseID.String()+"/validation", token, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &validation))
+	require.Empty(t, validation.TablesWithoutService)
 }
