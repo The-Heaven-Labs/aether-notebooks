@@ -269,7 +269,7 @@ func (s *Server) warnRejectedConnectorLink(ctx context.Context, connectorID uuid
 // warehouse management is enabled: with the kill switch off the override is
 // inert, matching handleListConnectors and resolveExecutionTarget.
 func (s *Server) listWarehouseServices(ctx context.Context, warehouseID, orgID uuid.UUID) ([]warehouseService, error) {
-	allowProvisioner := s.warehouseManagementEnabled()
+	managementEnabled := s.warehouseManagementEnabled()
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT c.id, c.name, c.config_encrypted, c.max_rows, c.timeout_seconds
 		FROM connectors c
@@ -279,7 +279,7 @@ func (s *Server) listWarehouseServices(ctx context.Context, warehouseID, orgID u
 		  AND (w.provisioner_connector_id IS NULL
 		       OR w.provisioner_connector_id <> c.id
 		       OR (w.allow_provisioner_execution AND $3))
-		ORDER BY c.name ASC, c.id ASC`, warehouseID.String(), orgID.String(), allowProvisioner)
+		ORDER BY c.name ASC, c.id ASC`, warehouseID.String(), orgID.String(), managementEnabled)
 	if err != nil {
 		return nil, fmt.Errorf("list warehouse %s services: %w", warehouseID, err)
 	}

@@ -803,7 +803,7 @@ func (s *Server) handleSetWarehousePreference(w http.ResponseWriter, r *http.Req
 		// resolveExecutionTarget. A missing warehouse row is not a provisioner.
 		var isProvisioner, allowProvisioner bool
 		err = s.db.Pool.QueryRow(ctx, `
-			SELECT (provisioner_connector_id = $2) AS is_provisioner,
+			SELECT COALESCE(provisioner_connector_id = $2, false) AS is_provisioner,
 			       COALESCE(allow_provisioner_execution, false) AS allow
 			FROM warehouses WHERE id = $1`,
 			warehouseUUID.String(), connectorID.String()).Scan(&isProvisioner, &allowProvisioner)
