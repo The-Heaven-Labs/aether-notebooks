@@ -101,11 +101,27 @@ export function WarehouseSettingsPage() {
   const allowProvisionerMutation = useMutation({
     mutationFn: ({ id, allow }: { id: string; allow: boolean }) =>
       updateWarehouse(id, { allow_provisioner_execution: allow }),
+    onMutate: ({ id, allow }) => {
+      const previous = qc.getQueryData<Warehouse>(['warehouse', id])
+      void qc.cancelQueries({ queryKey: ['warehouse', id] })
+      if (previous) {
+        qc.setQueryData<Warehouse>(['warehouse', id], {
+          ...previous,
+          allow_provisioner_execution: allow,
+        })
+      }
+      return { previous }
+    },
+    onError: (err: Error, { id }, context) => {
+      if (context?.previous) {
+        qc.setQueryData<Warehouse>(['warehouse', id], context.previous)
+      }
+      setError(err.message)
+    },
     onSuccess: () => {
       invalidateWarehouses()
       setError(null)
     },
-    onError: (err: Error) => setError(err.message),
   })
 
   const provisionerMutation = useMutation({
@@ -383,6 +399,14 @@ function WarehouseCard({
     enabled: expanded,
   })
 
+  const serverAllowProvisioner =
+    detail?.allow_provisioner_execution ?? warehouse.allow_provisioner_execution ?? false
+  const [allowProvisionerOverride, setAllowProvisionerOverride] = useState<boolean | null>(null)
+  useEffect(() => {
+    setAllowProvisionerOverride(null)
+  }, [serverAllowProvisioner])
+  const allowProvisionerChecked = allowProvisionerOverride ?? serverAllowProvisioner
+
   const validationWarnings = validation
     ? validation.tables_without_service_access.length + validation.service_access_without_tables.length
     : 0
@@ -505,10 +529,13 @@ function WarehouseCard({
                   <input
                     type="checkbox"
                     aria-label="Allow queries through the provisioner"
-                    checked={detail?.allow_provisioner_execution ?? warehouse.allow_provisioner_execution ?? false}
+                    checked={allowProvisionerChecked}
                     disabled={!detail?.provisioner_connector_id || allowProvisionerPending}
                     aria-describedby={`allow-provisioner-hint-${warehouse.id}`}
-                    onChange={(e) => onSetAllowProvisionerExecution(e.target.checked)}
+                    onChange={(e) => {
+                      setAllowProvisionerOverride(e.target.checked)
+                      onSetAllowProvisionerExecution(e.target.checked)
+                    }}
                   />
                   Allow queries through the provisioner
                 </label>

@@ -378,6 +378,7 @@ describe('WarehouseSettingsPage', () => {
     expect(checkbox).not.toBeChecked()
 
     fireEvent.click(checkbox)
+    expect(checkbox).toBeChecked()
 
     await waitFor(() => expect(putBody).toEqual({ allow_provisioner_execution: true }))
     await waitFor(() => expect(checkbox).toBeChecked())
