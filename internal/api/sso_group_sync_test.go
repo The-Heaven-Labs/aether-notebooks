@@ -28,13 +28,13 @@ func TestFindOrCreateGroup_PreservesDisplayName(t *testing.T) {
 	).Scan(&orgID)
 	require.NoError(t, err)
 
-	groupID, _, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "aether-analysts")
+	groupID, _, _, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "aether-analysts")
 	require.NoError(t, err)
 
 	_, err = s.DB().Pool.Exec(ctx, `UPDATE groups SET display_name=$1 WHERE id=$2`, "Data Analysts", groupID)
 	require.NoError(t, err)
 
-	again, created, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "AETHER-ANALYSTS")
+	again, created, _, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "AETHER-ANALYSTS")
 	require.NoError(t, err)
 	require.False(t, created)
 	require.Equal(t, groupID, again)
@@ -469,4 +469,99 @@ func TestSyncSSOGroups_AuditEvents(t *testing.T) {
 	).Scan(&attributed)
 	require.NoError(t, err)
 	assert.Equal(t, 1, attributed, "remove_member must record the user")
+}
+
+func TestFindOrCreateGroup_SourceTransitions(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+
+	slug := fmt.Sprintf("test-org-%d", time.Now().UnixNano())
+	var orgID string
+	require.NoError(t, s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`, slug, slug).Scan(&orgID))
+
+	sourceOf := func(id string) string {
+		t.Helper()
+		var src string
+		require.NoError(t, s.DB().Pool.QueryRow(ctx, `SELECT source FROM groups WHERE id=$1`, id).Scan(&src))
+		return src
+	}
+
+	// A brand new group is created as sso.
+	id, created, adopted, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "engineering")
+	require.NoError(t, err)
+	require.True(t, created)
+	require.False(t, adopted)
+	require.Equal(t, "sso", sourceOf(id))
+
+	// A manual group is adopted exactly once.
+	var manualID string
+	require.NoError(t, s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO groups (org_id, name, source) VALUES ($1, 'manual-group', 'manual') RETURNING id`,
+		orgID).Scan(&manualID))
+	id, created, adopted, err = api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "MANUAL-GROUP")
+	require.NoError(t, err)
+	require.False(t, created)
+	require.True(t, adopted)
+	require.Equal(t, manualID, id)
+	require.Equal(t, "sso", sourceOf(manualID))
+
+	_, _, adopted, err = api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "manual-group")
+	require.NoError(t, err)
+	require.False(t, adopted, "adoption must only fire on the manual -> sso transition")
+
+	// A system group is never flipped.
+	var systemID string
+	require.NoError(t, s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO groups (org_id, name, source) VALUES ($1, 'Platform', 'system') RETURNING id`,
+		orgID).Scan(&systemID))
+	_, _, adopted, err = api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "Platform")
+	require.NoError(t, err)
+	require.False(t, adopted)
+	require.Equal(t, "system", sourceOf(systemID))
+}
+
+func TestSyncSSOGroups_AdoptsManualGroup(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+
+	slug := fmt.Sprintf("test-org-%d", time.Now().UnixNano())
+	var orgID string
+	require.NoError(t, s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO orgs (name, slug) VALUES ($1, $2) RETURNING id`, slug, slug).Scan(&orgID))
+
+	var userID string
+	require.NoError(t, s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO users (email, name) VALUES ($1, $2) RETURNING id`,
+		fmt.Sprintf("adopt-%d@test.com", time.Now().UnixNano()), "Adopt").Scan(&userID))
+	_, err := s.DB().Pool.Exec(ctx,
+		`INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'admin')`, orgID, userID)
+	require.NoError(t, err)
+
+	var groupID string
+	require.NoError(t, s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO groups (org_id, name, source) VALUES ($1, 'engineering', 'manual') RETURNING id`,
+		orgID).Scan(&groupID))
+
+	provider, err := sso.CreateProvider(ctx, s.DB().Pool, testMasterKey, sso.Provider{
+		Scope: "org", OrgID: &orgID, Name: "adopt-test", ProviderType: "oidc",
+		ClientID: "test-client", ClientSecret: "test-secret",
+		DiscoveryURL: "https://example.com/", AllowedDomains: []string{},
+		Scopes: []string{}, Enabled: true, AutoSyncGroups: true,
+	})
+	require.NoError(t, err)
+
+	logger := audit.NewLogger(s.DB())
+
+	api.SyncSSOGroups(ctx, s.DB().Pool, logger, provider, orgID, userID, []string{"engineering"})
+
+	var src string
+	require.NoError(t, s.DB().Pool.QueryRow(ctx, `SELECT source FROM groups WHERE id=$1`, groupID).Scan(&src))
+	assert.Equal(t, "sso", src)
+
+	var n int
+	require.NoError(t, s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM audit_logs WHERE org_id=$1 AND action='group.sso.adopt' AND user_id=$2`,
+		orgID, userID).Scan(&n))
+	assert.Equal(t, 1, n, "adoption must emit group.sso.adopt")
 }

@@ -317,7 +317,7 @@ func TestSyncSSOGroups_CaseInsensitiveMatching(t *testing.T) {
 	require.NoError(t, err)
 
 	// FindOrCreateGroup should return the existing group when queried with different case
-	foundID, created, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "engineering")
+	foundID, created, _, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "engineering")
 	require.NoError(t, err)
 	assert.Equal(t, existingID, foundID, "should find existing group case-insensitively")
 	assert.False(t, created)
@@ -350,7 +350,7 @@ func TestFindOrCreateGroup_Existing(t *testing.T) {
 	require.NoError(t, err)
 
 	// Find the same group — should return existing ID
-	foundID, created, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "my-group")
+	foundID, created, _, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "my-group")
 	require.NoError(t, err)
 	assert.Equal(t, existingID, foundID, "should return existing group ID")
 	assert.False(t, created, "existing group should report created=false")
@@ -376,7 +376,7 @@ func TestFindOrCreateGroup_CaseInsensitive(t *testing.T) {
 	require.NoError(t, err)
 
 	// Find with different case
-	foundID, created, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "mygroup")
+	foundID, created, _, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "mygroup")
 	require.NoError(t, err)
 	assert.Equal(t, existingID, foundID, "should find existing group case-insensitively")
 	assert.False(t, created)
@@ -394,7 +394,7 @@ func TestFindOrCreateGroup_Creates(t *testing.T) {
 	).Scan(&orgID)
 	require.NoError(t, err)
 
-	id, created, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "brand-new")
+	id, created, _, err := api.FindOrCreateGroup(ctx, s.DB().Pool, orgID, "brand-new")
 	require.NoError(t, err)
 	assert.NotEmpty(t, id)
 	assert.True(t, created, "new group should report created=true")

@@ -80,13 +80,16 @@ func SyncSSOGroups(ctx context.Context, pool *pgxpool.Pool, logger *audit.Logger
 
 	changed := map[string]struct{}{}
 	for _, groupName := range resolved {
-		groupID, created, err := FindOrCreateGroup(ctx, pool, orgID, groupName)
+		groupID, created, adopted, err := FindOrCreateGroup(ctx, pool, orgID, groupName)
 		if err != nil {
 			logGroupSyncError(ctx, logger, orgID, userID, "", groupName, err)
 			continue
 		}
 		if created {
 			logGroupSyncEvent(ctx, logger, "group.sso.create", orgID, userID, groupID, groupName)
+		}
+		if adopted {
+			logGroupSyncEvent(ctx, logger, "group.sso.adopt", orgID, userID, groupID, groupName)
 		}
 
 		tag, err := pool.Exec(ctx,
@@ -163,29 +166,40 @@ func changedGroupIDs(changed map[string]struct{}) []string {
 
 // FindOrCreateGroup returns the ID of the org's group with the given name
 // (case-insensitive), inserting it when absent. created reports whether this
-// call inserted the row.
-func FindOrCreateGroup(ctx context.Context, pool *pgxpool.Pool, orgID, name string) (string, bool, error) {
-	var id string
+// call inserted the row; adopted reports whether an existing manual group was
+// flipped to SSO-managed.
+func FindOrCreateGroup(ctx context.Context, pool *pgxpool.Pool, orgID, name string) (string, bool, bool, error) {
+	var id, source string
 	err := pool.QueryRow(ctx,
-		`SELECT id FROM groups WHERE org_id=$1 AND LOWER(name)=LOWER($2)`,
+		`SELECT id, source FROM groups WHERE org_id=$1 AND LOWER(name)=LOWER($2)`,
 		orgID, name,
-	).Scan(&id)
+	).Scan(&id, &source)
 	if err == nil {
-		return id, false, nil
+		if source != "manual" {
+			return id, false, false, nil
+		}
+		tag, uerr := pool.Exec(ctx,
+			`UPDATE groups SET source='sso' WHERE id=$1 AND source='manual'`,
+			id,
+		)
+		if uerr != nil {
+			return "", false, false, fmt.Errorf("adopt group: %w", uerr)
+		}
+		return id, false, tag.RowsAffected() > 0, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return "", false, fmt.Errorf("lookup group: %w", err)
+		return "", false, false, fmt.Errorf("lookup group: %w", err)
 	}
 
 	err = pool.QueryRow(ctx,
-		`INSERT INTO groups (org_id, name) VALUES ($1, $2) RETURNING id`,
+		`INSERT INTO groups (org_id, name, source) VALUES ($1, $2, 'sso') RETURNING id`,
 		orgID, name,
 	).Scan(&id)
 	if err != nil {
-		return "", false, fmt.Errorf("create group: %w", err)
+		return "", false, false, fmt.Errorf("create group: %w", err)
 	}
 
-	return id, true, nil
+	return id, true, false, nil
 }
 
 func FindStaleSSOGroups(ctx context.Context, pool *pgxpool.Pool, providerID, userID string, currentGroups []string) ([]string, error) {
