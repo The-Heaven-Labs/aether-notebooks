@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/chaccess"
 	"github.com/the-heaven-labs/aether/internal/executor"
 )
@@ -196,4 +197,36 @@ func TestExecuteCellOnProvisionerKillSwitchOffReturns403(t *testing.T) {
 	body := strings.ToLower(rec.Body.String())
 	require.Contains(t, body, "provisioner")
 	require.Contains(t, body, "cannot run queries")
+}
+
+// The agent execute_sql tool shares resolveExecutionTarget; it must surface a
+// provisioner-specific, actionable error and never open the stored credential.
+func TestAgentExecuteSQLBlocksProvisioner(t *testing.T) {
+	s, key := newWarehouseSyncTestServer(t)
+	fx := seedWarehouseFixtureRows(t, s, key)
+	grantConnectorUse(t, s, fx.orgID, fx.userID, fx.connectorID)
+	ctx := context.Background()
+
+	def, ok := s.agentEngine.GetRegistry().Get("execute_sql")
+	require.True(t, ok, "execute_sql must be registered")
+	args, err := json.Marshal(map[string]any{
+		"connector_id": fx.connectorID.String(),
+		"query":        "SELECT currentUser()",
+	})
+	require.NoError(t, err)
+
+	tc := &agent.ToolContext{
+		Context:             ctx,
+		UserID:              fx.userID.String(),
+		OrgID:               fx.orgID.String(),
+		OrgRole:             "admin",
+		DB:                  s.db.Pool,
+		MasterKey:           s.masterKey,
+		ResolveTarget:       s.resolveExecutionTarget,
+		ConnPool:            s.connPool,
+		CheckPermissionFunc: s.checkPermission,
+	}
+	_, err = def.Execute(args, tc)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "is the warehouse provisioner and cannot run queries")
 }

@@ -56,6 +56,8 @@ func resolveClickHouseTarget(tc *ToolContext, connectorID string) (*executor.Exe
 			return nil, fmt.Errorf("connector %s: multiple warehouse services are available (%s); set a service preference in the warehouse settings", connectorID, strings.Join(names, ", "))
 		}
 		return nil, fmt.Errorf("connector %s: multiple warehouse services are available; set a service preference in the warehouse settings", connectorID)
+	case errors.Is(err, executor.ErrProvisionerNotExecutable):
+		return nil, fmt.Errorf("connector %s is the warehouse provisioner and cannot run queries; choose another connector or ask an admin to enable queries through the provisioner", connectorID)
 	default:
 		return nil, fmt.Errorf("resolve execution target for connector %s: %w", connectorID, err)
 	}
