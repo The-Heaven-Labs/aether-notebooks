@@ -7,6 +7,7 @@ interface ConnectorItem {
   name: string
   type: string
   can_use?: boolean
+  is_provisioner?: boolean
 }
 
 interface ConnectorSelectorProps {
@@ -58,7 +59,7 @@ export function ConnectorSelector({
         <option value="" disabled={!allowClear || !value}>{allowClear && value ? 'Clear selection' : placeholder}</option>
         {connectors.map(c => (
           <option key={c.id} value={c.id} disabled={c.can_use === false}>
-            {c.name}{c.can_use === false ? ' (view only)' : ''}
+            {c.name}{c.is_provisioner ? ' (provisioner)' : c.can_use === false ? ' (view only)' : ''}
           </option>
         ))}
       </select>

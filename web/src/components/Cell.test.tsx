@@ -775,3 +775,42 @@ describe('run endpoint footer', () => {
     expect(screen.getByText(/⏱/)).toBeInTheDocument()
   })
 })
+
+describe('connector picker provisioner handling', () => {
+  it('labels and disables a blocked provisioner connector', async () => {
+    const cell: CellType = {
+      id: 'cell-prov',
+      notebook_id: 'nb-1',
+      type: 'code',
+      language: 'sql',
+      source: 'SELECT 1',
+      outputs: [],
+      position: 0,
+      created_at: '',
+      updated_at: '',
+      source_visible: true,
+      cell_collapsed: false,
+      connector_id: 'conn-prov',
+    }
+    render(
+      <Suspense fallback={null}>
+        <Cell
+          cell={cell}
+          connectors={[
+            { id: 'conn-prov', name: 'Provisioner', type: 'clickhouse', created_at: '', can_use: false, is_provisioner: true },
+            { id: 'conn-svc', name: 'Service', type: 'clickhouse', created_at: '', can_use: true, is_provisioner: false },
+          ]}
+          notebookId="nb-1"
+          onRun={vi.fn()}
+          onDelete={vi.fn()}
+          onSourceChange={vi.fn()}
+          onAssignConnector={vi.fn()}
+        />
+      </Suspense>
+    )
+
+    fireEvent.click(await screen.findByTitle('Click to change connector'))
+    const option = await screen.findByRole('option', { name: 'Provisioner (provisioner)' })
+    expect(option).toBeDisabled()
+  })
+})

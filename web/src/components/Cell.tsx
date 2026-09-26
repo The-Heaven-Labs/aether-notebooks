@@ -585,7 +585,7 @@ export const Cell = memo(function Cell({
                 <option value="">Inherit from notebook</option>
                 {connectors.map((c) => (
                   <option key={c.id} value={c.id} disabled={c.can_use === false}>
-                    {c.name}{c.can_use === false ? ' (view only)' : ''}
+                    {c.name}{c.is_provisioner ? ' (provisioner)' : c.can_use === false ? ' (view only)' : ''}
                   </option>
                 ))}
               </select>

@@ -165,6 +165,7 @@ export interface Connector {
   created_at: string
   updated_at?: string
   can_use?: boolean
+  is_provisioner?: boolean
   timeout_seconds?: number
   table_allowlist?: string[]
   table_denylist?: string[]

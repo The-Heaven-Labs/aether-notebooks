@@ -16,6 +16,7 @@ export interface Warehouse {
   org_id: string
   name: string
   provisioner_connector_id: string | null
+  allow_provisioner_execution: boolean
   sync_status: WarehouseSyncStatus
   sync_error: string | null
   last_synced_at: string | null
@@ -132,7 +133,11 @@ export function createWarehouse(data: {
 
 export function updateWarehouse(
   id: string,
-  data: { name?: string; provisioner_connector_id?: string | null },
+  data: {
+    name?: string
+    provisioner_connector_id?: string | null
+    allow_provisioner_execution?: boolean
+  },
 ): Promise<Warehouse> {
   return api.put<Warehouse>(`/api/v1/warehouses/${id}`, data)
 }

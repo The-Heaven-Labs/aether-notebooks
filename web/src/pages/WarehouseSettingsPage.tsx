@@ -98,6 +98,16 @@ export function WarehouseSettingsPage() {
     onError: (err: Error) => setError(err.message),
   })
 
+  const allowProvisionerMutation = useMutation({
+    mutationFn: ({ id, allow }: { id: string; allow: boolean }) =>
+      updateWarehouse(id, { allow_provisioner_execution: allow }),
+    onSuccess: () => {
+      invalidateWarehouses()
+      setError(null)
+    },
+    onError: (err: Error) => setError(err.message),
+  })
+
   const provisionerMutation = useMutation({
     mutationFn: ({ id, connectorId }: { id: string; connectorId: string | null }) =>
       setWarehouseProvisioner(id, connectorId),
@@ -261,6 +271,9 @@ export function WarehouseSettingsPage() {
                 onSetProvisioner={(connectorId) =>
                   provisionerMutation.mutate({ id: warehouse.id, connectorId })
                 }
+                onSetAllowProvisionerExecution={(allow) =>
+                  allowProvisionerMutation.mutate({ id: warehouse.id, allow })
+                }
                 onAddConnector={(connectorId) =>
                   linkMutation.mutate({ connectorId, warehouseId: warehouse.id })
                 }
@@ -330,6 +343,7 @@ interface WarehouseCardProps {
   onRename: (name: string) => void
   onDelete: () => void
   onSetProvisioner: (connectorId: string | null) => void
+  onSetAllowProvisionerExecution: (allow: boolean) => void
   onAddConnector: (connectorId: string) => void
   onRemoveConnector: (connector: WarehouseConnector) => void
 }
@@ -342,6 +356,7 @@ function WarehouseCard({
   onRename,
   onDelete,
   onSetProvisioner,
+  onSetAllowProvisionerExecution,
   onAddConnector,
   onRemoveConnector,
 }: WarehouseCardProps) {
@@ -479,6 +494,23 @@ function WarehouseCard({
                   {tablePermissionsEnabled
                     ? 'Runs the DDL that provisions per-user ClickHouse access.'
                     : 'ClickHouse table permissions are disabled; runs keep using the stored credential.'}
+                </span>
+              </div>
+
+              <div style={styles.field}>
+                <label style={{ ...styles.label, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    aria-label="Allow queries through the provisioner"
+                    checked={detail?.allow_provisioner_execution ?? warehouse.allow_provisioner_execution}
+                    disabled={!detail?.provisioner_connector_id}
+                    onChange={(e) => onSetAllowProvisionerExecution(e.target.checked)}
+                  />
+                  Allow queries through the provisioner
+                </label>
+                <span style={styles.hint}>
+                  Off by default. The provisioner credential is reserved for background provisioning;
+                  when off, notebook and agent queries cannot run through this connector.
                 </span>
               </div>
 
