@@ -121,6 +121,7 @@ type (
 		ID          string    `json:"id"`
 		OrgID       string    `json:"org_id"`
 		Name        string    `json:"name"`
+		Source      string    `json:"source"`
 		MemberCount int       `json:"member_count"`
 		CreatedAt   time.Time `json:"created_at"`
 	}

@@ -32,8 +32,12 @@ func (c *Client) UpdateGroup(id, name string) (*Group, error) {
 	return &g, nil
 }
 
-func (c *Client) DeleteGroup(id string) error {
-	return c.DeleteJSON("/api/v1/groups/" + id)
+func (c *Client) DeleteGroup(id string, force bool) error {
+	path := "/api/v1/groups/" + id
+	if force {
+		path += "?force=true"
+	}
+	return c.DeleteJSON(path)
 }
 
 func (c *Client) ListGroupMembers(id string) ([]GroupMember, error) {
@@ -121,22 +125,27 @@ func GroupsCmd() *cobra.Command {
 			c.MarkFlagRequired("name")
 			return c
 		}(),
-		&cobra.Command{
-			Use:   "delete <id>",
-			Short: "Delete a group",
-			Args:  cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				c, err := LoadClient()
-				if err != nil {
-					return err
-				}
-				if err := c.DeleteGroup(args[0]); err != nil {
-					return err
-				}
-				fmt.Println("Deleted.")
-				return nil
-			},
-		},
+		func() *cobra.Command {
+			var force bool
+			cmd := &cobra.Command{
+				Use:   "delete <id>",
+				Short: "Delete a group",
+				Args:  cobra.ExactArgs(1),
+				RunE: func(cmd *cobra.Command, args []string) error {
+					cl, err := LoadClient()
+					if err != nil {
+						return err
+					}
+					if err := cl.DeleteGroup(args[0], force); err != nil {
+						return err
+					}
+					fmt.Println("Deleted.")
+					return nil
+				},
+			}
+			cmd.Flags().BoolVar(&force, "force", false, "Force-delete an SSO-managed group")
+			return cmd
+		}(),
 		func() *cobra.Command {
 			var memberCmd = &cobra.Command{
 				Use:   "members",

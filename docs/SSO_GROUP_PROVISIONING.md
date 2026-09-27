@@ -60,27 +60,31 @@ updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
 PRIMARY KEY (provider_id, group_id, user_id)
 ```
 
-### `groups` — new column
+### `groups` — new columns
 
 ```sql
 display_name text
+source       text NOT NULL DEFAULT 'manual'  -- 'manual' | 'sso' | 'system'
 ```
 
-An admin-owned label rendered in the UI instead of `name`. It never participates in matching or permission resolution — see [Display Names](#display-names).
+`display_name` is an admin-owned label rendered in the UI instead of `name`. It never participates in matching or permission resolution — see [Display Names](#display-names).
+
+`source` records how a group came to exist: set to `sso` when SSO sync creates it, flipped one-way from `manual` to `sso` when sync adopts an existing group by name, `system` for the `Everyone` group, and `manual` otherwise. The console renders an SSO badge for `source='sso'` and a System badge for `source='system'`.
 
 ## Reconciliation Logic
 
 On each SSO login (both new and returning users):
 
 1. **Resolve**: Apply `group_prefix`. If set, groups whose names don't start with it are dropped. When `strip_group_prefix` is also on, the prefix is removed from the name that is looked up and stored (`Aether Notebooks: Area` → `Area`); filtering always uses the full prefixed name, and names that become empty are dropped.
-2. **Find or create**: For each resolved group name, do a case-insensitive lookup in the user's org. If not found, create the group. New groups are created with no display name — see [Display Names](#display-names).
+2. **Find or create**: For each resolved group name, do a case-insensitive lookup in the user's org. If not found, create the group with `source='sso'`. An existing `manual` group is adopted by flipping `source` to `sso` (one-way; audited as `group.sso.adopt`). New groups are created with no display name — see [Display Names](#display-names).
 3. **Add**: Insert into `group_members` (`ON CONFLICT DO NOTHING`).
 4. **Track**: Insert into `sso_group_memberships` (`ON CONFLICT DO NOTHING`).
 5. **Remove stale**: Query `sso_group_memberships` for memberships tracked under this provider but whose group names aren't in the current resolved list. Delete those memberships.
 6. **Empty result**: If the resolved list is empty and `sync_empty_groups` is `true`, the empty list is authoritative and step 5 removes every membership tracked under this provider for that user. With the default `false`, an empty list skips reconciliation entirely (steps 2–5 do not run).
 
 **Key behaviors:**
-- Groups are never deleted — only memberships are removed
+- Groups are never deleted by sync — only memberships are removed
+- Deleting a group with `source='sso'` requires `DELETE /groups/{id}?force=true` (audited as `group.delete.forced`); `source='system'` groups (Everyone) are never deletable
 - Manual memberships (no corresponding `sso_group_memberships` row) are never touched
 - With `sync_empty_groups`, an IdP reporting zero groups removes all SSO-managed memberships for that user — manual memberships and group rows are preserved
 - Errors are non-fatal — the login succeeds even if sync fails, errors are audit-logged
@@ -170,25 +174,27 @@ For production OIDC providers using a real URL, the custom transport is not appl
 | Test file | Tests | What it covers |
 |---|---|---|
 | `internal/api/oidc_handlers_test.go` | 20 | OIDC exchange with groups, UserInfo fallback and unavailable-source guard, full callback + group sync (empty-authoritative, skip-on-unavailable), edge cases (empty, case-insensitive, stale) |
-| `internal/api/sso_group_sync_test.go` | 7 | Group creation, prefix filter/stripping, empty-claim removal, display-name preservation, manual membership preservation, audit events |
+| `internal/api/sso_group_sync_test.go` | 9 | Group creation, prefix filter/stripping, empty-claim removal, display-name preservation, manual membership preservation, audit events |
 | `internal/sso/sso_test.go` | 10 | Provider CRUD round-trip with new fields |
 
 All tests hit a real PostgreSQL database (no mocks).
 
 ## Audit Events
 
-Emitted during SSO group provisioning:
+Emitted by SSO group provisioning and management:
 
 | Event | When |
 |---|---|
 | `group.sso.create` | Auto-creating a group from an IDP group claim |
+| `group.sso.adopt` | An existing manual group was adopted (flipped to `sso`) by SSO sync |
 | `group.sso.add_member` | Adding a user to a group via SSO sync (only when the membership is newly inserted) |
 | `group.sso.remove_member` | Removing a user from a group via SSO sync (only when a tracked membership is actually deleted) |
 | `group.sso.error` | Group reconciliation failure (non-fatal), including a skipped sync when the groups source is unavailable |
+| `group.delete.forced` | An SSO-managed group was deleted with `?force=true` |
 
 ## Migration
 
-Migration `V073__sso_group_provisioning.sql` adds the initial columns and table, `V115__sso_group_sync_options.sql` adds `sync_empty_groups` and `strip_group_prefix`, and `V116__group_display_names.sql` adds `groups.display_name`. Migrations run automatically on server startup.
+Migration `V073__sso_group_provisioning.sql` adds the initial columns and table, `V115__sso_group_sync_options.sql` adds `sync_empty_groups` and `strip_group_prefix`, `V116__group_display_names.sql` adds `groups.display_name`, and `V119__group_source.sql` adds `groups.source`. V119 performs a one-time heuristic backfill: groups with active `sso_group_memberships` rows become `sso`, `Everyone` becomes `system`, and the rest stay `manual`. Migrations run automatically on server startup.
 
 ## Cleaning Up
 

@@ -102,7 +102,7 @@ func (s *Server) handleOrgCreate(w http.ResponseWriter, r *http.Request) {
 
 	// Ensure Everyone group exists for this org
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO groups (org_id, name) VALUES ($1, 'Everyone') ON CONFLICT DO NOTHING`,
+		`INSERT INTO groups (org_id, name, source) VALUES ($1, 'Everyone', 'system') ON CONFLICT DO NOTHING`,
 		orgID,
 	); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create Everyone group")
@@ -279,7 +279,7 @@ func (s *Server) handleOrgJoin(w http.ResponseWriter, r *http.Request) {
 
 	// Ensure Everyone group exists and add user
 	if _, err := joinTx.Exec(ctx,
-		`INSERT INTO groups (org_id, name) VALUES ($1, 'Everyone') ON CONFLICT DO NOTHING`,
+		`INSERT INTO groups (org_id, name, source) VALUES ($1, 'Everyone', 'system') ON CONFLICT DO NOTHING`,
 		orgID,
 	); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create Everyone group")

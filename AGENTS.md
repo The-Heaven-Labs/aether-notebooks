@@ -268,7 +268,7 @@ In dev, `Taskfile.yml` sets `AETHER_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com`
 
 **Permissions**: `acl_entries` table stores per-resource ACL. Resolution walks the ancestor folder chain via recursive CTE, ordered by specificity (resource entry beats parent folder beats grandparent; within same depth: user beats group beats org_role). Deny by default if no ACL matches. Use `s.checkPermission(ctx, userID, orgID, orgRole, resourceType, resourceID, action)` (method on `*Server`) from `internal/api/permissions.go`. Route middleware: `requirePermission(resourceType, idParam, action)`.
 
-**Groups**: Custom groups (`groups` + `group_members` tables) are first-class permission subjects. Group management (create/rename/delete/members) requires `admin` role; viewing groups is open to all members.
+**Groups**: Custom groups (`groups` + `group_members` tables) are first-class permission subjects. Group management (create/rename/delete/members) requires `admin` role; viewing groups is open to all members. Groups carry a `source` column (`manual`/`sso`/`system`): SSO create/adopt sets `sso` (one-way, audited `group.sso.adopt`), Everyone is `system`, and admin-created groups are `manual`. `DELETE /api/v1/groups/{id}` refuses `sso` unless `?force=true` (audited `group.delete.forced`) and never deletes `system` groups.
 
 **Pre-provisioned group members**: Org admins can stage group memberships by email before the person has an account (`pending_group_members`, V105; endpoints `POST`/`GET /api/v1/groups/{id}/pending-members` and `DELETE /api/v1/groups/{id}/pending-members/{email}`). `ApplyPendingGroups` (called inside the join transaction on password registration, SSO provisioning/auto-join, and invite redemption) materializes matching rows into `group_members` and consumes the pending rows; failures are audited (`group.pending_materialize.error`) and never block first login. Staged memberships are admin-curated and therefore survive IdP `auto_sync_groups` removals. Posting an email that already belongs to an org member adds them directly instead of staging.
 
@@ -309,6 +309,8 @@ OIDC providers are loaded dynamically from the database. SSO routes are disabled
 - Markdown cells persist on blur via `PUT /cells/:id`
 - Real-time collaboration: `HocuspocusProvider` in `Cell` connects to relay on `:3001`
 - Yjs document key convention: `cell:{cellID}` for each cell's text content
+
+**Real-browser validation is mandatory for every UI change.** After the dev stack is up, validate the changed flows with agent-browser (`agent-browser open`, `snapshot -i`, interact, `screenshot`, `errors`) — component tests alone are not sufficient.
 
 ### Debugging with agent-browser
 

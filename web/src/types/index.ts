@@ -292,6 +292,7 @@ export interface Group {
   org_id: string
   name: string
   display_name: string | null
+  source: 'manual' | 'sso' | 'system'
   member_count: number
   created_at: string
 }
