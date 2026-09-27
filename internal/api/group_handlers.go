@@ -280,7 +280,7 @@ func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
-		Action: action, ResourceType: "group", ResourceID: groupID,
+		Action: action, ResourceType: "group", ResourceID: groupID, ResourceName: name,
 	})
 	w.WriteHeader(http.StatusNoContent)
 }

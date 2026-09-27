@@ -154,7 +154,7 @@ pre-existing rows.
 
 - `Group` gains `Source`.
 - `groups delete <id> --force` sets the query param.
-- `groups list` marks SSO and system groups (e.g. `[SSO]`, `[system]`).
+- `groups list` JSON includes `source`; `groups delete` gains `--force`.
 
 ### 8. Testing
 
