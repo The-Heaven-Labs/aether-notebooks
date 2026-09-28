@@ -1331,6 +1331,8 @@ func (s *Server) handleWarehouseNewTables(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	patterns := compileHiddenPatterns(wh.HiddenTablePatterns)
+
 	since := wh.CreatedAt
 	if raw := r.URL.Query().Get("since"); raw != "" {
 		parsed, err := time.Parse(time.RFC3339, raw)
@@ -1388,6 +1390,9 @@ func (s *Server) handleWarehouseNewTables(w http.ResponseWriter, r *http.Request
 		if err := rows.Scan(&t.Database, &t.Table, &t.FirstSeenAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
+		}
+		if matchesHiddenPattern(patterns, t.Database, t.Table) {
+			continue
 		}
 		tables = append(tables, t)
 	}

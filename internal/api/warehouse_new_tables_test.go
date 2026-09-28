@@ -558,3 +558,26 @@ func seedGrantMemberWithID(t *testing.T, s *Server, orgID, userID uuid.UUID) {
 		}
 	})
 }
+
+func TestWarehouseNewTablesHiddenPatterns(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Hidden Patterns Inbox WH")
+	conn := seedWarehouseConnector(t, s, orgID, "Hidden Patterns Inbox Service")
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, conn, &wh).Code)
+
+	require.Equal(t, http.StatusOK, updateWarehouseViaAPI(t, s, admin, wh, map[string]any{
+		"hidden_table_patterns": []string{`^analytics\._tmp`},
+	}).Code)
+
+	now := time.Now().UTC()
+	_, err := s.db.Pool.Exec(context.Background(),
+		`UPDATE warehouses SET created_at = $1 WHERE id = $2`, now.Add(-4*time.Hour), wh.String())
+	require.NoError(t, err)
+	insertSchemaSnapshot(t, s, conn, "analytics", "events", now.Add(-3*time.Hour))
+	insertSchemaSnapshot(t, s, conn, "analytics", "_tmp_scratch", now.Add(-3*time.Hour))
+
+	resp := listNewTablesViaAPI(t, s, admin, wh, "")
+	require.Len(t, resp.Tables, 1, "pre-existing snapshot rows matching patterns are filtered")
+	require.Equal(t, "events", resp.Tables[0].Table)
+}

@@ -1197,3 +1197,41 @@ func TestWarehouseLoopEnqueuesAllAndStops(t *testing.T) {
 	require.Equal(t, 1, rec.count(fx.warehouseID))
 	fx.s.Close() // Close is idempotent
 }
+
+func TestReconcileWarehouseHiddenPatternsSnapshot(t *testing.T) {
+	fx := setupWarehouseFixture(t)
+	ctx := context.Background()
+
+	database := "aether_snap_" + uuid.NewString()[:8]
+	quotedDB, err := chaccess.QuoteObjectIdent(database)
+	require.NoError(t, err)
+	require.NoError(t, fx.conn.Exec(ctx, "CREATE DATABASE IF NOT EXISTS "+quotedDB))
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = fx.conn.Exec(cleanupCtx, "DROP DATABASE IF EXISTS "+quotedDB)
+	})
+	for _, table := range []string{"events", "_tmp_scratch"} {
+		quoted, err := chaccess.QuoteObjectIdent(table)
+		require.NoError(t, err)
+		require.NoError(t, fx.conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS "+quotedDB+"."+quoted+
+			" (id UInt64) ENGINE = MergeTree ORDER BY id"))
+	}
+
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET hidden_table_patterns = $1 WHERE id = $2`,
+		[]string{`_tmp`}, fx.warehouseID.String())
+	require.NoError(t, err)
+
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	var hidden, visible int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM schema_snapshots WHERE connector_id = $1 AND database_name = $2 AND table_name = '_tmp_scratch'`,
+		fx.connectorID.String(), database).Scan(&hidden))
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM schema_snapshots WHERE connector_id = $1 AND database_name = $2 AND table_name = 'events'`,
+		fx.connectorID.String(), database).Scan(&visible))
+	require.Zero(t, hidden, "pattern-matched tables never enter snapshots")
+	require.Equal(t, 1, visible)
+}
