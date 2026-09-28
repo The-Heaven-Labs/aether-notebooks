@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach } from 'vitest'
-import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { screen, fireEvent, waitFor, render } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { renderWithProviders } from '../test/utils'
@@ -150,5 +151,28 @@ describe('WarehouseHiddenTables', () => {
     fireEvent.change(await screen.findByLabelText('Pattern'), { target: { value: '(' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     expect(await screen.findByText(/invalid pattern/)).toBeInTheDocument()
+  })
+
+  test('preserves cached connectors when the PUT response omits them', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    qc.setQueryData<Warehouse>(['warehouse', 'wh-1'], { ...WAREHOUSE, connectors: CONNECTORS })
+    server.use(
+      http.put('/api/v1/warehouses/wh-1', () =>
+        HttpResponse.json({ ...WAREHOUSE, hidden_table_patterns: ['_tmp'] }),
+      ),
+    )
+    render(
+      <QueryClientProvider client={qc}>
+        <WarehouseHiddenTables warehouseId="wh-1" patterns={[]} connectors={CONNECTORS} />
+      </QueryClientProvider>,
+    )
+    fireEvent.change(await screen.findByLabelText('Pattern'), { target: { value: '_tmp' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() => {
+      const cached = qc.getQueryData<Warehouse>(['warehouse', 'wh-1'])
+      expect(cached?.hidden_table_patterns).toEqual(['_tmp'])
+      expect(cached?.connectors).toEqual(CONNECTORS)
+    })
   })
 })

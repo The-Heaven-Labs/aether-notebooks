@@ -237,6 +237,10 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
     qc.invalidateQueries({ queryKey: ['warehouse-validation', warehouseId] })
     qc.invalidateQueries({ queryKey: ['warehouses'] })
     qc.invalidateQueries({ queryKey: ['warehouse', warehouseId] })
+    // The schema response depends on grants: granted tables stay visible when
+    // they match hidden patterns, and non-admins get the per-user filter. A
+    // grant change must refresh every connector-schema query.
+    qc.invalidateQueries({ queryKey: ['connector-schema'] })
   }
 
   const clearWarning = (key: string) => {

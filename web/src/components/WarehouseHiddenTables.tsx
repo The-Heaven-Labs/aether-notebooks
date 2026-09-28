@@ -69,6 +69,7 @@ export function WarehouseHiddenTables({ warehouseId, patterns, connectors = [] }
   }
 
   const removePattern = (pattern: string) => {
+    if (save.isPending) return
     save.mutate(patterns.filter((p) => p !== pattern))
   }
 
