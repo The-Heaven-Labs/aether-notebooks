@@ -111,6 +111,14 @@ func TestConnectorSchemaHiddenPatterns(t *testing.T) {
 		fx.connectorID.String(), database).Scan(&hiddenRows))
 	require.Zero(t, hiddenRows)
 
+	// ...and the surviving table was actually written: the filtered catalog is
+	// a real snapshot, not an empty no-op.
+	var visibleRows int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM schema_snapshots WHERE connector_id = $1 AND database_name = $2 AND table_name = 'events'`,
+		fx.connectorID.String(), database).Scan(&visibleRows))
+	require.Equal(t, 1, visibleRows)
+
 	// A granted table that also matches stays visible.
 	_, err = fx.s.db.Pool.Exec(ctx, `
 		INSERT INTO warehouse_table_grants (org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
@@ -127,4 +135,57 @@ func TestConnectorSchemaHiddenPatterns(t *testing.T) {
 		got[table.Schema+"."+table.Name] = true
 	}
 	require.True(t, got[database+"._tmp_scratch"], "granted tables stay visible even when matched")
+}
+
+// With the kill switch off, a non-admin viewing a warehouse-linked service
+// connector must still see a granted table that matches a hidden pattern:
+// patterns hide only ungranted tables, never existing access. setupWarehouseFixture
+// builds a dedicated server, so flipping the kill switch is safe here.
+func TestConnectorSchemaHiddenPatternsKillSwitchOff(t *testing.T) {
+	fx := setupWarehouseFixture(t)
+	defer fx.s.SetCHTablePermissions(true)
+	fx.s.SetCHTablePermissions(false)
+	ctx := context.Background()
+
+	database := "aether_visoff_" + uuid.NewString()[:8]
+	quotedDB, err := chaccess.QuoteObjectIdent(database)
+	require.NoError(t, err)
+	require.NoError(t, fx.conn.Exec(ctx, "CREATE DATABASE IF NOT EXISTS "+quotedDB))
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = fx.conn.Exec(cleanupCtx, "DROP DATABASE IF EXISTS "+quotedDB)
+	})
+	quotedTable, err := chaccess.QuoteObjectIdent("_tmp_scratch")
+	require.NoError(t, err)
+	require.NoError(t, fx.conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS "+quotedDB+"."+quotedTable+
+		" (id UInt64) ENGINE = MergeTree ORDER BY id"))
+
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET hidden_table_patterns = $1 WHERE id = $2`,
+		[]string{`_tmp`}, fx.warehouseID.String())
+	require.NoError(t, err)
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants (org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		VALUES ($1, $2, 'user', $3, $4, '_tmp_scratch')`,
+		fx.orgID.String(), fx.warehouseID.String(), fx.userID.String(), database)
+	require.NoError(t, err)
+
+	serviceID := insertClickHouseService(t, fx.s, fx.orgID, fx.connectorID, "Visibility Off Service", &fx.warehouseID)
+	grantConnectorUse(t, fx.s, fx.orgID, fx.userID, serviceID)
+
+	token, err := fx.s.jwt.Issue(fx.userID.String(), fx.orgID.String(), "non-admin")
+	require.NoError(t, err)
+	rec := warehouseAPIRequest(t, fx.s, http.MethodGet,
+		"/api/v1/connectors/"+serviceID.String()+"/schema", token, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var schema executor.SchemaInfo
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &schema))
+	got := map[string]bool{}
+	for _, table := range schema.Tables {
+		got[table.Schema+"."+table.Name] = true
+	}
+	require.True(t, got[database+"._tmp_scratch"],
+		"a granted pattern-matched table must stay visible with the kill switch off")
 }

@@ -900,13 +900,13 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 	var patterns []*regexp.Regexp
 	var patternProtected map[tableKey]struct{}
 	var effective map[tableKey]struct{}
-	if warehouseID != nil {
+	if warehouseID != nil && string(connType) == "clickhouse" {
 		patterns = s.loadWarehouseHiddenPatterns(ctx, *warehouseID, claims.OrgID)
-		if claims.Role == "admin" && len(patterns) > 0 {
+		if len(patterns) > 0 {
 			grants, gErr := s.loadWarehouseGrantKeys(ctx, *warehouseID, claims.OrgID)
 			if gErr != nil {
 				slog.Warn("failed to load warehouse grants for pattern protection; serving unfiltered tables",
-					"warehouse_id", *warehouseID, "error", gErr)
+					"warehouse_id", *warehouseID, "connector_id", connID, "user_id", claims.UserID, "error", gErr)
 				patterns = nil
 			} else {
 				patternProtected = grants
@@ -919,7 +919,9 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			effective = keysToSet(keys)
-			patternProtected = effective
+			// No longer set patternProtected = effective here: protection is the
+			// full warehouse grant set, and the per-user filter runs after the
+			// snapshot and bounds the response for non-admins.
 		}
 	}
 	if len(patterns) > 0 {
