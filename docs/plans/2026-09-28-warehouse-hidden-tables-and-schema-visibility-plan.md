@@ -479,11 +479,11 @@ func matchesHiddenPattern(patterns []*regexp.Regexp, database, table string) boo
 
 // loadWarehouseHiddenPatterns loads and compiles one warehouse's patterns.
 // Failures fail open (log and return none): patterns are curation.
-func (s *Server) loadWarehouseHiddenPatterns(ctx context.Context, warehouseID uuid.UUID) []*regexp.Regexp {
+func (s *Server) loadWarehouseHiddenPatterns(ctx context.Context, warehouseID uuid.UUID, orgID string) []*regexp.Regexp {
 	var patterns []string
 	if err := s.db.Pool.QueryRow(ctx,
-		`SELECT hidden_table_patterns FROM warehouses WHERE id = $1`,
-		warehouseID.String()).Scan(&patterns); err != nil {
+		`SELECT hidden_table_patterns FROM warehouses WHERE id = $1 AND org_id = $2`,
+		warehouseID.String(), orgID).Scan(&patterns); err != nil {
 		slog.Warn("failed to load warehouse hidden-table patterns",
 			"warehouse_id", warehouseID, "error", err)
 		return nil
@@ -788,7 +788,7 @@ After the connector allow/deny block (ends at line ~893), insert the pattern fil
 	var patternProtected map[tableKey]struct{}
 	var effective map[tableKey]struct{}
 	if warehouseID != nil {
-		patterns = s.loadWarehouseHiddenPatterns(ctx, *warehouseID)
+		patterns = s.loadWarehouseHiddenPatterns(ctx, *warehouseID, claims.OrgID)
 		if claims.Role == "admin" && len(patterns) > 0 {
 			grants, gErr := s.loadWarehouseGrantKeys(ctx, *warehouseID, claims.OrgID)
 			if gErr != nil {
@@ -1067,7 +1067,7 @@ In `internal/api/warehouse_sync.go`, change the catalog snapshot block:
 		slog.Warn("warehouse catalog snapshot failed",
 			"warehouse_id", warehouseID, "error", catErr)
 	} else {
-		patterns := s.loadWarehouseHiddenPatterns(ctx, warehouseID)
+		patterns := s.loadWarehouseHiddenPatterns(ctx, warehouseID, hdr.orgID)
 		if snapErr := s.recordSchemaSnapshot(ctx, *hdr.provisionerID, filterHiddenCatalogTables(patterns, tables)); snapErr != nil {
 			slog.Warn("warehouse catalog snapshot write failed",
 				"warehouse_id", warehouseID, "error", snapErr)
