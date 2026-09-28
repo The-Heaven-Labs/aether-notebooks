@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -12,6 +13,20 @@ import (
 	"github.com/the-heaven-labs/aether/internal/chaccess"
 	"github.com/the-heaven-labs/aether/internal/executor"
 )
+
+// schemaTableSet asserts the response is a 200 and converts its schema body
+// into a database.table lookup set.
+func schemaTableSet(t *testing.T, rec *httptest.ResponseRecorder) map[string]bool {
+	t.Helper()
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var schema executor.SchemaInfo
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &schema))
+	got := map[string]bool{}
+	for _, table := range schema.Tables {
+		got[table.Schema+"."+table.Name] = true
+	}
+	return got
+}
 
 func TestCompileAndMatchHiddenPatterns(t *testing.T) {
 	patterns := compileHiddenPatterns([]string{`^analytics\._tmp`, `_scratch$`, `^scratchy$`, `(`})
@@ -92,14 +107,7 @@ func TestConnectorSchemaHiddenPatterns(t *testing.T) {
 	require.NoError(t, err)
 	rec := warehouseAPIRequest(t, fx.s, http.MethodGet,
 		"/api/v1/connectors/"+fx.connectorID.String()+"/schema", token, nil)
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-
-	var schema executor.SchemaInfo
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &schema))
-	got := map[string]bool{}
-	for _, table := range schema.Tables {
-		got[table.Schema+"."+table.Name] = true
-	}
+	got := schemaTableSet(t, rec)
 	require.True(t, got[database+".events"], "unmatched tables survive")
 	require.True(t, got[database+".daily_revenue"])
 	require.False(t, got[database+"._tmp_scratch"], "pattern-matched ungranted tables are hidden")
@@ -128,12 +136,7 @@ func TestConnectorSchemaHiddenPatterns(t *testing.T) {
 
 	rec = warehouseAPIRequest(t, fx.s, http.MethodGet,
 		"/api/v1/connectors/"+fx.connectorID.String()+"/schema", token, nil)
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &schema))
-	got = map[string]bool{}
-	for _, table := range schema.Tables {
-		got[table.Schema+"."+table.Name] = true
-	}
+	got = schemaTableSet(t, rec)
 	require.True(t, got[database+"._tmp_scratch"], "granted tables stay visible even when matched")
 }
 
@@ -176,26 +179,24 @@ func TestConnectorSchemaHiddenPatternsKillSwitchOff(t *testing.T) {
 
 	token, err := fx.s.jwt.Issue(fx.userID.String(), fx.orgID.String(), "non-admin")
 	require.NoError(t, err)
-	rec := warehouseAPIRequest(t, fx.s, http.MethodGet,
-		"/api/v1/connectors/"+serviceID.String()+"/schema", token, nil)
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-
-	var schema executor.SchemaInfo
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &schema))
-	got := map[string]bool{}
-	for _, table := range schema.Tables {
-		got[table.Schema+"."+table.Name] = true
-	}
+	got := schemaTableSet(t, warehouseAPIRequest(t, fx.s, http.MethodGet,
+		"/api/v1/connectors/"+serviceID.String()+"/schema", token, nil))
 	require.True(t, got[database+"._tmp_scratch"],
 		"a granted pattern-matched table must stay visible with the kill switch off")
 }
 
-// visibilityFixture builds a warehouse with a non-provisioner ClickHouse
-// service linked, the given grants, and returns the service connector ID.
+// visibilityFixture links a non-provisioner ClickHouse service to the fixture
+// warehouse, seeds the given database with events/daily_revenue/clicks/secret
+// tables, and returns the service connector ID.
 func visibilityFixture(t *testing.T, fx *warehouseSyncFixture, database string) (serviceID uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
 	serviceID = insertClickHouseService(t, fx.s, fx.orgID, fx.connectorID, "Visibility Service", &fx.warehouseID)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, _ = fx.s.db.Pool.Exec(cleanupCtx, `DELETE FROM connectors WHERE id = $1`, serviceID.String())
+	})
 	quotedDB, err := chaccess.QuoteObjectIdent(database)
 	require.NoError(t, err)
 	require.NoError(t, fx.conn.Exec(ctx, "CREATE DATABASE IF NOT EXISTS "+quotedDB))
@@ -210,11 +211,6 @@ func visibilityFixture(t *testing.T, fx *warehouseSyncFixture, database string) 
 		require.NoError(t, fx.conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS "+quotedDB+"."+quoted+
 			" (id UInt64) ENGINE = MergeTree ORDER BY id"))
 	}
-	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_, _ = fx.s.db.Pool.Exec(cleanupCtx, `DELETE FROM connectors WHERE id = $1`, serviceID.String())
-	})
 	return serviceID
 }
 
@@ -248,16 +244,8 @@ func TestConnectorSchemaPerUserGrantFilter(t *testing.T) {
 
 	schemaFor := func(t *testing.T, token string) map[string]bool {
 		t.Helper()
-		rec := warehouseAPIRequest(t, fx.s, http.MethodGet,
-			"/api/v1/connectors/"+serviceID.String()+"/schema", token, nil)
-		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-		var schema executor.SchemaInfo
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &schema))
-		got := map[string]bool{}
-		for _, table := range schema.Tables {
-			got[table.Schema+"."+table.Name] = true
-		}
-		return got
+		return schemaTableSet(t, warehouseAPIRequest(t, fx.s, http.MethodGet,
+			"/api/v1/connectors/"+serviceID.String()+"/schema", token, nil))
 	}
 
 	// Non-admin sees direct + group + everyone grants only.
@@ -267,12 +255,15 @@ func TestConnectorSchemaPerUserGrantFilter(t *testing.T) {
 	require.True(t, got[database+".clicks"], "everyone grant")
 	require.False(t, got[database+".secret"], "ungranted tables are hidden")
 
-	// A member with service access but zero grants sees nothing.
+	// A member with service access but no direct/group grants still sees the
+	// everyone grant: the effective set is exactly {clicks}.
 	noGrantID, noGrantToken := seedGrantOrgMember(t, fx.s, fx.orgID, "editor")
 	grantConnectorUse(t, fx.s, fx.orgID, noGrantID, serviceID)
 	got = schemaFor(t, noGrantToken)
+	require.True(t, got[database+".clicks"], "everyone grants reach every member")
 	require.False(t, got[database+".events"])
 	require.False(t, got[database+".secret"])
+	require.Len(t, got, 1, "the member sees exactly the everyone grant")
 
 	// Admin bypasses the per-user filter.
 	adminToken, err := fx.s.jwt.Issue(fx.userID.String(), fx.orgID.String(), "admin")
@@ -281,12 +272,78 @@ func TestConnectorSchemaPerUserGrantFilter(t *testing.T) {
 	require.True(t, got[database+".events"])
 	require.True(t, got[database+".secret"])
 
+	// A granted table that matches a hidden pattern stays visible to its
+	// grantee with the kill switch on: patterns can never hide access.
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET hidden_table_patterns = $1 WHERE id = $2`,
+		[]string{`secret`}, fx.warehouseID.String())
+	require.NoError(t, err)
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants (org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		VALUES ($1, $2, 'user', $3, $4, 'secret')`,
+		fx.orgID.String(), fx.warehouseID.String(), memberID.String(), database)
+	require.NoError(t, err)
+	got = schemaFor(t, memberToken)
+	require.True(t, got[database+".secret"],
+		"a granted pattern-matched table stays visible with the kill switch on")
+
 	// With the kill switch off, execution uses the stored credential, so the
 	// per-user filter must not understate access. (Dedicated server: safe.)
 	fx.s.SetCHTablePermissions(false)
+	defer fx.s.SetCHTablePermissions(true)
 	got = schemaFor(t, memberToken)
 	require.True(t, got[database+".secret"], "kill switch off disables per-user filtering")
-	fx.s.SetCHTablePermissions(true)
+}
+
+// Removing a user from the org must revoke effective grants even while the
+// user still holds a valid JWT and a connector use ACL: resolution requires
+// current org membership, matching execution. The schema request itself still
+// succeeds, with an empty table set.
+func TestConnectorSchemaRemovedMemberSeesNothing(t *testing.T) {
+	fx := setupWarehouseFixture(t)
+	ctx := context.Background()
+	database := "aether_visrm_" + uuid.NewString()[:8]
+	serviceID := visibilityFixture(t, fx, database)
+
+	memberID, memberToken := seedGrantOrgMember(t, fx.s, fx.orgID, "editor")
+	grantConnectorUse(t, fx.s, fx.orgID, memberID, serviceID)
+	_, err := fx.s.db.Pool.Exec(ctx,
+		`INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)`,
+		fx.groupID.String(), memberID.String())
+	require.NoError(t, err)
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants (org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		VALUES
+			($1, $2, 'user', $3, $4, 'events'),
+			($1, $2, 'everyone', 'everyone', $4, 'clicks')`,
+		fx.orgID.String(), fx.warehouseID.String(), memberID.String(), database)
+	require.NoError(t, err)
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants (org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		VALUES ($1, $2, 'group', $3, $4, 'daily_revenue')`,
+		fx.orgID.String(), fx.warehouseID.String(), fx.groupID.String(), database)
+	require.NoError(t, err)
+
+	got := schemaTableSet(t, warehouseAPIRequest(t, fx.s, http.MethodGet,
+		"/api/v1/connectors/"+serviceID.String()+"/schema", memberToken, nil))
+	require.True(t, got[database+".events"], "direct grant while a member")
+	require.True(t, got[database+".daily_revenue"], "group grant while a member")
+	require.True(t, got[database+".clicks"], "everyone grant while a member")
+
+	// The membership row goes away; the token and the connector use ACL stay.
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`DELETE FROM org_members WHERE org_id = $1 AND user_id = $2`,
+		fx.orgID.String(), memberID.String())
+	require.NoError(t, err)
+
+	rec := warehouseAPIRequest(t, fx.s, http.MethodGet,
+		"/api/v1/connectors/"+serviceID.String()+"/schema", memberToken, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	got = schemaTableSet(t, rec)
+	require.False(t, got[database+".events"], "a removed member loses direct grants")
+	require.False(t, got[database+".daily_revenue"], "a removed member loses group grants")
+	require.False(t, got[database+".clicks"], "a removed member loses everyone grants")
+	require.Empty(t, got, "a removed member sees no tables")
 }
 
 // A schema read must snapshot the warehouse-wide catalog, never one viewer's

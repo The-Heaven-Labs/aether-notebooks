@@ -86,9 +86,10 @@ func (s *Server) loadWarehouseGrantKeys(ctx context.Context, warehouseID uuid.UU
 
 // loadEffectiveWarehouseGrants resolves one user's union of everyone + direct
 // + group grants, the same resolution execution relies on. Like
-// loadWarehouseDesiredState, only actual org members participate: a user grant
-// counts only while its subject is an org member, and a group grant reaches
-// only group members who are org members. It also returns the sorted
+// loadWarehouseDesiredState, all three branches require current org
+// membership: the caller must be in org_members for any grant to count, a user
+// grant counts only while its subject is an org member, and a group grant
+// reaches only group members who are org members. It also returns the sorted
 // ClickHouse role idents implied by group/everyone grants so the
 // effective-access endpoint keeps reporting them. Group membership is joined
 // through org groups so a cross-org membership row can never import another
@@ -103,7 +104,8 @@ func (s *Server) loadEffectiveWarehouseGrants(ctx context.Context, warehouseID u
 		FROM warehouse_table_grants wtg
 		WHERE wtg.warehouse_id = $1 AND wtg.org_id = $2
 		  AND (
-		    wtg.subject_type = 'everyone'
+		    (wtg.subject_type = 'everyone' AND EXISTS (
+		       SELECT 1 FROM org_members m WHERE m.org_id = $2 AND m.user_id::text = $3))
 		    OR (wtg.subject_type = 'user' AND wtg.subject_id = $3
 		        AND EXISTS (SELECT 1 FROM org_members m
 		                    WHERE m.org_id = $2 AND m.user_id = wtg.subject_id::uuid))
