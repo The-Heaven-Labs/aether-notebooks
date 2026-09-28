@@ -1,7 +1,12 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { connectorSchemaQueryKey, getConnectorSchema } from '../api/schema'
-import { listGrants, updateWarehouse, type WarehouseConnector } from '../api/warehouses'
+import {
+  listGrants,
+  updateWarehouse,
+  type Warehouse,
+  type WarehouseConnector,
+} from '../api/warehouses'
 import { ErrorBanner } from './ErrorBanner'
 
 interface Props {
@@ -57,7 +62,11 @@ export function WarehouseHiddenTables({ warehouseId, patterns, connectors = [] }
     onSuccess: (updated) => {
       setError(null)
       setInput('')
-      qc.setQueryData(['warehouse', warehouseId], updated)
+      // The PUT response omits `connectors` (GET-only); merge so the cached
+      // detail keeps the linked connectors the settings page renders.
+      qc.setQueryData<Warehouse>(['warehouse', warehouseId], (prev) =>
+        prev ? { ...prev, ...updated } : updated,
+      )
       qc.invalidateQueries({ queryKey: ['warehouse', warehouseId] })
       qc.invalidateQueries({ queryKey: ['warehouses'] })
       qc.invalidateQueries({ queryKey: ['warehouse-new-tables', warehouseId] })

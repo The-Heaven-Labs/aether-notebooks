@@ -10,6 +10,7 @@ import { FormCard } from '../components/FormCard'
 import { NewTablesInbox } from '../components/NewTablesInbox'
 import { SectionHeader } from '../components/SectionHeader'
 import { StatusBadge } from '../components/StatusBadge'
+import { WarehouseHiddenTables } from '../components/WarehouseHiddenTables'
 import { WarehouseTableGrants } from '../components/WarehouseTableGrants'
 import {
   createWarehouse,
@@ -606,7 +607,16 @@ function WarehouseCard({
                 </div>
               </div>
 
-              <WarehouseTableGrants warehouseId={warehouse.id} connectors={linked} />
+              <WarehouseHiddenTables
+                warehouseId={warehouse.id}
+                patterns={detail?.hidden_table_patterns ?? warehouse.hidden_table_patterns ?? []}
+                connectors={linked}
+              />
+              <WarehouseTableGrants
+                warehouseId={warehouse.id}
+                connectors={linked}
+                hiddenPatterns={detail?.hidden_table_patterns ?? warehouse.hidden_table_patterns ?? []}
+              />
               <NewTablesInbox warehouseId={warehouse.id} />
             </>
           )}

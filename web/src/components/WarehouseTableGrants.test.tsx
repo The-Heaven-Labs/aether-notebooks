@@ -400,4 +400,31 @@ describe('WarehouseTableGrants', () => {
 
     expect(await screen.findByText(/invalid database name/)).toBeInTheDocument()
   })
+
+  test('hints how many tables match hidden patterns', async () => {
+    renderWithProviders(
+      <WarehouseTableGrants warehouseId="wh-1" connectors={CONNECTORS} hiddenPatterns={['_tmp']} />,
+    )
+    await screen.findAllByText('Data Team')
+    // The SCHEMA mock has no _tmp tables, so no hint renders.
+    expect(screen.queryByText(/match hidden patterns/)).toBeNull()
+  })
+
+  test('shows the match hint when patterns match schema tables', async () => {
+    server.use(
+      http.get('/api/v1/connectors/c-1/schema', () =>
+        HttpResponse.json({
+          tables: [
+            ...SCHEMA.tables,
+            { schema: 'analytics', name: '_tmp_scratch', columns: [] },
+          ],
+        }),
+      ),
+    )
+    renderWithProviders(
+      <WarehouseTableGrants warehouseId="wh-1" connectors={CONNECTORS} hiddenPatterns={['_tmp']} />,
+    )
+    await screen.findAllByText('Data Team')
+    expect(await screen.findByText(/1 table matches hidden patterns/)).toBeInTheDocument()
+  })
 })
