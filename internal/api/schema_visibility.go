@@ -50,11 +50,11 @@ func matchesHiddenPattern(patterns []*regexp.Regexp, database, table string) boo
 
 // loadWarehouseHiddenPatterns loads and compiles one warehouse's patterns.
 // Failures fail open (log and return none): patterns are curation.
-func (s *Server) loadWarehouseHiddenPatterns(ctx context.Context, warehouseID uuid.UUID) []*regexp.Regexp {
+func (s *Server) loadWarehouseHiddenPatterns(ctx context.Context, warehouseID uuid.UUID, orgID string) []*regexp.Regexp {
 	var patterns []string
 	if err := s.db.Pool.QueryRow(ctx,
-		`SELECT hidden_table_patterns FROM warehouses WHERE id = $1`,
-		warehouseID.String()).Scan(&patterns); err != nil {
+		`SELECT hidden_table_patterns FROM warehouses WHERE id = $1 AND org_id = $2`,
+		warehouseID.String(), orgID).Scan(&patterns); err != nil {
 		slog.Warn("failed to load warehouse hidden-table patterns",
 			"warehouse_id", warehouseID, "error", err)
 		return nil
@@ -85,23 +85,34 @@ func (s *Server) loadWarehouseGrantKeys(ctx context.Context, warehouseID uuid.UU
 }
 
 // loadEffectiveWarehouseGrants resolves one user's union of everyone + direct
-// + group grants, the same resolution execution relies on. It also returns the
-// sorted ClickHouse role idents implied by group/everyone grants so the
+// + group grants, the same resolution execution relies on. Like
+// loadWarehouseDesiredState, only actual org members participate: a user grant
+// counts only while its subject is an org member, and a group grant reaches
+// only group members who are org members. It also returns the sorted
+// ClickHouse role idents implied by group/everyone grants so the
 // effective-access endpoint keeps reporting them. Group membership is joined
 // through org groups so a cross-org membership row can never import another
 // org's grant.
 func (s *Server) loadEffectiveWarehouseGrants(ctx context.Context, warehouseID uuid.UUID, orgID, userID string) ([]tableKey, []string, error) {
+	orgUUID, err := uuid.Parse(orgID)
+	if err != nil {
+		return nil, nil, err
+	}
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT DISTINCT wtg.subject_type, wtg.subject_id, wtg.database_name, wtg.table_name
 		FROM warehouse_table_grants wtg
 		WHERE wtg.warehouse_id = $1 AND wtg.org_id = $2
 		  AND (
 		    wtg.subject_type = 'everyone'
-		    OR (wtg.subject_type = 'user' AND wtg.subject_id = $3)
+		    OR (wtg.subject_type = 'user' AND wtg.subject_id = $3
+		        AND EXISTS (SELECT 1 FROM org_members m
+		                    WHERE m.org_id = $2 AND m.user_id = wtg.subject_id::uuid))
 		    OR (wtg.subject_type = 'group' AND EXISTS (
 		          SELECT 1 FROM group_members gm
 		          JOIN groups g ON g.id = gm.group_id AND g.org_id = $2
-		          WHERE gm.user_id = $4 AND gm.group_id::text = wtg.subject_id))
+		          WHERE gm.user_id = $4 AND gm.group_id::text = wtg.subject_id
+		            AND EXISTS (SELECT 1 FROM org_members m
+		                        WHERE m.org_id = $2 AND m.user_id = gm.user_id)))
 		  )
 		ORDER BY wtg.database_name ASC, wtg.table_name ASC`,
 		warehouseID.String(), orgID, userID, userID)
@@ -113,7 +124,6 @@ func (s *Server) loadEffectiveWarehouseGrants(ctx context.Context, warehouseID u
 	var keys []tableKey
 	seen := map[tableKey]struct{}{}
 	roleSet := map[string]struct{}{}
-	orgUUID, orgErr := uuid.Parse(orgID)
 	for rows.Next() {
 		var subjectType, subjectID, database, table string
 		if err := rows.Scan(&subjectType, &subjectID, &database, &table); err != nil {
@@ -123,9 +133,6 @@ func (s *Server) loadEffectiveWarehouseGrants(ctx context.Context, warehouseID u
 		if _, ok := seen[key]; !ok {
 			seen[key] = struct{}{}
 			keys = append(keys, key)
-		}
-		if orgErr != nil {
-			continue
 		}
 		switch subjectType {
 		case "group":

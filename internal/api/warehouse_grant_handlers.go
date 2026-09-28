@@ -637,7 +637,7 @@ func (s *Server) handleWarehouseEffectiveAccess(w http.ResponseWriter, r *http.R
 	}
 	tables := make([]warehouseEffectiveTableJSON, 0, len(keyList))
 	for _, key := range keyList {
-		tables = append(tables, warehouseEffectiveTableJSON{Database: key.Database, Table: key.Table})
+		tables = append(tables, warehouseEffectiveTableJSON(key))
 	}
 
 	allowedServices, preferredID, err := s.allowedWarehouseServices(ctx, targetUUID, orgUUID, targetRole, warehouseUUID)
