@@ -924,7 +924,18 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 			// snapshot and bounds the response for non-admins.
 		}
 	}
+	hiddenTables := 0
 	if len(patterns) > 0 {
+		for _, t := range schema.Tables {
+			key := tableKey{Database: t.Schema, Table: t.Name}
+			if !matchesHiddenPattern(patterns, t.Schema, t.Name) {
+				continue
+			}
+			if _, protected := patternProtected[key]; protected {
+				continue
+			}
+			hiddenTables++
+		}
 		schema.Tables = filterVisibleSchemaTables(schema.Tables, patterns, nil, patternProtected)
 	}
 
@@ -952,5 +963,11 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 		schema.Tables = filterVisibleSchemaTables(schema.Tables, nil, effective, nil)
 	}
 
-	writeJSON(w, http.StatusOK, schema)
+	// HiddenTables lets schema-browsing UIs explain why tables are missing
+	// without re-deriving the pattern/grant logic client-side. It is omitted
+	// when zero so the response shape is unchanged for the common case.
+	writeJSON(w, http.StatusOK, struct {
+		executor.SchemaInfo
+		HiddenTables int `json:"hidden_tables,omitempty"`
+	}{SchemaInfo: *schema, HiddenTables: hiddenTables})
 }

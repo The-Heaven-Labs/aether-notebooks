@@ -28,6 +28,18 @@ func schemaTableSet(t *testing.T, rec *httptest.ResponseRecorder) map[string]boo
 	return got
 }
 
+// schemaHiddenTables extracts the schema endpoint's hidden_tables count; an
+// absent field decodes to zero.
+func schemaHiddenTables(t *testing.T, rec *httptest.ResponseRecorder) int {
+	t.Helper()
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body struct {
+		HiddenTables int `json:"hidden_tables"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	return body.HiddenTables
+}
+
 func TestCompileAndMatchHiddenPatterns(t *testing.T) {
 	patterns := compileHiddenPatterns([]string{`^analytics\._tmp`, `_scratch$`, `^scratchy$`, `(`})
 	require.Len(t, patterns, 3, "an invalid stored pattern is skipped")
@@ -113,19 +125,35 @@ func TestConnectorSchemaHiddenPatterns(t *testing.T) {
 			" (id UInt64) ENGINE = MergeTree ORDER BY id"))
 	}
 
+	token, err := fx.s.jwt.Issue(fx.userID.String(), fx.orgID.String(), "admin")
+	require.NoError(t, err)
+	// Scope the read to this test's database so the hidden count is stable
+	// against any other tables on the shared ClickHouse instance.
+	schemaURL := "/api/v1/connectors/" + fx.connectorID.String() + "/schema?database=" + database
+
+	// No patterns yet: nothing is hidden and matched-looking tables stay visible.
+	rec := warehouseAPIRequest(t, fx.s, http.MethodGet, schemaURL, token, nil)
+	got := schemaTableSet(t, rec)
+	require.True(t, got[database+"._tmp_scratch"], "no patterns set: nothing is hidden")
+	require.Zero(t, schemaHiddenTables(t, rec), "no patterns set: hidden_tables is absent/zero")
+
 	_, err = fx.s.db.Pool.Exec(ctx,
 		`UPDATE warehouses SET hidden_table_patterns = $1 WHERE id = $2`,
 		[]string{`_tmp`}, fx.warehouseID.String())
 	require.NoError(t, err)
-
-	token, err := fx.s.jwt.Issue(fx.userID.String(), fx.orgID.String(), "admin")
+	// Drop the row the pre-pattern read wrote so the snapshot assertion below
+	// proves the filtered read does not re-snapshot hidden tables.
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`DELETE FROM schema_snapshots WHERE connector_id = $1 AND database_name = $2`,
+		fx.connectorID.String(), database)
 	require.NoError(t, err)
-	rec := warehouseAPIRequest(t, fx.s, http.MethodGet,
-		"/api/v1/connectors/"+fx.connectorID.String()+"/schema", token, nil)
-	got := schemaTableSet(t, rec)
+
+	rec = warehouseAPIRequest(t, fx.s, http.MethodGet, schemaURL, token, nil)
+	got = schemaTableSet(t, rec)
 	require.True(t, got[database+".events"], "unmatched tables survive")
 	require.True(t, got[database+".daily_revenue"])
 	require.False(t, got[database+"._tmp_scratch"], "pattern-matched ungranted tables are hidden")
+	require.Equal(t, 1, schemaHiddenTables(t, rec), "the response reports the hidden table count")
 
 	// The schema-read snapshot is pattern-filtered too.
 	var hiddenRows int
@@ -142,17 +170,17 @@ func TestConnectorSchemaHiddenPatterns(t *testing.T) {
 		fx.connectorID.String(), database).Scan(&visibleRows))
 	require.Equal(t, 1, visibleRows)
 
-	// A granted table that also matches stays visible.
+	// A granted table that also matches stays visible and is not "hidden".
 	_, err = fx.s.db.Pool.Exec(ctx, `
 		INSERT INTO warehouse_table_grants (org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
 		VALUES ($1, $2, 'everyone', 'everyone', $3, '_tmp_scratch')`,
 		fx.orgID.String(), fx.warehouseID.String(), database)
 	require.NoError(t, err)
 
-	rec = warehouseAPIRequest(t, fx.s, http.MethodGet,
-		"/api/v1/connectors/"+fx.connectorID.String()+"/schema", token, nil)
+	rec = warehouseAPIRequest(t, fx.s, http.MethodGet, schemaURL, token, nil)
 	got = schemaTableSet(t, rec)
 	require.True(t, got[database+"._tmp_scratch"], "granted tables stay visible even when matched")
+	require.Zero(t, schemaHiddenTables(t, rec), "granted matches are not hidden")
 }
 
 // With the kill switch off, a non-admin viewing a warehouse-linked service
