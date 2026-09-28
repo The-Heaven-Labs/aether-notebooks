@@ -373,6 +373,7 @@ func TestWarehouseHiddenPatternsDefault(t *testing.T) {
 	var got warehouseJSON
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 	require.Empty(t, got.HiddenTablePatterns)
+	require.Contains(t, rec.Body.String(), `"hidden_table_patterns":[]`)
 
 	// The list endpoint carries the field too.
 	rec = warehouseAPIRequest(t, s, http.MethodGet, "/api/v1/warehouses", admin, nil)
@@ -380,11 +381,14 @@ func TestWarehouseHiddenPatternsDefault(t *testing.T) {
 	var list []warehouseJSON
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
 	require.NotEmpty(t, list)
+	found := false
 	for _, w := range list {
 		if w.ID == wh.String() {
+			found = true
 			require.Empty(t, w.HiddenTablePatterns)
 		}
 	}
+	require.True(t, found, "warehouse %s missing from list response", wh)
 }
 
 func TestWarehouseRoutesRequireOrgAdmin(t *testing.T) {
