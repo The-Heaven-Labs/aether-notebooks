@@ -12,6 +12,26 @@
 
 **Working branch:** `feat/warehouse-hidden-tables-schema-visibility` (already exists with the design doc committed).
 
+## As-built deviations (post-implementation)
+
+The task bodies below are the original plan. The implementation matches them except for these
+review-driven changes; trust the code when they disagree:
+
+- `loadEffectiveWarehouseGrants(ctx, warehouseID, orgID, userID)` (renamed from
+  `loadEffectiveWarehouseGrantKeys`) also returns sorted role idents and requires current org
+  membership on all three subject branches (`user`/`group`/`everyone`) to match execution.
+- The visibility filter is named `filterVisibleSchemaTables`; the reconcile filter is
+  `filterHiddenCatalogTables`.
+- The schema response carries a server-computed `hidden_tables` count. Both UI counts
+  ("hides N tables", "N table(s) hidden by patterns") consume it; the `hiddenPatterns` prop and
+  client-side regex counting were removed. Grant changes now also invalidate `connector-schema`.
+- The new-tables inbox no longer uses SQL `LIMIT`; it streams rows, applies the cap after
+  pattern filtering, and sets `truncated` only for a 201st visible row.
+- `loadWarehouseHiddenPatterns` takes `orgID` (`WHERE id = $1 AND org_id = $2`).
+- Real-browser evidence: `/tmp/opencode/verify-admin-warehouse.png`,
+  `/tmp/opencode/verify-nova-schema-on.png` (admin picker/inbox, non-admin grant filtering, kill
+  switch off, zero-grant empty state).
+
 ---
 
 ## Conventions for every Go test run

@@ -138,31 +138,41 @@ pre-existing rows are handled by the inbox (below).
 
 After the existing query (which already excludes granted tables), load the warehouse's patterns
 and drop matching rows in Go before responding. This covers legacy snapshot rows regardless of
-when they were written. The 200-row cap is applied after filtering; returning slightly fewer
-than 200 is acceptable.
+when they were written. The query streams rows (no SQL `LIMIT`); the 200-row cap is applied after
+filtering and `truncated` is set only when a 201st visible row exists, so the flag never claims
+completeness while omitting visible tables.
 
 ### Shared helpers (new `internal/api/schema_visibility.go`)
 
-- `compileHiddenPatterns([]string) ([]*regexp.Regexp, error)` / `matchesHidden(patterns, db, table)`.
-- `loadWarehouseGrantKeys(ctx, warehouseID, orgID)` — all grant keys (admin protected set).
-- `loadEffectiveWarehouseGrantKeys(ctx, warehouseID, orgID, userID)` — extracted from
-  `handleWarehouseEffectiveAccess`, which then reuses it (pure refactor; existing tests guard).
-- `filterSchemaTables(tables []executor.TableInfo, patterns []*regexp.Regexp,
-  allowed, protected map[[2]string]struct{})` — one implementation used by the schema endpoint;
-  the inbox reuses the pattern matcher.
+- `compileHiddenPatterns([]string) []*regexp.Regexp` / `matchesHiddenPattern(patterns, db, table)`
+  (invalid stored patterns are logged and skipped, fail open).
+- `loadWarehouseGrantKeys(ctx, warehouseID, orgID)` — all grant keys (the protected set for
+  pattern filtering, loaded whenever patterns exist so a match never hides existing access).
+- `loadEffectiveWarehouseGrants(ctx, warehouseID, orgID, userID)` — extracted from
+  `handleWarehouseEffectiveAccess`, which then reuses it (behavior-preserving refactor; existing
+  tests guard). All three subject branches (`user`/`group`/`everyone`) additionally require
+  current org membership, matching execution.
+- `filterVisibleSchemaTables(tables []executor.TableInfo, patterns []*regexp.Regexp,
+  allowed, patternProtected map[tableKey]struct{})` — one implementation used by the schema
+  endpoint; the inbox/reconcile reuse the pattern matcher via `filterHiddenCatalogTables`.
+- The schema response additionally carries `hidden_tables` (count of pattern-matched,
+  grant-unprotected tables), so the UI count is server-computed and cannot drift from Go RE2
+  semantics. Swagger documents it in the endpoint description.
 
 ## Frontend
 
 - New `WarehouseHiddenTables.tsx` rendered inside the expanded `WarehouseCard`
-  (`WarehouseSettingsPage.tsx:609`, beside `WarehouseTableGrants`): chip-style pattern list with
+  (`WarehouseSettingsPage.tsx`, beside `WarehouseTableGrants`): chip-style pattern list with
   add/remove, saving immediately via `updateWarehouse`, inline server validation errors. Helper
   text: "Go regex matched against `database.table`; matching tables are hidden unless already
-  granted." A live "hides N tables in this schema source" count uses the already-cached connector
-  schema (no extra fetch) and is skipped when the schema is not cached.
+  granted." The "hides N tables in this schema source" count comes from the schema response's
+  `hidden_tables` field (server-computed over the already-cached connector schema; no extra fetch).
 - On pattern save, invalidate `connector-schema` queries for the linked connectors and
-  `warehouse-new-tables` so the picker and inbox refresh immediately.
-- `WarehouseTableGrants`: show a small "N tables hidden by patterns" hint when patterns exist,
-  so admins are not confused by missing tables.
+  `warehouse-new-tables` so the picker and inbox refresh immediately. On grant changes,
+  `WarehouseTableGrants` also invalidates `connector-schema` because the schema response is
+  grant-dependent.
+- `WarehouseTableGrants`: show a small "N table(s) hidden by patterns" hint from the same
+  server count, so admins are not confused by missing tables.
 - `NewTablesInbox` and `SchemaBrowser`: no UI change (server-side filtering; existing empty
   states apply).
 
