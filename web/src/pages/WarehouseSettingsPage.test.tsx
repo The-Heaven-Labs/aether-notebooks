@@ -12,13 +12,13 @@ vi.mock('../components/AppShell', () => ({
 const WAREHOUSES = [
   {
     id: 'wh-1', org_id: 'org-1', name: 'Analytics', provisioner_connector_id: 'c-1',
-    allow_provisioner_execution: true,
+    allow_provisioner_execution: true, hidden_table_patterns: [],
     sync_status: 'ready', sync_error: null, last_synced_at: '2026-01-01T00:00:00Z',
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
   },
   {
     id: 'wh-2', org_id: 'org-1', name: 'Beta', provisioner_connector_id: null,
-    allow_provisioner_execution: false,
+    allow_provisioner_execution: false, hidden_table_patterns: [],
     sync_status: 'error', sync_error: 'wildcard grant detected', last_synced_at: null,
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
   },
@@ -149,7 +149,7 @@ describe('WarehouseSettingsPage', () => {
         return HttpResponse.json(
           {
             id: 'wh-new', org_id: 'org-1', name: 'New Wh', provisioner_connector_id: null,
-            allow_provisioner_execution: false,
+            allow_provisioner_execution: false, hidden_table_patterns: [],
             sync_status: 'pending', sync_error: null, last_synced_at: null,
             created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
           },

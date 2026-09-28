@@ -141,7 +141,7 @@ describe('ConnectorsPage', () => {
         HttpResponse.json([
           {
             id: 'wh-1', org_id: 'org-1', name: 'Analytics', provisioner_connector_id: 'c-ch',
-            allow_provisioner_execution: false,
+            allow_provisioner_execution: false, hidden_table_patterns: [],
             sync_status: 'pending', sync_error: null, last_synced_at: null,
             created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
           },
