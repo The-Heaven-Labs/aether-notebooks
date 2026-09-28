@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -389,6 +390,83 @@ func TestWarehouseHiddenPatternsDefault(t *testing.T) {
 		}
 	}
 	require.True(t, found, "warehouse %s missing from list response", wh)
+}
+
+func TestWarehouseHiddenPatternsUpdate(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	_, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Hidden Patterns Update WH")
+
+	// Set patterns.
+	rec := updateWarehouseViaAPI(t, s, admin, wh, map[string]any{
+		"hidden_table_patterns": []string{`^analytics\._tmp`, `_scratch$`},
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var got warehouseJSON
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, []string{`^analytics\._tmp`, `_scratch$`}, got.HiddenTablePatterns)
+
+	// Absent field leaves them unchanged.
+	rec = updateWarehouseViaAPI(t, s, admin, wh, map[string]any{"name": "Hidden Patterns Update WH 2"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Equal(t, []string{`^analytics\._tmp`, `_scratch$`}, got.HiddenTablePatterns)
+
+	// An empty array clears them.
+	rec = updateWarehouseViaAPI(t, s, admin, wh, map[string]any{"hidden_table_patterns": []string{}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Empty(t, got.HiddenTablePatterns)
+
+	// Explicit null clears them too.
+	rec = updateWarehouseViaAPI(t, s, admin, wh, map[string]any{"hidden_table_patterns": nil})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Empty(t, got.HiddenTablePatterns)
+}
+
+func TestWarehouseHiddenPatternsValidation(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	_, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Hidden Patterns Validation WH")
+
+	cases := []struct {
+		name    string
+		body    map[string]any
+		message string
+	}{
+		{"invalid regex", map[string]any{"hidden_table_patterns": []string{`(`}}, "invalid pattern"},
+		{"empty pattern", map[string]any{"hidden_table_patterns": []string{""}}, "empty"},
+		{"whitespace pattern", map[string]any{"hidden_table_patterns": []string{"   "}}, "empty"},
+		{"non-string", map[string]any{"hidden_table_patterns": []any{1}}, "must be an array"},
+		{
+			"too long",
+			map[string]any{"hidden_table_patterns": []string{strings.Repeat("a", maxWarehouseHiddenPatternLength+1)}},
+			"characters or fewer",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := updateWarehouseViaAPI(t, s, admin, wh, tc.body)
+			require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+			require.Contains(t, rec.Body.String(), tc.message)
+		})
+	}
+
+	tooMany := make([]string, maxWarehouseHiddenPatterns+1)
+	for i := range tooMany {
+		tooMany[i] = "p" + strconv.Itoa(i)
+	}
+	rec := updateWarehouseViaAPI(t, s, admin, wh, map[string]any{"hidden_table_patterns": tooMany})
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), strconv.Itoa(maxWarehouseHiddenPatterns))
+
+	// The warehouse is untouched after every rejected write.
+	rec = warehouseAPIRequest(t, s, http.MethodGet, "/api/v1/warehouses/"+wh.String(), admin, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var got warehouseJSON
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Empty(t, got.HiddenTablePatterns)
 }
 
 func TestWarehouseRoutesRequireOrgAdmin(t *testing.T) {
