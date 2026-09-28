@@ -52,10 +52,12 @@ export function WarehouseHiddenTables({ warehouseId, patterns, connectors = [] }
   }, [patterns, grants, schema])
 
   const save = useMutation({
+    scope: { id: `warehouse-hidden-patterns-${warehouseId}` },
     mutationFn: (next: string[]) => updateWarehouse(warehouseId, { hidden_table_patterns: next }),
-    onSuccess: () => {
+    onSuccess: (updated) => {
       setError(null)
       setInput('')
+      qc.setQueryData(['warehouse', warehouseId], updated)
       qc.invalidateQueries({ queryKey: ['warehouse', warehouseId] })
       qc.invalidateQueries({ queryKey: ['warehouses'] })
       qc.invalidateQueries({ queryKey: ['warehouse-new-tables', warehouseId] })
@@ -67,6 +69,7 @@ export function WarehouseHiddenTables({ warehouseId, patterns, connectors = [] }
   })
 
   const addPattern = () => {
+    if (save.isPending) return
     const trimmed = input.trim()
     if (!trimmed) return
     if (patterns.includes(trimmed)) {
@@ -120,6 +123,7 @@ export function WarehouseHiddenTables({ warehouseId, patterns, connectors = [] }
           style={styles.input}
           placeholder="e.g. ^analytics\._tmp"
           value={input}
+          disabled={save.isPending}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') addPattern()

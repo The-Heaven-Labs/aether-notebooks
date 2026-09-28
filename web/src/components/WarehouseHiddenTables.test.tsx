@@ -64,6 +64,76 @@ describe('WarehouseHiddenTables', () => {
     fireEvent.change(screen.getByLabelText('Pattern'), { target: { value: '^raw\\.old' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     await waitFor(() => expect(putBody).toEqual({ hidden_table_patterns: ['_tmp', '^raw\\.old'] }))
+    expect(screen.getByLabelText('Pattern')).toHaveValue('')
+  })
+
+  test('removes a pattern through PUT /warehouses/{id}', async () => {
+    let putBody: Record<string, unknown> | null = null
+    server.use(
+      http.put('/api/v1/warehouses/wh-1', async ({ request }) => {
+        putBody = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json({ ...WAREHOUSE, hidden_table_patterns: [] })
+      }),
+    )
+    renderWithProviders(
+      <WarehouseHiddenTables warehouseId="wh-1" patterns={WAREHOUSE.hidden_table_patterns} connectors={CONNECTORS} />,
+    )
+    await screen.findByText('_tmp')
+    fireEvent.click(screen.getByRole('button', { name: 'Remove pattern _tmp' }))
+    await waitFor(() => expect(putBody).toEqual({ hidden_table_patterns: [] }))
+  })
+
+  test('clears the input and does not PUT when adding a duplicate pattern', async () => {
+    let puts = 0
+    server.use(
+      http.put('/api/v1/warehouses/wh-1', () => {
+        puts++
+        return HttpResponse.json(WAREHOUSE)
+      }),
+    )
+    renderWithProviders(
+      <WarehouseHiddenTables warehouseId="wh-1" patterns={WAREHOUSE.hidden_table_patterns} connectors={CONNECTORS} />,
+    )
+    await screen.findByText('_tmp')
+    fireEvent.change(screen.getByLabelText('Pattern'), { target: { value: '_tmp' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect(screen.getByLabelText('Pattern')).toHaveValue('')
+    expect(puts).toBe(0)
+  })
+
+  test('disables Add and sends no PUT for empty input', async () => {
+    let puts = 0
+    server.use(
+      http.put('/api/v1/warehouses/wh-1', () => {
+        puts++
+        return HttpResponse.json(WAREHOUSE)
+      }),
+    )
+    renderWithProviders(
+      <WarehouseHiddenTables warehouseId="wh-1" patterns={[]} connectors={CONNECTORS} />,
+    )
+    const addButton = await screen.findByRole('button', { name: 'Add' })
+    expect(addButton).toBeDisabled()
+    fireEvent.click(addButton)
+    expect(puts).toBe(0)
+  })
+
+  test('pluralizes the hidden count across matching patterns', async () => {
+    renderWithProviders(
+      <WarehouseHiddenTables
+        warehouseId="wh-1"
+        patterns={['^analytics\\._tmp', '^analytics\\.events$']}
+        connectors={CONNECTORS}
+      />,
+    )
+    expect(await screen.findByText(/hides 2 tables/)).toBeInTheDocument()
+  })
+
+  test('reports zero hidden tables when no table matches', async () => {
+    renderWithProviders(
+      <WarehouseHiddenTables warehouseId="wh-1" patterns={['^raw\\.']} connectors={CONNECTORS} />,
+    )
+    expect(await screen.findByText(/hides 0 tables/)).toBeInTheDocument()
   })
 
   test('shows the server validation error for an invalid pattern', async () => {
