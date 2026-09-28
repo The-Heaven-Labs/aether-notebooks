@@ -24,6 +24,7 @@ type warehouseJSON struct {
 	Name                      string                   `json:"name"`
 	ProvisionerConnectorID    *string                  `json:"provisioner_connector_id"`
 	AllowProvisionerExecution bool                     `json:"allow_provisioner_execution"`
+	HiddenTablePatterns       []string                 `json:"hidden_table_patterns"`
 	SyncStatus                string                   `json:"sync_status"`
 	SyncError                 *string                  `json:"sync_error"`
 	LastSyncedAt              *time.Time               `json:"last_synced_at"`
@@ -40,7 +41,7 @@ type warehouseConnectorJSON struct {
 	IsProvisioner bool   `json:"is_provisioner"`
 }
 
-const warehouseSelectColumns = `id, org_id, name, provisioner_connector_id, allow_provisioner_execution, sync_status, sync_error, last_synced_at, created_at, updated_at`
+const warehouseSelectColumns = `id, org_id, name, provisioner_connector_id, allow_provisioner_execution, hidden_table_patterns, sync_status, sync_error, last_synced_at, created_at, updated_at`
 
 const maxWarehouseNameLength = 255
 
@@ -85,7 +86,7 @@ func (s *Server) enqueueWarehouseSyncNow(warehouseID uuid.UUID) {
 func scanWarehouseRow(row pgx.Row) (warehouseJSON, error) {
 	var wh warehouseJSON
 	err := row.Scan(&wh.ID, &wh.OrgID, &wh.Name, &wh.ProvisionerConnectorID,
-		&wh.AllowProvisionerExecution, &wh.SyncStatus, &wh.SyncError,
+		&wh.AllowProvisionerExecution, &wh.HiddenTablePatterns, &wh.SyncStatus, &wh.SyncError,
 		&wh.LastSyncedAt, &wh.CreatedAt, &wh.UpdatedAt)
 	return wh, err
 }

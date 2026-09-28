@@ -362,6 +362,31 @@ func TestWarehouseCRUD(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, deleteWarehouseViaAPI(t, s, admin, missing).Code)
 }
 
+func TestWarehouseHiddenPatternsDefault(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	_, _, admin := seedWarehouseOrgAdmin(t, s)
+
+	wh := createWarehouseViaAPI(t, s, admin, "Hidden Patterns Default WH")
+
+	rec := warehouseAPIRequest(t, s, http.MethodGet, "/api/v1/warehouses/"+wh.String(), admin, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var got warehouseJSON
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Empty(t, got.HiddenTablePatterns)
+
+	// The list endpoint carries the field too.
+	rec = warehouseAPIRequest(t, s, http.MethodGet, "/api/v1/warehouses", admin, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var list []warehouseJSON
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
+	require.NotEmpty(t, list)
+	for _, w := range list {
+		if w.ID == wh.String() {
+			require.Empty(t, w.HiddenTablePatterns)
+		}
+	}
+}
+
 func TestWarehouseRoutesRequireOrgAdmin(t *testing.T) {
 	s, _ := warehouseHandlersServer(t)
 	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
