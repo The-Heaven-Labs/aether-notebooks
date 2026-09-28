@@ -1355,6 +1355,13 @@ func (s *Server) handleWarehouseNewTables(w http.ResponseWriter, r *http.Request
 	// table seen long ago on one service and recently on another pass the
 	// cutoff on the min over the surviving rows. Aggregating first, then
 	// applying the cutoff to min(first_seen_at), uses the true first sighting.
+	//
+	// The query is intentionally unbounded: results are streamed, and the scan
+	// loop below stops at one visible row past maxWarehouseNewTables to detect
+	// truncation (hidden rows never consume slots), with the deferred
+	// rows.Close draining the remainder. A LIMIT cannot account for
+	// pattern-filtered rows, so an overfetch would not make the response more
+	// precise; large snapshot sets simply stream in full.
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT s.database_name, s.table_name, min(s.first_seen_at) AS first_seen_at
 		FROM schema_snapshots s

@@ -791,7 +791,7 @@ func (s *Server) handleTestConnector(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Summary Get connector schema
-// @Description Get the database schema for a connector
+// @Description Get the database schema for a connector. For a warehouse-linked ClickHouse connector the response is filtered by the warehouse's hidden-table patterns and, for non-admins, by the caller's effective table grants; matched tables that are already granted stay visible. The response may include a hidden_tables count of pattern-matched ungranted tables that were dropped.
 // @Tags connectors
 // @Produce json
 // @Param id path string true "Connector ID"
