@@ -153,13 +153,20 @@ describe('WarehouseHiddenTables', () => {
     expect(await screen.findByText(/invalid pattern/)).toBeInTheDocument()
   })
 
-  test('preserves cached connectors when the PUT response omits them', async () => {
+  test('merges the PUT response into the cached warehouse without dropping connectors', async () => {
+    let puts = 0
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    qc.setQueryData<Warehouse>(['warehouse', 'wh-1'], { ...WAREHOUSE, connectors: CONNECTORS })
+    // Distinguishing pre-mutation state: empty patterns, connectors present.
+    qc.setQueryData<Warehouse>(['warehouse', 'wh-1'], {
+      ...WAREHOUSE,
+      hidden_table_patterns: [],
+      connectors: CONNECTORS,
+    })
     server.use(
-      http.put('/api/v1/warehouses/wh-1', () =>
-        HttpResponse.json({ ...WAREHOUSE, hidden_table_patterns: ['_tmp'] }),
-      ),
+      http.put('/api/v1/warehouses/wh-1', () => {
+        puts++
+        return HttpResponse.json({ ...WAREHOUSE, hidden_table_patterns: ['_tmp'] })
+      }),
     )
     render(
       <QueryClientProvider client={qc}>
@@ -168,11 +175,12 @@ describe('WarehouseHiddenTables', () => {
     )
     fireEvent.change(await screen.findByLabelText('Pattern'), { target: { value: '_tmp' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await waitFor(() => expect(puts).toBe(1))
 
-    await waitFor(() => {
-      const cached = qc.getQueryData<Warehouse>(['warehouse', 'wh-1'])
-      expect(cached?.hidden_table_patterns).toEqual(['_tmp'])
-      expect(cached?.connectors).toEqual(CONNECTORS)
-    })
+    const cached = qc.getQueryData<Warehouse>(['warehouse', 'wh-1'])
+    // The new patterns prove the PUT response was merged into the cache...
+    expect(cached?.hidden_table_patterns).toEqual(['_tmp'])
+    // ...and the connectors prove the merge kept the GET-only field.
+    expect(cached?.connectors).toEqual(CONNECTORS)
   })
 })
