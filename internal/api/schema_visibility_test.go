@@ -78,6 +78,21 @@ func TestFilterVisibleSchemaTables(t *testing.T) {
 	require.Equal(t, []executor.TableInfo{{Schema: "raw", Name: "clicks"}}, got)
 }
 
+func TestFilterHiddenCatalogTables(t *testing.T) {
+	tables := []chaccess.CatalogTable{
+		{Database: "analytics", Table: "events"},
+		{Database: "analytics", Table: "_tmp_scratch"},
+	}
+
+	require.Equal(t, tables, filterHiddenCatalogTables(nil, tables),
+		"no patterns returns the input unchanged")
+
+	patterns := compileHiddenPatterns([]string{`_tmp`})
+	require.Equal(t, []chaccess.CatalogTable{{Database: "analytics", Table: "events"}},
+		filterHiddenCatalogTables(patterns, tables),
+		"matched tables are dropped")
+}
+
 func TestConnectorSchemaHiddenPatterns(t *testing.T) {
 	fx := setupWarehouseFixture(t)
 	ctx := context.Background()

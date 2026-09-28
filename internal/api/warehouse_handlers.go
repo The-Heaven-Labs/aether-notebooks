@@ -1275,7 +1275,9 @@ type warehouseNewTableJSON struct {
 // Since echoes the cutoff actually applied: the caller's ?since= when
 // supplied, otherwise the warehouse's most recent grant-creation time,
 // falling back to the warehouse's creation time when it has no grants yet.
-// Truncated reports that the response stopped at maxWarehouseNewTables.
+// Truncated reports that the response stopped at maxWarehouseNewTables
+// visible tables; the cap is applied after hidden-pattern filtering, so
+// pattern-matched rows never consume inbox slots.
 type warehouseNewTablesJSON struct {
 	WarehouseID string                  `json:"warehouse_id"`
 	Since       time.Time               `json:"since"`
@@ -1369,9 +1371,8 @@ func (s *Server) handleWarehouseNewTables(w http.ResponseWriter, r *http.Request
 		        AND g.table_name = s.table_name)
 		GROUP BY s.database_name, s.table_name
 		HAVING min(s.first_seen_at) > $3
-		ORDER BY first_seen_at DESC, s.database_name ASC, s.table_name ASC
-		LIMIT $4`,
-		claims.OrgID, warehouseUUID.String(), since, maxWarehouseNewTables+1)
+		ORDER BY first_seen_at DESC, s.database_name ASC, s.table_name ASC`,
+		claims.OrgID, warehouseUUID.String(), since)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -1381,11 +1382,6 @@ func (s *Server) handleWarehouseNewTables(w http.ResponseWriter, r *http.Request
 	tables := []warehouseNewTableJSON{}
 	truncated := false
 	for rows.Next() {
-		if len(tables) == maxWarehouseNewTables {
-			// One row past the cap is enough to know the list is incomplete.
-			truncated = true
-			break
-		}
 		var t warehouseNewTableJSON
 		if err := rows.Scan(&t.Database, &t.Table, &t.FirstSeenAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
@@ -1393,6 +1389,12 @@ func (s *Server) handleWarehouseNewTables(w http.ResponseWriter, r *http.Request
 		}
 		if matchesHiddenPattern(patterns, t.Database, t.Table) {
 			continue
+		}
+		if len(tables) == maxWarehouseNewTables {
+			// One visible row past the cap is enough to know the list is
+			// incomplete; hidden rows never consume inbox slots.
+			truncated = true
+			break
 		}
 		tables = append(tables, t)
 	}
