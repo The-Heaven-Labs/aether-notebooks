@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -557,4 +558,131 @@ func seedGrantMemberWithID(t *testing.T, s *Server, orgID, userID uuid.UUID) {
 			t.Logf("cleanup validation member: %v", err)
 		}
 	})
+}
+
+func TestWarehouseNewTablesHiddenPatterns(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Hidden Patterns Inbox WH")
+	conn := seedWarehouseConnector(t, s, orgID, "Hidden Patterns Inbox Service")
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, conn, &wh).Code)
+
+	require.Equal(t, http.StatusOK, updateWarehouseViaAPI(t, s, admin, wh, map[string]any{
+		"hidden_table_patterns": []string{`^analytics\._tmp`},
+	}).Code)
+
+	now := time.Now().UTC()
+	_, err := s.db.Pool.Exec(context.Background(),
+		`UPDATE warehouses SET created_at = $1 WHERE id = $2`, now.Add(-4*time.Hour), wh.String())
+	require.NoError(t, err)
+	insertSchemaSnapshot(t, s, conn, "analytics", "events", now.Add(-3*time.Hour))
+	insertSchemaSnapshot(t, s, conn, "analytics", "_tmp_scratch", now.Add(-3*time.Hour))
+
+	resp := listNewTablesViaAPI(t, s, admin, wh, "")
+	require.Len(t, resp.Tables, 1, "pre-existing snapshot rows matching patterns are filtered")
+	require.Equal(t, "events", resp.Tables[0].Table)
+}
+
+// Hidden rows newer than every visible row must never consume the inbox cap:
+// the SQL no longer limits, so pattern-matched rows are skipped in Go without
+// shrinking the visible window.
+func TestWarehouseNewTablesHiddenRowsDoNotStarveWindow(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Hidden Starvation WH")
+	conn := seedWarehouseConnector(t, s, orgID, "Hidden Starvation Service")
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, conn, &wh).Code)
+
+	require.Equal(t, http.StatusOK, updateWarehouseViaAPI(t, s, admin, wh, map[string]any{
+		"hidden_table_patterns": []string{`^analytics\._tmp`},
+	}).Code)
+
+	now := time.Now().UTC()
+	_, err := s.db.Pool.Exec(context.Background(),
+		`UPDATE warehouses SET created_at = $1 WHERE id = $2`, now.Add(-4*time.Hour), wh.String())
+	require.NoError(t, err)
+
+	for i := 0; i <= maxWarehouseNewTables+4; i++ {
+		insertSchemaSnapshot(t, s, conn, "analytics", fmt.Sprintf("_tmp_%03d", i), now.Add(-3*time.Hour))
+	}
+	insertSchemaSnapshot(t, s, conn, "analytics", "events", now.Add(-3*time.Hour).Add(-time.Minute))
+	insertSchemaSnapshot(t, s, conn, "analytics", "clicks", now.Add(-3*time.Hour).Add(-2*time.Minute))
+
+	resp := listNewTablesViaAPI(t, s, admin, wh, "")
+	require.False(t, resp.Truncated, "hidden rows do not count toward the cap")
+	require.Len(t, resp.Tables, 2, "newer hidden rows must not starve visible tables")
+	got := map[string]bool{}
+	for _, table := range resp.Tables {
+		got[table.Table] = true
+	}
+	require.True(t, got["events"])
+	require.True(t, got["clicks"])
+}
+
+// The cap counts visible tables only, and the truncated flag reports a visible
+// row past it even when a hidden row sits first in the ordering.
+func TestWarehouseNewTablesCapAppliesAfterPatternFiltering(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Hidden Cap WH")
+	conn := seedWarehouseConnector(t, s, orgID, "Hidden Cap Service")
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, conn, &wh).Code)
+
+	require.Equal(t, http.StatusOK, updateWarehouseViaAPI(t, s, admin, wh, map[string]any{
+		"hidden_table_patterns": []string{`^analytics\._tmp`},
+	}).Code)
+
+	now := time.Now().UTC()
+	_, err := s.db.Pool.Exec(context.Background(),
+		`UPDATE warehouses SET created_at = $1 WHERE id = $2`, now.Add(-4*time.Hour), wh.String())
+	require.NoError(t, err)
+
+	// The hidden row is the newest, so it lands first in the ordering.
+	insertSchemaSnapshot(t, s, conn, "analytics", "_tmp_newest", now.Add(-2*time.Hour))
+	for i := 0; i < maxWarehouseNewTables+1; i++ {
+		insertSchemaSnapshot(t, s, conn, "analytics", fmt.Sprintf("vis_%03d", i), now.Add(-3*time.Hour))
+	}
+
+	resp := listNewTablesViaAPI(t, s, admin, wh, "")
+	require.True(t, resp.Truncated, "a visible row past the cap must set truncated")
+	require.Len(t, resp.Tables, maxWarehouseNewTables)
+	for _, table := range resp.Tables {
+		require.NotEqual(t, "_tmp_newest", table.Table)
+	}
+}
+
+func TestWarehouseNewTablesPatternRemovalReveals(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Hidden Removal WH")
+	conn := seedWarehouseConnector(t, s, orgID, "Hidden Removal Service")
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, conn, &wh).Code)
+
+	require.Equal(t, http.StatusOK, updateWarehouseViaAPI(t, s, admin, wh, map[string]any{
+		"hidden_table_patterns": []string{`^analytics\._tmp`},
+	}).Code)
+
+	now := time.Now().UTC()
+	_, err := s.db.Pool.Exec(context.Background(),
+		`UPDATE warehouses SET created_at = $1 WHERE id = $2`, now.Add(-4*time.Hour), wh.String())
+	require.NoError(t, err)
+	insertSchemaSnapshot(t, s, conn, "analytics", "_tmp_scratch", now.Add(-3*time.Hour))
+	insertSchemaSnapshot(t, s, conn, "analytics", "events", now.Add(-3*time.Hour))
+
+	resp := listNewTablesViaAPI(t, s, admin, wh, "")
+	require.Len(t, resp.Tables, 1)
+	require.Equal(t, "events", resp.Tables[0].Table)
+
+	require.Equal(t, http.StatusOK, updateWarehouseViaAPI(t, s, admin, wh, map[string]any{
+		"hidden_table_patterns": []string{},
+	}).Code)
+
+	resp = listNewTablesViaAPI(t, s, admin, wh, "")
+	require.Len(t, resp.Tables, 2, "clearing patterns re-reveals matching snapshot rows")
+	got := map[string]bool{}
+	for _, table := range resp.Tables {
+		got[table.Table] = true
+	}
+	require.True(t, got["events"])
+	require.True(t, got["_tmp_scratch"])
 }

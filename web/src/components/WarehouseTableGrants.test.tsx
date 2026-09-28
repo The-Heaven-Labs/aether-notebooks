@@ -400,4 +400,48 @@ describe('WarehouseTableGrants', () => {
 
     expect(await screen.findByText(/invalid database name/)).toBeInTheDocument()
   })
+
+  test('does not hint when the server reports no hidden tables', async () => {
+    renderGrants()
+    await screen.findAllByText('Data Team')
+    expect(screen.queryByText(/hidden by patterns/)).toBeNull()
+  })
+
+  test('shows the server-reported hidden count as a hint', async () => {
+    server.use(
+      http.get('/api/v1/connectors/c-1/schema', () =>
+        HttpResponse.json({ ...SCHEMA, hidden_tables: 1 }),
+      ),
+    )
+    renderGrants()
+    await screen.findAllByText('Data Team')
+    expect(await screen.findByText('1 table hidden by patterns')).toBeInTheDocument()
+  })
+
+  test('refetches the connector schema after a grant change', async () => {
+    let schemaCalls = 0
+    server.use(
+      http.get('/api/v1/connectors/c-1/schema', () => {
+        schemaCalls++
+        return HttpResponse.json(SCHEMA)
+      }),
+      http.post('/api/v1/warehouses/wh-1/grants', () =>
+        HttpResponse.json({ ...GRANTS[0], id: 'gr-new' }, { status: 201 }),
+      ),
+    )
+    renderGrants()
+    await screen.findAllByText('Data Team')
+    await waitFor(() => expect(schemaCalls).toBe(1))
+
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'everyone:everyone' } })
+    await screen.findByRole('option', { name: 'analytics' })
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
+    await waitFor(() => expect(screen.getByLabelText('users')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('users'))
+    fireEvent.click(screen.getByText('Add grant'))
+
+    // The schema response depends on grants (hidden-table protection and the
+    // per-user filter), so a grant change must refresh it.
+    await waitFor(() => expect(schemaCalls).toBeGreaterThanOrEqual(2))
+  })
 })

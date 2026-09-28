@@ -110,6 +110,11 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
     return Array.from(seen).sort()
   }, [schema])
 
+  // The server computes the count before dropping hidden tables: the response
+  // no longer carries them, so the client cannot derive it. Granted matches
+  // stay visible in the response but are excluded from the server count.
+  const hiddenMatchCount = schema?.hidden_tables ?? 0
+
   const tables = useMemo(
     () => (schema?.tables ?? []).filter((t) => t.schema === database).map((t) => t.name).sort(),
     [schema, database],
@@ -232,6 +237,10 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
     qc.invalidateQueries({ queryKey: ['warehouse-validation', warehouseId] })
     qc.invalidateQueries({ queryKey: ['warehouses'] })
     qc.invalidateQueries({ queryKey: ['warehouse', warehouseId] })
+    // The schema response depends on grants: granted tables stay visible when
+    // they match hidden patterns, and non-admins get the per-user filter. A
+    // grant change must refresh every connector-schema query.
+    qc.invalidateQueries({ queryKey: ['connector-schema'] })
   }
 
   const clearWarning = (key: string) => {
@@ -325,6 +334,13 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
             ? 'Tables each subject may read in this warehouse. ClickHouse enforces these grants.'
             : 'Tables each subject may read in this warehouse. ClickHouse table permissions are disabled, so these grants are not enforced yet.'}
         </span>
+        {hiddenMatchCount > 0 && (
+          <span style={styles.hint}>
+            {hiddenMatchCount === 1
+              ? '1 table hidden by patterns'
+              : `${hiddenMatchCount} tables hidden by patterns`}
+          </span>
+        )}
       </div>
 
       {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
@@ -560,6 +576,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'baseline',
     gap: 10,
+    flexWrap: 'wrap',
   },
   title: {
     margin: 0,

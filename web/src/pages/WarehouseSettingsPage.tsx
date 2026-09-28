@@ -10,6 +10,7 @@ import { FormCard } from '../components/FormCard'
 import { NewTablesInbox } from '../components/NewTablesInbox'
 import { SectionHeader } from '../components/SectionHeader'
 import { StatusBadge } from '../components/StatusBadge'
+import { WarehouseHiddenTables } from '../components/WarehouseHiddenTables'
 import { WarehouseTableGrants } from '../components/WarehouseTableGrants'
 import {
   createWarehouse,
@@ -418,6 +419,7 @@ function WarehouseCard({
     : 0
 
   const linked = detail?.connectors ?? []
+  const hiddenPatterns = detail?.hidden_table_patterns ?? warehouse.hidden_table_patterns ?? []
   const unlinked = clickhouseConnectors.filter((c) => !c.warehouse_id)
 
   const submitRename = () => {
@@ -606,6 +608,11 @@ function WarehouseCard({
                 </div>
               </div>
 
+              <WarehouseHiddenTables
+                warehouseId={warehouse.id}
+                patterns={hiddenPatterns}
+                connectors={linked}
+              />
               <WarehouseTableGrants warehouseId={warehouse.id} connectors={linked} />
               <NewTablesInbox warehouseId={warehouse.id} />
             </>

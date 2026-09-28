@@ -194,6 +194,8 @@ export interface SchemaTable {
 
 export interface ConnectorSchema {
   tables: SchemaTable[]
+  /** Tables the server dropped because they match hidden patterns. */
+  hidden_tables?: number
 }
 
 export interface Dashboard {

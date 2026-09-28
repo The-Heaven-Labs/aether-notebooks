@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -24,6 +26,7 @@ type warehouseJSON struct {
 	Name                      string                   `json:"name"`
 	ProvisionerConnectorID    *string                  `json:"provisioner_connector_id"`
 	AllowProvisionerExecution bool                     `json:"allow_provisioner_execution"`
+	HiddenTablePatterns       []string                 `json:"hidden_table_patterns"`
 	SyncStatus                string                   `json:"sync_status"`
 	SyncError                 *string                  `json:"sync_error"`
 	LastSyncedAt              *time.Time               `json:"last_synced_at"`
@@ -40,9 +43,14 @@ type warehouseConnectorJSON struct {
 	IsProvisioner bool   `json:"is_provisioner"`
 }
 
-const warehouseSelectColumns = `id, org_id, name, provisioner_connector_id, allow_provisioner_execution, sync_status, sync_error, last_synced_at, created_at, updated_at`
+const warehouseSelectColumns = `id, org_id, name, provisioner_connector_id, allow_provisioner_execution, hidden_table_patterns, sync_status, sync_error, last_synced_at, created_at, updated_at`
 
 const maxWarehouseNameLength = 255
+
+const (
+	maxWarehouseHiddenPatterns      = 100
+	maxWarehouseHiddenPatternLength = 200
+)
 
 var (
 	errProvisionerConnectorMissing = errors.New("provisioner connector not found in this organization")
@@ -85,7 +93,7 @@ func (s *Server) enqueueWarehouseSyncNow(warehouseID uuid.UUID) {
 func scanWarehouseRow(row pgx.Row) (warehouseJSON, error) {
 	var wh warehouseJSON
 	err := row.Scan(&wh.ID, &wh.OrgID, &wh.Name, &wh.ProvisionerConnectorID,
-		&wh.AllowProvisionerExecution, &wh.SyncStatus, &wh.SyncError,
+		&wh.AllowProvisionerExecution, &wh.HiddenTablePatterns, &wh.SyncStatus, &wh.SyncError,
 		&wh.LastSyncedAt, &wh.CreatedAt, &wh.UpdatedAt)
 	return wh, err
 }
@@ -127,6 +135,34 @@ func uuidPointersEqual(a, b *uuid.UUID) bool {
 		return a == b
 	}
 	return *a == *b
+}
+
+// parseHiddenTablePatterns validates the raw hidden_table_patterns field. An
+// absent field is not passed here; explicit null/[] clears the list. Empty
+// patterns are rejected because an empty regex matches every table.
+func parseHiddenTablePatterns(raw json.RawMessage) ([]string, error) {
+	var patterns []string
+	if err := json.Unmarshal(raw, &patterns); err != nil {
+		return nil, errors.New("hidden_table_patterns must be an array of strings")
+	}
+	if patterns == nil {
+		patterns = []string{}
+	}
+	if len(patterns) > maxWarehouseHiddenPatterns {
+		return nil, fmt.Errorf("hidden_table_patterns must contain %d patterns or fewer", maxWarehouseHiddenPatterns)
+	}
+	for i, pattern := range patterns {
+		if strings.TrimSpace(pattern) == "" {
+			return nil, fmt.Errorf("hidden_table_patterns[%d] must not be empty", i)
+		}
+		if utf8.RuneCountInString(pattern) > maxWarehouseHiddenPatternLength {
+			return nil, fmt.Errorf("hidden_table_patterns[%d] must be %d characters or fewer", i, maxWarehouseHiddenPatternLength)
+		}
+		if _, err := regexp.Compile(pattern); err != nil {
+			return nil, fmt.Errorf("invalid pattern %q: %v", pattern, err)
+		}
+	}
+	return patterns, nil
 }
 
 // parseWarehouseName trims and validates a warehouse name.
@@ -411,7 +447,8 @@ func (s *Server) handleGetWarehouse(w http.ResponseWriter, r *http.Request) {
 }
 
 // updateWarehouseRequest: an absent field leaves the value unchanged; an
-// explicit null provisioner_connector_id clears the provisioner.
+// explicit null provisioner_connector_id clears the provisioner, and an
+// explicit null or [] hidden_table_patterns clears the patterns.
 // allow_provisioner_execution is an optional bool with no null semantics
 // (absent or null leaves it unchanged). name must be a string (it cannot be
 // nulled) and an empty body is rejected.
@@ -419,10 +456,11 @@ type updateWarehouseRequest struct {
 	Name                      json.RawMessage `json:"name"`
 	ProvisionerConnectorID    json.RawMessage `json:"provisioner_connector_id"`
 	AllowProvisionerExecution *bool           `json:"allow_provisioner_execution"`
+	HiddenTablePatterns       json.RawMessage `json:"hidden_table_patterns"`
 }
 
 // @Summary Update a warehouse
-// @Description Update a warehouse's name, provisioner connector, and/or provisioner execution override. An absent field leaves the value unchanged; an explicit null provisioner_connector_id clears the provisioner.
+// @Description Update a warehouse's name, provisioner connector, provisioner execution override, and/or hidden-table patterns. An absent field leaves the value unchanged; an explicit null provisioner_connector_id clears the provisioner, and an explicit null or empty hidden_table_patterns clears the patterns.
 // @Tags warehouses
 // @Accept json
 // @Produce json
@@ -449,7 +487,7 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Name == nil && req.ProvisionerConnectorID == nil && req.AllowProvisionerExecution == nil {
+	if req.Name == nil && req.ProvisionerConnectorID == nil && req.AllowProvisionerExecution == nil && req.HiddenTablePatterns == nil {
 		writeError(w, http.StatusBadRequest, "at least one field must be provided")
 		return
 	}
@@ -467,6 +505,17 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		name = &parsed
+	}
+
+	var hiddenPatterns []string
+	patternsSet := req.HiddenTablePatterns != nil
+	if patternsSet {
+		parsed, err := parseHiddenTablePatterns(req.HiddenTablePatterns)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		hiddenPatterns = parsed
 	}
 
 	var provisionerID *uuid.UUID
@@ -507,10 +556,11 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 	var oldName string
 	var oldProvisioner *uuid.UUID
 	var oldAllow bool
+	var oldPatterns []string
 	err = tx.QueryRow(ctx, `
-		SELECT name, provisioner_connector_id, allow_provisioner_execution FROM warehouses
+		SELECT name, provisioner_connector_id, allow_provisioner_execution, hidden_table_patterns FROM warehouses
 		WHERE id = $1 AND org_id = $2 FOR UPDATE`,
-		warehouseUUID.String(), claims.OrgID).Scan(&oldName, &oldProvisioner, &oldAllow)
+		warehouseUUID.String(), claims.OrgID).Scan(&oldName, &oldProvisioner, &oldAllow, &oldPatterns)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "warehouse not found")
 		return
@@ -523,6 +573,7 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 	changedName := name != nil && *name != oldName
 	changedProvisioner := provisionerSet && !uuidPointersEqual(oldProvisioner, provisionerID)
 	changedAllow := req.AllowProvisionerExecution != nil && *req.AllowProvisionerExecution != oldAllow
+	changedPatterns := patternsSet && !slices.Equal(hiddenPatterns, oldPatterns)
 
 	if changedName {
 		if _, err := tx.Exec(ctx,
@@ -550,6 +601,14 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if changedPatterns {
+		if _, err := tx.Exec(ctx,
+			`UPDATE warehouses SET hidden_table_patterns = $1, updated_at = now() WHERE id = $2 AND org_id = $3`,
+			hiddenPatterns, warehouseUUID.String(), claims.OrgID); err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
@@ -560,7 +619,7 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 		s.enqueueWarehouseSync(warehouseUUID)
 	}
 
-	if changedName || changedProvisioner || changedAllow {
+	if changedName || changedProvisioner || changedAllow || changedPatterns {
 		meta := map[string]any{}
 		if changedName {
 			meta["name"] = *name
@@ -579,6 +638,10 @@ func (s *Server) handleUpdateWarehouse(w http.ResponseWriter, r *http.Request) {
 		if changedAllow {
 			meta["allow_provisioner_execution"] = *req.AllowProvisionerExecution
 			meta["previous_allow_provisioner_execution"] = oldAllow
+		}
+		if changedPatterns {
+			meta["hidden_table_patterns"] = hiddenPatterns
+			meta["previous_hidden_table_patterns"] = oldPatterns
 		}
 		s.audit.Log(ctx, audit.Entry{
 			OrgID: claims.OrgID, UserID: claims.UserID,
@@ -1212,7 +1275,9 @@ type warehouseNewTableJSON struct {
 // Since echoes the cutoff actually applied: the caller's ?since= when
 // supplied, otherwise the warehouse's most recent grant-creation time,
 // falling back to the warehouse's creation time when it has no grants yet.
-// Truncated reports that the response stopped at maxWarehouseNewTables.
+// Truncated reports that the response stopped at maxWarehouseNewTables
+// visible tables; the cap is applied after hidden-pattern filtering, so
+// pattern-matched rows never consume inbox slots.
 type warehouseNewTablesJSON struct {
 	WarehouseID string                  `json:"warehouse_id"`
 	Since       time.Time               `json:"since"`
@@ -1268,6 +1333,8 @@ func (s *Server) handleWarehouseNewTables(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	patterns := compileHiddenPatterns(wh.HiddenTablePatterns)
+
 	since := wh.CreatedAt
 	if raw := r.URL.Query().Get("since"); raw != "" {
 		parsed, err := time.Parse(time.RFC3339, raw)
@@ -1288,6 +1355,13 @@ func (s *Server) handleWarehouseNewTables(w http.ResponseWriter, r *http.Request
 	// table seen long ago on one service and recently on another pass the
 	// cutoff on the min over the surviving rows. Aggregating first, then
 	// applying the cutoff to min(first_seen_at), uses the true first sighting.
+	//
+	// The query is intentionally unbounded: results are streamed, and the scan
+	// loop below stops at one visible row past maxWarehouseNewTables to detect
+	// truncation (hidden rows never consume slots), with the deferred
+	// rows.Close draining the remainder. A LIMIT cannot account for
+	// pattern-filtered rows, so an overfetch would not make the response more
+	// precise; large snapshot sets simply stream in full.
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT s.database_name, s.table_name, min(s.first_seen_at) AS first_seen_at
 		FROM schema_snapshots s
@@ -1304,9 +1378,8 @@ func (s *Server) handleWarehouseNewTables(w http.ResponseWriter, r *http.Request
 		        AND g.table_name = s.table_name)
 		GROUP BY s.database_name, s.table_name
 		HAVING min(s.first_seen_at) > $3
-		ORDER BY first_seen_at DESC, s.database_name ASC, s.table_name ASC
-		LIMIT $4`,
-		claims.OrgID, warehouseUUID.String(), since, maxWarehouseNewTables+1)
+		ORDER BY first_seen_at DESC, s.database_name ASC, s.table_name ASC`,
+		claims.OrgID, warehouseUUID.String(), since)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -1316,15 +1389,19 @@ func (s *Server) handleWarehouseNewTables(w http.ResponseWriter, r *http.Request
 	tables := []warehouseNewTableJSON{}
 	truncated := false
 	for rows.Next() {
-		if len(tables) == maxWarehouseNewTables {
-			// One row past the cap is enough to know the list is incomplete.
-			truncated = true
-			break
-		}
 		var t warehouseNewTableJSON
 		if err := rows.Scan(&t.Database, &t.Table, &t.FirstSeenAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
+		}
+		if matchesHiddenPattern(patterns, t.Database, t.Table) {
+			continue
+		}
+		if len(tables) == maxWarehouseNewTables {
+			// One visible row past the cap is enough to know the list is
+			// incomplete; hidden rows never consume inbox slots.
+			truncated = true
+			break
 		}
 		tables = append(tables, t)
 	}

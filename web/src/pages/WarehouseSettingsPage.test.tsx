@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
-import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { WarehouseSettingsPage } from './WarehouseSettingsPage'
@@ -12,13 +12,13 @@ vi.mock('../components/AppShell', () => ({
 const WAREHOUSES = [
   {
     id: 'wh-1', org_id: 'org-1', name: 'Analytics', provisioner_connector_id: 'c-1',
-    allow_provisioner_execution: true,
+    allow_provisioner_execution: true, hidden_table_patterns: [],
     sync_status: 'ready', sync_error: null, last_synced_at: '2026-01-01T00:00:00Z',
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
   },
   {
     id: 'wh-2', org_id: 'org-1', name: 'Beta', provisioner_connector_id: null,
-    allow_provisioner_execution: false,
+    allow_provisioner_execution: false, hidden_table_patterns: [],
     sync_status: 'error', sync_error: 'wildcard grant detected', last_synced_at: null,
     created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
   },
@@ -149,7 +149,7 @@ describe('WarehouseSettingsPage', () => {
         return HttpResponse.json(
           {
             id: 'wh-new', org_id: 'org-1', name: 'New Wh', provisioner_connector_id: null,
-            allow_provisioner_execution: false,
+            allow_provisioner_execution: false, hidden_table_patterns: [],
             sync_status: 'pending', sync_error: null, last_synced_at: null,
             created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
           },
@@ -185,6 +185,30 @@ describe('WarehouseSettingsPage', () => {
     expect(await screen.findByText('No table grants yet.')).toBeInTheDocument()
     expect(await screen.findByText('New tables')).toBeInTheDocument()
     expect(await screen.findByText('No new tables since your last review.')).toBeInTheDocument()
+  })
+
+  test('renders the hidden-tables editor and saves a pattern', async () => {
+    let putBody: Record<string, unknown> | null = null
+    server.use(
+      http.get('/api/v1/connectors/c-1/schema', () =>
+        HttpResponse.json({ tables: [], hidden_tables: 1 }),
+      ),
+      http.put('/api/v1/warehouses/wh-1', async ({ request }) => {
+        putBody = await request.json() as Record<string, unknown>
+        return HttpResponse.json({ ...WAREHOUSES[0], hidden_table_patterns: ['_tmp'] })
+      }),
+    )
+    renderWithProviders(<WarehouseSettingsPage />)
+    fireEvent.click(await screen.findByText('Analytics'))
+
+    const hiddenSection = await screen.findByRole('region', { name: 'Hidden tables' })
+    expect(hiddenSection).toBeInTheDocument()
+    fireEvent.change(within(hiddenSection).getByLabelText('Pattern'), {
+      target: { value: '_tmp' },
+    })
+    fireEvent.click(within(hiddenSection).getByRole('button', { name: 'Add' }))
+
+    await waitFor(() => expect(putBody).toEqual({ hidden_table_patterns: ['_tmp'] }))
   })
 
   test('changes the provisioner through the selector', async () => {

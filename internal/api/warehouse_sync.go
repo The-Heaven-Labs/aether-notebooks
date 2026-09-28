@@ -132,9 +132,12 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 	if tables, catErr := chaccess.LoadCatalogTables(ctx, conn); catErr != nil {
 		slog.Warn("warehouse catalog snapshot failed",
 			"warehouse_id", warehouseID, "error", catErr)
-	} else if snapErr := s.recordSchemaSnapshot(ctx, *hdr.provisionerID, tables); snapErr != nil {
-		slog.Warn("warehouse catalog snapshot write failed",
-			"warehouse_id", warehouseID, "error", snapErr)
+	} else {
+		patterns := s.loadWarehouseHiddenPatterns(ctx, warehouseID, hdr.orgID.String())
+		if snapErr := s.recordSchemaSnapshot(ctx, *hdr.provisionerID, filterHiddenCatalogTables(patterns, tables)); snapErr != nil {
+			slog.Warn("warehouse catalog snapshot write failed",
+				"warehouse_id", warehouseID, "error", snapErr)
+		}
 	}
 
 	desired, err := s.loadWarehouseDesiredState(ctx, warehouseID, hdr.orgID)

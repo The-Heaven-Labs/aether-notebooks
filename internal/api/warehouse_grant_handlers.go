@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -631,55 +630,14 @@ func (s *Server) handleWarehouseEffectiveAccess(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Union of everyone + direct + groups the user belongs to. Group
-	// membership is joined through org groups so a cross-org membership row
-	// can never import another org's grant.
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT wtg.subject_type, wtg.subject_id, wtg.database_name, wtg.table_name
-		FROM warehouse_table_grants wtg
-		WHERE wtg.warehouse_id = $1 AND wtg.org_id = $2
-		  AND (
-		    wtg.subject_type = 'everyone'
-		    OR (wtg.subject_type = 'user' AND wtg.subject_id = $3)
-		    OR (wtg.subject_type = 'group' AND EXISTS (
-		          SELECT 1 FROM group_members gm
-		          JOIN groups g ON g.id = gm.group_id AND g.org_id = $2
-		          WHERE gm.user_id = $4 AND gm.group_id::text = wtg.subject_id))
-		  )
-		ORDER BY wtg.database_name ASC, wtg.table_name ASC`,
-		warehouseUUID.String(), claims.OrgID, targetUserID, targetUserID)
+	keyList, roles, err := s.loadEffectiveWarehouseGrants(ctx, warehouseUUID, claims.OrgID, targetUserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	defer rows.Close()
-
-	tables := []warehouseEffectiveTableJSON{}
-	seenTables := map[string]struct{}{}
-	roleSet := map[string]struct{}{}
-	for rows.Next() {
-		var subjectType, subjectID, database, table string
-		if err := rows.Scan(&subjectType, &subjectID, &database, &table); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
-			return
-		}
-		key := database + "\x00" + table
-		if _, seen := seenTables[key]; !seen {
-			seenTables[key] = struct{}{}
-			tables = append(tables, warehouseEffectiveTableJSON{Database: database, Table: table})
-		}
-		switch subjectType {
-		case "group":
-			if groupUUID, err := uuid.Parse(subjectID); err == nil {
-				roleSet[chaccess.RoleIdent(warehouseUUID, orgUUID, groupUUID)] = struct{}{}
-			}
-		case "everyone":
-			roleSet[chaccess.EveryoneRole(warehouseUUID)] = struct{}{}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
-		return
+	tables := make([]warehouseEffectiveTableJSON, 0, len(keyList))
+	for _, key := range keyList {
+		tables = append(tables, warehouseEffectiveTableJSON(key))
 	}
 
 	allowedServices, preferredID, err := s.allowedWarehouseServices(ctx, targetUUID, orgUUID, targetRole, warehouseUUID)
@@ -700,12 +658,6 @@ func (s *Server) handleWarehouseEffectiveAccess(w http.ResponseWriter, r *http.R
 		preferred := preferredID.String()
 		preferredValue = &preferred
 	}
-
-	roles := make([]string, 0, len(roleSet))
-	for role := range roleSet {
-		roles = append(roles, role)
-	}
-	sort.Strings(roles)
 
 	resp := warehouseEffectiveAccessJSON{
 		UserID:               targetUserID,
