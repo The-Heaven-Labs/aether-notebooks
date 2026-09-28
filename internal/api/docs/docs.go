@@ -8693,7 +8693,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Update a warehouse's name, provisioner connector, and/or provisioner execution override. An absent field leaves the value unchanged; an explicit null provisioner_connector_id clears the provisioner.",
+                "description": "Update a warehouse's name, provisioner connector, provisioner execution override, and/or hidden-table patterns. An absent field leaves the value unchanged; an explicit null provisioner_connector_id clears the provisioner, and an explicit null or empty hidden_table_patterns clears the patterns.",
                 "consumes": [
                     "application/json"
                 ],
