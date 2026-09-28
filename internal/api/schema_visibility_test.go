@@ -189,3 +189,265 @@ func TestConnectorSchemaHiddenPatternsKillSwitchOff(t *testing.T) {
 	require.True(t, got[database+"._tmp_scratch"],
 		"a granted pattern-matched table must stay visible with the kill switch off")
 }
+
+// visibilityFixture builds a warehouse with a non-provisioner ClickHouse
+// service linked, the given grants, and returns the service connector ID.
+func visibilityFixture(t *testing.T, fx *warehouseSyncFixture, database string) (serviceID uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	serviceID = insertClickHouseService(t, fx.s, fx.orgID, fx.connectorID, "Visibility Service", &fx.warehouseID)
+	quotedDB, err := chaccess.QuoteObjectIdent(database)
+	require.NoError(t, err)
+	require.NoError(t, fx.conn.Exec(ctx, "CREATE DATABASE IF NOT EXISTS "+quotedDB))
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = fx.conn.Exec(cleanupCtx, "DROP DATABASE IF EXISTS "+quotedDB)
+	})
+	for _, table := range []string{"events", "daily_revenue", "clicks", "secret"} {
+		quoted, err := chaccess.QuoteObjectIdent(table)
+		require.NoError(t, err)
+		require.NoError(t, fx.conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS "+quotedDB+"."+quoted+
+			" (id UInt64) ENGINE = MergeTree ORDER BY id"))
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, _ = fx.s.db.Pool.Exec(cleanupCtx, `DELETE FROM connectors WHERE id = $1`, serviceID.String())
+	})
+	return serviceID
+}
+
+func TestConnectorSchemaPerUserGrantFilter(t *testing.T) {
+	fx := setupWarehouseFixture(t)
+	ctx := context.Background()
+	database := "aether_vis_" + uuid.NewString()[:8]
+	serviceID := visibilityFixture(t, fx, database)
+
+	memberID, memberToken := seedGrantOrgMember(t, fx.s, fx.orgID, "editor")
+	grantConnectorUse(t, fx.s, fx.orgID, memberID, serviceID)
+	_, err := fx.s.db.Pool.Exec(ctx,
+		`INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)`,
+		fx.groupID.String(), memberID.String())
+	require.NoError(t, err)
+
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants (org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		VALUES
+			($1, $2, 'user', $3, $4, 'events'),
+			($1, $2, 'everyone', 'everyone', $4, 'clicks')`,
+		fx.orgID.String(), fx.warehouseID.String(), memberID.String(), database)
+	require.NoError(t, err)
+	// The fixture's group grant (analytics.daily_revenue) is in another
+	// database; add one in the visibility database to prove group inheritance.
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants (org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		VALUES ($1, $2, 'group', $3, $4, 'daily_revenue')`,
+		fx.orgID.String(), fx.warehouseID.String(), fx.groupID.String(), database)
+	require.NoError(t, err)
+
+	schemaFor := func(t *testing.T, token string) map[string]bool {
+		t.Helper()
+		rec := warehouseAPIRequest(t, fx.s, http.MethodGet,
+			"/api/v1/connectors/"+serviceID.String()+"/schema", token, nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var schema executor.SchemaInfo
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &schema))
+		got := map[string]bool{}
+		for _, table := range schema.Tables {
+			got[table.Schema+"."+table.Name] = true
+		}
+		return got
+	}
+
+	// Non-admin sees direct + group + everyone grants only.
+	got := schemaFor(t, memberToken)
+	require.True(t, got[database+".events"], "direct grant")
+	require.True(t, got[database+".daily_revenue"], "group grant")
+	require.True(t, got[database+".clicks"], "everyone grant")
+	require.False(t, got[database+".secret"], "ungranted tables are hidden")
+
+	// A member with service access but zero grants sees nothing.
+	noGrantID, noGrantToken := seedGrantOrgMember(t, fx.s, fx.orgID, "editor")
+	grantConnectorUse(t, fx.s, fx.orgID, noGrantID, serviceID)
+	got = schemaFor(t, noGrantToken)
+	require.False(t, got[database+".events"])
+	require.False(t, got[database+".secret"])
+
+	// Admin bypasses the per-user filter.
+	adminToken, err := fx.s.jwt.Issue(fx.userID.String(), fx.orgID.String(), "admin")
+	require.NoError(t, err)
+	got = schemaFor(t, adminToken)
+	require.True(t, got[database+".events"])
+	require.True(t, got[database+".secret"])
+
+	// With the kill switch off, execution uses the stored credential, so the
+	// per-user filter must not understate access. (Dedicated server: safe.)
+	fx.s.SetCHTablePermissions(false)
+	got = schemaFor(t, memberToken)
+	require.True(t, got[database+".secret"], "kill switch off disables per-user filtering")
+	fx.s.SetCHTablePermissions(true)
+}
+
+// A schema read must snapshot the warehouse-wide catalog, never one viewer's
+// subset: a pattern-matched table granted to another subject stays recorded in
+// schema_snapshots even though the non-admin caller's response omits it.
+func TestConnectorSchemaSnapshotKeepsOtherSubjectGrants(t *testing.T) {
+	fx := setupWarehouseFixture(t)
+	ctx := context.Background()
+	database := "aether_vissn_" + uuid.NewString()[:8]
+	serviceID := visibilityFixture(t, fx, database)
+
+	_, err := fx.s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET hidden_table_patterns = $1 WHERE id = $2`,
+		[]string{`_tmp`}, fx.warehouseID.String())
+	require.NoError(t, err)
+
+	quotedDB, err := chaccess.QuoteObjectIdent(database)
+	require.NoError(t, err)
+	quotedTable, err := chaccess.QuoteObjectIdent("_tmp_shared")
+	require.NoError(t, err)
+	require.NoError(t, fx.conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS "+quotedDB+"."+quotedTable+
+		" (id UInt64) ENGINE = MergeTree ORDER BY id"))
+
+	// The pattern-matched table is granted to a different org member: not the
+	// caller, not a group the caller is in, not everyone.
+	otherID, _ := seedGrantOrgMember(t, fx.s, fx.orgID, "editor")
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants (org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		VALUES ($1, $2, 'user', $3, $4, '_tmp_shared')`,
+		fx.orgID.String(), fx.warehouseID.String(), otherID.String(), database)
+	require.NoError(t, err)
+
+	memberID, memberToken := seedGrantOrgMember(t, fx.s, fx.orgID, "editor")
+	grantConnectorUse(t, fx.s, fx.orgID, memberID, serviceID)
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants (org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		VALUES ($1, $2, 'user', $3, $4, 'events')`,
+		fx.orgID.String(), fx.warehouseID.String(), memberID.String(), database)
+	require.NoError(t, err)
+
+	rec := warehouseAPIRequest(t, fx.s, http.MethodGet,
+		"/api/v1/connectors/"+serviceID.String()+"/schema", memberToken, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var schema executor.SchemaInfo
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &schema))
+	got := map[string]bool{}
+	for _, table := range schema.Tables {
+		got[table.Schema+"."+table.Name] = true
+	}
+	require.True(t, got[database+".events"], "the caller's own grant stays visible")
+	require.False(t, got[database+"._tmp_shared"],
+		"another subject's grant is not the caller's to see")
+
+	var snapshotRows int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM schema_snapshots WHERE connector_id = $1 AND database_name = $2 AND table_name = '_tmp_shared'`,
+		serviceID.String(), database).Scan(&snapshotRows))
+	require.Equal(t, 1, snapshotRows,
+		"the snapshot must record the warehouse-wide catalog before per-user filtering")
+}
+
+// Warehouse grants and hidden patterns are org-scoped: a viewer in one org
+// must never see another org's grants, and one org's patterns must never hide
+// tables from another org's connector.
+func TestConnectorSchemaCrossOrgIsolation(t *testing.T) {
+	fx := setupWarehouseFixture(t)
+	ctx := context.Background()
+	database := "aether_visx_" + uuid.NewString()[:8]
+	serviceA := visibilityFixture(t, fx, database)
+
+	quotedDB, err := chaccess.QuoteObjectIdent(database)
+	require.NoError(t, err)
+	// One plain name granted to org B, one pattern-matched name left ungranted
+	// (so a leaked org A pattern would hide it for org B), and one name for the
+	// cross-org group-membership probe.
+	for _, table := range []string{"orgb_only", "_tmp_orgb", "orgb_group_leak"} {
+		quoted, err := chaccess.QuoteObjectIdent(table)
+		require.NoError(t, err)
+		require.NoError(t, fx.conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS "+quotedDB+"."+quoted+
+			" (id UInt64) ENGINE = MergeTree ORDER BY id"))
+	}
+
+	// Org A: a pattern plus a member with service access and a direct grant.
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET hidden_table_patterns = $1 WHERE id = $2`,
+		[]string{`_tmp`}, fx.warehouseID.String())
+	require.NoError(t, err)
+	memberA, tokenA := seedGrantOrgMember(t, fx.s, fx.orgID, "editor")
+	grantConnectorUse(t, fx.s, fx.orgID, memberA, serviceA)
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants (org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		VALUES ($1, $2, 'user', $3, $4, 'events')`,
+		fx.orgID.String(), fx.warehouseID.String(), memberA.String(), database)
+	require.NoError(t, err)
+
+	// Org B: its own warehouse, provisioner, service, and grant. The service
+	// copies org A's encrypted ClickHouse config; only the org/warehouse scope
+	// differs.
+	orgB, _, adminB := seedWarehouseOrgAdmin(t, fx.s)
+	provisionerB := insertClickHouseService(t, fx.s, orgB, fx.connectorID, "Cross-Org Provisioner B", nil)
+	warehouseB := uuid.New()
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouses (id, org_id, name, provisioner_connector_id)
+		VALUES ($1, $2, $3, $4)`,
+		warehouseB.String(), orgB.String(), "Cross-Org Warehouse B", provisionerB.String())
+	require.NoError(t, err)
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE connectors SET warehouse_id = $1 WHERE id = $2`,
+		warehouseB.String(), provisionerB.String())
+	require.NoError(t, err)
+	serviceB := insertClickHouseService(t, fx.s, orgB, fx.connectorID, "Cross-Org Service B", &warehouseB)
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants (org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		VALUES ($1, $2, 'everyone', 'everyone', $3, 'orgb_only')`,
+		orgB.String(), warehouseB.String(), database)
+	require.NoError(t, err)
+
+	// Even a cross-org group membership row plus a raw grant naming that
+	// foreign group (the API rejects both) must not import access: the
+	// resolver joins memberships through org groups.
+	groupB := seedGrantGroup(t, fx.s, orgB, "Cross-Org Group B")
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)`,
+		groupB.String(), memberA.String())
+	require.NoError(t, err)
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants (org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		VALUES ($1, $2, 'group', $3, $4, 'orgb_group_leak')`,
+		fx.orgID.String(), fx.warehouseID.String(), groupB.String(), database)
+	require.NoError(t, err)
+
+	// Org A's non-admin sees only org A's effective grants; org B's grant is
+	// invisible even though the table lives in the same ClickHouse database.
+	rec := warehouseAPIRequest(t, fx.s, http.MethodGet,
+		"/api/v1/connectors/"+serviceA.String()+"/schema", tokenA, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var schemaA executor.SchemaInfo
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &schemaA))
+	gotA := map[string]bool{}
+	for _, table := range schemaA.Tables {
+		gotA[table.Schema+"."+table.Name] = true
+	}
+	require.True(t, gotA[database+".events"], "org A's own grant is visible")
+	require.False(t, gotA[database+".orgb_only"], "org B's grant must not reach org A")
+	require.False(t, gotA[database+"._tmp_orgb"])
+	require.False(t, gotA[database+".orgb_group_leak"],
+		"a foreign group's grant must not resolve through a cross-org membership row")
+
+	// Org A's hidden pattern must not affect org B's connector: read as an org
+	// B admin (no per-user filter) and require the ungranted pattern-matched
+	// table to be visible.
+	rec = warehouseAPIRequest(t, fx.s, http.MethodGet,
+		"/api/v1/connectors/"+serviceB.String()+"/schema", adminB, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var schemaB executor.SchemaInfo
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &schemaB))
+	gotB := map[string]bool{}
+	for _, table := range schemaB.Tables {
+		gotB[table.Schema+"."+table.Name] = true
+	}
+	require.True(t, gotB[database+"._tmp_orgb"],
+		"org A's hidden pattern must not hide org B's tables")
+	require.True(t, gotB[database+".orgb_only"])
+}
