@@ -596,16 +596,18 @@ func (s *Server) loadConnectorRow(ctx context.Context, connID, orgID string) (mo
 	return connType, configEnc, err
 }
 
-// loadConnectorWithFilters fetches the connector type, encrypted config, and table filters.
-func (s *Server) loadConnectorWithFilters(ctx context.Context, connID, orgID string) (models.ConnectorType, []byte, []string, []string, error) {
+// loadConnectorWithFilters fetches the connector type, encrypted config,
+// table filters, and warehouse link.
+func (s *Server) loadConnectorWithFilters(ctx context.Context, connID, orgID string) (models.ConnectorType, []byte, []string, []string, *uuid.UUID, error) {
 	var configEnc []byte
 	var connType models.ConnectorType
 	var allowlist, denylist []string
+	var warehouseID *uuid.UUID
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT type, config_encrypted, table_allowlist, table_denylist FROM connectors WHERE id = $1 AND org_id = $2`,
+		`SELECT type, config_encrypted, table_allowlist, table_denylist, warehouse_id FROM connectors WHERE id = $1 AND org_id = $2`,
 		connID, orgID,
-	).Scan(&connType, &configEnc, &allowlist, &denylist)
-	return connType, configEnc, allowlist, denylist, err
+	).Scan(&connType, &configEnc, &allowlist, &denylist, &warehouseID)
+	return connType, configEnc, allowlist, denylist, warehouseID, err
 }
 
 // buildExecutor decrypts connector config and constructs the appropriate executor.
@@ -823,7 +825,7 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	connType, configEnc, allowlist, denylist, err := s.loadConnectorWithFilters(ctx, connID, claims.OrgID)
+	connType, configEnc, allowlist, denylist, warehouseID, err := s.loadConnectorWithFilters(ctx, connID, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "connector not found")
 		return
@@ -892,6 +894,38 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 		schema.Tables = filtered
 	}
 
+	// Hidden-table patterns hide ungranted tables from every viewer. Existing
+	// grants stay visible (protected) so revoke workflows keep working, and the
+	// per-user effective-grant filter is applied after the snapshot below.
+	var patterns []*regexp.Regexp
+	var patternProtected map[tableKey]struct{}
+	var effective map[tableKey]struct{}
+	if warehouseID != nil {
+		patterns = s.loadWarehouseHiddenPatterns(ctx, *warehouseID, claims.OrgID)
+		if claims.Role == "admin" && len(patterns) > 0 {
+			grants, gErr := s.loadWarehouseGrantKeys(ctx, *warehouseID, claims.OrgID)
+			if gErr != nil {
+				slog.Warn("failed to load warehouse grants for pattern protection; serving unfiltered tables",
+					"warehouse_id", *warehouseID, "error", gErr)
+				patterns = nil
+			} else {
+				patternProtected = grants
+			}
+		}
+		if s.warehouseManagementEnabled() && claims.Role != "admin" {
+			keys, _, gErr := s.loadEffectiveWarehouseGrants(ctx, *warehouseID, claims.OrgID, claims.UserID)
+			if gErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to resolve table access")
+				return
+			}
+			effective = keysToSet(keys)
+			patternProtected = effective
+		}
+	}
+	if len(patterns) > 0 {
+		schema.Tables = filterVisibleSchemaTables(schema.Tables, patterns, nil, patternProtected)
+	}
+
 	// Snapshot the observed catalog so the warehouse new-tables inbox can
 	// notice tables without waiting for the next reconcile. Touching is
 	// throttled: schema reads are frequent and only first_seen_at matters for
@@ -908,6 +942,12 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 					"connector_id", connID, "error", cacheErr)
 			}
 		}
+	}
+
+	// The per-user filter runs after the snapshot so schema_snapshots stays a
+	// warehouse-wide catalog, never one viewer's subset.
+	if effective != nil {
+		schema.Tables = filterVisibleSchemaTables(schema.Tables, nil, effective, nil)
 	}
 
 	writeJSON(w, http.StatusOK, schema)

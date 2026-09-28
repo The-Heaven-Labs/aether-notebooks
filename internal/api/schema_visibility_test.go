@@ -1,9 +1,15 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/chaccess"
 	"github.com/the-heaven-labs/aether/internal/executor"
 )
 
@@ -55,4 +61,70 @@ func TestFilterVisibleSchemaTables(t *testing.T) {
 	// patternProtected.
 	got = filterVisibleSchemaTables(tables, patterns, allowed, map[tableKey]struct{}{})
 	require.Equal(t, []executor.TableInfo{{Schema: "raw", Name: "clicks"}}, got)
+}
+
+func TestConnectorSchemaHiddenPatterns(t *testing.T) {
+	fx := setupWarehouseFixture(t)
+	ctx := context.Background()
+
+	database := "aether_vis_" + uuid.NewString()[:8]
+	quotedDB, err := chaccess.QuoteObjectIdent(database)
+	require.NoError(t, err)
+	require.NoError(t, fx.conn.Exec(ctx, "CREATE DATABASE IF NOT EXISTS "+quotedDB))
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = fx.conn.Exec(cleanupCtx, "DROP DATABASE IF EXISTS "+quotedDB)
+	})
+	for _, table := range []string{"events", "_tmp_scratch", "daily_revenue"} {
+		quoted, err := chaccess.QuoteObjectIdent(table)
+		require.NoError(t, err)
+		require.NoError(t, fx.conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS "+quotedDB+"."+quoted+
+			" (id UInt64) ENGINE = MergeTree ORDER BY id"))
+	}
+
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE warehouses SET hidden_table_patterns = $1 WHERE id = $2`,
+		[]string{`_tmp`}, fx.warehouseID.String())
+	require.NoError(t, err)
+
+	token, err := fx.s.jwt.Issue(fx.userID.String(), fx.orgID.String(), "admin")
+	require.NoError(t, err)
+	rec := warehouseAPIRequest(t, fx.s, http.MethodGet,
+		"/api/v1/connectors/"+fx.connectorID.String()+"/schema", token, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var schema executor.SchemaInfo
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &schema))
+	got := map[string]bool{}
+	for _, table := range schema.Tables {
+		got[table.Schema+"."+table.Name] = true
+	}
+	require.True(t, got[database+".events"], "unmatched tables survive")
+	require.True(t, got[database+".daily_revenue"])
+	require.False(t, got[database+"._tmp_scratch"], "pattern-matched ungranted tables are hidden")
+
+	// The schema-read snapshot is pattern-filtered too.
+	var hiddenRows int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM schema_snapshots WHERE connector_id = $1 AND database_name = $2 AND table_name = '_tmp_scratch'`,
+		fx.connectorID.String(), database).Scan(&hiddenRows))
+	require.Zero(t, hiddenRows)
+
+	// A granted table that also matches stays visible.
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants (org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		VALUES ($1, $2, 'everyone', 'everyone', $3, '_tmp_scratch')`,
+		fx.orgID.String(), fx.warehouseID.String(), database)
+	require.NoError(t, err)
+
+	rec = warehouseAPIRequest(t, fx.s, http.MethodGet,
+		"/api/v1/connectors/"+fx.connectorID.String()+"/schema", token, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &schema))
+	got = map[string]bool{}
+	for _, table := range schema.Tables {
+		got[table.Schema+"."+table.Name] = true
+	}
+	require.True(t, got[database+"._tmp_scratch"], "granted tables stay visible even when matched")
 }
