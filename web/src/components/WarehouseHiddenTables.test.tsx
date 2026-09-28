@@ -4,7 +4,7 @@ import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { renderWithProviders } from '../test/utils'
 import { WarehouseHiddenTables } from './WarehouseHiddenTables'
-import type { Warehouse, WarehouseConnector, WarehouseGrant } from '../api/warehouses'
+import type { Warehouse, WarehouseConnector } from '../api/warehouses'
 
 const CONNECTORS: WarehouseConnector[] = [
   { id: 'c-1', name: 'CH RW', type: 'clickhouse', is_provisioner: true },
@@ -17,35 +17,27 @@ const WAREHOUSE: Warehouse = {
   created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
 }
 
-const GRANTS: WarehouseGrant[] = [
-  {
-    id: 'gr-1', org_id: 'org-1', warehouse_id: 'wh-1', subject_type: 'everyone', subject_id: 'everyone',
-    database: 'analytics', table: '_tmp_kept', created_by: null, created_at: '2026-01-01T00:00:00Z',
-  },
-]
-
 const SCHEMA = {
   tables: [
     { schema: 'analytics', name: 'events', columns: [] },
     { schema: 'analytics', name: '_tmp_scratch', columns: [] },
     { schema: 'analytics', name: '_tmp_kept', columns: [] },
   ],
+  hidden_tables: 1,
 }
 
 beforeEach(() => {
   server.use(
     http.get('/api/v1/connectors/c-1/schema', () => HttpResponse.json(SCHEMA)),
-    http.get('/api/v1/warehouses/wh-1/grants', () => HttpResponse.json(GRANTS)),
   )
 })
 
 describe('WarehouseHiddenTables', () => {
-  test('renders patterns and counts matches excluding already-granted tables', async () => {
+  test('renders patterns and the server-reported hidden count', async () => {
     renderWithProviders(
       <WarehouseHiddenTables warehouseId="wh-1" patterns={WAREHOUSE.hidden_table_patterns} connectors={CONNECTORS} />,
     )
     expect(await screen.findByText('_tmp')).toBeInTheDocument()
-    // Two tables match `_tmp`, but one is already granted and stays visible.
     expect(await screen.findByText(/hides 1 table/)).toBeInTheDocument()
   })
 
@@ -118,7 +110,12 @@ describe('WarehouseHiddenTables', () => {
     expect(puts).toBe(0)
   })
 
-  test('pluralizes the hidden count across matching patterns', async () => {
+  test('pluralizes the server-reported hidden count', async () => {
+    server.use(
+      http.get('/api/v1/connectors/c-1/schema', () =>
+        HttpResponse.json({ ...SCHEMA, hidden_tables: 2 }),
+      ),
+    )
     renderWithProviders(
       <WarehouseHiddenTables
         warehouseId="wh-1"
@@ -129,7 +126,12 @@ describe('WarehouseHiddenTables', () => {
     expect(await screen.findByText(/hides 2 tables/)).toBeInTheDocument()
   })
 
-  test('reports zero hidden tables when no table matches', async () => {
+  test('reports zero hidden tables when the server reports none', async () => {
+    server.use(
+      http.get('/api/v1/connectors/c-1/schema', () =>
+        HttpResponse.json({ ...SCHEMA, hidden_tables: 0 }),
+      ),
+    )
     renderWithProviders(
       <WarehouseHiddenTables warehouseId="wh-1" patterns={['^raw\\.']} connectors={CONNECTORS} />,
     )

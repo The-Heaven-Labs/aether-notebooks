@@ -21,7 +21,6 @@ import type { Group, Member } from '../types'
 interface Props {
   warehouseId: string
   connectors?: WarehouseConnector[]
-  hiddenPatterns?: string[]
 }
 
 interface SubjectRow {
@@ -51,11 +50,7 @@ function parseSubjectKey(key: string): { subjectType: WarehouseSubjectType; subj
   return { subjectType, subjectId: key.slice(separator + 1) }
 }
 
-export function WarehouseTableGrants({
-  warehouseId,
-  connectors = [],
-  hiddenPatterns = [],
-}: Props) {
+export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
   const qc = useQueryClient()
   const tablePermissionsEnabled = useWarehouseTablePermissions()
   const [subjectSelection, setSubjectSelection] = useState('')
@@ -115,23 +110,10 @@ export function WarehouseTableGrants({
     return Array.from(seen).sort()
   }, [schema])
 
-  const hiddenMatchCount = useMemo(() => {
-    const compiled: RegExp[] = []
-    for (const pattern of hiddenPatterns) {
-      try {
-        compiled.push(new RegExp(pattern))
-      } catch {
-        // Server-validated; ignore stale data.
-      }
-    }
-    if (compiled.length === 0) return 0
-    let count = 0
-    for (const table of schema?.tables ?? []) {
-      const name = table.schema ? `${table.schema}.${table.name}` : table.name
-      if (compiled.some((re) => re.test(name))) count++
-    }
-    return count
-  }, [hiddenPatterns, schema])
+  // The server computes the count before dropping hidden tables: the response
+  // no longer carries them, so the client cannot derive it. Granted matches
+  // stay visible in the response but are excluded from the server count.
+  const hiddenMatchCount = schema?.hidden_tables ?? 0
 
   const tables = useMemo(
     () => (schema?.tables ?? []).filter((t) => t.schema === database).map((t) => t.name).sort(),
@@ -351,8 +333,8 @@ export function WarehouseTableGrants({
         {hiddenMatchCount > 0 && (
           <span style={styles.hint}>
             {hiddenMatchCount === 1
-              ? '1 table matches hidden patterns'
-              : `${hiddenMatchCount} tables match hidden patterns`}
+              ? '1 table hidden by patterns'
+              : `${hiddenMatchCount} tables hidden by patterns`}
           </span>
         )}
       </div>
@@ -590,6 +572,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'baseline',
     gap: 10,
+    flexWrap: 'wrap',
   },
   title: {
     margin: 0,

@@ -419,6 +419,7 @@ function WarehouseCard({
     : 0
 
   const linked = detail?.connectors ?? []
+  const hiddenPatterns = detail?.hidden_table_patterns ?? warehouse.hidden_table_patterns ?? []
   const unlinked = clickhouseConnectors.filter((c) => !c.warehouse_id)
 
   const submitRename = () => {
@@ -609,14 +610,10 @@ function WarehouseCard({
 
               <WarehouseHiddenTables
                 warehouseId={warehouse.id}
-                patterns={detail?.hidden_table_patterns ?? warehouse.hidden_table_patterns ?? []}
+                patterns={hiddenPatterns}
                 connectors={linked}
               />
-              <WarehouseTableGrants
-                warehouseId={warehouse.id}
-                connectors={linked}
-                hiddenPatterns={detail?.hidden_table_patterns ?? warehouse.hidden_table_patterns ?? []}
-              />
+              <WarehouseTableGrants warehouseId={warehouse.id} connectors={linked} />
               <NewTablesInbox warehouseId={warehouse.id} />
             </>
           )}

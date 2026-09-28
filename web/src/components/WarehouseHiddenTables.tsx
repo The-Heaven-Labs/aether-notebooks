@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { connectorSchemaQueryKey, getConnectorSchema } from '../api/schema'
 import {
-  listGrants,
   updateWarehouse,
   type Warehouse,
   type WarehouseConnector,
@@ -31,30 +30,9 @@ export function WarehouseHiddenTables({ warehouseId, patterns, connectors = [] }
     enabled: !!sourceConnectorId,
   })
 
-  const { data: grants = [] } = useQuery({
-    queryKey: ['warehouse-grants', warehouseId],
-    queryFn: () => listGrants(warehouseId),
-  })
-
-  const hiddenCount = useMemo(() => {
-    const compiled: RegExp[] = []
-    for (const pattern of patterns) {
-      try {
-        compiled.push(new RegExp(pattern))
-      } catch {
-        // Invalid patterns are rejected by the server; ignore stale data.
-      }
-    }
-    if (compiled.length === 0) return 0
-    const granted = new Set(grants.map((g) => `${g.database}.${g.table}`))
-    let count = 0
-    for (const table of schema?.tables ?? []) {
-      const name = table.schema ? `${table.schema}.${table.name}` : table.name
-      if (granted.has(name)) continue
-      if (compiled.some((re) => re.test(name))) count++
-    }
-    return count
-  }, [patterns, grants, schema])
+  // The server computes the count before dropping hidden tables: the response
+  // no longer carries them, so the client cannot derive it.
+  const hiddenCount = schema?.hidden_tables ?? 0
 
   const save = useMutation({
     scope: { id: `warehouse-hidden-patterns-${warehouseId}` },
@@ -65,7 +43,9 @@ export function WarehouseHiddenTables({ warehouseId, patterns, connectors = [] }
       // The PUT response omits `connectors` (GET-only); merge so the cached
       // detail keeps the linked connectors the settings page renders.
       qc.setQueryData<Warehouse>(['warehouse', warehouseId], (prev) =>
-        prev ? { ...prev, ...updated } : updated,
+        prev
+          ? { ...prev, ...updated, connectors: updated.connectors ?? prev.connectors }
+          : updated,
       )
       qc.invalidateQueries({ queryKey: ['warehouse', warehouseId] })
       qc.invalidateQueries({ queryKey: ['warehouses'] })

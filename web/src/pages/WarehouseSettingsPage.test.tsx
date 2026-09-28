@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
-import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { WarehouseSettingsPage } from './WarehouseSettingsPage'
@@ -185,6 +185,30 @@ describe('WarehouseSettingsPage', () => {
     expect(await screen.findByText('No table grants yet.')).toBeInTheDocument()
     expect(await screen.findByText('New tables')).toBeInTheDocument()
     expect(await screen.findByText('No new tables since your last review.')).toBeInTheDocument()
+  })
+
+  test('renders the hidden-tables editor and saves a pattern', async () => {
+    let putBody: Record<string, unknown> | null = null
+    server.use(
+      http.get('/api/v1/connectors/c-1/schema', () =>
+        HttpResponse.json({ tables: [], hidden_tables: 1 }),
+      ),
+      http.put('/api/v1/warehouses/wh-1', async ({ request }) => {
+        putBody = await request.json() as Record<string, unknown>
+        return HttpResponse.json({ ...WAREHOUSES[0], hidden_table_patterns: ['_tmp'] })
+      }),
+    )
+    renderWithProviders(<WarehouseSettingsPage />)
+    fireEvent.click(await screen.findByText('Analytics'))
+
+    const hiddenSection = await screen.findByRole('region', { name: 'Hidden tables' })
+    expect(hiddenSection).toBeInTheDocument()
+    fireEvent.change(within(hiddenSection).getByLabelText('Pattern'), {
+      target: { value: '_tmp' },
+    })
+    fireEvent.click(within(hiddenSection).getByRole('button', { name: 'Add' }))
+
+    await waitFor(() => expect(putBody).toEqual({ hidden_table_patterns: ['_tmp'] }))
   })
 
   test('changes the provisioner through the selector', async () => {
