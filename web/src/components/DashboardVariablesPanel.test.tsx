@@ -124,6 +124,23 @@ describe('DashboardVariablesPanel', () => {
     expect(screen.queryByLabelText('Variable name')).toBeNull()
   })
 
+  test('saves the public live toggle', async () => {
+    const bodies = capturePuts()
+    render(
+      <DashboardVariablesPanel
+        dashboardId="d1"
+        dashboard={dashboardWith([])}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.click(screen.getByLabelText('Public live queries'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save variables' }))
+    await waitFor(() => expect(bodies.length).toBe(1))
+    const settings = bodies[0].settings as Record<string, unknown>
+    expect(settings.public_live).toBe(true)
+  })
+
   test('prefills a new variable from the widget drawer', () => {
     render(
       <DashboardVariablesPanel

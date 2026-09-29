@@ -194,6 +194,7 @@ export function DashboardVariablesPanel({ dashboardId, dashboard, onClose, onSav
   }, [dashboard.settings?.variables, initialNewName])
 
   const [rows, setRows] = useState<EditableVariable[]>(initialRows)
+  const [publicLive, setPublicLive] = useState(!!dashboard.settings?.public_live)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -215,7 +216,7 @@ export function DashboardVariablesPanel({ dashboardId, dashboard, onClose, onSav
     setError(null)
     try {
       await api.put(`/api/v1/dashboards/${dashboardId}`, {
-        settings: { ...dashboard.settings, variables: rows.map(fromEditable) },
+        settings: { ...dashboard.settings, variables: rows.map(fromEditable), public_live: publicLive },
       })
       setSaved(true)
       onSaved()
@@ -405,6 +406,21 @@ export function DashboardVariablesPanel({ dashboardId, dashboard, onClose, onSav
         >
           <Plus size={12} /> Add variable
         </button>
+
+        <div style={styles.checkboxRow}>
+          <input
+            id="public-live"
+            aria-label="Public live queries"
+            type="checkbox"
+            checked={publicLive}
+            onChange={(e) => { setSaved(false); setPublicLive(e.target.checked) }}
+          />
+          <label htmlFor="public-live">Public live queries</label>
+        </div>
+        <span style={styles.muted}>
+          When enabled, public visitors run this dashboard's query widgets as you, rate-limited
+          per visitor. Disabled by default.
+        </span>
 
         {error && <div style={styles.error} role="alert">{error}</div>}
         {saved && <div style={styles.saved}>Variables saved</div>}

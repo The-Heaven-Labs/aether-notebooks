@@ -57,18 +57,22 @@ const styles: Record<string, React.CSSProperties> = {
   },
 }
 
-export function QueryDataWidget({ dashboardId, widget, canViewWithData, refreshNonce = 0 }: {
+export function QueryDataWidget({ dashboardId, widget, canViewWithData, refreshNonce = 0, endpointBase }: {
   dashboardId: string
   widget: Widget
   canViewWithData: boolean
   refreshNonce?: number
+  /** Overrides the execute endpoint base, e.g. `/api/v1/public/{token}` for public dashboards. */
+  endpointBase?: string
 }) {
+  const isPublic = !!endpointBase
   const { values } = useDashboardVariables()
   const { data, error, isPending, isFetching, refresh } = useWidgetQuery({
     dashboardId,
     widget,
     values,
     enabled: canViewWithData,
+    endpointBase,
   })
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null)
   const [serviceChoice, setServiceChoice] = useState<ServiceChoicePrompt | null>(null)
@@ -93,8 +97,10 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, refreshN
 
   useEffect(() => {
     const prompt = serviceChoicesFromError(error)
-    if (prompt) setServiceChoice(prompt)
-  }, [error])
+    // Public visitors cannot store a routing preference; surface an
+    // explanatory error instead of a dialog that would fail to save.
+    if (prompt && !isPublic) setServiceChoice(prompt)
+  }, [error, isPublic])
 
   const chooseService = useCallback(async (connectorId: string) => {
     const warehouseId = serviceChoice?.warehouseId
@@ -137,6 +143,13 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, refreshN
 
   if (error) {
     if (serviceChoicesFromError(error)) {
+      if (isPublic) {
+        return (
+          <div style={styles.muted}>
+            This widget needs a warehouse service preference. Ask the dashboard owner to set one.
+          </div>
+        )
+      }
       return (
         <>
           <div style={styles.muted}>Choose a warehouse service to run this widget.</div>

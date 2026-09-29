@@ -62,19 +62,25 @@ function serializeValue(v: DashboardVariable, value: unknown): string[] {
   }
 }
 
-export function DashboardVariablesProvider({ dashboardId, variables, children }: {
+export function DashboardVariablesProvider({ dashboardId, variables, children, endpointBase, storageId }: {
   dashboardId: string
   variables: DashboardVariable[]
   children: React.ReactNode
+  /** Overrides the options endpoint base, e.g. `/api/v1/public/{token}` for public dashboards. */
+  endpointBase?: string
+  /** Overrides the localStorage namespace, e.g. a public token so visitors don't leak values across dashboards. */
+  storageId?: string
 }) {
+  const storageNamespace = storageId ?? dashboardId
+  const optionsBase = endpointBase ?? `/api/v1/dashboards/${dashboardId}`
   const [searchParams, setSearchParams] = useSearchParams()
-  const [values, setValuesState] = useState<Record<string, unknown>>(() => loadInitial(dashboardId, variables, searchParams))
+  const [values, setValuesState] = useState<Record<string, unknown>>(() => loadInitial(storageNamespace, variables, searchParams))
   const [optionState, setOptionState] = useState<Record<string, VariableOptionsState>>({})
   const valuesRef = useRef(values)
   valuesRef.current = values
 
   const persist = useCallback((next: Record<string, unknown>) => {
-    try { localStorage.setItem(storageKey(dashboardId), JSON.stringify(next)) } catch { /* ignore quota */ }
+    try { localStorage.setItem(storageKey(storageNamespace), JSON.stringify(next)) } catch { /* ignore quota */ }
     const params = new URLSearchParams()
     for (const v of variables) {
       const serialized = serializeValue(v, next[v.name])
@@ -82,7 +88,7 @@ export function DashboardVariablesProvider({ dashboardId, variables, children }:
       if (!isDefault) serialized.forEach(s => params.append(v.name, s))
     }
     setSearchParams(params, { replace: true })
-  }, [dashboardId, variables, setSearchParams])
+  }, [storageNamespace, variables, setSearchParams])
 
   const setValue = useCallback((name: string, value: unknown) => {
     setValuesState(prev => {
@@ -100,7 +106,7 @@ export function DashboardVariablesProvider({ dashboardId, variables, children }:
     setOptionState(prev => ({ ...prev, [name]: { ...(prev[name] ?? { options: [] }), loading: true, error: null } }))
     try {
       const resp = await api.post<{ options: DashboardVariableOption[] }>(
-        `/api/v1/dashboards/${dashboardId}/variables/${name}/options`,
+        `${optionsBase}/variables/${name}/options`,
         { variables: valuesRef.current },
       )
       setOptionState(prev => ({ ...prev, [name]: { options: resp.options, loading: false, error: null, reload: () => { void loadOptions(name) } } }))
@@ -108,7 +114,7 @@ export function DashboardVariablesProvider({ dashboardId, variables, children }:
       const message = e instanceof Error ? e.message : 'Failed to load options'
       setOptionState(prev => ({ ...prev, [name]: { options: [], loading: false, error: message, reload: () => { void loadOptions(name) } } }))
     }
-  }, [dashboardId])
+  }, [optionsBase])
 
   // Reload query-backed options on mount and whenever a dependency changes.
   const depSignature = JSON.stringify(variables.map(v => ({
