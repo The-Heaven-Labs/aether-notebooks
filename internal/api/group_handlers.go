@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -17,6 +18,7 @@ type createGroupRequest struct {
 type updateGroupRequest struct {
 	Name        *string `json:"name"`
 	DisplayName *string `json:"display_name"`
+	ConfirmName *string `json:"confirm_name"`
 }
 
 // normalizeDisplayName trims a label and maps blank to nil (SQL NULL).
@@ -137,7 +139,7 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Summary Update a group
-// @Description Update a group's name and/or display name
+// @Description Update a group's name and/or display name. Renaming an SSO-managed group requires confirm_name equal to the current name.
 // @Tags groups
 // @Accept json
 // @Produce json
@@ -146,6 +148,7 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 // @Success 200 {object} models.Group
 // @Failure 400 {object} map[string]string
 // @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
 // @Security BearerAuth
 // @Router /groups/{id} [put]
 func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
@@ -153,11 +156,16 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	groupID := r.PathValue("id")
 	ctx := r.Context()
 
-	isEveryone, err := s.isEveryoneGroup(ctx, groupID, claims.OrgID)
+	var currentName, currentSource string
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT name, source FROM groups WHERE id=$1 AND org_id=$2`,
+		groupID, claims.OrgID,
+	).Scan(&currentName, &currentSource)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "group not found")
 		return
 	}
+	isEveryone := strings.EqualFold(currentName, "everyone")
 	var req updateGroupRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -188,6 +196,15 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	nameChanged := req.Name != nil && *req.Name != currentName
+	if nameChanged && currentSource == "sso" {
+		if req.ConfirmName == nil || *req.ConfirmName != currentName {
+			writeError(w, http.StatusConflict,
+				fmt.Sprintf("group is managed by SSO; renaming it disconnects sync. Send confirm_name with the current name (%q) to proceed", currentName))
+			return
+		}
+	}
+
 	display := ""
 	if req.DisplayName != nil {
 		display = strings.TrimSpace(*req.DisplayName)
@@ -202,13 +219,23 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 		req.Name, req.DisplayName != nil, display, groupID, claims.OrgID,
 	).Scan(&g.ID, &g.OrgID, &g.Name, &g.DisplayName, &g.Source, &g.CreatedAt)
 	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "a group with this name already exists")
+			return
+		}
 		writeError(w, http.StatusNotFound, "group not found")
 		return
 	}
+	action := "group.update"
+	metadata := map[string]any{"display_name": g.DisplayName}
+	if nameChanged && currentSource == "sso" {
+		action = "group.sso.rename"
+		metadata = map[string]any{"old_name": currentName, "new_name": g.Name, "display_name": g.DisplayName}
+	}
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
-		Action: "group.update", ResourceType: "group", ResourceID: groupID, ResourceName: g.Name,
-		Metadata: map[string]any{"display_name": g.DisplayName},
+		Action: action, ResourceType: "group", ResourceID: groupID, ResourceName: g.Name,
+		Metadata: metadata,
 	})
 	writeJSON(w, http.StatusOK, g)
 }

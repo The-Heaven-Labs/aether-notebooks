@@ -356,3 +356,120 @@ func TestUpdateEveryoneGroupRejectsNameAndLabel(t *testing.T) {
 		t.Fatalf("rename Everyone: expected 400, got %d: %s", renameRec.Code, renameRec.Body.String())
 	}
 }
+
+func TestUpdateSSOGroupRenameRequiresConfirmation(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("group-sso-rename-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Group SSO Rename Org")
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(map[string]any{"name": "aether-analysts"})
+	createReq := httptest.NewRequest("POST", "/api/v1/groups", bytes.NewReader(createBody))
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Authorization", "Bearer "+token)
+	createRec := httptest.NewRecorder()
+	srv.ServeHTTP(createRec, createReq)
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+	var created map[string]any
+	require.NoError(t, json.NewDecoder(createRec.Body).Decode(&created))
+	groupID := created["id"].(string)
+
+	_, err := srv.DB().Pool.Exec(ctx, `UPDATE groups SET source='sso' WHERE id=$1`, groupID)
+	require.NoError(t, err)
+
+	put := func(body map[string]any) (*httptest.ResponseRecorder, map[string]any) {
+		t.Helper()
+		payload, _ := json.Marshal(body)
+		req := httptest.NewRequest("PUT", "/api/v1/groups/"+groupID, bytes.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		var decoded map[string]any
+		_ = json.NewDecoder(rec.Body).Decode(&decoded)
+		return rec, decoded
+	}
+
+	// Rename without confirm_name: 409 and the name stays put.
+	rec, _ := put(map[string]any{"name": "renamed"})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	var dbName string
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx, `SELECT name FROM groups WHERE id=$1`, groupID).Scan(&dbName))
+	require.Equal(t, "aether-analysts", dbName)
+
+	// Wrong confirm_name: still 409.
+	rec, _ = put(map[string]any{"name": "renamed", "confirm_name": "not-the-name"})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+
+	// A case-only change is still an identity change and needs confirmation.
+	rec, _ = put(map[string]any{"name": "AETHER-ANALYSTS"})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+
+	// Correct confirm_name: acknowledged rename.
+	rec, decoded := put(map[string]any{"name": "renamed", "confirm_name": "aether-analysts"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "renamed", decoded["name"])
+	var renameAudits int
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM audit_logs WHERE action='group.sso.rename' AND resource_id=$1`, groupID,
+	).Scan(&renameAudits))
+	require.Equal(t, 1, renameAudits)
+	var oldName, newName string
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+		`SELECT metadata->>'old_name', metadata->>'new_name' FROM audit_logs WHERE action='group.sso.rename' AND resource_id=$1`,
+		groupID,
+	).Scan(&oldName, &newName))
+	require.Equal(t, "aether-analysts", oldName)
+	require.Equal(t, "renamed", newName)
+
+	// Display-only update needs no confirmation and stays a plain group.update.
+	rec, decoded = put(map[string]any{"display_name": "Data Analysts"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, "renamed", decoded["name"])
+	require.Equal(t, "Data Analysts", decoded["display_name"])
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM audit_logs WHERE action='group.sso.rename' AND resource_id=$1`, groupID,
+	).Scan(&renameAudits))
+	require.Equal(t, 1, renameAudits)
+	var updateAudits int
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM audit_logs WHERE action='group.update' AND resource_id=$1`, groupID,
+	).Scan(&updateAudits))
+	require.Equal(t, 1, updateAudits)
+}
+
+func TestUpdateGroupDuplicateNameConflict(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("group-duplicate-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Group Duplicate Org")
+	ctx := context.Background()
+
+	create := func(name string) string {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"name": name})
+		req := httptest.NewRequest("POST", "/api/v1/groups", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		var g map[string]any
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&g))
+		return g["id"].(string)
+	}
+
+	create("Alpha")
+	secondID := create("Beta")
+
+	payload, _ := json.Marshal(map[string]any{"name": "Alpha"})
+	req := httptest.NewRequest("PUT", "/api/v1/groups/"+secondID, bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+
+	var dbName string
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx, `SELECT name FROM groups WHERE id=$1`, secondID).Scan(&dbName))
+	require.Equal(t, "Beta", dbName)
+}

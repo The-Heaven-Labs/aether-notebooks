@@ -3681,7 +3681,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Update a group's name and/or display name",
+                "description": "Update a group's name and/or display name. Renaming an SSO-managed group requires confirm_name equal to the current name.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3728,6 +3728,15 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
