@@ -404,10 +404,33 @@ definitions:
         type: integer
       grid_cols:
         type: integer
-      parameter_overrides:
-        additionalProperties:
+      public_live:
+        type: boolean
+      query_cache_seconds:
+        type: integer
+      variables:
+        items:
+          $ref: '#/definitions/models.DashboardVariable'
+        type: array
+    type: object
+  models.DashboardVariable:
+    properties:
+      default: {}
+      depends_on:
+        items:
           type: string
-        type: object
+        type: array
+      label:
+        type: string
+      name:
+        type: string
+      options:
+        $ref: '#/definitions/models.VariableOptions'
+      required:
+        type: boolean
+      type:
+        description: text|number|boolean|date|date_range|single_select|multi_select
+        type: string
     type: object
   models.Group:
     properties:
@@ -514,6 +537,13 @@ definitions:
       title:
         type: string
       updated_at:
+        type: string
+    type: object
+  models.OptionValue:
+    properties:
+      label:
+        type: string
+      value:
         type: string
     type: object
   models.Parameter:
@@ -625,6 +655,29 @@ definitions:
       updated_at:
         type: string
     type: object
+  models.VariableOptions:
+    properties:
+      label_column:
+        type: string
+      mode:
+        description: '"static" | "query"'
+        type: string
+      query:
+        $ref: '#/definitions/models.VariableQuery'
+      value_column:
+        type: string
+      values:
+        items:
+          $ref: '#/definitions/models.OptionValue'
+        type: array
+    type: object
+  models.VariableQuery:
+    properties:
+      connector_id:
+        type: string
+      sql:
+        type: string
+    type: object
   models.Widget:
     properties:
       cell_id:
@@ -632,15 +685,21 @@ definitions:
       config:
         additionalProperties: true
         type: object
+      connector_id:
+        type: string
       created_at:
         type: string
       dashboard_id:
         type: string
       id:
         type: string
+      language:
+        type: string
       layout:
         $ref: '#/definitions/models.WidgetLayout'
       notebook_id:
+        type: string
+      query:
         type: string
       type:
         $ref: '#/definitions/models.WidgetType'
@@ -664,22 +723,12 @@ definitions:
     - table
     - text
     - metric
-    - date_picker
-    - date_range
-    - freetext
-    - number
-    - multi_select
     type: string
     x-enum-varnames:
     - WidgetChart
     - WidgetTable
     - WidgetText
     - WidgetMetric
-    - WidgetDatePicker
-    - WidgetDateRange
-    - WidgetFreetext
-    - WidgetNumber
-    - WidgetMultiSelect
 host: localhost:8088
 info:
   contact: {}
@@ -1744,6 +1793,92 @@ paths:
       summary: Get public resource
       tags:
       - public
+  /api/v1/public/{token}/execute:
+    post:
+      consumes:
+      - application/json
+      description: Runs one query widget of a publicly shared dashboard when settings.public_live
+        is enabled. Queries run as the dashboard creator and are rate-limited per
+        token and client IP.
+      parameters:
+      - description: Public sharing token
+        in: path
+        name: token
+        required: true
+        type: string
+      - description: widget_id, variables, bypass_cache
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: outputs, metrics, cached
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - none: []
+      summary: Execute a public dashboard query widget
+      tags:
+      - public
+  /api/v1/public/{token}/variables/{name}/options:
+    post:
+      consumes:
+      - application/json
+      description: Executes the query-backed options for a variable of a publicly
+        shared dashboard when settings.public_live is enabled.
+      parameters:
+      - description: Public sharing token
+        in: path
+        name: token
+        required: true
+        type: string
+      - description: Variable name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - none: []
+      summary: Run a public dashboard variable's options query
+      tags:
+      - public
   /api/v1/recent:
     get:
       description: Returns recently accessed notebooks, dashboards, and connectors
@@ -2593,6 +2728,55 @@ paths:
       summary: Update a dashboard
       tags:
       - dashboards
+  /dashboards/{id}/execute:
+    post:
+      consumes:
+      - application/json
+      description: Runs one query widget as the requesting user, interpolating dashboard
+        variables server-side. Results are cached in Redis for the dashboard's query_cache_seconds
+        (default 30, 0 disables).
+      parameters:
+      - description: Dashboard ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: widget_id, variables, bypass_cache
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: outputs, metrics, cached
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: service_choice_required with warehouse_id and services
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Execute a dashboard query widget
+      tags:
+      - dashboards
   /dashboards/{id}/permissions:
     get:
       description: Get the current user's permissions for a dashboard
@@ -2700,6 +2884,48 @@ paths:
       summary: Share a dashboard
       tags:
       - dashboards
+  /dashboards/{id}/variables/{name}/options:
+    post:
+      consumes:
+      - application/json
+      description: Executes the query-backed options for a dashboard variable and
+        returns label/value pairs
+      parameters:
+      - description: Dashboard ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Variable name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Run a dashboard variable's options query
+      tags:
+      - dashboards
   /dashboards/{id}/widgets:
     post:
       consumes:
@@ -2804,6 +3030,49 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a widget
+      tags:
+      - dashboards
+  /dashboards/{id}/widgets/{widget_id}/convert-to-query:
+    post:
+      consumes:
+      - application/json
+      description: Inlines notebook slug references, moves the cell's connector and
+        SQL onto the widget, and turns referenced notebook/cell parameters into dashboard
+        variables
+      parameters:
+      - description: Dashboard ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Widget ID
+        in: path
+        name: widget_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: widget and variables
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Convert a cell-linked widget to a query widget
       tags:
       - dashboards
   /docs:
