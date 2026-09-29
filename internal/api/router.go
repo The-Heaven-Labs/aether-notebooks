@@ -444,6 +444,7 @@ func (s *Server) routes() {
 	s.mux.Handle("PUT /api/v1/dashboards/{id}", authMW(s.requirePermission("dashboard", "id", "edit")(http.HandlerFunc(s.handleUpdateDashboard))))
 	s.mux.Handle("DELETE /api/v1/dashboards/{id}", authMW(s.requirePermission("dashboard", "id", "delete")(http.HandlerFunc(s.handleDeleteDashboard))))
 	s.mux.Handle("POST /api/v1/dashboards/{id}/widgets", authMW(http.HandlerFunc(s.handleAddWidget)))
+	s.mux.Handle("POST /api/v1/dashboards/{id}/widgets/{widget_id}/convert-to-query", authMW(http.HandlerFunc(s.handleConvertWidgetToQuery)))
 	s.mux.Handle("PUT /api/v1/dashboards/{id}/widgets/{widget_id}", authMW(http.HandlerFunc(s.handleUpdateWidget)))
 	s.mux.Handle("DELETE /api/v1/dashboards/{id}/widgets/{widget_id}", authMW(http.HandlerFunc(s.handleDeleteWidget)))
 	s.mux.Handle("GET /api/v1/dashboards/{id}/share", authMW(s.requirePermission("dashboard", "id", "view")(http.HandlerFunc(s.handleGetDashboardShare))))

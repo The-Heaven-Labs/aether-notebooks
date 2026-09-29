@@ -329,6 +329,154 @@ func TestPublicDashboardExecuteRateLimited(t *testing.T) {
 	require.True(t, got429, "expected 429 after exceeding the public execute rate limit")
 }
 
+func convertWidgetToQuery(t *testing.T, srv *api.Server, token, dashID, widgetID string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/api/v1/dashboards/"+dashID+"/widgets/"+widgetID+"/convert-to-query", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec
+}
+
+func createCellWithSlug(t *testing.T, srv *api.Server, token, nbID, source, connID, slug string) string {
+	t.Helper()
+	cellID := createCell(t, srv, token, nbID, "sql", source, connID)
+	if slug != "" {
+		raw, _ := json.Marshal(map[string]any{"slug": slug})
+		req := httptest.NewRequest("PUT", "/api/v1/notebooks/"+nbID+"/cells/"+cellID, bytes.NewReader(raw))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-AETHER-Admin-Mode", "true")
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	}
+	return cellID
+}
+
+func setNotebookParameters(t *testing.T, srv *api.Server, token, nbID string, params []map[string]any) {
+	t.Helper()
+	raw, _ := json.Marshal(map[string]any{"parameters": params})
+	req := httptest.NewRequest("PUT", "/api/v1/notebooks/"+nbID, bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+func TestConvertCellWidgetToQueryWidget(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("convert-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Convert Org")
+	connID := createConnector(t, srv, token)
+
+	nbID := createNotebook(t, srv, token, "Convert NB")
+	setNotebookParameters(t, srv, token, nbID, []map[string]any{
+		{"name": "who", "type": "string", "default": "world"},
+	})
+	cellID := createCell(t, srv, token, nbID, "sql", "SELECT {{who}} AS greeting", connID)
+
+	dashID := createDashWithSettings(t, srv, token, nil)
+	widget := addWidgetRaw(t, srv, token, dashID, map[string]any{
+		"notebook_id": nbID,
+		"cell_id":     cellID,
+		"type":        "table",
+		"layout":      map[string]int{"row": 0, "col": 0, "width": 6, "height": 6},
+	})
+	widgetID := widget["id"].(string)
+
+	rec := convertWidgetToQuery(t, srv, token, dashID, widgetID)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var resp struct {
+		Widget struct {
+			ConnectorID *string `json:"connector_id"`
+			Query       *string `json:"query"`
+			NotebookID  *string `json:"notebook_id"`
+			CellID      *string `json:"cell_id"`
+			Language    string  `json:"language"`
+		} `json:"widget"`
+		Variables []struct {
+			Name    string      `json:"name"`
+			Type    string      `json:"type"`
+			Default interface{} `json:"default"`
+		} `json:"variables"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	require.NotNil(t, resp.Widget.ConnectorID)
+	require.Equal(t, connID, *resp.Widget.ConnectorID)
+	require.NotNil(t, resp.Widget.Query)
+	require.Equal(t, "SELECT {{who}} AS greeting", *resp.Widget.Query)
+	require.Nil(t, resp.Widget.NotebookID)
+	require.Nil(t, resp.Widget.CellID)
+	require.Equal(t, "sql", resp.Widget.Language)
+	require.Len(t, resp.Variables, 1)
+	require.Equal(t, "who", resp.Variables[0].Name)
+	require.Equal(t, "text", resp.Variables[0].Type)
+	require.Equal(t, "world", resp.Variables[0].Default)
+
+	// The converted widget now executes with a provided value.
+	execRec := executeDashboardWidget(t, srv, token, dashID, map[string]any{
+		"widget_id": widgetID,
+		"variables": map[string]any{"who": "Aether"},
+	})
+	require.Equal(t, http.StatusOK, execRec.Code, execRec.Body.String())
+	var execResp map[string]any
+	require.NoError(t, json.NewDecoder(execRec.Body).Decode(&execResp))
+	rows := execResp["outputs"].([]any)[0].(map[string]any)["data"].(map[string]any)["rows"].([]any)
+	require.Equal(t, "Aether", rows[0].([]any)[0])
+
+	// Persisted dashboard settings also carry the variable.
+	req := httptest.NewRequest("GET", "/api/v1/dashboards/"+dashID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec2 := httptest.NewRecorder()
+	srv.ServeHTTP(rec2, req)
+	require.Equal(t, http.StatusOK, rec2.Code, rec2.Body.String())
+	require.Contains(t, rec2.Body.String(), `"who"`)
+}
+
+func TestConvertCellWidgetInlinesSlugs(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("convert-slug-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Convert Slug Org")
+	connID := createConnector(t, srv, token)
+
+	nbID := createNotebook(t, srv, token, "Convert Slug NB")
+	createCellWithSlug(t, srv, token, nbID, "SELECT 1 AS x", connID, "base")
+	cellID := createCellWithSlug(t, srv, token, nbID, "SELECT * FROM {{base}}", connID, "")
+
+	dashID := createDashWithSettings(t, srv, token, nil)
+	widget := addWidgetRaw(t, srv, token, dashID, map[string]any{
+		"notebook_id": nbID,
+		"cell_id":     cellID,
+		"type":        "table",
+		"layout":      map[string]int{"row": 0, "col": 0, "width": 6, "height": 6},
+	})
+
+	rec := convertWidgetToQuery(t, srv, token, dashID, widget["id"].(string))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "SELECT 1 AS x")
+	require.NotContains(t, rec.Body.String(), "{{base}}")
+}
+
+func TestConvertRejectsNonCellWidget(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("convert-noncell-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Convert NonCell Org")
+	connID := createConnector(t, srv, token)
+	dashID := createDashWithSettings(t, srv, token, nil)
+	widgetID := addQueryWidget(t, srv, token, dashID, connID, "SELECT 1")
+
+	rec := convertWidgetToQuery(t, srv, token, dashID, widgetID)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "not linked to a notebook cell")
+}
+
 func TestDashboardQueryExecuteUnknownVariableReturns400(t *testing.T) {
 	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)

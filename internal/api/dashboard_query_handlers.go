@@ -306,6 +306,241 @@ func optionsFromResult(outputs []models.Output, labelCol, valueCol string) ([]mo
 	return options, nil
 }
 
+// @Summary Convert a cell-linked widget to a query widget
+// @Description Inlines notebook slug references, moves the cell's connector and SQL onto the widget, and turns referenced notebook/cell parameters into dashboard variables
+// @Tags dashboards
+// @Accept json
+// @Produce json
+// @Param id path string true "Dashboard ID"
+// @Param widget_id path string true "Widget ID"
+// @Success 200 {object} map[string]any "widget and variables"
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Security BearerAuth
+// @Router /dashboards/{id}/widgets/{widget_id}/convert-to-query [post]
+func (s *Server) handleConvertWidgetToQuery(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	dashID, widgetID := r.PathValue("id"), r.PathValue("widget_id")
+	ctx := r.Context()
+
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "edit")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "you don't have permission to edit this dashboard")
+		return
+	}
+
+	widget, err := s.loadQueryWidget(ctx, dashID, widgetID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "widget not found")
+		return
+	}
+	if widget.CellID == nil || widget.NotebookID == nil {
+		writeError(w, http.StatusBadRequest, "widget is not linked to a notebook cell")
+		return
+	}
+
+	// Conversion copies the cell source into the dashboard, so viewing the
+	// notebook is required in addition to editing the dashboard.
+	viewOK, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", *widget.NotebookID, "view")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !viewOK {
+		writeError(w, http.StatusForbidden, "you don't have permission to view this notebook")
+		return
+	}
+
+	var source string
+	var language, cellConnID *string
+	var cellParamsJSON []byte
+	err = s.db.Pool.QueryRow(ctx,
+		`SELECT c.source, c.language, c.connector_id, c.parameters
+		 FROM cells c JOIN notebooks n ON n.id = c.notebook_id
+		 WHERE c.id = $1 AND c.notebook_id = $2 AND n.org_id = $3`,
+		*widget.CellID, *widget.NotebookID, claims.OrgID,
+	).Scan(&source, &language, &cellConnID, &cellParamsJSON)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "cell not found")
+		return
+	}
+	if language != nil && *language != "sql" {
+		writeError(w, http.StatusBadRequest, "only SQL cells can be converted to query widgets")
+		return
+	}
+
+	// Notebook connector fallback, mirroring cell execution.
+	if cellConnID == nil || *cellConnID == "" {
+		var nbConn *string
+		s.db.Pool.QueryRow(ctx, `SELECT connector_id FROM notebooks WHERE id = $1`, *widget.NotebookID).Scan(&nbConn)
+		cellConnID = nbConn
+	}
+	if cellConnID == nil || *cellConnID == "" {
+		writeError(w, http.StatusBadRequest, "cell has no connector assigned")
+		return
+	}
+
+	// Parameters: notebook defaults win over cell defaults, as in execution.
+	var notebookParamsJSON []byte
+	s.db.Pool.QueryRow(ctx, `SELECT parameters FROM notebooks WHERE id = $1`, *widget.NotebookID).Scan(&notebookParamsJSON)
+	var notebookParams, cellParams []models.Parameter
+	json.Unmarshal(notebookParamsJSON, &notebookParams)
+	json.Unmarshal(cellParamsJSON, &cellParams)
+	paramByName := map[string]models.Parameter{}
+	for _, p := range cellParams {
+		paramByName[p.Name] = p
+	}
+	for _, p := range notebookParams {
+		paramByName[p.Name] = p
+	}
+	knownParams := make(map[string]bool, len(paramByName))
+	for name := range paramByName {
+		knownParams[name] = true
+	}
+
+	// Inline {{slug}} references; parameter tokens pass through.
+	slugMap := map[string]string{}
+	slugRows, slugErr := s.db.Pool.Query(ctx,
+		`SELECT slug, source FROM cells WHERE notebook_id = $1 AND slug IS NOT NULL AND slug != ''`,
+		*widget.NotebookID,
+	)
+	if slugErr == nil {
+		defer slugRows.Close()
+		for slugRows.Next() {
+			var slug, slugSource string
+			if scanErr := slugRows.Scan(&slug, &slugSource); scanErr == nil {
+				slugMap[slug] = slugSource
+			}
+		}
+	}
+	resolved, err := resolveSlugRefs(source, slugMap, knownParams)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	dash, err := s.loadDashboardSettings(ctx, claims.OrgID, dashID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "dashboard not found")
+		return
+	}
+	existing := map[string]bool{}
+	for _, v := range dash.Settings.Variables {
+		existing[v.Name] = true
+	}
+	for _, m := range slugRefRe.FindAllStringSubmatch(source, -1) {
+		name := m[1]
+		if existing[name] {
+			continue
+		}
+		p, ok := paramByName[name]
+		if !ok {
+			continue
+		}
+		dash.Settings.Variables = append(dash.Settings.Variables, variableFromParameter(p))
+		existing[name] = true
+	}
+	if err := dashboard.ValidateVariables(dash.Settings.Variables); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to convert widget")
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	var updated models.Widget
+	var layoutOut, configOut []byte
+	err = tx.QueryRow(ctx,
+		`UPDATE widgets SET notebook_id = NULL, cell_id = NULL, connector_id = $1, query = $2, language = 'sql', updated_at = NOW()
+		 WHERE id = $3 AND dashboard_id = $4
+		 RETURNING id, dashboard_id, notebook_id, cell_id, connector_id, query, language, type, layout, config, created_at, updated_at`,
+		*cellConnID, resolved, widgetID, dashID,
+	).Scan(&updated.ID, &updated.DashboardID, &updated.NotebookID, &updated.CellID,
+		&updated.ConnectorID, &updated.Query, &updated.Language, &updated.Type,
+		&layoutOut, &configOut, &updated.CreatedAt, &updated.UpdatedAt)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update widget")
+		return
+	}
+	json.Unmarshal(layoutOut, &updated.Layout)
+	json.Unmarshal(configOut, &updated.Config)
+
+	if dash.Settings.Variables == nil {
+		dash.Settings.Variables = []models.DashboardVariable{}
+	}
+	settingsJSON, err := json.Marshal(dash.Settings)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update dashboard settings")
+		return
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE dashboards SET settings = $1, updated_at = NOW() WHERE id = $2`,
+		settingsJSON, dashID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update dashboard settings")
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to convert widget")
+		return
+	}
+
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "widget.convert_to_query", ResourceType: "widget", ResourceID: widgetID,
+		Metadata: map[string]any{
+			"dashboard_id": dashID,
+			"cell_id":      *widget.CellID,
+			"notebook_id":  *widget.NotebookID,
+			"connector_id": *cellConnID,
+		},
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"widget": updated, "variables": dash.Settings.Variables})
+}
+
+// variableFromParameter maps a notebook/cell parameter onto a dashboard
+// variable, preserving its type and default where the representations line up.
+func variableFromParameter(p models.Parameter) models.DashboardVariable {
+	v := models.DashboardVariable{Name: p.Name, Label: p.Name, Type: paramTypeToVariableType(p.Type)}
+	switch v.Type {
+	case "boolean":
+		v.Default = strings.EqualFold(p.Default, "true")
+	case "date_range":
+		if parts := strings.SplitN(p.Default, ",", 2); len(parts) == 2 {
+			v.Default = []string{strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])}
+		} else if p.Default != "" {
+			v.Default = p.Default
+		}
+	default:
+		if p.Default != "" {
+			v.Default = p.Default
+		}
+	}
+	return v
+}
+
+func paramTypeToVariableType(t string) string {
+	switch t {
+	case "number":
+		return "number"
+	case "boolean":
+		return "boolean"
+	case "date":
+		return "date"
+	case "daterange", "date_range":
+		return "date_range"
+	default:
+		return "text"
+	}
+}
+
 func (s *Server) resolvePublicDashboard(ctx context.Context, token string) (*models.Dashboard, error) {
 	var d models.Dashboard
 	var settingsOut []byte
