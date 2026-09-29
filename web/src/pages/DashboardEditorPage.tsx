@@ -627,16 +627,7 @@ const markSaved = useCallback(() => {
                       type="button"
                       style={{ ...styles.editWidgetBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                       title="Edit widget"
-                      onClick={() => {
-                        if (isQueryWidget(widget)) {
-                          setEditingWidget(widget)
-                          return
-                        }
-                        setPickerNotebookId(widget.notebook_id ?? '')
-                        setPickerCellId(widget.cell_id ?? '')
-                        setPickerType(widget.type === 'chart' ? 'chart' : 'table')
-                        setShowPicker(true)
-                      }}
+                      onClick={() => setEditingWidget(widget)}
                     >
                       <Pencil size={11} />
                     </button>
