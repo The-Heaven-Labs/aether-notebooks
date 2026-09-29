@@ -88,4 +88,44 @@ test.describe('Group provenance and SSO-managed delete guard', () => {
     await expect(row.getByText('System')).toBeVisible()
     await expect(row.getByTitle('Group actions')).toHaveCount(0)
   })
+
+  test('renaming an SSO group requires typing the synced name', async ({ page, request }) => {
+    await loginAsAdmin(page)
+    const headers = await adminHeaders(page)
+    const name = `SSO Rename ${Date.now()}`
+    const resp = await request.post('/api/v1/groups', { headers, data: { name } })
+    expect(resp.ok(), await resp.text()).toBeTruthy()
+    const group = await resp.json()
+
+    try {
+      setGroupSource(group.id, 'sso')
+
+      // API fails closed without confirm_name.
+      const blocked = await request.put(`/api/v1/groups/${group.id}`, {
+        headers, data: { name: `${name} API` },
+      })
+      expect(blocked.status()).toBe(409)
+
+      await page.goto('/groups')
+      const row = page.getByText(name).locator('..').locator('..')
+      await row.getByTitle('Group actions').click()
+      await page.getByText('Rename', { exact: true }).click()
+      const nameInput = page.getByLabel('Group name')
+      await nameInput.fill(`${name} v2`)
+      await nameInput.press('Enter')
+
+      await expect(page.getByText('Rename SSO-managed group?')).toBeVisible()
+      const confirm = page.getByRole('button', { name: 'Rename group' })
+      await expect(confirm).toBeDisabled()
+      await page.getByLabel('Confirm group name').fill('wrong-name')
+      await expect(confirm).toBeDisabled()
+      await page.getByLabel('Confirm group name').fill(name)
+      await expect(confirm).toBeEnabled()
+      await confirm.click()
+
+      await expect(page.getByText(`${name} v2`)).toBeVisible()
+    } finally {
+      await request.delete(`/api/v1/groups/${group.id}?force=true`, { headers }).catch(() => {})
+    }
+  })
 })
