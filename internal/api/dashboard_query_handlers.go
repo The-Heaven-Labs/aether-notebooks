@@ -306,6 +306,163 @@ func optionsFromResult(outputs []models.Output, labelCol, valueCol string) ([]mo
 	return options, nil
 }
 
+func (s *Server) resolvePublicDashboard(ctx context.Context, token string) (*models.Dashboard, error) {
+	var d models.Dashboard
+	var settingsOut []byte
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT d.id, d.org_id, d.title, d.settings, d.created_by
+		 FROM public_tokens pt
+		 JOIN orgs o ON o.id = pt.org_id AND o.public_sharing_enabled = true
+		 JOIN dashboards d ON d.id = pt.resource_id AND d.deleted_at IS NULL
+		 WHERE pt.token = $1 AND pt.resource_type = 'dashboard'`,
+		token,
+	).Scan(&d.ID, &d.OrgID, &d.Title, &settingsOut, &d.CreatedBy)
+	if err != nil {
+		return nil, err
+	}
+	json.Unmarshal(settingsOut, &d.Settings)
+	return &d, nil
+}
+
+// @Summary Execute a public dashboard query widget
+// @Description Runs one query widget of a publicly shared dashboard when settings.public_live is enabled. Queries run as the dashboard creator and are rate-limited per token and client IP.
+// @Tags public
+// @Accept json
+// @Produce json
+// @Param token path string true "Public sharing token"
+// @Param request body object true "widget_id, variables, bypass_cache"
+// @Success 200 {object} map[string]interface{} "outputs, metrics, cached"
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security none
+// @Router /api/v1/public/{token}/execute [post]
+func (s *Server) handlePublicDashboardExecute(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	ctx := r.Context()
+
+	var req dashboardExecuteRequest
+	if err := decodeJSON(r, &req); err != nil || req.WidgetID == "" {
+		writeError(w, http.StatusBadRequest, "widget_id is required")
+		return
+	}
+	dash, err := s.resolvePublicDashboard(ctx, token)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "resource not found or sharing disabled")
+		return
+	}
+	if !dash.Settings.PublicLive {
+		writeError(w, http.StatusForbidden, "live queries are not enabled for this dashboard")
+		return
+	}
+	widget, err := s.loadQueryWidget(ctx, dash.ID, req.WidgetID)
+	if err == pgx.ErrNoRows {
+		writeError(w, http.StatusNotFound, "widget not found")
+		return
+	}
+	if err != nil || widget.ConnectorID == nil || widget.Query == nil {
+		writeError(w, http.StatusBadRequest, "widget is not a query widget")
+		return
+	}
+	if widget.Language != "" && widget.Language != "sql" {
+		writeError(w, http.StatusBadRequest, "only SQL query widgets can be executed")
+		return
+	}
+	if err := dashboard.ValidateVariables(dash.Settings.Variables); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	sqlText, err := dashboard.Interpolate(*widget.Query, dash.Settings.Variables, req.Variables)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp, err := s.runDashboardQuery(ctx, dashboardQueryParams{
+		OrgID:        dash.OrgID,
+		Identity:     dashboardIdentity{UserID: dash.CreatedBy, Role: "viewer"},
+		ConnectorID:  *widget.ConnectorID,
+		SQL:          sqlText,
+		BypassCache:  req.BypassCache,
+		CacheSeconds: dash.Settings.QueryCacheSeconds,
+		CacheScope:   "token:" + token,
+	})
+	if err != nil {
+		writeDashboardQueryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// @Summary Run a public dashboard variable's options query
+// @Description Executes the query-backed options for a variable of a publicly shared dashboard when settings.public_live is enabled.
+// @Tags public
+// @Accept json
+// @Produce json
+// @Param token path string true "Public sharing token"
+// @Param name path string true "Variable name"
+// @Success 200 {object} map[string]any
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security none
+// @Router /api/v1/public/{token}/variables/{name}/options [post]
+func (s *Server) handlePublicDashboardVariableOptions(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	name := r.PathValue("name")
+	ctx := r.Context()
+
+	var req dashboardVariableOptionsRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	dash, err := s.resolvePublicDashboard(ctx, token)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "resource not found or sharing disabled")
+		return
+	}
+	if !dash.Settings.PublicLive {
+		writeError(w, http.StatusForbidden, "live queries are not enabled for this dashboard")
+		return
+	}
+	v := findDashboardVariable(dash.Settings.Variables, name)
+	if v == nil {
+		writeError(w, http.StatusNotFound, "variable not found")
+		return
+	}
+	if v.Options == nil || v.Options.Mode != "query" || v.Options.Query == nil {
+		writeError(w, http.StatusBadRequest, "variable has no query-backed options")
+		return
+	}
+	if err := dashboard.ValidateVariables(dash.Settings.Variables); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	sqlText, err := dashboard.Interpolate(v.Options.Query.SQL, dash.Settings.Variables, req.Variables)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp, err := s.runDashboardQuery(ctx, dashboardQueryParams{
+		OrgID:           dash.OrgID,
+		Identity:        dashboardIdentity{UserID: dash.CreatedBy, Role: "viewer"},
+		ConnectorID:     v.Options.Query.ConnectorID,
+		SQL:             sqlText,
+		CacheSeconds:    dash.Settings.QueryCacheSeconds,
+		MaxRowsOverride: dashboardOptionMaxRows,
+		Timeout:         dashboardOptionTimeout,
+		CacheScope:      "token:" + token,
+	})
+	if err != nil {
+		writeDashboardQueryError(w, err)
+		return
+	}
+	options, err := optionsFromResult(resp.Outputs, v.Options.LabelColumn, v.Options.ValueColumn)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"options": options})
+}
+
 func (s *Server) loadDashboardSettings(ctx context.Context, orgID, dashID string) (*models.Dashboard, error) {
 	var d models.Dashboard
 	var settingsOut []byte

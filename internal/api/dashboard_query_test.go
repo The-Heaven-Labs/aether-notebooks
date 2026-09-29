@@ -234,6 +234,101 @@ func TestDashboardVariableOptionsRejectsStaticVariable(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "no query-backed options")
 }
 
+func shareDashboard(t *testing.T, srv *api.Server, token, dashID string) string {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/api/v1/dashboards/"+dashID+"/share", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var resp map[string]any
+	json.NewDecoder(rec.Body).Decode(&resp)
+	return resp["token"].(string)
+}
+
+func publicDashboardExecute(t *testing.T, srv *api.Server, token string, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	raw, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/public/"+token+"/execute", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-For", fmt.Sprintf("10.%d.%d.%d", time.Now().UnixNano()%250, (time.Now().UnixNano()/250)%250, 7))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestPublicDashboardExecuteRequiresOptIn(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("pub-optin-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Pub OptIn Org")
+	connID := createConnector(t, srv, token)
+	dashID := createDashWithSettings(t, srv, token, nil)
+	widgetID := addQueryWidget(t, srv, token, dashID, connID, "SELECT 1 AS x")
+	publicToken := shareDashboard(t, srv, token, dashID)
+
+	rec := publicDashboardExecute(t, srv, publicToken, map[string]any{"widget_id": widgetID})
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "live queries are not enabled")
+}
+
+func TestPublicDashboardExecuteRunsAsCreator(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("pub-live-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Pub Live Org")
+	connID := createConnector(t, srv, token)
+	dashID := createDashWithSettings(t, srv, token, map[string]any{"public_live": true})
+	widgetID := addQueryWidget(t, srv, token, dashID, connID, "SELECT 1 AS x")
+	publicToken := shareDashboard(t, srv, token, dashID)
+
+	rec := publicDashboardExecute(t, srv, publicToken, map[string]any{"widget_id": widgetID})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	outputs := resp["outputs"].([]any)
+	require.NotEmpty(t, outputs)
+	rows := outputs[0].(map[string]any)["data"].(map[string]any)["rows"].([]any)
+	require.Len(t, rows, 1)
+}
+
+func TestPublicDashboardExecuteRateLimited(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("pub-rl-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Pub RL Org")
+	connID := createConnector(t, srv, token)
+	dashID := createDashWithSettings(t, srv, token, map[string]any{"public_live": true})
+	widgetID := addQueryWidget(t, srv, token, dashID, connID, "SELECT 1 AS x")
+	publicToken := shareDashboard(t, srv, token, dashID)
+
+	// Fresh client IP so the limiter key is isolated from other tests.
+	ip := fmt.Sprintf("192.0.2.%d", time.Now().UnixNano()%250)
+	dispatch := func() *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(map[string]any{"widget_id": widgetID})
+		req := httptest.NewRequest("POST", "/api/v1/public/"+publicToken+"/execute", bytes.NewReader(raw))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Forwarded-For", ip)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		return rec
+	}
+
+	first := dispatch()
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+	require.Equal(t, "60", first.Header().Get("X-RateLimit-Limit"))
+
+	got429 := false
+	for i := 0; i < 65; i++ {
+		if rec := dispatch(); rec.Code == http.StatusTooManyRequests {
+			got429 = true
+			break
+		}
+	}
+	require.True(t, got429, "expected 429 after exceeding the public execute rate limit")
+}
+
 func TestDashboardQueryExecuteUnknownVariableReturns400(t *testing.T) {
 	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
