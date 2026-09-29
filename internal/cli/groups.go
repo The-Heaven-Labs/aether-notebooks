@@ -23,8 +23,11 @@ func (c *Client) CreateGroup(name string) (*Group, error) {
 	return &g, nil
 }
 
-func (c *Client) UpdateGroup(id, name string) (*Group, error) {
+func (c *Client) UpdateGroup(id, name, confirmName string) (*Group, error) {
 	body := map[string]interface{}{"name": name}
+	if confirmName != "" {
+		body["confirm_name"] = confirmName
+	}
 	var g Group
 	if err := c.PutJSON("/api/v1/groups/"+id, body, &g); err != nil {
 		return nil, err
@@ -103,7 +106,7 @@ func GroupsCmd() *cobra.Command {
 			return c
 		}(),
 		func() *cobra.Command {
-			var name string
+			var name, confirmName string
 			c := &cobra.Command{
 				Use:   "update <id>",
 				Short: "Rename a group",
@@ -113,7 +116,7 @@ func GroupsCmd() *cobra.Command {
 					if err != nil {
 						return err
 					}
-					g, err := cl.UpdateGroup(args[0], name)
+					g, err := cl.UpdateGroup(args[0], name, confirmName)
 					if err != nil {
 						return err
 					}
@@ -122,6 +125,7 @@ func GroupsCmd() *cobra.Command {
 				},
 			}
 			c.Flags().StringVarP(&name, "name", "n", "", "New group name (required)")
+			c.Flags().StringVar(&confirmName, "confirm-name", "", "Current group name; required to rename an SSO-managed group")
 			c.MarkFlagRequired("name")
 			return c
 		}(),
