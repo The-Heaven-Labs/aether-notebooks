@@ -616,14 +616,30 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 			Width  int `json:"width"`
 			Height int `json:"height"`
 		} `json:"layout,omitempty"`
-		Config map[string]interface{} `json:"config,omitempty"`
+		Config      map[string]interface{} `json:"config,omitempty"`
+		Type        *models.WidgetType     `json:"type,omitempty"`
+		ConnectorID *string                `json:"connector_id,omitempty"`
+		Query       *string                `json:"query,omitempty"`
+		Language    *string                `json:"language,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if req.Layout == nil && req.Config == nil {
-		writeError(w, http.StatusBadRequest, "layout or config required")
+	if req.Layout == nil && req.Config == nil && req.Type == nil && req.ConnectorID == nil && req.Query == nil && req.Language == nil {
+		writeError(w, http.StatusBadRequest, "layout, config, type, or query fields required")
+		return
+	}
+	if req.Type != nil {
+		switch *req.Type {
+		case models.WidgetChart, models.WidgetTable, models.WidgetText, models.WidgetMetric:
+		default:
+			writeError(w, http.StatusBadRequest, "invalid widget type")
+			return
+		}
+	}
+	if req.ConnectorID != nil && *req.ConnectorID == "" {
+		writeError(w, http.StatusBadRequest, "connector_id cannot be empty")
 		return
 	}
 
@@ -655,6 +671,27 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 		}
 		setParts = append(setParts, fmt.Sprintf("config=$%d", len(args)+1))
 		args = append(args, configJSON)
+	}
+
+	if req.Type != nil {
+		setParts = append(setParts, fmt.Sprintf("type=$%d", len(args)+1))
+		args = append(args, *req.Type)
+	}
+	if req.ConnectorID != nil {
+		setParts = append(setParts, fmt.Sprintf("connector_id=$%d", len(args)+1))
+		args = append(args, *req.ConnectorID)
+	}
+	if req.Query != nil {
+		setParts = append(setParts, fmt.Sprintf("query=$%d", len(args)+1))
+		args = append(args, *req.Query)
+	}
+	if req.Language != nil {
+		if *req.Language != "sql" {
+			writeError(w, http.StatusBadRequest, "only sql widgets are supported")
+			return
+		}
+		setParts = append(setParts, fmt.Sprintf("language=$%d", len(args)+1))
+		args = append(args, *req.Language)
 	}
 
 	setParts = append(setParts, "updated_at=NOW()")

@@ -477,6 +477,49 @@ func TestConvertRejectsNonCellWidget(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "not linked to a notebook cell")
 }
 
+func TestUpdateWidgetTypeAndQuerySource(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("widget-update-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Widget Update Org")
+	connID := createConnector(t, srv, token)
+	dashID := createDashWithSettings(t, srv, token, nil)
+	widgetID := addQueryWidget(t, srv, token, dashID, connID, "SELECT 1 AS x")
+
+	put := func(body map[string]any) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(body)
+		req := httptest.NewRequest("PUT", "/api/v1/dashboards/"+dashID+"/widgets/"+widgetID, bytes.NewReader(raw))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-AETHER-Admin-Mode", "true")
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		return rec
+	}
+
+	require.Equal(t, http.StatusNoContent, put(map[string]any{"type": "chart"}).Code)
+	require.Equal(t, http.StatusNoContent, put(map[string]any{"query": "SELECT 2 AS x", "connector_id": connID}).Code)
+
+	req := httptest.NewRequest("GET", "/api/v1/dashboards/"+dashID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var dash struct {
+		Widgets []struct {
+			Type  string `json:"type"`
+			Query string `json:"query"`
+		} `json:"widgets"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&dash))
+	require.Len(t, dash.Widgets, 1)
+	require.Equal(t, "chart", dash.Widgets[0].Type)
+	require.Equal(t, "SELECT 2 AS x", dash.Widgets[0].Query)
+
+	require.Equal(t, http.StatusBadRequest, put(map[string]any{"type": "bogus"}).Code)
+}
+
 func TestDashboardQueryExecuteUnknownVariableReturns400(t *testing.T) {
 	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
