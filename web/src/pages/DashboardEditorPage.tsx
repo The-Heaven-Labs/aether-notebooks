@@ -16,6 +16,7 @@ import { Skeleton } from '../components/Skeleton'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { WidgetConfigDrawer } from '../components/WidgetConfigDrawer'
+import { DashboardVariablesPanel } from '../components/DashboardVariablesPanel'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { SqlEditor } from '../components/SqlEditor'
 import { ReadOnlyCode } from '../components/ReadOnlyCode'
@@ -143,6 +144,8 @@ const markSaved = useCallback(() => {
   const [pickerType, setPickerType] = useState<'table' | 'chart'>('table')
   const [pickerError, setPickerError] = useState<string | null>(null)
   const [editingWidget, setEditingWidget] = useState<Widget | null>(null)
+  const [showVariables, setShowVariables] = useState(false)
+  const [variablePrefill, setVariablePrefill] = useState<string | null>(null)
 
   const [containerWidth, setContainerWidth] = useState(0)
   const [deleteWidgetTarget, setDeleteWidgetTarget] = useState<string | null>(null)
@@ -394,6 +397,19 @@ const markSaved = useCallback(() => {
               ))}
             </div>
           )}
+          <button
+            type="button"
+            style={{
+              padding: '5px 12px', fontSize: 12, fontWeight: 600,
+              background: 'none', color: 'var(--text-secondary)',
+              border: '1px solid var(--border)', borderRadius: 4,
+              cursor: 'pointer',
+            }}
+            onClick={() => setShowVariables(true)}
+            title="Manage dashboard variables and filters"
+          >
+            Variables
+          </button>
           {saveStatus && (
             <span style={{
               fontSize: 11, fontWeight: 600, color: saveStatus === 'saving' ? 'var(--text-muted)' : 'var(--success)',
@@ -670,6 +686,20 @@ const markSaved = useCallback(() => {
           dashboard={dashboard}
           widget={editingWidget}
           onClose={() => setEditingWidget(null)}
+          onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
+          onDefineVariable={(name) => {
+            setVariablePrefill(name)
+            setShowVariables(true)
+          }}
+        />
+      )}
+      {showVariables && (
+        <DashboardVariablesPanel
+          key={variablePrefill ?? 'variables'}
+          dashboardId={id!}
+          dashboard={dashboard}
+          initialNewName={variablePrefill}
+          onClose={() => { setShowVariables(false); setVariablePrefill(null) }}
           onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
         />
       )}

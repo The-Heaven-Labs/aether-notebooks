@@ -141,6 +141,8 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   const [running, setRunning] = useState(false)
   const [runResult, setRunResult] = useState<WidgetQueryResult | null>(null)
   const [runError, setRunError] = useState<string | null>(null)
+  const [converting, setConverting] = useState(false)
+  const [convertError, setConvertError] = useState<string | null>(null)
   const [serviceChoice, setServiceChoice] = useState<ServiceChoicePrompt | null>(null)
   const [serviceChoiceError, setServiceChoiceError] = useState<string | null>(null)
   const [serviceChoiceSaving, setServiceChoiceSaving] = useState(false)
@@ -212,6 +214,20 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
     }
   }
 
+  const convertToQuery = async () => {
+    setConverting(true)
+    setConvertError(null)
+    try {
+      await api.post(`/api/v1/dashboards/${dashboardId}/widgets/${widget.id}/convert-to-query`)
+      onSaved()
+      onClose()
+    } catch (e) {
+      setConvertError(e instanceof Error ? e.message : 'Failed to convert widget')
+    } finally {
+      setConverting(false)
+    }
+  }
+
   const chooseService = async (serviceConnectorId: string) => {
     const warehouseId = serviceChoice?.warehouseId
     if (!warehouseId) {
@@ -280,9 +296,16 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
             )}
           </>
         ) : (
-          <div style={styles.muted}>
-            Notebook cell widget. Edit its layout here, or convert it to a query widget to own its SQL.
-          </div>
+          <>
+            <div style={styles.muted}>
+              Notebook cell widget. Convert it to a query widget to own its SQL and reference
+              dashboard variables.
+            </div>
+            <button type="button" style={styles.runBtn} onClick={convertToQuery} disabled={converting}>
+              {converting ? 'Converting…' : 'Convert to query widget'}
+            </button>
+            {convertError && <div style={styles.error} role="alert">{convertError}</div>}
+          </>
         )}
 
         <label style={styles.sectionLabel} htmlFor="widget-type">Visualization</label>

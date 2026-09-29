@@ -129,6 +129,30 @@ describe('WidgetConfigDrawer', () => {
     await waitFor(() => expect(bodies).toContainEqual({ type: 'chart' }))
   })
 
+  test('converts a cell widget to a query widget', async () => {
+    let converted = false
+    server.use(
+      http.post('/api/v1/dashboards/d1/widgets/w2/convert-to-query', () => {
+        converted = true
+        return HttpResponse.json({ widget: {}, variables: [] })
+      }),
+    )
+    const onSaved = vi.fn()
+    const cellWidget = queryWidget({
+      id: 'w2',
+      connector_id: null,
+      query: null,
+      notebook_id: 'nb-1',
+      cell_id: 'cell-1',
+    })
+    render(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={cellWidget} onClose={() => {}} onSaved={onSaved} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Convert to query widget' }))
+    await waitFor(() => expect(converted).toBe(true))
+    expect(onSaved).toHaveBeenCalled()
+  })
+
   test('debounces SQL source saves with the connector', async () => {
     const bodies: Array<Record<string, unknown>> = []
     server.use(
