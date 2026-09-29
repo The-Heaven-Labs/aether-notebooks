@@ -2,6 +2,14 @@ import { test, expect } from '@playwright/test'
 import type { APIRequestContext, Page } from '@playwright/test'
 import { registerAndOnboard } from './helpers'
 
+/**
+ * Requires a running dev stack (API + Postgres) and the Vite dev server on
+ * :5173. The API-side Postgres connector host defaults to `localhost` (native
+ * API run); override with E2E_PG_CONNECTOR_HOST when the API runs in Docker
+ * (e.g. `aether-postgres`), mirroring the warehouse specs.
+ */
+const PG_CONNECTOR_HOST = process.env.E2E_PG_CONNECTOR_HOST ?? 'localhost'
+
 async function authHeaders(page: Page): Promise<{ Authorization: string }> {
   const token = await page.evaluate(() => localStorage.getItem('aether_token'))
   return { Authorization: `Bearer ${token}` }
@@ -20,7 +28,7 @@ async function createLiveDashboard(
       name: `Filters DB ${opts.suffix}`,
       type: 'postgres',
       config: {
-        host: 'aether-postgres',
+        host: PG_CONNECTOR_HOST,
         port: 5432,
         user: 'aether',
         password: 'aether_dev',

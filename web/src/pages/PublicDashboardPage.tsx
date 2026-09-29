@@ -100,8 +100,8 @@ export function PublicDashboardPage() {
               const top = l.row * (ROW_HEIGHT + gap)
               const width = l.width * colWidth + (l.width - 1) * gap
               const height = l.height * ROW_HEIGHT + (l.height - 1) * gap
-              const wrapperStyle = {
-                position: 'absolute' as const,
+              const wrapperStyle: React.CSSProperties = {
+                position: 'absolute',
                 left, top, width, height,
                 background: 'var(--bg-card)',
                 border: '1px solid var(--border)',

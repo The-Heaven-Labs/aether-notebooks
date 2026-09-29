@@ -64,10 +64,10 @@ describe('DashboardVariablesContext', () => {
   })
 
   test('loads query-backed options with parent values', async () => {
-    let received: { variables?: Record<string, unknown> } | null = null
+    const received: { variables?: Record<string, unknown> } = {}
     server.use(
       http.post('/api/v1/dashboards/d1/variables/city/options', async ({ request }) => {
-        received = (await request.json()) as { variables?: Record<string, unknown> }
+        Object.assign(received, (await request.json()) as { variables?: Record<string, unknown> })
         return HttpResponse.json({ options: [{ label: 'Paris', value: 'paris' }] })
       }),
     )
@@ -77,7 +77,7 @@ describe('DashboardVariablesContext', () => {
       () => expect(result.current.optionState.city?.options).toEqual([{ label: 'Paris', value: 'paris' }]),
       { timeout: 3000 },
     )
-    expect(received?.variables).toMatchObject({ country: 'US' })
+    expect(received.variables).toMatchObject({ country: 'US' })
   })
 
   test('exposes loading and error state for failed option queries', async () => {
