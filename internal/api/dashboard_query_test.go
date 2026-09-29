@@ -155,6 +155,85 @@ func TestDashboardQueryExecuteRequiresViewWithData(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 
+func dashboardVariableOptions(t *testing.T, srv *api.Server, token, dashID, name string, body map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	raw, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/v1/dashboards/"+dashID+"/variables/"+name+"/options", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestDashboardVariableOptions(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("dash-opts-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Dash Opts Org")
+	connID := createConnector(t, srv, token)
+
+	settings := map[string]any{
+		"variables": []map[string]any{
+			{"name": "country", "type": "text", "default": "US"},
+			{
+				"name": "city", "label": "City", "type": "single_select", "depends_on": []string{"country"},
+				"options": map[string]any{
+					"mode": "query",
+					"query": map[string]any{
+						"connector_id": connID,
+						"sql":          "SELECT 'Paris' AS label, 'paris' AS value",
+					},
+					"label_column": "label", "value_column": "value",
+				},
+			},
+		},
+	}
+	dashID := createDashWithSettings(t, srv, token, settings)
+
+	rec := dashboardVariableOptions(t, srv, token, dashID, "city", map[string]any{"variables": map[string]any{"country": "FR"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var resp struct {
+		Options []struct {
+			Label string `json:"label"`
+			Value string `json:"value"`
+		} `json:"options"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(t, []struct {
+		Label string `json:"label"`
+		Value string `json:"value"`
+	}{{Label: "Paris", Value: "paris"}}, resp.Options)
+
+	// Unknown variable → 404.
+	rec = dashboardVariableOptions(t, srv, token, dashID, "nope", nil)
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+func TestDashboardVariableOptionsRejectsStaticVariable(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("dash-opts-static-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Dash Opts Static Org")
+	settings := map[string]any{
+		"variables": []map[string]any{
+			{
+				"name": "region", "type": "single_select",
+				"options": map[string]any{
+					"mode":   "static",
+					"values": []map[string]any{{"label": "EMEA", "value": "EMEA"}},
+				},
+			},
+		},
+	}
+	dashID := createDashWithSettings(t, srv, token, settings)
+
+	rec := dashboardVariableOptions(t, srv, token, dashID, "region", nil)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "no query-backed options")
+}
+
 func TestDashboardQueryExecuteUnknownVariableReturns400(t *testing.T) {
 	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)

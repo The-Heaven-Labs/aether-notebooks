@@ -175,6 +175,137 @@ func (s *Server) handleExecuteDashboardWidget(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// @Summary Run a dashboard variable's options query
+// @Description Executes the query-backed options for a dashboard variable and returns label/value pairs
+// @Tags dashboards
+// @Accept json
+// @Produce json
+// @Param id path string true "Dashboard ID"
+// @Param name path string true "Variable name"
+// @Success 200 {object} map[string]any
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Security BearerAuth
+// @Router /dashboards/{id}/variables/{name}/options [post]
+func (s *Server) handleDashboardVariableOptions(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	dashID := r.PathValue("id")
+	name := r.PathValue("name")
+	ctx := r.Context()
+
+	var req dashboardVariableOptionsRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	dash, err := s.loadDashboardSettings(ctx, claims.OrgID, dashID)
+	if err == pgx.ErrNoRows {
+		writeError(w, http.StatusNotFound, "dashboard not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "view_with_data")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "you need view_with_data permission to run dashboard queries")
+		return
+	}
+
+	v := findDashboardVariable(dash.Settings.Variables, name)
+	if v == nil {
+		writeError(w, http.StatusNotFound, "variable not found")
+		return
+	}
+	if v.Options == nil || v.Options.Mode != "query" || v.Options.Query == nil {
+		writeError(w, http.StatusBadRequest, "variable has no query-backed options")
+		return
+	}
+	if err := dashboard.ValidateVariables(dash.Settings.Variables); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	sqlText, err := dashboard.Interpolate(v.Options.Query.SQL, dash.Settings.Variables, req.Variables)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	resp, err := s.runDashboardQuery(ctx, dashboardQueryParams{
+		OrgID:           claims.OrgID,
+		Identity:        dashboardIdentity{UserID: claims.UserID, Role: claims.Role},
+		ConnectorID:     v.Options.Query.ConnectorID,
+		SQL:             sqlText,
+		CacheSeconds:    dash.Settings.QueryCacheSeconds,
+		MaxRowsOverride: dashboardOptionMaxRows,
+		Timeout:         dashboardOptionTimeout,
+	})
+	if err != nil {
+		writeDashboardQueryError(w, err)
+		return
+	}
+
+	options, err := optionsFromResult(resp.Outputs, v.Options.LabelColumn, v.Options.ValueColumn)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	s.audit.Log(ctx, audit.Entry{
+		OrgID: claims.OrgID, UserID: claims.UserID,
+		Action: "dashboard.variable_options", ResourceType: "dashboard", ResourceID: dashID,
+		Metadata: map[string]any{"variable": name, "option_count": len(options)},
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"options": options})
+}
+
+func findDashboardVariable(vars []models.DashboardVariable, name string) *models.DashboardVariable {
+	for i := range vars {
+		if vars[i].Name == name {
+			return &vars[i]
+		}
+	}
+	return nil
+}
+
+func optionsFromResult(outputs []models.Output, labelCol, valueCol string) ([]models.OptionValue, error) {
+	if len(outputs) == 0 {
+		return []models.OptionValue{}, nil
+	}
+	rs, ok := outputs[0].Data.(*executor.ResultSet)
+	if !ok || rs == nil {
+		return []models.OptionValue{}, nil
+	}
+	labelIdx, valueIdx := 0, 1
+	for i, c := range rs.Columns {
+		if c.Name == labelCol && labelCol != "" {
+			labelIdx = i
+		}
+		if c.Name == valueCol && valueCol != "" {
+			valueIdx = i
+		}
+	}
+	if len(rs.Columns) == 1 {
+		valueIdx = 0
+	}
+	options := make([]models.OptionValue, 0, len(rs.Rows))
+	for _, row := range rs.Rows {
+		get := func(i int) string {
+			if i < 0 || i >= len(row) || row[i] == nil {
+				return ""
+			}
+			return fmt.Sprintf("%v", row[i])
+		}
+		options = append(options, models.OptionValue{Label: get(labelIdx), Value: get(valueIdx)})
+	}
+	return options, nil
+}
+
 func (s *Server) loadDashboardSettings(ctx context.Context, orgID, dashID string) (*models.Dashboard, error) {
 	var d models.Dashboard
 	var settingsOut []byte
