@@ -40,11 +40,14 @@ type widgetCellData struct {
 }
 
 type addWidgetRequest struct {
-	NotebookID *string                `json:"notebook_id"`
-	CellID     *string                `json:"cell_id"`
-	Type       models.WidgetType      `json:"type"`
-	Layout     models.WidgetLayout    `json:"layout"`
-	Config     map[string]interface{} `json:"config,omitempty"`
+	NotebookID  *string                `json:"notebook_id"`
+	CellID      *string                `json:"cell_id"`
+	ConnectorID *string                `json:"connector_id"`
+	Query       *string                `json:"query"`
+	Language    *string                `json:"language"`
+	Type        models.WidgetType      `json:"type"`
+	Layout      models.WidgetLayout    `json:"layout"`
+	Config      map[string]interface{} `json:"config,omitempty"`
 }
 
 // @Summary Create a dashboard
@@ -502,6 +505,32 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate the widget source: exactly one of notebook-cell or query.
+	// Source-less widgets (e.g. text) remain allowed for backwards compatibility.
+	if req.NotebookID != nil && req.ConnectorID != nil {
+		writeError(w, http.StatusBadRequest, "widget cannot reference both a notebook cell and a query connector")
+		return
+	}
+	if req.ConnectorID != nil {
+		if req.CellID != nil {
+			writeError(w, http.StatusBadRequest, "query widgets cannot reference a cell")
+			return
+		}
+		if req.Query == nil || *req.Query == "" {
+			writeError(w, http.StatusBadRequest, "query is required for query widgets")
+			return
+		}
+	} else if req.NotebookID != nil || req.CellID != nil {
+		if req.NotebookID == nil || req.CellID == nil {
+			writeError(w, http.StatusBadRequest, "cell widgets require notebook_id and cell_id")
+			return
+		}
+	}
+	lang := "sql"
+	if req.Language != nil && *req.Language != "" {
+		lang = *req.Language
+	}
+
 	// Validate widget references a notebook the user can view (prevents IDOR escalation)
 	if req.NotebookID != nil {
 		nbOK, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", *req.NotebookID, "view")
@@ -530,12 +559,12 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 	var widget models.Widget
 	var layoutOut, configOut []byte
 	err = s.db.Pool.QueryRow(ctx,
-		`INSERT INTO widgets (dashboard_id, notebook_id, cell_id, type, layout, config)
-		 VALUES ($1, $2, $3, $4, $5, $6)
-		 RETURNING id, dashboard_id, notebook_id, cell_id, type, layout, config, created_at, updated_at`,
-		dashID, req.NotebookID, req.CellID, req.Type, layoutJSON, configJSON,
+		`INSERT INTO widgets (dashboard_id, notebook_id, cell_id, connector_id, query, language, type, layout, config)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		 RETURNING id, dashboard_id, notebook_id, cell_id, connector_id, query, language, type, layout, config, created_at, updated_at`,
+		dashID, req.NotebookID, req.CellID, req.ConnectorID, req.Query, lang, req.Type, layoutJSON, configJSON,
 	).Scan(&widget.ID, &widget.DashboardID, &widget.NotebookID, &widget.CellID,
-		&widget.Type, &layoutOut, &configOut, &widget.CreatedAt, &widget.UpdatedAt)
+		&widget.ConnectorID, &widget.Query, &widget.Language, &widget.Type, &layoutOut, &configOut, &widget.CreatedAt, &widget.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to add widget")
 		return
@@ -901,7 +930,7 @@ func (s *Server) servePublicDashboard(w http.ResponseWriter, r *http.Request, da
 
 func (s *Server) loadWidgets(ctx context.Context, dashID string) ([]models.Widget, error) {
 	rows, err := s.db.Pool.Query(ctx,
-		`SELECT id, dashboard_id, notebook_id, cell_id, type, layout, config, created_at, updated_at
+		`SELECT id, dashboard_id, notebook_id, cell_id, connector_id, query, language, type, layout, config, created_at, updated_at
 		 FROM widgets WHERE dashboard_id = $1 ORDER BY created_at ASC`,
 		dashID,
 	)
@@ -915,7 +944,7 @@ func (s *Server) loadWidgets(ctx context.Context, dashID string) ([]models.Widge
 		var wgt models.Widget
 		var layoutOut, configOut []byte
 		if err := rows.Scan(&wgt.ID, &wgt.DashboardID, &wgt.NotebookID, &wgt.CellID,
-			&wgt.Type, &layoutOut, &configOut, &wgt.CreatedAt, &wgt.UpdatedAt); err != nil {
+			&wgt.ConnectorID, &wgt.Query, &wgt.Language, &wgt.Type, &layoutOut, &configOut, &wgt.CreatedAt, &wgt.UpdatedAt); err != nil {
 			return nil, err
 		}
 		json.Unmarshal(layoutOut, &wgt.Layout)

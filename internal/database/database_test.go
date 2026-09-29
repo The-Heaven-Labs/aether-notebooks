@@ -2,6 +2,7 @@ package database_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"slices"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/the-heaven-labs/aether/internal/database"
+	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 func TestConnect(t *testing.T) {
@@ -1009,5 +1011,107 @@ func TestMigration119GroupSource(t *testing.T) {
 	}
 	if err := sp.Rollback(ctx); err != nil {
 		t.Fatalf("rollback savepoint: %v", err)
+	}
+}
+
+func TestMigration121DashboardVariables(t *testing.T) {
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+	}
+	db, err := database.Connect(context.Background(), dsn, "")
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer db.Close()
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	ctx := context.Background()
+
+	// Schema: new columns exist.
+	for _, col := range []string{"connector_id", "query", "language"} {
+		var exists bool
+		if err := db.Pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='widgets' AND column_name=$1)`, col).Scan(&exists); err != nil {
+			t.Fatalf("column %s query: %v", col, err)
+		}
+		if !exists {
+			t.Fatalf("widgets.%s missing after V121", col)
+		}
+	}
+
+	// Conversion: run the marked block against a simulated legacy dashboard.
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `ALTER TABLE widgets DROP CONSTRAINT IF EXISTS widgets_type_check`); err != nil {
+		t.Fatalf("drop constraint: %v", err)
+	}
+	var orgID, userID, dashID string
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO orgs (name, slug) VALUES ('V121 Org', 'v121-' || md5(random()::text)) RETURNING id::text`).Scan(&orgID); err != nil {
+		t.Fatalf("insert org: %v", err)
+	}
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO users (email, name) VALUES ('v121-' || md5(random()::text) || '@example.com', 'V121') RETURNING id::text`).Scan(&userID); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO dashboards (org_id, title, settings, created_by)
+		 VALUES ($1, 'V121', '{"parameter_overrides":{"x":"y"}}', $2) RETURNING id::text`, orgID, userID).Scan(&dashID); err != nil {
+		t.Fatalf("insert dashboard: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO widgets (dashboard_id, type, layout, config) VALUES
+		 ($1, 'date_picker', '{}', '{"paramName":"start_date","label":"Start date"}'),
+		 ($1, 'multi_select', '{}', '{"paramName":"region","label":"Region","options":["EMEA","AMER"]}')`, dashID); err != nil {
+		t.Fatalf("insert widgets: %v", err)
+	}
+
+	content, err := os.ReadFile("migrations/V121__dashboard_query_widgets.sql")
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	startMarker, endMarker := "-- +conversion:start", "-- +conversion:end"
+	start := strings.Index(string(content), startMarker)
+	end := strings.Index(string(content), endMarker)
+	if start < 0 || end < 0 {
+		t.Fatal("conversion markers missing from V121")
+	}
+	if _, err := tx.Exec(ctx, string(content)[start+len(startMarker):end]); err != nil {
+		t.Fatalf("run conversion: %v", err)
+	}
+
+	var settings []byte
+	if err := tx.QueryRow(ctx, `SELECT settings FROM dashboards WHERE id=$1`, dashID).Scan(&settings); err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	var got struct {
+		Variables []models.DashboardVariable `json:"variables"`
+	}
+	if err := json.Unmarshal(settings, &got); err != nil {
+		t.Fatalf("unmarshal settings: %v", err)
+	}
+	if len(got.Variables) != 2 {
+		t.Fatalf("expected 2 variables, got %+v", got.Variables)
+	}
+	var region *models.DashboardVariable
+	for i := range got.Variables {
+		if got.Variables[i].Name == "region" {
+			region = &got.Variables[i]
+		}
+	}
+	if region == nil || region.Type != "multi_select" || region.Options == nil || len(region.Options.Values) != 2 {
+		t.Fatalf("region variable wrong: %+v", region)
+	}
+	var remaining int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM widgets WHERE dashboard_id=$1`, dashID).Scan(&remaining); err != nil {
+		t.Fatalf("count widgets: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("expected input widgets deleted, %d remain", remaining)
 	}
 }
