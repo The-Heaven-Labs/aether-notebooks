@@ -219,6 +219,10 @@ func (s *Server) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
 		req.Name, req.DisplayName != nil, display, groupID, claims.OrgID,
 	).Scan(&g.ID, &g.OrgID, &g.Name, &g.DisplayName, &g.Source, &g.CreatedAt)
 	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "a group with this name already exists")
+			return
+		}
 		writeError(w, http.StatusNotFound, "group not found")
 		return
 	}

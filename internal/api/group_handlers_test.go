@@ -437,3 +437,39 @@ func TestUpdateSSOGroupRenameRequiresConfirmation(t *testing.T) {
 	).Scan(&updateAudits))
 	require.Equal(t, 1, updateAudits)
 }
+
+func TestUpdateGroupDuplicateNameConflict(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("group-duplicate-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Group Duplicate Org")
+	ctx := context.Background()
+
+	create := func(name string) string {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"name": name})
+		req := httptest.NewRequest("POST", "/api/v1/groups", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		var g map[string]any
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&g))
+		return g["id"].(string)
+	}
+
+	create("Alpha")
+	secondID := create("Beta")
+
+	payload, _ := json.Marshal(map[string]any{"name": "Alpha"})
+	req := httptest.NewRequest("PUT", "/api/v1/groups/"+secondID, bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+
+	var dbName string
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx, `SELECT name FROM groups WHERE id=$1`, secondID).Scan(&dbName))
+	require.Equal(t, "Beta", dbName)
+}
