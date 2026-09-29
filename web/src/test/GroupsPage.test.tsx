@@ -533,6 +533,52 @@ describe('SSO group rename guard', () => {
     await waitFor(() => expect(putBody).toEqual({
       name: 'Analysts', display_name: '', confirm_name: 'aether-analysts',
     }))
+    expect(screen.queryByText('Rename SSO-managed group?')).toBeNull()
+  })
+
+  test('a case-only rename still prompts', async () => {
+    server.use(
+      http.get('/api/v1/groups', () => HttpResponse.json([ssoGroup])),
+      http.put('/api/v1/groups/g-sso', async ({ request }) => {
+        const body = await request.json() as Record<string, unknown>
+        return HttpResponse.json({ ...ssoGroup, name: body.name as string })
+      })
+    )
+    renderWithProviders(<GroupsPage />)
+    await screen.findByText('aether-analysts')
+
+    fireEvent.click(screen.getByTitle('Group actions'))
+    fireEvent.click(screen.getByText('Rename'))
+    const nameInput = screen.getByLabelText('Group name')
+    fireEvent.change(nameInput, { target: { value: 'AETHER-ANALYSTS' } })
+    fireEvent.keyDown(nameInput, { key: 'Enter' })
+
+    expect(await screen.findByText('Rename SSO-managed group?')).toBeInTheDocument()
+  })
+
+  test('shows the API error and closes the dialog when the rename fails', async () => {
+    server.use(
+      http.get('/api/v1/groups', () => HttpResponse.json([ssoGroup])),
+      http.put('/api/v1/groups/g-sso', () => HttpResponse.json(
+        { error: 'group is managed by SSO; renaming it disconnects sync' },
+        { status: 409 }
+      ))
+    )
+    renderWithProviders(<GroupsPage />)
+    await screen.findByText('aether-analysts')
+
+    fireEvent.click(screen.getByTitle('Group actions'))
+    fireEvent.click(screen.getByText('Rename'))
+    const nameInput = screen.getByLabelText('Group name')
+    fireEvent.change(nameInput, { target: { value: 'Analysts' } })
+    fireEvent.keyDown(nameInput, { key: 'Enter' })
+    await screen.findByText('Rename SSO-managed group?')
+
+    fireEvent.change(screen.getByLabelText('Confirm group name'), { target: { value: 'aether-analysts' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Rename group' }))
+
+    await waitFor(() => expect(screen.queryByText('Rename SSO-managed group?')).toBeNull())
+    expect(await screen.findByText(/managed by SSO/i)).toBeInTheDocument()
   })
 
   test('a display-label-only edit on an SSO group saves without the dialog', async () => {

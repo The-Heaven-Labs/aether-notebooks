@@ -330,7 +330,7 @@ export function GroupsPage() {
   const [renameDisplayValue, setRenameDisplayValue] = useState('')
 
   // SSO rename confirmation: pending rename awaiting typed confirmation
-  const [ssoRenameConfirm, setSsoRenameConfirm] = useState<{ group: Group; name: string; displayName: string } | null>(null)
+  const [ssoRenameConfirm, setSsoRenameConfirm] = useState<{ id: string; name: string; displayName: string } | null>(null)
   const [ssoConfirmNameInput, setSsoConfirmNameInput] = useState('')
   const ssoConfirmInputRef = useRef<HTMLInputElement>(null)
 
@@ -359,6 +359,8 @@ export function GroupsPage() {
     enabled: isAdmin,
   })
 
+  const ssoRenameGroup = ssoRenameConfirm ? groups.find((g) => g.id === ssoRenameConfirm.id) : undefined
+
   const updateGroup = useMutation({
     mutationFn: ({ id, name, display_name, confirm_name }: { id: string; name: string; display_name: string; confirm_name?: string }) =>
       api.put<Group>(`/api/v1/groups/${id}`, { name, display_name, confirm_name }),
@@ -368,7 +370,11 @@ export function GroupsPage() {
       setSsoRenameConfirm(null)
       setMutateError(null)
     },
-    onError: (err: Error) => setMutateError(err.message),
+    onError: (err: Error) => {
+      setMutateError(err.message)
+      setSsoRenameConfirm(null)
+      qc.invalidateQueries({ queryKey: ['groups'] })
+    },
   })
 
   const deleteGroup = useMutation({
@@ -513,19 +519,19 @@ export function GroupsPage() {
     const displayName = renameDisplayValue.trim()
     if (group && group.source === 'sso' && trimmed !== group.name) {
       setSsoConfirmNameInput('')
-      setSsoRenameConfirm({ group, name: trimmed, displayName })
+      setSsoRenameConfirm({ id: group.id, name: trimmed, displayName })
       return
     }
     updateGroup.mutate({ id, name: trimmed, display_name: displayName })
   }
 
   const handleSsoRenameConfirm = () => {
-    if (!ssoRenameConfirm) return
+    if (!ssoRenameConfirm || !ssoRenameGroup) return
     updateGroup.mutate({
-      id: ssoRenameConfirm.group.id,
+      id: ssoRenameConfirm.id,
       name: ssoRenameConfirm.name,
       display_name: ssoRenameConfirm.displayName,
-      confirm_name: ssoRenameConfirm.group.name,
+      confirm_name: ssoRenameGroup.name,
     })
   }
 
@@ -991,28 +997,32 @@ export function GroupsPage() {
         open={!!ssoRenameConfirm}
         title="Rename SSO-managed group?"
         message={
-          ssoRenameConfirm
-            ? `"${groupLabel(ssoRenameConfirm.group)}" is synced from your identity provider. Renaming it disconnects the sync: the next SSO login will create a new group for "${ssoRenameConfirm.group.name}" and remove members from this one, so its permissions and warehouse grants stop applying.`
+          ssoRenameGroup
+            ? `"${groupLabel(ssoRenameGroup)}" is synced from your identity provider. Renaming it disconnects the sync: the next SSO login will create a new group for "${ssoRenameGroup.name}" and remove members from this one, so its permissions and warehouse grants stop applying.`
             : ''
         }
         confirmLabel="Rename group"
         destructive
-        confirmDisabled={ssoConfirmNameInput !== ssoRenameConfirm?.group.name || updateGroup.isPending}
+        confirmDisabled={!ssoRenameGroup || ssoConfirmNameInput !== ssoRenameGroup.name || updateGroup.isPending}
         defaultFocusRef={ssoConfirmInputRef}
         onConfirm={handleSsoRenameConfirm}
         onCancel={() => setSsoRenameConfirm(null)}
       >
         <div style={{ marginBottom: 4 }}>
-          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>
-            Type <strong>{ssoRenameConfirm?.group.name}</strong> to confirm
+          <label
+            htmlFor="sso-confirm-name"
+            style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}
+          >
+            Type <strong>{ssoRenameGroup?.name}</strong> to confirm
           </label>
           <input
+            id="sso-confirm-name"
             ref={ssoConfirmInputRef}
             style={{ ...styles.input, width: '100%', boxSizing: 'border-box' }}
             value={ssoConfirmNameInput}
             onChange={(e) => setSsoConfirmNameInput(e.target.value)}
             aria-label="Confirm group name"
-            placeholder={ssoRenameConfirm?.group.name}
+            placeholder={ssoRenameGroup?.name}
           />
         </div>
       </ConfirmDialog>
