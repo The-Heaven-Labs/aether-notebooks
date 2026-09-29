@@ -329,6 +329,11 @@ export function GroupsPage() {
   const [renameValue, setRenameValue] = useState('')
   const [renameDisplayValue, setRenameDisplayValue] = useState('')
 
+  // SSO rename confirmation: pending rename awaiting typed confirmation
+  const [ssoRenameConfirm, setSsoRenameConfirm] = useState<{ group: Group; name: string; displayName: string } | null>(null)
+  const [ssoConfirmNameInput, setSsoConfirmNameInput] = useState('')
+  const ssoConfirmInputRef = useRef<HTMLInputElement>(null)
+
   // New group form
   const [newGroupName, setNewGroupName] = useState('')
   const [newGroupDisplayName, setNewGroupDisplayName] = useState('')
@@ -355,11 +360,12 @@ export function GroupsPage() {
   })
 
   const updateGroup = useMutation({
-    mutationFn: ({ id, name, display_name }: { id: string; name: string; display_name: string }) =>
-      api.put<Group>(`/api/v1/groups/${id}`, { name, display_name }),
+    mutationFn: ({ id, name, display_name, confirm_name }: { id: string; name: string; display_name: string; confirm_name?: string }) =>
+      api.put<Group>(`/api/v1/groups/${id}`, { name, display_name, confirm_name }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['groups'] })
       setRenamingId(null)
+      setSsoRenameConfirm(null)
       setMutateError(null)
     },
     onError: (err: Error) => setMutateError(err.message),
@@ -503,7 +509,24 @@ export function GroupsPage() {
       setMutateError('"everyone" is a reserved group name')
       return
     }
-    updateGroup.mutate({ id, name: trimmed, display_name: renameDisplayValue.trim() })
+    const group = groups.find((g) => g.id === id)
+    const displayName = renameDisplayValue.trim()
+    if (group && group.source === 'sso' && trimmed !== group.name) {
+      setSsoConfirmNameInput('')
+      setSsoRenameConfirm({ group, name: trimmed, displayName })
+      return
+    }
+    updateGroup.mutate({ id, name: trimmed, display_name: displayName })
+  }
+
+  const handleSsoRenameConfirm = () => {
+    if (!ssoRenameConfirm) return
+    updateGroup.mutate({
+      id: ssoRenameConfirm.group.id,
+      name: ssoRenameConfirm.name,
+      display_name: ssoRenameConfirm.displayName,
+      confirm_name: ssoRenameConfirm.group.name,
+    })
   }
 
   const [deleteGroupConfirm, setDeleteGroupConfirm] = useState<Group | null>(null)
@@ -964,6 +987,35 @@ export function GroupsPage() {
         }}
         onCancel={() => setRemovePendingConfirm(null)}
       />
+      <ConfirmDialog
+        open={!!ssoRenameConfirm}
+        title="Rename SSO-managed group?"
+        message={
+          ssoRenameConfirm
+            ? `"${groupLabel(ssoRenameConfirm.group)}" is synced from your identity provider. Renaming it disconnects the sync: the next SSO login will create a new group for "${ssoRenameConfirm.group.name}" and remove members from this one, so its permissions and warehouse grants stop applying.`
+            : ''
+        }
+        confirmLabel="Rename group"
+        destructive
+        confirmDisabled={ssoConfirmNameInput !== ssoRenameConfirm?.group.name || updateGroup.isPending}
+        defaultFocusRef={ssoConfirmInputRef}
+        onConfirm={handleSsoRenameConfirm}
+        onCancel={() => setSsoRenameConfirm(null)}
+      >
+        <div style={{ marginBottom: 4 }}>
+          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>
+            Type <strong>{ssoRenameConfirm?.group.name}</strong> to confirm
+          </label>
+          <input
+            ref={ssoConfirmInputRef}
+            style={{ ...styles.input, width: '100%', boxSizing: 'border-box' }}
+            value={ssoConfirmNameInput}
+            onChange={(e) => setSsoConfirmNameInput(e.target.value)}
+            aria-label="Confirm group name"
+            placeholder={ssoRenameConfirm?.group.name}
+          />
+        </div>
+      </ConfirmDialog>
     </AppShell>
   )
 }
