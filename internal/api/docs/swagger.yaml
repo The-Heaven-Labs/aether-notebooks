@@ -3065,7 +3065,8 @@ paths:
     put:
       consumes:
       - application/json
-      description: Update a group's name and/or display name
+      description: Update a group's name and/or display name. Renaming an SSO-managed
+        group requires confirm_name equal to the current name.
       parameters:
       - description: Group ID
         in: path
@@ -3093,6 +3094,12 @@ paths:
             type: object
         "404":
           description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
           schema:
             additionalProperties:
               type: string

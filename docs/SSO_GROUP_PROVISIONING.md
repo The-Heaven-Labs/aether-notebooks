@@ -109,7 +109,9 @@ If an admin **adds** a user to a group that isn't in the IDP's list, the sync ne
 
 ## Group Renames
 
-If the IDP renames a group, the old Aether group persists with stale memberships and a new group is created. There is no rename tracking — the old group must be cleaned up manually. This is a known limitation.
+Renaming an SSO-managed group is guarded because `name` is the sync identity. `PUT /groups/{id}` returns `409 Conflict` when the name changes and `confirm_name` is missing or not equal to the group's current name; on success the rename is audited as `group.sso.rename` (with `old_name` and `new_name`). The console mirrors this: changing the name of an SSO group opens a type-the-synced-name confirmation, while editing only `display_name` saves directly.
+
+If the IDP renames a group, the old Aether group persists with stale memberships and a new group is created. There is no rename tracking — the old group must be cleaned up manually. This is a known limitation. Renaming from the Aether side deliberately does the same thing, which is what the confirmation warns about.
 
 ## Display Names
 
@@ -120,6 +122,8 @@ The label is presentation-only. The frontend renders `display_name?.trim() || na
 Because identity is still `name`, labels survive re-sync: an existing group row is reused and its label is left untouched. An IdP rename still creates a new, unlabeled group, leaving the old group (and its label) behind until cleaned up manually. Example: `aether-notebooks-data-analysts-infra` with `strip_group_prefix` stores `data-analysts-infra`, which an admin can label `Data Analysts Infra`.
 
 `POST /groups` accepts an optional `display_name`. `PUT /groups/{id}` accepts `name` and/or `display_name`: an omitted field keeps its current value, and a blank (`""` or whitespace) label clears it back to `NULL`. A JSON `null` decodes the same as an omitted field, so it keeps the label — send `""` to clear. Values are trimmed.
+
+Renaming an SSO-managed group additionally requires `confirm_name` equal to the current `name` — a deliberate acknowledgement that the rename disconnects the group from SSO sync (subsequent logins create a replacement group and move members out of this one). The `aether` CLI exposes this as `aether groups update <id> --name X --confirm-name <old-name>`.
 
 ## Development: Testing with Keycloak
 
@@ -190,6 +194,7 @@ Emitted by SSO group provisioning and management:
 | `group.sso.add_member` | Adding a user to a group via SSO sync (only when the membership is newly inserted) |
 | `group.sso.remove_member` | Removing a user from a group via SSO sync (only when a tracked membership is actually deleted) |
 | `group.sso.error` | Group reconciliation failure (non-fatal), including a skipped sync when the groups source is unavailable |
+| `group.sso.rename` | An SSO-managed group was renamed with `confirm_name` acknowledgement |
 | `group.delete.forced` | An SSO-managed group was deleted with `?force=true` |
 
 ## Migration
