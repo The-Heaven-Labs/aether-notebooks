@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { registerAndOnboard } from './helpers'
 
-test.describe('Dashboard input widgets', () => {
+test.describe('Dashboard variables and widgets', () => {
   test.beforeEach(async ({ page }) => {
     const ts = Date.now().toString()
     await registerAndOnboard(page, ts)
@@ -23,27 +23,20 @@ test.describe('Dashboard input widgets', () => {
     await expect(page.getByText(title)).toBeVisible()
   })
 
-  test('date picker widget accepts input', async ({ page, request }) => {
+  test('date variable filter accepts input', async ({ page, request }) => {
     const headers = { Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem('aether_token'))}` }
     const dashResp = await request.post('/api/v1/dashboards', {
       headers,
-      data: { title: `Date Picker ${Date.now()}`, settings: {} },
+      data: {
+        title: `Date Filter ${Date.now()}`,
+        settings: { variables: [{ name: 'start_date', label: 'Start date', type: 'date' }] },
+      },
     })
     expect(dashResp.ok()).toBeTruthy()
     const dashboard = await dashResp.json()
 
-    const widgetResp = await request.post(`/api/v1/dashboards/${dashboard.id}/widgets`, {
-      headers,
-      data: {
-        type: 'date_picker',
-        layout: { row: 0, col: 0, width: 4, height: 3 },
-        config: { paramName: 'start_date', label: 'Start date' },
-      },
-    })
-    expect(widgetResp.ok()).toBeTruthy()
-
     await page.goto(`/dashboards/${dashboard.id}/view`)
-    const datePicker = page.locator('input[type="date"]').first()
+    const datePicker = page.getByLabel('Start date')
     await expect(datePicker).toBeVisible()
     await datePicker.fill('2024-01-15')
     await expect(datePicker).toHaveValue('2024-01-15')
