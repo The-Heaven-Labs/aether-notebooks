@@ -10,7 +10,9 @@ import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '.
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { OutputRenderer } from '../components/OutputRenderer'
-import { DashboardParamsProvider, useDashboardParams } from '../contexts/DashboardParamsContext'
+import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
+import { DashboardVariableBar } from '../components/DashboardVariableBar'
+import { QueryDataWidget } from '../components/QueryDataWidget'
 import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
@@ -29,155 +31,11 @@ interface DashboardWithWidgets extends Dashboard {
 // Widget type extended with input widget variants (config is typed loosely)
 type AnyWidget = Widget & { type: string; config: any }
 
-const INPUT_WIDGET_TYPES = new Set([
-  'date_picker',
-  'date_range',
-  'freetext',
-  'number',
-  'multi_select',
-])
-
-function InputWidget({ widget }: { widget: AnyWidget }) {
-  const { setParam } = useDashboardParams()
-  const config = widget.config ?? {}
-  const paramName: string = config.paramName ?? widget.id
-  const label: string = config.label ?? paramName
-
-  if (widget.type === 'date_picker') {
-    return (
-      <div style={inputStyles.wrapper}>
-        <label style={inputStyles.label}>{label}</label>
-        <input
-          type="date"
-          style={inputStyles.input}
-          onChange={(e) => setParam(paramName, e.target.value)}
-        />
-      </div>
-    )
-  }
-
-  if (widget.type === 'date_range') {
-    return (
-      <div style={inputStyles.wrapper}>
-        <label style={inputStyles.label}>{label}</label>
-        <div style={inputStyles.rangeRow}>
-          <input
-            type="date"
-            style={{ ...inputStyles.input, flex: 1 }}
-            placeholder="Start"
-            onChange={(e) => setParam(`${paramName}_start`, e.target.value)}
-          />
-          <span style={inputStyles.rangeSep}>to</span>
-          <input
-            type="date"
-            style={{ ...inputStyles.input, flex: 1 }}
-            placeholder="End"
-            onChange={(e) => setParam(`${paramName}_end`, e.target.value)}
-          />
-        </div>
-      </div>
-    )
-  }
-
-  if (widget.type === 'freetext') {
-    return (
-      <div style={inputStyles.wrapper}>
-        <label style={inputStyles.label}>{label}</label>
-        <input
-          type="text"
-          style={inputStyles.input}
-          placeholder={config.placeholder ?? ''}
-          onChange={(e) => setParam(paramName, e.target.value)}
-        />
-      </div>
-    )
-  }
-
-  if (widget.type === 'number') {
-    return (
-      <div style={inputStyles.wrapper}>
-        <label style={inputStyles.label}>{label}</label>
-        <input
-          type="text"
-          style={inputStyles.input}
-          placeholder={config.placeholder ?? ''}
-          onChange={(e) => setParam(paramName, e.target.value)}
-        />
-      </div>
-    )
-  }
-
-  if (widget.type === 'multi_select') {
-    const options: string[] = Array.isArray(config.options) ? config.options : []
-    return (
-      <div style={inputStyles.wrapper}>
-        <label style={inputStyles.label}>{label}</label>
-        <select
-          multiple
-          style={{ ...inputStyles.input, height: 'auto', minHeight: 80 }}
-          onChange={(e) => {
-            const selected = Array.from(e.target.selectedOptions).map((o) => o.value)
-            setParam(paramName, selected.join(','))
-          }}
-        >
-          {options.map((opt) => (
-            <option key={opt} value={opt}>{opt}</option>
-          ))}
-        </select>
-        <span style={inputStyles.hint}>Hold Ctrl / Cmd to select multiple</span>
-      </div>
-    )
-  }
-
-  return null
+function isQueryWidget(w: AnyWidget): w is AnyWidget & { connector_id: string; query: string } {
+  return !!w.connector_id && !!w.query
 }
 
-const inputStyles: Record<string, React.CSSProperties> = {
-  wrapper: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 6,
-    padding: '14px 16px',
-  },
-  label: {
-    fontSize: 11,
-    fontWeight: 600,
-    color: 'var(--text-secondary)',
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em',
-  },
-  input: {
-    padding: '7px 10px',
-    border: '1px solid var(--border)',
-    borderRadius: 4,
-    fontSize: 13,
-    fontFamily: 'var(--font-sans)',
-    background: 'var(--bg-input)',
-    color: 'var(--text-primary)',
-    width: '100%',
-    boxSizing: 'border-box',
-    outline: 'none',
-  },
-  rangeRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-  },
-  rangeSep: {
-    fontSize: 12,
-    color: 'var(--text-muted)',
-    flexShrink: 0,
-  },
-  hint: {
-    fontSize: 11,
-    color: 'var(--text-muted)',
-    fontStyle: 'italic',
-  },
-}
-
-function QueryWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, onEdit }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string; loading?: boolean; onRun?: () => void; onEdit?: () => void }) {
-  const { params } = useDashboardParams()
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+function CellDataWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, onEdit }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string; loading?: boolean; onRun?: () => void; onEdit?: () => void }) {
   const handleChartConfigChange = useCallback((config: ChartConfig) => {
     if (!dashboardId) return
     api.put(`/api/v1/dashboards/${dashboardId}/widgets/${widget.id}`, {
@@ -203,26 +61,6 @@ function QueryWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, onE
     queryFn: () => api.get<NotebookWithCells>(`/api/v1/notebooks/${widget.notebook_id}`),
     enabled: !useInlinedData,
   })
-
-  // When params change and the cell source contains template refs ({{...}}),
-  // trigger a re-execution. Execute integration is a follow-on — stub here.
-  useEffect(() => {
-    const cell = useInlinedData
-      ? widgetCellData
-      : notebook?.cells?.find((c: Cell) => c.id === widget.cell_id)
-
-    if (!cell?.source?.includes('{{')) return
-
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => {
-      // TODO: call execute API with substituted params once dashboard execute
-      // endpoint is available (follow-on: POST /api/v1/dashboards/:id/execute)
-    }, 300)
-
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current)
-    }
-  }, [params, notebook, widget.cell_id, widgetCellData, useInlinedData])
 
   if (!useInlinedData && isLoading) return <div style={queryWidgetStyles.loading}>Loading…</div>
 
@@ -348,17 +186,10 @@ function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit }: { widget: 
     }
   }, [widget.notebook_id, widget.cell_id, qc, loading])
 
-  if (INPUT_WIDGET_TYPES.has(widget.type)) {
-    return (
-      <div style={styles.inputWidgetCard}>
-        <InputWidget widget={widget} />
-      </div>
-    )
-  }
   return (
     <div style={styles.widgetCard}>
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        <QueryWidget widget={widget} qc={qc} widgetsData={widgetsData} dashboardId={dashboardId} loading={loading} onRun={handleRun} onEdit={onEdit} />
+        <CellDataWidget widget={widget} qc={qc} widgetsData={widgetsData} dashboardId={dashboardId} loading={loading} onRun={handleRun} onEdit={onEdit} />
       </div>
     </div>
   )
@@ -381,6 +212,7 @@ function DashboardContent({ id }: { id: string }) {
   const [containerWidth, setContainerWidth] = useState(0)
   const [refreshSeconds, setRefreshSeconds] = useState<number>(0)
   const [refreshCustom, setRefreshCustom] = useState(false)
+  const [refreshNonce, setRefreshNonce] = useState(0)
   const [showShare, setShowShare] = useState(false)
   const gridContainerRef = useRef<HTMLDivElement | null>(null)
 
@@ -427,28 +259,32 @@ function DashboardContent({ id }: { id: string }) {
 
   async function executeAllWidgets(widgetList: AnyWidget[]) {
     const token = localStorage.getItem('aether_token')
-    const queryWidgets = widgetList.filter(w => !INPUT_WIDGET_TYPES.has(w.type))
-    if (!queryWidgets.length) return
+    const cellWidgets = widgetList.filter(w => !isQueryWidget(w) && w.notebook_id && w.cell_id)
+    const queryWidgets = widgetList.filter(isQueryWidget)
+    if (!cellWidgets.length && !queryWidgets.length) return
     setIsRefreshing(true)
     try {
+      if (queryWidgets.length) {
+        // Query widgets refresh themselves through their own hooks; bumping
+        // the nonce asks every QueryDataWidget to refetch.
+        setRefreshNonce(n => n + 1)
+      }
       await Promise.all(
-        queryWidgets
-          .filter(w => w.notebook_id && w.cell_id)
-          .map(w =>
-            fetch(`/api/v1/notebooks/${w.notebook_id}/cells/${w.cell_id}/execute`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                ...(token ? { Authorization: `Bearer ${token}` } : {}),
-              },
-              body: JSON.stringify({ parameters: {} }),
-            })
-          )
+        cellWidgets.map(w =>
+          fetch(`/api/v1/notebooks/${w.notebook_id}/cells/${w.cell_id}/execute`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({ parameters: {} }),
+          })
+        )
       )
       if (dashboard?.can_view_with_data) {
         qc.invalidateQueries({ queryKey: ['dashboard', id] })
       } else {
-        const notebookIds = [...new Set(queryWidgets.map(w => w.notebook_id).filter(Boolean))]
+        const notebookIds = [...new Set(cellWidgets.map(w => w.notebook_id).filter(Boolean))]
         notebookIds.forEach(nbId => qc.invalidateQueries({ queryKey: ['notebook', nbId] }))
       }
     } finally {
@@ -491,10 +327,10 @@ function DashboardContent({ id }: { id: string }) {
     )
   }
 
-  const inputWidgets = widgets.filter((w) => INPUT_WIDGET_TYPES.has(w.type))
-  const dataWidgets = widgets.filter((w) => !INPUT_WIDGET_TYPES.has(w.type))
+  const variables = dashboard.settings?.variables ?? []
 
   return (
+    <DashboardVariablesProvider dashboardId={dashboard.id} variables={variables}>
     <AppShell noPadding>
       {/* Sub-header */}
       <header style={styles.subHeader}>
@@ -642,36 +478,37 @@ function DashboardContent({ id }: { id: string }) {
       </header>
 
       <div style={styles.body}>
-        {/* Input widgets row — rendered at the top when present */}
-        {inputWidgets.length > 0 && (
-          <div style={styles.inputRow}>
-            {inputWidgets.map((widget) => (
-              <div key={widget.id} style={styles.inputWidgetCard}>
-                <InputWidget widget={widget} />
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Dashboard variable filters */}
+        {variables.length > 0 && <DashboardVariableBar />}
 
-        {/* Data widgets grid */}
-        {dataWidgets.length === 0 && inputWidgets.length === 0 ? (
+        {/* Widgets grid */}
+        {widgets.length === 0 && variables.length === 0 ? (
           <EmptyState
             title="No widgets yet"
             text="Add widgets in the dashboard editor to display notebook cell outputs."
           />
-        ) : dataWidgets.length === 0 ? null : (
+        ) : widgets.length === 0 ? null : (
           <div ref={gridRef}>
             <GridLayout
-              layout={dataWidgets.map(toGridItem)}
+              layout={widgets.map(toGridItem)}
               width={containerWidth}
               gridConfig={{ cols: dashboard.settings?.grid_cols ?? 12, rowHeight: 30, margin: [4, 4] }}
               dragConfig={{ enabled: false }}
               resizeConfig={{ enabled: false }}
               style={{ minHeight: 240 }}
             >
-              {dataWidgets.map((widget) => (
+              {widgets.map((widget) => (
                 <div key={widget.id} style={styles.widgetCard}>
-                  <WidgetCard widget={widget} qc={qc} widgetsData={dashboard.widgets_data} dashboardId={id} />
+                  {isQueryWidget(widget) ? (
+                    <QueryDataWidget
+                      dashboardId={dashboard.id}
+                      widget={widget}
+                      canViewWithData={dashboard.can_view_with_data !== false}
+                      refreshNonce={refreshNonce}
+                    />
+                  ) : (
+                    <WidgetCard widget={widget} qc={qc} widgetsData={dashboard.widgets_data} dashboardId={id} />
+                  )}
                 </div>
               ))}
             </GridLayout>
@@ -687,16 +524,13 @@ function DashboardContent({ id }: { id: string }) {
         />
       )}
     </AppShell>
+    </DashboardVariablesProvider>
   )
 }
 
 export function DashboardPage() {
   const { id } = useParams<{ id: string }>()
-  return (
-    <DashboardParamsProvider>
-      <DashboardContent id={id ?? ''} />
-    </DashboardParamsProvider>
-  )
+  return <DashboardContent id={id ?? ''} />
 }
 
 const styles: Record<string, React.CSSProperties> = {
@@ -767,19 +601,6 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap: 24,
   },
-  inputRow: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  inputWidgetCard: {
-    background: 'var(--bg-card)',
-    border: '1px solid var(--border)',
-    borderRadius: 4,
-    minWidth: 200,
-    flex: '0 1 auto',
-  },
-
   widgetCard: {
     background: 'var(--bg-card)',
     border: '1px solid var(--border-light)',

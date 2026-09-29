@@ -1659,6 +1659,134 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/public/{token}/execute": {
+            "post": {
+                "security": [
+                    {
+                        "none": []
+                    }
+                ],
+                "description": "Runs one query widget of a publicly shared dashboard when settings.public_live is enabled. Queries run as the dashboard creator and are rate-limited per token and client IP.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "public"
+                ],
+                "summary": "Execute a public dashboard query widget",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Public sharing token",
+                        "name": "token",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "widget_id, variables, bypass_cache",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "outputs, metrics, cached",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/public/{token}/variables/{name}/options": {
+            "post": {
+                "security": [
+                    {
+                        "none": []
+                    }
+                ],
+                "description": "Executes the query-backed options for a variable of a publicly shared dashboard when settings.public_live is enabled.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "public"
+                ],
+                "summary": "Run a public dashboard variable's options query",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Public sharing token",
+                        "name": "token",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Variable name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/recent": {
             "get": {
                 "security": [
@@ -2972,6 +3100,78 @@ const docTemplate = `{
                 }
             }
         },
+        "/dashboards/{id}/execute": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Runs one query widget as the requesting user, interpolating dashboard variables server-side. Results are cached in Redis for the dashboard's query_cache_seconds (default 30, 0 disables).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboards"
+                ],
+                "summary": "Execute a dashboard query widget",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dashboard ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "widget_id, variables, bypass_cache",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "outputs, metrics, cached",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "service_choice_required with warehouse_id and services",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/dashboards/{id}/permissions": {
             "get": {
                 "security": [
@@ -3140,6 +3340,69 @@ const docTemplate = `{
                 }
             }
         },
+        "/dashboards/{id}/variables/{name}/options": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Executes the query-backed options for a dashboard variable and returns label/value pairs",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboards"
+                ],
+                "summary": "Run a dashboard variable's options query",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dashboard ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Variable name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/dashboards/{id}/widgets": {
             "post": {
                 "security": [
@@ -3295,6 +3558,69 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/dashboards/{id}/widgets/{widget_id}/convert-to-query": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Inlines notebook slug references, moves the cell's connector and SQL onto the widget, and turns referenced notebook/cell parameters into dashboard variables",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboards"
+                ],
+                "summary": "Convert a cell-linked widget to a query widget",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dashboard ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Widget ID",
+                        "name": "widget_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "widget and variables",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -9945,11 +10271,45 @@ const docTemplate = `{
                 "grid_cols": {
                     "type": "integer"
                 },
-                "parameter_overrides": {
-                    "type": "object",
-                    "additionalProperties": {
+                "public_live": {
+                    "type": "boolean"
+                },
+                "query_cache_seconds": {
+                    "type": "integer"
+                },
+                "variables": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.DashboardVariable"
+                    }
+                }
+            }
+        },
+        "models.DashboardVariable": {
+            "type": "object",
+            "properties": {
+                "default": {},
+                "depends_on": {
+                    "type": "array",
+                    "items": {
                         "type": "string"
                     }
+                },
+                "label": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "options": {
+                    "$ref": "#/definitions/models.VariableOptions"
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "description": "text|number|boolean|date|date_range|single_select|multi_select",
+                    "type": "string"
                 }
             }
         },
@@ -10110,6 +10470,17 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.OptionValue": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string"
+                },
+                "value": {
                     "type": "string"
                 }
             }
@@ -10278,6 +10649,41 @@ const docTemplate = `{
                 }
             }
         },
+        "models.VariableOptions": {
+            "type": "object",
+            "properties": {
+                "label_column": {
+                    "type": "string"
+                },
+                "mode": {
+                    "description": "\"static\" | \"query\"",
+                    "type": "string"
+                },
+                "query": {
+                    "$ref": "#/definitions/models.VariableQuery"
+                },
+                "value_column": {
+                    "type": "string"
+                },
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.OptionValue"
+                    }
+                }
+            }
+        },
+        "models.VariableQuery": {
+            "type": "object",
+            "properties": {
+                "connector_id": {
+                    "type": "string"
+                },
+                "sql": {
+                    "type": "string"
+                }
+            }
+        },
         "models.Widget": {
             "type": "object",
             "properties": {
@@ -10288,6 +10694,9 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": true
                 },
+                "connector_id": {
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -10297,10 +10706,16 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "language": {
+                    "type": "string"
+                },
                 "layout": {
                     "$ref": "#/definitions/models.WidgetLayout"
                 },
                 "notebook_id": {
+                    "type": "string"
+                },
+                "query": {
                     "type": "string"
                 },
                 "type": {
@@ -10334,23 +10749,13 @@ const docTemplate = `{
                 "chart",
                 "table",
                 "text",
-                "metric",
-                "date_picker",
-                "date_range",
-                "freetext",
-                "number",
-                "multi_select"
+                "metric"
             ],
             "x-enum-varnames": [
                 "WidgetChart",
                 "WidgetTable",
                 "WidgetText",
-                "WidgetMetric",
-                "WidgetDatePicker",
-                "WidgetDateRange",
-                "WidgetFreetext",
-                "WidgetNumber",
-                "WidgetMultiSelect"
+                "WidgetMetric"
             ]
         }
     },

@@ -6,6 +6,9 @@ import remarkGfm from 'remark-gfm'
 import { api } from '../api/client'
 import { Skeleton } from '../components/Skeleton'
 import { OutputRenderer } from '../components/OutputRenderer'
+import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
+import { DashboardVariableBar } from '../components/DashboardVariableBar'
+import { QueryDataWidget } from '../components/QueryDataWidget'
 import type { Dashboard, Widget, Output } from '../types'
 import { mergeWidgetChartConfig } from '../charts/widgetChartConfig'
 
@@ -54,54 +57,80 @@ export function PublicDashboardPage() {
 
   const widgets = dashboard.widgets ?? []
   const widgetsData = dashboard.widgets_data ?? {}
+  const publicLive = dashboard.settings?.public_live === true
+  const variables = dashboard.settings?.variables ?? []
+  const endpointBase = `/api/v1/public/${token}`
+  const isQueryWidget = (w: Widget) => !!w.connector_id && !!w.query
+  // Query widgets only render when the owner opted into live queries; cell
+  // widgets need stored outputs to render at all.
+  const visibleWidgets = widgets.filter((w) =>
+    isQueryWidget(w) ? publicLive : !!(w.cell_id && widgetsData[w.cell_id]?.outputs?.length),
+  )
   const cols = dashboard.settings?.grid_cols ?? 12
   const colWidth = (containerWidth - (cols - 1) * gap) / cols
-  const totalHeight = widgets.reduce((max, w) => {
+  const totalHeight = visibleWidgets.reduce((max, w) => {
     return Math.max(max, (w.layout?.row ?? 0) + (w.layout?.height ?? 4))
   }, 0) * (ROW_HEIGHT + gap)
 
-  return (
+  const content = (
     <div style={pageStyles.page}>
       <header style={pageStyles.header}>
         <div style={pageStyles.headerInner}>
           <span style={pageStyles.brandMark}>Aether</span>
           <h1 style={pageStyles.title}>{dashboard.title}</h1>
-          <span style={pageStyles.readOnlyBadge}>Read-only</span>
+          <span style={pageStyles.readOnlyBadge}>{publicLive ? 'Live' : 'Read-only'}</span>
         </div>
       </header>
       <main style={pageStyles.body}>
-        {widgets.length === 0 ? (
+        {publicLive && variables.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <DashboardVariableBar />
+          </div>
+        )}
+        {visibleWidgets.length === 0 ? (
           <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
             <p style={{ fontSize: 14, fontWeight: 600, margin: '0 0 4px' }}>No widgets in this dashboard</p>
             <p style={{ fontSize: 13, margin: 0 }}>The dashboard owner hasn't added any widgets yet.</p>
           </div>
         ) : (
           <div ref={measureRef} style={{ minHeight: totalHeight, position: 'relative' }}>
-            {widgets.map((widget) => {
-              const cellData = widgetsData[widget.cell_id!]
-              if (!cellData || !cellData.outputs?.length) return null
-
+            {visibleWidgets.map((widget) => {
               const l = widget.layout
               const left = l.col * (colWidth + gap)
               const top = l.row * (ROW_HEIGHT + gap)
               const width = l.width * colWidth + (l.width - 1) * gap
               const height = l.height * ROW_HEIGHT + (l.height - 1) * gap
+              const wrapperStyle: React.CSSProperties = {
+                position: 'absolute',
+                left, top, width, height,
+                background: 'var(--bg-card)',
+                border: '1px solid var(--border)',
+                borderRadius: 4,
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+              }
 
+              if (isQueryWidget(widget)) {
+                return (
+                  <div key={widget.id} style={wrapperStyle}>
+                    <QueryDataWidget
+                      dashboardId={dashboard.id}
+                      widget={widget}
+                      canViewWithData
+                      endpointBase={endpointBase}
+                    />
+                  </div>
+                )
+              }
+
+              const cellData = widgetsData[widget.cell_id!]
               const isChart = widget.type === 'chart'
               const fixedView = isChart ? 'chart' : 'table'
               const chartConfig = mergeWidgetChartConfig(cellData.metadata?.chart, widget.config)
 
               return (
-                <div key={widget.id} style={{
-                  position: 'absolute' as const,
-                  left, top, width, height,
-                  background: 'var(--bg-card)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 4,
-                  overflow: 'hidden',
-                  display: 'flex',
-                  flexDirection: 'column',
-                }}>
+                <div key={widget.id} style={wrapperStyle}>
                   {cellData.type === 'text' ? (
                     <div style={{ padding: 16, fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.6, overflow: 'auto', height: '100%' }}>
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{cellData.source || ''}</ReactMarkdown>
@@ -128,6 +157,18 @@ export function PublicDashboardPage() {
         <span style={pageStyles.footerText}>Powered by Aether</span>
       </footer>
     </div>
+  )
+
+  if (!publicLive) return content
+  return (
+    <DashboardVariablesProvider
+      dashboardId={dashboard.id}
+      variables={variables}
+      endpointBase={endpointBase}
+      storageId={`pub_${token}`}
+    >
+      {content}
+    </DashboardVariablesProvider>
   )
 }
 

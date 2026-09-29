@@ -15,6 +15,11 @@ import type { LayoutItem, Layout } from 'react-grid-layout'
 import { Skeleton } from '../components/Skeleton'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { WidgetConfigDrawer } from '../components/WidgetConfigDrawer'
+import { DashboardVariablesPanel } from '../components/DashboardVariablesPanel'
+import { ConnectorSelector } from '../components/ConnectorSelector'
+import { SqlEditor } from '../components/SqlEditor'
+import { ReadOnlyCode } from '../components/ReadOnlyCode'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -42,6 +47,19 @@ function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width:
   if (!widgets.length) return { row: 0, col: 0, width: 6, height: 8 }
   const maxBottom = widgets.reduce((max, w) => Math.max(max, w.layout.row + w.layout.height), 0)
   return { row: maxBottom, col: 0, width: 6, height: 8 }
+}
+
+function isQueryWidget(w: Widget): boolean {
+  return !!w.connector_id && !!w.query
+}
+
+function QueryWidgetPreview({ widget }: { widget: Widget }) {
+  return (
+    <div style={widgetContentStyles.queryPreview}>
+      <span style={widgetContentStyles.queryLabel}>Query widget</span>
+      <ReadOnlyCode source={widget.query ?? ''} language="sql" />
+    </div>
+  )
 }
 
 function WidgetContent({ widget, onConfigSave, onConfigReset }: { widget: Widget; onConfigSave: (widgetId: string, config: ChartConfig) => void; onConfigReset: (widgetId: string) => void }) {
@@ -86,6 +104,8 @@ const widgetContentStyles: Record<string, React.CSSProperties> = {
   loading: { padding: '16px', fontSize: 13, color: 'var(--text-muted)' },
   empty: { padding: '16px', fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' },
   markdown: { padding: '16px', fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.6, overflow: 'auto', height: '100%' },
+  queryPreview: { padding: 12, display: 'flex', flexDirection: 'column', gap: 8, height: '100%', overflow: 'auto' },
+  queryLabel: { fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' },
 }
 
 export function DashboardEditorPage() {
@@ -116,10 +136,16 @@ const markSaved = useCallback(() => {
 
   const [showPicker, setShowPicker] = useState(false)
   const [showPermissions, setShowPermissions] = useState(false)
+  const [pickerSource, setPickerSource] = useState<'cell' | 'query'>('cell')
   const [pickerNotebookId, setPickerNotebookId] = useState('')
   const [pickerCellId, setPickerCellId] = useState('')
+  const [pickerConnectorId, setPickerConnectorId] = useState<string | null>(null)
+  const [pickerQuery, setPickerQuery] = useState('SELECT 1')
   const [pickerType, setPickerType] = useState<'table' | 'chart'>('table')
   const [pickerError, setPickerError] = useState<string | null>(null)
+  const [editingWidget, setEditingWidget] = useState<Widget | null>(null)
+  const [showVariables, setShowVariables] = useState(false)
+  const [variablePrefill, setVariablePrefill] = useState<string | null>(null)
 
   const [containerWidth, setContainerWidth] = useState(0)
   const [deleteWidgetTarget, setDeleteWidgetTarget] = useState<string | null>(null)
@@ -191,19 +217,25 @@ const markSaved = useCallback(() => {
   })
 
   const addWidget = useMutation({
-    mutationFn: () =>
-      api.post<Widget>(`/api/v1/dashboards/${id}/widgets`, {
-        notebook_id: pickerNotebookId,
-        cell_id: pickerCellId,
+    mutationFn: () => {
+      const base = {
         type: pickerType,
         layout: nextWidgetLayout(dashboard?.widgets ?? []),
         config: {},
-      }),
+      }
+      const payload = pickerSource === 'query'
+        ? { ...base, connector_id: pickerConnectorId, query: pickerQuery, language: 'sql' }
+        : { ...base, notebook_id: pickerNotebookId, cell_id: pickerCellId }
+      return api.post<Widget>(`/api/v1/dashboards/${id}/widgets`, payload)
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['dashboard', id] })
       setShowPicker(false)
+      setPickerSource('cell')
       setPickerNotebookId('')
       setPickerCellId('')
+      setPickerConnectorId(null)
+      setPickerQuery('SELECT 1')
       setPickerType('table')
       setPickerError(null)
     },
@@ -365,6 +397,19 @@ const markSaved = useCallback(() => {
               ))}
             </div>
           )}
+          <button
+            type="button"
+            style={{
+              padding: '5px 12px', fontSize: 12, fontWeight: 600,
+              background: 'none', color: 'var(--text-secondary)',
+              border: '1px solid var(--border)', borderRadius: 4,
+              cursor: 'pointer',
+            }}
+            onClick={() => setShowVariables(true)}
+            title="Manage dashboard variables and filters"
+          >
+            Variables
+          </button>
           {saveStatus && (
             <span style={{
               fontSize: 11, fontWeight: 600, color: saveStatus === 'saving' ? 'var(--text-muted)' : 'var(--success)',
@@ -425,8 +470,11 @@ const markSaved = useCallback(() => {
                 style={{ ...styles.pickerClose, display: 'flex', alignItems: 'center' }}
                 onClick={() => {
                   setShowPicker(false)
+                  setPickerSource('cell')
                   setPickerNotebookId('')
                   setPickerCellId('')
+                  setPickerConnectorId(null)
+                  setPickerQuery('SELECT 1')
                   setPickerType('table')
                   setPickerError(null)
                 }}
@@ -436,35 +484,57 @@ const markSaved = useCallback(() => {
             </div>
 
             <div style={styles.pickerBody}>
-              <label style={styles.pickerLabel}>Notebook</label>
+              <label style={styles.pickerLabel}>Source</label>
               <select
                 style={styles.pickerSelect}
-                value={pickerNotebookId}
-                onChange={(e) => {
-                  setPickerNotebookId(e.target.value)
-                  setPickerCellId('')
-                }}
+                aria-label="Widget source"
+                value={pickerSource}
+                onChange={(e) => setPickerSource(e.target.value as 'cell' | 'query')}
               >
-                <option value="">Select notebook…</option>
-                {notebooks.map((nb) => (
-                  <option key={nb.id} value={nb.id}>{nb.title}</option>
-                ))}
+                <option value="cell">Notebook cell</option>
+                <option value="query">Query</option>
               </select>
 
-              <label style={styles.pickerLabel}>Cell</label>
-              <select
-                style={styles.pickerSelect}
-                value={pickerCellId}
-                onChange={(e) => setPickerCellId(e.target.value)}
-                disabled={!pickerNotebookId}
-              >
-                <option value="">Select cell…</option>
-                {pickerCells.map((cell, i) => (
-                  <option key={cell.id} value={cell.id}>
-                    Cell {i + 1} ({cell.type}){cell.source ? ` — ${cell.source.slice(0, 40)}` : ''}
-                  </option>
-                ))}
-              </select>
+              {pickerSource === 'cell' ? (
+                <>
+                  <label style={styles.pickerLabel}>Notebook</label>
+                  <select
+                    style={styles.pickerSelect}
+                    value={pickerNotebookId}
+                    onChange={(e) => {
+                      setPickerNotebookId(e.target.value)
+                      setPickerCellId('')
+                    }}
+                  >
+                    <option value="">Select notebook…</option>
+                    {notebooks.map((nb) => (
+                      <option key={nb.id} value={nb.id}>{nb.title}</option>
+                    ))}
+                  </select>
+
+                  <label style={styles.pickerLabel}>Cell</label>
+                  <select
+                    style={styles.pickerSelect}
+                    value={pickerCellId}
+                    onChange={(e) => setPickerCellId(e.target.value)}
+                    disabled={!pickerNotebookId}
+                  >
+                    <option value="">Select cell…</option>
+                    {pickerCells.map((cell, i) => (
+                      <option key={cell.id} value={cell.id}>
+                        Cell {i + 1} ({cell.type}){cell.source ? ` — ${cell.source.slice(0, 40)}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              ) : (
+                <>
+                  <label style={styles.pickerLabel}>Connector</label>
+                  <ConnectorSelector value={pickerConnectorId} onChange={setPickerConnectorId} />
+                  <label style={styles.pickerLabel}>SQL</label>
+                  <SqlEditor value={pickerQuery} onChange={setPickerQuery} minHeight={120} />
+                </>
+              )}
 
               <label style={styles.pickerLabel}>Widget Type</label>
               <select
@@ -483,7 +553,12 @@ const markSaved = useCallback(() => {
               <button
                 type="button"
                 style={styles.pickerAddBtn}
-                disabled={!pickerNotebookId || !pickerCellId || addWidget.isPending}
+                disabled={
+                  addWidget.isPending ||
+                  (pickerSource === 'cell'
+                    ? !pickerNotebookId || !pickerCellId
+                    : !pickerConnectorId || !pickerQuery.trim())
+                }
                 onClick={() => addWidget.mutate()}
               >
                 {addWidget.isPending ? 'Adding…' : 'Add Widget'}
@@ -513,7 +588,11 @@ const markSaved = useCallback(() => {
                 >
                   <X size={12} />
                 </button>
-                <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} onConfigReset={(widgetId) => resetWidgetConfig.mutate(widgetId)} />
+                {isQueryWidget(widget) ? (
+                  <QueryWidgetPreview widget={widget} />
+                ) : (
+                  <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} onConfigReset={(widgetId) => resetWidgetConfig.mutate(widgetId)} />
+                )}
               </div>
             ))}
           </div>
@@ -548,12 +627,7 @@ const markSaved = useCallback(() => {
                       type="button"
                       style={{ ...styles.editWidgetBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                       title="Edit widget"
-                      onClick={() => {
-                        setPickerNotebookId(widget.notebook_id)
-                        setPickerCellId(widget.cell_id)
-                        setPickerType(widget.type === 'chart' ? 'chart' : 'table')
-                        setShowPicker(true)
-                      }}
+                      onClick={() => setEditingWidget(widget)}
                     >
                       <Pencil size={11} />
                     </button>
@@ -565,7 +639,11 @@ const markSaved = useCallback(() => {
                     >
                       <X size={12} />
                     </button>
-                    <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} onConfigReset={(widgetId) => resetWidgetConfig.mutate(widgetId)} />
+                    {isQueryWidget(widget) ? (
+                      <QueryWidgetPreview widget={widget} />
+                    ) : (
+                      <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} onConfigReset={(widgetId) => resetWidgetConfig.mutate(widgetId)} />
+                    )}
                   </div>
                 </div>
               ))}
@@ -592,6 +670,30 @@ const markSaved = useCallback(() => {
         onConfirm={() => { if (deleteWidgetTarget) deleteWidget.mutate(deleteWidgetTarget); setDeleteWidgetTarget(null) }}
         onCancel={() => setDeleteWidgetTarget(null)}
       />
+      {editingWidget && (
+        <WidgetConfigDrawer
+          key={editingWidget.id}
+          dashboardId={id!}
+          dashboard={dashboard}
+          widget={editingWidget}
+          onClose={() => setEditingWidget(null)}
+          onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
+          onDefineVariable={(name) => {
+            setVariablePrefill(name)
+            setShowVariables(true)
+          }}
+        />
+      )}
+      {showVariables && (
+        <DashboardVariablesPanel
+          key={variablePrefill ?? 'variables'}
+          dashboardId={id!}
+          dashboard={dashboard}
+          initialNewName={variablePrefill}
+          onClose={() => { setShowVariables(false); setVariablePrefill(null) }}
+          onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
+        />
+      )}
     </AppShell>
   )
 }

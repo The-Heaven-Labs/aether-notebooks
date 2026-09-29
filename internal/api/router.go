@@ -444,12 +444,27 @@ func (s *Server) routes() {
 	s.mux.Handle("PUT /api/v1/dashboards/{id}", authMW(s.requirePermission("dashboard", "id", "edit")(http.HandlerFunc(s.handleUpdateDashboard))))
 	s.mux.Handle("DELETE /api/v1/dashboards/{id}", authMW(s.requirePermission("dashboard", "id", "delete")(http.HandlerFunc(s.handleDeleteDashboard))))
 	s.mux.Handle("POST /api/v1/dashboards/{id}/widgets", authMW(http.HandlerFunc(s.handleAddWidget)))
+	s.mux.Handle("POST /api/v1/dashboards/{id}/widgets/{widget_id}/convert-to-query", authMW(http.HandlerFunc(s.handleConvertWidgetToQuery)))
 	s.mux.Handle("PUT /api/v1/dashboards/{id}/widgets/{widget_id}", authMW(http.HandlerFunc(s.handleUpdateWidget)))
 	s.mux.Handle("DELETE /api/v1/dashboards/{id}/widgets/{widget_id}", authMW(http.HandlerFunc(s.handleDeleteWidget)))
 	s.mux.Handle("GET /api/v1/dashboards/{id}/share", authMW(s.requirePermission("dashboard", "id", "view")(http.HandlerFunc(s.handleGetDashboardShare))))
 	s.mux.Handle("POST /api/v1/dashboards/{id}/share", authMW(s.requirePermission("dashboard", "id", "share")(http.HandlerFunc(s.handleShareDashboard))))
 	s.mux.Handle("DELETE /api/v1/dashboards/{id}/share", authMW(s.requirePermission("dashboard", "id", "share")(http.HandlerFunc(s.handleRevokeDashboardShare))))
 	s.mux.Handle("GET /api/v1/dashboards/{id}/permissions", authMW(http.HandlerFunc(s.handleGetDashboardPermissions)))
+	s.mux.Handle("POST /api/v1/dashboards/{id}/execute", authMW(http.HandlerFunc(s.handleExecuteDashboardWidget)))
+	s.mux.Handle("POST /api/v1/dashboards/{id}/variables/{name}/options", authMW(http.HandlerFunc(s.handleDashboardVariableOptions)))
+	s.mux.Handle("POST /api/v1/public/{token}/execute",
+		s.rateLimit(rateLimitConfig{
+			keyFunc: func(r *http.Request) string { return "public-dash-exec:" + r.PathValue("token") + ":" + clientIP(r) },
+			limit:   60,
+			window:  time.Minute,
+		})(http.HandlerFunc(s.handlePublicDashboardExecute)))
+	s.mux.Handle("POST /api/v1/public/{token}/variables/{name}/options",
+		s.rateLimit(rateLimitConfig{
+			keyFunc: func(r *http.Request) string { return "public-dash-opts:" + r.PathValue("token") + ":" + clientIP(r) },
+			limit:   120,
+			window:  time.Minute,
+		})(http.HandlerFunc(s.handlePublicDashboardVariableOptions)))
 	s.mux.HandleFunc("GET /api/v1/public/{token}", s.handlePublicResource)
 	s.mux.HandleFunc("GET /api/v1/public/motd", s.handleListLoginMOTD)
 

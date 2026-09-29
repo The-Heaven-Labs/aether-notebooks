@@ -152,6 +152,9 @@ services:
       AETHER_MASTER_KEY: dev-master-key-change-in-production
       AETHER_JWT_SECRET: dev-jwt-secret-change-in-production
       AETHER_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com
+      # E2E specs register many users in quick succession; match CI's limits.
+      AETHER_RATE_LIMIT_REGISTER: "500"
+      AETHER_RATE_LIMIT_LOGIN: "500"
       AETHER_PUBLIC_URL: http://localhost:8088
       AETHER_FRONTEND_URL: http://localhost:8088
       AETHER_PORT: "8080"
