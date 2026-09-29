@@ -198,11 +198,57 @@ export interface ConnectorSchema {
   hidden_tables?: number
 }
 
+export type DashboardVariableType =
+  | 'text'
+  | 'number'
+  | 'boolean'
+  | 'date'
+  | 'date_range'
+  | 'single_select'
+  | 'multi_select'
+
+export interface DashboardVariableOption {
+  label: string
+  value: string
+}
+
+export interface DashboardVariableOptions {
+  mode: 'static' | 'query'
+  values?: DashboardVariableOption[]
+  query?: { connector_id: string; sql: string }
+  label_column?: string
+  value_column?: string
+}
+
+export interface DashboardVariable {
+  name: string
+  label?: string
+  type: DashboardVariableType
+  default?: unknown
+  required?: boolean
+  options?: DashboardVariableOptions
+  depends_on?: string[]
+}
+
+export interface WidgetQueryResult {
+  outputs: Output[]
+  metrics: { query_time_ms?: number; total_time_ms?: number }
+  routing?: { warehouse_id?: string; connector_name?: string; ch_user?: string }
+  cached: boolean
+  cache_expires_at?: string
+}
+
 export interface Dashboard {
   id: string
   org_id: string
   title: string
-  settings: { refresh_interval?: number; auto_refresh_seconds?: number; grid_cols?: number }
+  settings: {
+    auto_refresh_seconds?: number
+    grid_cols?: number
+    query_cache_seconds?: number
+    public_live?: boolean
+    variables?: DashboardVariable[]
+  }
   public_token?: string
   folder_id?: string
   created_by: string
@@ -216,9 +262,12 @@ export interface Dashboard {
 export interface Widget {
   id: string
   dashboard_id: string
-  notebook_id: string
-  cell_id: string
-  type: 'chart' | 'table' | 'text' | 'metric' | 'date_picker' | 'date_range' | 'freetext' | 'number' | 'multi_select'
+  notebook_id?: string | null
+  cell_id?: string | null
+  connector_id?: string | null
+  query?: string | null
+  language?: string
+  type: 'chart' | 'table' | 'text' | 'metric'
   layout: { row: number; col: number; width: number; height: number }
   config: Record<string, unknown>
   created_at: string

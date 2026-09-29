@@ -28,7 +28,7 @@ async function request<T>(
   method: string,
   path: string,
   body?: unknown,
-  options?: { binary?: boolean },
+  options?: { binary?: boolean; signal?: AbortSignal },
 ): Promise<T> {
   const headers: Record<string, string> = {}
 
@@ -49,6 +49,7 @@ async function request<T>(
     method,
     headers,
     body: body ? (options?.binary ? (body as BodyInit) : JSON.stringify(body)) : undefined,
+    signal: options?.signal,
   })
 
   if (!res.ok) {
@@ -61,11 +62,11 @@ async function request<T>(
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>('GET', path),
-  post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
-  put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
-  patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
-  delete: <T>(path: string) => request<T>('DELETE', path),
+  get: <T>(path: string, options?: { signal?: AbortSignal }) => request<T>('GET', path, undefined, options),
+  post: <T>(path: string, body?: unknown, options?: { signal?: AbortSignal }) => request<T>('POST', path, body, options),
+  put: <T>(path: string, body?: unknown, options?: { signal?: AbortSignal }) => request<T>('PUT', path, body, options),
+  patch: <T>(path: string, body?: unknown, options?: { signal?: AbortSignal }) => request<T>('PATCH', path, body, options),
+  delete: <T>(path: string, options?: { signal?: AbortSignal }) => request<T>('DELETE', path, undefined, options),
 }
 
 export const toolsApi = {
