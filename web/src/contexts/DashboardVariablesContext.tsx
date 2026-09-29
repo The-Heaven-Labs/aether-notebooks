@@ -91,15 +91,19 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
   }, [storageNamespace, variables, setSearchParams])
 
   const setValue = useCallback((name: string, value: unknown) => {
-    setValuesState(prev => {
-      const next = { ...prev, [name]: value }
-      persist(next)
-      return next
-    })
+    // Persist outside the state updater: calling setSearchParams while React
+    // renders another component triggers a "cannot update during render"
+    // warning, and updaters may run twice under StrictMode.
+    const next = { ...valuesRef.current, [name]: value }
+    valuesRef.current = next
+    setValuesState(next)
+    persist(next)
   }, [persist])
 
   const setValues = useCallback((next: Record<string, unknown>) => {
-    setValuesState(next); persist(next)
+    valuesRef.current = next
+    setValuesState(next)
+    persist(next)
   }, [persist])
 
   const loadOptions = useCallback(async (name: string) => {
