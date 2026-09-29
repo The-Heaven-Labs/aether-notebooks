@@ -140,19 +140,6 @@ test.describe('Group provenance and SSO-managed delete guard', () => {
     try {
       setGroupSource(group.id, 'sso')
 
-      // Force the PUT to fail, deterministically, without touching the backend.
-      await page.route(`**/api/v1/groups/${group.id}`, async (route) => {
-        if (route.request().method() === 'PUT') {
-          await route.fulfill({
-            status: 409,
-            contentType: 'application/json',
-            body: JSON.stringify({ error: 'group is managed by SSO; renaming it disconnects sync' }),
-          })
-        } else {
-          await route.continue()
-        }
-      })
-
       await page.goto('/groups')
       const row = page.getByText(name).locator('..').locator('..')
       await row.getByTitle('Group actions').click()
@@ -160,13 +147,21 @@ test.describe('Group provenance and SSO-managed delete guard', () => {
       const nameInput = page.getByLabel('Group name')
       await nameInput.fill(`${name} v2`)
       await nameInput.press('Enter')
+
+      // Rename the group behind the dialog's back, with a valid acknowledgement.
+      const sneaky = await request.put(`/api/v1/groups/${group.id}`, {
+        headers, data: { name: `${name} moved`, confirm_name: name },
+      })
+      expect(sneaky.ok(), await sneaky.text()).toBeTruthy()
+
+      // The dialog still expects the old name, so the real guard rejects it.
       await page.getByLabel('Confirm group name').fill(name)
       await page.getByRole('button', { name: 'Rename group' }).click()
 
       await expect(page.getByText('Rename SSO-managed group?')).toHaveCount(0)
-      await expect(page.getByText(/managed by SSO; renaming it disconnects sync/)).toBeVisible()
+      await expect(page.getByText(/confirm_name with the current name/)).toBeVisible()
+      await expect(page.getByText(`${name} moved`).first()).toBeVisible()
     } finally {
-      await page.unroute(`**/api/v1/groups/${group.id}`)
       await request.delete(`/api/v1/groups/${group.id}?force=true`, { headers }).catch(() => {})
     }
   })
@@ -180,12 +175,15 @@ test.describe('Group provenance and SSO-managed delete guard', () => {
     const resp = await request.post('/api/v1/groups', { headers, data: { name } })
     expect(resp.ok(), await resp.text()).toBeTruthy()
     const group = await resp.json()
-    const takenResp = await request.post('/api/v1/groups', { headers, data: { name: takenName } })
-    expect(takenResp.ok(), await takenResp.text()).toBeTruthy()
-    const taken = await takenResp.json()
+    let takenID: string | undefined
 
     try {
       setGroupSource(group.id, 'sso')
+
+      const takenResp = await request.post('/api/v1/groups', { headers, data: { name: takenName } })
+      expect(takenResp.ok(), await takenResp.text()).toBeTruthy()
+      const taken = await takenResp.json()
+      takenID = taken.id
 
       await page.goto('/groups')
       const row = page.getByText(name).locator('..').locator('..')
@@ -201,7 +199,9 @@ test.describe('Group provenance and SSO-managed delete guard', () => {
       await expect(page.getByText(/already exists/i)).toBeVisible()
     } finally {
       await request.delete(`/api/v1/groups/${group.id}?force=true`, { headers }).catch(() => {})
-      await request.delete(`/api/v1/groups/${taken.id}`, { headers }).catch(() => {})
+      if (takenID) {
+        await request.delete(`/api/v1/groups/${takenID}`, { headers }).catch(() => {})
+      }
     }
   })
 })
