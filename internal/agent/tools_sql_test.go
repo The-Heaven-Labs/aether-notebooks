@@ -147,6 +147,27 @@ func TestExecuteSQLToolBudgetGovernsAdHocSQL(t *testing.T) {
 	})
 }
 
+func TestSQLTimeoutBudget(t *testing.T) {
+	cases := []struct {
+		name    string
+		ceiling time.Duration
+		argMs   int
+		want    time.Duration
+	}{
+		{"zero ceiling falls back to 30s", 0, 0, 30 * time.Second},
+		{"zero arg uses ceiling", 10 * time.Minute, 0, 10 * time.Minute},
+		{"negative arg uses ceiling", 10 * time.Minute, -5, 10 * time.Minute},
+		{"arg below ceiling honored", 10 * time.Minute, 45000, 45 * time.Second},
+		{"arg above ceiling clamped", 10 * time.Minute, 900000, 10 * time.Minute},
+		{"arg clamped to fallback ceiling", 0, 60000, 30 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, sqlTimeoutBudget(tc.argMs, tc.ceiling))
+		})
+	}
+}
+
 // The tool result persisted in agent_messages must carry the execution ID so
 // the run can be joined to its ClickHouse query_log entry. The embedded
 // ResultSet fields stay at the top level of the JSON.

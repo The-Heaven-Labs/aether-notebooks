@@ -15,6 +15,30 @@ import (
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
+// defaultSQLToolTimeout is the historical execute_sql tool budget. It applies
+// when the caller provides no ceiling (in-Aether agent paths), preserving the
+// guardrail that pushes agents toward notebook cells for long queries.
+const defaultSQLToolTimeout = 30 * time.Second
+
+// sqlTimeoutBudget resolves the effective execution budget for an execute_sql
+// call: the caller's timeout_ms when positive, clamped to the caller's
+// ceiling. A zero ceiling falls back to defaultSQLToolTimeout. The MCP handler
+// sets a larger ceiling (AETHER_MCP_SQL_TIMEOUT_MS) so harness callers can run
+// longer queries; agent callers never do.
+func sqlTimeoutBudget(timeoutMs int, ceiling time.Duration) time.Duration {
+	if ceiling <= 0 {
+		ceiling = defaultSQLToolTimeout
+	}
+	if timeoutMs <= 0 {
+		return ceiling
+	}
+	d := time.Duration(timeoutMs) * time.Millisecond
+	if d > ceiling {
+		return ceiling
+	}
+	return d
+}
+
 // effectiveCellOutputMaxBytes returns the org-configured per-cell output byte
 // cap, clamped by the platform ceiling. It is resolved per call (no caching)
 // from the org row the handlers already load for the connector.
