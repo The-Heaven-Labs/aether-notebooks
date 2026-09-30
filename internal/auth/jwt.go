@@ -13,6 +13,9 @@ type Claims struct {
 	OrgID           string `json:"oid"`
 	Role            string `json:"role"`
 	IsPlatformAdmin bool   `json:"is_platform_admin,omitempty"`
+	// OAuth access tokens (MCP authorization server) only:
+	Scope    string `json:"scope,omitempty"`     // space-separated granted scopes
+	ClientID string `json:"client_id,omitempty"` // DCR client the token was issued to
 	jwt.RegisteredClaims
 }
 
@@ -66,6 +69,28 @@ func (j *JWTIssuer) IssueOnboarding(userID string, isPlatformAdmin bool) (string
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(15 * time.Minute)),
 			IssuedAt:  jwt.NewNumericDate(now),
+		},
+	}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(j.secret)
+}
+
+// IssueMCPAccessToken issues a short-lived access token for an OAuth MCP
+// client. The audience binds the token to the canonical MCP resource URI
+// (RFC 8707) so it cannot be replayed against another service, and ClientID
+// marks it as an OAuth token — the API middleware rejects it everywhere
+// except the MCP endpoint.
+func (j *JWTIssuer) IssueMCPAccessToken(userID, orgID, role, scopes, clientID, audience string, ttl time.Duration) (string, error) {
+	now := time.Now()
+	claims := &Claims{
+		UserID:   userID,
+		OrgID:    orgID,
+		Role:     role,
+		Scope:    scopes,
+		ClientID: clientID,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Audience:  jwt.ClaimStrings{audience},
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		},
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(j.secret)
