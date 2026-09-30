@@ -801,7 +801,8 @@ func TestAgentWSSessionViewEditSplit(t *testing.T) {
 	defer ts.Close()
 
 	finalBody := `{"id":"x","model":"gpt-4","choices":[{"message":{"content":"viewer sees this"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`
-	llm := mockLLMResponses(t, []string{finalBody})
+	var captured []map[string]any
+	llm := mockLLMWithCapture(t, []string{finalBody}, &captured)
 	defer llm.Close()
 
 	notebookID := createNotebook(t, f.srv, f.aliceToken, "WS View Edit NB")
@@ -848,7 +849,9 @@ func TestAgentWSSessionViewEditSplit(t *testing.T) {
 		done := viewerCol.waitFor("done")
 		data, _ := done["data"].(map[string]any)
 		require.Equal(t, "viewer sees this", data["content"])
-		require.NotNil(t, done["seq"], "viewer events must carry the shared seq")
+		seq, ok := done["seq"].(float64)
+		require.True(t, ok, "viewer events must carry a numeric shared seq: %v", done)
+		require.Greater(t, seq, float64(0), "viewer events must carry a positive shared seq")
 	})
 
 	t.Run("viewer mutating frames are rejected and the socket stays open", func(t *testing.T) {
@@ -867,13 +870,12 @@ func TestAgentWSSessionViewEditSplit(t *testing.T) {
 			{"type": "set_page_context", "page_context": map[string]any{"type": "notebook", "id": notebookID}},
 			{"type": "set_admin_mode", "admin_mode": true},
 		}
-		for _, frame := range frames {
+		for i, frame := range frames {
 			require.NoError(t, conn.WriteJSON(frame))
-		}
-
-		col.waitForCount("error", len(frames))
-		for _, m := range col.messagesOfType("error") {
-			require.Equal(t, "read-only session", m["message"], "%v", m)
+			col.waitForCount("error", i+1)
+			errs := col.messagesOfType("error")
+			require.Len(t, errs, i+1, "frame %d (%v): exactly one rejection per frame", i, frame)
+			require.Equal(t, "read-only session", errs[i]["message"], "frame %d (%v) must be rejected as read-only", i, frame)
 		}
 		require.Zero(t, col.count("done"), "a rejected message must not start a turn")
 
@@ -881,7 +883,9 @@ func TestAgentWSSessionViewEditSplit(t *testing.T) {
 		// rejected frames did not close the socket.
 		require.NoError(t, conn.WriteJSON(map[string]string{"type": "reconnect", "last_message_id": ""}))
 		sync := col.waitFor("reconnect_sync")
-		require.Equal(t, false, sync["running"], "no turn may be running for the viewer")
+		running, ok := sync["running"].(bool)
+		require.True(t, ok, "reconnect_sync must report a boolean running flag: %v", sync)
+		require.False(t, running, "no turn may be running for the viewer")
 	})
 
 	t.Run("owner can still send and change settings", func(t *testing.T) {
@@ -889,12 +893,16 @@ func TestAgentWSSessionViewEditSplit(t *testing.T) {
 		conn := dial(t, sessionID, f.aliceToken, false)
 		col := collectWS(t, conn)
 
+		start := len(captured)
 		require.NoError(t, conn.WriteJSON(map[string]string{"type": "set_reasoning_effort", "reasoning_effort": "high"}))
 		require.NoError(t, conn.WriteJSON(map[string]string{"type": "message", "content": "owner turn"}))
 		done := col.waitFor("done")
 		data, _ := done["data"].(map[string]any)
 		require.Equal(t, "viewer sees this", data["content"])
 		require.Zero(t, col.count("error"), "owner frames must be accepted")
+		require.Len(t, captured, start+1, "the owner turn must reach the LLM exactly once")
+		require.Equal(t, "high", captured[start]["reasoning_effort"],
+			"the owner's requested reasoning effort must reach the LLM request")
 	})
 
 	t.Run("admin-mode org admin can mutate", func(t *testing.T) {
@@ -908,12 +916,16 @@ func TestAgentWSSessionViewEditSplit(t *testing.T) {
 		conn := dial(t, sessionID, adminToken, true)
 		col := collectWS(t, conn)
 
+		start := len(captured)
 		require.NoError(t, conn.WriteJSON(map[string]string{"type": "set_reasoning_effort", "reasoning_effort": "low"}))
 		require.NoError(t, conn.WriteJSON(map[string]string{"type": "message", "content": "admin turn"}))
 		done := col.waitFor("done")
 		data, _ := done["data"].(map[string]any)
 		require.Equal(t, "viewer sees this", data["content"])
 		require.Zero(t, col.count("error"), "an admin-mode org admin must not be read-only")
+		require.Len(t, captured, start+1, "the admin turn must reach the LLM exactly once")
+		require.Equal(t, "low", captured[start]["reasoning_effort"],
+			"the admin's requested reasoning effort must reach the LLM request")
 	})
 
 	t.Run("member without a share cannot connect", func(t *testing.T) {
