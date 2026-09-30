@@ -645,9 +645,9 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	shares, err := h.validateSessionShares(ctx, claims.UserID, claims.OrgID, req.Shares)
+	shares, err := h.server.normalizeSessionShareEntries(ctx, claims.UserID, claims.OrgID, req.Shares)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeSessionShareError(w, err)
 		return
 	}
 
@@ -710,75 +710,6 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 		"auto_approve_tools":    req.AutoApproveTools,
 		"auto_answer_questions": req.AutoAnswerQuestions,
 	})
-}
-
-// validateSessionShares normalizes the create-session share list. Subjects must
-// belong to the caller's org and sharing is read-only: a non-owner subject's
-// actions must be exactly ["view"] (an omitted list defaults to view).
-// Duplicate subjects collapse, and entries naming the owner are dropped because
-// the owner entry already carries full access.
-func (h *agentHandlers) validateSessionShares(ctx context.Context, userID, orgID string, entries []aclEntryInput) ([]aclEntryInput, error) {
-	normalized := make([]aclEntryInput, 0, len(entries))
-	seen := make(map[string]bool, len(entries))
-	for _, e := range entries {
-		switch e.SubjectType {
-		case "user":
-			if !isValidUUID(e.SubjectID) {
-				return nil, fmt.Errorf("invalid share user")
-			}
-			if e.SubjectID == userID {
-				continue
-			}
-			var member bool
-			if err := h.server.db.Pool.QueryRow(ctx,
-				`SELECT EXISTS (SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2)`,
-				orgID, e.SubjectID).Scan(&member); err != nil {
-				return nil, fmt.Errorf("validate share user: %w", err)
-			}
-			if !member {
-				return nil, fmt.Errorf("share user is not a member of this organization")
-			}
-		case "group":
-			if !isValidUUID(e.SubjectID) {
-				return nil, fmt.Errorf("invalid share group")
-			}
-			var exists bool
-			if err := h.server.db.Pool.QueryRow(ctx,
-				`SELECT EXISTS (SELECT 1 FROM groups WHERE org_id = $1 AND id = $2)`,
-				orgID, e.SubjectID).Scan(&exists); err != nil {
-				return nil, fmt.Errorf("validate share group: %w", err)
-			}
-			if !exists {
-				return nil, fmt.Errorf("share group not found in this organization")
-			}
-		case "org_role":
-			if e.SubjectID != "everyone" {
-				return nil, fmt.Errorf(`org_role shares must use subject_id "everyone"`)
-			}
-		default:
-			return nil, fmt.Errorf("invalid share subject_type")
-		}
-
-		actions := e.Actions
-		if len(actions) == 0 {
-			actions = []string{"view"}
-		}
-		if len(actions) != 1 || actions[0] != "view" {
-			return nil, fmt.Errorf(`shared sessions are read-only: actions must be ["view"]`)
-		}
-
-		key := e.SubjectType + ":" + e.SubjectID
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		normalized = append(normalized, aclEntryInput{
-			SubjectType: e.SubjectType,
-			SubjectID:   e.SubjectID,
-			Actions:     actions,
-		})
-	}
-	return normalized, nil
 }
 
 // createSessionParams carries the validated create-session inputs into the
@@ -858,14 +789,8 @@ func (h *agentHandlers) createSessionWithSharing(ctx context.Context, sessionID 
 		return fmt.Errorf("seed session owner ACL: %w", err)
 	}
 
-	for _, share := range p.Shares {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-			VALUES ($1, 'agent_session', $2::uuid, $3, $4, $5)
-			ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING
-		`, p.OrgID, sessionID, share.SubjectType, share.SubjectID, share.Actions); err != nil {
-			return fmt.Errorf("insert session share: %w", err)
-		}
+	if err := insertSessionACLEntries(ctx, tx, p.OrgID, sessionID, p.Shares); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
