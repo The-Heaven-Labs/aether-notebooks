@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -32,11 +33,10 @@ func sqlTimeoutBudget(timeoutMs int, ceiling time.Duration) time.Duration {
 	if timeoutMs <= 0 {
 		return ceiling
 	}
-	d := time.Duration(timeoutMs) * time.Millisecond
-	if d > ceiling {
+	if int64(timeoutMs) > int64(ceiling/time.Millisecond) {
 		return ceiling
 	}
-	return d
+	return time.Duration(timeoutMs) * time.Millisecond
 }
 
 // effectiveCellOutputMaxBytes returns the org-configured per-cell output byte
@@ -200,13 +200,17 @@ func makeExecuteSQLHandler(pool *pgxpool.Pool) ToolHandler {
 		// The def declares NoTimeout; this handler enforces the caller-scoped
 		// budget itself so the MCP path can raise the ceiling above the agent
 		// default while agent paths keep the 30s guardrail.
-		runCtx, cancel := context.WithTimeout(ctx.Context, sqlTimeoutBudget(req.TimeoutMs, ctx.QueryTimeoutCeiling))
+		budget := sqlTimeoutBudget(req.TimeoutMs, ctx.QueryTimeoutCeiling)
+		runCtx, cancel := context.WithTimeout(ctx.Context, budget)
 		defer cancel()
 		tc := *ctx
 		tc.Context = runCtx
 
 		result, err := executeAgentSQL(&tc, pool, req.ConnectorID, req.Query, nil, req.Limit)
 		if err != nil {
+			if errors.Is(runCtx.Err(), context.DeadlineExceeded) && ctx.Context.Err() == nil {
+				return nil, fmt.Errorf("tool %q timed out after %s", "execute_sql", budget)
+			}
 			return nil, err
 		}
 
