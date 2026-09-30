@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -174,7 +175,7 @@ func TestFilterVisibleSessionsMatchesPerRowChecks(t *testing.T) {
 
 	// The org was seeded with raw SQL, so no Everyone group exists yet; create
 	// the canonical group and resolve its ID by name exactly the way
-	// viewerGroupIDs and checkPermission do.
+	// callerGroupIDs and checkPermission do.
 	_, err = s.db.Pool.Exec(ctx,
 		`INSERT INTO groups (org_id, name, source) VALUES ($1, 'Everyone', 'system')`,
 		orgID.String())
@@ -190,6 +191,22 @@ func TestFilterVisibleSessionsMatchesPerRowChecks(t *testing.T) {
 		notebookID.String(), orgID.String(), "Filter Notebook", ownerID.String())
 	require.NoError(t, err)
 	grantSessionPermACL(t, s, orgID, "notebook", notebookID, inheritorID, []string{"view"})
+
+	// A second notebook inherits view from its parent folder and has no direct
+	// notebook ACL: the batched path must fall back to checkPermission's
+	// ancestor walk to see it.
+	folderID := uuid.New()
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO folders (id, org_id, name, created_by) VALUES ($1, $2, $3, $4)`,
+		folderID.String(), orgID.String(), "Filter Folder", ownerID.String())
+	require.NoError(t, err)
+	grantSessionPermACL(t, s, orgID, "folder", folderID, inheritorID, []string{"view"})
+
+	folderNotebookID := uuid.New()
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO notebooks (id, org_id, folder_id, title, created_by) VALUES ($1, $2, $3, $4, $5)`,
+		folderNotebookID.String(), orgID.String(), folderID.String(), "Filter Folder Notebook", ownerID.String())
+	require.NoError(t, err)
 
 	_, ownedSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, nil, false)
 	_, directSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, nil, false)
@@ -212,9 +229,12 @@ func TestFilterVisibleSessionsMatchesPerRowChecks(t *testing.T) {
 	_, inheritedSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, &nb, true)
 	_, mixedSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, &nb, true)
 	grantSessionPermACL(t, s, orgID, "agent_session", mixedSessionID, directID, []string{"view"})
+	folderNB := folderNotebookID
+	_, folderInheritedSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, &folderNB, true)
 	_, privateSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, nil, false)
 
 	notebookIDCopy := notebookID.String()
+	folderNotebookIDCopy := folderNotebookID.String()
 	candidates := []listSessionRow{
 		{ID: ownedSessionID.String(), UserID: ownerID.String()},
 		{ID: directSessionID.String(), UserID: ownerID.String()},
@@ -223,6 +243,7 @@ func TestFilterVisibleSessionsMatchesPerRowChecks(t *testing.T) {
 		{ID: everyoneSessionID.String(), UserID: ownerID.String()},
 		{ID: inheritedSessionID.String(), UserID: ownerID.String(), NotebookID: &notebookIDCopy, Inherit: true},
 		{ID: mixedSessionID.String(), UserID: ownerID.String(), NotebookID: &notebookIDCopy, Inherit: true},
+		{ID: folderInheritedSessionID.String(), UserID: ownerID.String(), NotebookID: &folderNotebookIDCopy, Inherit: true},
 		{ID: privateSessionID.String(), UserID: ownerID.String()},
 	}
 
@@ -260,7 +281,9 @@ func TestFilterVisibleSessionsMatchesPerRowChecks(t *testing.T) {
 				expectedEdit[candidate.ID] = editable
 			}
 
-			got, err := s.filterVisibleSessions(callerCtx, caller.userID.String(), orgID.String(), caller.role, candidates)
+			groupIDs, err := s.callerGroupIDs(callerCtx, caller.userID.String(), orgID.String())
+			require.NoError(t, err)
+			got, err := s.filterVisibleSessions(callerCtx, caller.userID.String(), orgID.String(), caller.role, groupIDs, candidates)
 			require.NoError(t, err)
 
 			gotIDs := make([]string, 0, len(got))
@@ -281,6 +304,29 @@ func TestFilterVisibleSessionsMatchesPerRowChecks(t *testing.T) {
 				"batched visibility must match the per-row check")
 		})
 	}
+}
+
+// TestMergeSessionRowsDedupOrderAndCap pins mergeSessionRows: duplicates across
+// the two pages collapse to the first-seen row, the result is newest-first, and
+// the cap truncates the oldest rows.
+func TestMergeSessionRowsDedupOrderAndCap(t *testing.T) {
+	now := time.Now()
+	row := func(id string, age time.Duration) listSessionRow {
+		return listSessionRow{ID: id, CreatedAt: now.Add(-age)}
+	}
+
+	primary := []listSessionRow{row("a", 3*time.Hour), row("b", time.Hour)}
+	secondary := []listSessionRow{row("b", 2*time.Hour), row("c", 4*time.Hour)}
+
+	merged := mergeSessionRows(primary, secondary, 10)
+	require.Len(t, merged, 3, "the duplicate b row must collapse")
+	require.Equal(t, []string{"b", "a", "c"}, []string{merged[0].ID, merged[1].ID, merged[2].ID},
+		"newest first, primary page first on ties")
+	require.Equal(t, now.Add(-time.Hour), merged[0].CreatedAt, "the first-seen b row wins")
+
+	capped := mergeSessionRows(primary, secondary, 2)
+	require.Equal(t, []string{"b", "a"}, []string{capped[0].ID, capped[1].ID},
+		"the cap keeps the newest rows")
 }
 
 // TestSessionShareDatabaseFailureMapsToServerError proves a database outage

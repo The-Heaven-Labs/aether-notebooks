@@ -1001,6 +1001,15 @@ func TestListSharedSessions(t *testing.T) {
 		require.Equal(t, http.StatusOK, code)
 		require.Empty(t, sessionListIDs(rows))
 	})
+
+	t.Run("cross-org caller sees nothing", func(t *testing.T) {
+		otherToken := registerAndGetToken(t, f.srv,
+			fmt.Sprintf("session-share-shared-other-%d@example.com", time.Now().UnixNano()),
+			"Session Share Shared Other Org")
+		code, body := rawRequest(t, f.srv, otherToken, "GET", "/api/v1/sessions/shared", nil)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+		require.Equal(t, "[]", strings.TrimSpace(body))
+	})
 }
 
 // TestUpdateSession pins PATCH /sessions/{id}: title needs edit, the inherit
@@ -1091,9 +1100,62 @@ func TestUpdateSession(t *testing.T) {
 		require.False(t, flag)
 	})
 
+	t.Run("owner updates title and flag in one request", func(t *testing.T) {
+		code, resp := doRequest(t, f.srv, f.aliceToken, "PATCH",
+			"/api/v1/sessions/"+withNotebook, map[string]any{
+				"title":                       "combined update",
+				"share_with_notebook_viewers": true,
+			})
+		require.Equal(t, http.StatusOK, code, "%v", resp)
+		require.Equal(t, "combined update", resp["title"])
+		require.Equal(t, true, resp["share_with_notebook_viewers"])
+
+		var title *string
+		var flag bool
+		require.NoError(t, f.srv.DB().Pool.QueryRow(ctx,
+			`SELECT title, share_with_notebook_viewers FROM agent_sessions WHERE id = $1`,
+			withNotebook).Scan(&title, &flag))
+		require.NotNil(t, title)
+		require.Equal(t, "combined update", *title)
+		require.True(t, flag)
+	})
+
 	t.Run("unknown session is 404", func(t *testing.T) {
 		code, resp := doRequest(t, f.srv, f.aliceToken, "PATCH",
 			"/api/v1/sessions/"+uuid.NewString(), map[string]any{"title": "nope"})
 		require.Equal(t, http.StatusNotFound, code, "%v", resp)
+	})
+
+	t.Run("empty body is rejected without leaking the title", func(t *testing.T) {
+		var currentTitle string
+		require.NoError(t, f.srv.DB().Pool.QueryRow(ctx,
+			`SELECT COALESCE(title, '') FROM agent_sessions WHERE id = $1`, withNotebook).Scan(&currentTitle))
+		require.NotEmpty(t, currentTitle)
+
+		_, unrelatedToken := addFixtureMember(t, f, "update-empty")
+		foreignToken := registerAndGetToken(t, f.srv,
+			fmt.Sprintf("session-share-update-foreign-%d@example.com", time.Now().UnixNano()),
+			"Session Share Update Foreign Org")
+
+		for name, token := range map[string]string{
+			"owner":                 f.aliceToken,
+			"unrelated org member":  unrelatedToken,
+			"member of another org": foreignToken,
+		} {
+			t.Run(name, func(t *testing.T) {
+				code, body := rawRequest(t, f.srv, token, "PATCH",
+					"/api/v1/sessions/"+withNotebook, map[string]any{})
+				require.Equal(t, http.StatusBadRequest, code, "%v", body)
+				require.Contains(t, body, "no fields to update")
+				require.NotContains(t, body, currentTitle,
+					"an empty PATCH must never echo the session title")
+			})
+		}
+
+		t.Run("empty raw body", func(t *testing.T) {
+			code, body := rawRequest(t, f.srv, f.aliceToken, "PATCH", "/api/v1/sessions/"+withNotebook, nil)
+			require.Equal(t, http.StatusBadRequest, code, "%v", body)
+			require.NotContains(t, body, currentTitle)
+		})
 	})
 }
