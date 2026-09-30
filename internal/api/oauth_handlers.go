@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/oauth"
 )
 
@@ -78,24 +79,24 @@ func (s *Server) handleOAuthRegister(w http.ResponseWriter, r *http.Request) {
 		ResponseTypes           []string `json:"response_types"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.RedirectURIs) == 0 {
-		writeError(w, http.StatusBadRequest, "invalid_client_metadata")
+		oauthErrorResponse(w, "invalid_client_metadata", "redirect_uris is required")
 		return
 	}
 	if req.TokenEndpointAuthMethod != "" && req.TokenEndpointAuthMethod != "none" {
-		writeError(w, http.StatusBadRequest, "only public clients (token_endpoint_auth_method=none) are supported")
+		oauthErrorResponse(w, "invalid_client_metadata", "only public clients (token_endpoint_auth_method=none) are supported")
 		return
 	}
 	for _, gt := range append(req.GrantTypes, req.ResponseTypes...) {
 		switch gt {
 		case "", "authorization_code", "refresh_token", "code":
 		default:
-			writeError(w, http.StatusBadRequest, "unsupported grant or response type: "+gt)
+			oauthErrorResponse(w, "invalid_client_metadata", "unsupported grant or response type: "+gt)
 			return
 		}
 	}
 	for _, uri := range req.RedirectURIs {
 		if !oauth.ValidateRedirectURI(uri) {
-			writeError(w, http.StatusBadRequest, "redirect URIs must be https or loopback http")
+			oauthErrorResponse(w, "invalid_redirect_uri", "redirect URIs must be https or loopback http")
 			return
 		}
 	}
@@ -127,9 +128,15 @@ func (s *Server) handleOAuthToken(w http.ResponseWriter, r *http.Request) {
 		oauthErrorResponse(w, "invalid_request", "malformed form body")
 		return
 	}
+	// RFC 6749 §5.1: token responses (success or error) must not be cached.
+	w.Header().Set("Cache-Control", "no-store")
 	client, err := s.oauth.GetClient(r.Context(), r.PostFormValue("client_id"))
 	if err != nil {
-		oauthErrorResponse(w, "invalid_client", "unknown client")
+		if errors.Is(err, oauth.ErrNotFound) {
+			oauthErrorResponse(w, "invalid_client", "unknown client")
+		} else {
+			writeError(w, http.StatusInternalServerError, "token endpoint failure")
+		}
 		return
 	}
 
@@ -137,7 +144,7 @@ func (s *Server) handleOAuthToken(w http.ResponseWriter, r *http.Request) {
 	case "authorization_code":
 		s.handleOAuthTokenAuthCode(w, r, client)
 	case "refresh_token":
-		s.handleOAuthTokenRefresh(w, r)
+		s.handleOAuthTokenRefresh(w, r, client)
 	default:
 		oauthErrorResponse(w, "unsupported_grant_type", "grant_type must be authorization_code or refresh_token")
 	}
@@ -171,7 +178,11 @@ func (s *Server) handleOAuthTokenAuthCode(w http.ResponseWriter, r *http.Request
 	// initial exchange fetch it from org_members.
 	role, err := s.memberRole(r.Context(), codeRec.OrgID, codeRec.UserID)
 	if err != nil {
-		oauthErrorResponse(w, "invalid_grant", "user is not a member of the organization")
+		if errors.Is(err, pgx.ErrNoRows) {
+			oauthErrorResponse(w, "invalid_grant", "user is not a member of the organization")
+		} else {
+			writeError(w, http.StatusInternalServerError, "token issuance failed")
+		}
 		return
 	}
 	access, refresh, err := s.oauth.IssueTokens(r.Context(), s.jwt, client.ClientID,
@@ -189,12 +200,14 @@ func (s *Server) handleOAuthTokenAuthCode(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func (s *Server) handleOAuthTokenRefresh(w http.ResponseWriter, r *http.Request) {
-	access, newRefresh, err := s.oauth.RotateRefresh(r.Context(), s.jwt, r.PostFormValue("refresh_token"))
+func (s *Server) handleOAuthTokenRefresh(w http.ResponseWriter, r *http.Request, client *oauth.Client) {
+	access, newRefresh, err := s.oauth.RotateRefresh(r.Context(), s.jwt, client.ClientID, r.PostFormValue("refresh_token"))
 	switch {
 	case errors.Is(err, oauth.ErrReused):
 		oauthErrorResponse(w, "invalid_grant", "refresh token reuse detected; all tokens in the family were revoked")
-	case errors.Is(err, oauth.ErrNotFound):
+	case errors.Is(err, oauth.ErrClientMismatch), errors.Is(err, oauth.ErrNotFound):
+		// Non-enumerating: a token presented by the wrong client is
+		// indistinguishable from an unknown or expired one.
 		oauthErrorResponse(w, "invalid_grant", "refresh token is invalid or expired")
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, "token rotation failed")

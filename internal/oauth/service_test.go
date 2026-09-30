@@ -165,7 +165,7 @@ func TestIssueTokensAndRotateRefresh(t *testing.T) {
 		`SELECT family_id FROM oauth_tokens WHERE refresh_hash = $1`,
 		hashToken(refresh)).Scan(&familyBefore))
 
-	newAccess, newRefresh, err := svc.RotateRefresh(ctx, issuer, refresh)
+	newAccess, newRefresh, err := svc.RotateRefresh(ctx, issuer, client.ClientID, refresh)
 	require.NoError(t, err)
 	require.NotEmpty(t, newAccess)
 	require.NotEmpty(t, newRefresh)
@@ -208,14 +208,14 @@ func TestRotateRefreshReuseRevokesFamily(t *testing.T) {
 		[]string{ScopeQuery}, "https://aether.example.com/mcp")
 	require.NoError(t, err)
 
-	_, rotated, err := svc.RotateRefresh(ctx, issuer, refresh)
+	_, rotated, err := svc.RotateRefresh(ctx, issuer, client.ClientID, refresh)
 	require.NoError(t, err)
 
-	_, _, err = svc.RotateRefresh(ctx, issuer, refresh)
+	_, _, err = svc.RotateRefresh(ctx, issuer, client.ClientID, refresh)
 	require.ErrorIs(t, err, ErrReused)
 
 	// A revoked member of the family is also rejected as reuse.
-	_, _, err = svc.RotateRefresh(ctx, issuer, rotated)
+	_, _, err = svc.RotateRefresh(ctx, issuer, client.ClientID, rotated)
 	require.ErrorIs(t, err, ErrReused)
 
 	var total, revoked int
@@ -243,7 +243,7 @@ func TestRotateRefreshMembershipRemoved(t *testing.T) {
 		`DELETE FROM org_members WHERE org_id = $1 AND user_id = $2`, orgID, userID)
 	require.NoError(t, err)
 
-	_, _, err = svc.RotateRefresh(ctx, issuer, refresh)
+	_, _, err = svc.RotateRefresh(ctx, issuer, client.ClientID, refresh)
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -263,7 +263,7 @@ func TestRotateRefreshExpiredToken(t *testing.T) {
 		hashToken(refresh))
 	require.NoError(t, err)
 
-	_, _, err = svc.RotateRefresh(ctx, issuer, refresh)
+	_, _, err = svc.RotateRefresh(ctx, issuer, client.ClientID, refresh)
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -271,7 +271,41 @@ func TestRotateRefreshUnknownToken(t *testing.T) {
 	svc, _ := newOAuthTestService(t)
 	ctx := context.Background()
 	issuer := newOAuthTestIssuer(t)
+	client := registerOAuthTestClient(t, svc)
 
-	_, _, err := svc.RotateRefresh(ctx, issuer, "not-a-real-refresh-token")
+	_, _, err := svc.RotateRefresh(ctx, issuer, client.ClientID, "not-a-real-refresh-token")
 	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestRotateRefreshClientMismatch(t *testing.T) {
+	svc, db := newOAuthTestService(t)
+	ctx := context.Background()
+	issuer := newOAuthTestIssuer(t)
+	orgID, userID := createOAuthTestIdentity(t, db)
+	clientA := registerOAuthTestClient(t, svc)
+	clientB := registerOAuthTestClient(t, svc)
+
+	_, refresh, err := svc.IssueTokens(ctx, issuer, clientA.ClientID, userID, orgID, "admin",
+		[]string{ScopeQuery}, "https://aether.example.com/mcp")
+	require.NoError(t, err)
+
+	// Another client presenting the token is rejected, and the attempt must
+	// not revoke the family (no DoS on a leaked token).
+	_, _, err = svc.RotateRefresh(ctx, issuer, clientB.ClientID, refresh)
+	require.ErrorIs(t, err, ErrClientMismatch)
+
+	var total, revoked, replaced int
+	require.NoError(t, db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*), COUNT(*) FILTER (WHERE revoked_at IS NOT NULL),
+		        COUNT(*) FILTER (WHERE replaced_by IS NOT NULL)
+		 FROM oauth_tokens WHERE refresh_hash = $1`,
+		hashToken(refresh)).Scan(&total, &revoked, &replaced))
+	require.Equal(t, 1, total)
+	require.Zero(t, revoked)
+	require.Zero(t, replaced)
+
+	// The legitimate client can still rotate.
+	_, newRefresh, err := svc.RotateRefresh(ctx, issuer, clientA.ClientID, refresh)
+	require.NoError(t, err)
+	require.NotEmpty(t, newRefresh)
 }

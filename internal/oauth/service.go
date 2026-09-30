@@ -17,8 +17,9 @@ import (
 
 // Sentinel errors mapped to OAuth error codes by the HTTP layer.
 var (
-	ErrNotFound = errors.New("oauth: not found")
-	ErrReused   = errors.New("oauth: refresh token reuse detected")
+	ErrNotFound       = errors.New("oauth: not found")
+	ErrReused         = errors.New("oauth: refresh token reuse detected")
+	ErrClientMismatch = errors.New("oauth: refresh token was issued to another client")
 )
 
 const (
@@ -173,11 +174,12 @@ func (s *Service) IssueTokens(ctx context.Context, issuer *auth.JWTIssuer, clien
 }
 
 // RotateRefresh exchanges a refresh token for a new one in the same family.
-// Presenting a superseded or revoked token revokes the whole family (reuse
-// detection) and returns ErrReused. An unknown or expired token returns
-// ErrNotFound. Membership is re-checked so removing a user from the org kills
-// their refresh chains.
-func (s *Service) RotateRefresh(ctx context.Context, issuer *auth.JWTIssuer, refreshToken string) (access, newRefresh string, err error) {
+// The token is bound to the client it was issued to (RFC 6749 §6): presenting
+// it from any other client returns ErrClientMismatch. Presenting a superseded
+// or revoked token revokes the whole family (reuse detection) and returns
+// ErrReused. An unknown or expired token returns ErrNotFound. Membership is
+// re-checked so removing a user from the org kills their refresh chains.
+func (s *Service) RotateRefresh(ctx context.Context, issuer *auth.JWTIssuer, clientID, refreshToken string) (access, newRefresh string, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return "", "", err
@@ -198,6 +200,12 @@ func (s *Service) RotateRefresh(ctx context.Context, issuer *auth.JWTIssuer, ref
 			return "", "", ErrNotFound
 		}
 		return "", "", err
+	}
+
+	// Client binding is checked before the reuse branch so a wrong-client
+	// attempt cannot revoke a family it does not own (no DoS on leaked tokens).
+	if rec.ClientID != clientID {
+		return "", "", ErrClientMismatch
 	}
 
 	if rec.Revoked || rec.Replaced {
