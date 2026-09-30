@@ -82,7 +82,12 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allowed, _ := s.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "view")
+	allowed, err := s.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "view")
+	if err != nil {
+		slog.Warn("ws: session permission check failed", "session_id", sessionID, "user_id", claims.UserID, "action", "view", "error", err)
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
 	if !allowed {
 		writeError(w, http.StatusForbidden, "access denied")
 		return
@@ -90,11 +95,26 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 
 	// The read-only split is decided once at connect: viewers (shared users,
 	// notebook inheritors) watch and reconnect, editors own the session.
-	canEdit, _ := s.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "edit")
+	//
+	// Permissions are evaluated at connect time only, consistent with the
+	// notebook hub's connect-time auth: a viewer whose share is revoked keeps
+	// this stream until disconnect, and `reconnect` deliberately does not
+	// re-check.
+	canEdit, err := s.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "edit")
+	if err != nil {
+		slog.Warn("ws: session permission check failed", "session_id", sessionID, "user_id", claims.UserID, "action", "edit", "error", err)
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
 
 	// Capture admin mode for this session so the engine can respect per-tool ACLs
-	// unless the profile-page "admin mode" toggle is ON.
-	if s.agentEngine != nil {
+	// unless the profile-page "admin mode" toggle is ON. Only connections that
+	// may edit the session may touch the flag: a viewer dialing
+	// ?admin_mode=true must not switch admin mode on for the owner's session,
+	// and a viewer connecting without the param must not clear it either. An
+	// org admin in admin mode has canEdit=true via the ACL bypass, so their
+	// toggle still takes effect.
+	if s.agentEngine != nil && canEdit {
 		s.agentEngine.SessionStore().SetAdminMode(sessionID, adminModeFromContext(r.Context()))
 	}
 
