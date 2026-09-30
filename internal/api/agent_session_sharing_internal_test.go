@@ -142,8 +142,9 @@ func grantSessionPermGroupACL(t *testing.T, s *Server, orgID uuid.UUID, resource
 
 // TestFilterVisibleSessionsMatchesPerRowChecks pins the batched visibility
 // helper against the per-row checkSessionPermission primitive for every access
-// path (owner, direct user, group, everyone, notebook inheritance, admin mode)
-// so an optimized query and the authoritative check can never diverge silently.
+// path (owner, direct user, custom group, Everyone group, everyone org_role,
+// notebook inheritance, admin mode) so an optimized query and the authoritative
+// check can never diverge silently.
 func TestFilterVisibleSessionsMatchesPerRowChecks(t *testing.T) {
 	s := newSessionPermissionTestServer(t)
 	ctx := context.Background()
@@ -171,6 +172,18 @@ func TestFilterVisibleSessionsMatchesPerRowChecks(t *testing.T) {
 		groupID.String(), groupMemberID.String())
 	require.NoError(t, err)
 
+	// The org was seeded with raw SQL, so no Everyone group exists yet; create
+	// the canonical group and resolve its ID by name exactly the way
+	// viewerGroupIDs and checkPermission do.
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO groups (org_id, name, source) VALUES ($1, 'Everyone', 'system')`,
+		orgID.String())
+	require.NoError(t, err)
+	var everyoneGroupID string
+	require.NoError(t, s.db.Pool.QueryRow(ctx,
+		`SELECT id FROM groups WHERE org_id = $1 AND name = 'Everyone'`,
+		orgID.String()).Scan(&everyoneGroupID))
+
 	notebookID := uuid.New()
 	_, err = s.db.Pool.Exec(ctx,
 		`INSERT INTO notebooks (id, org_id, title, created_by) VALUES ($1, $2, $3, $4)`,
@@ -183,6 +196,12 @@ func TestFilterVisibleSessionsMatchesPerRowChecks(t *testing.T) {
 	grantSessionPermACL(t, s, orgID, "agent_session", directSessionID, directID, []string{"view"})
 	_, groupSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, nil, false)
 	grantSessionPermGroupACL(t, s, orgID, "agent_session", groupSessionID, groupID, []string{"view"})
+	_, everyoneGroupSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, nil, false)
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		 VALUES ($1, 'agent_session', $2::uuid, 'group', $3, ARRAY['view'])`,
+		orgID.String(), everyoneGroupSessionID.String(), everyoneGroupID)
+	require.NoError(t, err)
 	_, everyoneSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, nil, false)
 	_, err = s.db.Pool.Exec(ctx,
 		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
@@ -200,6 +219,7 @@ func TestFilterVisibleSessionsMatchesPerRowChecks(t *testing.T) {
 		{ID: ownedSessionID.String(), UserID: ownerID.String()},
 		{ID: directSessionID.String(), UserID: ownerID.String()},
 		{ID: groupSessionID.String(), UserID: ownerID.String()},
+		{ID: everyoneGroupSessionID.String(), UserID: ownerID.String()},
 		{ID: everyoneSessionID.String(), UserID: ownerID.String()},
 		{ID: inheritedSessionID.String(), UserID: ownerID.String(), NotebookID: &notebookIDCopy, Inherit: true},
 		{ID: mixedSessionID.String(), UserID: ownerID.String(), NotebookID: &notebookIDCopy, Inherit: true},

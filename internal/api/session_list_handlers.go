@@ -176,6 +176,9 @@ func (s *Server) filterVisibleSessions(ctx context.Context, userID, orgID, orgRo
 		return visible, nil
 	}
 
+	// Admin-mode bypass assumes org-scoped candidates (all current callers);
+	// unlike checkPermission's resourceOrgID equality, it applies no org check,
+	// so a future non-org-scoped caller must add one.
 	adminMode := orgRole == "admin" && adminModeFromContext(ctx)
 
 	groupIDs, err := s.viewerGroupIDs(ctx, userID, orgID)

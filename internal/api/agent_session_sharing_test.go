@@ -1058,6 +1058,18 @@ func TestUpdateSession(t *testing.T) {
 		require.False(t, flag)
 	})
 
+	t.Run("owner can clear the flag without a notebook", func(t *testing.T) {
+		code, resp := doRequest(t, f.srv, f.aliceToken, "PATCH",
+			"/api/v1/sessions/"+withoutNotebook, map[string]any{"share_with_notebook_viewers": false})
+		require.Equal(t, http.StatusOK, code, "%v", resp)
+		require.Equal(t, false, resp["share_with_notebook_viewers"])
+
+		var flag bool
+		require.NoError(t, f.srv.DB().Pool.QueryRow(ctx,
+			`SELECT share_with_notebook_viewers FROM agent_sessions WHERE id = $1`, withoutNotebook).Scan(&flag))
+		require.False(t, flag)
+	})
+
 	t.Run("title over 50 characters is rejected", func(t *testing.T) {
 		code, resp := doRequest(t, f.srv, f.aliceToken, "PATCH",
 			"/api/v1/sessions/"+withNotebook, map[string]any{"title": strings.Repeat("x", 51)})
