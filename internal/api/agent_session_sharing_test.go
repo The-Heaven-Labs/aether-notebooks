@@ -32,6 +32,9 @@ type sessionSharingFixture struct {
 
 func setupSessionSharingFixture(t *testing.T) *sessionSharingFixture {
 	t.Helper()
+	// Registration is rate-limited per IP (default 5/min); a full-package run
+	// registers more users than that from the same test client address.
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
 	ts := time.Now().UnixNano()
 
@@ -95,6 +98,22 @@ func sessionACLCount(t *testing.T, srv *api.Server, sessionID string) int {
 		`SELECT COUNT(*) FROM acl_entries WHERE resource_type = 'agent_session' AND resource_id = $1::uuid`,
 		sessionID).Scan(&count))
 	return count
+}
+
+// sessionArtifactCounts returns how many sessions and agent_session ACL rows
+// exist for one (user, agent) pair. Tests snapshot it around a rejected request
+// to prove no session or ACL row was written.
+func sessionArtifactCounts(t *testing.T, srv *api.Server, userID, agentID string) (sessions, acls int) {
+	t.Helper()
+	require.NoError(t, srv.DB().Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM agent_sessions WHERE user_id = $1 AND agent_id = $2`,
+		userID, agentID).Scan(&sessions))
+	require.NoError(t, srv.DB().Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM acl_entries
+		 WHERE resource_type = 'agent_session'
+		   AND resource_id IN (SELECT id FROM agent_sessions WHERE user_id = $1 AND agent_id = $2)`,
+		userID, agentID).Scan(&acls))
+	return sessions, acls
 }
 
 func sessionExists(t *testing.T, srv *api.Server, sessionID string) bool {
@@ -206,14 +225,35 @@ func TestCreateSessionWithShares(t *testing.T) {
 			{"org_role not everyone", map[string]any{"subject_type": "org_role", "subject_id": "admin", "actions": []string{"view"}}},
 			{"unknown subject type", map[string]any{"subject_type": "widget", "subject_id": f.bobID, "actions": []string{"view"}}},
 		}
+		sessionsBefore, aclsBefore := sessionArtifactCounts(t, f.srv, f.aliceID, f.agentID)
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
 				code, resp := postCreateSession(t, f.srv, f.aliceToken, f.agentID, map[string]any{
 					"shares": []map[string]any{tc.share},
 				})
 				require.Equal(t, http.StatusBadRequest, code, "%v", resp)
+
+				sessions, acls := sessionArtifactCounts(t, f.srv, f.aliceID, f.agentID)
+				require.Equal(t, sessionsBefore, sessions, "a rejected request must not create a session")
+				require.Equal(t, aclsBefore, acls, "a rejected request must not create session ACL rows")
 			})
 		}
+	})
+
+	t.Run("oversized share list is rejected", func(t *testing.T) {
+		sessionsBefore, aclsBefore := sessionArtifactCounts(t, f.srv, f.aliceID, f.agentID)
+		shares := make([]map[string]any, 0, 101)
+		for i := 0; i < 101; i++ {
+			shares = append(shares, map[string]any{
+				"subject_type": "user", "subject_id": f.bobID, "actions": []string{"view"},
+			})
+		}
+		code, resp := postCreateSession(t, f.srv, f.aliceToken, f.agentID, map[string]any{"shares": shares})
+		require.Equal(t, http.StatusBadRequest, code, "%v", resp)
+
+		sessions, acls := sessionArtifactCounts(t, f.srv, f.aliceID, f.agentID)
+		require.Equal(t, sessionsBefore, sessions, "a rejected request must not create a session")
+		require.Equal(t, aclsBefore, acls, "a rejected request must not create session ACL rows")
 	})
 
 	t.Run("inherit flag requires a notebook", func(t *testing.T) {
@@ -312,4 +352,33 @@ func TestCreateSessionEmptyCleanupScopedToNotebook(t *testing.T) {
 	require.True(t, sessionExists(t, f.srv, sA2), "non-empty session must survive the sweep")
 	require.True(t, sessionExists(t, f.srv, sA3))
 	require.NotZero(t, sessionACLCount(t, f.srv, sA2))
+}
+
+// TestCreateSessionDatabaseFailureIsNotBadRequest guards the wire-level error
+// mapping in one direction: with the database failing, the endpoint must never
+// answer 400 (invalid input). The internal share-validation tests pin the
+// per-error classification (sentinel → 400, database error → 500).
+func TestCreateSessionDatabaseFailureIsNotBadRequest(t *testing.T) {
+	f := setupSessionSharingFixture(t)
+
+	// Canceling the request context makes every query fail like a database
+	// outage without touching the shared pool other tests use.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	body, err := json.Marshal(map[string]any{
+		"shares": []map[string]any{
+			{"subject_type": "user", "subject_id": f.bobID, "actions": []string{"view"}},
+		},
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/api/v1/agents/"+f.agentID+"/session", bytes.NewReader(body)).WithContext(ctx)
+	req.Host = "localhost" // skip the DB-backed subdomain lookup
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+f.aliceToken)
+	rec := httptest.NewRecorder()
+	f.srv.ServeHTTP(rec, req)
+
+	require.NotEqual(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }
