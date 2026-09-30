@@ -247,6 +247,26 @@ func TestRotateRefreshMembershipRemoved(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestRotateRefreshExpiredToken(t *testing.T) {
+	svc, db := newOAuthTestService(t)
+	ctx := context.Background()
+	issuer := newOAuthTestIssuer(t)
+	orgID, userID := createOAuthTestIdentity(t, db)
+	client := registerOAuthTestClient(t, svc)
+
+	_, refresh, err := svc.IssueTokens(ctx, issuer, client.ClientID, userID, orgID, "admin",
+		[]string{ScopeQuery}, "https://aether.example.com/mcp")
+	require.NoError(t, err)
+
+	_, err = db.Pool.Exec(ctx,
+		`UPDATE oauth_tokens SET expires_at = NOW() - interval '1 minute' WHERE refresh_hash = $1`,
+		hashToken(refresh))
+	require.NoError(t, err)
+
+	_, _, err = svc.RotateRefresh(ctx, issuer, refresh)
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
 func TestRotateRefreshUnknownToken(t *testing.T) {
 	svc, _ := newOAuthTestService(t)
 	ctx := context.Background()

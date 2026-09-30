@@ -160,8 +160,8 @@ func (s *Service) IssueTokens(ctx context.Context, issuer *auth.JWTIssuer, clien
 	_, err = s.pool.Exec(ctx,
 		`INSERT INTO oauth_tokens
 		     (family_id, refresh_hash, client_id, user_id, org_id, scopes, resource, expires_at)
-		 VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, NOW() + make_interval(days => 30))`,
-		hashToken(refresh), clientID, userID, orgID, scopes, resource)
+		 VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, NOW() + make_interval(secs => $7))`,
+		hashToken(refresh), clientID, userID, orgID, scopes, resource, RefreshTTL.Seconds())
 	if err != nil {
 		return "", "", err
 	}
@@ -201,11 +201,17 @@ func (s *Service) RotateRefresh(ctx context.Context, issuer *auth.JWTIssuer, ref
 	}
 
 	if rec.Revoked || rec.Replaced {
-		// Reuse of a rotated/revoked token: kill the whole family.
-		_, _ = tx.Exec(ctx,
+		// Reuse of a rotated/revoked token: kill the whole family. Failures
+		// are propagated — a failed revocation must not be reported as a
+		// successful detection.
+		if _, err := tx.Exec(ctx,
 			`UPDATE oauth_tokens SET revoked_at = NOW()
-			 WHERE family_id = $1 AND revoked_at IS NULL`, rec.FamilyID)
-		_ = tx.Commit(ctx)
+			 WHERE family_id = $1 AND revoked_at IS NULL`, rec.FamilyID); err != nil {
+			return "", "", err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return "", "", err
+		}
 		return "", "", ErrReused
 	}
 	if !time.Now().Before(rec.ExpiresAt) {
@@ -228,9 +234,9 @@ func (s *Service) RotateRefresh(ctx context.Context, issuer *auth.JWTIssuer, ref
 	err = tx.QueryRow(ctx,
 		`INSERT INTO oauth_tokens
 		     (family_id, refresh_hash, client_id, user_id, org_id, scopes, resource, expires_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW() + make_interval(days => 30))
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW() + make_interval(secs => $8))
 		 RETURNING id`,
-		rec.FamilyID, hashToken(newRefresh), rec.ClientID, rec.UserID, rec.OrgID, scopes, rec.Resource).Scan(&newID)
+		rec.FamilyID, hashToken(newRefresh), rec.ClientID, rec.UserID, rec.OrgID, scopes, rec.Resource, RefreshTTL.Seconds()).Scan(&newID)
 	if err != nil {
 		return "", "", err
 	}
