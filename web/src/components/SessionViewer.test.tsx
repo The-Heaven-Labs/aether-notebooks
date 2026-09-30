@@ -113,10 +113,39 @@ describe('SessionViewer', () => {
 
     emit(ws, { type: 'token', data: 'Live ' })
     emit(ws, { type: 'token', data: 'output' })
-    expect(await screen.findByText(/Live output/)).toBeInTheDocument()
+    expect(await screen.findByTestId('streaming-text')).toBeInTheDocument()
+    expect(screen.getByText(/Live output/)).toBeInTheDocument()
 
-    emit(ws, { type: 'done', data: { tokens: { input: 10, output: 5 } } })
-    expect(await screen.findByText(/Live output/)).toBeInTheDocument()
+    emit(ws, { type: 'done', data: { tokens: { input: 10, output: 5, duration_ms: 42 } } })
+    await waitFor(() => expect(screen.queryByTestId('streaming-text')).toBeNull())
+    expect(screen.getByText(/Live output/)).toBeInTheDocument()
+    expect(screen.getByText('42ms')).toBeInTheDocument()
+  })
+
+  it('keeps partial text and appends the error on error', async () => {
+    const ws = await renderViewer()
+    await screen.findByText('hello from owner')
+
+    emit(ws, { type: 'token', data: 'partial answer' })
+    expect(await screen.findByTestId('streaming-text')).toBeInTheDocument()
+
+    emit(ws, { type: 'error', message: 'model failed' })
+    await waitFor(() => expect(screen.queryByTestId('streaming-text')).toBeNull())
+    expect(screen.getByText(/partial answer/)).toBeInTheDocument()
+    expect(screen.getByText(/Error: model failed/)).toBeInTheDocument()
+  })
+
+  it('keeps partial text and appends the cancelled marker on cancelled', async () => {
+    const ws = await renderViewer()
+    await screen.findByText('hello from owner')
+
+    emit(ws, { type: 'token', data: 'half done' })
+    expect(await screen.findByTestId('streaming-text')).toBeInTheDocument()
+
+    emit(ws, { type: 'cancelled' })
+    await waitFor(() => expect(screen.queryByTestId('streaming-text')).toBeNull())
+    expect(screen.getByText(/half done/)).toBeInTheDocument()
+    expect(screen.getByText(/\[Cancelled\]/)).toBeInTheDocument()
   })
 
   it('ignores tool_confirm_required and question events', async () => {
@@ -128,7 +157,7 @@ describe('SessionViewer', () => {
 
     expect(screen.queryByText(/Confirm Tool Call/)).toBeNull()
     expect(screen.queryByText('Pick one')).toBeNull()
-    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Shared agent session' })).toBeInTheDocument()
     expect(ws.sent.some((f) => f.includes('tool_confirm') || f.includes('question_answer'))).toBe(false)
   })
 
@@ -140,6 +169,139 @@ describe('SessionViewer', () => {
     const share = await screen.findByRole('button', { name: /share/i })
     fireEvent.click(share)
     expect(onShare).toHaveBeenCalledTimes(1)
+  })
+
+  it('merges the session summary prop into the fetched body for the owner header and Share button', async () => {
+    const onShare = vi.fn()
+    server.use(
+      http.get('/api/v1/sessions/:id', () => HttpResponse.json({
+        id: 's1',
+        agent_id: 'a1',
+        notebook_id: 'nb-1',
+        user_id: 'u1',
+        max_turns: 10,
+        created_at: '2026-09-29T10:00:00Z',
+      })),
+    )
+    render(
+      <SessionViewer
+        sessionId="s1"
+        session={{ ...SESSION, title: 'Summary title', shared: false, can_edit: true }}
+        onShare={onShare}
+      />,
+    )
+
+    expect(await screen.findByText('Summary title')).toBeInTheDocument()
+    expect(screen.getByText('owner@example.com')).toBeInTheDocument()
+    const share = await screen.findByRole('button', { name: /share/i })
+    fireEvent.click(share)
+    expect(onShare).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let a late REST seed clobber a reconnect_sync', async () => {
+    const releases: { session?: () => void; messages?: () => void } = {}
+    server.use(
+      http.get('/api/v1/sessions/:id', async () => {
+        await new Promise<void>((resolve) => { releases.session = resolve })
+        return HttpResponse.json(SESSION)
+      }),
+      http.get('/api/v1/sessions/:id/messages', async () => {
+        await new Promise<void>((resolve) => { releases.messages = resolve })
+        return HttpResponse.json(MESSAGES)
+      }),
+    )
+    const ws = await renderViewer()
+    await waitFor(() => expect(releases.session).toBeDefined())
+    await waitFor(() => expect(releases.messages).toBeDefined())
+
+    emit(ws, {
+      type: 'reconnect_sync',
+      messages: [{ id: 'm9', session_id: 's1', role: 'assistant', content: 'authoritative', created_at: '2026-09-29T10:05:00Z' }],
+    })
+
+    await act(async () => {
+      releases.session?.()
+      releases.messages?.()
+    })
+    await waitFor(() => expect(screen.queryByText('Loading session…')).toBeNull())
+    expect(screen.getByText('authoritative')).toBeInTheDocument()
+    expect(screen.queryByText('hello from owner')).toBeNull()
+  })
+
+  it('shows the HTTP status and no empty state when access is denied', async () => {
+    server.use(
+      http.get('/api/v1/sessions/:id', () => HttpResponse.json({ error: 'insufficient permissions' }, { status: 403 })),
+    )
+    render(<SessionViewer sessionId="s1" />)
+
+    expect(await screen.findByText('You do not have access to this session (HTTP 403)')).toBeInTheDocument()
+    expect(screen.queryByText(/No messages in this session yet/)).toBeNull()
+  })
+
+  it('shows the HTTP status and no empty state when the session fetch fails', async () => {
+    server.use(
+      http.get('/api/v1/sessions/:id', () => HttpResponse.json({ error: 'boom' }, { status: 500 })),
+    )
+    render(<SessionViewer sessionId="s1" />)
+
+    expect(await screen.findByText('Failed to load session (HTTP 500)')).toBeInTheDocument()
+    expect(screen.queryByText(/No messages in this session yet/)).toBeNull()
+  })
+
+  it('shows a disconnected state on a socket error and recovers on open', async () => {
+    const ws = await renderViewer()
+    await screen.findByText('hello from owner')
+
+    act(() => { ws.onopen?.() })
+    expect(screen.getByText('Live')).toBeInTheDocument()
+
+    act(() => { ws.onerror?.() })
+    expect(screen.getByText('Disconnected')).toBeInTheDocument()
+    expect(screen.queryByText('Live')).toBeNull()
+
+    act(() => { ws.onopen?.() })
+    expect(screen.getByText('Live')).toBeInTheDocument()
+    expect(screen.queryByText('Disconnected')).toBeNull()
+  })
+
+  it('shows a disconnected state when reconnects are exhausted', async () => {
+    const ws = await renderViewer()
+    await screen.findByText('hello from owner')
+
+    vi.useFakeTimers()
+    try {
+      // The close handler schedules a retry while attempts < 5 and only flags
+      // the disconnected state once the budget is exhausted.
+      for (let i = 0; i < 6; i++) {
+        act(() => { ws.onclose?.() })
+      }
+      expect(screen.getByText('Disconnected')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('restarts the seq clock on a new connection so restarted streams apply', async () => {
+    const ws = await renderViewer()
+    await screen.findByText('hello from owner')
+
+    emit(ws, { type: 'token', data: 'before restart', seq: 5 })
+    expect(await screen.findByText(/before restart/)).toBeInTheDocument()
+
+    vi.useFakeTimers()
+    try {
+      act(() => { ws.onclose?.() })
+      act(() => { vi.advanceTimersByTime(1000) })
+    } finally {
+      vi.useRealTimers()
+    }
+    const next = MockWebSocket.instances[MockWebSocket.instances.length - 1]
+    expect(next).not.toBe(ws)
+
+    // A restarted server stream starts from a lower seq; it must not be
+    // dropped by the previous connection's clock.
+    emit(next, { type: 'token', data: 'after restart', seq: 1 })
+    expect(await screen.findByText(/after restart/)).toBeInTheDocument()
   })
 
   it('loads subagent detail read-only when a subagent row is clicked', async () => {
@@ -160,5 +322,50 @@ describe('SessionViewer', () => {
     expect(await screen.findByText('subagent answer')).toBeInTheDocument()
     expect(screen.getByText(/Subagent task-1/)).toBeInTheDocument()
     expect(screen.queryByRole('textbox')).toBeNull()
+  })
+
+  it('surfaces a failed subagent fetch instead of the empty state', async () => {
+    server.use(
+      http.get('/api/v1/agents/subagent/:taskId/messages', () =>
+        HttpResponse.json({ error: 'forbidden' }, { status: 403 }),
+      ),
+    )
+    const ws = await renderViewer()
+    await screen.findByText('hello from owner')
+
+    emit(ws, { type: 'subagent_status', task_id: 'task-1', status: 'running', goal: 'do a thing' })
+    fireEvent.click(await screen.findByText('SUBAGENT'))
+
+    expect(await screen.findByText('Failed to load subagent messages (HTTP 403)')).toBeInTheDocument()
+    expect(screen.queryByText(/hasn't produced any messages yet/)).toBeNull()
+  })
+
+  it('discards a stale subagent response after switching to another subagent', async () => {
+    const releases: { first?: () => void } = {}
+    server.use(
+      http.get('/api/v1/agents/subagent/:taskId/messages', async ({ params }) => {
+        if (params.taskId === 'task-1') {
+          await new Promise<void>((resolve) => { releases.first = resolve })
+          return HttpResponse.json([{ role: 'assistant', content: 'stale answer', created_at: '2026-09-29T10:01:00Z' }])
+        }
+        return HttpResponse.json([{ role: 'assistant', content: 'fresh answer', created_at: '2026-09-29T10:02:00Z' }])
+      }),
+    )
+    const ws = await renderViewer()
+    await screen.findByText('hello from owner')
+
+    emit(ws, { type: 'subagent_status', task_id: 'task-1', status: 'running', goal: 'first' })
+    emit(ws, { type: 'subagent_status', task_id: 'task-2', status: 'running', goal: 'second' })
+
+    fireEvent.click((await screen.findAllByText('SUBAGENT'))[0])
+    await waitFor(() => expect(releases.first).toBeDefined())
+    fireEvent.click(screen.getByRole('button', { name: /back/i }))
+
+    fireEvent.click((await screen.findAllByText('SUBAGENT'))[1])
+    expect(await screen.findByText('fresh answer')).toBeInTheDocument()
+
+    await act(async () => { releases.first?.() })
+    expect(screen.getByText('fresh answer')).toBeInTheDocument()
+    expect(screen.queryByText('stale answer')).toBeNull()
   })
 })

@@ -3,7 +3,7 @@ import { ArrowLeft, Share2, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
-import { api, getToken } from '../api/client'
+import { api, ApiError, getToken } from '../api/client'
 import { getWsUrl } from '../config'
 import type { AgentMessage, AgentSession, WSMessage } from '../types/agent'
 import { mapServerMessagesToChat, mapSubagentMessage, mapSubagentMessages, applyToolResult, applySteeringMessage } from '../utils/agentTranscript'
@@ -42,9 +42,11 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
   const [currentStreamingReasoning, setCurrentStreamingReasoning] = useState('')
   const [retryNotice, setRetryNotice] = useState<RetryNotice | null>(null)
   const [connected, setConnected] = useState(false)
+  const [disconnected, setDisconnected] = useState(false)
   const [subagentView, setSubagentView] = useState<string | null>(null)
   const [subagentMessages, setSubagentMessages] = useState<ChatMessage[]>([])
   const [subagentLoading, setSubagentLoading] = useState(false)
+  const [subagentError, setSubagentError] = useState<string | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectAttemptsRef = useRef(0)
@@ -55,6 +57,7 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
   const lastSeqRef = useRef(0)
   const lastResyncRequestRef = useRef(0)
   const lastMessageIdRef = useRef('')
+  const syncedRef = useRef(false)
   const subagentViewRef = useRef<string | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
@@ -70,16 +73,23 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
     setSubagentView(null)
     subagentViewRef.current = null
     setSubagentMessages([])
+    setSubagentError(null)
     streamingTextRef.current = ''
     streamingReasoningRef.current = ''
     setCurrentStreamingText('')
     setCurrentStreamingReasoning('')
     lastSeqRef.current = 0
     lastMessageIdRef.current = ''
+    lastResyncRequestRef.current = 0
+    setRetryNotice(null)
+    setConnected(false)
+    setDisconnected(false)
+    syncedRef.current = false
   }, [sessionId])
 
   // The REST fetch seeds the transcript; the WS reconnect_sync is authoritative
-  // and replaces it when the connection opens.
+  // and replaces it when the connection opens. A late REST response must never
+  // clobber or regress what reconnect_sync already applied.
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true)
@@ -89,12 +99,20 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
       api.get<AgentMessage[]>(`/api/v1/sessions/${sessionId}/messages`, { signal: controller.signal }),
     ])
       .then(([sess, rows]) => {
+        if (controller.signal.aborted) return
         setFetchedSession(sess)
+        if (syncedRef.current) return
         setMessages(mapServerMessagesToChat(rows))
         if (rows?.length) lastMessageIdRef.current = rows[rows.length - 1]?.id ?? ''
       })
-      .catch(() => {
-        if (!controller.signal.aborted) setError('Failed to load session')
+      .catch((err) => {
+        if (controller.signal.aborted) return
+        const message = err instanceof ApiError
+          ? (err.status === 401 || err.status === 403
+            ? `You do not have access to this session (HTTP ${err.status})`
+            : `Failed to load session (HTTP ${err.status})`)
+          : 'Failed to load session'
+        setError(message)
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false)
@@ -117,18 +135,18 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
     subagentViewRef.current = taskId
     setSubagentView(taskId)
     setSubagentMessages([])
+    setSubagentError(null)
     setSubagentLoading(true)
     try {
-      const res = await fetch(`/api/v1/agents/subagent/${taskId}/messages`, {
-        headers: { Authorization: 'Bearer ' + getToken() },
-      })
-      if (!res.ok) return
-      const data = await res.json() as unknown[]
+      const data = await api.get<Array<Record<string, unknown>>>(`/api/v1/agents/subagent/${taskId}/messages`)
+      if (subagentViewRef.current !== taskId) return
       setSubagentMessages(mapSubagentMessages(data))
-    } catch {
-      /* read-only fetch failed; the empty state is shown instead */
+    } catch (err) {
+      if (subagentViewRef.current !== taskId) return
+      const status = err instanceof ApiError ? ` (HTTP ${err.status})` : ''
+      setSubagentError(`Failed to load subagent messages${status}`)
     } finally {
-      setSubagentLoading(false)
+      if (subagentViewRef.current === taskId) setSubagentLoading(false)
     }
   }, [])
 
@@ -136,6 +154,7 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
     subagentViewRef.current = null
     setSubagentView(null)
     setSubagentMessages([])
+    setSubagentError(null)
   }, [])
 
   const connectWebSocket = useCallback(() => {
@@ -153,9 +172,14 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
     const ws = new WebSocket(WS_URL + sessionId + '?token=' + token + adminParam)
     wsRef.current = ws
     reconnectAttemptsRef.current = 0
+    // A fresh connection restarts the resumable-stream clock: seqs are scoped
+    // to the server's stream epoch, so a restart must not drop every event for
+    // the lifetime of this connection.
+    lastSeqRef.current = 0
 
     ws.onopen = () => {
       setConnected(true)
+      setDisconnected(false)
       // Read-only connect: reconcile only, never set_* or an auth frame.
       ws.send(JSON.stringify({ type: 'reconnect', last_message_id: lastMessageIdRef.current }))
     }
@@ -218,6 +242,7 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
           if (msg.content) setMessages((prev) => applySteeringMessage(prev, msg.content))
           break
         case 'reconnect_sync': {
+          syncedRef.current = true
           const rows = msg.messages
           const serverMsgs = mapServerMessagesToChat(rows)
           if (serverMsgs.length > 0) setMessages(serverMsgs)
@@ -246,6 +271,7 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
         case 'done': {
           setIsStreaming(false)
           setRetryNotice(null)
+          const durationMs = msg.data?.tokens?.duration_ms
           const finalText = streamingTextRef.current
           const finalReasoning = msg.data?.reasoning || streamingReasoningRef.current || undefined
           streamingTextRef.current = ''
@@ -253,9 +279,9 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
           streamingReasoningRef.current = ''
           setCurrentStreamingReasoning('')
           if (finalText) {
-            setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: finalText, reasoning: finalReasoning, created_at: new Date().toISOString() }])
+            setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: finalText, reasoning: finalReasoning, duration_ms: durationMs, created_at: new Date().toISOString() }])
           } else if (msg.data?.content) {
-            setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: msg.data?.content ?? '', reasoning: finalReasoning, created_at: new Date().toISOString() }])
+            setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: msg.data?.content ?? '', reasoning: finalReasoning, duration_ms: durationMs, created_at: new Date().toISOString() }])
           }
           break
         }
@@ -289,21 +315,41 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
           }
           break
         case 'error':
+          // Keep any partially streamed text, then append the failure: the
+          // resync below reconciles against the persisted DB state.
           setIsStreaming(false)
-          streamingTextRef.current = ''
-          setCurrentStreamingText('')
+          setRetryNotice(null)
+          setMessages((prev) => {
+            const next = [...prev]
+            if (streamingTextRef.current) {
+              next.push({ id: crypto.randomUUID(), role: 'assistant', content: streamingTextRef.current, created_at: new Date().toISOString() })
+              streamingTextRef.current = ''
+              setCurrentStreamingText('')
+            }
+            next.push({ id: crypto.randomUUID(), role: 'assistant', content: 'Error: ' + msg.message, created_at: new Date().toISOString() })
+            return next
+          })
           streamingReasoningRef.current = ''
           setCurrentStreamingReasoning('')
-          setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: 'Error: ' + msg.message, created_at: new Date().toISOString() }])
           requestResync()
           break
-        case 'cancelled':
+        case 'cancelled': {
+          // Mirror AgentPanel: a cancelled turn keeps its partial text and
+          // closes with a marker instead of silently dropping the stream.
           setIsStreaming(false)
+          const cancelledText = streamingTextRef.current
+          setMessages((prev) => [...prev, {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: cancelledText ? cancelledText + '\n\n*[Cancelled]*' : '*[Cancelled]*',
+            created_at: new Date().toISOString(),
+          }])
           streamingTextRef.current = ''
           setCurrentStreamingText('')
           streamingReasoningRef.current = ''
           setCurrentStreamingReasoning('')
           break
+        }
         case 'resync':
           requestResync()
           break
@@ -328,7 +374,14 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
           reconnectTimerRef.current = null
           connectWebSocket()
         }, delay)
+      } else {
+        setDisconnected(true)
       }
+    }
+
+    ws.onerror = () => {
+      setConnected(false)
+      setDisconnected(true)
     }
   }, [sessionId, requestResync])
 
@@ -356,22 +409,26 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
     if (el) el.scrollTop = el.scrollHeight
   }, [messages, currentStreamingText, subagentMessages, subagentView])
 
-  const title = session?.title || sessionSummary?.title || 'Agent session'
+  const title = session?.title || 'Agent session'
   const ownerEmail = session?.owner_email
   const canEdit = session?.can_edit === true
 
   return (
-    <div style={styles.panel}>
+    <div style={styles.panel} role="dialog" aria-label="Shared agent session">
       <div style={styles.header}>
         <div style={styles.headerText}>
           <div style={styles.title} title={title}>{title}</div>
           {ownerEmail && <div style={styles.owner} title={ownerEmail}>{ownerEmail}</div>}
         </div>
-        {connected && (
+        {connected ? (
           <span style={styles.live} title="Live updates">
             <span style={styles.liveDot} /> Live
           </span>
-        )}
+        ) : disconnected ? (
+          <span style={styles.disconnected} title="Live updates stopped">
+            <span style={styles.disconnectedDot} /> Disconnected
+          </span>
+        ) : null}
         {canEdit && onShare && (
           <button type="button" style={styles.shareBtn} onClick={onShare} title="Share this session">
             <Share2 size={13} /> Share
@@ -395,10 +452,11 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
             <span style={styles.subTitle}>Subagent {subagentView.slice(0, 8)}</span>
           </div>
           <div ref={scrollRef} style={styles.messageList}>
+            {subagentError && <div style={styles.error}>{subagentError}</div>}
             <AgentChatTranscript
               messages={subagentMessages}
               leading={subagentLoading ? <div style={styles.loading}>Loading…</div> : undefined}
-              emptyState={!subagentLoading ? (
+              emptyState={!subagentLoading && !subagentError ? (
                 <div style={styles.empty}>This subagent hasn't produced any messages yet.</div>
               ) : undefined}
             />
@@ -412,18 +470,17 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
           ) : (
             <AgentChatTranscript
               messages={messages}
-              subagentView={subagentView}
               onSubagentSelect={openSubagent}
-              emptyState={<div style={styles.empty}>No messages in this session yet.</div>}
+              emptyState={error ? undefined : <div style={styles.empty}>No messages in this session yet.</div>}
               trailing={<>
                 {isStreaming && !currentStreamingText && currentStreamingReasoning && (
-                  <div style={{ ...chatStyles.message, ...chatStyles.reasoningMessage }}>
+                  <div data-testid="streaming-reasoning" style={{ ...chatStyles.message, ...chatStyles.reasoningMessage }}>
                     <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>Thinking…</div>
                     <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{currentStreamingReasoning}</div>
                   </div>
                 )}
                 {currentStreamingText && (
-                  <div style={{ ...chatStyles.message, ...chatStyles.assistantMessage }}>
+                  <div data-testid="streaming-text" style={{ ...chatStyles.message, ...chatStyles.assistantMessage }}>
                     <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={chatMarkdownComponents}>{currentStreamingText}</ReactMarkdown>
                   </div>
                 )}
@@ -488,6 +545,21 @@ const styles: Record<string, React.CSSProperties> = {
     height: 6,
     borderRadius: '50%',
     background: 'var(--success, #10b981)',
+  },
+  disconnected: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    fontSize: 10,
+    color: 'var(--warning, #f59e0b)',
+    whiteSpace: 'nowrap',
+  },
+  disconnectedDot: {
+    display: 'inline-block',
+    width: 6,
+    height: 6,
+    borderRadius: '50%',
+    background: 'var(--warning, #f59e0b)',
   },
   shareBtn: {
     display: 'flex',
