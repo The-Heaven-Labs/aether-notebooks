@@ -22,6 +22,7 @@ import (
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/database"
 	"github.com/the-heaven-labs/aether/internal/executor"
+	"github.com/the-heaven-labs/aether/internal/oauth"
 	"github.com/the-heaven-labs/aether/internal/storage"
 )
 
@@ -51,8 +52,10 @@ type Server struct {
 	frontendURL                  string
 	Cache                        *cache.Cache
 	maxAttachmentBytes           int64
-	outputLimitsMaxBytes         int64         // platform ceiling for org output byte caps (AETHER_OUTPUT_LIMITS_MAX_BYTES)
-	mcpSQLTimeout                time.Duration // execute_sql ceiling for MCP callers (0 = agent default)
+	outputLimitsMaxBytes         int64          // platform ceiling for org output byte caps (AETHER_OUTPUT_LIMITS_MAX_BYTES)
+	mcpSQLTimeout                time.Duration  // execute_sql ceiling for MCP callers (0 = agent default)
+	mcpOAuthEnabled              bool           // serves the OAuth 2.1 authorization-server endpoints
+	oauth                        *oauth.Service // OAuth AS storage/logic
 	agentEngine                  *agent.Engine
 	upgrader                     websocket.Upgrader
 	toolAllowedDomains           []string
@@ -191,6 +194,15 @@ func (s *Server) SetOutputLimitsMaxBytes(n int64) {
 // SetMCPSQLTimeout sets the execute_sql ceiling applied to MCP callers.
 func (s *Server) SetMCPSQLTimeout(d time.Duration) {
 	s.mcpSQLTimeout = d
+}
+
+// SetMCPOAuthEnabled enables the OAuth 2.1 authorization-server endpoints
+// for the MCP resource server. Must be called before the first request.
+func (s *Server) SetMCPOAuthEnabled(enabled bool) {
+	s.mcpOAuthEnabled = enabled
+	if enabled && s.oauth == nil {
+		s.oauth = oauth.NewService(s.db.Pool)
+	}
 }
 
 // orgCellOutputMaxBytes returns the effective per-cell output byte cap for the
