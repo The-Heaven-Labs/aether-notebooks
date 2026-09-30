@@ -1115,3 +1115,133 @@ func TestMigration121DashboardVariables(t *testing.T) {
 		t.Fatalf("expected input widgets deleted, %d remain", remaining)
 	}
 }
+
+func TestMigration124AgentSessionACL(t *testing.T) {
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+	}
+
+	db, err := database.Connect(context.Background(), dsn, "")
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// The notebook-viewer inheritance flag must exist, be NOT NULL and default false.
+	var dataType, nullable string
+	var def *string
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT data_type, is_nullable, column_default
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'agent_sessions'
+		  AND column_name = 'share_with_notebook_viewers'`).
+		Scan(&dataType, &nullable, &def); err != nil {
+		t.Fatalf("agent_sessions.share_with_notebook_viewers missing: %v", err)
+	}
+	if dataType != "boolean" || nullable != "NO" || def == nil || *def != "false" {
+		t.Fatalf("share_with_notebook_viewers = (%s, nullable=%s, default=%v), want (boolean, NO, false)", dataType, nullable, def)
+	}
+
+	// The notebook listing index is pinned to (notebook_id, created_at DESC).
+	var idxDef string
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT pg_get_indexdef(i.indexrelid)
+		FROM pg_index i
+		JOIN pg_class t ON t.oid = i.indexrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+		WHERE t.relname = 'idx_agent_sessions_notebook'`).Scan(&idxDef); err != nil {
+		t.Fatalf("idx_agent_sessions_notebook missing: %v", err)
+	}
+	if !strings.Contains(idxDef, "(notebook_id, created_at DESC)") {
+		t.Fatalf("idx_agent_sessions_notebook = %q, want (notebook_id, created_at DESC)", idxDef)
+	}
+
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var orgID, userID, agentID, sessionID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO orgs (name, slug)
+		VALUES ('V124 Session Org', 'v124-session-' || substr(gen_random_uuid()::text, 1, 8))
+		RETURNING id::text`).Scan(&orgID); err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO users (email, name)
+		VALUES ('v124-session-' || substr(gen_random_uuid()::text, 1, 8) || '@test.local', 'V124 Session')
+		RETURNING id::text`).Scan(&userID); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO agents (org_id, name, created_by)
+		VALUES ($1, 'V124 Session Agent', $2)
+		RETURNING id::text`, orgID, userID).Scan(&agentID); err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+
+	// A fresh session must pick up the false default at insert time.
+	var flag bool
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO agent_sessions (agent_id, user_id)
+		VALUES ($1, $2)
+		RETURNING id::text, share_with_notebook_viewers`, agentID, userID).Scan(&sessionID, &flag); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	if flag {
+		t.Fatal("share_with_notebook_viewers should default to false")
+	}
+
+	// The extended CHECK constraint must accept agent_session entries.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		VALUES ($1, 'agent_session', gen_random_uuid(), 'user', $2, ARRAY['view'])`, orgID, userID); err != nil {
+		t.Fatalf("agent_session ACL insert rejected: %v", err)
+	}
+
+	// Execute the migration's real backfill statement against this session,
+	// twice, to prove the owner entry contents and ON CONFLICT idempotency.
+	content, err := os.ReadFile("migrations/V124__agent_session_acl.sql")
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	const startMarker, endMarker = "-- +backfill:start", "-- +backfill:end"
+	start := strings.Index(string(content), startMarker)
+	end := strings.Index(string(content), endMarker)
+	if start < 0 || end < 0 || end < start {
+		t.Fatal("backfill markers missing from V124")
+	}
+	backfill := string(content)[start+len(startMarker) : end]
+	for i := 0; i < 2; i++ {
+		if _, err := tx.Exec(ctx, backfill); err != nil {
+			t.Fatalf("run backfill (attempt %d): %v", i+1, err)
+		}
+	}
+
+	var aclOrgID, resourceID, subjectType, subjectID string
+	var actions []string
+	if err := tx.QueryRow(ctx, `
+		SELECT org_id::text, resource_id::text, subject_type, subject_id, actions
+		FROM acl_entries
+		WHERE resource_type = 'agent_session' AND resource_id = $1 AND subject_type = 'user'`, sessionID).
+		Scan(&aclOrgID, &resourceID, &subjectType, &subjectID, &actions); err != nil {
+		t.Fatalf("owner ACL entry missing after backfill: %v", err)
+	}
+	if aclOrgID != orgID || resourceID != sessionID || subjectType != "user" || subjectID != userID {
+		t.Fatalf("owner ACL entry = (org %s, resource %s, %s/%s), want (org %s, resource %s, user/%s)",
+			aclOrgID, resourceID, subjectType, subjectID, orgID, sessionID, userID)
+	}
+	wantActions := []string{"view", "edit", "share", "delete", "admin"}
+	if !slices.Equal(actions, wantActions) {
+		t.Fatalf("owner ACL actions = %v, want %v", actions, wantActions)
+	}
+}
