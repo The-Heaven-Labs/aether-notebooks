@@ -373,3 +373,31 @@ func TestOAuthAuthorizeInvalidParamsRejected(t *testing.T) {
 	rec = doJSON(t, srv, "GET", u, "", "")
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
+
+func TestOAuthScopeFiltering(t *testing.T) {
+	srv, jwt, clientID, _ := setupOAuthServer(t)
+	code := oauthConsentApprove(t, srv, jwt, clientID)
+	tok := oauthToken(t, srv, clientID, code)
+	access := tok["access_token"].(string)
+
+	// tools/list only shows query tools.
+	rec := doJSON(t, srv, "POST", "/api/v1/mcp", access,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "execute_sql")
+	require.NotContains(t, rec.Body.String(), "create_notebook")
+
+	// tools/call with a write tool is rejected even if guessed by name.
+	rec = doJSON(t, srv, "POST", "/api/v1/mcp", access,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_notebook","arguments":{"title":"nope"}}}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "not available")
+
+	// PATs keep the full allowlist (scope filtering must not leak into them).
+	patCode, patResp := doCreateToken(t, srv, jwt, "full-pat", "")
+	require.Equal(t, http.StatusCreated, patCode, patResp)
+	rec = doJSON(t, srv, "POST", "/api/v1/mcp", patResp["token"].(string),
+		`{"jsonrpc":"2.0","id":3,"method":"tools/list"}`)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "create_notebook")
+}

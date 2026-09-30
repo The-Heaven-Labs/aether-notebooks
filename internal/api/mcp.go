@@ -12,6 +12,7 @@ import (
 
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/auth"
+	"github.com/the-heaven-labs/aether/internal/oauth"
 )
 
 type mcpJSONRPCRequest struct {
@@ -231,14 +232,30 @@ func (s *Server) handleMCPInitialize(w http.ResponseWriter, req mcpJSONRPCReques
 	})
 }
 
+// mcpToolsForToken returns the tool set the caller may use. OAuth tokens
+// (identified by ClientID) are limited to the union of their granted scopes;
+// PATs and session JWTs keep the full allowlist. A nil map means "all".
+func mcpToolsForToken(claims *auth.Claims) map[string]struct{} {
+	if claims == nil || claims.ClientID == "" {
+		return nil
+	}
+	return oauth.ToolsForScopes(oauth.ParseScopes(claims.Scope))
+}
+
 func (s *Server) handleMCPToolsList(w http.ResponseWriter, req mcpJSONRPCRequest, claims *auth.Claims) {
 	registry := s.agentEngine.GetRegistry()
 	defs := registry.List()
 
+	allowed := mcpToolsForToken(claims)
 	tools := make([]mcpTool, 0, len(defs))
 	for _, d := range defs {
 		if d.Function.Name == "" || !mcpToolAllowed(d.Function.Name) {
 			continue
+		}
+		if allowed != nil {
+			if _, ok := allowed[d.Function.Name]; !ok {
+				continue
+			}
 		}
 		schema := resolveMCPSchema(d.Function.Parameters)
 		tools = append(tools, mcpTool{
@@ -279,6 +296,16 @@ func (s *Server) handleMCPToolsCall(w http.ResponseWriter, req mcpJSONRPCRequest
 			Error: &mcpError{Code: -32602, Message: "Tool not available over MCP: " + params.Name},
 		})
 		return
+	}
+
+	if allowed := mcpToolsForToken(claims); allowed != nil {
+		if _, ok := allowed[params.Name]; !ok {
+			writeJSON(w, http.StatusOK, mcpJSONRPCResponse{
+				JSONRPC: "2.0", ID: req.ID,
+				Error: &mcpError{Code: -32602, Message: "Tool not available for the granted scopes: " + params.Name},
+			})
+			return
+		}
 	}
 
 	// OAuth clients are marked used on valid tool calls (bookkeeping only).
