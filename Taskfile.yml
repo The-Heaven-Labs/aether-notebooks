@@ -11,6 +11,7 @@ env:
   AETHER_MASTER_KEY: dev-master-key-change-in-production
   AETHER_JWT_SECRET: dev-jwt-secret-change-in-production
   AETHER_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com
+  AETHER_REDIS_URL: redis://localhost:6379
 
 tasks:
 
