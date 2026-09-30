@@ -156,6 +156,12 @@ the folder walk simply stays nil for this type.
   owner ACL `{view,edit,share,delete,admin}`, share entries, commit; then audit
   (`agent_session.create` plus `acl.granted` per share).
 - Response stays `{session_id, context_window, auto_approve_tools, auto_answer_questions}`.
+- **ACL cleanup on session deletion (review finding):** sessions are hard-deleted but their
+  `acl_entries` rows are not, leaking a row per deleted session (millions already in dev).
+  Delete the session's `agent_session` ACL rows wherever sessions are deleted:
+  `SessionStore.DeleteSession` (`internal/agent/session.go`), the empty-session sweep here,
+  the agent delete path (`internal/api/agent_handlers.go` — grep `DELETE FROM agent_sessions`),
+  and any notebook-delete cascade. Same transaction as the session delete; add tests.
 
 **Step 3:** pass; commit: `feat(api): create sessions with shares and notebook inheritance in one request`
 
