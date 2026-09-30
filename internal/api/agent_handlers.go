@@ -836,61 +836,28 @@ func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT s.id, s.agent_id, s.notebook_id, s.user_id, s.max_turns, s.ended_at, s.title, s.created_at,
-			COALESCE(
-				(SELECT content FROM agent_messages WHERE session_id = s.id AND role = 'user' ORDER BY created_at ASC LIMIT 1),
-				''
-			) as first_message,
-			COALESCE(
-				(SELECT COUNT(*) FROM agent_messages WHERE session_id = s.id),
-				0
-			) as message_count
-		FROM agent_sessions s
+	rows, err := h.server.db.Pool.Query(r.Context(), sessionListSelect+`
 		WHERE s.agent_id = $1
 			AND s.id IN (SELECT DISTINCT session_id FROM agent_messages)
-		ORDER BY s.created_at DESC LIMIT 50
-	`, agentID)
+		ORDER BY s.created_at DESC LIMIT $2
+	`, agentID, agentSessionListLimit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	defer rows.Close()
-
-	var sessions []map[string]any
-	for rows.Next() {
-		var s models.AgentSession
-		var firstMsg string
-		var msgCount int
-		var endedAt *time.Time
-		var title *string
-		var notebookID *string
-		if err := rows.Scan(&s.ID, &s.AgentID, &notebookID, &s.UserID, &s.MaxTurns, &endedAt, &title, &s.CreatedAt, &firstMsg, &msgCount); err != nil {
-			continue
-		}
-		if notebookID != nil {
-			s.NotebookID = *notebookID
-		}
-		sessions = append(sessions, map[string]any{
-			"id":            s.ID,
-			"agent_id":      s.AgentID,
-			"notebook_id":   s.NotebookID,
-			"user_id":       s.UserID,
-			"max_turns":     s.MaxTurns,
-			"ended_at":      endedAt,
-			"title":         title,
-			"created_at":    s.CreatedAt,
-			"first_message": firstMsg,
-			"message_count": msgCount,
-		})
-	}
-
-	if err := rows.Err(); err != nil {
+	candidates, err := scanListSessionRows(rows)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, sessions)
+	visible, err := h.server.filterVisibleSessions(r.Context(), claims.UserID, claims.OrgID, claims.Role, candidates)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list sessions")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, sessionListResponse(visible, claims.UserID))
 }
 
 // @Summary Get a session

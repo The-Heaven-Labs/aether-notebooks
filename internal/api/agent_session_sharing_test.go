@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -721,5 +722,366 @@ func TestSubagentMessagesAuthorization(t *testing.T) {
 			"Session Share Other Org")
 		code, body := getSubagentMessages(t, f.srv, otherToken, taskID)
 		require.Equal(t, http.StatusNotFound, code, "%v", body)
+	})
+}
+
+// --- Task 6: listing and update helpers ---
+
+func userEmailByID(t *testing.T, srv *api.Server, userID string) string {
+	t.Helper()
+	var email string
+	require.NoError(t, srv.DB().Pool.QueryRow(context.Background(),
+		`SELECT email FROM users WHERE id = $1`, userID).Scan(&email))
+	return email
+}
+
+// addFixtureMember inserts an org member with an editor JWT in the fixture org.
+func addFixtureMember(t *testing.T, f *sessionSharingFixture, label string) (userID, token string) {
+	t.Helper()
+	userID = insertUser(t, f.srv,
+		fmt.Sprintf("session-share-%s-%d@example.com", label, time.Now().UnixNano()), label)
+	addOrgMember(t, f.srv, f.orgID, userID, "editor")
+	token = issueToken(t, userID, f.orgID, "editor")
+	return userID, token
+}
+
+// listSessionsResponse performs an authenticated GET and decodes a session list.
+func listSessionsResponse(t *testing.T, srv *api.Server, token, path string) (int, []map[string]any) {
+	t.Helper()
+	req := httptest.NewRequest("GET", path, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	var rows []map[string]any
+	if rec.Body.Len() > 0 {
+		_ = json.NewDecoder(rec.Body).Decode(&rows)
+	}
+	return rec.Code, rows
+}
+
+func sessionListIDs(rows []map[string]any) []string {
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if id, ok := row["id"].(string); ok {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func sessionListRow(t *testing.T, rows []map[string]any, id string) map[string]any {
+	t.Helper()
+	for _, row := range rows {
+		if row["id"] == id {
+			return row
+		}
+	}
+	t.Fatalf("session %s not found in list: %v", id, rows)
+	return nil
+}
+
+func requireSessionRowFields(t *testing.T, row map[string]any, ownerEmail string, shared, canEdit, inherit bool) {
+	t.Helper()
+	require.Equal(t, ownerEmail, row["owner_email"])
+	require.Equal(t, shared, row["shared"])
+	require.Equal(t, canEdit, row["can_edit"])
+	require.Equal(t, inherit, row["share_with_notebook_viewers"])
+}
+
+// TestListSessionsVisibility pins the agent session list visibility matrix:
+// owners see their sessions, direct shares and notebook inheritors see only
+// what they were granted, and unrelated members see nothing.
+func TestListSessionsVisibility(t *testing.T) {
+	f := setupSessionSharingFixture(t)
+	notebookID := createNotebook(t, f.srv, f.aliceToken, "List Sessions NB")
+	grantACL(t, f.srv, f.orgID, "notebook", notebookID, "user", f.carolID, "view")
+	grantACL(t, f.srv, f.orgID, "agent", f.agentID, "user", f.bobID, "view")
+	grantACL(t, f.srv, f.orgID, "agent", f.agentID, "user", f.carolID, "view")
+	aliceEmail := userEmailByID(t, f.srv, f.aliceID)
+
+	owned := f.createSession(t, map[string]any{"notebook_id": notebookID})
+	seedSessionMessage(t, f.srv, owned, "owned")
+	direct := f.createSession(t, map[string]any{
+		"notebook_id": notebookID,
+		"shares": []map[string]any{
+			{"subject_type": "user", "subject_id": f.bobID, "actions": []string{"view"}},
+		},
+	})
+	seedSessionMessage(t, f.srv, direct, "direct")
+	inherited := f.createSession(t, map[string]any{
+		"notebook_id":                 notebookID,
+		"share_with_notebook_viewers": true,
+	})
+	seedSessionMessage(t, f.srv, inherited, "inherited")
+	private := f.createSession(t, map[string]any{"notebook_id": notebookID})
+	seedSessionMessage(t, f.srv, private, "private")
+
+	path := "/api/v1/agents/" + f.agentID + "/sessions"
+
+	t.Run("owner sees all own sessions", func(t *testing.T) {
+		code, rows := listSessionsResponse(t, f.srv, f.aliceToken, path)
+		require.Equal(t, http.StatusOK, code)
+		require.ElementsMatch(t, []string{owned, direct, inherited, private}, sessionListIDs(rows))
+		for _, id := range []string{owned, direct, private} {
+			requireSessionRowFields(t, sessionListRow(t, rows, id), aliceEmail, false, true, false)
+		}
+		requireSessionRowFields(t, sessionListRow(t, rows, inherited), aliceEmail, false, true, true)
+	})
+
+	t.Run("direct share sees only the shared session", func(t *testing.T) {
+		code, rows := listSessionsResponse(t, f.srv, f.bobToken, path)
+		require.Equal(t, http.StatusOK, code)
+		require.ElementsMatch(t, []string{direct}, sessionListIDs(rows))
+		requireSessionRowFields(t, sessionListRow(t, rows, direct), aliceEmail, true, false, false)
+	})
+
+	t.Run("notebook viewer sees only the inherited session", func(t *testing.T) {
+		code, rows := listSessionsResponse(t, f.srv, f.carolToken, path)
+		require.Equal(t, http.StatusOK, code)
+		require.ElementsMatch(t, []string{inherited}, sessionListIDs(rows))
+		requireSessionRowFields(t, sessionListRow(t, rows, inherited), aliceEmail, true, false, true)
+	})
+
+	t.Run("unrelated member gets an empty list serialized as []", func(t *testing.T) {
+		unrelatedID, unrelatedToken := addFixtureMember(t, f, "list-unrelated")
+		grantACL(t, f.srv, f.orgID, "agent", f.agentID, "user", unrelatedID, "view")
+		code, body := rawRequest(t, f.srv, unrelatedToken, "GET", path, nil)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+		require.Equal(t, "[]", strings.TrimSpace(body))
+	})
+}
+
+// TestListNotebookSessions pins notebook-scoped listing: the route requires
+// notebook view, returns only sessions the caller can view, and 404s for
+// notebooks that do not exist in the caller's org.
+func TestListNotebookSessions(t *testing.T) {
+	f := setupSessionSharingFixture(t)
+	notebookID := createNotebook(t, f.srv, f.aliceToken, "Notebook Sessions NB")
+	grantACL(t, f.srv, f.orgID, "notebook", notebookID, "user", f.carolID, "view")
+	grantACL(t, f.srv, f.orgID, "notebook", notebookID, "user", f.bobID, "view")
+	grantACL(t, f.srv, f.orgID, "agent", f.agentID, "user", f.bobID, "view")
+	aliceEmail := userEmailByID(t, f.srv, f.aliceID)
+
+	alicePrivate := f.createSession(t, map[string]any{"notebook_id": notebookID})
+	seedSessionMessage(t, f.srv, alicePrivate, "alice private")
+	inherited := f.createSession(t, map[string]any{
+		"notebook_id":                 notebookID,
+		"share_with_notebook_viewers": true,
+	})
+	seedSessionMessage(t, f.srv, inherited, "inherited")
+
+	code, resp := postCreateSession(t, f.srv, f.bobToken, f.agentID, map[string]any{"notebook_id": notebookID})
+	require.Equal(t, http.StatusCreated, code, "%v", resp)
+	bobSession := resp["session_id"].(string)
+	seedSessionMessage(t, f.srv, bobSession, "bob session")
+
+	path := "/api/v1/notebooks/" + notebookID + "/sessions"
+
+	t.Run("owner sees own notebook sessions only", func(t *testing.T) {
+		code, rows := listSessionsResponse(t, f.srv, f.aliceToken, path)
+		require.Equal(t, http.StatusOK, code)
+		require.ElementsMatch(t, []string{alicePrivate, inherited}, sessionListIDs(rows))
+		requireSessionRowFields(t, sessionListRow(t, rows, inherited), aliceEmail, false, true, true)
+	})
+
+	t.Run("notebook viewer sees the inherited session", func(t *testing.T) {
+		code, rows := listSessionsResponse(t, f.srv, f.carolToken, path)
+		require.Equal(t, http.StatusOK, code)
+		require.ElementsMatch(t, []string{inherited}, sessionListIDs(rows))
+	})
+
+	t.Run("member sees own and inherited sessions", func(t *testing.T) {
+		// Bob is an explicit notebook viewer, so the inherited session is
+		// visible to him alongside the session he owns.
+		code, rows := listSessionsResponse(t, f.srv, f.bobToken, path)
+		require.Equal(t, http.StatusOK, code)
+		require.ElementsMatch(t, []string{bobSession, inherited}, sessionListIDs(rows))
+		requireSessionRowFields(t, sessionListRow(t, rows, bobSession),
+			userEmailByID(t, f.srv, f.bobID), false, true, false)
+		requireSessionRowFields(t, sessionListRow(t, rows, inherited), aliceEmail, true, false, true)
+	})
+
+	t.Run("without notebook view is 403", func(t *testing.T) {
+		_, token := addFixtureMember(t, f, "notebook-list-outsider")
+		code, body := rawRequest(t, f.srv, token, "GET", path, nil)
+		require.Equal(t, http.StatusForbidden, code, "%v", body)
+	})
+
+	t.Run("empty notebook list serializes as []", func(t *testing.T) {
+		emptyNB := createNotebook(t, f.srv, f.aliceToken, "Notebook Sessions Empty")
+		viewerID, token := addFixtureMember(t, f, "notebook-list-empty")
+		grantACL(t, f.srv, f.orgID, "notebook", emptyNB, "user", viewerID, "view")
+		code, body := rawRequest(t, f.srv, token, "GET", "/api/v1/notebooks/"+emptyNB+"/sessions", nil)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+		require.Equal(t, "[]", strings.TrimSpace(body))
+	})
+
+	t.Run("missing notebook is 404", func(t *testing.T) {
+		code, body := rawRequest(t, f.srv, f.aliceToken, "GET",
+			"/api/v1/notebooks/"+uuid.NewString()+"/sessions", nil)
+		require.Equal(t, http.StatusNotFound, code, "%v", body)
+	})
+
+	t.Run("cross-org notebook is 404", func(t *testing.T) {
+		otherToken := registerAndGetToken(t, f.srv,
+			fmt.Sprintf("session-share-nblist-other-%d@example.com", time.Now().UnixNano()),
+			"Session Share NB Other Org")
+		code, body := rawRequest(t, f.srv, otherToken, "GET", path, nil)
+		require.Equal(t, http.StatusNotFound, code, "%v", body)
+	})
+}
+
+// TestListSharedSessions pins the shared-with-me listing: direct, group, and
+// Everyone shares plus notebook inheritance, always excluding owned sessions,
+// with empty results serialized as [].
+func TestListSharedSessions(t *testing.T) {
+	f := setupSessionSharingFixture(t)
+	notebookID := createNotebook(t, f.srv, f.aliceToken, "Shared List NB")
+	grantACL(t, f.srv, f.orgID, "notebook", notebookID, "user", f.carolID, "view")
+	aliceEmail := userEmailByID(t, f.srv, f.aliceID)
+
+	t.Run("no shares serializes as []", func(t *testing.T) {
+		_, token := addFixtureMember(t, f, "shared-list-empty")
+		code, body := rawRequest(t, f.srv, token, "GET", "/api/v1/sessions/shared", nil)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+		require.Equal(t, "[]", strings.TrimSpace(body))
+	})
+
+	owned := f.createSession(t, map[string]any{})
+	seedSessionMessage(t, f.srv, owned, "owned")
+	direct := f.createSession(t, map[string]any{
+		"shares": []map[string]any{
+			{"subject_type": "user", "subject_id": f.bobID, "actions": []string{"view"}},
+		},
+	})
+	seedSessionMessage(t, f.srv, direct, "direct")
+	groupID := createGroup(t, f.srv, f.aliceToken, "Shared List Group")
+	addGroupMember(t, f.srv, f.aliceToken, groupID, f.bobID)
+	groupShared := f.createSession(t, map[string]any{
+		"shares": []map[string]any{
+			{"subject_type": "group", "subject_id": groupID, "actions": []string{"view"}},
+		},
+	})
+	seedSessionMessage(t, f.srv, groupShared, "group")
+	everyoneShared := f.createSession(t, map[string]any{
+		"shares": []map[string]any{
+			{"subject_type": "org_role", "subject_id": "everyone", "actions": []string{"view"}},
+		},
+	})
+	seedSessionMessage(t, f.srv, everyoneShared, "everyone")
+	inherited := f.createSession(t, map[string]any{
+		"notebook_id":                 notebookID,
+		"share_with_notebook_viewers": true,
+	})
+	seedSessionMessage(t, f.srv, inherited, "inherited")
+
+	// Bob owns a session of his own; it must never show up in his shared list.
+	grantACL(t, f.srv, f.orgID, "agent", f.agentID, "user", f.bobID, "view")
+	code, resp := postCreateSession(t, f.srv, f.bobToken, f.agentID, map[string]any{})
+	require.Equal(t, http.StatusCreated, code, "%v", resp)
+	bobOwned := resp["session_id"].(string)
+	seedSessionMessage(t, f.srv, bobOwned, "bob owned")
+
+	t.Run("member sees direct, group, and everyone shares", func(t *testing.T) {
+		code, rows := listSessionsResponse(t, f.srv, f.bobToken, "/api/v1/sessions/shared")
+		require.Equal(t, http.StatusOK, code)
+		require.ElementsMatch(t, []string{direct, groupShared, everyoneShared}, sessionListIDs(rows))
+		requireSessionRowFields(t, sessionListRow(t, rows, direct), aliceEmail, true, false, false)
+	})
+
+	t.Run("notebook viewer sees inherited and everyone shares", func(t *testing.T) {
+		code, rows := listSessionsResponse(t, f.srv, f.carolToken, "/api/v1/sessions/shared")
+		require.Equal(t, http.StatusOK, code)
+		require.ElementsMatch(t, []string{inherited, everyoneShared}, sessionListIDs(rows))
+		requireSessionRowFields(t, sessionListRow(t, rows, inherited), aliceEmail, true, false, true)
+	})
+
+	t.Run("owner's shared list excludes owned sessions", func(t *testing.T) {
+		code, rows := listSessionsResponse(t, f.srv, f.aliceToken, "/api/v1/sessions/shared")
+		require.Equal(t, http.StatusOK, code)
+		require.Empty(t, sessionListIDs(rows))
+	})
+}
+
+// TestUpdateSession pins PATCH /sessions/{id}: title needs edit, the inherit
+// flag needs share plus an attached notebook, and shared viewers can do neither.
+func TestUpdateSession(t *testing.T) {
+	f := setupSessionSharingFixture(t)
+	notebookID := createNotebook(t, f.srv, f.aliceToken, "Update Session NB")
+	ctx := context.Background()
+
+	withNotebook := f.createSession(t, map[string]any{"notebook_id": notebookID})
+	withoutNotebook := f.createSession(t, map[string]any{})
+	grantACL(t, f.srv, f.orgID, "agent_session", withNotebook, "user", f.bobID, "view")
+
+	t.Run("owner renames", func(t *testing.T) {
+		code, resp := doRequest(t, f.srv, f.aliceToken, "PATCH",
+			"/api/v1/sessions/"+withNotebook, map[string]any{"title": "owner renamed"})
+		require.Equal(t, http.StatusOK, code, "%v", resp)
+		require.Equal(t, "owner renamed", resp["title"])
+
+		var title *string
+		require.NoError(t, f.srv.DB().Pool.QueryRow(ctx,
+			`SELECT title FROM agent_sessions WHERE id = $1`, withNotebook).Scan(&title))
+		require.NotNil(t, title)
+		require.Equal(t, "owner renamed", *title)
+	})
+
+	t.Run("owner sets and clears the inherit flag", func(t *testing.T) {
+		code, resp := doRequest(t, f.srv, f.aliceToken, "PATCH",
+			"/api/v1/sessions/"+withNotebook, map[string]any{"share_with_notebook_viewers": true})
+		require.Equal(t, http.StatusOK, code, "%v", resp)
+		require.Equal(t, true, resp["share_with_notebook_viewers"])
+
+		var flag bool
+		require.NoError(t, f.srv.DB().Pool.QueryRow(ctx,
+			`SELECT share_with_notebook_viewers FROM agent_sessions WHERE id = $1`, withNotebook).Scan(&flag))
+		require.True(t, flag)
+
+		code, resp = doRequest(t, f.srv, f.aliceToken, "PATCH",
+			"/api/v1/sessions/"+withNotebook, map[string]any{"share_with_notebook_viewers": false})
+		require.Equal(t, http.StatusOK, code, "%v", resp)
+		require.Equal(t, false, resp["share_with_notebook_viewers"])
+		require.NoError(t, f.srv.DB().Pool.QueryRow(ctx,
+			`SELECT share_with_notebook_viewers FROM agent_sessions WHERE id = $1`, withNotebook).Scan(&flag))
+		require.False(t, flag)
+	})
+
+	t.Run("owner cannot enable the flag without a notebook", func(t *testing.T) {
+		code, resp := doRequest(t, f.srv, f.aliceToken, "PATCH",
+			"/api/v1/sessions/"+withoutNotebook, map[string]any{"share_with_notebook_viewers": true})
+		require.Equal(t, http.StatusBadRequest, code, "%v", resp)
+
+		var flag bool
+		require.NoError(t, f.srv.DB().Pool.QueryRow(ctx,
+			`SELECT share_with_notebook_viewers FROM agent_sessions WHERE id = $1`, withoutNotebook).Scan(&flag))
+		require.False(t, flag)
+	})
+
+	t.Run("title over 50 characters is rejected", func(t *testing.T) {
+		code, resp := doRequest(t, f.srv, f.aliceToken, "PATCH",
+			"/api/v1/sessions/"+withNotebook, map[string]any{"title": strings.Repeat("x", 51)})
+		require.Equal(t, http.StatusBadRequest, code, "%v", resp)
+	})
+
+	t.Run("shared viewer can neither rename nor toggle sharing", func(t *testing.T) {
+		code, resp := doRequest(t, f.srv, f.bobToken, "PATCH",
+			"/api/v1/sessions/"+withNotebook, map[string]any{"title": "bob renamed"})
+		require.Equal(t, http.StatusForbidden, code, "%v", resp)
+
+		code, resp = doRequest(t, f.srv, f.bobToken, "PATCH",
+			"/api/v1/sessions/"+withNotebook, map[string]any{"share_with_notebook_viewers": true})
+		require.Equal(t, http.StatusForbidden, code, "%v", resp)
+
+		var flag bool
+		require.NoError(t, f.srv.DB().Pool.QueryRow(ctx,
+			`SELECT share_with_notebook_viewers FROM agent_sessions WHERE id = $1`, withNotebook).Scan(&flag))
+		require.False(t, flag)
+	})
+
+	t.Run("unknown session is 404", func(t *testing.T) {
+		code, resp := doRequest(t, f.srv, f.aliceToken, "PATCH",
+			"/api/v1/sessions/"+uuid.NewString(), map[string]any{"title": "nope"})
+		require.Equal(t, http.StatusNotFound, code, "%v", resp)
 	})
 }

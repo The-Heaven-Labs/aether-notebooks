@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/executor"
 )
 
 func TestCreateSessionInheritanceVisibleToNotebookViewer(t *testing.T) {
@@ -124,6 +125,142 @@ func TestNormalizeSessionShareEntriesCap(t *testing.T) {
 	_, err := s.normalizeSessionShareEntries(ctx, ownerID, uuid.NewString(), entries)
 	require.Error(t, err)
 	require.ErrorIs(t, err, errInvalidSessionShare, "oversized share lists must be rejected as invalid input")
+}
+
+// grantSessionPermGroupACL upserts one group-subject ACL row; the user-subject
+// helper in permissions_internal_test.go cannot express group grants.
+func grantSessionPermGroupACL(t *testing.T, s *Server, orgID uuid.UUID, resourceType string, resourceID, subjectID uuid.UUID, actions []string) {
+	t.Helper()
+	_, err := s.db.Pool.Exec(context.Background(),
+		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		 VALUES ($1, $2, $3::uuid, 'group', $4, $5)
+		 ON CONFLICT (resource_type, resource_id, subject_type, subject_id)
+		 DO UPDATE SET actions = EXCLUDED.actions`,
+		orgID.String(), resourceType, resourceID.String(), subjectID.String(), actions)
+	require.NoError(t, err)
+}
+
+// TestFilterVisibleSessionsMatchesPerRowChecks pins the batched visibility
+// helper against the per-row checkSessionPermission primitive for every access
+// path (owner, direct user, group, everyone, notebook inheritance, admin mode)
+// so an optimized query and the authoritative check can never diverge silently.
+func TestFilterVisibleSessionsMatchesPerRowChecks(t *testing.T) {
+	s := newSessionPermissionTestServer(t)
+	ctx := context.Background()
+	orgID := insertSessionPermOrg(t, s, "filter")
+	ownerID := insertSessionPermUser(t, s, "owner")
+	addSessionPermMember(t, s, orgID, ownerID, "editor")
+	directID := insertSessionPermUser(t, s, "direct")
+	addSessionPermMember(t, s, orgID, directID, "editor")
+	groupMemberID := insertSessionPermUser(t, s, "group-member")
+	addSessionPermMember(t, s, orgID, groupMemberID, "editor")
+	inheritorID := insertSessionPermUser(t, s, "inheritor")
+	addSessionPermMember(t, s, orgID, inheritorID, "editor")
+	unrelatedID := insertSessionPermUser(t, s, "unrelated")
+	addSessionPermMember(t, s, orgID, unrelatedID, "editor")
+	adminID := insertSessionPermUser(t, s, "admin")
+	addSessionPermMember(t, s, orgID, adminID, "admin")
+
+	groupID := uuid.New()
+	_, err := s.db.Pool.Exec(ctx,
+		`INSERT INTO groups (id, org_id, name) VALUES ($1, $2, $3)`,
+		groupID.String(), orgID.String(), "Filter Group")
+	require.NoError(t, err)
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)`,
+		groupID.String(), groupMemberID.String())
+	require.NoError(t, err)
+
+	notebookID := uuid.New()
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO notebooks (id, org_id, title, created_by) VALUES ($1, $2, $3, $4)`,
+		notebookID.String(), orgID.String(), "Filter Notebook", ownerID.String())
+	require.NoError(t, err)
+	grantSessionPermACL(t, s, orgID, "notebook", notebookID, inheritorID, []string{"view"})
+
+	_, ownedSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, nil, false)
+	_, directSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, nil, false)
+	grantSessionPermACL(t, s, orgID, "agent_session", directSessionID, directID, []string{"view"})
+	_, groupSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, nil, false)
+	grantSessionPermGroupACL(t, s, orgID, "agent_session", groupSessionID, groupID, []string{"view"})
+	_, everyoneSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, nil, false)
+	_, err = s.db.Pool.Exec(ctx,
+		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		 VALUES ($1, 'agent_session', $2::uuid, 'org_role', 'everyone', ARRAY['view'])`,
+		orgID.String(), everyoneSessionID.String())
+	require.NoError(t, err)
+	nb := notebookID
+	_, inheritedSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, &nb, true)
+	_, mixedSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, &nb, true)
+	grantSessionPermACL(t, s, orgID, "agent_session", mixedSessionID, directID, []string{"view"})
+	_, privateSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, nil, false)
+
+	notebookIDCopy := notebookID.String()
+	candidates := []listSessionRow{
+		{ID: ownedSessionID.String(), UserID: ownerID.String()},
+		{ID: directSessionID.String(), UserID: ownerID.String()},
+		{ID: groupSessionID.String(), UserID: ownerID.String()},
+		{ID: everyoneSessionID.String(), UserID: ownerID.String()},
+		{ID: inheritedSessionID.String(), UserID: ownerID.String(), NotebookID: &notebookIDCopy, Inherit: true},
+		{ID: mixedSessionID.String(), UserID: ownerID.String(), NotebookID: &notebookIDCopy, Inherit: true},
+		{ID: privateSessionID.String(), UserID: ownerID.String()},
+	}
+
+	callers := []struct {
+		name      string
+		userID    uuid.UUID
+		role      string
+		adminMode bool
+	}{
+		{"owner", ownerID, "editor", false},
+		{"direct share", directID, "editor", false},
+		{"group member", groupMemberID, "editor", false},
+		{"notebook inheritor", inheritorID, "editor", false},
+		{"unrelated member", unrelatedID, "editor", false},
+		{"admin without admin mode", adminID, "admin", false},
+		{"admin with admin mode", adminID, "admin", true},
+	}
+
+	for _, caller := range callers {
+		t.Run(caller.name, func(t *testing.T) {
+			callerCtx := ctx
+			if caller.adminMode {
+				callerCtx = executor.WithAdminMode(ctx, true)
+			}
+
+			expectedVisible := map[string]bool{}
+			expectedEdit := map[string]bool{}
+			for _, candidate := range candidates {
+				allowed, err := s.checkSessionPermission(callerCtx, caller.userID.String(), orgID.String(), caller.role, candidate.ID, "view")
+				require.NoError(t, err)
+				expectedVisible[candidate.ID] = allowed
+
+				editable, err := s.checkSessionPermission(callerCtx, caller.userID.String(), orgID.String(), caller.role, candidate.ID, "edit")
+				require.NoError(t, err)
+				expectedEdit[candidate.ID] = editable
+			}
+
+			got, err := s.filterVisibleSessions(callerCtx, caller.userID.String(), orgID.String(), caller.role, candidates)
+			require.NoError(t, err)
+
+			gotIDs := make([]string, 0, len(got))
+			expectedIDs := make([]string, 0, len(expectedVisible))
+			for id, visible := range expectedVisible {
+				if visible {
+					expectedIDs = append(expectedIDs, id)
+				}
+			}
+			for _, row := range got {
+				gotIDs = append(gotIDs, row.ID)
+				require.Equal(t, expectedEdit[row.ID], row.CanEdit,
+					"can_edit must match the per-row edit check for %s", row.ID)
+				require.True(t, expectedVisible[row.ID],
+					"filter returned %s but the per-row view check denies it", row.ID)
+			}
+			require.ElementsMatch(t, expectedIDs, gotIDs,
+				"batched visibility must match the per-row check")
+		})
+	}
 }
 
 // TestSessionShareDatabaseFailureMapsToServerError proves a database outage
