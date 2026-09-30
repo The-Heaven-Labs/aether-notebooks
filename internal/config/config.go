@@ -45,6 +45,7 @@ type Config struct {
 	OutputLimitsMaxBytes       int64         // platform ceiling for org-configured output byte caps (AETHER_OUTPUT_LIMITS_MAX_BYTES, default 64MB)
 	WarehouseReconcileInterval time.Duration // warehouse ClickHouse reconcile catch-up cadence (AETHER_CH_RECONCILE_INTERVAL, default 10m, floor 1m)
 	CHTablePermissions         bool          // per-user ClickHouse warehouse table permissions kill switch (AETHER_CH_TABLE_PERMISSIONS, default false)
+	MCPOAuthEnabled            bool          // serve the MCP OAuth 2.1 authorization-server endpoints (AETHER_MCP_OAUTH_ENABLED, default false)
 }
 
 func parseCommaList(s string) []string {
@@ -144,6 +145,7 @@ func load(migrateOnly bool) (*Config, error) {
 		OutputLimitsMaxBytes:       outputLimitsMaxBytes,
 		WarehouseReconcileInterval: warehouseReconcileInterval,
 		CHTablePermissions:         envOrDefault("AETHER_CH_TABLE_PERMISSIONS", "false") == "true",
+		MCPOAuthEnabled:            envOrDefault("AETHER_MCP_OAUTH_ENABLED", "false") == "true",
 	}
 
 	// If no explicit DatabaseURL, build from individual components.

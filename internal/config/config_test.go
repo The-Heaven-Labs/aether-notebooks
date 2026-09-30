@@ -232,6 +232,18 @@ func TestCHTablePermissionsOnlyTrueEnables(t *testing.T) {
 	}
 }
 
+func TestMCPOAuthEnabledDefault(t *testing.T) {
+	t.Setenv("AETHER_MCP_OAUTH_ENABLED", "")
+	cfg, err := LoadMigrateOnly() // no secrets required
+	require.NoError(t, err)
+	require.False(t, cfg.MCPOAuthEnabled)
+
+	t.Setenv("AETHER_MCP_OAUTH_ENABLED", "true")
+	cfg, err = LoadMigrateOnly()
+	require.NoError(t, err)
+	require.True(t, cfg.MCPOAuthEnabled)
+}
+
 func TestOutputLimitsMaxBytesDefault(t *testing.T) {
 	os.Unsetenv("AETHER_OUTPUT_LIMITS_MAX_BYTES")
 	cfg, err := LoadMigrateOnly()

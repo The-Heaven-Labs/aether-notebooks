@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useAuth, useAuthProvider, AuthContext } from './hooks/useAuth'
 import { LoginPage } from './pages/LoginPage'
+import { OAuthConsentPage } from './pages/OAuthConsentPage'
 import { HomePage } from './pages/HomePage'
 import { NotebookPage } from './pages/NotebookPage'
 import { ConnectorsPage } from './pages/ConnectorsPage'
@@ -52,6 +53,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/oauth/authorize" element={<OAuthConsentPage />} />
       <Route path="/join" element={<JoinPage />} />
       <Route path="/" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
       <Route

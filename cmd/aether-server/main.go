@@ -293,6 +293,7 @@ func main() {
 	srv.SetToolTimeoutDefault(cfg.AgentToolTimeoutDefault)
 	srv.SetOutputLimitsMaxBytes(cfg.OutputLimitsMaxBytes)
 	srv.SetMCPSQLTimeout(time.Duration(cfg.MCPSQLTimeoutMs) * time.Millisecond)
+	srv.SetMCPOAuthEnabled(cfg.MCPOAuthEnabled)
 	srv.SetOIDCHostRewrite(cfg.OIDCHostRewrite)
 	srv.SetDisableRegistration(cfg.DisableRegistration)
 	srv.SetFrontendHandler(frontendHandler(&runtimeConfig{
