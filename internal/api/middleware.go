@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -58,6 +59,22 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte
 			if err != nil {
 				writeError(w, http.StatusUnauthorized, "invalid token")
 				return
+			}
+
+			// OAuth access tokens (ClientID set) are bound to the MCP
+			// resource: audience must match the canonical resource URI of
+			// this request (RFC 8707), and they are only valid at the MCP
+			// endpoint — never on the platform REST APIs. Exact path match:
+			// a prefix would also admit /api/v1/mcp-servers.
+			if claims.ClientID != "" {
+				if r.URL.Path != "/api/v1/mcp" {
+					writeError(w, http.StatusForbidden, "oauth access tokens are only valid at the MCP endpoint")
+					return
+				}
+				if !slices.Contains([]string(claims.Audience), canonicalResourceURI(r)) {
+					writeError(w, http.StatusUnauthorized, "token audience does not match this resource")
+					return
+				}
 			}
 
 			ctx := context.WithValue(r.Context(), claimsKey, claims)

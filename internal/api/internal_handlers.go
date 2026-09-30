@@ -1,12 +1,28 @@
 package api
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/the-heaven-labs/aether/internal/auth"
 )
+
+// validateInternalToken validates a session/internal JWT. OAuth access
+// tokens (ClientID set) are bound to the MCP endpoint and must never be
+// accepted by the relay's internal endpoints.
+func (s *Server) validateInternalToken(token string) (*auth.Claims, error) {
+	claims, err := s.jwt.Validate(token)
+	if err != nil {
+		return nil, err
+	}
+	if claims.ClientID != "" {
+		return nil, errors.New("oauth access tokens are not valid for internal endpoints")
+	}
+	return claims, nil
+}
 
 // @Summary Get Yjs document
 // @Description Returns the Yjs document state for a notebook (internal relay endpoint)
@@ -23,8 +39,7 @@ func (s *Server) handleInternalYjsGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := strings.TrimPrefix(authHeader, "Bearer ")
-	_, err := s.jwt.Validate(token)
-	if err != nil {
+	if _, err := s.validateInternalToken(token); err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid token")
 		return
 	}
@@ -33,7 +48,7 @@ func (s *Server) handleInternalYjsGet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	var state []byte
-	err = s.db.Pool.QueryRow(ctx,
+	err := s.db.Pool.QueryRow(ctx,
 		`SELECT state FROM yjs_documents WHERE notebook_id = $1`,
 		nbID,
 	).Scan(&state)
@@ -67,8 +82,7 @@ func (s *Server) handleInternalYjsPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := strings.TrimPrefix(authHeader, "Bearer ")
-	_, err := s.jwt.Validate(token)
-	if err != nil {
+	if _, err := s.validateInternalToken(token); err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid token")
 		return
 	}
@@ -110,7 +124,7 @@ func (s *Server) handleInternalAuthValidate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	token := strings.TrimPrefix(authHeader, "Bearer ")
-	claims, err := s.jwt.Validate(token)
+	claims, err := s.validateInternalToken(token)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid token")
 		return

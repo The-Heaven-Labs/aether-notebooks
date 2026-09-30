@@ -250,6 +250,32 @@ func TestOAuthTokenRejectedOutsideMCP(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, rec.Code)
 }
 
+// TestOAuthTokenRejectedOnInternalEndpoints pins the relay's internal
+// endpoints to session/internals JWTs: an OAuth access token (ClientID set) is
+// minted for the MCP resource and must never validate there.
+func TestOAuthTokenRejectedOnInternalEndpoints(t *testing.T) {
+	srv, jwt, clientID, _ := setupOAuthServer(t)
+	code := oauthConsentApprove(t, srv, jwt, clientID)
+	access := oauthToken(t, srv, clientID, code)["access_token"].(string)
+
+	rec := doJSON(t, srv, "GET", "/internal/auth/validate", access, "")
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	rec = doJSON(t, srv, "GET", "/internal/yjs/00000000-0000-0000-0000-000000000000", access, "")
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// TestOAuthTokenRejectedOnMCPServersAPI pins the exact-path MCP check: the
+// /api/v1/mcp-servers prefix must not admit OAuth access tokens.
+func TestOAuthTokenRejectedOnMCPServersAPI(t *testing.T) {
+	srv, jwt, clientID, _ := setupOAuthServer(t)
+	code := oauthConsentApprove(t, srv, jwt, clientID)
+	access := oauthToken(t, srv, clientID, code)["access_token"].(string)
+
+	rec := doJSON(t, srv, "GET", "/api/v1/mcp-servers", access, "")
+	require.Equal(t, http.StatusForbidden, rec.Code)
+}
+
 func TestOAuthConsentInfoAndDeny(t *testing.T) {
 	srv, jwt, clientID, _ := setupOAuthServer(t)
 

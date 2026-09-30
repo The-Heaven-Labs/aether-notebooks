@@ -280,6 +280,12 @@ func (s *Server) handleMCPToolsCall(w http.ResponseWriter, req mcpJSONRPCRequest
 		return
 	}
 
+	// OAuth clients are marked used on valid tool calls (bookkeeping only).
+	if claims.ClientID != "" {
+		_, _ = s.db.Pool.Exec(r.Context(),
+			`UPDATE oauth_clients SET last_used_at = NOW() WHERE client_id = $1`, claims.ClientID)
+	}
+
 	registry := s.agentEngine.GetRegistry()
 	def, ok := registry.Get(params.Name)
 	if !ok {
