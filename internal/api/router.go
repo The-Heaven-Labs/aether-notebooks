@@ -51,7 +51,8 @@ type Server struct {
 	frontendURL                  string
 	Cache                        *cache.Cache
 	maxAttachmentBytes           int64
-	outputLimitsMaxBytes         int64 // platform ceiling for org output byte caps (AETHER_OUTPUT_LIMITS_MAX_BYTES)
+	outputLimitsMaxBytes         int64         // platform ceiling for org output byte caps (AETHER_OUTPUT_LIMITS_MAX_BYTES)
+	mcpSQLTimeout                time.Duration // execute_sql ceiling for MCP callers (0 = agent default)
 	agentEngine                  *agent.Engine
 	upgrader                     websocket.Upgrader
 	toolAllowedDomains           []string
@@ -185,6 +186,11 @@ func (s *Server) SetMaxAttachmentBytes(n int64) {
 func (s *Server) SetOutputLimitsMaxBytes(n int64) {
 	s.outputLimitsMaxBytes = n
 	s.agentEngine.SetOutputLimitsMaxBytes(n)
+}
+
+// SetMCPSQLTimeout sets the execute_sql ceiling applied to MCP callers.
+func (s *Server) SetMCPSQLTimeout(d time.Duration) {
+	s.mcpSQLTimeout = d
 }
 
 // orgCellOutputMaxBytes returns the effective per-cell output byte cap for the

@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -136,6 +138,22 @@ func TestAgentToolTimeoutInvalid(t *testing.T) {
 	if _, err := LoadMigrateOnly(); err == nil {
 		t.Error("expected error for invalid duration, got nil")
 	}
+}
+
+func TestParseMCPSQLTimeoutMs(t *testing.T) {
+	d, err := parseMCPSQLTimeoutMs("")
+	require.NoError(t, err)
+	require.Equal(t, 600000, d)
+
+	d, err = parseMCPSQLTimeoutMs("30000")
+	require.NoError(t, err)
+	require.Equal(t, 30000, d)
+
+	_, err = parseMCPSQLTimeoutMs("500")
+	require.Error(t, err)
+
+	_, err = parseMCPSQLTimeoutMs("abc")
+	require.Error(t, err)
 }
 
 func TestWarehouseReconcileIntervalDefault(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/auth"
@@ -289,23 +290,12 @@ func (s *Server) handleMCPToolsCall(w http.ResponseWriter, req mcpJSONRPCRequest
 		return
 	}
 
-	ctx := &agent.ToolContext{
-		Context:   r.Context(),
-		UserID:    claims.UserID,
-		OrgID:     claims.OrgID,
-		OrgRole:   claims.Role,
-		DB:        s.db.Pool,
-		MasterKey: s.masterKey,
-		BroadcastFunc: func(notebookID string, msg interface{}) {
-			s.hub.Broadcast(notebookID, msg)
-		},
-		SetRunningFunc:      s.hub.SetRunning,
-		UnsetRunningFunc:    s.hub.UnsetRunning,
-		SetCancelFunc:       s.hub.SetCancelFunc,
-		DeleteCancelFunc:    s.hub.DeleteCancelFunc,
-		ResolveTarget:       s.resolveExecutionTarget,
-		ConnPool:            s.connPool,
-		CheckPermissionFunc: s.checkPermission,
+	ctx := s.mcpToolContext(claims, r)
+
+	// The server WriteTimeout (60s) would cut off MCP calls that legally run
+	// up to AETHER_MCP_SQL_TIMEOUT_MS; extend the write deadline per-request.
+	if s.mcpSQLTimeout > 0 {
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(s.mcpSQLTimeout + 30*time.Second))
 	}
 
 	result, err := def.Execute(params.Arguments, ctx)
@@ -331,6 +321,31 @@ func (s *Server) handleMCPToolsCall(w http.ResponseWriter, req mcpJSONRPCRequest
 			},
 		},
 	})
+}
+
+// mcpToolContext builds the agent ToolContext for an MCP tools/call. The
+// execute_sql ceiling comes from AETHER_MCP_SQL_TIMEOUT_MS (via
+// SetMCPSQLTimeout); zero keeps the agent-side 30s default.
+func (s *Server) mcpToolContext(claims *auth.Claims, r *http.Request) *agent.ToolContext {
+	return &agent.ToolContext{
+		Context:   r.Context(),
+		UserID:    claims.UserID,
+		OrgID:     claims.OrgID,
+		OrgRole:   claims.Role,
+		DB:        s.db.Pool,
+		MasterKey: s.masterKey,
+		BroadcastFunc: func(notebookID string, msg interface{}) {
+			s.hub.Broadcast(notebookID, msg)
+		},
+		SetRunningFunc:      s.hub.SetRunning,
+		UnsetRunningFunc:    s.hub.UnsetRunning,
+		SetCancelFunc:       s.hub.SetCancelFunc,
+		DeleteCancelFunc:    s.hub.DeleteCancelFunc,
+		ResolveTarget:       s.resolveExecutionTarget,
+		ConnPool:            s.connPool,
+		CheckPermissionFunc: s.checkPermission,
+		QueryTimeoutCeiling: s.mcpSQLTimeout,
+	}
 }
 
 // resolveMCPSchema converts a tool's parameters schema (string or map) to the MCP inputSchema format.
