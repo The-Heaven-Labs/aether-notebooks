@@ -694,6 +694,32 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/mcp", http.HandlerFunc(handleMCPNoStream))
 	s.mux.Handle("DELETE /api/v1/mcp", http.HandlerFunc(handleMCPNoStream))
 
+	// OAuth 2.1 authorization-server endpoints for MCP clients. Registered
+	// unconditionally and gated per-request by requireMCPOAuth: the flag can
+	// be set after NewServer returns (tests do exactly that), so a build-time
+	// conditional would never register them.
+	s.mux.Handle("GET /.well-known/oauth-protected-resource", s.requireMCPOAuth(http.HandlerFunc(s.handleOAuthProtectedResource)))
+	s.mux.Handle("GET /.well-known/oauth-authorization-server", s.requireMCPOAuth(http.HandlerFunc(s.handleOAuthASMetadata)))
+	oauthRegisterLimit := 10
+	if v := os.Getenv("AETHER_RATE_LIMIT_OAUTH_REGISTER"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			oauthRegisterLimit = n
+		}
+	}
+	oauthTokenLimit := 30
+	if v := os.Getenv("AETHER_RATE_LIMIT_OAUTH_TOKEN"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			oauthTokenLimit = n
+		}
+	}
+	s.mux.Handle("POST /oauth/register", s.requireMCPOAuth(s.rateLimit(rateLimitConfig{
+		keyFunc: clientIP, limit: oauthRegisterLimit, window: time.Minute,
+	})(http.HandlerFunc(s.handleOAuthRegister))))
+	s.mux.Handle("POST /oauth/token", s.requireMCPOAuth(s.rateLimit(rateLimitConfig{
+		keyFunc: clientIP, limit: oauthTokenLimit, window: time.Minute,
+	})(http.HandlerFunc(s.handleOAuthToken))))
+	s.mux.Handle("GET /oauth/authorize", s.requireMCPOAuth(http.HandlerFunc(s.handleOAuthAuthorize)))
+
 	// Agent session attachment routes (vision support)
 	s.mux.Handle("POST /api/v1/agent-sessions/{session_id}/attachments", authMW(http.HandlerFunc(s.handleUploadAgentAttachment)))
 	s.mux.Handle("GET /api/v1/agent-attachments/{id}", authMW(http.HandlerFunc(s.handleGetAgentAttachment)))
