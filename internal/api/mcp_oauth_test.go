@@ -14,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/api"
+	"github.com/the-heaven-labs/aether/internal/auth"
+	"github.com/the-heaven-labs/aether/internal/oauth"
 )
 
 // Pinned resource/host: the tests derive the canonical resource URI from the
@@ -400,4 +402,35 @@ func TestOAuthScopeFiltering(t *testing.T) {
 		`{"jsonrpc":"2.0","id":3,"method":"tools/list"}`)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "create_notebook")
+}
+
+func TestMCPToolsForTokenFailClosed(t *testing.T) {
+	require.Nil(t, api.MCPToolsForTokenForTest(nil))
+	require.Nil(t, api.MCPToolsForTokenForTest(&auth.Claims{}))
+
+	empty := api.MCPToolsForTokenForTest(&auth.Claims{ClientID: "mcp_x", Scope: ""})
+	require.NotNil(t, empty, "OAuth tokens must never fall back to the full allowlist")
+	require.Empty(t, empty)
+
+	bogus := api.MCPToolsForTokenForTest(&auth.Claims{ClientID: "mcp_x", Scope: "bogus:scope"})
+	require.Empty(t, bogus)
+
+	all := api.MCPToolsForTokenForTest(&auth.Claims{ClientID: "mcp_x", Scope: "mcp:query mcp:read mcp:write"})
+	require.Contains(t, all, "execute_sql")
+	require.Contains(t, all, "create_notebook")
+}
+
+// Every allowlisted tool must be reachable through some grantable scope and no
+// scope may unlock a tool outside the allowlist.
+func TestOAuthScopesCoverAllowlistExactly(t *testing.T) {
+	srv := setupTestServer(t)
+	allowlist := srv.MCPToolAllowlistForTest()
+	reachable := oauth.ToolsForScopes(oauth.AllScopes)
+	for _, name := range allowlist {
+		_, ok := reachable[name]
+		require.Truef(t, ok, "allowlist tool %q is not reachable through any scope", name)
+	}
+	for name := range reachable {
+		require.Contains(t, allowlist, name, "scope unlocks tool %q outside the MCP allowlist", name)
+	}
 }

@@ -63,3 +63,9 @@ func (s *Server) SetMCPToolAllowedForTest(name string, allowed bool) {
 func (s *Server) MCPToolContextForTest(r *http.Request, claims *auth.Claims) *agent.ToolContext {
 	return s.mcpToolContext(claims, r)
 }
+
+// MCPToolsForTokenForTest exposes mcpToolsForToken so external tests can pin
+// its fail-closed behavior for scoped OAuth tokens.
+func MCPToolsForTokenForTest(claims *auth.Claims) map[string]struct{} {
+	return mcpToolsForToken(claims)
+}
