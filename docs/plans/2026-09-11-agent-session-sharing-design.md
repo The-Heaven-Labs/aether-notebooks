@@ -34,7 +34,8 @@ V061), but there is no sharing model and the current access control is too loose
 - Sessions are linked to notebooks for discovery: a notebook shows the chats that happened in it.
 - A session owner can explicitly share a session read-only with users/groups/Everyone.
 - A session owner can opt a session into **notebook-viewer inheritance**, so anyone who can
-  view the attached notebook can read it live (view-only; revocation is immediate).
+  view the attached notebook can read it live (view-only; HTTP reads revoke immediately, while
+  live WebSocket viewers are disconnected within the periodic re-validation interval).
 - A shared user can read the transcript (including subagent detail and attachments) and watch
   it live, but can never send, cancel, confirm tools, answer questions, or change settings.
 - **Automation:** `POST /agents/{id}/session` accepts the share list and inherit flag, applied
@@ -92,8 +93,9 @@ fallback, the owner entry, and platform/org admins in admin mode.
 boolean, settable at creation or later via `PATCH /sessions/{id}` (owner only). When it is
 true and the session has a `notebook_id`, `checkSessionPermission(..., "view")` also passes if
 the caller has notebook `view`. Evaluation is **live** (no materialized rows): unsharing the
-notebook, removing a group, or flipping the flag off revokes access immediately. The flag can
-only grant `view`.
+notebook, removing a group, or flipping the flag off revokes access immediately for HTTP reads;
+live WebSocket viewers are disconnected at the next re-validation check (connect-time plus
+periodic — see Known Limitations). The flag can only grant `view`.
 
 **Org resolution / admin bypass:** `checkPermission` resolves the resource org for
 `agent_session` through `agent_sessions → agents.org_id`. Sessions have no `folder_id`, so
@@ -384,7 +386,8 @@ now included here). `AgentPanel` and the read-only viewer both use it.
   connect and then re-checked on every `reconnect` frame and once per ~60s; a viewer whose
   access is revoked keeps receiving events until the next check closes the socket (within ~60s
   of revocation, not instantly). `edit` is not re-checked (owner/admin-mode are stable within a
-  connection).
+  connection). A revocation that coincides with a database outage is deferred to the next
+  successful check: a failed check never grants access, but it also does not close the socket.
 - **Redis outage:** fan-out falls back to local; remote viewers miss events until Redis
   returns, then reconcile via `resync`/`reconnect_sync`.
 - **Cascade deletes leave Redis stream keys behind.** Only `SessionStore.DeleteSession` removes
