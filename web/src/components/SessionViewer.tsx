@@ -9,6 +9,7 @@ import type { AgentMessage, AgentSession, WSMessage } from '../types/agent'
 import { mapServerMessagesToChat, mapSubagentMessage, mapSubagentMessages, applyToolResult, applySteeringMessage } from '../utils/agentTranscript'
 import { AgentChatTranscript, chatMarkdownComponents, chatStyles } from './AgentChatTranscript'
 import type { ChatMessage } from './AgentChatTranscript'
+import { PermissionsPanel } from './PermissionsPanel'
 
 const WS_URL = getWsUrl() + '/api/v1/ws/agents/'
 
@@ -18,8 +19,8 @@ export interface SessionViewerProps {
    * listing endpoint; the GET /sessions body does not always carry them. */
   session?: AgentSession | null
   onClose?: () => void
-  /** Owner-only share action; the button renders only when both can_edit and
-   * this handler are present. */
+  /** Owner-only share override; when absent the Share button opens the
+   * built-in PermissionsPanel for the session. */
   onShare?: () => void
 }
 
@@ -47,6 +48,10 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
   const [subagentMessages, setSubagentMessages] = useState<ChatMessage[]>([])
   const [subagentLoading, setSubagentLoading] = useState(false)
   const [subagentError, setSubagentError] = useState<string | null>(null)
+  const [showPermissions, setShowPermissions] = useState(false)
+  // Optimistic override for share_with_notebook_viewers so the toggle reflects
+  // the PATCH result without refetching the session.
+  const [inheritOverride, setInheritOverride] = useState<boolean | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectAttemptsRef = useRef(0)
@@ -63,8 +68,10 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
 
   const session = useMemo<AgentSession | null>(() => {
     if (!sessionSummary && !fetchedSession) return null
-    return { ...(sessionSummary ?? {}), ...(fetchedSession ?? {}) } as AgentSession
-  }, [sessionSummary, fetchedSession])
+    const merged = { ...(sessionSummary ?? {}), ...(fetchedSession ?? {}) } as AgentSession
+    if (inheritOverride !== null) merged.share_with_notebook_viewers = inheritOverride
+    return merged
+  }, [sessionSummary, fetchedSession, inheritOverride])
 
   // Session switches must not leak the previous transcript/stream state.
   useEffect(() => {
@@ -85,6 +92,8 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
     setConnected(false)
     setDisconnected(false)
     syncedRef.current = false
+    setShowPermissions(false)
+    setInheritOverride(null)
   }, [sessionId])
 
   // The REST fetch seeds the transcript; the WS reconnect_sync is authoritative
@@ -156,6 +165,18 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
     setSubagentMessages([])
     setSubagentError(null)
   }, [])
+
+  // Owner-only: flips notebook-viewer inheritance and mirrors the server's
+  // response into local state. Errors propagate to the panel for inline display.
+  const handleToggleInheritance = useCallback(async (next: boolean) => {
+    const res = await api.patch<{ share_with_notebook_viewers?: boolean }>(
+      `/api/v1/sessions/${sessionId}`,
+      { share_with_notebook_viewers: next },
+    )
+    setInheritOverride(
+      typeof res.share_with_notebook_viewers === 'boolean' ? res.share_with_notebook_viewers : next,
+    )
+  }, [sessionId])
 
   const connectWebSocket = useCallback(() => {
     suppressReconnectRef.current = false
@@ -429,8 +450,13 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
             <span style={styles.disconnectedDot} /> Disconnected
           </span>
         ) : null}
-        {canEdit && onShare && (
-          <button type="button" style={styles.shareBtn} onClick={onShare} title="Share this session">
+        {canEdit && (
+          <button
+            type="button"
+            style={styles.shareBtn}
+            onClick={() => { if (onShare) onShare(); else setShowPermissions(true) }}
+            title="Share this session"
+          >
             <Share2 size={13} /> Share
           </button>
         )}
@@ -493,6 +519,22 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
             />
           )}
         </div>
+      )}
+
+      {showPermissions && canEdit && session && (
+        <PermissionsPanel
+          resourceType="agent_session"
+          resourceId={sessionId}
+          resourceName={title}
+          resourceOwnerId={session.user_id}
+          canEdit={canEdit}
+          sessionNotebookInheritance={{
+            enabled: session.share_with_notebook_viewers === true,
+            hasNotebook: !!session.notebook_id,
+            onToggle: handleToggleInheritance,
+          }}
+          onClose={() => setShowPermissions(false)}
+        />
       )}
     </div>
   )

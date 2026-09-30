@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { SessionViewer } from './SessionViewer'
 import { server } from '../test/server'
+import { renderWithProviders } from '../test/utils'
 
 const SESSION = {
   id: 's1',
@@ -55,7 +56,7 @@ function emit(sock: MockWebSocket, msg: Record<string, unknown>) {
 }
 
 async function renderViewer(props: { onShare?: () => void } = {}): Promise<MockWebSocket> {
-  render(<SessionViewer sessionId="s1" {...props} />)
+  renderWithProviders(<SessionViewer sessionId="s1" {...props} />)
   await waitFor(() => expect(MockWebSocket.instances.length).toBeGreaterThan(0))
   return MockWebSocket.instances[MockWebSocket.instances.length - 1]
 }
@@ -171,6 +172,44 @@ describe('SessionViewer', () => {
     expect(onShare).toHaveBeenCalledTimes(1)
   })
 
+  it('opens the sharing panel for the owner and PATCHes notebook inheritance', async () => {
+    let patchBody: unknown
+    server.use(
+      http.get('/api/v1/sessions/:id', () => HttpResponse.json({
+        ...SESSION, shared: false, can_edit: true, share_with_notebook_viewers: false,
+      })),
+      http.get('/api/v1/acl/agent_session/s1', () => HttpResponse.json([])),
+      http.patch('/api/v1/sessions/s1', async ({ request }) => {
+        patchBody = await request.json()
+        return HttpResponse.json({ title: 'Revenue analysis', share_with_notebook_viewers: true })
+      }),
+    )
+    await renderViewer()
+
+    fireEvent.click(await screen.findByRole('button', { name: /share/i }))
+    expect(await screen.findByRole('dialog', { name: /permissions/i })).toBeInTheDocument()
+    const checkbox = await screen.findByRole('checkbox', { name: /Anyone who can view this notebook/i })
+    expect(checkbox).not.toBeChecked()
+
+    fireEvent.click(checkbox)
+    await waitFor(() => expect(patchBody).toEqual({ share_with_notebook_viewers: true }))
+    await waitFor(() => expect(checkbox).toBeChecked())
+  })
+
+  it('hides the notebook inheritance toggle when the session has no notebook', async () => {
+    server.use(
+      http.get('/api/v1/sessions/:id', () => HttpResponse.json({
+        ...SESSION, notebook_id: '', shared: false, can_edit: true, share_with_notebook_viewers: false,
+      })),
+      http.get('/api/v1/acl/agent_session/s1', () => HttpResponse.json([])),
+    )
+    await renderViewer()
+
+    fireEvent.click(await screen.findByRole('button', { name: /share/i }))
+    expect(await screen.findByRole('dialog', { name: /permissions/i })).toBeInTheDocument()
+    expect(screen.queryByText(/Anyone who can view this notebook/i)).toBeNull()
+  })
+
   it('merges the session summary prop into the fetched body for the owner header and Share button', async () => {
     const onShare = vi.fn()
     server.use(
@@ -183,7 +222,7 @@ describe('SessionViewer', () => {
         created_at: '2026-09-29T10:00:00Z',
       })),
     )
-    render(
+    renderWithProviders(
       <SessionViewer
         sessionId="s1"
         session={{ ...SESSION, title: 'Summary title', shared: false, can_edit: true }}
@@ -232,7 +271,7 @@ describe('SessionViewer', () => {
     server.use(
       http.get('/api/v1/sessions/:id', () => HttpResponse.json({ error: 'insufficient permissions' }, { status: 403 })),
     )
-    render(<SessionViewer sessionId="s1" />)
+    renderWithProviders(<SessionViewer sessionId="s1" />)
 
     expect(await screen.findByText('You do not have access to this session (HTTP 403)')).toBeInTheDocument()
     expect(screen.queryByText(/No messages in this session yet/)).toBeNull()
@@ -242,7 +281,7 @@ describe('SessionViewer', () => {
     server.use(
       http.get('/api/v1/sessions/:id', () => HttpResponse.json({ error: 'boom' }, { status: 500 })),
     )
-    render(<SessionViewer sessionId="s1" />)
+    renderWithProviders(<SessionViewer sessionId="s1" />)
 
     expect(await screen.findByText('Failed to load session (HTTP 500)')).toBeInTheDocument()
     expect(screen.queryByText(/No messages in this session yet/)).toBeNull()
