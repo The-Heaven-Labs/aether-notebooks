@@ -21,6 +21,14 @@ const ACTION_LABELS: Record<ResourceType, string[]> = {
   agent_session: ['view'],
 }
 
+// Actions the API enforces for a resource type that have no checkbox in the
+// panel. The save path keeps them on existing entries so an invisible
+// permission is never silently revoked: notebook "create" gates adding and
+// duplicating cells (handleCreateCell) and is seeded on notebook creation.
+const UNRENDERED_ACTIONS: Partial<Record<ResourceType, string[]>> = {
+  notebook: ['create'],
+}
+
 const ACTION_DESCRIPTIONS: Record<ResourceType, Record<string, string>> = {
   connector: {
     view:   'See connector name, type, host, and status',
@@ -123,6 +131,18 @@ export interface PermissionsPanelProps {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Narrows an entry's actions to those valid for the resource type, using the
+ * checkbox matrix as the source of truth plus any unrendered backend-enforced
+ * actions. Saves must never PUT actions the resource's write path rejects
+ * (e.g. the owner's full-access actions on a read-only agent_session). */
+function constrainActions(resourceType: ResourceType, entryActions: string[]): string[] {
+  const allowed = new Set([
+    ...ACTION_LABELS[resourceType],
+    ...(UNRENDERED_ACTIONS[resourceType] ?? []),
+  ])
+  return entryActions.filter((action) => allowed.has(action))
+}
 
 function initials(name: string): string {
   return name
@@ -703,7 +723,14 @@ export function PermissionsPanel({
                       opacity: saveAcl.isPending ? 0.6 : 1,
                     }}
                     disabled={saveAcl.isPending || aclLoading}
-                    onClick={() => saveAcl.mutate(draft.map(({ id: _id, ...rest }) => rest))}
+                    onClick={() =>
+                      saveAcl.mutate(
+                        draft.map(({ id: _id, ...rest }) => ({
+                          ...rest,
+                          actions: constrainActions(resourceType, rest.actions),
+                        }))
+                      )
+                    }
                   >
                     {saveAcl.isPending ? 'Saving…' : 'Save'}
                   </button>
