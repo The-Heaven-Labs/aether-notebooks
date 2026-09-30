@@ -77,17 +77,20 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, err := s.agentEngine.SessionStore().GetSession(r.Context(), sessionID)
-	if err != nil {
+	if _, err := s.agentEngine.SessionStore().GetSession(r.Context(), sessionID); err != nil {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
 
-	allowed, _ := s.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", sess.AgentID, "view")
+	allowed, _ := s.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "view")
 	if !allowed {
 		writeError(w, http.StatusForbidden, "access denied")
 		return
 	}
+
+	// The read-only split is decided once at connect: viewers (shared users,
+	// notebook inheritors) watch and reconnect, editors own the session.
+	canEdit, _ := s.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "edit")
 
 	// Capture admin mode for this session so the engine can respect per-tool ACLs
 	// unless the profile-page "admin mode" toggle is ON.
@@ -221,6 +224,15 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 			slog.Debug("ws: received message", "session_id", currentSessionID, "type", msg.Type, "content_len", len(msg.Content))
+
+			// Readers without session edit may only reconcile (`reconnect`);
+			// every mutating frame is rejected without touching the engine and
+			// without closing the socket. Steering rides the `message` frame,
+			// so this also covers it.
+			if !canEdit && msg.Type != "reconnect" {
+				safeSend(WSErrorResponse{Type: "error", Message: "read-only session"})
+				continue
+			}
 
 			if msg.Type == "cancel" {
 				// Cancel via session-level map (handles reconnected connections)
