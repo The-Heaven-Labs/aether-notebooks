@@ -462,6 +462,12 @@ func (s *Server) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete API tokens")
 		return
 	}
+	// Clear the ACL rows of the user's sessions before the sessions go away:
+	// only the user-subject rows were removed above, share/inherit rows remain.
+	if err := agent.DeleteAgentSessionACLs(ctx, tx, `user_id = $1`, targetID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete session ACLs")
+		return
+	}
 	if _, err := tx.Exec(ctx,
 		`DELETE FROM agent_sessions WHERE user_id = $1`, targetID,
 	); err != nil {

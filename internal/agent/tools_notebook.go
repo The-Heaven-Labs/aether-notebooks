@@ -1684,7 +1684,19 @@ func makeDeleteNotebookHandler(db *pgxpool.Pool) ToolHandler {
 		// Auto-snapshot before destructive action
 		SpawnAutoSnapshot(db, req.NotebookID, ctx.UserID, ctx.OrgID)
 
-		result, err := db.Exec(ctx.Context,
+		tx, err := db.Begin(ctx.Context)
+		if err != nil {
+			return nil, fmt.Errorf("delete notebook: %w", err)
+		}
+		defer tx.Rollback(ctx.Context)
+
+		// The session cascade has no ACL cleanup, so remove the agent_session
+		// ACL rows while the sessions are still visible to the subquery.
+		if err := DeleteAgentSessionACLs(ctx.Context, tx, `notebook_id = $1`, req.NotebookID); err != nil {
+			return nil, err
+		}
+
+		result, err := tx.Exec(ctx.Context,
 			`DELETE FROM notebooks WHERE id = $1 AND org_id = $2`,
 			req.NotebookID, ctx.OrgID,
 		)
@@ -1693,6 +1705,9 @@ func makeDeleteNotebookHandler(db *pgxpool.Pool) ToolHandler {
 		}
 		if result.RowsAffected() == 0 {
 			return nil, fmt.Errorf("notebook not found")
+		}
+		if err := tx.Commit(ctx.Context); err != nil {
+			return nil, fmt.Errorf("delete notebook: %w", err)
 		}
 
 		_ = ctx.AuditLog("notebook.delete", "notebook", req.NotebookID)

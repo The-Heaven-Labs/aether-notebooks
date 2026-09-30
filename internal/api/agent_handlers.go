@@ -570,13 +570,31 @@ func (h *agentHandlers) handleDeleteAgent(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	result, err := h.server.db.Pool.Exec(r.Context(), `DELETE FROM agents WHERE id = $1 AND org_id = $2`, agentID, claims.OrgID)
+	tx, err := h.server.db.Pool.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	// The ACL rows have no FK to agent_sessions, so clear them in the same
+	// transaction before the agents delete cascades the sessions away.
+	if err := agent.DeleteAgentSessionACLs(r.Context(), tx, `agent_id = $1`, agentID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	result, err := tx.Exec(r.Context(), `DELETE FROM agents WHERE id = $1 AND org_id = $2`, agentID, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if result.RowsAffected() == 0 {
 		writeError(w, http.StatusNotFound, "agent not found")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
