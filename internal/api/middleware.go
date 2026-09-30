@@ -45,6 +45,10 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte
 			}
 
 			if token == "" {
+				if r.URL.Path == "/api/v1/mcp" {
+					writeMCPUnauthorized(w, r)
+					return
+				}
 				writeError(w, http.StatusUnauthorized, "missing or invalid authorization header")
 				return
 			}
@@ -57,6 +61,10 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte
 
 			claims, err := issuer.Validate(token)
 			if err != nil {
+				if r.URL.Path == "/api/v1/mcp" {
+					writeMCPUnauthorized(w, r)
+					return
+				}
 				writeError(w, http.StatusUnauthorized, "invalid token")
 				return
 			}

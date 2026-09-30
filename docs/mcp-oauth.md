@@ -36,8 +36,11 @@ primitives:
 | Resource indicators (RFC 8707) | `aud` claim on access tokens == canonical resource URI |
 
 The `401` challenge from the MCP endpoint is
-`WWW-Authenticate: Bearer realm="aether"`; clients discover the metadata
-documents from the standard well-known paths at the host root.
+`WWW-Authenticate: Bearer realm="aether",
+resource_metadata="http://{host}/.well-known/oauth-protected-resource"`, so
+harnesses can discover the metadata document directly from the challenge (they
+may also probe the standard well-known paths at the host root). Other API
+endpoints emit `WWW-Authenticate: Bearer realm="aether"` only.
 
 The browser flow, all on the org's host:
 

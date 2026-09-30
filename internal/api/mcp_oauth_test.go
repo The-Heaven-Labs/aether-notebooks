@@ -420,6 +420,36 @@ func TestMCPToolsForTokenFailClosed(t *testing.T) {
 	require.Contains(t, all, "create_notebook")
 }
 
+func TestMCPUnauthenticatedChallengeAdvertisesResourceMetadata(t *testing.T) {
+	srv := setupTestServer(t)
+
+	rec := doJSON(t, srv, "POST", "/api/v1/mcp", "", "")
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	challenge := rec.Header().Get("WWW-Authenticate")
+	require.Contains(t, challenge, `Bearer realm="aether"`)
+	require.Contains(t, challenge, `resource_metadata="http://example.com/.well-known/oauth-protected-resource"`)
+}
+
+func TestMCPInvalidTokenChallengeAdvertisesResourceMetadata(t *testing.T) {
+	srv := setupTestServer(t)
+
+	rec := doJSON(t, srv, "POST", "/api/v1/mcp", "bogus", "")
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	challenge := rec.Header().Get("WWW-Authenticate")
+	require.Contains(t, challenge, `Bearer realm="aether"`)
+	require.Contains(t, challenge, `resource_metadata="http://example.com/.well-known/oauth-protected-resource"`)
+}
+
+func TestNonMCPUnauthorizedChallengeOmitsResourceMetadata(t *testing.T) {
+	srv := setupTestServer(t)
+
+	rec := doJSON(t, srv, "GET", "/api/v1/notebooks", "", "")
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	challenge := rec.Header().Get("WWW-Authenticate")
+	require.Contains(t, challenge, `Bearer realm="aether"`)
+	require.NotContains(t, challenge, "resource_metadata")
+}
+
 // Every allowlisted tool must be reachable through some grantable scope and no
 // scope may unlock a tool outside the allowlist.
 func TestOAuthScopesCoverAllowlistExactly(t *testing.T) {
