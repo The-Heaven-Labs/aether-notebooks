@@ -2,7 +2,9 @@ package agent_test
 
 import (
 	"context"
+	"errors"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -200,4 +202,194 @@ func TestStreamRedisSlowSubscriberEmitsResyncMarker(t *testing.T) {
 	msg, ok := evt.Msg.(map[string]any)
 	require.True(t, ok, "event message decoded as %T", evt.Msg)
 	require.Equal(t, "resync", msg["type"])
+}
+
+// The shared seq counter must not expire under connected clients: a reset makes
+// the server appear to move backwards. The replay buffer keeps its TTL.
+func TestStreamRedisSeqKeyHasNoTTL(t *testing.T) {
+	a, rdb := newStreamRedisManager(t)
+	sessionID := newStreamRedisSession(t, rdb)
+	ctx := context.Background()
+
+	a.Publish(sessionID, map[string]any{"type": "token"})
+
+	seqTTL, err := rdb.TTL(ctx, sessionStreamSeqKey(sessionID)).Result()
+	require.NoError(t, err)
+	require.Equal(t, time.Duration(-1), seqTTL, "seq key must not expire")
+
+	bufTTL, err := rdb.TTL(ctx, sessionStreamBufKey(sessionID)).Result()
+	require.NoError(t, err)
+	require.Greater(t, bufTTL, time.Duration(0), "buffer key keeps its TTL")
+}
+
+// skipBuffer subscribers only get live events: buffered events published before
+// the subscription are not replayed.
+func TestStreamRedisSkipBufferLiveOnly(t *testing.T) {
+	a, rdb := newStreamRedisManager(t)
+	b, _ := newStreamRedisManager(t)
+	sessionID := newStreamRedisSession(t, rdb)
+
+	a.Publish(sessionID, map[string]any{"type": "token", "n": 0})
+
+	sub, unsub := b.Subscribe(sessionID, 16, true)
+	defer unsub()
+
+	select {
+	case evt := <-sub:
+		t.Fatalf("skipBuffer subscriber got replayed seq %d", evt.Seq)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	a.Publish(sessionID, map[string]any{"type": "token", "n": 1})
+	evt := nextStreamEvent(t, sub)
+	require.Equal(t, uint64(2), evt.Seq)
+}
+
+// The replay buffer is capped: only the newest 500 entries survive.
+func TestStreamRedisBufferTrimmedAt500(t *testing.T) {
+	a, rdb := newStreamRedisManager(t)
+	sessionID := newStreamRedisSession(t, rdb)
+
+	const cap = 500
+	for i := 0; i < cap+20; i++ {
+		a.Publish(sessionID, map[string]any{"type": "token", "n": i})
+	}
+
+	entries, err := rdb.LRange(context.Background(), sessionStreamBufKey(sessionID), 0, -1).Result()
+	require.NoError(t, err)
+	require.Len(t, entries, cap)
+	require.Contains(t, entries[0], `"seq":21`)
+	require.Contains(t, entries[cap-1], `"seq":520`)
+}
+
+// A catastrophic counter reset (flush/failover) while a subscriber is connected
+// must never move the delivered seq backwards: the subscriber first gets a
+// resync marker, then the recovered event re-based onto the old clock.
+func TestStreamRedisCounterResetResyncsSubscriber(t *testing.T) {
+	a, rdb := newStreamRedisManager(t)
+	b, _ := newStreamRedisManager(t)
+	sessionID := newStreamRedisSession(t, rdb)
+
+	sub, unsub := b.Subscribe(sessionID, 16, false)
+	defer unsub()
+
+	for i := 0; i < 3; i++ {
+		a.Publish(sessionID, map[string]any{"type": "token", "n": i})
+	}
+	var seqs []uint64
+	for i := 0; i < 3; i++ {
+		seqs = append(seqs, nextStreamEvent(t, sub).Seq)
+	}
+	require.Equal(t, []uint64{1, 2, 3}, seqs)
+
+	require.NoError(t, rdb.Del(context.Background(),
+		sessionStreamSeqKey(sessionID), sessionStreamBufKey(sessionID)).Err())
+
+	a.Publish(sessionID, map[string]any{"type": "token", "n": 99})
+
+	marker := nextStreamEvent(t, sub)
+	msg, ok := marker.Msg.(map[string]any)
+	require.True(t, ok, "marker decoded as %T", marker.Msg)
+	require.Equal(t, "resync", msg["type"])
+	require.Equal(t, uint64(4), marker.Seq, "marker must be the next client-visible seq")
+
+	evt := nextStreamEvent(t, sub)
+	require.Equal(t, uint64(5), evt.Seq, "recovered event must stay above the marker")
+	msg, ok = evt.Msg.(map[string]any)
+	require.True(t, ok, "event decoded as %T", evt.Msg)
+	require.Equal(t, "token", msg["type"])
+	require.Equal(t, float64(99), msg["n"])
+}
+
+// publishFailHook fails EVAL/EVALSHA commands while enabled, simulating a Redis
+// outage for publishes without breaking the pump's pub/sub connection.
+type publishFailHook struct{ fail atomic.Bool }
+
+func (h *publishFailHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *publishFailHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if h.fail.Load() {
+			switch cmd.Name() {
+			case "eval", "evalsha":
+				return errors.New("simulated redis publish failure")
+			}
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (h *publishFailHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+// newStreamRedisManagerWithHook is newStreamRedisManager plus a pluggable hook.
+func newStreamRedisManagerWithHook(t *testing.T, hook redis.Hook) (*agent.StreamManager, *redis.Client) {
+	t.Helper()
+	opt, err := redis.ParseURL(redisStreamURL(t))
+	require.NoError(t, err)
+	rdb := redis.NewClient(opt)
+	rdb.AddHook(hook)
+	require.NoError(t, rdb.Ping(context.Background()).Err())
+	t.Cleanup(func() { _ = rdb.Close() })
+	return agent.NewStreamManager(rdb), rdb
+}
+
+// After a fallback publish (Redis down), the next successful publish reuses the
+// fallback seq, so local subscribers would drop the recovery event as a
+// duplicate and remote subscribers would never learn an event was lost. The
+// recovery must force a resync marker for both.
+func TestStreamRedisFallbackRecoveryForcesResync(t *testing.T) {
+	hook := &publishFailHook{}
+	a, _ := newStreamRedisManagerWithHook(t, hook)
+	b, rdb := newStreamRedisManager(t)
+	sessionID := newStreamRedisSession(t, rdb)
+
+	subA, unsubA := a.Subscribe(sessionID, 32, false)
+	defer unsubA()
+	subB, unsubB := b.Subscribe(sessionID, 32, false)
+	defer unsubB()
+
+	a.Publish(sessionID, map[string]any{"type": "token", "n": 0})
+	require.Equal(t, uint64(1), nextStreamEvent(t, subA).Seq)
+	require.Equal(t, uint64(1), nextStreamEvent(t, subB).Seq)
+
+	// Redis publish fails: local fan-out only, remote replicas see nothing.
+	hook.fail.Store(true)
+	a.Publish(sessionID, map[string]any{"type": "token", "n": 1})
+	local := nextStreamEvent(t, subA)
+	require.Equal(t, uint64(2), local.Seq)
+	select {
+	case evt := <-subB:
+		t.Fatalf("remote subscriber saw the fallback event, seq %d", evt.Seq)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// Redis recovers: the next publish must resync every subscriber.
+	hook.fail.Store(false)
+	a.Publish(sessionID, map[string]any{"type": "token", "n": 2})
+
+	resyncTypes := func(t *testing.T, ch <-chan agent.SequencedEvent) {
+		t.Helper()
+		var sawEvent, sawResync bool
+		deadline := time.After(3 * time.Second)
+		for !sawResync || !sawEvent {
+			select {
+			case evt := <-ch:
+				msg, ok := evt.Msg.(map[string]any)
+				require.True(t, ok, "event decoded as %T", evt.Msg)
+				if msg["type"] == "resync" {
+					sawResync = true
+					continue
+				}
+				sawEvent = true
+			case <-deadline:
+				t.Fatalf("timed out: saw_event=%v saw_resync=%v", sawEvent, sawResync)
+			}
+		}
+	}
+	// The local subscriber gets the recovery event (duplicate seq of the
+	// fallback event) followed by the forced marker.
+	resyncTypes(t, subA)
+	resyncTypes(t, subB)
 }
