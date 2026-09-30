@@ -1,5 +1,16 @@
 basePath: /api/v1
 definitions:
+  api.aclEntryInput:
+    properties:
+      actions:
+        items:
+          type: string
+        type: array
+      subject_id:
+        type: string
+      subject_type:
+        type: string
+    type: object
   api.adminCreateOrgRequest:
     properties:
       name:
@@ -40,6 +51,25 @@ definitions:
           name:
             type: string
         type: object
+    type: object
+  api.createSessionRequest:
+    properties:
+      auto_answer_questions:
+        type: boolean
+      auto_approve_tools:
+        type: boolean
+      max_turns:
+        type: integer
+      notebook_id:
+        type: string
+      share_with_notebook_viewers:
+        type: boolean
+      shares:
+        items:
+          $ref: '#/definitions/api.aclEntryInput'
+        type: array
+      title:
+        type: string
     type: object
   api.loginRequest:
     properties:
@@ -176,6 +206,13 @@ definitions:
       sso_password_login:
         type: boolean
     type: object
+  api.updateSessionRequest:
+    properties:
+      share_with_notebook_viewers:
+        type: boolean
+      title:
+        type: string
+    type: object
   audit.Entry:
     properties:
       action:
@@ -282,6 +319,12 @@ definitions:
           AutoApproveTools makes the engine resolve tool_confirm_required itself
           instead of waiting on a client, so headless/API sessions don't hang.
         type: boolean
+      can_edit:
+        description: |-
+          CanEdit reports whether the calling user may modify the session (owner
+          or admin mode). It is request-relative and only set by the session GET
+          endpoint.
+        type: boolean
       context_tokens:
         type: integer
       context_window:
@@ -296,6 +339,21 @@ definitions:
         type: integer
       notebook_id:
         type: string
+      owner_email:
+        description: |-
+          OwnerEmail is the session owner's email, populated by the session GET
+          endpoint so shared viewers can render who owns the session.
+        type: string
+      share_with_notebook_viewers:
+        description: |-
+          ShareWithNotebookViewers mirrors the session's inherit flag so the GET
+          body is self-sufficient for viewers.
+        type: boolean
+      shared:
+        description: |-
+          Shared reports whether the calling user is not the session owner. It is
+          request-relative and only set by the session GET endpoint.
+        type: boolean
       title:
         type: string
       total_cache_read:
@@ -1334,7 +1392,7 @@ paths:
         name: request
         required: true
         schema:
-          type: object
+          $ref: '#/definitions/api.createSessionRequest'
       produces:
       - application/json
       responses:
@@ -4463,6 +4521,41 @@ paths:
       summary: Get notebook permissions
       tags:
       - notebooks
+  /notebooks/{id}/sessions:
+    get:
+      description: List sessions attached to a notebook that the caller can view
+      parameters:
+      - description: Notebook ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List sessions attached to a notebook
+      tags:
+      - agents
   /notebooks/{id}/share:
     delete:
       description: Revoke the public share link for a notebook
@@ -5545,6 +5638,54 @@ paths:
       summary: Get a session
       tags:
       - agents
+    patch:
+      consumes:
+      - application/json
+      description: Update a session's title (owner/edit) or notebook-viewer inheritance
+        flag (owner/share)
+      parameters:
+      - description: Session ID
+        in: path
+        name: session_id
+        required: true
+        type: string
+      - description: Session update
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/api.updateSessionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a session
+      tags:
+      - agents
   /sessions/{session_id}/messages:
     get:
       description: Get all messages for a given session
@@ -5614,6 +5755,24 @@ paths:
       security:
       - BearerAuth: []
       summary: Update session title
+      tags:
+      - agents
+  /sessions/shared:
+    get:
+      description: 'List non-owned sessions the caller can view: direct shares (user,
+        group, Everyone) and notebook-viewer inheritance'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+      security:
+      - BearerAuth: []
+      summary: List sessions shared with the caller
       tags:
       - agents
   /sso/platform-providers:

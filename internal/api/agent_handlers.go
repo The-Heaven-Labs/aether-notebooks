@@ -606,13 +606,24 @@ func (h *agentHandlers) handleDeleteAgent(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusNoContent, nil)
 }
 
+// createSessionRequest is the POST /agents/{id}/session request body.
+type createSessionRequest struct {
+	NotebookID               string          `json:"notebook_id"`
+	MaxTurns                 int             `json:"max_turns"`
+	Title                    *string         `json:"title"`
+	AutoApproveTools         bool            `json:"auto_approve_tools"`
+	AutoAnswerQuestions      bool            `json:"auto_answer_questions"`
+	Shares                   []aclEntryInput `json:"shares"`
+	ShareWithNotebookViewers bool            `json:"share_with_notebook_viewers"`
+}
+
 // @Summary Create an agent session
 // @Description Create a new chat session with an agent
 // @Tags agents
 // @Accept json
 // @Produce json
 // @Param id path string true "Agent ID"
-// @Param request body object true "Session details"
+// @Param request body createSessionRequest true "Session details"
 // @Success 201 {object} map[string]any
 // @Failure 400 {object} map[string]string
 // @Security BearerAuth
@@ -628,15 +639,7 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var req struct {
-		NotebookID               string          `json:"notebook_id"`
-		MaxTurns                 int             `json:"max_turns"`
-		Title                    *string         `json:"title"`
-		AutoApproveTools         bool            `json:"auto_approve_tools"`
-		AutoAnswerQuestions      bool            `json:"auto_answer_questions"`
-		Shares                   []aclEntryInput `json:"shares"`
-		ShareWithNotebookViewers bool            `json:"share_with_notebook_viewers"`
-	}
+	var req createSessionRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return

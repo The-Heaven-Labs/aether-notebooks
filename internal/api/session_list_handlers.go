@@ -398,13 +398,19 @@ func (h *agentHandlers) querySessionRows(ctx context.Context, query string, args
 	return scanListSessionRows(rows)
 }
 
+// updateSessionRequest is the PATCH /sessions/{session_id} request body.
+type updateSessionRequest struct {
+	Title                    *string `json:"title"`
+	ShareWithNotebookViewers *bool   `json:"share_with_notebook_viewers"`
+}
+
 // @Summary Update a session
 // @Description Update a session's title (owner/edit) or notebook-viewer inheritance flag (owner/share)
 // @Tags agents
 // @Accept json
 // @Produce json
 // @Param session_id path string true "Session ID"
-// @Param request body object true "Session update"
+// @Param request body updateSessionRequest true "Session update"
 // @Success 200 {object} map[string]any
 // @Failure 400 {object} map[string]string
 // @Failure 403 {object} map[string]string
@@ -418,10 +424,7 @@ func (h *agentHandlers) handleUpdateSession(w http.ResponseWriter, r *http.Reque
 
 	// Decode before touching the session row: a request with nothing to update
 	// must never return the session's current title or sharing state.
-	var req struct {
-		Title                    *string `json:"title"`
-		ShareWithNotebookViewers *bool   `json:"share_with_notebook_viewers"`
-	}
+	var req updateSessionRequest
 	if err := decodeJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return

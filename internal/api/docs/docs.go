@@ -1114,7 +1114,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object"
+                            "$ref": "#/definitions/api.createSessionRequest"
                         }
                     }
                 ],
@@ -5854,6 +5854,61 @@ const docTemplate = `{
                 }
             }
         },
+        "/notebooks/{id}/sessions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "List sessions attached to a notebook that the caller can view",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "List sessions attached to a notebook",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Notebook ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "type": "object"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/notebooks/{id}/share": {
             "get": {
                 "security": [
@@ -7438,6 +7493,34 @@ const docTemplate = `{
                 }
             }
         },
+        "/sessions/shared": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "List non-owned sessions the caller can view: direct shares (user, group, Everyone) and notebook-viewer inheritance",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "List sessions shared with the caller",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/sessions/{session_id}": {
             "get": {
                 "security": [
@@ -7467,6 +7550,78 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/models.AgentSession"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Update a session's title (owner/edit) or notebook-viewer inheritance flag (owner/share)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Update a session",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Session ID",
+                        "name": "session_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Session update",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.updateSessionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     },
                     "404": {
@@ -9673,6 +9828,23 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "api.aclEntryInput": {
+            "type": "object",
+            "properties": {
+                "actions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "subject_id": {
+                    "type": "string"
+                },
+                "subject_type": {
+                    "type": "string"
+                }
+            }
+        },
         "api.adminCreateOrgRequest": {
             "type": "object",
             "properties": {
@@ -9734,6 +9906,35 @@ const docTemplate = `{
                             "type": "string"
                         }
                     }
+                }
+            }
+        },
+        "api.createSessionRequest": {
+            "type": "object",
+            "properties": {
+                "auto_answer_questions": {
+                    "type": "boolean"
+                },
+                "auto_approve_tools": {
+                    "type": "boolean"
+                },
+                "max_turns": {
+                    "type": "integer"
+                },
+                "notebook_id": {
+                    "type": "string"
+                },
+                "share_with_notebook_viewers": {
+                    "type": "boolean"
+                },
+                "shares": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.aclEntryInput"
+                    }
+                },
+                "title": {
+                    "type": "string"
                 }
             }
         },
@@ -9941,6 +10142,17 @@ const docTemplate = `{
                 }
             }
         },
+        "api.updateSessionRequest": {
+            "type": "object",
+            "properties": {
+                "share_with_notebook_viewers": {
+                    "type": "boolean"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
         "audit.Entry": {
             "type": "object",
             "properties": {
@@ -10088,6 +10300,10 @@ const docTemplate = `{
                     "description": "AutoApproveTools makes the engine resolve tool_confirm_required itself\ninstead of waiting on a client, so headless/API sessions don't hang.",
                     "type": "boolean"
                 },
+                "can_edit": {
+                    "description": "CanEdit reports whether the calling user may modify the session (owner\nor admin mode). It is request-relative and only set by the session GET\nendpoint.",
+                    "type": "boolean"
+                },
                 "context_tokens": {
                     "type": "integer"
                 },
@@ -10108,6 +10324,18 @@ const docTemplate = `{
                 },
                 "notebook_id": {
                     "type": "string"
+                },
+                "owner_email": {
+                    "description": "OwnerEmail is the session owner's email, populated by the session GET\nendpoint so shared viewers can render who owns the session.",
+                    "type": "string"
+                },
+                "share_with_notebook_viewers": {
+                    "description": "ShareWithNotebookViewers mirrors the session's inherit flag so the GET\nbody is self-sufficient for viewers.",
+                    "type": "boolean"
+                },
+                "shared": {
+                    "description": "Shared reports whether the calling user is not the session owner. It is\nrequest-relative and only set by the session GET endpoint.",
+                    "type": "boolean"
                 },
                 "title": {
                     "type": "string"
