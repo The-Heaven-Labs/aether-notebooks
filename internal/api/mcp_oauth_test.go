@@ -559,6 +559,30 @@ func TestOAuthAuthorizeRateLimited(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, call(), "second request must be throttled")
 }
 
+// The consent APIs share the login rate-limit tier with authorize (design
+// decision #7).
+func TestOAuthConsentRateLimited(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_LOGIN", "1")
+	srv, jwt, clientID, _ := setupOAuthServer(t)
+
+	// Unique IP per run: the counter lives in shared Redis keyed by IP+path.
+	ip := fmt.Sprintf("203.0.%d.%d", rand.IntN(256), rand.IntN(256))
+	infoURL := "/api/v1/oauth/consent/info?client_id=" + clientID +
+		"&scope=mcp:query&resource=" + oauthResource
+
+	call := func() int {
+		req := httptest.NewRequest("GET", infoURL, nil)
+		req.Host = oauthHost
+		req.Header.Set("Authorization", "Bearer "+jwt)
+		req.Header.Set("X-Forwarded-For", ip)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	require.Equal(t, http.StatusOK, call(), "first request must not be throttled")
+	require.Equal(t, http.StatusTooManyRequests, call(), "second request must be throttled")
+}
+
 func postTokenForm(t *testing.T, srv http.Handler, form url.Values) *httptest.ResponseRecorder {
 	t.Helper()
 	req, _ := http.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))

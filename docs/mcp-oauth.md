@@ -211,8 +211,13 @@ OAuth access tokens are narrower than PATs by construction:
 - **No token passthrough.** Aether executes queries with its own connector
   credentials; the OAuth token is never forwarded to the data source
   (confused-deputy protection).
-- **Rate limits.** DCR and token endpoints are rate-limited per client IP
-  (defaults `10`/min and `30`/min; see [Configuration](#2-configuration)).
+- **Rate limits.** Every OAuth endpoint is rate-limited per client IP.
+  `/oauth/authorize` and the consent APIs use the login tier
+  (`AETHER_RATE_LIMIT_LOGIN`, default `10`/min) so they cannot be used to probe
+  or brute-force session credentials faster than login itself. `/oauth/register`
+  (default `10`/min) and `/oauth/token` (default `30`/min) have dedicated limits
+  via `AETHER_RATE_LIMIT_OAUTH_REGISTER` / `AETHER_RATE_LIMIT_OAUTH_TOKEN`
+  (see [Configuration](#2-configuration)).
 
 ### Retention & revocation
 
