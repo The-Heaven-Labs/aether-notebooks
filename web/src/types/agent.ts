@@ -97,6 +97,12 @@ export interface AgentSession {
   share_with_notebook_viewers?: boolean
 }
 
+/** One row from a session listing endpoint (agent / notebook / shared). */
+export interface AgentSessionListItem extends AgentSession {
+  first_message: string
+  message_count: number
+}
+
 export interface AgentMessage {
   id: string
   session_id: string

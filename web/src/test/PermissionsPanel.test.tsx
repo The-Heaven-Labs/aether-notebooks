@@ -267,7 +267,7 @@ describe('Action sets', () => {
     })
   })
 
-  test('agent_session strips owner and stale actions from the PUT payload', async () => {
+  test('agent_session constrains every entry to view-only actions in the PUT payload', async () => {
     let putBody: { entries: Array<{ subject_type: string; subject_id: string; actions: string[] }> } | null = null
     server.use(
       http.get('/api/v1/acl/agent_session/s-1', () =>
@@ -305,15 +305,13 @@ describe('Action sets', () => {
 
     await waitFor(() => expect(putBody).not.toBeNull())
     const entries = putBody!.entries
-    expect(entries.length).toBeGreaterThan(0)
-    // No entry may carry an action the session write path rejects.
-    for (const entry of entries) {
-      expect(entry.actions).toEqual(['view'])
-    }
+    expect(entries).toHaveLength(2)
     const owner = entries.find((e) => e.subject_id === 'user-1')
-    if (owner) expect(owner.actions).toEqual(['view'])
+    expect(owner).toBeDefined()
+    expect(owner!.actions).toEqual(['view'])
     const share = entries.find((e) => e.subject_id === 'user-2')
-    expect(share?.actions).toEqual(['view'])
+    expect(share).toBeDefined()
+    expect(share!.actions).toEqual(['view'])
   })
 
   test('notebook keeps all of its allowed actions in the PUT payload', async () => {

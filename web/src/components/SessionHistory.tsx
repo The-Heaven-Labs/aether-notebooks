@@ -4,17 +4,12 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import { api } from '../api/client'
+import type { AgentSessionListItem } from '../types/agent'
 import { chatMarkdownComponents } from './AgentChatTranscript'
 import { AgentMessageImages } from './AgentMessageImages'
+import { SessionViewer } from './SessionViewer'
 
-interface SessionSummary {
-  id: string
-  created_at: string
-  first_message: string
-  message_count: number
-  notebook_id: string
-  title: string | null
-}
+type SessionSummary = AgentSessionListItem
 
 interface SessionMessage {
   id: string
@@ -39,7 +34,9 @@ function truncateSummary(content: string | undefined, max = 400): string {
 
 export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHistoryProps) {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
+  const [sharedSessions, setSharedSessions] = useState<SessionSummary[]>([])
   const [selectedSession, setSelectedSession] = useState<SessionSummary | null>(null)
+  const [viewerSession, setViewerSession] = useState<SessionSummary | null>(null)
   const [messages, setMessages] = useState<SessionMessage[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingMessages, setLoadingMessages] = useState(false)
@@ -48,10 +45,21 @@ export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHist
   const [editValue, setEditValue] = useState('')
 
   useEffect(() => {
-    api.get<SessionSummary[]>(`/api/v1/agents/${agentId}/sessions`)
-      .then(data => setSessions(data ?? []))
-      .catch(() => setError('Failed to load sessions'))
-      .finally(() => setLoading(false))
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    Promise.all([
+      api.get<SessionSummary[]>(`/api/v1/agents/${agentId}/sessions`),
+      api.get<SessionSummary[]>('/api/v1/sessions/shared').catch(() => []),
+    ])
+      .then(([own, shared]) => {
+        if (cancelled) return
+        setSessions((own ?? []).filter(s => !s.shared))
+        setSharedSessions((shared ?? []).filter(s => s.shared !== false && s.agent_id === agentId))
+      })
+      .catch(() => { if (!cancelled) setError('Failed to load sessions') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [agentId])
 
   const loadSession = async (session: SessionSummary) => {
@@ -77,6 +85,16 @@ export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHist
     } catch {
       setError('Failed to update title')
     }
+  }
+
+  if (viewerSession) {
+    return (
+      <SessionViewer
+        sessionId={viewerSession.id}
+        session={viewerSession}
+        onClose={() => setViewerSession(null)}
+      />
+    )
   }
 
   if (selectedSession) {
@@ -134,44 +152,73 @@ export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHist
       <div style={styles.sessionList}>
         {loading ? (
           <div style={styles.loadingText}>Loading...</div>
-        ) : sessions.length === 0 ? (
+        ) : sessions.length === 0 && sharedSessions.length === 0 ? (
           <div style={styles.loadingText}>No past sessions</div>
         ) : (
-          sessions.map((s) => (
-            <button key={s.id} style={styles.sessionItem} onClick={() => !editingTitle && loadSession(s)}>
-              <MessageSquare size={14} style={{ flexShrink: 0, marginTop: 2 }} />
-              <div style={styles.sessionInfo}>
-                <div style={styles.sessionPreview} onClick={(e) => {
-                  e.stopPropagation()
-                  setEditingTitle(s.id)
-                  setEditValue(s.title || s.first_message || '')
-                }}>
-                  {editingTitle === s.id ? (
-                    <input
-                      style={styles.titleInput}
-                      value={editValue}
-                      onChange={(e) => setEditValue(e.target.value)}
-                      onBlur={() => handleSaveTitle(s.id, editValue)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleSaveTitle(s.id, editValue)
-                        if (e.key === 'Escape') setEditingTitle(null)
-                      }}
-                      autoFocus
-                      maxLength={50}
-                    />
-                  ) : (
-                    <>
-                      {s.title || s.first_message || '(empty session)'}
-                      <Edit2 size={12} style={styles.editIcon} />
-                    </>
-                  )}
-                </div>
-                <div style={styles.sessionMeta}>
-                  {new Date(s.created_at).toLocaleDateString()} · {s.message_count} messages
-                </div>
-              </div>
-            </button>
-          ))
+          <>
+            <div style={styles.sectionLabel}>My sessions</div>
+            {sessions.length === 0 ? (
+              <div style={styles.loadingText}>No past sessions</div>
+            ) : (
+              sessions.map((s) => (
+                <button key={s.id} style={styles.sessionItem} onClick={() => !editingTitle && loadSession(s)}>
+                  <MessageSquare size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+                  <div style={styles.sessionInfo}>
+                    <div style={styles.sessionPreview} onClick={(e) => {
+                      e.stopPropagation()
+                      setEditingTitle(s.id)
+                      setEditValue(s.title || s.first_message || '')
+                    }}>
+                      {editingTitle === s.id ? (
+                        <input
+                          style={styles.titleInput}
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onBlur={() => handleSaveTitle(s.id, editValue)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveTitle(s.id, editValue)
+                            if (e.key === 'Escape') setEditingTitle(null)
+                          }}
+                          autoFocus
+                          maxLength={50}
+                        />
+                      ) : (
+                        <>
+                          {s.title || s.first_message || '(empty session)'}
+                          <Edit2 size={12} style={styles.editIcon} />
+                        </>
+                      )}
+                    </div>
+                    <div style={styles.sessionMeta}>
+                      {new Date(s.created_at).toLocaleDateString()} · {s.message_count} messages
+                    </div>
+                  </div>
+                </button>
+              ))
+            )}
+
+            {sharedSessions.length > 0 && (
+              <>
+                <div style={styles.sectionLabel}>Shared with me</div>
+                {sharedSessions.map((s) => (
+                  <button key={s.id} style={styles.sessionItem} onClick={() => setViewerSession(s)}>
+                    <MessageSquare size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+                    <div style={styles.sessionInfo}>
+                      <div style={styles.sessionPreview}>
+                        {s.title || s.first_message || '(empty session)'}
+                        <span style={styles.sharedBadge}>Shared</span>
+                      </div>
+                      <div style={styles.sessionMeta}>
+                        {s.owner_email && <span style={styles.ownerEmail}>{s.owner_email}</span>}
+                        {s.owner_email && <span>·</span>}
+                        <span>{new Date(s.created_at).toLocaleDateString()} · {s.message_count} messages</span>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </>
+            )}
+          </>
         )}
       </div>
     </>
@@ -214,6 +261,27 @@ const styles: Record<string, React.CSSProperties> = {
   },
   headerTitle: { fontSize: 12, fontWeight: 500, color: 'var(--text-muted)' },
   sessionDate: { fontSize: 12, color: 'var(--text-muted)', marginLeft: 'auto' },
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: 600,
+    color: 'var(--text-muted)',
+    padding: '10px 8px 4px',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.5px',
+  },
+  sharedBadge: {
+    marginLeft: 6,
+    fontSize: 9,
+    fontWeight: 600,
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.04em',
+    color: 'var(--accent)',
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
+    borderRadius: 3,
+    padding: '0 4px',
+  },
+  ownerEmail: { color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   sessionList: { flex: 1, overflowY: 'auto', padding: 8 },
   sessionItem: {
     display: 'flex',
@@ -235,7 +303,7 @@ const styles: Record<string, React.CSSProperties> = {
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap' as const,
   },
-  sessionMeta: { fontSize: 11, color: 'var(--text-muted)', marginTop: 2 },
+  sessionMeta: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-muted)', marginTop: 2, minWidth: 0 },
   titleInput: {
     width: '100%',
     fontSize: 13,

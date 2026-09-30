@@ -162,7 +162,7 @@ describe('SessionViewer', () => {
     expect(ws.sent.some((f) => f.includes('tool_confirm') || f.includes('question_answer'))).toBe(false)
   })
 
-  it('shows a Share button only for owners who wired a handler', async () => {
+  it('shows a Share button for owners and invokes the handler when provided', async () => {
     const onShare = vi.fn()
     server.use(http.get('/api/v1/sessions/:id', () => HttpResponse.json({ ...SESSION, can_edit: true, shared: false })))
     await renderViewer({ onShare })

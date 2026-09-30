@@ -34,6 +34,8 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { ShareModal } from '../components/ShareModal'
 import { SessionViewer } from '../components/SessionViewer'
+import { NotebookChats } from '../components/NotebookChats'
+import type { AgentSessionListItem } from '../types/agent'
 import { exportNotebookHTML } from '../utils/notebookExport'
 
 interface NotebookWithCells extends Notebook {
@@ -275,6 +277,16 @@ export function NotebookPage() {
   const [historyVersions, setHistoryVersions] = useState<CellVersion[]>([])
   // Read-only shared-session viewer (opened from the Chats drawer / history).
   const [viewerSessionId, setViewerSessionId] = useState<string | null>(null)
+  const [viewerSession, setViewerSession] = useState<AgentSessionListItem | null>(null)
+  const [showChats, setShowChats] = useState(false)
+  const openSessionViewer = useCallback((session: AgentSessionListItem) => {
+    setViewerSession(session)
+    setViewerSessionId(session.id)
+  }, [])
+  const closeSessionViewer = useCallback(() => {
+    setViewerSession(null)
+    setViewerSessionId(null)
+  }, [])
   // Drag-and-drop sensors
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
@@ -1469,6 +1481,13 @@ export function NotebookPage() {
                   >
                     Schedules
                   </button>
+                  <button
+                    type="button"
+                    style={{ ...styles.dropdownItem, ...(showChats ? styles.dropdownItemActive : {}) }}
+                    onClick={() => { setShowChats(v => !v); setViewOpen(false) }}
+                  >
+                    Chats
+                  </button>
                   <div style={styles.dropdownSeparator} />
                   <button
                     type="button"
@@ -1810,11 +1829,24 @@ export function NotebookPage() {
         </>
       )}
 
+      {showChats && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 199 }} onClick={() => setShowChats(false)} />
+          <div style={{ position: 'fixed', right: 0, top: 52, bottom: 0, width: 380, overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
+            <NotebookChats
+              notebookId={id!}
+              onOpenSession={openSessionViewer}
+              onClose={() => setShowChats(false)}
+            />
+          </div>
+        </>
+      )}
+
       {viewerSessionId && (
         <>
-          <div style={{ position: 'fixed', inset: 0, zIndex: 199 }} onClick={() => setViewerSessionId(null)} />
-          <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 420, maxWidth: '100vw', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200, background: 'var(--bg-primary)', borderLeft: '1px solid var(--border)' }}>
-            <SessionViewer sessionId={viewerSessionId} onClose={() => setViewerSessionId(null)} />
+          <div style={{ position: 'fixed', inset: 0, zIndex: 201 }} onClick={closeSessionViewer} />
+          <div style={{ position: 'fixed', right: 0, top: 52, bottom: 0, width: 420, maxWidth: '100vw', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 202, background: 'var(--bg-primary)', borderLeft: '1px solid var(--border)' }}>
+            <SessionViewer sessionId={viewerSessionId} session={viewerSession} onClose={closeSessionViewer} />
           </div>
         </>
       )}
