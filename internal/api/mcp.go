@@ -1,15 +1,18 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/auth"
+	"github.com/the-heaven-labs/aether/internal/oauth"
 )
 
 type mcpJSONRPCRequest struct {
@@ -229,14 +232,30 @@ func (s *Server) handleMCPInitialize(w http.ResponseWriter, req mcpJSONRPCReques
 	})
 }
 
+// mcpToolsForToken returns the tool set the caller may use. OAuth tokens
+// (identified by ClientID) are limited to the union of their granted scopes;
+// PATs and session JWTs keep the full allowlist. A nil map means "all".
+func mcpToolsForToken(claims *auth.Claims) map[string]struct{} {
+	if claims == nil || claims.ClientID == "" {
+		return nil
+	}
+	return oauth.ToolsForScopes(oauth.ParseScopes(claims.Scope))
+}
+
 func (s *Server) handleMCPToolsList(w http.ResponseWriter, req mcpJSONRPCRequest, claims *auth.Claims) {
 	registry := s.agentEngine.GetRegistry()
 	defs := registry.List()
 
+	allowed := mcpToolsForToken(claims)
 	tools := make([]mcpTool, 0, len(defs))
 	for _, d := range defs {
 		if d.Function.Name == "" || !mcpToolAllowed(d.Function.Name) {
 			continue
+		}
+		if allowed != nil {
+			if _, ok := allowed[d.Function.Name]; !ok {
+				continue
+			}
 		}
 		schema := resolveMCPSchema(d.Function.Parameters)
 		tools = append(tools, mcpTool{
@@ -279,6 +298,27 @@ func (s *Server) handleMCPToolsCall(w http.ResponseWriter, req mcpJSONRPCRequest
 		return
 	}
 
+	if allowed := mcpToolsForToken(claims); allowed != nil {
+		if _, ok := allowed[params.Name]; !ok {
+			writeJSON(w, http.StatusOK, mcpJSONRPCResponse{
+				JSONRPC: "2.0", ID: req.ID,
+				Error: &mcpError{Code: -32602, Message: "Tool not available for the granted scopes: " + params.Name},
+			})
+			return
+		}
+	}
+
+	// OAuth clients are marked used on valid tool calls (bookkeeping only).
+	if claims.ClientID != "" {
+		clientID := claims.ClientID
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, _ = s.db.Pool.Exec(ctx,
+				`UPDATE oauth_clients SET last_used_at = NOW() WHERE client_id = $1`, clientID)
+		}()
+	}
+
 	registry := s.agentEngine.GetRegistry()
 	def, ok := registry.Get(params.Name)
 	if !ok {
@@ -289,23 +329,13 @@ func (s *Server) handleMCPToolsCall(w http.ResponseWriter, req mcpJSONRPCRequest
 		return
 	}
 
-	ctx := &agent.ToolContext{
-		Context:   r.Context(),
-		UserID:    claims.UserID,
-		OrgID:     claims.OrgID,
-		OrgRole:   claims.Role,
-		DB:        s.db.Pool,
-		MasterKey: s.masterKey,
-		BroadcastFunc: func(notebookID string, msg interface{}) {
-			s.hub.Broadcast(notebookID, msg)
-		},
-		SetRunningFunc:      s.hub.SetRunning,
-		UnsetRunningFunc:    s.hub.UnsetRunning,
-		SetCancelFunc:       s.hub.SetCancelFunc,
-		DeleteCancelFunc:    s.hub.DeleteCancelFunc,
-		ResolveTarget:       s.resolveExecutionTarget,
-		ConnPool:            s.connPool,
-		CheckPermissionFunc: s.checkPermission,
+	ctx := s.mcpToolContext(claims, r)
+
+	// The server WriteTimeout (60s) would cut off MCP calls that legally run
+	// up to AETHER_MCP_SQL_TIMEOUT_MS; extend the write deadline per-request,
+	// but never shorten the server baseline for smaller ceilings.
+	if d, ok := mcpWriteDeadlineOverride(s.mcpSQLTimeout); ok {
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(d))
 	}
 
 	result, err := def.Execute(params.Arguments, ctx)
@@ -331,6 +361,49 @@ func (s *Server) handleMCPToolsCall(w http.ResponseWriter, req mcpJSONRPCRequest
 			},
 		},
 	})
+}
+
+// mcpWriteDeadlineServerBaseline mirrors the HTTP server's WriteTimeout
+// configured in cmd/aether-server. SetWriteDeadline replaces that deadline
+// rather than extending it, so any override must stay above this baseline.
+const mcpWriteDeadlineServerBaseline = 60 * time.Second
+
+// mcpWriteDeadlineOverride returns the per-request write deadline to apply to
+// an MCP tools/call and whether it should be applied. A small
+// AETHER_MCP_SQL_TIMEOUT_MS must not shorten the deadline for tools whose
+// worst case is not the SQL ceiling (run_cell, import_notebook), so only
+// margin-inclusive deadlines above the server baseline are applied.
+func mcpWriteDeadlineOverride(ceiling time.Duration) (time.Duration, bool) {
+	d := ceiling + 30*time.Second
+	if d <= mcpWriteDeadlineServerBaseline {
+		return 0, false
+	}
+	return d, true
+}
+
+// mcpToolContext builds the agent ToolContext for an MCP tools/call. The
+// execute_sql ceiling comes from AETHER_MCP_SQL_TIMEOUT_MS (via
+// SetMCPSQLTimeout); zero keeps the agent-side 30s default.
+func (s *Server) mcpToolContext(claims *auth.Claims, r *http.Request) *agent.ToolContext {
+	return &agent.ToolContext{
+		Context:   r.Context(),
+		UserID:    claims.UserID,
+		OrgID:     claims.OrgID,
+		OrgRole:   claims.Role,
+		DB:        s.db.Pool,
+		MasterKey: s.masterKey,
+		BroadcastFunc: func(notebookID string, msg interface{}) {
+			s.hub.Broadcast(notebookID, msg)
+		},
+		SetRunningFunc:      s.hub.SetRunning,
+		UnsetRunningFunc:    s.hub.UnsetRunning,
+		SetCancelFunc:       s.hub.SetCancelFunc,
+		DeleteCancelFunc:    s.hub.DeleteCancelFunc,
+		ResolveTarget:       s.resolveExecutionTarget,
+		ConnPool:            s.connPool,
+		CheckPermissionFunc: s.checkPermission,
+		QueryTimeoutCeiling: s.mcpSQLTimeout,
+	}
 }
 
 // resolveMCPSchema converts a tool's parameters schema (string or map) to the MCP inputSchema format.

@@ -32,6 +32,7 @@
 - **Fine-grained Permissions** — ACL-based permission system with folder hierarchy inheritance
 - **Multi-tenancy** — Subdomain-based org isolation for teams and enterprises
 - **SSO / OIDC** — Single sign-on with any OpenID Connect provider, including automatic group provisioning
+- **MCP Server** — Expose the tool catalog to OpenCode, Claude Code, and other MCP harnesses, with OAuth 2.1 browser consent or personal access tokens
 - **Audit Logging** — Full query and action audit trail stored in PostgreSQL
 
 ## Screenshots
@@ -181,6 +182,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full development setup and coding con
 | `AETHER_STORAGE_BACKEND` | No | `local` | Attachment storage (`local` or `s3`) |
 | `AETHER_S3_BUCKET` | No | — | S3 bucket name (if using S3 storage) |
 | `AETHER_MAX_ATTACHMENT_BYTES` | No | `10485760` | Max attachment upload size |
+| `AETHER_MCP_OAUTH_ENABLED` | No | `false` | Serve the MCP OAuth 2.1 authorization-server endpoints (browser consent for MCP clients) |
+| `AETHER_MCP_SQL_TIMEOUT_MS` | No | `600000` | `execute_sql` timeout ceiling in ms for MCP callers |
 
 ## Project Structure
 

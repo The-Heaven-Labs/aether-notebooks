@@ -60,6 +60,10 @@ type ToolContext struct {
 	// OutputLimitsMaxBytes is the platform ceiling applied to the org's
 	// cell_output_max_bytes cap for agent-driven executions (0 = no ceiling).
 	OutputLimitsMaxBytes int64
+	// QueryTimeoutCeiling bounds execute_sql execution. Zero means the agent
+	// default (30s). The MCP handler sets it from AETHER_MCP_SQL_TIMEOUT_MS
+	// so harness callers can run longer queries; agent paths leave it zero.
+	QueryTimeoutCeiling time.Duration
 }
 
 type AgentTask struct {

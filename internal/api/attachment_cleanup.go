@@ -66,6 +66,22 @@ func (s *Server) StartBackgroundJobs(ctx context.Context) {
 			}
 		}
 	}()
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if s.oauth != nil {
+					if err := s.oauth.Cleanup(ctx); err != nil {
+						slog.Warn("oauth cleanup: background cycle", "error", err)
+					}
+				}
+			}
+		}
+	}()
 	s.startConnPoolIdleLoop(ctx)
 	s.startWarehouseReconcileLoop(ctx)
 	s.startWarehouseInvalidationSubscriber(ctx)

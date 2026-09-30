@@ -41,9 +41,11 @@ type Config struct {
 	DisableMigrations          bool          // when true, skip embedded migrations on startup (used when pipeline handles migrations)
 	StatsRollupInterval        time.Duration // agent stats rollup cadence (AETHER_AGENT_STATS_ROLLUP_INTERVAL, default 1h, floor 5m)
 	AgentToolTimeoutDefault    time.Duration // fallback agent tool execution budget (AETHER_AGENT_TOOL_TIMEOUT_DEFAULT, default 120s, floor 1s)
+	MCPSQLTimeoutMs            int           // execute_sql ceiling for MCP callers (AETHER_MCP_SQL_TIMEOUT_MS, default 600000ms)
 	OutputLimitsMaxBytes       int64         // platform ceiling for org-configured output byte caps (AETHER_OUTPUT_LIMITS_MAX_BYTES, default 64MB)
 	WarehouseReconcileInterval time.Duration // warehouse ClickHouse reconcile catch-up cadence (AETHER_CH_RECONCILE_INTERVAL, default 10m, floor 1m)
 	CHTablePermissions         bool          // per-user ClickHouse warehouse table permissions kill switch (AETHER_CH_TABLE_PERMISSIONS, default false)
+	MCPOAuthEnabled            bool          // serve the MCP OAuth 2.1 authorization-server endpoints (AETHER_MCP_OAUTH_ENABLED, default false)
 }
 
 func parseCommaList(s string) []string {
@@ -92,6 +94,10 @@ func load(migrateOnly bool) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	mcpSQLTimeoutMs, err := parseMCPSQLTimeoutMs(os.Getenv("AETHER_MCP_SQL_TIMEOUT_MS"))
+	if err != nil {
+		return nil, err
+	}
 	outputLimitsMaxBytes, err := strconv.ParseInt(envOrDefault("AETHER_OUTPUT_LIMITS_MAX_BYTES", "67108864"), 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("invalid AETHER_OUTPUT_LIMITS_MAX_BYTES: %w", err)
@@ -135,9 +141,11 @@ func load(migrateOnly bool) (*Config, error) {
 		DisableMigrations:          envOrDefault("AETHER_DISABLE_MIGRATIONS", "false") == "true",
 		StatsRollupInterval:        statsRollupInterval,
 		AgentToolTimeoutDefault:    agentToolTimeoutDefault,
+		MCPSQLTimeoutMs:            mcpSQLTimeoutMs,
 		OutputLimitsMaxBytes:       outputLimitsMaxBytes,
 		WarehouseReconcileInterval: warehouseReconcileInterval,
 		CHTablePermissions:         envOrDefault("AETHER_CH_TABLE_PERMISSIONS", "false") == "true",
+		MCPOAuthEnabled:            envOrDefault("AETHER_MCP_OAUTH_ENABLED", "false") == "true",
 	}
 
 	// If no explicit DatabaseURL, build from individual components.
@@ -218,6 +226,23 @@ func parseAgentToolTimeoutDefault(raw string) (time.Duration, error) {
 		return time.Second, nil
 	}
 	return d, nil
+}
+
+// parseMCPSQLTimeoutMs parses AETHER_MCP_SQL_TIMEOUT_MS. Empty means the
+// 10-minute default (matching run_cell's maxToolTimeoutMs); values below
+// 1000ms are rejected so a misconfigured var cannot make execute_sql useless.
+func parseMCPSQLTimeoutMs(raw string) (int, error) {
+	if raw == "" {
+		return 600000, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid AETHER_MCP_SQL_TIMEOUT_MS %q: %w", raw, err)
+	}
+	if n < 1000 {
+		return 0, fmt.Errorf("invalid AETHER_MCP_SQL_TIMEOUT_MS %q: must be at least 1000ms", raw)
+	}
+	return n, nil
 }
 
 // DefaultWarehouseReconcileInterval is the catch-up cadence used when

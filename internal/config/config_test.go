@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -138,6 +140,22 @@ func TestAgentToolTimeoutInvalid(t *testing.T) {
 	}
 }
 
+func TestParseMCPSQLTimeoutMs(t *testing.T) {
+	d, err := parseMCPSQLTimeoutMs("")
+	require.NoError(t, err)
+	require.Equal(t, 600000, d)
+
+	d, err = parseMCPSQLTimeoutMs("30000")
+	require.NoError(t, err)
+	require.Equal(t, 30000, d)
+
+	_, err = parseMCPSQLTimeoutMs("500")
+	require.Error(t, err)
+
+	_, err = parseMCPSQLTimeoutMs("abc")
+	require.Error(t, err)
+}
+
 func TestWarehouseReconcileIntervalDefault(t *testing.T) {
 	os.Unsetenv("AETHER_CH_RECONCILE_INTERVAL")
 	cfg, err := LoadMigrateOnly()
@@ -211,6 +229,27 @@ func TestCHTablePermissionsOnlyTrueEnables(t *testing.T) {
 			t.Errorf("for %q: expected CHTablePermissions false", raw)
 		}
 		os.Unsetenv("AETHER_CH_TABLE_PERMISSIONS")
+	}
+}
+
+func TestMCPOAuthEnabledDefault(t *testing.T) {
+	t.Setenv("AETHER_MCP_OAUTH_ENABLED", "")
+	cfg, err := LoadMigrateOnly() // no secrets required
+	require.NoError(t, err)
+	require.False(t, cfg.MCPOAuthEnabled)
+
+	t.Setenv("AETHER_MCP_OAUTH_ENABLED", "true")
+	cfg, err = LoadMigrateOnly()
+	require.NoError(t, err)
+	require.True(t, cfg.MCPOAuthEnabled)
+}
+
+func TestMCPOAuthEnabledOnlyTrueEnables(t *testing.T) {
+	for _, raw := range []string{"false", "1", "yes", "TRUE", ""} {
+		t.Setenv("AETHER_MCP_OAUTH_ENABLED", raw)
+		cfg, err := LoadMigrateOnly()
+		require.NoError(t, err)
+		require.False(t, cfg.MCPOAuthEnabled, "for %q", raw)
 	}
 }
 

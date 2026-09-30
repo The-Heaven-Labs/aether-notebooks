@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -14,6 +15,29 @@ import (
 	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
+
+// defaultSQLToolTimeout is the historical execute_sql tool budget. It applies
+// when the caller provides no ceiling (in-Aether agent paths), preserving the
+// guardrail that pushes agents toward notebook cells for long queries.
+const defaultSQLToolTimeout = 30 * time.Second
+
+// sqlTimeoutBudget resolves the effective execution budget for an execute_sql
+// call: the caller's timeout_ms when positive, clamped to the caller's
+// ceiling. A zero ceiling falls back to defaultSQLToolTimeout. The MCP handler
+// sets a larger ceiling (AETHER_MCP_SQL_TIMEOUT_MS) so harness callers can run
+// longer queries; agent callers never do.
+func sqlTimeoutBudget(timeoutMs int, ceiling time.Duration) time.Duration {
+	if ceiling <= 0 {
+		ceiling = defaultSQLToolTimeout
+	}
+	if timeoutMs <= 0 {
+		return ceiling
+	}
+	if int64(timeoutMs) > int64(ceiling/time.Millisecond) {
+		return ceiling
+	}
+	return time.Duration(timeoutMs) * time.Millisecond
+}
 
 // effectiveCellOutputMaxBytes returns the org-configured per-cell output byte
 // cap, clamped by the platform ceiling. It is resolved per call (no caching)
@@ -153,6 +177,7 @@ func makeExecuteSQLHandler(pool *pgxpool.Pool) ToolHandler {
 			ConnectorID string `json:"connector_id"`
 			Query       string `json:"query"`
 			Limit       int    `json:"limit"`
+			TimeoutMs   int    `json:"timeout_ms"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -172,8 +197,20 @@ func makeExecuteSQLHandler(pool *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("only read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are allowed")
 		}
 
-		result, err := executeAgentSQL(ctx, pool, req.ConnectorID, req.Query, nil, req.Limit)
+		// The def declares NoTimeout; this handler enforces the caller-scoped
+		// budget itself so the MCP path can raise the ceiling above the agent
+		// default while agent paths keep the 30s guardrail.
+		budget := sqlTimeoutBudget(req.TimeoutMs, ctx.QueryTimeoutCeiling)
+		runCtx, cancel := context.WithTimeout(ctx.Context, budget)
+		defer cancel()
+		tc := *ctx
+		tc.Context = runCtx
+
+		result, err := executeAgentSQL(&tc, pool, req.ConnectorID, req.Query, nil, req.Limit)
 		if err != nil {
+			if errors.Is(runCtx.Err(), context.DeadlineExceeded) && ctx.Context.Err() == nil {
+				return nil, fmt.Errorf("tool %q timed out after %s", "execute_sql", budget)
+			}
 			return nil, err
 		}
 

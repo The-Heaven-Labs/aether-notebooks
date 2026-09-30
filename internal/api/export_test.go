@@ -1,8 +1,11 @@
 package api
 
 import (
+	"net/http"
+
 	"github.com/google/uuid"
 	"github.com/the-heaven-labs/aether/internal/agent"
+	"github.com/the-heaven-labs/aether/internal/auth"
 )
 
 // WarehouseSyncerForTest mirrors the warehouse sync trigger surface so
@@ -52,4 +55,17 @@ func (s *Server) SetMCPToolAllowedForTest(name string, allowed bool) {
 	} else {
 		delete(mcpToolAllowlist, name)
 	}
+}
+
+// MCPToolContextForTest exposes mcpToolContext to the api_test package.
+// Claims are passed explicitly because a bare httptest request never runs the
+// auth middleware that populates the request context.
+func (s *Server) MCPToolContextForTest(r *http.Request, claims *auth.Claims) *agent.ToolContext {
+	return s.mcpToolContext(claims, r)
+}
+
+// MCPToolsForTokenForTest exposes mcpToolsForToken so external tests can pin
+// its fail-closed behavior for scoped OAuth tokens.
+func MCPToolsForTokenForTest(claims *auth.Claims) map[string]struct{} {
+	return mcpToolsForToken(claims)
 }

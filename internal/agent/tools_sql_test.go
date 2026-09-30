@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"testing"
 	"time"
 
@@ -145,6 +146,71 @@ func TestExecuteSQLToolBudgetGovernsAdHocSQL(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), `tool "sql_query" timed out after 200ms`)
 	})
+}
+
+func TestSQLTimeoutBudget(t *testing.T) {
+	cases := []struct {
+		name    string
+		ceiling time.Duration
+		argMs   int
+		want    time.Duration
+	}{
+		{"zero ceiling falls back to 30s", 0, 0, 30 * time.Second},
+		{"zero arg uses ceiling", 10 * time.Minute, 0, 10 * time.Minute},
+		{"negative arg uses ceiling", 10 * time.Minute, -5, 10 * time.Minute},
+		{"arg below ceiling honored", 10 * time.Minute, 45000, 45 * time.Second},
+		{"arg above ceiling clamped", 10 * time.Minute, 900000, 10 * time.Minute},
+		{"huge arg clamps to ceiling", 10 * time.Minute, math.MaxInt, 10 * time.Minute},
+		{"arg clamped to fallback ceiling", 0, 60000, 30 * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, sqlTimeoutBudget(tc.argMs, tc.ceiling))
+		})
+	}
+}
+
+// The def declares NoTimeout, so the handler itself must both enforce the
+// caller-scoped budget and surface the normalized timeout error that the
+// def-level wrapper used to produce.
+func TestExecuteSQLHandlerEnforcesBudget(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	connID, masterKey := createSQLTestPGConnector(t, db, orgID, userID)
+
+	handler := makeExecuteSQLHandler(db.Pool)
+
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+	}{
+		{
+			name: "ceiling only",
+			args: map[string]any{"connector_id": connID, "query": "SELECT pg_sleep(2)"},
+		},
+		{
+			name: "timeout_ms above ceiling clamps",
+			args: map[string]any{"connector_id": connID, "query": "SELECT pg_sleep(2)", "timeout_ms": 60000},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(tc.args)
+			require.NoError(t, err)
+			ctx := &ToolContext{
+				Context:             context.Background(),
+				UserID:              userID,
+				OrgID:               orgID,
+				OrgRole:             "admin",
+				DB:                  db.Pool,
+				MasterKey:           masterKey,
+				CheckPermissionFunc: allowAllPermissions,
+				QueryTimeoutCeiling: 200 * time.Millisecond,
+			}
+			_, err = handler(raw, ctx)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), `tool "execute_sql" timed out after 200ms`)
+		})
+	}
 }
 
 // The tool result persisted in agent_messages must carry the execution ID so

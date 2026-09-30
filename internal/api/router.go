@@ -22,6 +22,7 @@ import (
 	"github.com/the-heaven-labs/aether/internal/crypto"
 	"github.com/the-heaven-labs/aether/internal/database"
 	"github.com/the-heaven-labs/aether/internal/executor"
+	"github.com/the-heaven-labs/aether/internal/oauth"
 	"github.com/the-heaven-labs/aether/internal/storage"
 )
 
@@ -51,7 +52,10 @@ type Server struct {
 	frontendURL                  string
 	Cache                        *cache.Cache
 	maxAttachmentBytes           int64
-	outputLimitsMaxBytes         int64 // platform ceiling for org output byte caps (AETHER_OUTPUT_LIMITS_MAX_BYTES)
+	outputLimitsMaxBytes         int64          // platform ceiling for org output byte caps (AETHER_OUTPUT_LIMITS_MAX_BYTES)
+	mcpSQLTimeout                time.Duration  // execute_sql ceiling for MCP callers (0 = agent default)
+	mcpOAuthEnabled              bool           // serves the OAuth 2.1 authorization-server endpoints
+	oauth                        *oauth.Service // OAuth AS storage/logic
 	agentEngine                  *agent.Engine
 	upgrader                     websocket.Upgrader
 	toolAllowedDomains           []string
@@ -185,6 +189,20 @@ func (s *Server) SetMaxAttachmentBytes(n int64) {
 func (s *Server) SetOutputLimitsMaxBytes(n int64) {
 	s.outputLimitsMaxBytes = n
 	s.agentEngine.SetOutputLimitsMaxBytes(n)
+}
+
+// SetMCPSQLTimeout sets the execute_sql ceiling applied to MCP callers.
+func (s *Server) SetMCPSQLTimeout(d time.Duration) {
+	s.mcpSQLTimeout = d
+}
+
+// SetMCPOAuthEnabled enables the OAuth 2.1 authorization-server endpoints
+// for the MCP resource server. Must be called before the first request.
+func (s *Server) SetMCPOAuthEnabled(enabled bool) {
+	s.mcpOAuthEnabled = enabled
+	if enabled && s.oauth == nil {
+		s.oauth = oauth.NewService(s.db.Pool)
+	}
 }
 
 // orgCellOutputMaxBytes returns the effective per-cell output byte cap for the
@@ -675,6 +693,44 @@ func (s *Server) routes() {
 	// Register explicit 405s so the SPA catch-all never answers these.
 	s.mux.Handle("GET /api/v1/mcp", http.HandlerFunc(handleMCPNoStream))
 	s.mux.Handle("DELETE /api/v1/mcp", http.HandlerFunc(handleMCPNoStream))
+
+	// OAuth 2.1 authorization-server endpoints for MCP clients. Registered
+	// unconditionally and gated per-request by requireMCPOAuth: the flag can
+	// be set after NewServer returns (tests do exactly that), so a build-time
+	// conditional would never register them.
+	s.mux.Handle("GET /.well-known/oauth-protected-resource", s.requireMCPOAuth(http.HandlerFunc(s.handleOAuthProtectedResource)))
+	s.mux.Handle("GET /.well-known/oauth-authorization-server", s.requireMCPOAuth(http.HandlerFunc(s.handleOAuthASMetadata)))
+	oauthRegisterLimit := 10
+	if v := os.Getenv("AETHER_RATE_LIMIT_OAUTH_REGISTER"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			oauthRegisterLimit = n
+		}
+	}
+	oauthTokenLimit := 30
+	if v := os.Getenv("AETHER_RATE_LIMIT_OAUTH_TOKEN"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			oauthTokenLimit = n
+		}
+	}
+	s.mux.Handle("POST /oauth/register", s.requireMCPOAuth(s.rateLimit(rateLimitConfig{
+		keyFunc: clientIP, limit: oauthRegisterLimit, window: time.Minute,
+	})(http.HandlerFunc(s.handleOAuthRegister))))
+	s.mux.Handle("POST /oauth/token", s.requireMCPOAuth(s.rateLimit(rateLimitConfig{
+		keyFunc: clientIP, limit: oauthTokenLimit, window: time.Minute,
+	})(http.HandlerFunc(s.handleOAuthToken))))
+	// Authorize and consent front the session-token surface: rate-limit them
+	// with the login tier so they cannot be used to probe or brute-force
+	// session credentials faster than login itself.
+	s.mux.Handle("GET /oauth/authorize", s.requireMCPOAuth(s.rateLimit(rateLimitConfig{
+		keyFunc: clientIP, limit: loginLimit, window: time.Minute,
+	})(http.HandlerFunc(s.handleOAuthAuthorize))))
+	// SPA consent APIs (authed; gated by the same flag).
+	s.mux.Handle("GET /api/v1/oauth/consent/info", s.requireMCPOAuth(s.rateLimit(rateLimitConfig{
+		keyFunc: clientIP, limit: loginLimit, window: time.Minute,
+	})(authMW(http.HandlerFunc(s.handleOAuthConsentInfo)))))
+	s.mux.Handle("POST /api/v1/oauth/consent/decision", s.requireMCPOAuth(s.rateLimit(rateLimitConfig{
+		keyFunc: clientIP, limit: loginLimit, window: time.Minute,
+	})(authMW(http.HandlerFunc(s.handleOAuthConsentDecision)))))
 
 	// Agent session attachment routes (vision support)
 	s.mux.Handle("POST /api/v1/agent-sessions/{session_id}/attachments", authMW(http.HandlerFunc(s.handleUploadAgentAttachment)))

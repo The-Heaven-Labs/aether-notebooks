@@ -16,7 +16,7 @@ func TestAllBuiltinToolsHaveTimeout(t *testing.T) {
 	seen := map[string]bool{}
 	for _, def := range engine.registry.List() {
 		switch def.Function.Name {
-		case "ask_question", "spawn_subagents":
+		case "ask_question", "spawn_subagents", "execute_sql":
 			require.Equal(t, NoTimeout, def.Timeout, def.Function.Name)
 			seen[def.Function.Name] = true
 		default:
@@ -38,6 +38,9 @@ func TestDynamicToolDefsDeclareTimeout(t *testing.T) {
 		Config: models.JSONMap{"connector_id": "connector-1", "query": "SELECT 1"},
 	}, nil)
 	require.NoError(t, err)
+	// The builtin execute_sql declares NoTimeout and enforces its budget
+	// in-handler (sqlTimeoutBudget) so the MCP path can raise the ceiling.
+	// The dynamic sql_query tool keeps the fixed 30s default.
 	require.Equal(t, 30*time.Second, sqlDef.Timeout)
 
 	webhookDef, err := makeWebhookToolDef(&models.Tool{
