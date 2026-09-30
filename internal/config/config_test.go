@@ -244,6 +244,15 @@ func TestMCPOAuthEnabledDefault(t *testing.T) {
 	require.True(t, cfg.MCPOAuthEnabled)
 }
 
+func TestMCPOAuthEnabledOnlyTrueEnables(t *testing.T) {
+	for _, raw := range []string{"false", "1", "yes", "TRUE", ""} {
+		t.Setenv("AETHER_MCP_OAUTH_ENABLED", raw)
+		cfg, err := LoadMigrateOnly()
+		require.NoError(t, err)
+		require.False(t, cfg.MCPOAuthEnabled, "for %q", raw)
+	}
+}
+
 func TestOutputLimitsMaxBytesDefault(t *testing.T) {
 	os.Unsetenv("AETHER_OUTPUT_LIMITS_MAX_BYTES")
 	cfg, err := LoadMigrateOnly()

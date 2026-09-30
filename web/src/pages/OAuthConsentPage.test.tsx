@@ -17,15 +17,18 @@ const AUTH_SEARCH = new URLSearchParams({
 }).toString()
 
 interface FakeLocation {
+  pathname: string
   search: string
   href: string
   origin: string
 }
 
 // jsdom's window.location is unforgeable, so replace the global with a plain
-// object: the page reads `search` and assigns `href` to leave for the client.
+// object: the page reads `search`/`pathname` and assigns `href` to leave for
+// the client.
 function stubLocation(search: string): FakeLocation {
   const fake: FakeLocation = {
+    pathname: '/oauth/authorize',
     search,
     href: `http://localhost:3000/oauth/authorize${search}`,
     origin: 'http://localhost:3000',
@@ -36,6 +39,7 @@ function stubLocation(search: string): FakeLocation {
 
 beforeEach(() => {
   localStorage.clear()
+  sessionStorage.clear()
   vi.clearAllMocks()
 })
 
@@ -47,13 +51,21 @@ describe('OAuthConsentPage', () => {
   test('shows an invalid-request error when required parameters are missing', async () => {
     stubLocation('')
     renderWithProviders(<OAuthConsentPage />)
-    expect(await screen.findByText('Invalid authorization request.')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Invalid authorization request.')
   })
 
-  test('asks the user to sign in when no token is stored', async () => {
-    stubLocation(`?${AUTH_SEARCH}`)
+  test('asks the user to sign in and preserves the return URL on the login link', async () => {
+    const location = stubLocation(`?${AUTH_SEARCH}`)
     renderWithProviders(<OAuthConsentPage />)
+
     expect(await screen.findByText(/Sign in to Aether first/)).toBeInTheDocument()
+    const loginLink = screen.getByRole('link', { name: 'Sign in' })
+    expect(loginLink).toHaveAttribute('href', '/login')
+
+    fireEvent.click(loginLink)
+    expect(sessionStorage.getItem('aether_redirect_after_login')).toBe(
+      `${location.pathname}${location.search}`,
+    )
   })
 
   test('renders the consent request and Allow posts the decision, then navigates', async () => {
@@ -89,6 +101,7 @@ describe('OAuthConsentPage', () => {
       await screen.findByRole('heading', { name: /Authorize Claude Desktop/ }),
     ).toBeInTheDocument()
     expect(screen.getByText('Acme')).toBeInTheDocument()
+    expect(screen.getByText('127.0.0.1:9876')).toBeInTheDocument()
     expect(screen.getByText('Run read-only SQL queries against your connectors')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Allow' }))
@@ -141,5 +154,53 @@ describe('OAuthConsentPage', () => {
       expect(location.href).toBe('http://127.0.0.1:9876/callback?error=access_denied&state=st-1'),
     )
     expect(decisionBody).toMatchObject({ approve: false })
+  })
+
+  test('keeps the consent card on a failed decision and allows retrying', async () => {
+    const location = stubLocation(`?${AUTH_SEARCH}`)
+    localStorage.setItem('aether_token', 'test-token')
+
+    let decisionCalls = 0
+    server.use(
+      http.get('/api/v1/oauth/consent/info', () =>
+        HttpResponse.json({
+          client_name: 'Claude Desktop',
+          org_id: 'org-1',
+          org_name: 'Acme',
+          scopes: ['mcp:query', 'mcp:read'],
+          scope_descriptions: {
+            'mcp:query': 'Run read-only SQL queries against your connectors',
+            'mcp:read': 'View notebooks, dashboards and other resources',
+          },
+        }),
+      ),
+      http.post('/api/v1/oauth/consent/decision', () => {
+        decisionCalls++
+        if (decisionCalls === 1) {
+          return HttpResponse.json({ error: 'Authorization failed' }, { status: 500 })
+        }
+        return HttpResponse.json({
+          redirect: 'http://127.0.0.1:9876/callback?code=retry&state=st-1',
+        })
+      }),
+    )
+
+    renderWithProviders(<OAuthConsentPage />)
+    await screen.findByRole('heading', { name: /Authorize Claude Desktop/ })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Allow' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Authorization failed')
+    // The card survives the failure so the user can retry without reloading.
+    expect(screen.getByRole('heading', { name: /Authorize Claude Desktop/ })).toBeInTheDocument()
+    expect(screen.getByText('Run read-only SQL queries against your connectors')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Allow' }))
+
+    await waitFor(() =>
+      expect(location.href).toBe('http://127.0.0.1:9876/callback?code=retry&state=st-1'),
+    )
+    expect(decisionCalls).toBe(2)
   })
 })

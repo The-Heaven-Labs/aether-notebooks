@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { ApiError, api, getToken } from '../api/client'
 
 interface ConsentInfo {
@@ -8,10 +9,21 @@ interface ConsentInfo {
   scope_descriptions: Record<string, string>
 }
 
+// DCR client names are self-asserted, so show the host the code will be sent
+// to. Fall back to the raw value when it is not a parseable URL.
+function redirectHost(uri: string): string {
+  try {
+    return new URL(uri).host || uri
+  } catch {
+    return uri
+  }
+}
+
 export function OAuthConsentPage() {
   const params = new URLSearchParams(window.location.search)
   const [info, setInfo] = useState<ConsentInfo | null>(null)
   const [fetchError, setFetchError] = useState('')
+  const [decisionError, setDecisionError] = useState('')
   const [busy, setBusy] = useState(false)
 
   const clientId = params.get('client_id') || ''
@@ -22,9 +34,14 @@ export function OAuthConsentPage() {
   const challenge = params.get('code_challenge') || ''
   const challengeMethod = params.get('code_challenge_method') || ''
 
+  const redirectTarget = redirectHost(redirectUri)
   const invalidRequest = !clientId || !redirectUri || !challenge || challengeMethod !== 'S256'
   const signedOut = !invalidRequest && !getToken()
   const error = fetchError || (invalidRequest ? 'Invalid authorization request.' : signedOut ? 'Sign in to Aether first, then reconnect your MCP client.' : '')
+
+  function rememberReturnUrl() {
+    sessionStorage.setItem('aether_redirect_after_login', window.location.pathname + window.location.search)
+  }
 
   useEffect(() => {
     if (invalidRequest || signedOut) return
@@ -46,7 +63,7 @@ export function OAuthConsentPage() {
 
   const decide = async (approve: boolean) => {
     setBusy(true)
-    setFetchError('')
+    setDecisionError('')
     try {
       const { redirect } = await api.post<{ redirect: string }>('/api/v1/oauth/consent/decision', {
         client_id: clientId,
@@ -61,7 +78,7 @@ export function OAuthConsentPage() {
       if (!redirect) throw new Error('Authorization failed')
       window.location.href = redirect
     } catch (e) {
-      setFetchError(e instanceof ApiError || e instanceof Error ? e.message : 'Authorization failed')
+      setDecisionError(e instanceof ApiError || e instanceof Error ? e.message : 'Authorization failed')
       setBusy(false)
     }
   }
@@ -70,15 +87,25 @@ export function OAuthConsentPage() {
     <div style={styles.page}>
       <div style={styles.card}>
         {error ? (
-          <p style={styles.error}>{error}</p>
+          <p style={styles.error} role="alert">
+            {error}
+            {signedOut && (
+              <>
+                {' '}
+                <Link to="/login" onClick={rememberReturnUrl} style={styles.loginLink}>
+                  Sign in
+                </Link>
+              </>
+            )}
+          </p>
         ) : !info ? (
           <p style={styles.loading}>Loading…</p>
         ) : (
           <>
             <h1 style={styles.title}>Authorize {info.client_name}</h1>
             <p style={styles.subtitle}>
-              {info.client_name} wants to access your organization <strong>{info.org_name}</strong> via the
-              Aether MCP server.
+              {info.client_name} wants to access your organization <strong>{info.org_name}</strong> and
+              redirect back to <strong>{redirectTarget}</strong>.
             </p>
             <ul style={styles.scopes}>
               {info.scopes.map((s) => (
@@ -88,6 +115,11 @@ export function OAuthConsentPage() {
                 </li>
               ))}
             </ul>
+            {decisionError && (
+              <p style={styles.decisionError} role="alert">
+                {decisionError}
+              </p>
+            )}
             <div style={styles.actions}>
               <button style={styles.allow} disabled={busy} onClick={() => decide(true)}>
                 Allow
@@ -194,5 +226,15 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 14,
     color: 'var(--error-text)',
     lineHeight: 1.5,
+  },
+  loginLink: {
+    color: 'var(--accent)',
+    fontWeight: 600,
+  },
+  decisionError: {
+    fontSize: 13,
+    color: 'var(--error-text)',
+    lineHeight: 1.5,
+    marginBottom: 12,
   },
 }
