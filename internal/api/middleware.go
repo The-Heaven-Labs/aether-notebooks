@@ -71,7 +71,7 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte
 					writeError(w, http.StatusForbidden, "oauth access tokens are only valid at the MCP endpoint")
 					return
 				}
-				if !slices.Contains([]string(claims.Audience), canonicalResourceURI(r)) {
+				if !slices.Contains(claims.Audience, canonicalResourceURI(r)) {
 					writeError(w, http.StatusUnauthorized, "token audience does not match this resource")
 					return
 				}
@@ -91,7 +91,12 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte
 				}
 			}
 
-			adminMode := r.Header.Get("X-AETHER-Admin-Mode") == "true" || r.URL.Query().Get("admin_mode") == "true"
+			// Admin mode is a first-party session feature; OAuth access tokens are
+			// governed by their consented scopes and must not gain the ACL bypass.
+			adminMode := false
+			if claims.ClientID == "" {
+				adminMode = r.Header.Get("X-AETHER-Admin-Mode") == "true" || r.URL.Query().Get("admin_mode") == "true"
+			}
 			ctx = executor.WithAdminMode(ctx, adminMode)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

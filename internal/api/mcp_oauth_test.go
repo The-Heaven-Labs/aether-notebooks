@@ -263,6 +263,9 @@ func TestOAuthTokenRejectedOnInternalEndpoints(t *testing.T) {
 
 	rec = doJSON(t, srv, "GET", "/internal/yjs/00000000-0000-0000-0000-000000000000", access, "")
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	rec = doJSON(t, srv, "PUT", "/internal/yjs/00000000-0000-0000-0000-000000000000", access, "state")
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
 // TestOAuthTokenRejectedOnMCPServersAPI pins the exact-path MCP check: the
@@ -273,6 +276,17 @@ func TestOAuthTokenRejectedOnMCPServersAPI(t *testing.T) {
 	access := oauthToken(t, srv, clientID, code)["access_token"].(string)
 
 	rec := doJSON(t, srv, "GET", "/api/v1/mcp-servers", access, "")
+	require.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+// TestOAuthTokenRejectedViaQueryParam pins the WebSocket-style ?token= fallback:
+// it is subject to the same MCP-only restriction as the Authorization header.
+func TestOAuthTokenRejectedViaQueryParam(t *testing.T) {
+	srv, jwt, clientID, _ := setupOAuthServer(t)
+	code := oauthConsentApprove(t, srv, jwt, clientID)
+	access := oauthToken(t, srv, clientID, code)["access_token"].(string)
+
+	rec := doJSON(t, srv, "GET", "/api/v1/notebooks?token="+url.QueryEscape(access), "", "")
 	require.Equal(t, http.StatusForbidden, rec.Code)
 }
 

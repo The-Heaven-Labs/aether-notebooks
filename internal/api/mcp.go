@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -282,8 +283,13 @@ func (s *Server) handleMCPToolsCall(w http.ResponseWriter, req mcpJSONRPCRequest
 
 	// OAuth clients are marked used on valid tool calls (bookkeeping only).
 	if claims.ClientID != "" {
-		_, _ = s.db.Pool.Exec(r.Context(),
-			`UPDATE oauth_clients SET last_used_at = NOW() WHERE client_id = $1`, claims.ClientID)
+		clientID := claims.ClientID
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, _ = s.db.Pool.Exec(ctx,
+				`UPDATE oauth_clients SET last_used_at = NOW() WHERE client_id = $1`, clientID)
+		}()
 	}
 
 	registry := s.agentEngine.GetRegistry()
