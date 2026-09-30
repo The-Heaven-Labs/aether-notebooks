@@ -91,6 +91,10 @@ export interface AgentSession {
   title: string | null
   ended_at?: string
   created_at: string
+  owner_email?: string
+  shared?: boolean
+  can_edit?: boolean
+  share_with_notebook_viewers?: boolean
 }
 
 export interface AgentMessage {

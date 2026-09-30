@@ -138,8 +138,8 @@ export function CompactionDivider({ msg, fmtTime }: { msg: ChatMessage; fmtTime:
 
 const MemoizedChatMessage = memo(function MemoizedChatMessageInner({ msg, subagentView, onSubagentSelect }: {
   msg: ChatMessage
-  subagentView: string | null
-  onSubagentSelect: (id: string) => void
+  subagentView?: string | null
+  onSubagentSelect?: (id: string) => void
 }) {
   const [thoughtOpen, setThoughtOpen] = useState(true)
   const [toolOpen, setToolOpen] = useState(false)
@@ -218,8 +218,8 @@ const MemoizedChatMessage = memo(function MemoizedChatMessageInner({ msg, subage
               let parsedParams: { goal?: string; status?: string; error?: string } = {}
               try { if (msg.params) parsedParams = JSON.parse(msg.params) } catch {}
               return (
-              <div onClick={() => { if (msg.content) onSubagentSelect(msg.content) }}
-                style={{ fontSize: 11, opacity: 0.8, cursor: 'pointer', borderRadius: 4, padding: '2px 4px', border: subagentView === msg.content ? '1px solid var(--accent)' : '1px solid transparent' }}>
+              <div onClick={onSubagentSelect && msg.content ? () => onSubagentSelect(msg.content) : undefined}
+                style={{ fontSize: 11, opacity: 0.8, cursor: onSubagentSelect ? 'pointer' : 'default', borderRadius: 4, padding: '2px 4px', border: onSubagentSelect && subagentView === msg.content ? '1px solid var(--accent)' : '1px solid transparent' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ opacity: 0.5, fontSize: 10 }}>SUBAGENT</span>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, opacity: 0.5 }}>{msg.content?.slice(0, 8)}</span>
@@ -265,8 +265,8 @@ const MemoizedChatMessage = memo(function MemoizedChatMessageInner({ msg, subage
 
 export interface AgentChatTranscriptProps {
   messages: ChatMessage[]
-  subagentView: string | null
-  onSubagentSelect: (id: string) => void
+  subagentView?: string | null
+  onSubagentSelect?: (id: string) => void
   leading?: React.ReactNode
   emptyState?: React.ReactNode
   trailing?: React.ReactNode

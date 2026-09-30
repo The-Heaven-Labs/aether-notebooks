@@ -168,6 +168,56 @@ export function oldestPendingToolAgeMs(messages: TranscriptMessage[], nowMs: num
   return oldest
 }
 
+// mapSubagentMessage converts one subagent_messages row (or live
+// subagent_message event) into a renderable transcript entry, matching
+// AgentPanel's mapping. Assistant rows that only carry tool calls render
+// nothing (their tools arrive as role='tool' rows); tool rows take their name
+// from the call and their payload from content/result.
+export function mapSubagentMessage(m: any): TranscriptMessage | null {
+  const fn = (tc: any) => tc?.function || tc
+  if (m.role === 'assistant' && m.tool_calls?.length) {
+    if (!m.reasoning_content && !m.content) return null
+    const c = m.content || m.reasoning_content || ''
+    return {
+      role: 'assistant',
+      content: c,
+      reasoning: c === m.reasoning_content ? undefined : (m.reasoning_content || undefined),
+      duration_ms: m.duration_ms,
+      created_at: m.created_at,
+    }
+  }
+  if (m.role === 'tool') {
+    let name = 'tool'
+    let result = m.content || ''
+    let params: string | undefined
+    try { const p = JSON.parse(m.content); if (p.name) { name = p.name; result = p.result || result } } catch {}
+    const f = fn(m.tool_calls?.[0])
+    if (f?.name) name = f.name
+    if (f?.arguments) params = typeof f.arguments === 'string' ? f.arguments : JSON.stringify(f.arguments)
+    return { role: 'tool', content: name, params, result, duration_ms: m.duration_ms, created_at: m.created_at }
+  }
+  const finalContent = m.content || (!m.tool_calls?.length ? (m.reasoning_content || '') : '')
+  return {
+    role: m.role,
+    content: finalContent,
+    reasoning: finalContent === m.reasoning_content ? undefined : (m.reasoning_content || undefined),
+    duration_ms: m.duration_ms,
+    created_at: m.created_at,
+  }
+}
+
+// mapSubagentMessages drains a subagent_messages list into transcript entries,
+// dropping rows that produce no renderable entry (tool-call-only assistant rows).
+export function mapSubagentMessages(messages: any[] | null | undefined): TranscriptMessage[] {
+  if (!messages) return []
+  const out: TranscriptMessage[] = []
+  for (const m of messages) {
+    const entry = mapSubagentMessage(m)
+    if (entry) out.push(entry)
+  }
+  return out
+}
+
 // applySteeringMessage folds an engine steering event into the transcript.
 // The sender already appended the text optimistically at send time, and
 // reconnect_sync is authoritative — so this is a no-op when an identical user

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mapServerMessagesToChat, applyToolResult, oldestPendingToolAgeMs, applySteeringMessage } from '../utils/agentTranscript'
+import { mapServerMessagesToChat, mapSubagentMessages, applyToolResult, oldestPendingToolAgeMs, applySteeringMessage } from '../utils/agentTranscript'
 
 const callId = 'call-1'
 
@@ -163,6 +163,41 @@ describe('oldestPendingToolAgeMs', () => {
       { role: 'tool', content: 'b', created_at: '2026-09-11T00:00:00Z' },
     ]
     expect(oldestPendingToolAgeMs(msgs, now)).toBe(120000)
+  })
+})
+
+describe('mapSubagentMessages', () => {
+  it('drops tool-call-only assistant rows but keeps text and reasoning', () => {
+    const out = mapSubagentMessages([
+      { role: 'assistant', tool_calls: [{ function: { name: 'run_sql' } }], created_at: 't' },
+      { role: 'assistant', content: 'answer', reasoning_content: 'thought', created_at: 't' },
+    ])
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({ role: 'assistant', content: 'answer', reasoning: 'thought' })
+  })
+
+  it('maps a tool row to its function name, params and result', () => {
+    const out = mapSubagentMessages([
+      {
+        role: 'tool',
+        content: '{"name":"run_sql","result":"ok"}',
+        tool_calls: [{ function: { name: 'run_sql', arguments: { q: 'select 1' } } }],
+        created_at: 't',
+      },
+    ])
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({ role: 'tool', content: 'run_sql', result: 'ok' })
+    expect(out[0].params).toContain('select 1')
+  })
+
+  it('passes plain rows through and handles null input', () => {
+    const out = mapSubagentMessages([
+      { role: 'user', content: 'goal', created_at: 't' },
+      { role: 'assistant', reasoning_content: 'only thinking', created_at: 't' },
+    ])
+    expect(out[0]).toMatchObject({ role: 'user', content: 'goal' })
+    expect(out[1]).toMatchObject({ role: 'assistant', content: 'only thinking' })
+    expect(mapSubagentMessages(null)).toEqual([])
   })
 })
 
