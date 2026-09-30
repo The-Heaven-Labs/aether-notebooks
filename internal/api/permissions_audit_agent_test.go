@@ -398,9 +398,11 @@ func TestAgent_GroupACL(t *testing.T) {
 	})
 
 	t.Run("bobA creates session on GroupACL agent — 201", func(t *testing.T) {
+		// The notebook must be one bobA can view: session creation checks
+		// notebook view when a notebook_id is supplied.
 		status, body := f.DoRequest(t, "bobA", "POST",
 			"/api/v1/agents/"+f.OrgA.Agents.GroupACL+"/session",
-			map[string]any{"max_turns": 10, "notebook_id": f.OrgA.Notebooks.NoACL})
+			map[string]any{"max_turns": 10, "notebook_id": f.OrgA.Notebooks.GroupACL})
 		t.Logf("bobA create session on GroupACL: %d %s", status, body)
 		require.Equal(t, http.StatusCreated, status)
 	})
