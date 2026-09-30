@@ -293,9 +293,10 @@ func (s *Server) handleMCPToolsCall(w http.ResponseWriter, req mcpJSONRPCRequest
 	ctx := s.mcpToolContext(claims, r)
 
 	// The server WriteTimeout (60s) would cut off MCP calls that legally run
-	// up to AETHER_MCP_SQL_TIMEOUT_MS; extend the write deadline per-request.
-	if s.mcpSQLTimeout > 0 {
-		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(s.mcpSQLTimeout + 30*time.Second))
+	// up to AETHER_MCP_SQL_TIMEOUT_MS; extend the write deadline per-request,
+	// but never shorten the server baseline for smaller ceilings.
+	if d, ok := mcpWriteDeadlineOverride(s.mcpSQLTimeout); ok {
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(d))
 	}
 
 	result, err := def.Execute(params.Arguments, ctx)
@@ -321,6 +322,24 @@ func (s *Server) handleMCPToolsCall(w http.ResponseWriter, req mcpJSONRPCRequest
 			},
 		},
 	})
+}
+
+// mcpWriteDeadlineServerBaseline mirrors the HTTP server's WriteTimeout
+// configured in cmd/aether-server. SetWriteDeadline replaces that deadline
+// rather than extending it, so any override must stay above this baseline.
+const mcpWriteDeadlineServerBaseline = 60 * time.Second
+
+// mcpWriteDeadlineOverride returns the per-request write deadline to apply to
+// an MCP tools/call and whether it should be applied. A small
+// AETHER_MCP_SQL_TIMEOUT_MS must not shorten the deadline for tools whose
+// worst case is not the SQL ceiling (run_cell, import_notebook), so only
+// margin-inclusive deadlines above the server baseline are applied.
+func mcpWriteDeadlineOverride(ceiling time.Duration) (time.Duration, bool) {
+	d := ceiling + 30*time.Second
+	if d <= mcpWriteDeadlineServerBaseline {
+		return 0, false
+	}
+	return d, true
 }
 
 // mcpToolContext builds the agent ToolContext for an MCP tools/call. The
