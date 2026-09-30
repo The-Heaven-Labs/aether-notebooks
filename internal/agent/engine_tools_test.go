@@ -68,7 +68,7 @@ func newTestEngine(db *database.DB) *Engine {
 		registry:           NewToolRegistry(),
 		pool:               db.Pool,
 		tokenCounter:       NewTokenCounter(),
-		streams:            NewStreamManager(),
+		streams:            NewStreamManager(nil),
 		session:            NewSessionStore(db.Pool),
 		toolTimeoutDefault: DefaultToolTimeout,
 		// Tools now fail closed without a permission resolver; bare test

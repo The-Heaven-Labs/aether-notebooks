@@ -255,7 +255,7 @@ func NewEngine(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client) *Engi
 		session:            NewSessionStore(pool),
 		pool:               pool,
 		tokenCounter:       NewTokenCounter(),
-		streams:            NewStreamManager(),
+		streams:            NewStreamManager(rdb),
 		toolTimeoutDefault: DefaultToolTimeout,
 	}
 
