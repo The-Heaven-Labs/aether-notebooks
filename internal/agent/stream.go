@@ -178,6 +178,10 @@ func NewStreamManager(rdb *redis.Client) *StreamManager {
 	}
 }
 
+// Only SessionStore.DeleteSession reclaims :seq and :buf (today: /new on an
+// empty session); the creation-time sweep and cascade deletes (agent/user/
+// notebook removal, trash purge) leave them behind, and :seq is non-expiring
+// by design (see sessionStreamPublishScript).
 func sessionStreamSeqKey(sessionID string) string {
 	return "aether:agent:sess:" + sessionID + ":seq"
 }

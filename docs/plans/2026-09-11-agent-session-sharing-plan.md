@@ -342,8 +342,12 @@ session has a notebook, wired to `PATCH /api/v1/sessions/{id}`.
 - Modify: `web/src/pages/NotebookPage.tsx` (Chats entry in the View/Share toolbar area)
 - Test: `web/src/components/NotebookChats.test.tsx`
 
-**Step 1:** drawer lists owner/title/first-message/message count/date + Shared badge; click
-resumes (own) or opens `SessionViewer` (shared).
+**Step 1:** drawer lists owner/title/first-message/message count/date + Shared badge; every
+row opens the read-only `SessionViewer` (own rows included — their `can_edit` suppresses the
+“Shared · Read-only” banner). This is deliberate: the drawer has no cross-component resume
+plumbing at this stage. Resuming one's own session stays in the agent panel’s session
+history (“My sessions”), and `NotebookChats.onResumeSession` remains reserved for a future
+wiring (the component already prefers it over `onOpenSession` when provided for an owned row).
 **Step 2:** history sections + badges; `npx tsc --noEmit`; commit:
 `feat(web): notebook chats drawer and shared-with-me discovery`
 

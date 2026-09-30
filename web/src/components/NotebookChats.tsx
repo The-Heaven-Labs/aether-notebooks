@@ -39,6 +39,11 @@ export function NotebookChats({ notebookId, onClose, onOpenSession, onResumeSess
     return () => { cancelled = true }
   }, [notebookId])
 
+  // Deliberate decision (docs/plans/2026-09-11-agent-session-sharing-plan.md,
+  // Task 12): every row opens the read-only viewer, including owned sessions —
+  // their can_edit suppresses the "Shared · Read-only" banner and resuming
+  // stays in the agent panel's history. `onResumeSession` is reserved for a
+  // future wiring and preferred when a caller provides it for an owned row.
   const openSession = (session: AgentSessionListItem) => {
     if (session.shared === false && onResumeSession) {
       onResumeSession(session)

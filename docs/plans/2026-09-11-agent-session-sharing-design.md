@@ -123,6 +123,13 @@ Notes:
   intended.
 - Viewers receive every published stream event; a viewer’s mutating frames are rejected with a
   `read-only session` error and never touch the engine.
+- Live WS access is connect-time **plus periodic re-validation**: the socket checks session
+  `view` on every inbound `reconnect` frame and once per interval thereafter (~60s; one
+  permission evaluation per interval per connection). A revoked viewer (share deleted, group
+  membership removed, notebook unshared, inherit flag off, session deleted) is **disconnected
+  within that interval** instead of keeping the stream until navigation. `edit` is not
+  re-checked: after connect it is either the owner (owner fallback) or an org admin in admin
+  mode, both stable for the connection.
 
 ## Database changes (V124)
 
@@ -177,10 +184,18 @@ intentionally does not expire):**
 
 - `aether:agent:sess:{sessionID}:seq` — INCR counter; globally monotonic seq and `LastSeq`.
   No TTL: expiring the shared clock would reset it backwards under connected clients. The
-  trade-off is one small key per session accumulating for the Redis lifetime unless the
-  session is deleted (`SessionStore.DeleteSession`, which removes both keys).
+  trade-off is one small key per session accumulating for the Redis lifetime.
 - `aether:agent:sess:{sessionID}:buf` — LIST, MAX 500, entries `{"seq":N,"msg":{...}}`; 2h TTL.
 - `aether:agent:sess:{sessionID}` — pub/sub channel.
+
+**Key reclamation:** both keys are removed only by `SessionStore.DeleteSession`, whose sole
+production caller is the `/new` slash command on an empty session. The other paths that drop
+session rows — the empty-session sweep at session creation (`createSessionWithSharing` deletes
+directly, in transaction) and cascade deletes (agent/user/notebook hard delete, trash purge,
+admin user deletion) — do not call `DeleteSession`, so they leave the Redis keys behind. The
+non-expiring `:seq` keys therefore accumulate by design as a small, bounded trade-off (one
+short key per session ever created); the `:buf` keys expire on their own after 2h without
+publishes.
 
 **Publish** (one Lua script, atomic): `INCR` seq, `RPUSH` entry built from the JSON message,
 `LTRIM -500 -1`, refresh the buffer TTL, `PUBLISH` the entry. Local delivery happens **only
@@ -311,7 +326,12 @@ now included here). `AgentPanel` and the read-only viewer both use it.
 
 - **Notebook Chats**: a drawer on the notebook page listing sessions in that notebook the
   caller can view (`GET /notebooks/{id}/sessions`), with owner, title, first message preview,
-  message count, timestamp, and a “Shared” badge.
+  message count, timestamp, and a “Shared” badge. Every row — **including the caller’s own
+  sessions** — opens the read-only `SessionViewer`; owned rows carry `can_edit` so the viewer
+  hides the “Shared · Read-only” banner and the Share entry point stays available. Resuming
+  one’s own session stays in the agent panel’s session history (“My sessions”); the drawer’s
+  `onResumeSession` prop is reserved for a future wiring (the component prefers it when
+  provided for an owned row).
 - **Shared with me**: a section in the agent session history (`GET /sessions/shared`).
 - **Session history**: split “My sessions” / “Shared with me”, show owner and shared state;
   clicking a shared session opens the viewer, clicking your own session resumes as today.
@@ -360,8 +380,17 @@ now included here). `AgentPanel` and the read-only viewer both use it.
   resolve through per-pod channels; an owner whose WS lands on a different replica than the
   in-flight turn cannot confirm/cancel until timeout. Viewers are unaffected (they never send
   these frames). A follow-up can move resolution to a Redis control channel.
+- **Live-view revocation is bounded by the re-validation interval.** WS access is authorized at
+  connect and then re-checked on every `reconnect` frame and once per ~60s; a viewer whose
+  access is revoked keeps receiving events until the next check closes the socket (within ~60s
+  of revocation, not instantly). `edit` is not re-checked (owner/admin-mode are stable within a
+  connection).
 - **Redis outage:** fan-out falls back to local; remote viewers miss events until Redis
   returns, then reconcile via `resync`/`reconnect_sync`.
+- **Cascade deletes leave Redis stream keys behind.** Only `SessionStore.DeleteSession` removes
+  `:seq`/`:buf` (today: `/new` on an empty session); the creation-time empty-session sweep and
+  agent/user/notebook hard delete or trash purge do not. The non-expiring `:seq` keys accumulate
+  by design as a small, bounded trade-off; `:buf` keys expire after 2h without publishes.
 - **Inheritance cannot grant edit** and is view-only by construction.
 - **No public session links** (D6).
 
