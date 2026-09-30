@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import { api } from '../api/client'
-import { chatMarkdownComponents } from './AgentPanel'
+import { chatMarkdownComponents } from './AgentChatTranscript'
 import { AgentMessageImages } from './AgentMessageImages'
 
 interface SessionSummary {
