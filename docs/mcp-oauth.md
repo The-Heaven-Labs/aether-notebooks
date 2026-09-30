@@ -3,7 +3,7 @@
 Aether can act as its own OAuth 2.1 authorization server for MCP clients.
 Harnesses that implement the [MCP Authorization
 spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization)
-(OpenCode, Claude Code, ChatGPT connectors, …) discover Aether from the MCP
+(OpenCode and Claude Code are the tested paths) discover Aether from the MCP
 endpoint, register themselves via Dynamic Client Registration, and complete a
 browser consent flow on first use — no manual token creation or config editing.
 The feature is **off by default**; see [Configuration](#2-configuration).
@@ -71,7 +71,7 @@ and `X-Forwarded-Proto` so the advertised resource matches the URL clients use.
 ### Dev & testing
 
 The dev compose stack does not set the flag. Add it to the `api` service in
-`docker-compose.dev.yml` and restart that service:
+`docker-compose.dev.yml`:
 
 ```yaml
     environment:
@@ -79,7 +79,17 @@ The dev compose stack does not set the flag. Add it to the `api` service in
       AETHER_MCP_OAUTH_ENABLED: "true"
 ```
 
-For a foreground run, `AETHER_MCP_OAUTH_ENABLED=true task dev` works too.
+Then recreate the API container (`restart` does not apply new compose-file
+environment variables):
+
+```bash
+docker compose -f docker-compose.dev.yml up -d api
+```
+
+For a foreground run, `AETHER_MCP_OAUTH_ENABLED=true task dev` works too — but
+run `task build:web` first (or use the Docker dev stack): `task dev` embeds
+`web/dist` into the server, and the consent page is served from that embedded
+frontend.
 
 Point the harness at the **API origin**, not the Vite dev server — Vite only
 proxies `/api`, `/internal`, `/docs`, and `/swagger.json`; the OAuth discovery
@@ -92,6 +102,14 @@ and token endpoints are served by the Go server itself:
 Plain-HTTP loopback is fine in development: the canonical resource uses the
 request scheme/host, and DCR accepts `http://localhost` / `127.0.0.1` redirect
 URIs, so a harness on the same machine can complete the browser flow.
+
+### Troubleshooting
+
+- **Discovery returns `404`.** Check `AETHER_MCP_OAUTH_ENABLED=true` is actually
+  in the running API process (recreate the container after editing the compose
+  file). Clients fall back to `GET /.well-known/oauth-protected-resource` at
+  the **resource origin** — the scheme/host of the MCP URL — so a proxy or Vite
+  dev server that does not forward `/.well-known` will 404 too.
 
 ## 3. Scopes
 
