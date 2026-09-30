@@ -261,9 +261,22 @@ func (s *SessionStore) GetMessagesWithLimit(ctx context.Context, sessionID strin
 }
 
 func (s *SessionStore) DeleteSession(ctx context.Context, sessionID string) error {
-	if _, err := s.pool.Exec(ctx, `DELETE FROM agent_sessions WHERE id = $1`, sessionID); err != nil {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete session: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := DeleteAgentSessionACLs(ctx, tx, `id = $1`, sessionID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM agent_sessions WHERE id = $1`, sessionID); err != nil {
+		return fmt.Errorf("delete session: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete session: %w", err)
+	}
+
 	s.clearStreamState(ctx, sessionID)
 	return nil
 }

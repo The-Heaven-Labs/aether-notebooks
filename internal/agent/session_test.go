@@ -103,7 +103,7 @@ func TestSessionStoreGetMessagesOrderByIDAsc(t *testing.T) {
 
 // Deleting a session reclaims its Redis stream state (the non-expiring seq
 // counter and the replay buffer) instead of leaving them for the Redis
-// lifetime.
+// lifetime, and removes the session's ACL rows.
 func TestSessionStoreDeleteClearsStreamRedisState(t *testing.T) {
 	url := os.Getenv("AETHER_REDIS_URL")
 	if url == "" {
@@ -124,6 +124,7 @@ func TestSessionStoreDeleteClearsStreamRedisState(t *testing.T) {
 	store := agent.NewSessionStore(db.Pool, rdb)
 	session, err := store.CreateSession(ctx, agentID, nbID, userID, 10, nil, false, false, false)
 	require.NoError(t, err)
+	insertSessionTestACL(t, db.Pool, orgID, session.ID, userID)
 
 	// A publish on a manager sharing the client creates both stream keys.
 	streams := agent.NewStreamManager(rdb)
@@ -135,4 +136,53 @@ func TestSessionStoreDeleteClearsStreamRedisState(t *testing.T) {
 
 	require.NoError(t, store.DeleteSession(ctx, session.ID))
 	require.Equal(t, int64(0), rdb.Exists(ctx, seqKey, bufKey).Val())
+	require.Zero(t, countSessionTestACLs(t, db.Pool, session.ID))
+}
+
+func insertSessionTestACL(t *testing.T, pool *pgxpool.Pool, orgID, sessionID, userID string) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(), `
+		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		VALUES ($1, 'agent_session', $2::uuid, 'user', $3, ARRAY['view','edit','share','delete','admin']),
+		       ($1, 'agent_session', $2::uuid, 'org_role', 'everyone', ARRAY['view'])
+	`, orgID, sessionID, userID)
+	require.NoError(t, err)
+}
+
+func countSessionTestACLs(t *testing.T, pool *pgxpool.Pool, sessionID string) int {
+	t.Helper()
+	var count int
+	require.NoError(t, pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM acl_entries WHERE resource_type = 'agent_session' AND resource_id = $1::uuid`,
+		sessionID).Scan(&count))
+	return count
+}
+
+// DeleteSession removes the session's ACL rows (owner and shares) and leaves
+// other sessions alone.
+func TestSessionStoreDeleteSessionRemovesACLs(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	agentID := createSessionTestAgent(t, db.Pool, orgID, userID)
+
+	ctx := context.Background()
+	store := agent.NewSessionStore(db.Pool, nil)
+	session, err := store.CreateSession(ctx, agentID, nbID, userID, 10, nil, false, false, false)
+	require.NoError(t, err)
+	other, err := store.CreateSession(ctx, agentID, nbID, userID, 10, nil, false, false, false)
+	require.NoError(t, err)
+
+	insertSessionTestACL(t, db.Pool, orgID, session.ID, userID)
+	insertSessionTestACL(t, db.Pool, orgID, other.ID, userID)
+	require.Equal(t, 2, countSessionTestACLs(t, db.Pool, session.ID))
+
+	require.NoError(t, store.DeleteSession(ctx, session.ID))
+
+	var sessions int
+	require.NoError(t, db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM agent_sessions WHERE id = $1`, session.ID).Scan(&sessions))
+	require.Zero(t, sessions)
+	require.Zero(t, countSessionTestACLs(t, db.Pool, session.ID))
+
+	require.Equal(t, 2, countSessionTestACLs(t, db.Pool, other.ID), "other sessions' ACL rows must survive")
 }
