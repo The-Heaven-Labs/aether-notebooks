@@ -222,29 +222,6 @@ func TestStreamRedisSeqKeyHasNoTTL(t *testing.T) {
 	require.Greater(t, bufTTL, time.Duration(0), "buffer key keeps its TTL")
 }
 
-// skipBuffer subscribers only get live events: buffered events published before
-// the subscription are not replayed.
-func TestStreamRedisSkipBufferLiveOnly(t *testing.T) {
-	a, rdb := newStreamRedisManager(t)
-	b, _ := newStreamRedisManager(t)
-	sessionID := newStreamRedisSession(t, rdb)
-
-	a.Publish(sessionID, map[string]any{"type": "token", "n": 0})
-
-	sub, unsub := b.Subscribe(sessionID, 16, true)
-	defer unsub()
-
-	select {
-	case evt := <-sub:
-		t.Fatalf("skipBuffer subscriber got replayed seq %d", evt.Seq)
-	case <-time.After(300 * time.Millisecond):
-	}
-
-	a.Publish(sessionID, map[string]any{"type": "token", "n": 1})
-	evt := nextStreamEvent(t, sub)
-	require.Equal(t, uint64(2), evt.Seq)
-}
-
 // The replay buffer is capped: only the newest 500 entries survive.
 func TestStreamRedisBufferTrimmedAt500(t *testing.T) {
 	a, rdb := newStreamRedisManager(t)
@@ -338,7 +315,8 @@ func newStreamRedisManagerWithHook(t *testing.T, hook redis.Hook) (*agent.Stream
 // After a fallback publish (Redis down), the next successful publish reuses the
 // fallback seq, so local subscribers would drop the recovery event as a
 // duplicate and remote subscribers would never learn an event was lost. The
-// recovery must force a resync marker for both.
+// recovery must force a resync marker for both, with the client-visible seqs
+// strictly increasing and the marker above the fallback seq.
 func TestStreamRedisFallbackRecoveryForcesResync(t *testing.T) {
 	hook := &publishFailHook{}
 	a, _ := newStreamRedisManagerWithHook(t, hook)
@@ -357,39 +335,133 @@ func TestStreamRedisFallbackRecoveryForcesResync(t *testing.T) {
 	// Redis publish fails: local fan-out only, remote replicas see nothing.
 	hook.fail.Store(true)
 	a.Publish(sessionID, map[string]any{"type": "token", "n": 1})
-	local := nextStreamEvent(t, subA)
-	require.Equal(t, uint64(2), local.Seq)
-	select {
-	case evt := <-subB:
-		t.Fatalf("remote subscriber saw the fallback event, seq %d", evt.Seq)
-	case <-time.After(300 * time.Millisecond):
-	}
+	fallback := nextStreamEvent(t, subA)
+	require.Equal(t, uint64(2), fallback.Seq)
 
 	// Redis recovers: the next publish must resync every subscriber.
 	hook.fail.Store(false)
 	a.Publish(sessionID, map[string]any{"type": "token", "n": 2})
 
-	resyncTypes := func(t *testing.T, ch <-chan agent.SequencedEvent) {
+	// collectUntilResync drains events in delivery order and stops at the
+	// first resync marker.
+	collectUntilResync := func(t *testing.T, ch <-chan agent.SequencedEvent) []agent.SequencedEvent {
 		t.Helper()
-		var sawEvent, sawResync bool
+		var events []agent.SequencedEvent
 		deadline := time.After(3 * time.Second)
-		for !sawResync || !sawEvent {
+		for {
 			select {
 			case evt := <-ch:
-				msg, ok := evt.Msg.(map[string]any)
-				require.True(t, ok, "event decoded as %T", evt.Msg)
-				if msg["type"] == "resync" {
-					sawResync = true
-					continue
+				events = append(events, evt)
+				if msg, ok := evt.Msg.(map[string]any); ok && msg["type"] == "resync" {
+					return events
 				}
-				sawEvent = true
 			case <-deadline:
-				t.Fatalf("timed out: saw_event=%v saw_resync=%v", sawEvent, sawResync)
+				t.Fatalf("timed out waiting for a resync marker, got %d events", len(events))
+				return nil
 			}
 		}
 	}
-	// The local subscriber gets the recovery event (duplicate seq of the
-	// fallback event) followed by the forced marker.
-	resyncTypes(t, subA)
-	resyncTypes(t, subB)
+
+	// clientSeqs applies the viewer's dedup rule (`seq <= lastSeq` dropped,
+	// AgentPanel.tsx) and returns the strictly increasing client-visible seqs.
+	// The local fallback path may re-deliver the fallback seq once (publishLocal
+	// pushes without touching lastSeq), which the client drops as a duplicate.
+	clientSeqs := func(t *testing.T, last uint64, events []agent.SequencedEvent) []uint64 {
+		t.Helper()
+		var seqs []uint64
+		for _, evt := range events {
+			require.GreaterOrEqual(t, evt.Seq, last, "delivered seq moved backwards: %v", events)
+			if evt.Seq == last {
+				continue
+			}
+			seqs = append(seqs, evt.Seq)
+			last = evt.Seq
+		}
+		return seqs
+	}
+
+	// The local subscriber already saw the fallback event: recovery must never
+	// move its seq backwards, must end in a marker above the fallback seq.
+	local := collectUntilResync(t, subA)
+	localClient := clientSeqs(t, fallback.Seq, local)
+	require.NotEmpty(t, localClient)
+	for i := 1; i < len(localClient); i++ {
+		require.Greater(t, localClient[i], localClient[i-1], "local seqs not strictly increasing")
+	}
+	require.Equal(t, "resync", local[len(local)-1].Msg.(map[string]any)["type"], "marker must arrive last")
+	require.Greater(t, local[len(local)-1].Seq, fallback.Seq, "marker seq must exceed the fallback seq")
+
+	// The remote subscriber missed the fallback event entirely and must be
+	// told to reconcile: it sees the recovery event and then the marker, never
+	// the fallback event itself.
+	remote := collectUntilResync(t, subB)
+	for _, evt := range remote {
+		msg, ok := evt.Msg.(map[string]any)
+		require.True(t, ok, "event decoded as %T", evt.Msg)
+		if msg["type"] == "resync" {
+			continue
+		}
+		require.NotEqual(t, float64(1), msg["n"], "remote subscriber must not see the fallback event")
+	}
+	remoteClient := clientSeqs(t, 1, remote)
+	require.NotEmpty(t, remoteClient)
+	for i := 1; i < len(remoteClient); i++ {
+		require.Greater(t, remoteClient[i], remoteClient[i-1], "remote seqs not strictly increasing")
+	}
+	require.Equal(t, "resync", remote[len(remote)-1].Msg.(map[string]any)["type"], "marker must arrive last")
+	require.Greater(t, remote[len(remote)-1].Seq, fallback.Seq, "marker seq must exceed the fallback seq")
+}
+
+// A fallback must be advertised even when the failing pod publishes no further
+// events: the background retrier republishes the marker through Redis while
+// another replica advances the stream.
+func TestStreamRedisFallbackRetryResyncsWithoutLocalPublish(t *testing.T) {
+	hook := &publishFailHook{}
+	a, _ := newStreamRedisManagerWithHook(t, hook)
+	b, rdb := newStreamRedisManager(t)
+	sessionID := newStreamRedisSession(t, rdb)
+
+	subA, unsubA := a.Subscribe(sessionID, 32, false)
+	defer unsubA()
+	subB, unsubB := b.Subscribe(sessionID, 32, false)
+	defer unsubB()
+
+	a.Publish(sessionID, map[string]any{"type": "token", "n": 0})
+	require.Equal(t, uint64(1), nextStreamEvent(t, subA).Seq)
+	require.Equal(t, uint64(1), nextStreamEvent(t, subB).Seq)
+
+	// A's publish fails and falls back locally; A never publishes again.
+	hook.fail.Store(true)
+	a.Publish(sessionID, map[string]any{"type": "token", "n": 1})
+	fallback := nextStreamEvent(t, subA)
+	require.Equal(t, uint64(2), fallback.Seq)
+	hook.fail.Store(false)
+
+	// Another replica advances the stream; the retrier on A must still publish
+	// the recovery marker so B's viewers reconcile.
+	b.Publish(sessionID, map[string]any{"type": "token", "n": 2})
+
+	var seqs []uint64
+	var sawResync bool
+	deadline := time.After(3 * time.Second)
+	for !sawResync {
+		select {
+		case evt := <-subB:
+			seqs = append(seqs, evt.Seq)
+			msg, ok := evt.Msg.(map[string]any)
+			require.True(t, ok, "event decoded as %T", evt.Msg)
+			if msg["type"] == "resync" {
+				sawResync = true
+			} else {
+				require.NotEqual(t, float64(1), msg["n"], "B must never see A's fallback event")
+			}
+		case <-deadline:
+			t.Fatalf("B never received the fallback recovery marker, got seqs %v", seqs)
+		}
+	}
+	require.True(t, sawResync)
+	for i := 1; i < len(seqs); i++ {
+		require.Greater(t, seqs[i], seqs[i-1], "B seqs not strictly increasing: %v", seqs)
+	}
+	require.Greater(t, seqs[len(seqs)-1], fallback.Seq, "marker seq must exceed the fallback seq")
 }

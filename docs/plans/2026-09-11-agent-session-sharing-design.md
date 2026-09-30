@@ -172,17 +172,21 @@ channels, a 500-event buffer, and a local seq counter. Same-pod multi-viewer alr
 (`internal/api/ws.go`) already uses the intended pattern (`ws:notebook:{id}` pub/sub), and the
 2026-07-09 horizontal-scaling audit prescribes it for agent streams.
 
-**Keys and channel (per session, TTL 2h refreshed on publish):**
+**Keys and channel (per session; the buffer has a 2h TTL refreshed on publish, the seq key
+intentionally does not expire):**
 
 - `aether:agent:sess:{sessionID}:seq` — INCR counter; globally monotonic seq and `LastSeq`.
-- `aether:agent:sess:{sessionID}:buf` — LIST, MAX 500, entries `{"seq":N,"msg":{...}}`.
+  No TTL: expiring the shared clock would reset it backwards under connected clients. The
+  trade-off is one small key per session accumulating for the Redis lifetime unless the
+  session is deleted (`SessionStore.DeleteSession`, which removes both keys).
+- `aether:agent:sess:{sessionID}:buf` — LIST, MAX 500, entries `{"seq":N,"msg":{...}}`; 2h TTL.
 - `aether:agent:sess:{sessionID}` — pub/sub channel.
 
 **Publish** (one Lua script, atomic): `INCR` seq, `RPUSH` entry built from the JSON message,
-`LTRIM -500 -1`, refresh TTLs, `PUBLISH` the entry. Local delivery happens **only through the
-pod’s Redis subscription** — including on the publishing pod — so an event is never delivered
-twice and every pod sees the same seq. Publishing no longer no-ops when the local stream map
-has no entry (the subscriber may be on another replica).
+`LTRIM -500 -1`, refresh the buffer TTL, `PUBLISH` the entry. Local delivery happens **only
+through the pod’s Redis subscription** — including on the publishing pod — so an event is never
+delivered twice and every pod sees the same seq. Publishing no longer no-ops when the local
+stream map has no entry (the subscriber may be on another replica).
 
 **Subscribe:** the first local subscriber for a session starts the pod’s pump: SUBSCRIBE the
 channel *first*, then `LRANGE` the buffer, delivering buffered events (unless `skipBuffer`)
@@ -196,8 +200,10 @@ existing 5-second grace before UNSUBSCRIBE + cleanup.
 
 **Fallback:** when the engine has no Redis client (unit tests, single-node installs without
 Redis), the current in-memory implementation is used unchanged. If Redis is configured but a
-publish fails, the event falls back to local fan-out and is logged; seq continuity during such
-an outage is best-effort and clients recover through `resync`/`reconnect_sync`.
+publish fails, the event falls back to local fan-out and is logged; a background retrier (and
+the next successful publish, whichever comes first) publishes a resync marker through Redis so
+every replica’s viewers learn about the fallback seq. Seq continuity during such an outage is
+best-effort and clients recover through `resync`/`reconnect_sync`.
 
 The wire protocol, `seq` field, and frontend event handling do not change.
 

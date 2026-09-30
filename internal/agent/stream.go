@@ -43,13 +43,20 @@ const (
 	// sessionStreamPumpReconnectMax caps the pump's reconnect backoff so a
 	// long Redis outage does not produce a per-session reconnect/log storm.
 	sessionStreamPumpReconnectMax = 30 * time.Second
+	// defaultSessionStreamCleanupGrace is how long a stream with no subscribers
+	// is kept alive so a reconnecting WebSocket (page navigation) can pick up
+	// the in-flight buffer before the pump is stopped. StreamManager.cleanupGrace
+	// is the effective value.
+	defaultSessionStreamCleanupGrace = 5 * time.Second
+	// sessionStreamFallbackRetryInitial is the pause before the first retry of
+	// a fallback recovery marker.
+	sessionStreamFallbackRetryInitial = 250 * time.Millisecond
+	// sessionStreamFallbackRetryMax caps the fallback retry backoff.
+	sessionStreamFallbackRetryMax = 5 * time.Second
+	// sessionStreamFallbackRetryLifetime bounds how long a fallback recovery
+	// marker keeps being retried when Redis stays unavailable.
+	sessionStreamFallbackRetryLifetime = 5 * time.Minute
 )
-
-// sessionStreamCleanupGrace is how long a stream with no subscribers is kept
-// alive so a reconnecting WebSocket (page navigation) can pick up the
-// in-flight buffer before the pump is stopped. It is a var so tests can shrink
-// the window; it is only read when arming a cleanup timer.
-var sessionStreamCleanupGrace = 5 * time.Second
 
 // sessionStreamPublishScript atomically assigns the next seq, appends the entry
 // to the replay buffer, trims the buffer, refreshes the buffer TTL, and
@@ -61,7 +68,9 @@ var sessionStreamCleanupGrace = 5 * time.Second
 // connected client's dedup depends on, and expiring it resets the counter
 // backwards under clients that are still connected. Only the replay buffer is
 // allowed to expire; a seq key lost any other way (flush, failover) is covered
-// by the reset guard in deliverLocked.
+// by the reset guard in deliverLocked. The trade-off is one small seq key per
+// session for the Redis lifetime unless the session is deleted through
+// SessionStore.DeleteSession, which removes both keys.
 var sessionStreamPublishScript = redis.NewScript(fmt.Sprintf(`
 local seq = redis.call('INCR', KEYS[1])
 local entry = '{"seq":' .. seq .. ',"msg":' .. ARGV[1] .. '}'
@@ -77,11 +86,12 @@ return seq
 // clients that already saw fallback seqs still accept the marker. KEYS: seq,
 // buffer, channel. ARGV: buffer TTL seconds, minimum seq.
 var sessionStreamResyncScript = redis.NewScript(fmt.Sprintf(`
-local seq = redis.call('INCR', KEYS[1])
 local floor = tonumber(ARGV[2])
-while seq <= floor do
-  seq = redis.call('INCR', KEYS[1])
+local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+if current < floor then
+  redis.call('SET', KEYS[1], floor)
 end
+local seq = redis.call('INCR', KEYS[1])
 local entry = '{"seq":' .. seq .. ',"msg":{"type":"resync"}}'
 redis.call('RPUSH', KEYS[2], entry)
 redis.call('LTRIM', KEYS[2], -%d, -1)
@@ -98,12 +108,27 @@ type StreamManager struct {
 	mu      sync.RWMutex
 	streams map[string]*SessionStream
 
+	// cleanupGrace is how long a stream with no subscribers is kept alive so a
+	// reconnecting WebSocket can pick up the in-flight buffer before the pump
+	// stops. A field (rather than a package var) so tests can shrink it without
+	// racing other tests; it is only read when arming a cleanup timer.
+	cleanupGrace time.Duration
+
 	// fallbackMu guards fellBack, which tracks sessions whose last Redis
-	// publish failed and fell back to local fan-out (value: highest seq the
-	// fallback delivered). The next successful publish forces a resync marker
-	// so remote subscribers notice the seq the fallback consumed.
+	// publish failed and fell back to local fan-out. A background retrier
+	// publishes a resync marker through Redis for each entry, independent of
+	// whether this pod publishes again; the marker is deleted once it commits.
 	fallbackMu sync.Mutex
-	fellBack   map[string]uint64
+	fellBack   map[string]*fallbackMarker
+}
+
+// fallbackMarker is the pending recovery state for one session: watermark is
+// the highest seq the local fallback delivered (0 when no local subscriber
+// received it), and retrying reports whether a background goroutine owns
+// retrying the marker through Redis.
+type fallbackMarker struct {
+	watermark uint64
+	retrying  bool
 }
 
 // streamSubscriber is one local viewer's delivery state. ready, lastSeq and
@@ -146,9 +171,10 @@ type SessionStream struct {
 // fans out through Redis pub/sub so viewers on every replica see the session.
 func NewStreamManager(rdb *redis.Client) *StreamManager {
 	return &StreamManager{
-		rdb:      rdb,
-		streams:  make(map[string]*SessionStream),
-		fellBack: make(map[string]uint64),
+		rdb:          rdb,
+		streams:      make(map[string]*SessionStream),
+		fellBack:     make(map[string]*fallbackMarker),
+		cleanupGrace: defaultSessionStreamCleanupGrace,
 	}
 }
 
@@ -274,7 +300,7 @@ func (sm *StreamManager) unsubscribeFunc(sessionID string, stream *SessionStream
 		}
 		sm.mu.Lock()
 		if stream.cleanup == nil {
-			stream.cleanup = time.AfterFunc(sessionStreamCleanupGrace, func() {
+			stream.cleanup = time.AfterFunc(sm.cleanupGrace, func() {
 				sm.cleanupSessionStream(sessionID, stream)
 			})
 		}
@@ -307,6 +333,10 @@ func (sm *StreamManager) cleanupSessionStream(sessionID string, stream *SessionS
 	}
 	sm.mu.Unlock()
 
+	// The stream is retired: drop any pending fallback marker so its retrier
+	// exits instead of leaking a map entry with no stream to protect.
+	sm.forgetFallback(sessionID)
+
 	if cancel != nil {
 		cancel()
 	}
@@ -316,9 +346,10 @@ func (sm *StreamManager) cleanupSessionStream(sessionID string, stream *SessionS
 // With Redis it atomically assigns the shared seq, stores the event in the
 // replay buffer, and publishes it so each pod's pump delivers it exactly once
 // (including the publishing pod). If Redis is unavailable the event falls back
-// to the local in-memory fan-out, and the next successful publish forces a
-// resync marker so every client reconciles instead of trusting a seq the
-// fallback and the shared counter both handed out.
+// to the local in-memory fan-out, and a resync marker is forced so every client
+// reconciles instead of trusting a seq the fallback and the shared counter both
+// handed out. The marker is published by the next successful publish or by a
+// background retrier, whichever comes first.
 func (sm *StreamManager) Publish(sessionID string, msg any) {
 	if sm.rdb == nil {
 		sm.publishLocal(sessionID, msg)
@@ -337,14 +368,16 @@ func (sm *StreamManager) Publish(sessionID string, msg any) {
 
 // publishRecoveryResync publishes the forced resync marker after a Redis publish
 // recovered from a fallback. If the marker itself cannot be published it is
-// delivered to local subscribers and the session stays marked so the next
-// successful publish retries.
+// delivered to local subscribers and the session stays marked, so the retrier
+// (or the next successful publish) tries again.
 func (sm *StreamManager) publishRecoveryResync(sessionID string, minSeq uint64) {
 	if err := sm.publishResyncRedis(sessionID, minSeq); err != nil {
 		slog.Warn("agent stream: redis resync publish failed",
 			"session_id", sessionID, "error", err)
-		sm.markFellBack(sessionID, minSeq)
-		sm.publishLocal(sessionID, map[string]any{"type": resyncMarkerType})
+		// The locally delivered marker may get a seq at or above minSeq; keep
+		// the watermark above every seq local subscribers have seen.
+		seq := sm.publishLocal(sessionID, map[string]any{"type": resyncMarkerType})
+		sm.markFellBack(sessionID, max(minSeq, seq))
 	}
 }
 
@@ -386,24 +419,102 @@ func (sm *StreamManager) publishResyncRedis(sessionID string, minSeq uint64) err
 // markFellBack records that a Redis publish failed on this pod and that local
 // fallback seqs up to seq were delivered. A zero seq still marks the session:
 // the event may have been lost for remote subscribers even when no local
-// subscriber received it.
+// subscriber received it. The first call starts the session's single background
+// retrier.
 func (sm *StreamManager) markFellBack(sessionID string, seq uint64) {
 	sm.fallbackMu.Lock()
-	if seq > sm.fellBack[sessionID] {
-		sm.fellBack[sessionID] = seq
+	marker := sm.fellBack[sessionID]
+	if marker == nil {
+		marker = &fallbackMarker{}
+		sm.fellBack[sessionID] = marker
+	}
+	if seq > marker.watermark {
+		marker.watermark = seq
+	}
+	start := !marker.retrying
+	if start {
+		marker.retrying = true
+	}
+	sm.fallbackMu.Unlock()
+	if start {
+		go sm.retryFallbackResync(sessionID, marker)
+	}
+}
+
+// takeFellBack consumes and returns the session's fallback watermark, if any.
+// The retrier observes the marker is gone and exits.
+func (sm *StreamManager) takeFellBack(sessionID string) (uint64, bool) {
+	sm.fallbackMu.Lock()
+	defer sm.fallbackMu.Unlock()
+	marker, ok := sm.fellBack[sessionID]
+	if !ok {
+		return 0, false
+	}
+	delete(sm.fellBack, sessionID)
+	return marker.watermark, true
+}
+
+// clearFallback drops the session's pending fallback marker when marker is
+// still the current one, so a newer mark is left for its own retry.
+func (sm *StreamManager) clearFallback(sessionID string, marker *fallbackMarker) {
+	sm.fallbackMu.Lock()
+	if sm.fellBack[sessionID] == marker {
+		delete(sm.fellBack, sessionID)
 	}
 	sm.fallbackMu.Unlock()
 }
 
-// takeFellBack consumes and returns the session's fallback watermark, if any.
-func (sm *StreamManager) takeFellBack(sessionID string) (uint64, bool) {
+// forgetFallback drops any pending fallback marker for the session, used when
+// its stream is retired.
+func (sm *StreamManager) forgetFallback(sessionID string) {
 	sm.fallbackMu.Lock()
-	defer sm.fallbackMu.Unlock()
-	seq, ok := sm.fellBack[sessionID]
-	if ok {
-		delete(sm.fellBack, sessionID)
+	delete(sm.fellBack, sessionID)
+	sm.fallbackMu.Unlock()
+}
+
+// retryFallbackResync retries the session's recovery marker through Redis with
+// capped backoff, independent of Publish, so a fallback is eventually
+// advertised to every replica even when this pod publishes no further events.
+// Redis may be down for a while, so the marker is retried until it commits, the
+// stream is retired (forgetFallback removes the marker), or a bounded lifetime
+// elapses.
+func (sm *StreamManager) retryFallbackResync(sessionID string, marker *fallbackMarker) {
+	deadline := time.Now().Add(sessionStreamFallbackRetryLifetime)
+	backoff := sessionStreamFallbackRetryInitial
+	for {
+		sm.fallbackMu.Lock()
+		current := sm.fellBack[sessionID]
+		watermark := marker.watermark
+		sm.fallbackMu.Unlock()
+		if current != marker {
+			return
+		}
+		if time.Now().After(deadline) {
+			slog.Warn("agent stream: giving up fallback resync retry",
+				"session_id", sessionID, "watermark", watermark)
+			sm.clearFallback(sessionID, marker)
+			return
+		}
+		if err := sm.publishResyncRedis(sessionID, watermark); err == nil {
+			sm.fallbackMu.Lock()
+			current := sm.fellBack[sessionID]
+			if current == marker && marker.watermark == watermark {
+				delete(sm.fellBack, sessionID)
+				sm.fallbackMu.Unlock()
+				return
+			}
+			newer := current == marker
+			sm.fallbackMu.Unlock()
+			if !newer {
+				// The publish path consumed the marker first.
+				return
+			}
+			// A newer fallback was recorded while the marker was in flight;
+			// retry so the newer seqs are also covered.
+		}
+		time.Sleep(backoff)
+		backoff = min(backoff*2, sessionStreamFallbackRetryMax)
 	}
-	return seq, ok
 }
 
 // seedLocalSeq keeps the in-memory fallback counter ahead of the shared Redis
@@ -535,11 +646,13 @@ func (sm *StreamManager) pumpSessionLive(ctx context.Context, sessionID string, 
 // catchUpSessionStream replays the shared buffer to local subscribers. Events
 // are filtered by each subscriber's last delivered seq, so a subscriber that
 // joined mid-stream (or one resuming after a reconnect) only receives what it
-// has not seen. skipBuffer subscribers are not replayed; they are moved to
-// ready with the current buffer head as their baseline so their first live
-// event does not look like a gap. When a resuming subscriber's buffer has
-// already been trimmed past the events it missed, a resync marker is emitted
-// before the replay.
+// has not seen. Replayed seqs are re-based through the subscriber's offset
+// exactly like live delivery, so a counter reset can never make catch-up treat
+// missed events as already seen. skipBuffer subscribers are not replayed; they
+// are moved to ready with the current buffer head as their baseline so their
+// first live event does not look like a gap. When a resuming subscriber's
+// buffer has already been trimmed past the events it missed, a resync marker is
+// emitted before the replay.
 func (sm *StreamManager) catchUpSessionStream(ctx context.Context, sessionID string, stream *SessionStream) {
 	entries, maxSeq, err := sm.readSessionBuffer(ctx, sessionID)
 	if err != nil {
@@ -569,28 +682,30 @@ func (sm *StreamManager) catchUpSessionStream(ctx context.Context, sessionID str
 		}
 		if !sub.ready {
 			for _, evt := range entries {
-				if evt.Seq <= sub.lastSeq {
+				seq := evt.Seq + sub.offset
+				if seq <= sub.lastSeq {
 					continue
 				}
-				stream.push(sub, evt)
-				sub.lastSeq = evt.Seq
+				stream.push(sub, SequencedEvent{Seq: seq, Msg: evt.Msg})
+				sub.lastSeq = seq
 			}
 			sub.ready = true
 			continue
 		}
 		for _, evt := range entries {
-			if evt.Seq <= sub.lastSeq {
+			seq := evt.Seq + sub.offset
+			if seq <= sub.lastSeq {
 				continue
 			}
-			if evt.Seq > sub.lastSeq+1 {
+			if seq > sub.lastSeq+1 {
 				// The buffer no longer holds the events this subscriber
 				// missed; replaying the next entry silently would look like
 				// a gap. Mark the start of the missing range instead.
 				stream.push(sub, resyncEvent(sub.lastSeq+1))
 				sub.lastSeq++
 			}
-			stream.push(sub, evt)
-			sub.lastSeq = evt.Seq
+			stream.push(sub, SequencedEvent{Seq: seq, Msg: evt.Msg})
+			sub.lastSeq = seq
 		}
 	}
 }
