@@ -36,12 +36,14 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := ""
+			fromQuery := false
 
 			// WebSocket connections can't set Authorization header, so accept token via query param
 			if header := r.Header.Get("Authorization"); strings.HasPrefix(header, "Bearer ") {
 				token = strings.TrimPrefix(header, "Bearer ")
 			} else if queryToken := r.URL.Query().Get("token"); queryToken != "" {
 				token = queryToken
+				fromQuery = true
 			}
 
 			if token == "" {
@@ -79,6 +81,13 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte
 					writeError(w, http.StatusForbidden, "oauth access tokens are only valid at the MCP endpoint")
 					return
 				}
+				// The ?token= fallback exists for WebSocket handshakes, which
+				// OAuth access tokens must never authenticate. The MCP endpoint
+				// is POST-only, so query tokens have no legitimate use there.
+				if fromQuery {
+					writeMCPUnauthorized(w, r, "oauth access tokens must use the Authorization header")
+					return
+				}
 				if !slices.Contains(claims.Audience, canonicalResourceURI(r)) {
 					writeMCPUnauthorized(w, r, "token audience does not match this resource")
 					return
@@ -109,6 +118,17 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// writeAuthFailure emits a 401, using the MCP challenge (resource_metadata)
+// when the request targets the MCP endpoint so OAuth discovery works for any
+// rejected credential type.
+func writeAuthFailure(w http.ResponseWriter, r *http.Request, msg string) {
+	if r.URL.Path == "/api/v1/mcp" {
+		writeMCPUnauthorized(w, r, msg)
+		return
+	}
+	writeError(w, http.StatusUnauthorized, msg)
 }
 
 // validateAPIToken checks a personal access token against the api_tokens table.
@@ -181,7 +201,7 @@ func validateLegacyAPIToken(w http.ResponseWriter, r *http.Request, next http.Ha
 		return
 	}
 	if !matched {
-		writeError(w, http.StatusUnauthorized, "invalid or expired API token")
+		writeAuthFailure(w, r, "invalid or expired API token")
 		return
 	}
 
@@ -197,7 +217,7 @@ func validateLegacyAPIToken(w http.ResponseWriter, r *http.Request, next http.Ha
 // lookup, claims context, and last-used bookkeeping.
 func completeAPITokenAuth(w http.ResponseWriter, r *http.Request, next http.Handler, pool *pgxpool.Pool, id, userID, orgID string, expiresAt *time.Time) {
 	if expiresAt != nil && expiresAt.Before(time.Now()) {
-		writeError(w, http.StatusUnauthorized, "invalid or expired API token")
+		writeAuthFailure(w, r, "invalid or expired API token")
 		return
 	}
 

@@ -86,6 +86,7 @@ func (s *Server) handleOAuthRegister(w http.ResponseWriter, r *http.Request) {
 		GrantTypes              []string `json:"grant_types"`
 		ResponseTypes           []string `json:"response_types"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.RedirectURIs) == 0 {
 		oauthErrorResponse(w, "invalid_client_metadata", "redirect_uris is required")
 		return
@@ -135,6 +136,7 @@ func (s *Server) handleOAuthToken(w http.ResponseWriter, r *http.Request) {
 	// RFC 6749 §5.1: token responses (success or error) must not be cached.
 	// Set before parsing so malformed-form errors carry it too.
 	w.Header().Set("Cache-Control", "no-store")
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	if err := r.ParseForm(); err != nil {
 		oauthErrorResponse(w, "invalid_request", "malformed form body")
 		return
@@ -239,6 +241,10 @@ func (s *Server) handleOAuthTokenRefresh(w http.ResponseWriter, r *http.Request,
 // consent page re-reads the same query parameters.
 func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	if rt := q.Get("response_type"); rt != "" && rt != "code" {
+		http.Error(w, "unsupported response_type", http.StatusBadRequest)
+		return
+	}
 	client, err := s.oauth.GetClient(r.Context(), q.Get("client_id"))
 	if err != nil {
 		if errors.Is(err, oauth.ErrNotFound) {

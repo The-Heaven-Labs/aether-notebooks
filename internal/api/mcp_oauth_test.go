@@ -1,20 +1,25 @@
 package api_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/api"
 	"github.com/the-heaven-labs/aether/internal/auth"
+	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/oauth"
 )
 
@@ -25,7 +30,8 @@ const (
 	oauthHost     = "example.com"
 	oauthResource = "http://example.com/api/v1/mcp"
 	oauthRedirect = "http://localhost:33211/callback"
-	oauthVerifier = "test-verifier-0123456789abcdef"
+	// RFC 7636 requires 43–128 characters.
+	oauthVerifier = "test-verifier-0123456789abcdef-0123456789abcdef"
 )
 
 func oauthChallenge(t *testing.T) string {
@@ -119,6 +125,12 @@ func setupOAuthServer(t *testing.T) (*api.Server, string, string, string) {
 	// the thresholds so assertions exercise behavior, not rate limiting.
 	t.Setenv("AETHER_RATE_LIMIT_OAUTH_REGISTER", "500")
 	t.Setenv("AETHER_RATE_LIMIT_OAUTH_TOKEN", "500")
+	// Authorize/consent share the login tier. Tests intentionally override
+	// AETHER_RATE_LIMIT_LOGIN to pin throttling, so only default it when the
+	// caller left it unset.
+	if os.Getenv("AETHER_RATE_LIMIT_LOGIN") == "" {
+		t.Setenv("AETHER_RATE_LIMIT_LOGIN", "500")
+	}
 	srv := setupTestServer(t)
 	srv.SetMCPOAuthEnabled(true)
 	jwt := registerAndGetToken(t, srv, fmt.Sprintf("mcp-oauth-%d@example.com", time.Now().UnixNano()), "OAuth Org")
@@ -378,6 +390,32 @@ func TestOAuthAuthorizeInvalidParamsRejected(t *testing.T) {
 		"&code_challenge=abc&code_challenge_method=plain&response_type=code"
 	rec = doJSON(t, srv, "GET", u, "", "")
 	require.Equal(t, http.StatusBadRequest, rec.Code)
+
+	// response_type other than code rejected before any lookup.
+	u = "/oauth/authorize?client_id=" + clientID + "&redirect_uri=" + oauthRedirect +
+		"&code_challenge=abc&code_challenge_method=S256&response_type=token"
+	rec = doJSON(t, srv, "GET", u, "", "")
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "unsupported response_type")
+}
+
+// Unauthenticated OAuth endpoints cap request bodies at 64 KiB.
+func TestOAuthOversizedBodiesRejected(t *testing.T) {
+	srv, _, _, _ := setupOAuthServer(t)
+	big := strings.Repeat("a", 65<<10)
+
+	rec := doJSON(t, srv, "POST", "/oauth/register", "",
+		`{"client_name":"`+big+`","redirect_uris":["http://localhost:1/cb"]}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	var out map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Equal(t, "invalid_client_metadata", out["error"])
+
+	form := url.Values{"grant_type": {"authorization_code"}, "code_verifier": {big}}
+	rec = postTokenForm(t, srv, form)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Equal(t, "invalid_request", out["error"])
 }
 
 func TestOAuthScopeFiltering(t *testing.T) {
@@ -469,4 +507,203 @@ func TestOAuthScopesCoverAllowlistExactly(t *testing.T) {
 	for name := range reachable {
 		require.Contains(t, allowlist, name, "scope unlocks tool %q outside the MCP allowlist", name)
 	}
+}
+
+// A rejected PAT at the MCP endpoint must advertise the RFC 9728 challenge
+// just like session JWTs, or harnesses cannot discover OAuth after a stale PAT.
+func TestOAuthPATInvalidTokenGetsMCPChallenge(t *testing.T) {
+	srv := setupTestServer(t)
+
+	rec := doJSON(t, srv, "POST", "/api/v1/mcp", "aether_tok_bogus",
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Contains(t, rec.Header().Get("WWW-Authenticate"), "resource_metadata=")
+	require.Contains(t, rec.Body.String(), "invalid or expired API token")
+}
+
+// OAuth access tokens are header-only: the ?token= fallback exists for
+// WebSocket handshakes and must not authenticate them at the MCP endpoint.
+func TestOAuthTokenViaQueryParamRejected(t *testing.T) {
+	srv, jwt, clientID, _ := setupOAuthServer(t)
+	code := oauthConsentApprove(t, srv, jwt, clientID)
+	access := oauthToken(t, srv, clientID, code)["access_token"].(string)
+
+	rec := doJSON(t, srv, "POST", "/api/v1/mcp?token="+url.QueryEscape(access), "",
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Contains(t, rec.Body.String(), "Authorization header")
+	require.Contains(t, rec.Header().Get("WWW-Authenticate"), "resource_metadata=")
+}
+
+// Authorize shares the login rate-limit tier (design decision #7).
+func TestOAuthAuthorizeRateLimited(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_LOGIN", "1")
+	srv, _, clientID, _ := setupOAuthServer(t)
+
+	// Unique IP per run: the counter lives in shared Redis keyed by IP+path.
+	ip := fmt.Sprintf("203.0.%d.%d", rand.IntN(256), rand.IntN(256))
+	authorizeURL := "/oauth/authorize?client_id=" + clientID +
+		"&redirect_uri=" + url.QueryEscape(oauthRedirect) +
+		"&code_challenge=" + oauthChallenge(t) +
+		"&code_challenge_method=S256&response_type=code"
+
+	call := func() int {
+		req := httptest.NewRequest("GET", authorizeURL, nil)
+		req.Host = oauthHost
+		req.Header.Set("X-Forwarded-For", ip)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	require.NotEqual(t, http.StatusTooManyRequests, call(), "first request must not be throttled")
+	require.Equal(t, http.StatusTooManyRequests, call(), "second request must be throttled")
+}
+
+func postTokenForm(t *testing.T, srv http.Handler, form url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	req, _ := http.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
+	req.Host = oauthHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestOAuthWrongCodeVerifierRejected(t *testing.T) {
+	srv, jwt, clientID, _ := setupOAuthServer(t)
+	code := oauthConsentApprove(t, srv, jwt, clientID)
+
+	// In-range length so the hash comparison, not the RFC 7636 length check,
+	// is what rejects it.
+	form := url.Values{
+		"grant_type": {"authorization_code"}, "code": {code},
+		"redirect_uri": {oauthRedirect}, "client_id": {clientID},
+		"code_verifier": {strings.Repeat("b", 43)}, "resource": {oauthResource},
+	}
+	rec := postTokenForm(t, srv, form)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	var out map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Equal(t, "invalid_grant", out["error"])
+}
+
+func TestOAuthCodeClientMismatchRejected(t *testing.T) {
+	srv, jwt, clientID, _ := setupOAuthServer(t)
+	code := oauthConsentApprove(t, srv, jwt, clientID)
+
+	otherClient := oauthRegister(t, srv)
+	form := url.Values{
+		"grant_type": {"authorization_code"}, "code": {code},
+		"redirect_uri": {oauthRedirect}, "client_id": {otherClient},
+		"code_verifier": {oauthVerifier}, "resource": {oauthResource},
+	}
+	rec := postTokenForm(t, srv, form)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	var out map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Equal(t, "invalid_grant", out["error"])
+}
+
+// A consent decision is bound to the caller's org. With a subdomain host the
+// subdomain org must equal the JWT org (enforced by AuthMiddleware); without a
+// subdomain the JWT org wins. Either way no code may be bound to another org.
+func TestOAuthConsentOrgMismatchRejected(t *testing.T) {
+	srv, jwtA, clientID, _ := setupOAuthServer(t)
+	claimsA, err := testJWT.Validate(jwtA)
+	require.NoError(t, err)
+
+	jwtB := registerAndGetToken(t, srv,
+		fmt.Sprintf("mcp-oauth-orgb-%d@example.com", time.Now().UnixNano()), "OAuth Org B")
+	claimsB, err := testJWT.Validate(jwtB)
+	require.NoError(t, err)
+	require.NotEqual(t, claimsA.OrgID, claimsB.OrgID)
+
+	var slugA string
+	require.NoError(t, srv.DB().Pool.QueryRow(context.Background(),
+		`SELECT slug FROM orgs WHERE id = $1`, claimsA.OrgID).Scan(&slugA))
+
+	payload, _ := json.Marshal(map[string]any{
+		"client_id": clientID, "redirect_uri": oauthRedirect,
+		"scope": "mcp:query", "resource": oauthResource, "state": "s",
+		"code_challenge": oauthChallenge(t), "code_challenge_method": "S256",
+		"approve": true,
+	})
+
+	// User B's token against org A's subdomain is rejected before any code is
+	// minted: the subdomain org and the JWT org disagree.
+	req := httptest.NewRequest("POST", "/api/v1/oauth/consent/decision",
+		strings.NewReader(string(payload)))
+	req.Host = slugA + ".example.com"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+jwtB)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.NotContains(t, rec.Body.String(), "code")
+
+	// Without a subdomain the JWT org wins: consent succeeds, but the access
+	// token must carry org B, never org A.
+	rec = doJSON(t, srv, "POST", "/api/v1/oauth/consent/decision", jwtB, string(payload))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	u, err := url.Parse(out["redirect"].(string))
+	require.NoError(t, err)
+	code := u.Query().Get("code")
+	require.NotEmpty(t, code)
+
+	access := oauthToken(t, srv, clientID, code)["access_token"].(string)
+	accessClaims, err := testJWT.Validate(access)
+	require.NoError(t, err)
+	require.Equal(t, claimsB.OrgID, accessClaims.OrgID)
+	require.NotEqual(t, claimsA.OrgID, accessClaims.OrgID)
+}
+
+// Admin mode (the org-admin ACL bypass) is a first-party session feature.
+// OAuth access tokens must not gain it even when the header is present.
+func TestOAuthAdminModeSuppressedForOAuthTokens(t *testing.T) {
+	srv, jwt, clientID, _ := setupOAuthServer(t)
+
+	// The probe replaces execute_sql so it is reachable with mcp:query and
+	// reports the admin-mode flag its tool context carries.
+	probe := &agent.ToolDef{Timeout: time.Second}
+	probe.Function.Name = "execute_sql"
+	probe.Function.Parameters = `{"type":"object","properties":{}}`
+	probe.Handler = func(_ json.RawMessage, tc *agent.ToolContext) (any, error) {
+		return map[string]any{"admin_mode": executor.AdminModeFromContext(tc.Context)}, nil
+	}
+	srv.RegisterToolForTest(probe)
+
+	call := func(token string) map[string]any {
+		body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execute_sql","arguments":{}}}`
+		req, _ := http.NewRequest("POST", "/api/v1/mcp", strings.NewReader(body))
+		req.Host = oauthHost
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-AETHER-Admin-Mode", "true")
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+		var envelope struct {
+			Result struct {
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"result"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+		require.NotEmpty(t, envelope.Result.Content, rec.Body.String())
+		var result map[string]any
+		require.NoError(t, json.Unmarshal([]byte(envelope.Result.Content[0].Text), &result))
+		return result
+	}
+
+	// Session JWT: the header enables admin mode.
+	require.Equal(t, true, call(jwt)["admin_mode"])
+
+	// OAuth token: the same header is ignored.
+	code := oauthConsentApprove(t, srv, jwt, clientID)
+	access := oauthToken(t, srv, clientID, code)["access_token"].(string)
+	require.Equal(t, false, call(access)["admin_mode"])
 }

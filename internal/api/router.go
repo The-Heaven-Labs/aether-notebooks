@@ -718,10 +718,19 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /oauth/token", s.requireMCPOAuth(s.rateLimit(rateLimitConfig{
 		keyFunc: clientIP, limit: oauthTokenLimit, window: time.Minute,
 	})(http.HandlerFunc(s.handleOAuthToken))))
-	s.mux.Handle("GET /oauth/authorize", s.requireMCPOAuth(http.HandlerFunc(s.handleOAuthAuthorize)))
+	// Authorize and consent front the session-token surface: rate-limit them
+	// with the login tier so they cannot be used to probe or brute-force
+	// session credentials faster than login itself.
+	s.mux.Handle("GET /oauth/authorize", s.requireMCPOAuth(s.rateLimit(rateLimitConfig{
+		keyFunc: clientIP, limit: loginLimit, window: time.Minute,
+	})(http.HandlerFunc(s.handleOAuthAuthorize))))
 	// SPA consent APIs (authed; gated by the same flag).
-	s.mux.Handle("GET /api/v1/oauth/consent/info", s.requireMCPOAuth(authMW(http.HandlerFunc(s.handleOAuthConsentInfo))))
-	s.mux.Handle("POST /api/v1/oauth/consent/decision", s.requireMCPOAuth(authMW(http.HandlerFunc(s.handleOAuthConsentDecision))))
+	s.mux.Handle("GET /api/v1/oauth/consent/info", s.requireMCPOAuth(s.rateLimit(rateLimitConfig{
+		keyFunc: clientIP, limit: loginLimit, window: time.Minute,
+	})(authMW(http.HandlerFunc(s.handleOAuthConsentInfo)))))
+	s.mux.Handle("POST /api/v1/oauth/consent/decision", s.requireMCPOAuth(s.rateLimit(rateLimitConfig{
+		keyFunc: clientIP, limit: loginLimit, window: time.Minute,
+	})(authMW(http.HandlerFunc(s.handleOAuthConsentDecision)))))
 
 	// Agent session attachment routes (vision support)
 	s.mux.Handle("POST /api/v1/agent-sessions/{session_id}/attachments", authMW(http.HandlerFunc(s.handleUploadAgentAttachment)))
