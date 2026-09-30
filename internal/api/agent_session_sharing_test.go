@@ -148,6 +148,35 @@ func requireACLReadStatus(t *testing.T, srv *api.Server, token, resourceType, re
 	require.Equal(t, want, rec.Code, rec.Body.String())
 }
 
+// aclRequest performs an ACL request with an optional admin-mode header and
+// returns the status and raw response body.
+func aclRequest(t *testing.T, srv *api.Server, token, method, resourceType, resourceID string, adminMode bool, body map[string]any) (int, string) {
+	t.Helper()
+	var r io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		require.NoError(t, err)
+		r = bytes.NewReader(b)
+	}
+	req := httptest.NewRequest(method, "/api/v1/acl/"+resourceType+"/"+resourceID, r)
+	req.Header.Set("Authorization", "Bearer "+token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if adminMode {
+		req.Header.Set("X-AETHER-Admin-Mode", "true")
+	}
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec.Code, rec.Body.String()
+}
+
+// putACLEntries replaces a resource ACL through the HTTP handler.
+func putACLEntries(t *testing.T, srv *api.Server, token string, adminMode bool, resourceType, resourceID string, entries ...map[string]any) (int, string) {
+	t.Helper()
+	return aclRequest(t, srv, token, "PUT", resourceType, resourceID, adminMode, map[string]any{"entries": entries})
+}
+
 func TestCreateSessionWithShares(t *testing.T) {
 	f := setupSessionSharingFixture(t)
 	ctx := context.Background()
@@ -745,6 +774,17 @@ func addFixtureMember(t *testing.T, f *sessionSharingFixture, label string) (use
 	return userID, token
 }
 
+// addFixtureAdmin inserts an org admin (never the session owner) with an admin
+// JWT in the fixture org.
+func addFixtureAdmin(t *testing.T, f *sessionSharingFixture, label string) (userID, token string) {
+	t.Helper()
+	userID = insertUser(t, f.srv,
+		fmt.Sprintf("session-share-%s-%d@example.com", label, time.Now().UnixNano()), label)
+	addOrgMember(t, f.srv, f.orgID, userID, "admin")
+	token = issueToken(t, userID, f.orgID, "admin")
+	return userID, token
+}
+
 // listSessionsResponse performs an authenticated GET and decodes a session list.
 func listSessionsResponse(t *testing.T, srv *api.Server, token, path string) (int, []map[string]any) {
 	t.Helper()
@@ -1158,4 +1198,163 @@ func TestUpdateSession(t *testing.T) {
 			require.NotContains(t, body, currentTitle)
 		})
 	})
+}
+
+// --- Task 8: ACL write rules ---
+
+// TestSessionACLWriteRules pins the agent_session ACL PUT contract: only the
+// owner or an org admin in admin mode may write, entries are view-only shares
+// validated against the session's org, and the owner's full-access entry is
+// preserved even when the request omits it.
+func TestSessionACLWriteRules(t *testing.T) {
+	f := setupSessionSharingFixture(t)
+	sessionID := f.createSession(t, map[string]any{})
+	_, adminToken := addFixtureAdmin(t, f, "acl-write-admin")
+
+	bobView := map[string]any{"subject_type": "user", "subject_id": f.bobID, "actions": []string{"view"}}
+	carolView := map[string]any{"subject_type": "user", "subject_id": f.carolID, "actions": []string{"view"}}
+	ownerActions := []string{"view", "edit", "share", "delete", "admin"}
+
+	t.Run("non-owner cannot write", func(t *testing.T) {
+		code, body := putACLEntries(t, f.srv, f.bobToken, false, "agent_session", sessionID, bobView)
+		require.Equal(t, http.StatusForbidden, code, "%v", body)
+		require.Nil(t, sessionACLActions(t, f.srv, sessionID, "user", f.bobID),
+			"a rejected PUT must not write ACL rows")
+	})
+
+	t.Run("org admin without admin mode cannot write", func(t *testing.T) {
+		code, body := putACLEntries(t, f.srv, adminToken, false, "agent_session", sessionID, bobView)
+		require.Equal(t, http.StatusForbidden, code, "%v", body)
+		require.Nil(t, sessionACLActions(t, f.srv, sessionID, "user", f.bobID))
+	})
+
+	t.Run("admin mode can write", func(t *testing.T) {
+		code, body := putACLEntries(t, f.srv, adminToken, true, "agent_session", sessionID, bobView)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+		require.Equal(t, []string{"view"}, sessionACLActions(t, f.srv, sessionID, "user", f.bobID))
+		require.Equal(t, ownerActions, sessionACLActions(t, f.srv, sessionID, "user", f.aliceID),
+			"admin-mode writes must leave the owner entry intact")
+	})
+
+	t.Run("owner writes a read-only share", func(t *testing.T) {
+		code, body := putACLEntries(t, f.srv, f.aliceToken, false, "agent_session", sessionID, bobView, carolView)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+		require.Equal(t, []string{"view"}, sessionACLActions(t, f.srv, sessionID, "user", f.bobID))
+		require.Equal(t, []string{"view"}, sessionACLActions(t, f.srv, sessionID, "user", f.carolID))
+		requireACLReadStatus(t, f.srv, f.bobToken, "agent_session", sessionID, http.StatusOK)
+		requireACLReadStatus(t, f.srv, f.carolToken, "agent_session", sessionID, http.StatusOK)
+	})
+
+	t.Run("replace removes entries missing from the request", func(t *testing.T) {
+		code, body := putACLEntries(t, f.srv, f.aliceToken, false, "agent_session", sessionID, bobView)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+		require.Equal(t, []string{"view"}, sessionACLActions(t, f.srv, sessionID, "user", f.bobID))
+		require.Nil(t, sessionACLActions(t, f.srv, sessionID, "user", f.carolID),
+			"a replace-style PUT must revoke entries missing from the request")
+	})
+
+	t.Run("non-owner edit action is rejected", func(t *testing.T) {
+		editEntry := map[string]any{"subject_type": "user", "subject_id": f.carolID, "actions": []string{"edit"}}
+		code, body := putACLEntries(t, f.srv, f.aliceToken, false, "agent_session", sessionID, editEntry)
+		require.Equal(t, http.StatusBadRequest, code, "%v", body)
+		require.Nil(t, sessionACLActions(t, f.srv, sessionID, "user", f.carolID))
+	})
+
+	t.Run("unknown subjects are rejected", func(t *testing.T) {
+		cases := map[string]map[string]any{
+			"unknown user":          {"subject_type": "user", "subject_id": uuid.NewString(), "actions": []string{"view"}},
+			"unknown group":         {"subject_type": "group", "subject_id": uuid.NewString(), "actions": []string{"view"}},
+			"org_role not everyone": {"subject_type": "org_role", "subject_id": "admin", "actions": []string{"view"}},
+			"unknown subject type":  {"subject_type": "widget", "subject_id": f.bobID, "actions": []string{"view"}},
+		}
+		for name, entry := range cases {
+			t.Run(name, func(t *testing.T) {
+				code, body := putACLEntries(t, f.srv, f.aliceToken, false, "agent_session", sessionID, entry)
+				require.Equal(t, http.StatusBadRequest, code, "%v", body)
+			})
+		}
+		require.Equal(t, []string{"view"}, sessionACLActions(t, f.srv, sessionID, "user", f.bobID),
+			"rejected entries must not modify existing rows")
+	})
+
+	t.Run("put omitting the owner preserves owner access", func(t *testing.T) {
+		code, body := putACLEntries(t, f.srv, f.aliceToken, false, "agent_session", sessionID, bobView)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+		require.Equal(t, ownerActions, sessionACLActions(t, f.srv, sessionID, "user", f.aliceID),
+			"the owner entry must be re-upserted even when the request omits it")
+		requireACLReadStatus(t, f.srv, f.aliceToken, "agent_session", sessionID, http.StatusOK)
+
+		code, body = rawRequest(t, f.srv, f.aliceToken, "PATCH",
+			"/api/v1/sessions/"+sessionID+"/title", map[string]any{"title": "still mine"})
+		require.Equal(t, http.StatusOK, code, "%v", body)
+		require.Contains(t, body, "still mine", "the owner must still be able to rename")
+	})
+}
+
+// TestSessionACLReadRules pins GET /acl for agent_session: session view or
+// admin mode; an org admin without admin mode is treated as an ordinary member.
+func TestSessionACLReadRules(t *testing.T) {
+	f := setupSessionSharingFixture(t)
+	sessionID := f.createSession(t, map[string]any{})
+	grantACL(t, f.srv, f.orgID, "agent_session", sessionID, "user", f.bobID, "view")
+	_, adminToken := addFixtureAdmin(t, f, "acl-read-admin")
+
+	t.Run("owner reads", func(t *testing.T) {
+		code, body := aclRequest(t, f.srv, f.aliceToken, "GET", "agent_session", sessionID, false, nil)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+	})
+	t.Run("shared viewer reads", func(t *testing.T) {
+		code, body := aclRequest(t, f.srv, f.bobToken, "GET", "agent_session", sessionID, false, nil)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+	})
+	t.Run("unrelated member is denied", func(t *testing.T) {
+		code, body := aclRequest(t, f.srv, f.carolToken, "GET", "agent_session", sessionID, false, nil)
+		require.Equal(t, http.StatusForbidden, code, "%v", body)
+	})
+	t.Run("org admin without admin mode is denied", func(t *testing.T) {
+		code, body := aclRequest(t, f.srv, adminToken, "GET", "agent_session", sessionID, false, nil)
+		require.Equal(t, http.StatusForbidden, code, "%v", body)
+	})
+	t.Run("admin mode reads", func(t *testing.T) {
+		code, body := aclRequest(t, f.srv, adminToken, "GET", "agent_session", sessionID, true, nil)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+	})
+}
+
+// TestSessionACLAuditDiff keeps the generic acl.granted/acl.revoked diff for
+// session PUTs while never emitting an owner-entry event for the preserved
+// owner row.
+func TestSessionACLAuditDiff(t *testing.T) {
+	f := setupSessionSharingFixture(t)
+	sessionID := f.createSession(t, map[string]any{})
+	ctx := context.Background()
+
+	bobView := map[string]any{"subject_type": "user", "subject_id": f.bobID, "actions": []string{"view"}}
+	carolView := map[string]any{"subject_type": "user", "subject_id": f.carolID, "actions": []string{"view"}}
+
+	code, body := putACLEntries(t, f.srv, f.aliceToken, false, "agent_session", sessionID, bobView)
+	require.Equal(t, http.StatusOK, code, "%v", body)
+	code, body = putACLEntries(t, f.srv, f.aliceToken, false, "agent_session", sessionID, carolView)
+	require.Equal(t, http.StatusOK, code, "%v", body)
+
+	rows, err := f.srv.DB().Pool.Query(ctx, `
+		SELECT action, COALESCE(metadata->>'subject_type', ''), COALESCE(metadata->>'subject_id', '')
+		FROM audit_logs
+		WHERE resource_type = 'agent_session' AND resource_id = $1 AND action LIKE 'acl.%'
+	`, sessionID)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	var events []string
+	for rows.Next() {
+		var action, subjectType, subjectID string
+		require.NoError(t, rows.Scan(&action, &subjectType, &subjectID))
+		events = append(events, action+" "+subjectType+":"+subjectID)
+	}
+	require.NoError(t, rows.Err())
+	require.ElementsMatch(t, []string{
+		"acl.granted user:" + f.bobID,
+		"acl.revoked user:" + f.bobID,
+		"acl.granted user:" + f.carolID,
+	}, events, "the preserved owner row must not emit ACL audit events")
 }
