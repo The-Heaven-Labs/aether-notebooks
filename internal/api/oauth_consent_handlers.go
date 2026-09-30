@@ -2,10 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
-	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/oauth"
 )
 
@@ -18,23 +19,24 @@ var consentScopeDescriptions = map[string]string{
 // handleOAuthConsentInfo backs the SPA consent page: describes the client,
 // the org and the requested scopes. The org comes from the subdomain when one
 // is present (AuthMiddleware enforces token org == subdomain org before this
-// runs) and falls back to the JWT claims org otherwise.
+// runs); OrgIDFromContext falls back to the JWT claims org otherwise.
 func (s *Server) handleOAuthConsentInfo(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
-	if claims == nil {
-		writeError(w, http.StatusForbidden, "consent requires an authenticated user")
-		return
-	}
 	orgID := OrgIDFromContext(r.Context())
-	if orgID == "" {
-		orgID = claims.OrgID
+	if claims == nil || orgID == "" {
+		writeError(w, http.StatusForbidden, "consent requires an authenticated organization member")
+		return
 	}
 	client, err := s.oauth.GetClient(r.Context(), r.URL.Query().Get("client_id"))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "unknown client")
+		if errors.Is(err, oauth.ErrNotFound) {
+			writeError(w, http.StatusBadRequest, "unknown client")
+		} else {
+			writeError(w, http.StatusInternalServerError, "client lookup failed")
+		}
 		return
 	}
-	scopes := oauth.NormalizeScopes(strings.Fields(r.URL.Query().Get("scope")))
+	scopes := oauth.NormalizeScopes(oauth.ParseScopes(r.URL.Query().Get("scope")))
 	if len(scopes) == 0 {
 		writeError(w, http.StatusBadRequest, "no valid scopes requested")
 		return
@@ -70,13 +72,10 @@ type oauthConsentDecisionRequest struct {
 // single-use and bound to client + challenge + resource + org.
 func (s *Server) handleOAuthConsentDecision(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
-	if claims == nil {
-		writeError(w, http.StatusForbidden, "consent requires an authenticated user")
-		return
-	}
 	orgID := OrgIDFromContext(r.Context())
-	if orgID == "" {
-		orgID = claims.OrgID
+	if claims == nil || orgID == "" {
+		writeError(w, http.StatusForbidden, "consent requires an authenticated organization member")
+		return
 	}
 	var req oauthConsentDecisionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -85,7 +84,11 @@ func (s *Server) handleOAuthConsentDecision(w http.ResponseWriter, r *http.Reque
 	}
 	client, err := s.oauth.GetClient(r.Context(), req.ClientID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "unknown client")
+		if errors.Is(err, oauth.ErrNotFound) {
+			writeError(w, http.StatusBadRequest, "unknown client")
+		} else {
+			writeError(w, http.StatusInternalServerError, "client lookup failed")
+		}
 		return
 	}
 	allowed := false
@@ -99,28 +102,42 @@ func (s *Server) handleOAuthConsentDecision(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "redirect_uri is not registered for this client")
 		return
 	}
+	target, err := url.Parse(req.RedirectURI)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid redirect_uri")
+		return
+	}
 	if req.CodeChallenge == "" || req.CodeChallengeMethod != "S256" {
 		writeError(w, http.StatusBadRequest, "code_challenge with S256 is required")
+		return
+	}
+	q := target.Query()
+	q.Set("state", req.State)
+	if !req.Approve {
+		q.Set("error", "access_denied")
+		target.RawQuery = q.Encode()
+		writeJSON(w, http.StatusOK, map[string]any{"redirect": target.String()})
+		return
+	}
+	if req.Resource != "" && req.Resource != canonicalResourceURI(r) {
+		writeError(w, http.StatusBadRequest, "resource does not match this MCP server")
 		return
 	}
 	resource := req.Resource
 	if resource == "" {
 		resource = canonicalResourceURI(r)
 	}
-	redirect := req.RedirectURI + "?state=" + url.QueryEscape(req.State)
-	if !req.Approve {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"redirect": redirect + "&error=access_denied",
-		})
-		return
-	}
-	scopes := oauth.NormalizeScopes(strings.Fields(req.Scope))
+	scopes := oauth.NormalizeScopes(oauth.ParseScopes(req.Scope))
 	if len(scopes) == 0 {
 		writeError(w, http.StatusBadRequest, "no valid scopes requested")
 		return
 	}
 	if _, err := s.memberRole(r.Context(), orgID, claims.UserID); err != nil {
-		writeError(w, http.StatusForbidden, "you are not a member of this organization")
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusForbidden, "you are not a member of this organization")
+		} else {
+			writeError(w, http.StatusInternalServerError, "membership lookup failed")
+		}
 		return
 	}
 	code, err := s.oauth.IssueAuthCode(r.Context(), oauth.AuthCode{
@@ -137,7 +154,7 @@ func (s *Server) handleOAuthConsentDecision(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "could not issue authorization code")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"redirect": redirect + "&code=" + url.QueryEscape(code),
-	})
+	q.Set("code", code)
+	target.RawQuery = q.Encode()
+	writeJSON(w, http.StatusOK, map[string]any{"redirect": target.String()})
 }

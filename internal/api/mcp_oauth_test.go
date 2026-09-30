@@ -192,7 +192,16 @@ func TestOAuthFullFlowExecuteSQL(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.Contains(t, rec.Body.String(), `"x"`, "expected result column x")
+	var envelope struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+	require.NotEmpty(t, envelope.Result.Content)
+	require.Contains(t, envelope.Result.Content[0].Text, `"x"`, "expected result column x")
 }
 
 func TestOAuthWrongAudienceRejected(t *testing.T) {
@@ -269,7 +278,7 @@ func TestOAuthConsentInfoAndDeny(t *testing.T) {
 }
 
 func TestOAuthConsentRejectsUnknownClientOrRedirect(t *testing.T) {
-	srv, jwt, _, _ := setupOAuthServer(t)
+	srv, jwt, clientID, _ := setupOAuthServer(t)
 
 	payload, _ := json.Marshal(map[string]any{
 		"client_id": "mcp_missing", "redirect_uri": oauthRedirect,
@@ -280,9 +289,30 @@ func TestOAuthConsentRejectsUnknownClientOrRedirect(t *testing.T) {
 	rec := doJSON(t, srv, "POST", "/api/v1/oauth/consent/decision", jwt, string(payload))
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 
+	// Known client, unregistered redirect URI.
 	payload, _ = json.Marshal(map[string]any{
-		"client_id": "mcp_missing", "redirect_uri": "https://evil.example.com/cb",
+		"client_id": clientID, "redirect_uri": "https://evil.example.com/cb",
 		"scope": "mcp:query", "resource": oauthResource, "state": "s",
+		"code_challenge": oauthChallenge(t), "code_challenge_method": "S256",
+		"approve": true,
+	})
+	rec = doJSON(t, srv, "POST", "/api/v1/oauth/consent/decision", jwt, string(payload))
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+
+	// Known client, registered URI with a suffix — exact match required.
+	payload, _ = json.Marshal(map[string]any{
+		"client_id": clientID, "redirect_uri": oauthRedirect + "/x",
+		"scope": "mcp:query", "resource": oauthResource, "state": "s",
+		"code_challenge": oauthChallenge(t), "code_challenge_method": "S256",
+		"approve": true,
+	})
+	rec = doJSON(t, srv, "POST", "/api/v1/oauth/consent/decision", jwt, string(payload))
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+
+	// Known client, registered URI, resource pinned to a different server.
+	payload, _ = json.Marshal(map[string]any{
+		"client_id": clientID, "redirect_uri": oauthRedirect,
+		"scope": "mcp:query", "resource": "https://evil.example.com/api/v1/mcp", "state": "s",
 		"code_challenge": oauthChallenge(t), "code_challenge_method": "S256",
 		"approve": true,
 	})
