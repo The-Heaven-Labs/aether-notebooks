@@ -138,7 +138,7 @@ task db:reset          # Drop + recreate dev DB (data loss!)
 | `AETHER_CH_TABLE_PERMISSIONS` | no | `false` | Enables per-user ClickHouse warehouse table permissions. When unset/false, every connector executes with its stored credential and reconcile is a no-op. |
 | `AETHER_CH_RECONCILE_INTERVAL` | no | `10m` | Warehouse reconcile catch-up cadence (Go duration, floor `1m`): jittered startup enqueue-all plus interval re-enqueues, on top of mutation triggers. |
 | `AETHER_MCP_OAUTH_ENABLED` | no | `false` | Serves the MCP OAuth 2.1 authorization-server endpoints (`/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`, `/oauth/token`). When off all of them return `404`; the MCP endpoint itself keeps working with PATs/session JWTs. See `docs/mcp-oauth.md`. |
-| `AETHER_MCP_SQL_TIMEOUT_MS` | no | `600000` (10m) | Ceiling for `execute_sql` calls that arrive over MCP (integer ms, floor `1000`). In-app agents keep the 30s default; a per-call `timeout_ms` arg is clamped to this ceiling. |
+| `AETHER_MCP_SQL_TIMEOUT_MS` | no | `600000` (10m) | Ceiling for `execute_sql` calls that arrive over MCP (integer ms; values below `1000` are rejected at startup). In-app agents keep the 30s default; a per-call `timeout_ms` arg is clamped to this ceiling. |
 
 `Taskfile.yml` sets dev values for `AETHER_DATABASE_URL`, `AETHER_MASTER_KEY`, `AETHER_JWT_SECRET`, and `AETHER_PLATFORM_ADMIN_EMAIL` automatically when using `task`. Other vars rely on defaults or are set in `docker-compose.dev.yml`.
 

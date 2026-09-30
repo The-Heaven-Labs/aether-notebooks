@@ -129,7 +129,9 @@ Interactive and agent-session tools (`ask_question`, `spawn_subagents`,
 ## Known limitations
 
 - Per-tool `tools.config.timeout_ms` admin overrides do not apply to MCP calls;
-  tools use their registry default timeout.
+  tools use their registry default timeout. `execute_sql` is the exception: over
+  MCP it runs under the `AETHER_MCP_SQL_TIMEOUT_MS` ceiling (default 10 minutes),
+  and its per-call `timeout_ms` argument is clamped to that ceiling.
 - Long-running tools produce no progress output until they return.
 
 ## Security
@@ -140,5 +142,6 @@ Interactive and agent-session tools (`ask_question`, `spawn_subagents`,
   lookup key derives from `AETHER_MASTER_KEY`, rotating that key invalidates
   tokens that carry a lookup hash. Tokens created before the lookup migration
   keep working via bcrypt and are transparently migrated on first use.
-- OAuth 2.1 onboarding (browser consent, no manual token) is planned but not in
-  this phase; harnesses must be configured with the static header today.
+- OAuth 2.1 onboarding (browser consent, no manual token) is available behind
+  `AETHER_MCP_OAUTH_ENABLED=true` — see [`docs/mcp-oauth.md`](mcp-oauth.md) for
+  setup. PATs remain supported for curl/CI and other headless callers.

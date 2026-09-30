@@ -64,7 +64,7 @@ and `X-Forwarded-Proto` so the advertised resource matches the URL clients use.
 | Variable | Default | Purpose |
 |---|---|---|
 | `AETHER_MCP_OAUTH_ENABLED` | `false` | Serve the OAuth authorization-server endpoints (`/.well-known/oauth-*`, `/oauth/*`). When off, all of them return `404`; PAT/session-JWT access to `/api/v1/mcp` is unaffected. |
-| `AETHER_MCP_SQL_TIMEOUT_MS` | `600000` (10 min, floor `1000`) | Ceiling for `execute_sql` calls that arrive over MCP. In-app agents keep their 30s default; a per-call `timeout_ms` argument is clamped to this ceiling. |
+| `AETHER_MCP_SQL_TIMEOUT_MS` | `600000` (10 min) | Ceiling for `execute_sql` calls that arrive over MCP. Values below `1000` are rejected at startup. In-app agents keep their 30s default; a per-call `timeout_ms` argument is clamped to this ceiling. |
 | `AETHER_RATE_LIMIT_OAUTH_REGISTER` | `10`/min | Per-IP rate limit on Dynamic Client Registration. |
 | `AETHER_RATE_LIMIT_OAUTH_TOKEN` | `30`/min | Per-IP rate limit on the token endpoint. |
 
