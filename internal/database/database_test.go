@@ -1149,7 +1149,8 @@ func TestMigration124AgentSessionACL(t *testing.T) {
 		t.Fatalf("share_with_notebook_viewers = (%s, nullable=%s, default=%v), want (boolean, NO, false)", dataType, nullable, def)
 	}
 
-	// The notebook listing index is pinned to (notebook_id, created_at DESC).
+	// The notebook listing index is pinned to exactly (notebook_id, created_at
+	// DESC); normalize schema qualification so only the index shape is compared.
 	var idxDef string
 	if err := db.Pool.QueryRow(ctx, `
 		SELECT pg_get_indexdef(i.indexrelid)
@@ -1159,8 +1160,28 @@ func TestMigration124AgentSessionACL(t *testing.T) {
 		WHERE t.relname = 'idx_agent_sessions_notebook'`).Scan(&idxDef); err != nil {
 		t.Fatalf("idx_agent_sessions_notebook missing: %v", err)
 	}
-	if !strings.Contains(idxDef, "(notebook_id, created_at DESC)") {
-		t.Fatalf("idx_agent_sessions_notebook = %q, want (notebook_id, created_at DESC)", idxDef)
+	const wantIdxDef = "CREATE INDEX idx_agent_sessions_notebook ON public.agent_sessions USING btree (notebook_id, created_at DESC)"
+	if got := strings.ReplaceAll(idxDef, "public.", ""); got != strings.ReplaceAll(wantIdxDef, "public.", "") {
+		t.Fatalf("idx_agent_sessions_notebook = %q, want %q", idxDef, wantIdxDef)
+	}
+
+	// The redefined CHECK must still accept every legacy ACL resource type plus
+	// agent_session. Quoted matching keeps "agent" from matching "agent_session".
+	var conDef string
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT pg_get_constraintdef(oid)
+		FROM pg_constraint
+		WHERE conrelid = 'acl_entries'::regclass
+		  AND conname = 'acl_entries_resource_type_check'`).Scan(&conDef); err != nil {
+		t.Fatalf("acl_entries_resource_type_check missing: %v", err)
+	}
+	for _, resourceType := range []string{
+		"folder", "notebook", "connector", "dashboard", "agent",
+		"model_config", "skill", "mcp_server", "tool", "agent_session",
+	} {
+		if !strings.Contains(conDef, "'"+resourceType+"'") {
+			t.Fatalf("acl_entries_resource_type_check = %q, missing resource type %q", conDef, resourceType)
+		}
 	}
 
 	tx, err := db.Pool.Begin(ctx)
@@ -1240,8 +1261,10 @@ func TestMigration124AgentSessionACL(t *testing.T) {
 		t.Fatalf("owner ACL entry = (org %s, resource %s, %s/%s), want (org %s, resource %s, user/%s)",
 			aclOrgID, resourceID, subjectType, subjectID, orgID, sessionID, userID)
 	}
+	// Actions are semantically a set; compare order-insensitively rather than
+	// pinning the array order the migration happens to emit today.
 	wantActions := []string{"view", "edit", "share", "delete", "admin"}
-	if !slices.Equal(actions, wantActions) {
+	if !slices.Equal(slices.Sorted(slices.Values(actions)), slices.Sorted(slices.Values(wantActions))) {
 		t.Fatalf("owner ACL actions = %v, want %v", actions, wantActions)
 	}
 }
