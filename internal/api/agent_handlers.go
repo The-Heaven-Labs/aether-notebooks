@@ -602,19 +602,22 @@ func (h *agentHandlers) handleDeleteAgent(w http.ResponseWriter, r *http.Request
 func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
+	ctx := r.Context()
 
-	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "view")
+	allowed, err := h.server.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "view")
 	if err != nil || !allowed {
 		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
 	}
 
 	var req struct {
-		NotebookID          string  `json:"notebook_id"`
-		MaxTurns            int     `json:"max_turns"`
-		Title               *string `json:"title"`
-		AutoApproveTools    bool    `json:"auto_approve_tools"`
-		AutoAnswerQuestions bool    `json:"auto_answer_questions"`
+		NotebookID               string          `json:"notebook_id"`
+		MaxTurns                 int             `json:"max_turns"`
+		Title                    *string         `json:"title"`
+		AutoApproveTools         bool            `json:"auto_approve_tools"`
+		AutoAnswerQuestions      bool            `json:"auto_answer_questions"`
+		Shares                   []aclEntryInput `json:"shares"`
+		ShareWithNotebookViewers bool            `json:"share_with_notebook_viewers"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -630,14 +633,21 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 		req.MaxTurns = 100
 	}
 
-	// Clean up any empty sessions for this user+agent before creating a new one
-	_, err = h.server.db.Pool.Exec(r.Context(), `
-		DELETE FROM agent_sessions
-		WHERE agent_id = $1 AND user_id = $2
-			AND id NOT IN (SELECT DISTINCT session_id FROM agent_messages)
-	`, agentID, claims.UserID)
+	if req.NotebookID != "" {
+		allowed, err = h.server.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", req.NotebookID, "view")
+		if err != nil || !allowed {
+			writeError(w, http.StatusForbidden, "insufficient permissions")
+			return
+		}
+	}
+	if req.ShareWithNotebookViewers && req.NotebookID == "" {
+		writeError(w, http.StatusBadRequest, "share_with_notebook_viewers requires a notebook")
+		return
+	}
+
+	shares, err := h.validateSessionShares(ctx, claims.UserID, claims.OrgID, req.Shares)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -646,21 +656,29 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 	if req.NotebookID != "" {
 		notebookID = &req.NotebookID
 	}
-	_, err = h.server.db.Pool.Exec(r.Context(), `
-		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, title, created_at, auto_approve_tools, auto_answer_questions)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8)
-	`, sessionID, agentID, notebookID, claims.UserID, req.MaxTurns, req.Title, req.AutoApproveTools, req.AutoAnswerQuestions)
-	if err != nil {
+
+	if err := h.createSessionWithSharing(ctx, sessionID, createSessionParams{
+		AgentID:                  agentID,
+		NotebookID:               notebookID,
+		UserID:                   claims.UserID,
+		OrgID:                    claims.OrgID,
+		MaxTurns:                 req.MaxTurns,
+		Title:                    req.Title,
+		AutoApproveTools:         req.AutoApproveTools,
+		AutoAnswerQuestions:      req.AutoAnswerQuestions,
+		ShareWithNotebookViewers: req.ShareWithNotebookViewers,
+		Shares:                   shares,
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if h.server.agentEngine != nil {
-		h.server.agentEngine.SessionStore().SetAdminMode(sessionID, adminModeFromContext(r.Context()))
+		h.server.agentEngine.SessionStore().SetAdminMode(sessionID, adminModeFromContext(ctx))
 	}
 
 	// Look up the model's context window for display purposes
 	var contextWindow int
-	h.server.db.Pool.QueryRow(r.Context(), `
+	h.server.db.Pool.QueryRow(ctx, `
 		SELECT COALESCE(mc.context_window, 128000)
 		FROM agents a
 		JOIN model_configs mc ON mc.id = a.model_config_id
@@ -670,10 +688,21 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 		contextWindow = 128000
 	}
 
-	h.server.audit.Log(r.Context(), audit.Entry{
+	h.server.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "agent_session.create", ResourceType: "agent_session", ResourceID: sessionID,
 	})
+	for _, share := range shares {
+		h.server.audit.Log(ctx, audit.Entry{
+			OrgID: claims.OrgID, UserID: claims.UserID,
+			Action: "acl.granted", ResourceType: "agent_session", ResourceID: sessionID,
+			Metadata: map[string]any{
+				"subject_type": share.SubjectType,
+				"subject_id":   share.SubjectID,
+				"actions":      share.Actions,
+			},
+		})
+	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"session_id":            sessionID,
@@ -681,6 +710,168 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 		"auto_approve_tools":    req.AutoApproveTools,
 		"auto_answer_questions": req.AutoAnswerQuestions,
 	})
+}
+
+// validateSessionShares normalizes the create-session share list. Subjects must
+// belong to the caller's org and sharing is read-only: a non-owner subject's
+// actions must be exactly ["view"] (an omitted list defaults to view).
+// Duplicate subjects collapse, and entries naming the owner are dropped because
+// the owner entry already carries full access.
+func (h *agentHandlers) validateSessionShares(ctx context.Context, userID, orgID string, entries []aclEntryInput) ([]aclEntryInput, error) {
+	normalized := make([]aclEntryInput, 0, len(entries))
+	seen := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		switch e.SubjectType {
+		case "user":
+			if !isValidUUID(e.SubjectID) {
+				return nil, fmt.Errorf("invalid share user")
+			}
+			if e.SubjectID == userID {
+				continue
+			}
+			var member bool
+			if err := h.server.db.Pool.QueryRow(ctx,
+				`SELECT EXISTS (SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2)`,
+				orgID, e.SubjectID).Scan(&member); err != nil {
+				return nil, fmt.Errorf("validate share user: %w", err)
+			}
+			if !member {
+				return nil, fmt.Errorf("share user is not a member of this organization")
+			}
+		case "group":
+			if !isValidUUID(e.SubjectID) {
+				return nil, fmt.Errorf("invalid share group")
+			}
+			var exists bool
+			if err := h.server.db.Pool.QueryRow(ctx,
+				`SELECT EXISTS (SELECT 1 FROM groups WHERE org_id = $1 AND id = $2)`,
+				orgID, e.SubjectID).Scan(&exists); err != nil {
+				return nil, fmt.Errorf("validate share group: %w", err)
+			}
+			if !exists {
+				return nil, fmt.Errorf("share group not found in this organization")
+			}
+		case "org_role":
+			if e.SubjectID != "everyone" {
+				return nil, fmt.Errorf(`org_role shares must use subject_id "everyone"`)
+			}
+		default:
+			return nil, fmt.Errorf("invalid share subject_type")
+		}
+
+		actions := e.Actions
+		if len(actions) == 0 {
+			actions = []string{"view"}
+		}
+		if len(actions) != 1 || actions[0] != "view" {
+			return nil, fmt.Errorf(`shared sessions are read-only: actions must be ["view"]`)
+		}
+
+		key := e.SubjectType + ":" + e.SubjectID
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		normalized = append(normalized, aclEntryInput{
+			SubjectType: e.SubjectType,
+			SubjectID:   e.SubjectID,
+			Actions:     actions,
+		})
+	}
+	return normalized, nil
+}
+
+// createSessionParams carries the validated create-session inputs into the
+// single transaction that persists the session and its ACL entries.
+type createSessionParams struct {
+	AgentID                  string
+	NotebookID               *string
+	UserID                   string
+	OrgID                    string
+	MaxTurns                 int
+	Title                    *string
+	AutoApproveTools         bool
+	AutoAnswerQuestions      bool
+	ShareWithNotebookViewers bool
+	Shares                   []aclEntryInput
+}
+
+// createSessionWithSharing persists the session, its owner ACL entry, and the
+// share entries in one transaction. The caller's empty sessions for the same
+// agent and notebook — and their agent_session ACL rows — are swept first, so
+// deleting sessions never leaves orphaned ACLs behind. agent_sessions is
+// locked before acl_entries to match the V124 migration's lock order.
+func (h *agentHandlers) createSessionWithSharing(ctx context.Context, sessionID string, p createSessionParams) error {
+	tx, err := h.server.db.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin session transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	sweptRows, err := tx.Query(ctx, `
+		DELETE FROM agent_sessions
+		WHERE agent_id = $1 AND user_id = $2
+			AND notebook_id IS NOT DISTINCT FROM $3::uuid
+			AND id NOT IN (SELECT DISTINCT session_id FROM agent_messages)
+		RETURNING id
+	`, p.AgentID, p.UserID, p.NotebookID)
+	if err != nil {
+		return fmt.Errorf("sweep empty sessions: %w", err)
+	}
+	var sweptIDs []string
+	for sweptRows.Next() {
+		var id string
+		if err := sweptRows.Scan(&id); err != nil {
+			sweptRows.Close()
+			return fmt.Errorf("scan swept session: %w", err)
+		}
+		sweptIDs = append(sweptIDs, id)
+	}
+	if err := sweptRows.Err(); err != nil {
+		sweptRows.Close()
+		return fmt.Errorf("sweep empty sessions: %w", err)
+	}
+	sweptRows.Close()
+
+	if len(sweptIDs) > 0 {
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM acl_entries WHERE resource_type = 'agent_session' AND resource_id = ANY($1)`,
+			sweptIDs); err != nil {
+			return fmt.Errorf("delete swept session ACLs: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, title, created_at, auto_approve_tools, auto_answer_questions, share_with_notebook_viewers)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9)
+	`, sessionID, p.AgentID, p.NotebookID, p.UserID, p.MaxTurns, p.Title, p.AutoApproveTools, p.AutoAnswerQuestions, p.ShareWithNotebookViewers); err != nil {
+		return fmt.Errorf("create session: %w", err)
+	}
+
+	// The owner entry is written before the shares so an owner-named share
+	// entry cannot downgrade it: DO NOTHING keeps the full-access row.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		VALUES ($1, 'agent_session', $2::uuid, 'user', $3, ARRAY['view','edit','share','delete','admin'])
+		ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING
+	`, p.OrgID, sessionID, p.UserID); err != nil {
+		return fmt.Errorf("seed session owner ACL: %w", err)
+	}
+
+	for _, share := range p.Shares {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+			VALUES ($1, 'agent_session', $2::uuid, $3, $4, $5)
+			ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING
+		`, p.OrgID, sessionID, share.SubjectType, share.SubjectID, share.Actions); err != nil {
+			return fmt.Errorf("insert session share: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit session: %w", err)
+	}
+	return nil
 }
 
 // @Summary List agent sessions
