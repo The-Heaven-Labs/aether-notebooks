@@ -1832,7 +1832,7 @@ export function NotebookPage() {
       {showChats && (
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 199 }} onClick={() => setShowChats(false)} />
-          <div style={{ position: 'fixed', right: 0, top: 52, bottom: 0, width: 380, overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
+          <div style={{ position: 'fixed', right: 0, top: 52, bottom: 0, width: 380, overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200, background: 'var(--bg-primary)', borderLeft: '1px solid var(--border)' }}>
             <NotebookChats
               notebookId={id!}
               onOpenSession={openSessionViewer}

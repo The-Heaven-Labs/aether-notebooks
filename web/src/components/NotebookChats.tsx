@@ -40,7 +40,7 @@ export function NotebookChats({ notebookId, onClose, onOpenSession, onResumeSess
   }, [notebookId])
 
   const openSession = (session: AgentSessionListItem) => {
-    if (!session.shared && onResumeSession) {
+    if (session.shared === false && onResumeSession) {
       onResumeSession(session)
       return
     }

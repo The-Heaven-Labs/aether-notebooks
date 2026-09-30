@@ -92,6 +92,14 @@ describe('SessionViewer', () => {
     expect(screen.queryByRole('button', { name: /share/i })).toBeNull()
   })
 
+  it('hides the Shared · Read-only banner for a session the viewer owns', async () => {
+    server.use(http.get('/api/v1/sessions/:id', () => HttpResponse.json({ ...SESSION, shared: false, can_edit: true })))
+    await renderViewer()
+
+    expect(await screen.findByText('hello from owner')).toBeInTheDocument()
+    expect(screen.queryByText('Shared · Read-only')).toBeNull()
+  })
+
   it('connects read-only: token + admin_mode query params, only reconnect on open', async () => {
     localStorage.setItem('aether_admin_mode', 'true')
     const ws = await renderViewer()

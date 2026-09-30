@@ -467,7 +467,7 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
         )}
       </div>
 
-      <div style={styles.banner}>Shared · Read-only</div>
+      {!canEdit && <div style={styles.banner}>Shared · Read-only</div>}
 
       {subagentView ? (
         <>

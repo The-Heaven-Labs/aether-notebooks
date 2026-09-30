@@ -115,6 +115,26 @@ describe('NotebookChats', () => {
     expect(onOpenSession).not.toHaveBeenCalled()
   })
 
+  it('does not resume a row whose shared flag is omitted', async () => {
+    const unknown = listingRow({ shared: undefined, can_edit: undefined })
+    mockSessions([unknown])
+    const onOpenSession = vi.fn()
+    const onResumeSession = vi.fn()
+
+    render(
+      <NotebookChats
+        notebookId="nb-1"
+        onClose={vi.fn()}
+        onOpenSession={onOpenSession}
+        onResumeSession={onResumeSession}
+      />,
+    )
+    await userEvent.click(await screen.findByRole('button', { name: /Revenue analysis/ }))
+
+    expect(onOpenSession).toHaveBeenCalledWith(unknown)
+    expect(onResumeSession).not.toHaveBeenCalled()
+  })
+
   it('shows the empty state when the notebook has no visible chats', async () => {
     mockSessions([])
 
