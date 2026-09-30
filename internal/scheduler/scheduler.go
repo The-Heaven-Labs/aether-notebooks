@@ -142,8 +142,29 @@ func (s *Scheduler) rollupStats() {
 }
 
 func (s *Scheduler) purgeTrash(ctx context.Context) {
-	tables := []string{"notebooks", "connectors", "dashboards", "folders"}
-	for _, table := range tables {
+	// The notebook purge must also clear the agent_session ACL rows of the
+	// sessions that the notebook FK cascade removes: acl_entries has no FK to
+	// agent_sessions, so those rows would leak. One data-modifying CTE keeps
+	// the notebook delete and the ACL cleanup atomic.
+	if _, err := s.db.Pool.Exec(ctx, `
+		WITH purged AS (
+			DELETE FROM notebooks
+			WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '7 days'
+			RETURNING id
+		), cleanup AS (
+			DELETE FROM acl_entries
+			WHERE resource_type = 'agent_session'
+			  AND resource_id IN (
+				  SELECT s.id FROM agent_sessions s
+				  WHERE s.notebook_id IN (SELECT id FROM purged)
+			  )
+		)
+		SELECT COUNT(*) FROM purged
+	`); err != nil {
+		slog.Warn("scheduler: purge trash", "table", "notebooks", "error", err)
+	}
+
+	for _, table := range []string{"connectors", "dashboards", "folders"} {
 		_, err := s.db.Pool.Exec(ctx,
 			fmt.Sprintf(`DELETE FROM %s WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '7 days'`, table),
 		)
