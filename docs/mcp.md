@@ -19,6 +19,18 @@ Supported protocol versions are `2025-06-18`, `2025-11-25`, and `2026-07-28`.
 Clients that send the `MCP-Protocol-Version` header must use one of these;
 unsupported values are rejected with HTTP `400` and JSON-RPC `-32600`.
 
+## Authentication
+
+Two authentication paths are supported at the MCP endpoint:
+
+- **OAuth 2.1 (browser consent)** — harnesses that implement the MCP
+  Authorization spec register themselves and prompt you for consent on first
+  use; there is no token to create or paste. Available when
+  `AETHER_MCP_OAUTH_ENABLED=true` — see [`docs/mcp-oauth.md`](mcp-oauth.md).
+- **Personal access token (this doc)** — a static
+  `Authorization: Bearer aether_tok_…` header. Simplest for curl, CI, and
+  harnesses without OAuth support, and the fallback while the OAuth flag is off.
+
 ## 1. Create a personal access token
 
 1. Log in to Aether with your password **or SSO**.
@@ -122,8 +134,11 @@ Interactive and agent-session tools (`ask_question`, `spawn_subagents`,
   prompt; approval is the harness's responsibility.
 - Tool execution failures return `result.isError = true` with a text message.
 - Unknown tools return JSON-RPC `-32602`.
-- Missing/expired/revoked tokens return HTTP `401` with
-  `WWW-Authenticate: Bearer realm="aether"`.
+- Missing/expired/revoked tokens return HTTP `401`. The MCP endpoint advertises
+  `WWW-Authenticate: Bearer realm="aether",
+  resource_metadata="…/.well-known/oauth-protected-resource"` so OAuth-capable
+  clients can discover the authorization server; other API endpoints emit the
+  `realm` parameter only.
 - `GET`/`DELETE` return `405` (no SSE, no sessions).
 
 ## Known limitations
