@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -29,6 +30,85 @@ var resourceTable = map[string]string{
 	"skill":        "skills",
 	"mcp_server":   "mcp_servers",
 	"tool":         "tools",
+}
+
+// resourceOrgID resolves the org that owns a resource for the admin-mode
+// bypass. Folders, resourceTable types, and agent_session (via its agent) are
+// supported; unknown resource types fail closed with an error, and a missing
+// resource resolves to the empty string (no bypass).
+func (s *Server) resourceOrgID(ctx context.Context, resourceType, resourceID string) (string, error) {
+	var query string
+	switch resourceType {
+	case "folder":
+		query = "SELECT org_id FROM folders WHERE id = $1"
+	case "agent_session":
+		query = `SELECT a.org_id FROM agent_sessions s JOIN agents a ON a.id = s.agent_id WHERE s.id = $1`
+	default:
+		table, ok := resourceTable[resourceType]
+		if !ok {
+			return "", fmt.Errorf("unknown resource type %q", resourceType)
+		}
+		query = fmt.Sprintf("SELECT org_id FROM %s WHERE id = $1", table)
+	}
+
+	var resourceOrg string
+	err := s.db.Pool.QueryRow(ctx, query, resourceID).Scan(&resourceOrg)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve %s org: %w", resourceType, err)
+	}
+	return resourceOrg, nil
+}
+
+// checkSessionPermission reports whether userID may perform action on the
+// agent session identified by sessionID. Resolution order:
+//
+//  1. owner fallback — the session's user_id always passes for any action;
+//  2. the agent_session ACL for the requested action, including the org-admin
+//     admin-mode bypass inside checkPermission;
+//  3. for "view" only, live notebook-viewer inheritance when the session's
+//     share_with_notebook_viewers flag is set and a notebook is attached.
+//
+// Sharing is read-only: a non-owner subject can only ever hold view, so an
+// ACL entry granting another action to a non-owner is ignored unless the
+// caller is an org admin with admin mode enabled.
+func (s *Server) checkSessionPermission(ctx context.Context, userID, orgID, orgRole, sessionID, action string) (bool, error) {
+	var (
+		ownerID    string
+		notebookID *string
+		inherit    bool
+	)
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT user_id, notebook_id, share_with_notebook_viewers
+		FROM agent_sessions WHERE id = $1
+	`, sessionID).Scan(&ownerID, &notebookID, &inherit)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("session permission query: %w", err)
+	}
+	if ownerID == userID {
+		return true, nil
+	}
+
+	if action != "view" {
+		if orgRole != "admin" || !adminModeFromContext(ctx) {
+			return false, nil
+		}
+		return s.checkPermission(ctx, userID, orgID, orgRole, "agent_session", sessionID, action)
+	}
+
+	granted, err := s.checkPermission(ctx, userID, orgID, orgRole, "agent_session", sessionID, "view")
+	if err != nil || granted {
+		return granted, err
+	}
+	if inherit && notebookID != nil {
+		return s.checkPermission(ctx, userID, orgID, orgRole, "notebook", *notebookID, "view")
+	}
+	return false, nil
 }
 
 // checkPermission returns true if userID has action on resourceType/resourceID within orgID.
@@ -66,14 +146,11 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 
 	// Org admins bypass ACLs only when admin mode is enabled — scoped to their org
 	if orgRole == "admin" && adminModeFromContext(ctx) {
-		var resourceOrgID string
-		if resourceType == "folder" {
-			s.db.Pool.QueryRow(ctx, "SELECT org_id FROM folders WHERE id=$1", resourceID).Scan(&resourceOrgID)
-		} else if table, ok := resourceTable[resourceType]; ok {
-			q := fmt.Sprintf("SELECT org_id FROM %s WHERE id=$1", table)
-			s.db.Pool.QueryRow(ctx, q, resourceID).Scan(&resourceOrgID)
+		resourceOrg, err := s.resourceOrgID(ctx, resourceType, resourceID)
+		if err != nil {
+			return false, fmt.Errorf("admin bypass org resolve: %w", err)
 		}
-		if resourceOrgID == orgID {
+		if resourceOrg == orgID {
 			return true, nil
 		}
 	}
