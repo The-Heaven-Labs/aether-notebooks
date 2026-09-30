@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -101,8 +102,9 @@ func (c *Client) CreateSession(agentID string, opts CreateSessionOptions) (*Crea
 }
 
 // resolveSessionShares turns --share-user/--share-group references into
-// read-only ACL entries: UUIDs are used as-is, while emails and group names are
-// resolved against the org and must match exactly one subject.
+// read-only ACL entries: UUIDs are canonicalized (lowercase, hyphenated) for the
+// server, while emails and group names are resolved against the org and must
+// match exactly one subject.
 func (c *Client) resolveSessionShares(opts CreateSessionOptions) ([]ACLEntry, error) {
 	if len(opts.ShareUsers) == 0 && len(opts.ShareGroups) == 0 && !opts.ShareEveryone {
 		return nil, nil
@@ -113,8 +115,8 @@ func (c *Client) resolveSessionShares(opts CreateSessionOptions) ([]ACLEntry, er
 	if len(opts.ShareUsers) > 0 {
 		var members []OrgMember
 		for _, ref := range opts.ShareUsers {
-			subjectID := ref
-			if !isUUID(ref) {
+			subjectID, isID := canonicalShareUUID(ref)
+			if !isID {
 				if members == nil {
 					var err error
 					members, err = c.ListMembers()
@@ -144,8 +146,8 @@ func (c *Client) resolveSessionShares(opts CreateSessionOptions) ([]ACLEntry, er
 	if len(opts.ShareGroups) > 0 {
 		var groups []Group
 		for _, ref := range opts.ShareGroups {
-			subjectID := ref
-			if !isUUID(ref) {
+			subjectID, isID := canonicalShareUUID(ref)
+			if !isID {
 				if groups == nil {
 					var err error
 					groups, err = c.ListGroups()
@@ -179,9 +181,24 @@ func (c *Client) resolveSessionShares(opts CreateSessionOptions) ([]ACLEntry, er
 	return shares, nil
 }
 
-func isUUID(s string) bool {
-	_, err := uuid.Parse(s)
-	return err == nil
+// shareUUIDRegexp mirrors the server's strict share-subject UUID check
+// (internal/api/permissions.go isValidUUID), except that it accepts any letter
+// case so hyphenated UUIDs can be normalized before being sent.
+var shareUUIDRegexp = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// canonicalShareUUID reports whether ref is a share subject UUID and returns it
+// in the server's canonical form (lowercase, hyphenated). uuid.Parse accepts
+// further shapes the server rejects (bare 32-hex, braced, urn:uuid:), so those
+// intentionally fall through to email/name resolution.
+func canonicalShareUUID(ref string) (string, bool) {
+	if !shareUUIDRegexp.MatchString(ref) {
+		return "", false
+	}
+	id, err := uuid.Parse(ref)
+	if err != nil {
+		return "", false
+	}
+	return id.String(), true
 }
 
 // sessionShareSummary renders the raw share references for the create command's

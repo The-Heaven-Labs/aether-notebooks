@@ -157,6 +157,112 @@ func TestCreateSessionUUIDShareSkipsMemberLookup(t *testing.T) {
 	require.False(t, groupsCalled, "UUID share groups must not trigger a group lookup")
 }
 
+func TestCreateSessionCanonicalizesUUIDShares(t *testing.T) {
+	var (
+		mu            sync.Mutex
+		rawBody       []byte
+		membersCalled bool
+		groupsCalled  bool
+	)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/members", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		membersCalled = true
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, "[]")
+	})
+	mux.HandleFunc("GET /api/v1/groups", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		groupsCalled = true
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, "[]")
+	})
+	mux.HandleFunc("POST /api/v1/agents/agent-1/session", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		rawBody = body
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"session_id":"sess-1"}`)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := &Client{BaseURL: srv.URL, Token: "tok"}
+	_, err := c.CreateSession("agent-1", CreateSessionOptions{
+		NotebookID:  "nb-1",
+		ShareUsers:  []string{"ABCDEFAB-CDEF-ABCD-EFAB-CDEFABCDEFAB"},
+		ShareGroups: []string{"ABCDEF12-3456-7890-ABCD-EF1234567890"},
+	})
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.False(t, membersCalled, "uppercase user UUIDs must not trigger a member lookup")
+	require.False(t, groupsCalled, "uppercase group UUIDs must not trigger a group lookup")
+
+	var body struct {
+		Shares []ACLEntry `json:"shares"`
+	}
+	require.NoError(t, json.Unmarshal(rawBody, &body))
+	require.Equal(t, []ACLEntry{
+		{SubjectType: "user", SubjectID: "abcdefab-cdef-abcd-efab-cdefabcdefab", Actions: []string{"view"}},
+		{SubjectType: "group", SubjectID: "abcdef12-3456-7890-abcd-ef1234567890", Actions: []string{"view"}},
+	}, body.Shares)
+}
+
+func TestCreateSessionBareHexShareFallsThroughToLookup(t *testing.T) {
+	var (
+		mu            sync.Mutex
+		rawBody       []byte
+		membersCalled bool
+	)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/members", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		membersCalled = true
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]OrgMember{
+			{UserID: testShareUserID, Email: "alice@example.com"},
+		})
+	})
+	mux.HandleFunc("POST /api/v1/agents/agent-1/session", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		rawBody = body
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"session_id":"sess-1"}`)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// uuid.Parse accepts the bare 32-hex form, but the server's strict
+	// isValidUUID regexp rejects it, so the CLI treats it as an email/name.
+	c := &Client{BaseURL: srv.URL, Token: "tok"}
+	_, err := c.CreateSession("agent-1", CreateSessionOptions{
+		NotebookID: "nb-1",
+		ShareUsers: []string{"abcdefababcdefabcdefabcdefabcdefab"},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not found")
+	require.Contains(t, err.Error(), "email or user UUID")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.True(t, membersCalled, "bare 32-hex must fall through to email/name resolution")
+	require.Empty(t, rawBody, "create must not run when the share user cannot be resolved")
+}
+
 func TestCreateSessionUnknownShareUserFails(t *testing.T) {
 	var (
 		mu       sync.Mutex
