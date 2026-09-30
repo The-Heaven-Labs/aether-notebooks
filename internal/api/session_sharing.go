@@ -21,6 +21,20 @@ var errInvalidSessionShare = errors.New("invalid session share")
 // amplify into one query per entry.
 const maxSessionShares = 100
 
+// sessionOwnerActions is the full-access action set written to a session
+// owner's ACL row at creation and re-upserted by the PUT handler. It is the
+// single Go source of truth for the owner entry; both call sites bind it as a
+// query parameter rather than spelling the array out in SQL.
+var sessionOwnerActions = []string{"view", "edit", "share", "delete", "admin"}
+
+// shareQueryer is the query surface share normalization needs. Both
+// *pgxpool.Pool and pgx.Tx satisfy it, so the same validation runs inside the
+// PUT transaction (against the locked session) and against the pool on session
+// create.
+type shareQueryer interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
 // writeSessionShareError maps a share-normalization error to the session
 // create/update response: 400 with a stable message for invalid input, 500 with
 // a generic message (and a server log) for anything else.
@@ -34,14 +48,15 @@ func writeSessionShareError(w http.ResponseWriter, err error) {
 }
 
 // normalizeSessionShareEntries validates and normalizes a session share list for
-// userID in orgID. Subjects must belong to the caller's org and sharing is
-// read-only: a non-owner subject's actions must be exactly ["view"] (an omitted
-// list defaults to view). Duplicate subjects collapse, and entries naming the
-// owner are dropped because the owner entry already carries full access.
+// userID in orgID, running its membership lookups through q. Subjects must
+// belong to the caller's org and sharing is read-only: a non-owner subject's
+// actions must be exactly ["view"] (an omitted list defaults to view).
+// Duplicate subjects collapse, and entries naming the owner are dropped because
+// the owner entry already carries full access.
 //
 // Invalid input wraps errInvalidSessionShare; database failures are wrapped
 // without it so writeSessionShareError can map them to 500.
-func (s *Server) normalizeSessionShareEntries(ctx context.Context, userID, orgID string, entries []aclEntryInput) ([]aclEntryInput, error) {
+func (s *Server) normalizeSessionShareEntries(ctx context.Context, q shareQueryer, userID, orgID string, entries []aclEntryInput) ([]aclEntryInput, error) {
 	if len(entries) > maxSessionShares {
 		return nil, fmt.Errorf("%w: at most %d shares are allowed", errInvalidSessionShare, maxSessionShares)
 	}
@@ -96,7 +111,7 @@ func (s *Server) normalizeSessionShareEntries(ctx context.Context, userID, orgID
 	// Membership lookups are batched so a full share list costs at most two
 	// queries instead of one per entry.
 	if len(userIDs) > 0 {
-		found, err := s.lookupShareSubjectIDs(ctx,
+		found, err := s.lookupShareSubjectIDs(ctx, q,
 			`SELECT user_id FROM org_members WHERE org_id = $1 AND user_id = ANY($2::uuid[])`,
 			orgID, userIDs)
 		if err != nil {
@@ -109,7 +124,7 @@ func (s *Server) normalizeSessionShareEntries(ctx context.Context, userID, orgID
 		}
 	}
 	if len(groupIDs) > 0 {
-		found, err := s.lookupShareSubjectIDs(ctx,
+		found, err := s.lookupShareSubjectIDs(ctx, q,
 			`SELECT id FROM groups WHERE org_id = $1 AND id = ANY($2::uuid[])`,
 			orgID, groupIDs)
 		if err != nil {
@@ -128,8 +143,8 @@ func (s *Server) normalizeSessionShareEntries(ctx context.Context, userID, orgID
 // lookupShareSubjectIDs runs a single-column lookup scoped by orgID with the
 // candidate IDs passed as a uuid array in $2, and returns the matching IDs as a
 // set. Query errors are returned unwrapped so callers can classify them.
-func (s *Server) lookupShareSubjectIDs(ctx context.Context, query, orgID string, ids []string) (map[string]bool, error) {
-	rows, err := s.db.Pool.Query(ctx, query, orgID, ids)
+func (s *Server) lookupShareSubjectIDs(ctx context.Context, q shareQueryer, query, orgID string, ids []string) (map[string]bool, error) {
+	rows, err := q.Query(ctx, query, orgID, ids)
 	if err != nil {
 		return nil, err
 	}

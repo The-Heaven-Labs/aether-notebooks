@@ -46,6 +46,10 @@ func (s *Server) handleGetACL(w http.ResponseWriter, r *http.Request) {
 	resourceID := r.PathValue("resource_id")
 	ctx := r.Context()
 
+	// Session ACL rows live in the agent's org, which may differ from the
+	// token's org for the owner, so the scan must use the session's org to see
+	// what the PUT handler writes.
+	scanOrgID := claims.OrgID
 	if resourceType == "agent_session" {
 		// Sessions have no unconditional org-admin bypass: an org admin needs
 		// admin mode, exactly like every other session route.
@@ -54,6 +58,16 @@ func (s *Server) handleGetACL(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
 		}
+		sessionOrgID, err := s.resourceOrgID(ctx, "agent_session", resourceID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load session")
+			return
+		}
+		if sessionOrgID == "" {
+			writeError(w, http.StatusNotFound, "session not found")
+			return
+		}
+		scanOrgID = sessionOrgID
 	} else if claims.Role != "admin" {
 		allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, resourceType, resourceID, "view")
 		if err != nil || !allowed {
@@ -67,7 +81,7 @@ func (s *Server) handleGetACL(w http.ResponseWriter, r *http.Request) {
          FROM acl_entries
          WHERE resource_type = $1 AND resource_id = $2::uuid AND org_id = $3
          ORDER BY subject_type, subject_id`,
-		resourceType, resourceID, claims.OrgID)
+		resourceType, resourceID, scanOrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -239,6 +253,11 @@ func (s *Server) handlePutACL(w http.ResponseWriter, r *http.Request) {
 		}
 		oldEntries = append(oldEntries, e)
 	}
+	if err := existingRows.Err(); err != nil {
+		existingRows.Close()
+		writeError(w, http.StatusInternalServerError, "scan failed")
+		return
+	}
 	existingRows.Close()
 
 	// Delete all existing entries for this resource in this org
@@ -293,17 +312,52 @@ func (s *Server) handlePutACL(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePutSessionACL implements ACL writes for agent_session resources. Only
-// the owner or an org admin in admin mode may write (checkSessionPermission
-// with "share" honors both); org admins without admin mode are ordinary
-// members here. Entries are validated as same-org read-only shares and replace
-// the previous non-owner entries; the owner's full-access entry is upserted
-// last, so a replace-style PUT can never lock the owner out.
+// the owner or an org admin in admin mode may write; org admins without admin
+// mode are ordinary members here. The session row is locked before any
+// acl_entries work (agent_sessions -> acl_entries, matching create/delete), so
+// concurrent PUTs serialize and a session delete cannot interleave to leave
+// orphan ACL rows. The owner and org used to validate and mutate come from that
+// locked row, and a missing session is a 404. Entries are validated as same-org
+// read-only shares and replace the previous non-owner entries; the owner's
+// full-access entry is upserted last, so a replace-style PUT can never lock the
+// owner out.
 func (s *Server) handlePutSessionACL(w http.ResponseWriter, r *http.Request, sessionID string) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
 
-	allowed, err := s.checkSessionPermission(ctx, claims.UserID, claims.OrgID, claims.Role, sessionID, "share")
-	if err != nil || !allowed {
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	// Lock and resolve the session before touching acl_entries. Locking only
+	// the session row keeps the transaction from touching agents rows and
+	// holds the lock order the create/delete paths rely on.
+	var ownerID, sessionOrgID string
+	err = tx.QueryRow(ctx, `
+		SELECT s.user_id, a.org_id
+		FROM agent_sessions s
+		JOIN agents a ON a.id = s.agent_id
+		WHERE s.id = $1
+		FOR UPDATE OF s
+	`, sessionID).Scan(&ownerID, &sessionOrgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load session")
+		return
+	}
+
+	// Only the owner or an org admin in admin mode may write. This mirrors
+	// checkSessionPermission's "share" rule against the row already locked and
+	// resolved above, so no second pool connection is needed while the
+	// transaction holds the lock.
+	if claims.UserID != ownerID &&
+		!(claims.Role == "admin" && adminModeFromContext(ctx) && claims.OrgID == sessionOrgID) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
@@ -316,39 +370,15 @@ func (s *Server) handlePutSessionACL(w http.ResponseWriter, r *http.Request, ses
 		return
 	}
 
-	// Session ACL rows belong to the agent's org; resolve that org and the
-	// owner (whose entry is preserved) before validating the shares.
-	var ownerID, sessionOrgID string
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT s.user_id, a.org_id
-		FROM agent_sessions s
-		JOIN agents a ON a.id = s.agent_id
-		WHERE s.id = $1
-	`, sessionID).Scan(&ownerID, &sessionOrgID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "session not found")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load session")
-		return
-	}
-
 	// The normalizer drops entries naming the owner and rejects anything that
 	// is not a same-org, view-only share: invalid input maps to 400 and
-	// database failures map to 500.
-	shares, err := s.normalizeSessionShareEntries(ctx, ownerID, sessionOrgID, req.Entries)
+	// database failures map to 500. Running it against the transaction keeps
+	// the membership checks in the same snapshot as the locked session.
+	shares, err := s.normalizeSessionShareEntries(ctx, tx, ownerID, sessionOrgID, req.Entries)
 	if err != nil {
 		writeSessionShareError(w, err)
 		return
 	}
-
-	tx, err := s.db.Pool.Begin(ctx)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "database error")
-		return
-	}
-	defer tx.Rollback(ctx)
 
 	// Capture the previous non-owner entries for the audit diff. The preserved
 	// owner row is excluded so it never surfaces as revoked.
@@ -371,6 +401,11 @@ func (s *Server) handlePutSessionACL(w http.ResponseWriter, r *http.Request, ses
 		}
 		oldEntries = append(oldEntries, e)
 	}
+	if err := oldRows.Err(); err != nil {
+		oldRows.Close()
+		writeError(w, http.StatusInternalServerError, "scan failed")
+		return
+	}
 	oldRows.Close()
 
 	// Replace only the non-owner entries; the owner row is untouched here.
@@ -392,10 +427,10 @@ func (s *Server) handlePutSessionACL(w http.ResponseWriter, r *http.Request, ses
 	// one and restore full access if it was ever downgraded.
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-		VALUES ($1, 'agent_session', $2::uuid, 'user', $3, ARRAY['view','edit','share','delete','admin'])
+		VALUES ($1, 'agent_session', $2::uuid, 'user', $3, $4)
 		ON CONFLICT (resource_type, resource_id, subject_type, subject_id)
 		DO UPDATE SET actions = EXCLUDED.actions
-	`, sessionOrgID, sessionID, ownerID); err != nil {
+	`, sessionOrgID, sessionID, ownerID, sessionOwnerActions); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to preserve owner ACL entry")
 		return
 	}

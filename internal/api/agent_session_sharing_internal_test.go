@@ -95,7 +95,7 @@ func TestNormalizeSessionShareEntriesDedupAndOwnerDrop(t *testing.T) {
 		groupID.String(), orgID.String(), "Normalize Group")
 	require.NoError(t, err)
 
-	got, err := s.normalizeSessionShareEntries(ctx, ownerID.String(), orgID.String(), []aclEntryInput{
+	got, err := s.normalizeSessionShareEntries(ctx, s.db.Pool, ownerID.String(), orgID.String(), []aclEntryInput{
 		{SubjectType: "user", SubjectID: memberID.String()},
 		{SubjectType: "user", SubjectID: ownerID.String(), Actions: []string{"edit"}},
 		{SubjectType: "user", SubjectID: memberID.String(), Actions: []string{"view"}},
@@ -123,7 +123,7 @@ func TestNormalizeSessionShareEntriesCap(t *testing.T) {
 		entries[i] = aclEntryInput{SubjectType: "user", SubjectID: ownerID, Actions: []string{"view"}}
 	}
 
-	_, err := s.normalizeSessionShareEntries(ctx, ownerID, uuid.NewString(), entries)
+	_, err := s.normalizeSessionShareEntries(ctx, s.db.Pool, ownerID, uuid.NewString(), entries)
 	require.Error(t, err)
 	require.ErrorIs(t, err, errInvalidSessionShare, "oversized share lists must be rejected as invalid input")
 }
@@ -336,7 +336,7 @@ func TestSessionShareDatabaseFailureMapsToServerError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := s.normalizeSessionShareEntries(ctx, uuid.NewString(), uuid.NewString(), []aclEntryInput{
+	_, err := s.normalizeSessionShareEntries(ctx, s.db.Pool, uuid.NewString(), uuid.NewString(), []aclEntryInput{
 		{SubjectType: "user", SubjectID: uuid.NewString(), Actions: []string{"view"}},
 	})
 	require.Error(t, err)

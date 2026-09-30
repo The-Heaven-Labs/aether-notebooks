@@ -177,6 +177,26 @@ func putACLEntries(t *testing.T, srv *api.Server, token string, adminMode bool, 
 	return aclRequest(t, srv, token, "PUT", resourceType, resourceID, adminMode, map[string]any{"entries": entries})
 }
 
+// aclResponseActions indexes an ACL GET/PUT response body by "type:id", which
+// lets tests assert exactly which entries (owner included) came back.
+func aclResponseActions(t *testing.T, body string) map[string][]string {
+	t.Helper()
+	var entries []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(body), &entries))
+	actionsBySubject := make(map[string][]string, len(entries))
+	for _, e := range entries {
+		subjectType, _ := e["subject_type"].(string)
+		subjectID, _ := e["subject_id"].(string)
+		rawActions, _ := e["actions"].([]any)
+		actions := make([]string, 0, len(rawActions))
+		for _, a := range rawActions {
+			actions = append(actions, fmt.Sprint(a))
+		}
+		actionsBySubject[subjectType+":"+subjectID] = actions
+	}
+	return actionsBySubject
+}
+
 func TestCreateSessionWithShares(t *testing.T) {
 	f := setupSessionSharingFixture(t)
 	ctx := context.Background()
@@ -1289,6 +1309,33 @@ func TestSessionACLWriteRules(t *testing.T) {
 		require.Equal(t, http.StatusOK, code, "%v", body)
 		require.Contains(t, body, "still mine", "the owner must still be able to rename")
 	})
+
+	t.Run("response includes the owner and share entries", func(t *testing.T) {
+		code, body := putACLEntries(t, f.srv, f.aliceToken, false, "agent_session", sessionID, bobView, carolView)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+
+		entries := aclResponseActions(t, body)
+		require.Equal(t, ownerActions, entries["user:"+f.aliceID],
+			"the response must include the preserved owner entry")
+		require.Equal(t, []string{"view"}, entries["user:"+f.bobID])
+		require.Equal(t, []string{"view"}, entries["user:"+f.carolID])
+	})
+
+	t.Run("owner-named request entry cannot downgrade the owner", func(t *testing.T) {
+		ownerView := map[string]any{"subject_type": "user", "subject_id": f.aliceID, "actions": []string{"view"}}
+		code, body := putACLEntries(t, f.srv, f.aliceToken, false, "agent_session", sessionID, ownerView, bobView)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+
+		entries := aclResponseActions(t, body)
+		require.Equal(t, ownerActions, entries["user:"+f.aliceID],
+			"an owner-named request entry must be dropped, not applied")
+		require.Equal(t, ownerActions, sessionACLActions(t, f.srv, sessionID, "user", f.aliceID))
+	})
+
+	t.Run("missing session is 404", func(t *testing.T) {
+		code, body := putACLEntries(t, f.srv, f.aliceToken, false, "agent_session", uuid.NewString(), bobView)
+		require.Equal(t, http.StatusNotFound, code, "%v", body)
+	})
 }
 
 // TestSessionACLReadRules pins GET /acl for agent_session: session view or
@@ -1318,6 +1365,21 @@ func TestSessionACLReadRules(t *testing.T) {
 	t.Run("admin mode reads", func(t *testing.T) {
 		code, body := aclRequest(t, f.srv, adminToken, "GET", "agent_session", sessionID, true, nil)
 		require.Equal(t, http.StatusOK, code, "%v", body)
+	})
+	t.Run("owner with a foreign-org token reads the session's org entries", func(t *testing.T) {
+		var foreignOrgID string
+		require.NoError(t, f.srv.DB().Pool.QueryRow(context.Background(),
+			`INSERT INTO orgs (name, slug) VALUES ('ACL Read Foreign Org', 'acl-read-foreign-' || gen_random_uuid()) RETURNING id`,
+		).Scan(&foreignOrgID))
+		foreignToken := issueToken(t, f.aliceID, foreignOrgID, "member")
+
+		code, body := aclRequest(t, f.srv, foreignToken, "GET", "agent_session", sessionID, false, nil)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+
+		entries := aclResponseActions(t, body)
+		require.Contains(t, entries, "user:"+f.aliceID,
+			"the owner must see the session's org entries, not an empty list")
+		require.Contains(t, entries, "user:"+f.bobID)
 	})
 }
 

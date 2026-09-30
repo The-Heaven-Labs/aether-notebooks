@@ -663,7 +663,7 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	shares, err := h.server.normalizeSessionShareEntries(ctx, claims.UserID, claims.OrgID, req.Shares)
+	shares, err := h.server.normalizeSessionShareEntries(ctx, h.server.db.Pool, claims.UserID, claims.OrgID, req.Shares)
 	if err != nil {
 		writeSessionShareError(w, err)
 		return
@@ -801,9 +801,9 @@ func (h *agentHandlers) createSessionWithSharing(ctx context.Context, sessionID 
 	// entry cannot downgrade it: DO NOTHING keeps the full-access row.
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-		VALUES ($1, 'agent_session', $2::uuid, 'user', $3, ARRAY['view','edit','share','delete','admin'])
+		VALUES ($1, 'agent_session', $2::uuid, 'user', $3, $4)
 		ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING
-	`, p.OrgID, sessionID, p.UserID); err != nil {
+	`, p.OrgID, sessionID, p.UserID, sessionOwnerActions); err != nil {
 		return fmt.Errorf("seed session owner ACL: %w", err)
 	}
 
