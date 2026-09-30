@@ -326,7 +326,7 @@ func TestAgent_SessionWithPermission(t *testing.T) {
 			"agent view alone must not grant session reads")
 	})
 
-	t.Run("aliceA updates session title on UserACL — 403 (view-only, no edit)", func(t *testing.T) {
+	t.Run("aliceA updates session title on UserACL — 403 (not the session owner)", func(t *testing.T) {
 		status, body := f.DoRequest(t, "aliceA", "PATCH",
 			"/api/v1/sessions/"+sessionID+"/title",
 			map[string]string{"title": "renamed"})

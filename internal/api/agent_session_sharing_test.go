@@ -634,6 +634,27 @@ func TestSessionAttachmentAuthorization(t *testing.T) {
 	attID, _ := resp["id"].(string)
 	require.NotEmpty(t, attID)
 
+	// The owner fallback is org-agnostic, so a token carrying a different org
+	// still authorizes the owner's upload; the stored row must nevertheless be
+	// keyed to the agent's org, not the token's.
+	t.Run("owner upload with foreign-org token stores the agent's org", func(t *testing.T) {
+		var foreignOrgID string
+		require.NoError(t, f.srv.DB().Pool.QueryRow(context.Background(),
+			`INSERT INTO orgs (name, slug) VALUES ('Attachment Foreign Org', 'attach-foreign-' || gen_random_uuid()) RETURNING id`,
+		).Scan(&foreignOrgID))
+		foreignToken := issueToken(t, f.aliceID, foreignOrgID, "member")
+
+		code, resp := uploadSessionAttachment(t, f.srv, foreignToken, sessionID)
+		require.Equal(t, http.StatusCreated, code, "%v", resp)
+		foreignAttID, _ := resp["id"].(string)
+		require.NotEmpty(t, foreignAttID)
+
+		var storedOrgID string
+		require.NoError(t, f.srv.DB().Pool.QueryRow(context.Background(),
+			`SELECT org_id FROM session_attachments WHERE id = $1`, foreignAttID).Scan(&storedOrgID))
+		require.Equal(t, f.orgID, storedOrgID, "attachment must be stored under the session's org")
+	})
+
 	t.Run("shared viewer with agent edit cannot upload", func(t *testing.T) {
 		code, body := uploadSessionAttachment(t, f.srv, f.bobToken, sessionID)
 		require.Equal(t, http.StatusForbidden, code, "%v", body)

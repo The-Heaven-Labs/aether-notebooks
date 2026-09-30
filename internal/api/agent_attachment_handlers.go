@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -28,13 +29,22 @@ func (s *Server) handleUploadAgentAttachment(w http.ResponseWriter, r *http.Requ
 	sessionID := r.PathValue("session_id")
 	ctx := r.Context()
 
-	var exists bool
-	if err := s.db.Pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM agent_sessions WHERE id = $1)", sessionID).Scan(&exists); err != nil {
-		writeError(w, http.StatusInternalServerError, "db error")
+	// Resolve the session's agent org: authorization (the owner fallback in
+	// checkSessionPermission) is org-agnostic, but the stored row must be
+	// keyed to the org that owns the agent, not the caller's token org.
+	var sessionOrgID string
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT a.org_id
+		FROM agent_sessions s
+		JOIN agents a ON a.id = s.agent_id
+		WHERE s.id = $1
+	`, sessionID).Scan(&sessionOrgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	if !exists {
-		writeError(w, http.StatusNotFound, "session not found")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
 
@@ -80,7 +90,7 @@ func (s *Server) handleUploadAgentAttachment(w http.ResponseWriter, r *http.Requ
 	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO session_attachments (id, session_id, org_id, filename, mime_type, size_bytes, storage_path, created_by)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, attID, sessionID, claims.OrgID, header.Filename, mimeType, header.Size, attID, claims.UserID)
+	`, attID, sessionID, sessionOrgID, header.Filename, mimeType, header.Size, attID, claims.UserID)
 	if err != nil {
 		slog.Error("agent attachment db insert failed", "error", err)
 		s.store.Delete(attID)
