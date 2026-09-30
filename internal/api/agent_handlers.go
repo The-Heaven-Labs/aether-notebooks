@@ -883,9 +883,13 @@ func (h *agentHandlers) handleGetSession(w http.ResponseWriter, r *http.Request)
 	var title *string
 	var notebookID *string
 	err := h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT id, agent_id, notebook_id, user_id, max_turns, ended_at, title, created_at
-		FROM agent_sessions WHERE id = $1
-	`, sessionID).Scan(&s.ID, &s.AgentID, &notebookID, &s.UserID, &s.MaxTurns, &endedAt, &title, &s.CreatedAt)
+		SELECT s.id, s.agent_id, s.notebook_id, s.user_id, u.email, s.max_turns, s.ended_at, s.title, s.created_at,
+			s.share_with_notebook_viewers
+		FROM agent_sessions s
+		JOIN users u ON u.id = s.user_id
+		WHERE s.id = $1
+	`, sessionID).Scan(&s.ID, &s.AgentID, &notebookID, &s.UserID, &s.OwnerEmail,
+		&s.MaxTurns, &endedAt, &title, &s.CreatedAt, &s.ShareWithNotebookViewers)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
@@ -903,6 +907,15 @@ func (h *agentHandlers) handleGetSession(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
 	}
+
+	canEdit, err := h.server.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "edit")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+
+	s.Shared = s.UserID != claims.UserID
+	s.CanEdit = canEdit
 
 	writeJSON(w, http.StatusOK, s)
 }

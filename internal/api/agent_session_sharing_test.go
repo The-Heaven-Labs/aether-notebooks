@@ -28,6 +28,7 @@ type sessionSharingFixture struct {
 	srv        *api.Server
 	orgID      string
 	aliceID    string
+	aliceEmail string
 	aliceToken string
 	bobID      string
 	bobToken   string
@@ -46,8 +47,8 @@ func setupSessionSharingFixture(t *testing.T) *sessionSharingFixture {
 	srv := setupTestServerWithAttachDir(t)
 	ts := time.Now().UnixNano()
 
-	aliceToken := registerAndGetToken(t, srv,
-		fmt.Sprintf("session-share-alice-%d@example.com", ts), "Session Sharing Org")
+	aliceEmail := fmt.Sprintf("session-share-alice-%d@example.com", ts)
+	aliceToken := registerAndGetToken(t, srv, aliceEmail, "Session Sharing Org")
 	aliceID := userIDFromToken(t, srv, aliceToken)
 	orgID := orgIDFromUser(t, srv, aliceID)
 
@@ -64,7 +65,7 @@ func setupSessionSharingFixture(t *testing.T) *sessionSharingFixture {
 
 	return &sessionSharingFixture{
 		srv: srv, orgID: orgID,
-		aliceID: aliceID, aliceToken: aliceToken,
+		aliceID: aliceID, aliceEmail: aliceEmail, aliceToken: aliceToken,
 		bobID: bobID, bobToken: bobToken,
 		carolID: carolID, carolToken: carolToken,
 		agentID: agentID,
@@ -632,6 +633,58 @@ func TestSessionReadNotebookInheritance(t *testing.T) {
 	t.Run("notebook viewer cannot upload to inherited session", func(t *testing.T) {
 		code, body := uploadSessionAttachment(t, f.srv, f.carolToken, inheritID)
 		require.Equal(t, http.StatusForbidden, code, "%v", body)
+	})
+}
+
+// TestGetSessionViewerFields pins the GET /sessions/{id} viewer contract: the
+// body carries the owner's email, the request-relative shared/can_edit flags,
+// and the notebook-inheritance flag so a viewer never needs a listing call.
+func TestGetSessionViewerFields(t *testing.T) {
+	f := setupSessionSharingFixture(t)
+	notebookID := createNotebook(t, f.srv, f.aliceToken, "Viewer Fields NB")
+
+	shared := f.createSession(t, map[string]any{
+		"notebook_id":                 notebookID,
+		"share_with_notebook_viewers": true,
+	})
+	grantACL(t, f.srv, f.orgID, "agent_session", shared, "user", f.bobID, "view")
+	// Non-empty sessions survive the empty-session sweep that the next create
+	// runs for the same agent+notebook.
+	seedSessionMessage(t, f.srv, shared, "viewer fields")
+	private := f.createSession(t, map[string]any{"notebook_id": notebookID})
+
+	getSession := func(token, sessionID string) map[string]any {
+		t.Helper()
+		code, body := rawRequest(t, f.srv, token, "GET", "/api/v1/sessions/"+sessionID, nil)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal([]byte(body), &resp))
+		return resp
+	}
+
+	t.Run("owner sees owner fields and can edit", func(t *testing.T) {
+		resp := getSession(f.aliceToken, shared)
+		require.Equal(t, f.aliceEmail, resp["owner_email"])
+		require.Equal(t, false, resp["shared"])
+		require.Equal(t, true, resp["can_edit"])
+		require.Equal(t, true, resp["share_with_notebook_viewers"])
+	})
+
+	t.Run("shared viewer sees the owner but cannot edit", func(t *testing.T) {
+		resp := getSession(f.bobToken, shared)
+		require.Equal(t, f.aliceEmail, resp["owner_email"])
+		require.Equal(t, true, resp["shared"])
+		require.Equal(t, false, resp["can_edit"])
+		require.Equal(t, true, resp["share_with_notebook_viewers"])
+	})
+
+	t.Run("inherit flag off is returned for a non-owner too", func(t *testing.T) {
+		grantACL(t, f.srv, f.orgID, "agent_session", private, "user", f.bobID, "view")
+		resp := getSession(f.bobToken, private)
+		require.Equal(t, f.aliceEmail, resp["owner_email"])
+		require.Equal(t, true, resp["shared"])
+		require.Equal(t, false, resp["can_edit"])
+		require.Equal(t, false, resp["share_with_notebook_viewers"])
 	})
 }
 
