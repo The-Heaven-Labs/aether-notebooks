@@ -75,9 +75,33 @@ func addSessionPermMember(t *testing.T, s *Server, orgID, userID uuid.UUID, role
 }
 
 // seedSessionPermAgentAndSession inserts an agent and a session owned by
-// ownerID, returning both IDs plus the optional notebook. No ACL entry is
-// written: owner access must come from the fallback.
+// ownerID, creating and attaching a fresh notebook when withNotebook is true.
+// It returns the agent and notebook IDs (notebook is zero when none was
+// created) plus the session ID. No ACL entry is written: owner access must come
+// from the fallback.
 func seedSessionPermAgentAndSession(t *testing.T, s *Server, orgID, ownerID uuid.UUID, withNotebook, inherit bool) (agentID, notebookID, sessionID uuid.UUID) {
+	t.Helper()
+
+	var nb *uuid.UUID
+	if withNotebook {
+		notebookID = uuid.New()
+		_, err := s.db.Pool.Exec(context.Background(),
+			`INSERT INTO notebooks (id, org_id, title, created_by) VALUES ($1, $2, $3, $4)`,
+			notebookID.String(), orgID.String(), "Session Perm Notebook", ownerID.String())
+		require.NoError(t, err)
+		nb = &notebookID
+	}
+
+	agentID, sessionID = seedSessionPermSessionForNotebook(t, s, orgID, ownerID, nb, inherit)
+	return agentID, notebookID, sessionID
+}
+
+// seedSessionPermSessionForNotebook inserts an agent and a session owned by
+// ownerID attached to notebookID (nil leaves the session notebookless), with
+// share_with_notebook_viewers set to inherit. It returns both IDs. No ACL entry
+// is written: owner access must come from the fallback. Tests use it to attach
+// sibling sessions that differ only in the inherit flag to one notebook.
+func seedSessionPermSessionForNotebook(t *testing.T, s *Server, orgID, ownerID uuid.UUID, notebookID *uuid.UUID, inherit bool) (agentID, sessionID uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -88,12 +112,7 @@ func seedSessionPermAgentAndSession(t *testing.T, s *Server, orgID, ownerID uuid
 	require.NoError(t, err)
 
 	var nb any
-	if withNotebook {
-		notebookID = uuid.New()
-		_, err = s.db.Pool.Exec(ctx,
-			`INSERT INTO notebooks (id, org_id, title, created_by) VALUES ($1, $2, $3, $4)`,
-			notebookID.String(), orgID.String(), "Session Perm Notebook", ownerID.String())
-		require.NoError(t, err)
+	if notebookID != nil {
 		nb = notebookID.String()
 	}
 
@@ -103,7 +122,7 @@ func seedSessionPermAgentAndSession(t *testing.T, s *Server, orgID, ownerID uuid
 		 VALUES ($1, $2, $3, $4, $5)`,
 		sessionID.String(), agentID.String(), nb, ownerID.String(), inherit)
 	require.NoError(t, err)
-	return agentID, notebookID, sessionID
+	return agentID, sessionID
 }
 
 func grantSessionPermACL(t *testing.T, s *Server, orgID uuid.UUID, resourceType string, resourceID, subjectID uuid.UUID, actions []string) {
@@ -211,15 +230,23 @@ func TestCheckSessionPermissionNotebookInheritance(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, allowed, "removing the notebook grant must revoke inheritance immediately")
 
-	// The flag is required: a session in the same notebook without it stays
-	// invisible even to notebook viewers.
+	// The inherit flag is the only difference between the next two sessions:
+	// both hang off notebookID, which the viewer can view. The flagged session
+	// is visible through inheritance, while flipping the flag off must deny
+	// that same notebook viewer with no other variable changed.
 	grantSessionPermACL(t, s, orgID, "notebook", notebookID, viewerID, []string{"view"})
-	_, _, flaglessSessionID := seedSessionPermAgentAndSession(t, s, orgID, ownerID, true, false)
+	_, flaggedSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, &notebookID, true)
+	allowed, err = s.checkSessionPermission(ctx, viewerID.String(), orgID.String(), "editor", flaggedSessionID.String(), "view")
+	require.NoError(t, err)
+	require.True(t, allowed, "session with the inherit flag on must be visible to notebook viewers")
+
+	_, flaglessSessionID := seedSessionPermSessionForNotebook(t, s, orgID, ownerID, &notebookID, false)
 	allowed, err = s.checkSessionPermission(ctx, viewerID.String(), orgID.String(), "editor", flaglessSessionID.String(), "view")
 	require.NoError(t, err)
-	require.False(t, allowed, "session without the inherit flag must not be visible to notebook viewers")
+	require.False(t, allowed, "session with the inherit flag off must not be visible to notebook viewers")
 
-	// The flag is required to have a notebook to inherit from.
+	// The flag alone is not enough: without a notebook there is nothing to
+	// inherit from.
 	_, _, notebooklessSessionID := seedSessionPermAgentAndSession(t, s, orgID, ownerID, false, true)
 	allowed, err = s.checkSessionPermission(ctx, viewerID.String(), orgID.String(), "editor", notebooklessSessionID.String(), "view")
 	require.NoError(t, err)
