@@ -2,7 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )
 
@@ -61,13 +63,139 @@ func (c *Client) ListSessions(agentID string) ([]AgentSession, error) {
 	return sessions, nil
 }
 
-func (c *Client) CreateSession(agentID, notebookID string) (*AgentSession, error) {
-	body := map[string]interface{}{"notebook_id": notebookID}
-	var s AgentSession
-	if err := c.PostJSON("/api/v1/agents/"+agentID+"/session", body, &s); err != nil {
+// CreateSessionOptions collects the inputs for creating an agent session.
+// Share references are resolved by the client and sent in the same request as
+// the session itself.
+type CreateSessionOptions struct {
+	NotebookID           string
+	ShareUsers           []string
+	ShareGroups          []string
+	ShareEveryone        bool
+	ShareNotebookViewers bool
+}
+
+// CreateSession creates a session and applies its shares in a single POST.
+func (c *Client) CreateSession(agentID string, opts CreateSessionOptions) (*CreateSessionResult, error) {
+	if opts.ShareNotebookViewers && opts.NotebookID == "" {
+		return nil, fmt.Errorf("--share-notebook-viewers requires --notebook")
+	}
+
+	shares, err := c.resolveSessionShares(opts)
+	if err != nil {
 		return nil, err
 	}
-	return &s, nil
+
+	body := map[string]interface{}{"notebook_id": opts.NotebookID}
+	if len(shares) > 0 {
+		body["shares"] = shares
+	}
+	if opts.ShareNotebookViewers {
+		body["share_with_notebook_viewers"] = true
+	}
+
+	var result CreateSessionResult
+	if err := c.PostJSON("/api/v1/agents/"+agentID+"/session", body, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// resolveSessionShares turns --share-user/--share-group references into
+// read-only ACL entries: UUIDs are used as-is, while emails and group names are
+// resolved against the org and must match exactly one subject.
+func (c *Client) resolveSessionShares(opts CreateSessionOptions) ([]ACLEntry, error) {
+	if len(opts.ShareUsers) == 0 && len(opts.ShareGroups) == 0 && !opts.ShareEveryone {
+		return nil, nil
+	}
+
+	shares := make([]ACLEntry, 0, len(opts.ShareUsers)+len(opts.ShareGroups)+1)
+
+	if len(opts.ShareUsers) > 0 {
+		var members []OrgMember
+		for _, ref := range opts.ShareUsers {
+			subjectID := ref
+			if !isUUID(ref) {
+				if members == nil {
+					var err error
+					members, err = c.ListMembers()
+					if err != nil {
+						return nil, err
+					}
+				}
+				var matches []string
+				for _, m := range members {
+					if strings.EqualFold(m.Email, ref) {
+						matches = append(matches, m.UserID)
+					}
+				}
+				switch len(matches) {
+				case 0:
+					return nil, fmt.Errorf("share user %q not found in org (expected an email or user UUID)", ref)
+				case 1:
+					subjectID = matches[0]
+				default:
+					return nil, fmt.Errorf("share user %q is ambiguous: %d org members match (use a user UUID)", ref, len(matches))
+				}
+			}
+			shares = append(shares, ACLEntry{SubjectType: "user", SubjectID: subjectID, Actions: []string{"view"}})
+		}
+	}
+
+	if len(opts.ShareGroups) > 0 {
+		var groups []Group
+		for _, ref := range opts.ShareGroups {
+			subjectID := ref
+			if !isUUID(ref) {
+				if groups == nil {
+					var err error
+					groups, err = c.ListGroups()
+					if err != nil {
+						return nil, err
+					}
+				}
+				var matches []string
+				for _, g := range groups {
+					if strings.EqualFold(g.Name, ref) {
+						matches = append(matches, g.ID)
+					}
+				}
+				switch len(matches) {
+				case 0:
+					return nil, fmt.Errorf("share group %q not found in org (expected a name or group UUID)", ref)
+				case 1:
+					subjectID = matches[0]
+				default:
+					return nil, fmt.Errorf("share group %q is ambiguous: %d groups match (use a group UUID)", ref, len(matches))
+				}
+			}
+			shares = append(shares, ACLEntry{SubjectType: "group", SubjectID: subjectID, Actions: []string{"view"}})
+		}
+	}
+
+	if opts.ShareEveryone {
+		shares = append(shares, ACLEntry{SubjectType: "org_role", SubjectID: "everyone", Actions: []string{"view"}})
+	}
+
+	return shares, nil
+}
+
+func isUUID(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil
+}
+
+// sessionShareSummary renders the raw share references for the create command's
+// human-readable output; the API still receives resolved subject IDs.
+func sessionShareSummary(users, groups []string, everyone bool) string {
+	parts := make([]string, 0, len(users)+len(groups)+1)
+	parts = append(parts, users...)
+	for _, g := range groups {
+		parts = append(parts, "group "+g)
+	}
+	if everyone {
+		parts = append(parts, "everyone in the org")
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (c *Client) GetSession(sessionID string) (*AgentSession, error) {
@@ -213,7 +341,13 @@ func AgentsCmd() *cobra.Command {
 					},
 				},
 				func() *cobra.Command {
-					var notebookID string
+					var (
+						notebookID           string
+						shareUsers           []string
+						shareGroups          []string
+						shareEveryone        bool
+						shareNotebookViewers bool
+					)
 					c := &cobra.Command{
 						Use:   "create <agent-id>",
 						Short: "Create a session for an agent",
@@ -223,16 +357,33 @@ func AgentsCmd() *cobra.Command {
 							if err != nil {
 								return err
 							}
-							s, err := cl.CreateSession(args[0], notebookID)
+							result, err := cl.CreateSession(args[0], CreateSessionOptions{
+								NotebookID:           notebookID,
+								ShareUsers:           shareUsers,
+								ShareGroups:          shareGroups,
+								ShareEveryone:        shareEveryone,
+								ShareNotebookViewers: shareNotebookViewers,
+							})
 							if err != nil {
 								return err
 							}
-							PrintJSON(s)
+							fmt.Printf("Session created: %s\n", result.SessionID)
+							fmt.Printf("Context window: %d\n", result.ContextWindow)
+							if summary := sessionShareSummary(shareUsers, shareGroups, shareEveryone); summary != "" {
+								fmt.Printf("Shared with: %s\n", summary)
+							}
+							if shareNotebookViewers {
+								fmt.Println("Notebook viewers can read this session.")
+							}
 							return nil
 						},
 					}
 					c.Flags().StringVar(&notebookID, "notebook", "", "Notebook ID (required)")
 					c.MarkFlagRequired("notebook")
+					c.Flags().StringArrayVar(&shareUsers, "share-user", nil, "Share with an org member by email or user UUID (repeatable)")
+					c.Flags().StringArrayVar(&shareGroups, "share-group", nil, "Share with a group by name or group UUID (repeatable)")
+					c.Flags().BoolVar(&shareEveryone, "share-everyone", false, "Share with everyone in the org")
+					c.Flags().BoolVar(&shareNotebookViewers, "share-notebook-viewers", false, "Allow anyone who can view the notebook to read this session")
 					return c
 				}(),
 				&cobra.Command{

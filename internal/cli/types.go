@@ -252,6 +252,13 @@ type (
 		CreatedAt  time.Time  `json:"created_at"`
 	}
 
+	CreateSessionResult struct {
+		SessionID           string `json:"session_id"`
+		ContextWindow       int    `json:"context_window"`
+		AutoApproveTools    bool   `json:"auto_approve_tools"`
+		AutoAnswerQuestions bool   `json:"auto_answer_questions"`
+	}
+
 	AgentMessage struct {
 		ID               string    `json:"id"`
 		SessionID        string    `json:"session_id"`
