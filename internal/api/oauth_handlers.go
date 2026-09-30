@@ -124,12 +124,13 @@ func oauthErrorResponse(w http.ResponseWriter, code, description string) {
 
 // handleOAuthToken implements the authorization_code and refresh_token grants.
 func (s *Server) handleOAuthToken(w http.ResponseWriter, r *http.Request) {
+	// RFC 6749 §5.1: token responses (success or error) must not be cached.
+	// Set before parsing so malformed-form errors carry it too.
+	w.Header().Set("Cache-Control", "no-store")
 	if err := r.ParseForm(); err != nil {
 		oauthErrorResponse(w, "invalid_request", "malformed form body")
 		return
 	}
-	// RFC 6749 §5.1: token responses (success or error) must not be cached.
-	w.Header().Set("Cache-Control", "no-store")
 	client, err := s.oauth.GetClient(r.Context(), r.PostFormValue("client_id"))
 	if err != nil {
 		if errors.Is(err, oauth.ErrNotFound) {
@@ -155,7 +156,11 @@ func (s *Server) handleOAuthTokenAuthCode(w http.ResponseWriter, r *http.Request
 	resource := r.PostFormValue("resource")
 	codeRec, err := s.oauth.ConsumeAuthCode(r.Context(), r.PostFormValue("code"))
 	if err != nil {
-		oauthErrorResponse(w, "invalid_grant", "code is invalid, expired or already used")
+		if errors.Is(err, oauth.ErrNotFound) {
+			oauthErrorResponse(w, "invalid_grant", "code is invalid, expired or already used")
+		} else {
+			writeError(w, http.StatusInternalServerError, "token endpoint failure")
+		}
 		return
 	}
 	if codeRec.ClientID != client.ClientID {
@@ -228,7 +233,11 @@ func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	client, err := s.oauth.GetClient(r.Context(), q.Get("client_id"))
 	if err != nil {
-		http.Error(w, "invalid authorization request: unknown client", http.StatusBadRequest)
+		if errors.Is(err, oauth.ErrNotFound) {
+			http.Error(w, "invalid authorization request: unknown client", http.StatusBadRequest)
+		} else {
+			http.Error(w, "authorization endpoint failure", http.StatusInternalServerError)
+		}
 		return
 	}
 	redirectURI := q.Get("redirect_uri")

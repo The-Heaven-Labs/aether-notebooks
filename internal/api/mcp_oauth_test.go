@@ -240,3 +240,66 @@ func TestOAuthTokenRejectedOutsideMCP(t *testing.T) {
 	rec := doJSON(t, srv, "GET", "/api/v1/notebooks", tok["access_token"].(string), "")
 	require.Equal(t, http.StatusForbidden, rec.Code)
 }
+
+func TestOAuthConsentInfoAndDeny(t *testing.T) {
+	srv, jwt, clientID, _ := setupOAuthServer(t)
+
+	rec := doJSON(t, srv, "GET",
+		"/api/v1/oauth/consent/info?client_id="+clientID+"&scope=mcp:query&resource="+oauthResource,
+		jwt, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var info map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &info))
+	require.Equal(t, "opencode", info["client_name"])
+	require.NotEmpty(t, info["org_name"])
+	require.Contains(t, info["scopes"], "mcp:query")
+
+	// Deny → redirect with error=access_denied and no code.
+	payload, _ := json.Marshal(map[string]any{
+		"client_id": clientID, "redirect_uri": oauthRedirect,
+		"scope": "mcp:query", "resource": oauthResource, "state": "s",
+		"code_challenge": oauthChallenge(t), "code_challenge_method": "S256",
+		"approve": false,
+	})
+	rec = doJSON(t, srv, "POST", "/api/v1/oauth/consent/decision", jwt, string(payload))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Contains(t, out["redirect"], "error=access_denied")
+}
+
+func TestOAuthConsentRejectsUnknownClientOrRedirect(t *testing.T) {
+	srv, jwt, _, _ := setupOAuthServer(t)
+
+	payload, _ := json.Marshal(map[string]any{
+		"client_id": "mcp_missing", "redirect_uri": oauthRedirect,
+		"scope": "mcp:query", "resource": oauthResource, "state": "s",
+		"code_challenge": oauthChallenge(t), "code_challenge_method": "S256",
+		"approve": true,
+	})
+	rec := doJSON(t, srv, "POST", "/api/v1/oauth/consent/decision", jwt, string(payload))
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+
+	payload, _ = json.Marshal(map[string]any{
+		"client_id": "mcp_missing", "redirect_uri": "https://evil.example.com/cb",
+		"scope": "mcp:query", "resource": oauthResource, "state": "s",
+		"code_challenge": oauthChallenge(t), "code_challenge_method": "S256",
+		"approve": true,
+	})
+	rec = doJSON(t, srv, "POST", "/api/v1/oauth/consent/decision", jwt, string(payload))
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestOAuthAuthorizeInvalidParamsRejected(t *testing.T) {
+	srv, _, clientID, _ := setupOAuthServer(t)
+
+	// Unknown client → plain 400 (never a redirect).
+	rec := doJSON(t, srv, "GET", "/oauth/authorize?client_id=mcp_missing&redirect_uri="+oauthRedirect+"&code_challenge=abc&code_challenge_method=S256", "", "")
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+
+	// plain challenge method rejected.
+	u := "/oauth/authorize?client_id=" + clientID + "&redirect_uri=" + oauthRedirect +
+		"&code_challenge=abc&code_challenge_method=plain&response_type=code"
+	rec = doJSON(t, srv, "GET", u, "", "")
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
