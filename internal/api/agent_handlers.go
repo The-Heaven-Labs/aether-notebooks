@@ -842,16 +842,21 @@ func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Reques
 		ORDER BY s.created_at DESC LIMIT $2
 	`, agentID, agentSessionListLimit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "failed to list sessions")
 		return
 	}
 	candidates, err := scanListSessionRows(rows)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "failed to list sessions")
 		return
 	}
 
-	visible, err := h.server.filterVisibleSessions(r.Context(), claims.UserID, claims.OrgID, claims.Role, candidates)
+	groupIDs, err := h.server.callerGroupIDs(r.Context(), claims.UserID, claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list sessions")
+		return
+	}
+	visible, err := h.server.filterVisibleSessions(r.Context(), claims.UserID, claims.OrgID, claims.Role, groupIDs, candidates)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list sessions")
 		return

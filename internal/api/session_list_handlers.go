@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
-	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -101,76 +101,17 @@ func sessionListResponse(rows []listSessionRow, callerID string) []map[string]an
 	return out
 }
 
-// viewerGroupIDs returns the caller's group memberships plus their org's
-// Everyone group, mirroring how checkPermission builds its subject set.
-func (s *Server) viewerGroupIDs(ctx context.Context, userID, orgID string) ([]string, error) {
-	groupIDs := []string{}
-	rows, err := s.db.Pool.Query(ctx, `SELECT group_id FROM group_members WHERE user_id = $1`, userID)
-	if err != nil {
-		return nil, fmt.Errorf("viewer group query: %w", err)
-	}
-	for rows.Next() {
-		var gid string
-		if err := rows.Scan(&gid); err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("scan viewer group: %w", err)
-		}
-		groupIDs = append(groupIDs, gid)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("viewer group rows: %w", err)
-	}
-
-	everyoneRows, err := s.db.Pool.Query(ctx, `SELECT id FROM groups WHERE org_id = $1 AND name = 'Everyone'`, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("everyone group query: %w", err)
-	}
-	for everyoneRows.Next() {
-		var gid string
-		if err := everyoneRows.Scan(&gid); err != nil {
-			everyoneRows.Close()
-			return nil, fmt.Errorf("scan everyone group: %w", err)
-		}
-		groupIDs = append(groupIDs, gid)
-	}
-	everyoneRows.Close()
-	if err := everyoneRows.Err(); err != nil {
-		return nil, fmt.Errorf("everyone group rows: %w", err)
-	}
-	return groupIDs, nil
-}
-
-// aclSubjectGrantsView reports whether one ACL entry matches the caller and
-// grants view, applying the same action-implication rule as checkPermission.
-func aclSubjectGrantsView(subjectType, subjectID string, actions []string, userID string, groupIDs []string) bool {
-	matched := false
-	switch subjectType {
-	case "user":
-		matched = subjectID == userID
-	case "group":
-		matched = slices.Contains(groupIDs, subjectID)
-	case "org_role":
-		matched = subjectID == "everyone"
-	}
-	if !matched {
-		return false
-	}
-	for _, action := range actions {
-		if action == "view" || isViewImpliedBy(action) {
-			return true
-		}
-	}
-	return false
-}
-
 // filterVisibleSessions filters a bounded candidate page (<= ~100 rows) to the
 // sessions the caller can view, matching checkSessionPermission without its
 // per-row N+1 cost: owner fallback, one batched direct-ACL lookup (user,
-// groups, everyone), the admin-mode bypass, and notebook inheritance with the
-// notebook check memoized per distinct notebook. It fills CanEdit: true only
+// groups, everyone), the admin-mode bypass, and notebook inheritance. Direct
+// notebook grants are resolved in a second batched query; only notebooks with
+// no direct grant fall back to checkPermission (memoized per distinct
+// notebook) to cover folder inheritance, a fallback bounded by the number of
+// distinct notebooks on the page (<= ~100), never by the row count. groupIDs
+// must come from callerGroupIDs for the caller. It fills CanEdit: true only
 // for owners and admin mode, since non-owner ACLs can never hold edit.
-func (s *Server) filterVisibleSessions(ctx context.Context, userID, orgID, orgRole string, candidates []listSessionRow) ([]listSessionRow, error) {
+func (s *Server) filterVisibleSessions(ctx context.Context, userID, orgID, orgRole string, groupIDs []string, candidates []listSessionRow) ([]listSessionRow, error) {
 	visible := make([]listSessionRow, 0, len(candidates))
 	if len(candidates) == 0 {
 		return visible, nil
@@ -180,11 +121,6 @@ func (s *Server) filterVisibleSessions(ctx context.Context, userID, orgID, orgRo
 	// unlike checkPermission's resourceOrgID equality, it applies no org check,
 	// so a future non-org-scoped caller must add one.
 	adminMode := orgRole == "admin" && adminModeFromContext(ctx)
-
-	groupIDs, err := s.viewerGroupIDs(ctx, userID, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("load viewer groups: %w", err)
-	}
 
 	ids := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
@@ -210,7 +146,8 @@ func (s *Server) filterVisibleSessions(ctx context.Context, userID, orgID, orgRo
 		if directView[sessionID] {
 			continue
 		}
-		if aclSubjectGrantsView(subjectType, subjectID, actions, userID, groupIDs) {
+		if matchesUser(aclCandidate{subjectType: subjectType, subjectID: subjectID}, userID, orgRole, groupIDs) &&
+			grantsAction(actions, "view") {
 			directView[sessionID] = true
 		}
 	}
@@ -219,20 +156,62 @@ func (s *Server) filterVisibleSessions(ctx context.Context, userID, orgID, orgRo
 		return nil, fmt.Errorf("iterate session ACLs: %w", err)
 	}
 
-	notebookView := make(map[string]bool)
+	// Collect the distinct notebooks on inheritance candidates and resolve
+	// their direct ACL grants in one query, mirroring the session ACL batch.
+	// A notebook without a direct grant falls back to checkPermission below.
+	notebookIDs := make([]string, 0)
+	seenNotebook := make(map[string]bool)
+	for _, candidate := range candidates {
+		if candidate.Inherit && candidate.NotebookID != nil && !seenNotebook[*candidate.NotebookID] {
+			seenNotebook[*candidate.NotebookID] = true
+			notebookIDs = append(notebookIDs, *candidate.NotebookID)
+		}
+	}
+	notebookView := make(map[string]bool, len(notebookIDs))
+	notebookResolved := make(map[string]bool, len(notebookIDs))
+	if len(notebookIDs) > 0 {
+		nbRows, err := s.db.Pool.Query(ctx, `
+			SELECT resource_id::text, subject_type, subject_id, actions
+			FROM acl_entries
+			WHERE resource_type = 'notebook' AND resource_id = ANY($1::uuid[]) AND org_id = $2
+		`, notebookIDs, orgID)
+		if err != nil {
+			return nil, fmt.Errorf("load notebook ACLs: %w", err)
+		}
+		for nbRows.Next() {
+			var notebookID, subjectType, subjectID string
+			var actions []string
+			if err := nbRows.Scan(&notebookID, &subjectType, &subjectID, &actions); err != nil {
+				nbRows.Close()
+				return nil, fmt.Errorf("scan notebook ACL: %w", err)
+			}
+			if notebookView[notebookID] {
+				continue
+			}
+			if matchesUser(aclCandidate{subjectType: subjectType, subjectID: subjectID}, userID, orgRole, groupIDs) &&
+				grantsAction(actions, "view") {
+				notebookView[notebookID] = true
+				notebookResolved[notebookID] = true
+			}
+		}
+		nbRows.Close()
+		if err := nbRows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate notebook ACLs: %w", err)
+		}
+	}
+
 	for _, candidate := range candidates {
 		canView := adminMode || candidate.UserID == userID || directView[candidate.ID]
 		if !canView && candidate.Inherit && candidate.NotebookID != nil {
 			nbID := *candidate.NotebookID
-			cached, ok := notebookView[nbID]
-			if !ok {
-				cached, err = s.checkPermission(ctx, userID, orgID, orgRole, "notebook", nbID, "view")
+			if !notebookResolved[nbID] {
+				notebookView[nbID], err = s.checkPermission(ctx, userID, orgID, orgRole, "notebook", nbID, "view")
 				if err != nil {
 					return nil, fmt.Errorf("check notebook view: %w", err)
 				}
-				notebookView[nbID] = cached
+				notebookResolved[nbID] = true
 			}
-			canView = cached
+			canView = notebookView[nbID]
 		}
 		if !canView {
 			continue
@@ -257,8 +236,15 @@ func mergeSessionRows(primary, secondary []listSessionRow, limit int) []listSess
 			merged = append(merged, row)
 		}
 	}
-	sort.SliceStable(merged, func(i, j int) bool {
-		return merged[i].CreatedAt.After(merged[j].CreatedAt)
+	slices.SortStableFunc(merged, func(a, b listSessionRow) int {
+		switch {
+		case a.CreatedAt.After(b.CreatedAt):
+			return -1
+		case a.CreatedAt.Before(b.CreatedAt):
+			return 1
+		default:
+			return 0
+		}
 	})
 	if len(merged) > limit {
 		merged = merged[:limit]
@@ -325,7 +311,12 @@ func (h *agentHandlers) handleListNotebookSessions(w http.ResponseWriter, r *htt
 		return
 	}
 
-	visible, err := h.server.filterVisibleSessions(ctx, claims.UserID, claims.OrgID, claims.Role, candidates)
+	groupIDs, err := h.server.callerGroupIDs(ctx, claims.UserID, claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list sessions")
+		return
+	}
+	visible, err := h.server.filterVisibleSessions(ctx, claims.UserID, claims.OrgID, claims.Role, groupIDs, candidates)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list sessions")
 		return
@@ -345,7 +336,7 @@ func (h *agentHandlers) handleListSharedSessions(w http.ResponseWriter, r *http.
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
 
-	groupIDs, err := h.server.viewerGroupIDs(ctx, claims.UserID, claims.OrgID)
+	groupIDs, err := h.server.callerGroupIDs(ctx, claims.UserID, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list sessions")
 		return
@@ -389,7 +380,7 @@ func (h *agentHandlers) handleListSharedSessions(w http.ResponseWriter, r *http.
 	}
 
 	candidates := mergeSessionRows(directRows, inheritRows, sharedSessionListLimit)
-	visible, err := h.server.filterVisibleSessions(ctx, claims.UserID, claims.OrgID, claims.Role, candidates)
+	visible, err := h.server.filterVisibleSessions(ctx, claims.UserID, claims.OrgID, claims.Role, groupIDs, candidates)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list sessions")
 		return
@@ -425,6 +416,25 @@ func (h *agentHandlers) handleUpdateSession(w http.ResponseWriter, r *http.Reque
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
 
+	// Decode before touching the session row: a request with nothing to update
+	// must never return the session's current title or sharing state.
+	var req struct {
+		Title                    *string `json:"title"`
+		ShareWithNotebookViewers *bool   `json:"share_with_notebook_viewers"`
+	}
+	if err := decodeJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if req.Title == nil && req.ShareWithNotebookViewers == nil {
+		writeError(w, http.StatusBadRequest, "no fields to update")
+		return
+	}
+	if req.Title != nil && len(*req.Title) > 50 {
+		writeError(w, http.StatusBadRequest, "title must be 50 characters or less")
+		return
+	}
+
 	if !isValidUUID(sessionID) {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
@@ -448,16 +458,15 @@ func (h *agentHandlers) handleUpdateSession(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var req struct {
-		Title                    *string `json:"title"`
-		ShareWithNotebookViewers *bool   `json:"share_with_notebook_viewers"`
-	}
-	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request")
+	// Defense in depth: every update returns the session's current state, so
+	// view is required no matter which field the request changes.
+	allowed, err := h.server.checkSessionPermission(ctx, claims.UserID, claims.OrgID, claims.Role, sessionID, "view")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
 		return
 	}
-	if req.Title != nil && len(*req.Title) > 50 {
-		writeError(w, http.StatusBadRequest, "title must be 50 characters or less")
+	if !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
 	}
 
@@ -489,12 +498,41 @@ func (h *agentHandlers) handleUpdateSession(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	// Apply every field in one transaction: either all updates land or none,
+	// and auditing happens only after the commit succeeds.
+	tx, err := h.server.db.Pool.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update session")
+		return
+	}
+	defer tx.Rollback(ctx)
+
 	if req.Title != nil {
-		if err := h.server.agentEngine.SessionStore().UpdateTitle(ctx, sessionID, req.Title); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+		if _, err := tx.Exec(ctx,
+			`UPDATE agent_sessions SET title = $1 WHERE id = $2`,
+			req.Title, sessionID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update session")
 			return
 		}
 		title = req.Title
+	}
+
+	if req.ShareWithNotebookViewers != nil {
+		if _, err := tx.Exec(ctx,
+			`UPDATE agent_sessions SET share_with_notebook_viewers = $1 WHERE id = $2`,
+			*req.ShareWithNotebookViewers, sessionID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update session")
+			return
+		}
+		inherit = *req.ShareWithNotebookViewers
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update session")
+		return
+	}
+
+	if req.Title != nil {
 		h.server.audit.Log(ctx, audit.Entry{
 			OrgID: claims.OrgID, UserID: claims.UserID,
 			Action: "agent_session.update_title", ResourceType: "agent_session", ResourceID: sessionID,
@@ -502,13 +540,6 @@ func (h *agentHandlers) handleUpdateSession(w http.ResponseWriter, r *http.Reque
 	}
 
 	if req.ShareWithNotebookViewers != nil {
-		if _, err := h.server.db.Pool.Exec(ctx,
-			`UPDATE agent_sessions SET share_with_notebook_viewers = $1 WHERE id = $2`,
-			*req.ShareWithNotebookViewers, sessionID); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to update sharing")
-			return
-		}
-		inherit = *req.ShareWithNotebookViewers
 		h.server.audit.Log(ctx, audit.Entry{
 			OrgID: claims.OrgID, UserID: claims.UserID,
 			Action: "agent_session.update_sharing", ResourceType: "agent_session", ResourceID: sessionID,

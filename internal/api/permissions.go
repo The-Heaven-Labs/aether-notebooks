@@ -111,38 +111,56 @@ func (s *Server) checkSessionPermission(ctx context.Context, userID, orgID, orgR
 	return false, nil
 }
 
-// checkPermission returns true if userID has action on resourceType/resourceID within orgID.
-func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, resourceType, resourceID, action string) (bool, error) {
-	// 1. Collect user's group memberships
+// callerGroupIDs returns the caller's explicit group memberships followed by
+// their org's Everyone group. checkPermission and the batched session
+// visibility filter both build their subject set from this helper so group
+// resolution exists in exactly one place.
+func (s *Server) callerGroupIDs(ctx context.Context, userID, orgID string) ([]string, error) {
+	groupIDs := []string{}
 	rows, err := s.db.Pool.Query(ctx, `SELECT group_id FROM group_members WHERE user_id = $1`, userID)
 	if err != nil {
-		return false, fmt.Errorf("group query: %w", err)
+		return nil, fmt.Errorf("caller group query: %w", err)
 	}
-	var groupIDs []string
 	for rows.Next() {
 		var gid string
 		if err := rows.Scan(&gid); err != nil {
 			rows.Close()
-			return false, fmt.Errorf("scan group_id: %w", err)
+			return nil, fmt.Errorf("scan caller group: %w", err)
 		}
 		groupIDs = append(groupIDs, gid)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("caller group rows: %w", err)
+	}
 
 	// Include "Everyone" groups: any org member implicitly belongs to these.
 	everyoneRows, err := s.db.Pool.Query(ctx, `SELECT id FROM groups WHERE org_id = $1 AND name = 'Everyone'`, orgID)
 	if err != nil {
-		return false, fmt.Errorf("everyone group query: %w", err)
+		return nil, fmt.Errorf("everyone group query: %w", err)
 	}
 	for everyoneRows.Next() {
 		var gid string
 		if err := everyoneRows.Scan(&gid); err != nil {
 			everyoneRows.Close()
-			return false, fmt.Errorf("scan everyone group_id: %w", err)
+			return nil, fmt.Errorf("scan everyone group: %w", err)
 		}
 		groupIDs = append(groupIDs, gid)
 	}
 	everyoneRows.Close()
+	if err := everyoneRows.Err(); err != nil {
+		return nil, fmt.Errorf("everyone group rows: %w", err)
+	}
+	return groupIDs, nil
+}
+
+// checkPermission returns true if userID has action on resourceType/resourceID within orgID.
+func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, resourceType, resourceID, action string) (bool, error) {
+	// 1. Collect user's group memberships
+	groupIDs, err := s.callerGroupIDs(ctx, userID, orgID)
+	if err != nil {
+		return false, err
+	}
 
 	// Org admins bypass ACLs only when admin mode is enabled — scoped to their org
 	if orgRole == "admin" && adminModeFromContext(ctx) {
@@ -253,15 +271,7 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 			continue
 		}
 
-		grantsAction := false
-		for _, a := range c.actions {
-			if a == action || (action == "view" && isViewImpliedBy(a)) {
-				grantsAction = true
-				break
-			}
-		}
-
-		if grantsAction {
+		if grantsAction(c.actions, action) {
 			if c.subjectType == "org_role" && c.subjectID == "everyone" {
 				everyoneGrants = true
 			} else {
@@ -320,6 +330,19 @@ func isViewImpliedBy(action string) bool {
 	switch action {
 	case "use", "edit", "share", "delete", "admin":
 		return true
+	}
+	return false
+}
+
+// grantsAction reports whether actions contains action, applying the same
+// view-implication rule as checkPermission: view is implied by
+// use/edit/share/delete/admin. It is the single action-matching primitive for
+// checkPermission and the batched visibility filters.
+func grantsAction(actions []string, action string) bool {
+	for _, a := range actions {
+		if a == action || (action == "view" && isViewImpliedBy(a)) {
+			return true
+		}
 	}
 	return false
 }
