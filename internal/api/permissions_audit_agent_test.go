@@ -272,9 +272,8 @@ func TestAgent_SessionLifecycle(t *testing.T) {
 		status, body := f.DoRequest(t, "aliceA", "GET",
 			"/api/v1/sessions/"+noACLSessionID, nil)
 		t.Logf("aliceA get session: %d %s", status, body)
-		if status == http.StatusOK {
-			t.Log("VULNERABILITY: aliceA got session of NoACL agent without view")
-		}
+		require.Equal(t, http.StatusForbidden, status,
+			"no session share must deny reads")
 	})
 
 	t.Run("adminA gets session messages — 200", func(t *testing.T) {
@@ -289,6 +288,8 @@ func TestAgent_SessionLifecycle(t *testing.T) {
 			"/api/v1/sessions/"+noACLSessionID+"/title",
 			map[string]string{"title": "hacked"})
 		t.Logf("aliceA update session title: %d %s", status, body)
+		require.Equal(t, http.StatusForbidden, status,
+			"a non-owner must not rename the session")
 	})
 }
 
@@ -309,18 +310,20 @@ func TestAgent_SessionWithPermission(t *testing.T) {
 		require.Equal(t, http.StatusOK, status)
 	})
 
-	t.Run("aliceA gets session (via UserACL agent) — 200", func(t *testing.T) {
+	t.Run("aliceA gets session (via UserACL agent) — 403 (no session share)", func(t *testing.T) {
 		status, body := f.DoRequest(t, "aliceA", "GET",
 			"/api/v1/sessions/"+sessionID, nil)
 		t.Logf("aliceA get session: %d %s", status, body)
-		require.Equal(t, http.StatusOK, status)
+		require.Equal(t, http.StatusForbidden, status,
+			"agent view alone must not grant session reads")
 	})
 
-	t.Run("aliceA gets session messages — 200", func(t *testing.T) {
+	t.Run("aliceA gets session messages — 403 (no session share)", func(t *testing.T) {
 		status, body := f.DoRequest(t, "aliceA", "GET",
 			"/api/v1/sessions/"+sessionID+"/messages", nil)
 		t.Logf("aliceA get messages: %d %s", status, body)
-		require.Equal(t, http.StatusOK, status)
+		require.Equal(t, http.StatusForbidden, status,
+			"agent view alone must not grant session reads")
 	})
 
 	t.Run("aliceA updates session title on UserACL — 403 (view-only, no edit)", func(t *testing.T) {
@@ -328,18 +331,17 @@ func TestAgent_SessionWithPermission(t *testing.T) {
 			"/api/v1/sessions/"+sessionID+"/title",
 			map[string]string{"title": "renamed"})
 		t.Logf("aliceA update title: %d %s", status, body)
-		if status == http.StatusOK {
-			t.Log("VULNERABILITY: aliceA updated session title on view-only agent")
-		}
+		require.Equal(t, http.StatusForbidden, status)
 	})
 
-	t.Run("bobA updates session title on GroupACL — 200 (group has edit)", func(t *testing.T) {
+	t.Run("bobA updates session title on GroupACL — 403 (not the session owner)", func(t *testing.T) {
 		gSessionID := createSessionInAgent(t, f, "adminA", f.OrgA.Agents.GroupACL, nbID)
 		status, body := f.DoRequest(t, "bobA", "PATCH",
 			"/api/v1/sessions/"+gSessionID+"/title",
 			map[string]string{"title": "renamed-by-bob"})
 		t.Logf("bobA update title: %d %s", status, body)
-		require.Equal(t, http.StatusOK, status)
+		require.Equal(t, http.StatusForbidden, status,
+			"agent group edit must not grant session renames")
 	})
 }
 

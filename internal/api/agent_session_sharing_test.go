@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,9 +19,10 @@ import (
 	"github.com/the-heaven-labs/aether/internal/api"
 )
 
-// sessionSharingFixture is one org with an org-admin owner (Alice) and a plain
-// member (Bob), plus an agent Alice owns. Bob is inserted directly and carries
-// a JWT for Alice's org so tests never depend on a second registration.
+// sessionSharingFixture is one org with an org-admin owner (Alice) and two
+// plain members (Bob, Carol), plus an agent Alice owns. Bob and Carol are
+// inserted directly and carry JWTs for Alice's org so tests never depend on a
+// second registration.
 type sessionSharingFixture struct {
 	srv        *api.Server
 	orgID      string
@@ -27,6 +30,8 @@ type sessionSharingFixture struct {
 	aliceToken string
 	bobID      string
 	bobToken   string
+	carolID    string
+	carolToken string
 	agentID    string
 }
 
@@ -35,7 +40,9 @@ func setupSessionSharingFixture(t *testing.T) *sessionSharingFixture {
 	// Registration is rate-limited per IP (default 5/min); a full-package run
 	// registers more users than that from the same test client address.
 	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
-	srv := setupTestServer(t)
+	// The attachment read paths store real files, so the fixture needs a
+	// per-test storage directory.
+	srv := setupTestServerWithAttachDir(t)
 	ts := time.Now().UnixNano()
 
 	aliceToken := registerAndGetToken(t, srv,
@@ -47,6 +54,10 @@ func setupSessionSharingFixture(t *testing.T) *sessionSharingFixture {
 	addOrgMember(t, srv, orgID, bobID, "editor")
 	bobToken := issueToken(t, bobID, orgID, "editor")
 
+	carolID := insertUser(t, srv, fmt.Sprintf("session-share-carol-%d@example.com", ts), "Carol Outsider")
+	addOrgMember(t, srv, orgID, carolID, "editor")
+	carolToken := issueToken(t, carolID, orgID, "editor")
+
 	mcID := createModelConfig(t, srv, aliceToken)
 	agentID := createAgent(t, srv, aliceToken, mcID)
 
@@ -54,6 +65,7 @@ func setupSessionSharingFixture(t *testing.T) *sessionSharingFixture {
 		srv: srv, orgID: orgID,
 		aliceID: aliceID, aliceToken: aliceToken,
 		bobID: bobID, bobToken: bobToken,
+		carolID: carolID, carolToken: carolToken,
 		agentID: agentID,
 	}
 }
@@ -381,4 +393,312 @@ func TestCreateSessionDatabaseFailureIsNotBadRequest(t *testing.T) {
 	f.srv.ServeHTTP(rec, req)
 
 	require.NotEqual(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+}
+
+// grantACL upserts one ACL row directly; the ACL PUT handler that would
+// normally write these is out of scope for the read-path task.
+func grantACL(t *testing.T, srv *api.Server, orgID, resourceType, resourceID, subjectType, subjectID string, actions ...string) {
+	t.Helper()
+	_, err := srv.DB().Pool.Exec(context.Background(), `
+		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		VALUES ($1, $2, $3::uuid, $4, $5, $6)
+		ON CONFLICT (resource_type, resource_id, subject_type, subject_id)
+		DO UPDATE SET actions = EXCLUDED.actions
+	`, orgID, resourceType, resourceID, subjectType, subjectID, actions)
+	require.NoError(t, err)
+}
+
+// revokeAgentACLs removes a user's ACL rows on an agent so tests can prove the
+// session owner does not depend on agent-level permissions.
+func revokeAgentACLs(t *testing.T, srv *api.Server, agentID, userID string) {
+	t.Helper()
+	_, err := srv.DB().Pool.Exec(context.Background(),
+		`DELETE FROM acl_entries WHERE resource_type = 'agent' AND resource_id = $1::uuid
+		   AND subject_type = 'user' AND subject_id = $2`,
+		agentID, userID)
+	require.NoError(t, err)
+}
+
+// createSession creates a session owned by the fixture owner (Alice) and
+// returns its ID.
+func (f *sessionSharingFixture) createSession(t *testing.T, body map[string]any) string {
+	t.Helper()
+	code, resp := postCreateSession(t, f.srv, f.aliceToken, f.agentID, body)
+	require.Equal(t, http.StatusCreated, code, "%v", resp)
+	id, _ := resp["session_id"].(string)
+	require.NotEmpty(t, id)
+	return id
+}
+
+func seedSessionMessage(t *testing.T, srv *api.Server, sessionID, content string) {
+	t.Helper()
+	_, err := srv.DB().Pool.Exec(context.Background(),
+		`INSERT INTO agent_messages (session_id, role, content, created_at) VALUES ($1, 'user', $2, NOW())`,
+		sessionID, content)
+	require.NoError(t, err)
+}
+
+// rawRequest performs an authenticated JSON request without decoding the
+// response, for endpoints whose success payload is an array.
+func rawRequest(t *testing.T, srv *api.Server, token, method, path string, body map[string]any) (int, string) {
+	t.Helper()
+	var r io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		require.NoError(t, err)
+		r = bytes.NewReader(b)
+	}
+	req := httptest.NewRequest(method, path, r)
+	req.Header.Set("Authorization", "Bearer "+token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec.Code, rec.Body.String()
+}
+
+func uploadSessionAttachment(t *testing.T, srv *api.Server, token, sessionID string) (int, map[string]any) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("file", "test.png")
+	require.NoError(t, err)
+	_, err = io.WriteString(fw, "fake-image-bytes")
+	require.NoError(t, err)
+	require.NoError(t, mw.Close())
+
+	req := httptest.NewRequest("POST", "/api/v1/agent-sessions/"+sessionID+"/attachments", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	var resp map[string]any
+	if rec.Body.Len() > 0 {
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+	}
+	return rec.Code, resp
+}
+
+func fetchAgentAttachment(t *testing.T, srv *api.Server, token, attachmentID string) (int, string) {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/api/v1/agent-attachments/"+attachmentID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec.Code, rec.Body.String()
+}
+
+func getSubagentMessages(t *testing.T, srv *api.Server, token, taskID string) (int, string) {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/api/v1/agents/subagent/"+taskID+"/messages", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec.Code, rec.Body.String()
+}
+
+// TestSessionReadAuthorization pins the session-level read model: the owner and
+// direct shares read, while an org member who can view the agent but holds no
+// session share is denied. Agent ACLs must never grant session reads.
+func TestSessionReadAuthorization(t *testing.T) {
+	f := setupSessionSharingFixture(t)
+	sessionID := f.createSession(t, map[string]any{})
+	seedSessionMessage(t, f.srv, sessionID, "hello")
+
+	// Bob holds a direct view share. Carol can view the agent but not the
+	// session: under the old agent-level check she could read every session.
+	grantACL(t, f.srv, f.orgID, "agent_session", sessionID, "user", f.bobID, "view")
+	grantACL(t, f.srv, f.orgID, "agent", f.agentID, "user", f.carolID, "view")
+
+	// The owner must pass even with every agent ACL revoked.
+	revokeAgentACLs(t, f.srv, f.agentID, f.aliceID)
+
+	reads := []struct {
+		name string
+		path string
+	}{
+		{"get", "/api/v1/sessions/" + sessionID},
+		{"messages", "/api/v1/sessions/" + sessionID + "/messages"},
+		{"usage", "/api/v1/agents/sessions/" + sessionID + "/usage"},
+	}
+	for _, read := range reads {
+		t.Run("owner "+read.name, func(t *testing.T) {
+			code, body := rawRequest(t, f.srv, f.aliceToken, "GET", read.path, nil)
+			require.Equal(t, http.StatusOK, code, "%v", body)
+		})
+		t.Run("shared "+read.name, func(t *testing.T) {
+			code, body := rawRequest(t, f.srv, f.bobToken, "GET", read.path, nil)
+			require.Equal(t, http.StatusOK, code, "%v", body)
+		})
+		t.Run("unrelated "+read.name, func(t *testing.T) {
+			code, body := rawRequest(t, f.srv, f.carolToken, "GET", read.path, nil)
+			require.Equal(t, http.StatusForbidden, code, "%v", body)
+		})
+	}
+
+	t.Run("unknown session is 404", func(t *testing.T) {
+		code, body := doRequest(t, f.srv, f.aliceToken, "GET", "/api/v1/sessions/"+uuid.NewString(), nil)
+		require.Equal(t, http.StatusNotFound, code, "%v", body)
+	})
+}
+
+// TestSessionReadNotebookInheritance pins the live, opt-in notebook-viewer
+// inheritance: it grants reads only when the flag is set, and only view.
+func TestSessionReadNotebookInheritance(t *testing.T) {
+	f := setupSessionSharingFixture(t)
+	notebookID := createNotebook(t, f.srv, f.aliceToken, "Read Inherit NB")
+	grantACL(t, f.srv, f.orgID, "notebook", notebookID, "user", f.carolID, "view")
+
+	inheritID := f.createSession(t, map[string]any{
+		"notebook_id":                 notebookID,
+		"share_with_notebook_viewers": true,
+	})
+	seedSessionMessage(t, f.srv, inheritID, "inherit")
+	privateID := f.createSession(t, map[string]any{"notebook_id": notebookID})
+	seedSessionMessage(t, f.srv, privateID, "private")
+
+	// Carol can view the agent — the old path let her read both sessions.
+	grantACL(t, f.srv, f.orgID, "agent", f.agentID, "user", f.carolID, "view")
+
+	t.Run("notebook viewer reads inherited session", func(t *testing.T) {
+		code, body := doRequest(t, f.srv, f.carolToken, "GET", "/api/v1/sessions/"+inheritID, nil)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+	})
+	t.Run("notebook viewer denied when flag is off", func(t *testing.T) {
+		code, body := doRequest(t, f.srv, f.carolToken, "GET", "/api/v1/sessions/"+privateID, nil)
+		require.Equal(t, http.StatusForbidden, code, "%v", body)
+	})
+	t.Run("member without notebook view denied on inherited session", func(t *testing.T) {
+		code, body := doRequest(t, f.srv, f.bobToken, "GET", "/api/v1/sessions/"+inheritID, nil)
+		require.Equal(t, http.StatusForbidden, code, "%v", body)
+	})
+	t.Run("notebook viewer cannot rename inherited session", func(t *testing.T) {
+		code, body := rawRequest(t, f.srv, f.carolToken, "PATCH",
+			"/api/v1/sessions/"+inheritID+"/title",
+			map[string]any{"title": "carol-renamed"})
+		require.Equal(t, http.StatusForbidden, code, "%v", body)
+	})
+	t.Run("notebook viewer cannot upload to inherited session", func(t *testing.T) {
+		code, body := uploadSessionAttachment(t, f.srv, f.carolToken, inheritID)
+		require.Equal(t, http.StatusForbidden, code, "%v", body)
+	})
+}
+
+// TestSessionRenameAuthorization: only the session owner (or admin mode) can
+// rename; direct shares stay read-only, and the owner does not need agent edit.
+func TestSessionRenameAuthorization(t *testing.T) {
+	f := setupSessionSharingFixture(t)
+	sessionID := f.createSession(t, map[string]any{})
+
+	// Bob can edit the agent itself but only view the session.
+	grantACL(t, f.srv, f.orgID, "agent_session", sessionID, "user", f.bobID, "view")
+	grantACL(t, f.srv, f.orgID, "agent", f.agentID, "user", f.bobID, "edit")
+
+	code, body := doRequest(t, f.srv, f.bobToken, "PATCH",
+		"/api/v1/sessions/"+sessionID+"/title", map[string]any{"title": "bob-edited"})
+	require.Equal(t, http.StatusForbidden, code, "%v", body)
+
+	var title *string
+	require.NoError(t, f.srv.DB().Pool.QueryRow(context.Background(),
+		`SELECT title FROM agent_sessions WHERE id = $1`, sessionID).Scan(&title))
+	if title != nil {
+		require.NotEqual(t, "bob-edited", *title, "a shared viewer must not rename the session")
+	}
+
+	// The owner renames with no agent ACL at all.
+	revokeAgentACLs(t, f.srv, f.agentID, f.aliceID)
+	code, body = doRequest(t, f.srv, f.aliceToken, "PATCH",
+		"/api/v1/sessions/"+sessionID+"/title", map[string]any{"title": "owner-renamed"})
+	require.Equal(t, http.StatusOK, code, "%v", body)
+
+	require.NoError(t, f.srv.DB().Pool.QueryRow(context.Background(),
+		`SELECT title FROM agent_sessions WHERE id = $1`, sessionID).Scan(&title))
+	require.NotNil(t, title)
+	require.Equal(t, "owner-renamed", *title)
+}
+
+// TestSessionAttachmentAuthorization: upload needs session edit (owner only),
+// fetch needs session view, and neither is satisfied by agent ACLs.
+func TestSessionAttachmentAuthorization(t *testing.T) {
+	f := setupSessionSharingFixture(t)
+	sessionID := f.createSession(t, map[string]any{})
+
+	grantACL(t, f.srv, f.orgID, "agent_session", sessionID, "user", f.bobID, "view")
+	grantACL(t, f.srv, f.orgID, "agent", f.agentID, "user", f.bobID, "edit")
+
+	// The owner uploads with no agent ACL at all.
+	revokeAgentACLs(t, f.srv, f.agentID, f.aliceID)
+	code, resp := uploadSessionAttachment(t, f.srv, f.aliceToken, sessionID)
+	require.Equal(t, http.StatusCreated, code, "%v", resp)
+	attID, _ := resp["id"].(string)
+	require.NotEmpty(t, attID)
+
+	t.Run("shared viewer with agent edit cannot upload", func(t *testing.T) {
+		code, body := uploadSessionAttachment(t, f.srv, f.bobToken, sessionID)
+		require.Equal(t, http.StatusForbidden, code, "%v", body)
+	})
+	t.Run("owner fetches", func(t *testing.T) {
+		code, _ := fetchAgentAttachment(t, f.srv, f.aliceToken, attID)
+		require.Equal(t, http.StatusOK, code)
+	})
+	t.Run("shared viewer fetches", func(t *testing.T) {
+		code, _ := fetchAgentAttachment(t, f.srv, f.bobToken, attID)
+		require.Equal(t, http.StatusOK, code)
+	})
+	t.Run("unrelated member fetch denied", func(t *testing.T) {
+		code, _ := fetchAgentAttachment(t, f.srv, f.carolToken, attID)
+		require.Equal(t, http.StatusForbidden, code)
+	})
+	t.Run("unknown session upload is 404", func(t *testing.T) {
+		code, body := uploadSessionAttachment(t, f.srv, f.aliceToken, uuid.NewString())
+		require.Equal(t, http.StatusNotFound, code, "%v", body)
+	})
+	t.Run("unknown attachment fetch is 404", func(t *testing.T) {
+		code, _ := fetchAgentAttachment(t, f.srv, f.aliceToken, uuid.NewString())
+		require.Equal(t, http.StatusNotFound, code)
+	})
+}
+
+// TestSubagentMessagesAuthorization: subagent detail is readable whenever the
+// parent session is; org membership alone is no longer enough.
+func TestSubagentMessagesAuthorization(t *testing.T) {
+	f := setupSessionSharingFixture(t)
+	sessionID := f.createSession(t, map[string]any{})
+	taskID := uuid.NewString()
+	_, err := f.srv.DB().Pool.Exec(context.Background(), `
+		INSERT INTO subagent_tasks (id, parent_session_id, goal, status, result, created_at, completed_at)
+		VALUES ($1, $2, 'goal', 'completed', '{}', NOW(), NOW())
+	`, taskID, sessionID)
+	require.NoError(t, err)
+	_, err = f.srv.DB().Pool.Exec(context.Background(), `
+		INSERT INTO subagent_messages (subagent_task_id, role, content, created_at)
+		VALUES ($1, 'assistant', 'subagent says hi', NOW())
+	`, taskID)
+	require.NoError(t, err)
+
+	t.Run("owner reads", func(t *testing.T) {
+		code, body := getSubagentMessages(t, f.srv, f.aliceToken, taskID)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+	})
+	t.Run("shared viewer reads", func(t *testing.T) {
+		grantACL(t, f.srv, f.orgID, "agent_session", sessionID, "user", f.bobID, "view")
+		code, body := getSubagentMessages(t, f.srv, f.bobToken, taskID)
+		require.Equal(t, http.StatusOK, code, "%v", body)
+	})
+	t.Run("unrelated org member denied", func(t *testing.T) {
+		code, body := getSubagentMessages(t, f.srv, f.carolToken, taskID)
+		require.Equal(t, http.StatusForbidden, code, "%v", body)
+	})
+	t.Run("missing task is 404", func(t *testing.T) {
+		code, body := getSubagentMessages(t, f.srv, f.aliceToken, uuid.NewString())
+		require.Equal(t, http.StatusNotFound, code, "%v", body)
+	})
+	t.Run("cross-org is 404", func(t *testing.T) {
+		otherToken := registerAndGetToken(t, f.srv,
+			fmt.Sprintf("session-share-other-%d@example.com", time.Now().UnixNano()),
+			"Session Share Other Org")
+		code, body := getSubagentMessages(t, f.srv, otherToken, taskID)
+		require.Equal(t, http.StatusNotFound, code, "%v", body)
+	})
 }

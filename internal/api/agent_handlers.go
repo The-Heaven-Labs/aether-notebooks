@@ -926,7 +926,7 @@ func (h *agentHandlers) handleGetSession(w http.ResponseWriter, r *http.Request)
 	}
 	s.Title = title
 
-	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", s.AgentID, "view")
+	allowed, err := h.server.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "view")
 	if err != nil || !allowed {
 		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
@@ -948,15 +948,14 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 	sessionID := r.PathValue("session_id")
 	claims := ClaimsFromContext(r.Context())
 
-	var agentID string
-	err := h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT agent_id FROM agent_sessions WHERE id = $1
-	`, sessionID).Scan(&agentID)
-	if err != nil {
+	var exists bool
+	if err := h.server.db.Pool.QueryRow(r.Context(), `
+		SELECT EXISTS (SELECT 1 FROM agent_sessions WHERE id = $1)
+	`, sessionID).Scan(&exists); err != nil || !exists {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "view")
+	allowed, err := h.server.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "view")
 	if err != nil || !allowed {
 		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
@@ -1046,16 +1045,15 @@ func (h *agentHandlers) handleGetSessionUsage(w http.ResponseWriter, r *http.Req
 	sessionID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
 
-	var agentID string
-	err := h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT agent_id FROM agent_sessions WHERE id = $1
-	`, sessionID).Scan(&agentID)
-	if err != nil {
+	var exists bool
+	if err := h.server.db.Pool.QueryRow(r.Context(), `
+		SELECT EXISTS (SELECT 1 FROM agent_sessions WHERE id = $1)
+	`, sessionID).Scan(&exists); err != nil || !exists {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
 
-	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "view")
+	allowed, err := h.server.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "view")
 	if err != nil || !allowed {
 		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
@@ -1085,16 +1083,15 @@ func (h *agentHandlers) handleUpdateSessionTitle(w http.ResponseWriter, r *http.
 	sessionID := r.PathValue("session_id")
 	claims := ClaimsFromContext(r.Context())
 
-	var agentID string
-	err := h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT agent_id FROM agent_sessions WHERE id = $1
-	`, sessionID).Scan(&agentID)
-	if err != nil {
+	var exists bool
+	if err := h.server.db.Pool.QueryRow(r.Context(), `
+		SELECT EXISTS (SELECT 1 FROM agent_sessions WHERE id = $1)
+	`, sessionID).Scan(&exists); err != nil || !exists {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
 
-	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "edit")
+	allowed, err := h.server.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "edit")
 	if err != nil || !allowed {
 		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
@@ -1317,15 +1314,23 @@ func (h *agentHandlers) handleGetSubagentMessages(w http.ResponseWriter, r *http
 	taskID := r.PathValue("task_id")
 	claims := ClaimsFromContext(r.Context())
 
-	var orgID string
+	// Keep the org scope in the lookup so a cross-org caller still gets 404
+	// (as before) instead of learning that the task exists.
+	var parentSessionID string
 	err := h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT a.org_id FROM subagent_tasks st
+		SELECT st.parent_session_id FROM subagent_tasks st
 		JOIN agent_sessions s ON s.id = st.parent_session_id
 		JOIN agents a ON a.id = s.agent_id
-		WHERE st.id = $1
-	`, taskID).Scan(&orgID)
-	if err != nil || orgID != claims.OrgID {
+		WHERE st.id = $1 AND a.org_id = $2
+	`, taskID, claims.OrgID).Scan(&parentSessionID)
+	if err != nil {
 		writeError(w, http.StatusNotFound, "subagent task not found")
+		return
+	}
+
+	allowed, err := h.server.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, parentSessionID, "view")
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
 	}
 

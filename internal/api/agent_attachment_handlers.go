@@ -28,17 +28,17 @@ func (s *Server) handleUploadAgentAttachment(w http.ResponseWriter, r *http.Requ
 	sessionID := r.PathValue("session_id")
 	ctx := r.Context()
 
-	var agentID string
-	if err := s.db.Pool.QueryRow(ctx, "SELECT agent_id FROM agent_sessions WHERE id = $1", sessionID).Scan(&agentID); err != nil {
-		if err == pgx.ErrNoRows {
-			writeError(w, http.StatusNotFound, "session not found")
-			return
-		}
+	var exists bool
+	if err := s.db.Pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM agent_sessions WHERE id = $1)", sessionID).Scan(&exists); err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
+	if !exists {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
 
-	allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "edit")
+	allowed, _ := s.checkSessionPermission(ctx, claims.UserID, claims.OrgID, claims.Role, sessionID, "edit")
 	if !allowed {
 		writeError(w, http.StatusForbidden, "access denied")
 		return
@@ -110,20 +110,26 @@ func (s *Server) handleGetAgentAttachment(w http.ResponseWriter, r *http.Request
 	attID := r.PathValue("id")
 	ctx := r.Context()
 
-	var mimeType, filename string
+	var sessionID, mimeType, filename string
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT sa.mime_type, sa.filename
+		SELECT sa.session_id, sa.mime_type, sa.filename
 		FROM session_attachments sa
 		JOIN agent_sessions ases ON ases.id = sa.session_id
 		JOIN agents a ON a.id = ases.agent_id
 		WHERE sa.id = $1 AND a.org_id = $2
-	`, attID, claims.OrgID).Scan(&mimeType, &filename)
+	`, attID, claims.OrgID).Scan(&sessionID, &mimeType, &filename)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	allowed, _ := s.checkSessionPermission(ctx, claims.UserID, claims.OrgID, claims.Role, sessionID, "view")
+	if !allowed {
+		writeError(w, http.StatusForbidden, "access denied")
 		return
 	}
 
