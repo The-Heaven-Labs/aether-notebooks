@@ -44,10 +44,10 @@ func oauthBaseURL(r *http.Request) string {
 
 // writeMCPUnauthorized writes the MCP 401 challenge with the RFC 9728
 // resource_metadata parameter so harnesses can discover the OAuth server.
-func writeMCPUnauthorized(w http.ResponseWriter, r *http.Request) {
+func writeMCPUnauthorized(w http.ResponseWriter, r *http.Request, msg string) {
 	w.Header().Set("WWW-Authenticate",
 		`Bearer realm="aether", resource_metadata="`+oauthBaseURL(r)+`/.well-known/oauth-protected-resource"`)
-	writeError(w, http.StatusUnauthorized, "missing or invalid authorization")
+	writeError(w, http.StatusUnauthorized, msg)
 }
 
 // handleOAuthProtectedResource serves RFC 9728 Protected Resource Metadata.

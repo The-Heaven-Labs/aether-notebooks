@@ -46,7 +46,7 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte
 
 			if token == "" {
 				if r.URL.Path == "/api/v1/mcp" {
-					writeMCPUnauthorized(w, r)
+					writeMCPUnauthorized(w, r, "missing or invalid authorization")
 					return
 				}
 				writeError(w, http.StatusUnauthorized, "missing or invalid authorization header")
@@ -62,7 +62,7 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte
 			claims, err := issuer.Validate(token)
 			if err != nil {
 				if r.URL.Path == "/api/v1/mcp" {
-					writeMCPUnauthorized(w, r)
+					writeMCPUnauthorized(w, r, "invalid token")
 					return
 				}
 				writeError(w, http.StatusUnauthorized, "invalid token")
@@ -80,7 +80,7 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte
 					return
 				}
 				if !slices.Contains(claims.Audience, canonicalResourceURI(r)) {
-					writeError(w, http.StatusUnauthorized, "token audience does not match this resource")
+					writeMCPUnauthorized(w, r, "token audience does not match this resource")
 					return
 				}
 			}

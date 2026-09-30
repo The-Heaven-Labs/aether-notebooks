@@ -219,6 +219,10 @@ func TestOAuthWrongAudienceRejected(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	challenge := rec.Header().Get("WWW-Authenticate")
+	require.Contains(t, challenge, `Bearer realm="aether"`)
+	require.Contains(t, challenge, `resource_metadata="http://other.example.com/.well-known/oauth-protected-resource"`)
+	require.Contains(t, rec.Body.String(), "token audience does not match this resource")
 }
 
 func TestOAuthRefreshRotationAndReuseRevokesFamily(t *testing.T) {
@@ -428,6 +432,7 @@ func TestMCPUnauthenticatedChallengeAdvertisesResourceMetadata(t *testing.T) {
 	challenge := rec.Header().Get("WWW-Authenticate")
 	require.Contains(t, challenge, `Bearer realm="aether"`)
 	require.Contains(t, challenge, `resource_metadata="http://example.com/.well-known/oauth-protected-resource"`)
+	require.Contains(t, rec.Body.String(), "missing or invalid authorization")
 }
 
 func TestMCPInvalidTokenChallengeAdvertisesResourceMetadata(t *testing.T) {
@@ -438,6 +443,7 @@ func TestMCPInvalidTokenChallengeAdvertisesResourceMetadata(t *testing.T) {
 	challenge := rec.Header().Get("WWW-Authenticate")
 	require.Contains(t, challenge, `Bearer realm="aether"`)
 	require.Contains(t, challenge, `resource_metadata="http://example.com/.well-known/oauth-protected-resource"`)
+	require.Contains(t, rec.Body.String(), "invalid token")
 }
 
 func TestNonMCPUnauthorizedChallengeOmitsResourceMetadata(t *testing.T) {
