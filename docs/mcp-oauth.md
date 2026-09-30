@@ -213,3 +213,12 @@ OAuth access tokens are narrower than PATs by construction:
   (confused-deputy protection).
 - **Rate limits.** DCR and token endpoints are rate-limited per client IP
   (defaults `10`/min and `30`/min; see [Configuration](#2-configuration)).
+
+### Retention & revocation
+
+Consumed or expired authorization codes and expired refresh tokens are deleted
+hourly by the server's background cleanup; the expiry indexes added in V123
+back those deletes. There is no per-grant revocation API yet — the kill
+switches are removing the user from the org (refresh rotation then fails) and
+revoking/disabling the client by deleting its `oauth_clients` row (foreign keys
+cascade to its codes and tokens).

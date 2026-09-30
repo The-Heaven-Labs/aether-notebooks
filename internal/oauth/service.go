@@ -263,4 +263,17 @@ func (s *Service) RotateRefresh(ctx context.Context, issuer *auth.JWTIssuer, cli
 	return access, newRefresh, nil
 }
 
+// Cleanup deletes consumed or expired authorization codes and expired refresh
+// tokens. Rotated/revoked rows are kept until their expiry so replaying a
+// superseded token is still detected as reuse (ErrReused) rather than as an
+// unknown token; once expired they can no longer authenticate anything.
+func (s *Service) Cleanup(ctx context.Context) error {
+	if _, err := s.pool.Exec(ctx,
+		`DELETE FROM oauth_auth_codes WHERE used_at IS NOT NULL OR expires_at < NOW()`); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx, `DELETE FROM oauth_tokens WHERE expires_at < NOW()`)
+	return err
+}
+
 func joinScopes(scopes []string) string { return strings.Join(scopes, " ") }

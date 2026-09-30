@@ -309,3 +309,108 @@ func TestRotateRefreshClientMismatch(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, newRefresh)
 }
+
+func TestCleanupRemovesExpiredAndConsumedRows(t *testing.T) {
+	svc, db := newOAuthTestService(t)
+	ctx := context.Background()
+	issuer := newOAuthTestIssuer(t)
+	orgID, userID := createOAuthTestIdentity(t, db)
+	client := registerOAuthTestClient(t, svc)
+
+	issueCode := func() string {
+		t.Helper()
+		code, err := svc.IssueAuthCode(ctx, AuthCode{
+			ClientID:        client.ClientID,
+			UserID:          userID,
+			OrgID:           orgID,
+			Scopes:          []string{ScopeRead},
+			Resource:        "https://aether.example.com/mcp",
+			RedirectURI:     "https://client.example.com/callback",
+			CodeChallenge:   "test-challenge",
+			ChallengeMethod: "S256",
+		})
+		require.NoError(t, err)
+		return code
+	}
+	codeID := func(code string) string {
+		t.Helper()
+		var id string
+		require.NoError(t, db.Pool.QueryRow(ctx,
+			`SELECT id FROM oauth_auth_codes WHERE code_hash = $1`, hashToken(code)).Scan(&id))
+		return id
+	}
+	tokenID := func(refresh string) string {
+		t.Helper()
+		var id string
+		require.NoError(t, db.Pool.QueryRow(ctx,
+			`SELECT id FROM oauth_tokens WHERE refresh_hash = $1`, hashToken(refresh)).Scan(&id))
+		return id
+	}
+	assertCodeCount := func(id string, want int) {
+		t.Helper()
+		var n int
+		require.NoError(t, db.Pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM oauth_auth_codes WHERE id = $1`, id).Scan(&n))
+		require.Equal(t, want, n)
+	}
+	assertTokenCount := func(id string, want int) {
+		t.Helper()
+		var n int
+		require.NoError(t, db.Pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM oauth_tokens WHERE id = $1`, id).Scan(&n))
+		require.Equal(t, want, n)
+	}
+
+	// Consumed code: removed even though it has not expired yet.
+	consumed := issueCode()
+	_, err := svc.ConsumeAuthCode(ctx, consumed)
+	require.NoError(t, err)
+	consumedID := codeID(consumed)
+
+	// Unused but expired code: removed.
+	expired := issueCode()
+	_, err = db.Pool.Exec(ctx,
+		`UPDATE oauth_auth_codes SET expires_at = NOW() - interval '1 minute' WHERE code_hash = $1`,
+		hashToken(expired))
+	require.NoError(t, err)
+	expiredID := codeID(expired)
+
+	// Live unused code: kept.
+	live := issueCode()
+	liveID := codeID(live)
+
+	// Live token: kept.
+	_, liveRefresh, err := svc.IssueTokens(ctx, issuer, client.ClientID, userID, orgID, "admin",
+		[]string{ScopeQuery}, "https://aether.example.com/mcp")
+	require.NoError(t, err)
+	liveTokenID := tokenID(liveRefresh)
+
+	// Expired token: removed.
+	_, expiredRefresh, err := svc.IssueTokens(ctx, issuer, client.ClientID, userID, orgID, "admin",
+		[]string{ScopeQuery}, "https://aether.example.com/mcp")
+	require.NoError(t, err)
+	_, err = db.Pool.Exec(ctx,
+		`UPDATE oauth_tokens SET expires_at = NOW() - interval '1 minute' WHERE refresh_hash = $1`,
+		hashToken(expiredRefresh))
+	require.NoError(t, err)
+	expiredTokenID := tokenID(expiredRefresh)
+
+	// Revoked but unexpired token: kept so replay is still detected as reuse.
+	_, revokedRefresh, err := svc.IssueTokens(ctx, issuer, client.ClientID, userID, orgID, "admin",
+		[]string{ScopeQuery}, "https://aether.example.com/mcp")
+	require.NoError(t, err)
+	_, err = db.Pool.Exec(ctx,
+		`UPDATE oauth_tokens SET revoked_at = NOW() WHERE refresh_hash = $1`,
+		hashToken(revokedRefresh))
+	require.NoError(t, err)
+	revokedTokenID := tokenID(revokedRefresh)
+
+	require.NoError(t, svc.Cleanup(ctx))
+
+	assertCodeCount(consumedID, 0)
+	assertCodeCount(expiredID, 0)
+	assertCodeCount(liveID, 1)
+	assertTokenCount(liveTokenID, 1)
+	assertTokenCount(expiredTokenID, 0)
+	assertTokenCount(revokedTokenID, 1)
+}
