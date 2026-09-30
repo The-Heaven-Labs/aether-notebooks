@@ -73,26 +73,13 @@ and `X-Forwarded-Proto` so the advertised resource matches the URL clients use.
 
 ### Dev & testing
 
-The dev compose stack does not set the flag. Add it to the `api` service in
-`docker-compose.dev.yml`:
+The Docker dev stack enables the flag by default (`docker-compose.dev.yml`),
+so no configuration is needed there. Production defaults to off
+(`AETHER_MCP_OAUTH_ENABLED=false`); set it to `true` to expose the endpoints.
 
-```yaml
-    environment:
-      # ...
-      AETHER_MCP_OAUTH_ENABLED: "true"
-```
-
-Then recreate the API container (`restart` does not apply new compose-file
-environment variables):
-
-```bash
-docker compose -f docker-compose.dev.yml up -d api
-```
-
-For a foreground run, `AETHER_MCP_OAUTH_ENABLED=true task dev` works too — but
-run `task build:web` first (or use the Docker dev stack): `task dev` embeds
-`web/dist` into the server, and the consent page is served from that embedded
-frontend.
+For a non-Docker foreground run, `AETHER_MCP_OAUTH_ENABLED=true task dev` works
+too — but run `task build:web` first: `task dev` embeds `web/dist` into the
+server, and the consent page is served from that embedded frontend.
 
 Point the harness at the **API origin**, not the Vite dev server — Vite only
 proxies `/api`, `/internal`, `/docs`, and `/swagger.json`; the OAuth discovery
