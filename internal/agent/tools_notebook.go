@@ -173,12 +173,12 @@ func RegisterNotebookTools(reg *ToolRegistry, db *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "execute_sql",
-			Description: "Run an ad-hoc SQL query on a database connector (30s timeout). Use this for quick queries only. For long-running queries, use create_cell with run=true instead. Returns up to 10000 rows (default 1000, override with limit). For SELECT, SHOW, DESCRIBE queries.",
-			Parameters:  `{"type":"object","properties":{"connector_id":{"type":"string","description":"ID of the connector to query"},"query":{"type":"string","description":"The SQL query to execute"},"limit":{"type":"integer","description":"Max rows to return (default 1000, max 10000)"}},"required":["connector_id","query"]}`,
+			Description: "Run an ad-hoc SQL query on a database connector. Default timeout 30s; pass timeout_ms (milliseconds) for a longer budget, capped by the server's configured ceiling. For long-running queries, prefer create_cell with run=true. Returns up to 10000 rows (default 1000, override with limit). For SELECT, SHOW, DESCRIBE queries.",
+			Parameters:  `{"type":"object","properties":{"connector_id":{"type":"string","description":"ID of the connector to query"},"query":{"type":"string","description":"The SQL query to execute"},"limit":{"type":"integer","description":"Max rows to return (default 1000, max 10000)"},"timeout_ms":{"type":"integer","description":"Execution budget in milliseconds; clamped to the server ceiling"}},"required":["connector_id","query"]}`,
 		},
 		Handler:         makeExecuteSQLHandler(db),
 		ConfirmRequired: true,
-		Timeout:         30 * time.Second,
+		Timeout:         NoTimeout,
 	})
 
 	reg.Register(&ToolDef{

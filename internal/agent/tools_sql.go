@@ -177,6 +177,7 @@ func makeExecuteSQLHandler(pool *pgxpool.Pool) ToolHandler {
 			ConnectorID string `json:"connector_id"`
 			Query       string `json:"query"`
 			Limit       int    `json:"limit"`
+			TimeoutMs   int    `json:"timeout_ms"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -196,7 +197,15 @@ func makeExecuteSQLHandler(pool *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("only read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are allowed")
 		}
 
-		result, err := executeAgentSQL(ctx, pool, req.ConnectorID, req.Query, nil, req.Limit)
+		// The def declares NoTimeout; this handler enforces the caller-scoped
+		// budget itself so the MCP path can raise the ceiling above the agent
+		// default while agent paths keep the 30s guardrail.
+		runCtx, cancel := context.WithTimeout(ctx.Context, sqlTimeoutBudget(req.TimeoutMs, ctx.QueryTimeoutCeiling))
+		defer cancel()
+		tc := *ctx
+		tc.Context = runCtx
+
+		result, err := executeAgentSQL(&tc, pool, req.ConnectorID, req.Query, nil, req.Limit)
 		if err != nil {
 			return nil, err
 		}
