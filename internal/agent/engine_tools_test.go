@@ -69,7 +69,7 @@ func newTestEngine(db *database.DB) *Engine {
 		pool:               db.Pool,
 		tokenCounter:       NewTokenCounter(),
 		streams:            NewStreamManager(nil),
-		session:            NewSessionStore(db.Pool),
+		session:            NewSessionStore(db.Pool, nil),
 		toolTimeoutDefault: DefaultToolTimeout,
 		// Tools now fail closed without a permission resolver; bare test
 		// engines wire a permissive one so tool behavior is unchanged.
@@ -655,7 +655,7 @@ func TestProcessMessage_ToolNotInToolIDs_RejectedAtExecution(t *testing.T) {
 	// Need to set pool's engine session store etc - already via newTestEngine the pool is set, but we need to ensure engine.pool is set
 	engine.pool = db.Pool
 	// Session store needs pool as well
-	engine.session = NewSessionStore(db.Pool)
+	engine.session = NewSessionStore(db.Pool, nil)
 
 	_, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "hello", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
 	if err != nil {
@@ -721,7 +721,7 @@ func TestProcessMessage_DoesNotAdvertiseUnlistedTools(t *testing.T) {
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
 	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
 	engine.pool = db.Pool
-	engine.session = NewSessionStore(db.Pool)
+	engine.session = NewSessionStore(db.Pool, nil)
 	_, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "hi", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ProcessMessage: %v", err)
@@ -789,7 +789,7 @@ func TestProcessMessage_RegistryFallbackRemoved(t *testing.T) {
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
 	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
 	engine.pool = db.Pool
-	engine.session = NewSessionStore(db.Pool)
+	engine.session = NewSessionStore(db.Pool, nil)
 	_, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "hi", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ProcessMessage: %v", err)
@@ -878,7 +878,7 @@ func TestEndToEnd_ToolRemovedFromAgent_CannotCall(t *testing.T) {
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
 	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
 	engine.pool = db.Pool
-	engine.session = NewSessionStore(db.Pool)
+	engine.session = NewSessionStore(db.Pool, nil)
 	_, _, _, _, _, err = engine.ProcessMessage(context.Background(), sid, "hi", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ProcessMessage: %v", err)
@@ -909,7 +909,7 @@ func TestEndToEnd_AdminModeDoesNotBypassToolIDs(t *testing.T) {
 	nbID := createTestNotebook(t, db, orgID, userID)
 	sid := createTestSession(t, db, agentID, nbID, userID)
 	// Simulate AdminMode ON via session store
-	engine.session = NewSessionStore(db.Pool)
+	engine.session = NewSessionStore(db.Pool, nil)
 	engine.session.SetAdminMode(sid, true)
 	masterKey := make([]byte, 32)
 	responses := []ChatResponse{

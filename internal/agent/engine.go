@@ -253,7 +253,7 @@ func NewEngine(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client) *Engi
 	engine := &Engine{
 		rdb:                rdb,
 		registry:           NewToolRegistry(),
-		session:            NewSessionStore(pool),
+		session:            NewSessionStore(pool, rdb),
 		pool:               pool,
 		tokenCounter:       NewTokenCounter(),
 		streams:            NewStreamManager(rdb),

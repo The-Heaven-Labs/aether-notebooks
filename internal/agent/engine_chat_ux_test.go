@@ -63,7 +63,7 @@ func TestProcessMessage_TokensDirect_PerTool(t *testing.T) {
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
 	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
 	engine.pool = db.Pool
-	engine.session = NewSessionStore(db.Pool)
+	engine.session = NewSessionStore(db.Pool, nil)
 
 	_, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "list params", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
 	if err != nil {
@@ -140,7 +140,7 @@ func TestProcessMessage_TokensDirect_GlobalTotals(t *testing.T) {
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
 	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
 	engine.pool = db.Pool
-	engine.session = NewSessionStore(db.Pool)
+	engine.session = NewSessionStore(db.Pool, nil)
 
 	_, _, _, _, tokBrk, err := engine.ProcessMessage(context.Background(), sid, "do both", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
 	if err != nil {
@@ -232,7 +232,7 @@ func TestCompactionTriggerUsesCurrentNotCumulative(t *testing.T) {
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
 	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{"compaction_threshold": 70}))
 	engine.pool = db.Pool
-	engine.session = NewSessionStore(db.Pool)
+	engine.session = NewSessionStore(db.Pool, nil)
 	var events []EngineEvent
 	_, _, _, _, _, err = engine.ProcessMessage(context.Background(), sid, "test 200", nil, nil, masterKey, nil, nil, nil, nil, nil, func(evt EngineEvent) { events = append(events, evt) })
 	if err != nil {
@@ -364,7 +364,7 @@ func TestCompactionEmitsEventAndPersists(t *testing.T) {
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
 	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{"compaction_threshold": 10}))
 	engine.pool = db.Pool
-	engine.session = NewSessionStore(db.Pool)
+	engine.session = NewSessionStore(db.Pool, nil)
 	var events []EngineEvent
 	_, _, _, _, _, err = engine.ProcessMessage(context.Background(), sid, "trigger", nil, nil, masterKey, nil, nil, nil, nil, nil, func(evt EngineEvent) { events = append(events, evt) })
 	if err != nil {
@@ -766,7 +766,7 @@ func setupCompactionTestEnv(t *testing.T, contextWindow, threshold int) *compact
 	sid := createTestSession(t, db, agentID, nbID, userID)
 	env := &compactionTestEnv{db: db, engine: engine, sid: sid, mcID: mcID, masterKey: make([]byte, 32)}
 	env.engine.pool = db.Pool
-	env.engine.session = NewSessionStore(db.Pool)
+	env.engine.session = NewSessionStore(db.Pool, nil)
 	return env
 }
 
