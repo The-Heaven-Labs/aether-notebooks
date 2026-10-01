@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { renderHook } from '@testing-library/react'
-import { buildPieSeriesLabelConfig, PieChartModule } from './PieChart'
+import { buildPieSeriesLabelConfig, buildPieGeometry, PIE_TITLE_BAND, PieChartModule } from './PieChart'
 import { LineChartModule } from './LineChart'
 import { AreaChartModule } from './AreaChart'
 import { SankeyChartModule } from './SankeyChart'
@@ -9,7 +9,15 @@ import { HierarchyTreeModule } from './HierarchyTreeChart'
 import { TimelineModule } from './TimelineChart'
 import { HistogramChartModule } from './HistogramChart'
 import { FunnelChartModule } from './FunnelChart'
-import { useGroupBySeries } from './common'
+import {
+  useGroupBySeries,
+  buildLegend,
+  estimateLegendColumnWidth,
+  legendColumnReserve,
+  getChartColors,
+  LEGEND_COLUMN_MIN,
+  LEGEND_COLUMN_MAX,
+} from './common'
 import { ChartView } from './index'
 
 // ECharts uses ResizeObserver
@@ -24,7 +32,7 @@ describe('buildPieSeriesLabelConfig', () => {
     const c = buildPieSeriesLabelConfig({}, '#111')
     expect(c.label).toMatchObject({ show: true, position: 'outside' })
     expect(c.labelLine).toMatchObject({ show: true })
-    expect(c.labelLayout).toEqual({ hideOverlap: false })
+    expect(c.labelLayout({ rect: { x: 10, y: 500 } })).toEqual({ hideOverlap: false })
     expect(c.avoidLabelOverlap).toBe(true)
     expect(c.minShowLabelAngle).toBe(0)
   })
@@ -46,6 +54,128 @@ describe('buildPieSeriesLabelConfig', () => {
 
   it('passes min label angle through', () => {
     expect(buildPieSeriesLabelConfig({ minShowLabelAngle: 30 }, '#111').minShowLabelAngle).toBe(30)
+  })
+})
+
+describe('pie title-band protection', () => {
+  it('clamps outside labels dragged into the title band back below it', () => {
+    const c = buildPieSeriesLabelConfig({}, '#111', { hasTitle: true })
+    expect(c.labelLayout({ labelRect: { x: 10, y: 5 }, rect: { x: 10, y: 60 } }))
+      .toMatchObject({ y: PIE_TITLE_BAND, hideOverlap: false })
+    expect(c.labelLayout({ labelRect: { x: 10, y: PIE_TITLE_BAND - 1 } })).toMatchObject({ y: PIE_TITLE_BAND })
+    expect(c.labelLayout({ labelRect: { x: 10, y: PIE_TITLE_BAND } })).toEqual({ hideOverlap: false })
+  })
+
+  it('falls back to the host rect when labelRect is absent', () => {
+    const c = buildPieSeriesLabelConfig({}, '#111', { hasTitle: true })
+    expect(c.labelLayout({ rect: { x: 10, y: 20 } })).toMatchObject({ y: PIE_TITLE_BAND })
+  })
+
+  it('leaves labels below the band alone and never hides them', () => {
+    const c = buildPieSeriesLabelConfig({}, '#111', { hasTitle: true })
+    expect(c.labelLayout({ labelRect: { x: 10, y: 120 } })).toEqual({ hideOverlap: false })
+    // Missing rect info is treated as above the band (safe default).
+    expect(c.labelLayout({})).toEqual({ hideOverlap: false, y: PIE_TITLE_BAND })
+  })
+
+  it('uses shortened leader segments in title mode only', () => {
+    expect(buildPieSeriesLabelConfig({}, '#111', { hasTitle: true }).labelLine)
+      .toMatchObject({ show: true, length: 8, length2: 8 })
+    expect(buildPieSeriesLabelConfig({}, '#111').labelLine)
+      .toMatchObject({ show: true, length: 12, length2: 12 })
+  })
+
+  it('keeps the titled circle below the title band at small dashboard sizes', () => {
+    for (const height of [100, 200, 600]) {
+      const { center, radius } = buildPieGeometry({ title: 'CDN response code %', chartType: 'donut' })
+      const centerY = (parseFloat(center[1]) / 100) * height
+      const outerRadius = (parseFloat(radius[1]) / 100) * (height / 2)
+      expect(centerY - outerRadius).toBeGreaterThanOrEqual(PIE_TITLE_BAND)
+    }
+  })
+
+  it('keeps the untitled geometry unchanged from v0.56.0', () => {
+    expect(buildPieGeometry({ chartType: 'donut' })).toEqual({ radius: ['40%', '70%'], center: ['40%', '50%'] })
+    expect(buildPieGeometry({ chartType: 'pie' })).toEqual({ radius: ['0%', '70%'], center: ['40%', '50%'] })
+  })
+
+  it('centers the circle when the legend is hidden', () => {
+    expect(buildPieGeometry({ title: 'T', showLegend: false, chartType: 'pie' }).center).toEqual(['50%', '50%'])
+  })
+})
+
+describe('legend column measurement', () => {
+  it('clamps to the minimum for short or empty name lists', () => {
+    expect(estimateLegendColumnWidth([])).toBe(LEGEND_COLUMN_MIN)
+    expect(estimateLegendColumnWidth(['a', 'bb'])).toBe(LEGEND_COLUMN_MIN)
+  })
+
+  it('grows with the longest name and clamps at the maximum', () => {
+    expect(estimateLegendColumnWidth(['a'.repeat(24)])).toBeGreaterThan(LEGEND_COLUMN_MIN)
+    expect(estimateLegendColumnWidth(['x'.repeat(200)])).toBe(LEGEND_COLUMN_MAX)
+  })
+
+  it('covers the measured width of every name plus swatch/pager padding', () => {
+    const names = ['orders', 'developer-productivity-integration', 'network edge latency']
+    const width = estimateLegendColumnWidth(names)
+    expect(width).toBeLessThan(LEGEND_COLUMN_MAX)
+    for (const name of names) {
+      // jsdom has no real canvas, so the 6.2px/char fallback applies
+      expect(width).toBeGreaterThanOrEqual(name.length * 6.2 + 40 - 0.01)
+    }
+  })
+})
+
+describe('buildLegend long-name handling', () => {
+  const colors = getChartColors()
+
+  it('truncates names over the column budget and passes short names through', () => {
+    const legend = buildLegend({}, colors, { seriesNames: ['short'] }) as Record<string, unknown>
+    const formatter = legend.formatter as (name: string) => string
+    expect(formatter('short')).toBe('short')
+    const longName = 'developer-productivity-integration'
+    const rendered = formatter(longName)
+    expect(rendered.endsWith('…')).toBe(true)
+    expect(rendered.length).toBeLessThan(longName.length)
+  })
+
+  it('exposes the untruncated name via legend tooltip', () => {
+    const legend = buildLegend({}, colors) as Record<string, unknown>
+    expect(legend.tooltip).toEqual({ show: true })
+  })
+
+  it('is not longer than the reserved column width in characters', () => {
+    const names = ['a'.repeat(30)]
+    const legend = buildLegend({}, colors, { seriesNames: names }) as Record<string, unknown>
+    const formatter = legend.formatter as (name: string) => string
+    const rendered = formatter(names[0])
+    const reserved = estimateLegendColumnWidth(names)
+    expect(rendered.length).toBeLessThanOrEqual(Math.floor((reserved - 40) / 6.2))
+  })
+})
+
+describe('legend column reserve', () => {
+  it('reserves the measured column when shown and 16px otherwise', () => {
+    const names = ['alpha', 'beta']
+    expect(legendColumnReserve(undefined, names)).toBe(estimateLegendColumnWidth(names))
+    expect(legendColumnReserve(true, names)).toBe(estimateLegendColumnWidth(names))
+    expect(legendColumnReserve(false, names)).toBe(16)
+  })
+})
+
+describe('buildLegend top-right reservation', () => {
+  const colors = getChartColors()
+
+  it('keeps the legend below the reset button with and without a title', () => {
+    const untitled = buildLegend({}, colors, { reserveTopRight: true }) as Record<string, unknown>
+    const titled = buildLegend({ title: 'Sales' }, colors, { reserveTopRight: true }) as Record<string, unknown>
+    expect(untitled.top as number).toBeGreaterThanOrEqual(34)
+    expect(titled.top as number).toBeGreaterThanOrEqual(34)
+  })
+
+  it('leaves the default placement untouched without the option', () => {
+    expect((buildLegend({}, colors) as Record<string, unknown>).top).toBe(8)
+    expect((buildLegend({ title: 'Sales' }, colors) as Record<string, unknown>).top).toBe(30)
   })
 })
 

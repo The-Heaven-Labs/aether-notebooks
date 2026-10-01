@@ -119,13 +119,13 @@ func (s *Server) handleOAuthConsentDecision(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusOK, map[string]any{"redirect": target.String()})
 		return
 	}
-	if req.Resource != "" && req.Resource != canonicalResourceURI(r) {
+	if req.Resource != "" && req.Resource != canonicalResourceURI(r, s.publicURL) {
 		writeError(w, http.StatusBadRequest, "resource does not match this MCP server")
 		return
 	}
 	resource := req.Resource
 	if resource == "" {
-		resource = canonicalResourceURI(r)
+		resource = canonicalResourceURI(r, s.publicURL)
 	}
 	scopes := oauth.NormalizeScopes(oauth.ParseScopes(req.Scope))
 	if len(scopes) == 0 {

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -26,35 +28,106 @@ func (s *Server) requireMCPOAuth(next http.Handler) http.Handler {
 
 // canonicalResourceURI returns the RFC 8707 canonical URI of the MCP server
 // for the request: scheme://host/api/v1/mcp (no trailing slash). Subdomain
-// deployments each advertise and validate their own resource.
-func canonicalResourceURI(r *http.Request) string {
-	scheme := "http"
-	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+// deployments each advertise and validate their own resource. Token minting
+// (consent) and audience validation (AuthMiddleware) must both use this so the
+// resource they agree on is identical.
+func canonicalResourceURI(r *http.Request, publicURL string) string {
+	scheme, host := requestSchemeAndHost(r, publicURL)
+	return scheme + "://" + host + "/api/v1/mcp"
+}
+
+// oauthBaseURL is the AS issuer/discovery base for the request host.
+func oauthBaseURL(r *http.Request, publicURL string) string {
+	return strings.TrimSuffix(canonicalResourceURI(r, publicURL), "/api/v1/mcp")
+}
+
+// requestSchemeAndHost resolves the externally visible scheme and host for r.
+//
+// The request-derived host is the default: it keeps subdomain org binding
+// working (each org subdomain advertises and validates its own resource).
+// Proxies that preserve the client-facing host in X-Forwarded-Host take
+// precedence; when Host has been rewritten to an in-cluster name and no
+// X-Forwarded-Host is present, the configured public URL is used instead.
+// Loopback and literal-IP hosts are always kept — they are externally
+// meaningful in local development and port-forward testing.
+func requestSchemeAndHost(r *http.Request, publicURL string) (scheme, host string) {
+	// Scheme: proxy-observed, then direct TLS, then (below) the public URL.
+	if proto := firstHeaderValue(r.Header.Get("X-Forwarded-Proto")); proto != "" {
 		scheme = proto
 	} else if r.TLS != nil {
 		scheme = "https"
 	}
-	return scheme + "://" + r.Host + "/api/v1/mcp"
+
+	host = firstForwardedHost(r)
+	if host == "" {
+		host = r.Host
+		if publicURL != "" && isClusterInternalHost(host) {
+			if u, err := url.Parse(publicURL); err == nil && u.Host != "" {
+				host = u.Host
+				if scheme == "" {
+					scheme = u.Scheme
+				}
+			}
+		}
+	}
+	if scheme == "" {
+		scheme = "http"
+	}
+	return scheme, host
 }
 
-// oauthBaseURL is the AS issuer/discovery base for the request host.
-func oauthBaseURL(r *http.Request) string {
-	return strings.TrimSuffix(canonicalResourceURI(r), "/api/v1/mcp")
+// firstForwardedHost returns the first entry of the X-Forwarded-Host chain: a
+// comma-separated list whose leftmost value is the proxy-observed client host.
+func firstForwardedHost(r *http.Request) string {
+	return firstHeaderValue(r.Header.Get("X-Forwarded-Host"))
+}
+
+// firstHeaderValue returns the first comma-separated value of a forwarded
+// header, trimmed. Trust model matches the existing X-Forwarded-Proto handling:
+// values are trusted from the edge, so deployments must strip client-supplied
+// X-Forwarded-* at the boundary.
+func firstHeaderValue(v string) string {
+	if v == "" {
+		return ""
+	}
+	return strings.TrimSpace(strings.Split(v, ",")[0])
+}
+
+// isClusterInternalHost reports whether host is only resolvable inside the
+// cluster: a bare hostname without dots (k8s service/pod short name) or a
+// *.cluster.local name. Loopback and literal-IP hosts are externally
+// meaningful and never treated as internal.
+func isClusterInternalHost(host string) bool {
+	h := host
+	if hp, _, err := net.SplitHostPort(host); err == nil {
+		h = hp
+	}
+	h = strings.Trim(h, "[]")
+	if h == "" || strings.EqualFold(h, "localhost") {
+		return false
+	}
+	if net.ParseIP(h) != nil {
+		return false
+	}
+	if !strings.Contains(h, ".") {
+		return true
+	}
+	return strings.HasSuffix(strings.ToLower(h), ".cluster.local")
 }
 
 // writeMCPUnauthorized writes the MCP 401 challenge with the RFC 9728
 // resource_metadata parameter so harnesses can discover the OAuth server.
-func writeMCPUnauthorized(w http.ResponseWriter, r *http.Request, msg string) {
+func writeMCPUnauthorized(w http.ResponseWriter, r *http.Request, publicURL, msg string) {
 	w.Header().Set("WWW-Authenticate",
-		`Bearer realm="aether", resource_metadata="`+oauthBaseURL(r)+`/.well-known/oauth-protected-resource"`)
+		`Bearer realm="aether", resource_metadata="`+oauthBaseURL(r, publicURL)+`/.well-known/oauth-protected-resource"`)
 	writeError(w, http.StatusUnauthorized, msg)
 }
 
 // handleOAuthProtectedResource serves RFC 9728 Protected Resource Metadata.
 func (s *Server) handleOAuthProtectedResource(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"resource":                 canonicalResourceURI(r),
-		"authorization_servers":    []string{oauthBaseURL(r)},
+		"resource":                 canonicalResourceURI(r, s.publicURL),
+		"authorization_servers":    []string{oauthBaseURL(r, s.publicURL)},
 		"scopes_supported":         oauth.AllScopes,
 		"bearer_methods_supported": []string{"header"},
 	})
@@ -62,7 +135,7 @@ func (s *Server) handleOAuthProtectedResource(w http.ResponseWriter, r *http.Req
 
 // handleOAuthASMetadata serves RFC 8414 Authorization Server Metadata.
 func (s *Server) handleOAuthASMetadata(w http.ResponseWriter, r *http.Request) {
-	base := oauthBaseURL(r)
+	base := oauthBaseURL(r, s.publicURL)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"issuer":                                base,
 		"authorization_endpoint":                base + "/oauth/authorize",

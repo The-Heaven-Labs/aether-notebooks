@@ -3,31 +3,65 @@ import type { ChartModule, ChartProps, ConfigPanelProps, ChartConfig } from './t
 import { EChartsContainer, CHART_COLORS, getTooltipStyle, getContrastTextColor, useChartColors, useRowsAsObjects, useAxisColumns, detectAxisColumns, ChartTypeSelect, buildLegend } from './common'
 import { ConfigHint } from './ConfigHint'
 
+// Title band occupied by the shared ECharts title component (`top: 8`, 14px
+// text plus padding). Outside pie labels are clamped below it so they can
+// never draw over the title.
+export const PIE_TITLE_BAND = 34
+
+// Geometry for pie/donut. With a title the circle is shifted down and capped
+// so its top edge stays below the title band even on short dashboard widgets;
+// without one it keeps the historical v0.56.0 layout.
+export function buildPieGeometry(
+  config: Pick<ChartConfig, 'title' | 'showLegend' | 'chartType'>,
+): { radius: [string, string]; center: [string, string] } {
+  const hasTitle = !!config.title
+  const outerRadius = hasTitle ? '58%' : '70%'
+  return {
+    radius: config.chartType === 'donut' ? ['40%', outerRadius] : ['0%', outerRadius],
+    center: config.showLegend !== false
+      ? ['40%', hasTitle ? '63%' : '50%']
+      : ['50%', '50%'],
+  }
+}
+
 // Label plumbing shared by the option builder below (and unit-tested):
 // when labels are on, every slice gets an explicit visible label — ECharts 6
 // hides overlapping pie labels by default (labelLayout.hideOverlap), so we
 // disable the hiding and keep repositioning (avoidLabelOverlap) instead.
 // Inside labels sit on colored slices, so their color contrasts per-slice.
+// With a title, a labelLayout clamp pushes labels that overlap avoidance
+// dragged into the title band back below it (its guide line follows).
+// Note: the callback's `labelRect` is the label's own box; `rect` is the
+// host sector's box and cannot detect a label that was moved above it.
 export function buildPieSeriesLabelConfig(
   config: Pick<ChartConfig, 'showLabels' | 'labelPosition' | 'minShowLabelAngle'>,
   outsideColor: string,
+  opts?: { hasTitle?: boolean },
 ): {
   label: Record<string, unknown>
   labelLine: Record<string, unknown>
-  labelLayout: { hideOverlap: boolean }
+  labelLayout: (params: { rect?: { x?: number; y?: number }; labelRect?: { x?: number; y?: number } }) => Record<string, unknown>
   avoidLabelOverlap: boolean
   minShowLabelAngle: number
 } {
+  const titleBand = opts?.hasTitle ? PIE_TITLE_BAND : 0
+  const labelLayout = (params: { rect?: { x?: number; y?: number }; labelRect?: { x?: number; y?: number } }) => {
+    const y = params.labelRect?.y ?? params.rect?.y ?? 0
+    return titleBand > 0 && y < titleBand
+      ? { hideOverlap: false, y: titleBand }
+      : { hideOverlap: false }
+  }
   if (config.showLabels === false) {
     return {
       label: { show: false },
       labelLine: { show: false },
-      labelLayout: { hideOverlap: false },
+      labelLayout,
       avoidLabelOverlap: true,
       minShowLabelAngle: 0,
     }
   }
   const position = config.labelPosition ?? 'outside'
+  const leaderLength = opts?.hasTitle ? 8 : 12
   return {
     label: {
       show: true,
@@ -38,9 +72,9 @@ export function buildPieSeriesLabelConfig(
         : outsideColor,
     },
     labelLine: position === 'outside'
-      ? { show: true, length: 12, length2: 12 }
+      ? { show: true, length: leaderLength, length2: leaderLength }
       : { show: false },
-    labelLayout: { hideOverlap: false },
+    labelLayout,
     avoidLabelOverlap: true,
     minShowLabelAngle: config.minShowLabelAngle ?? 0,
   }
@@ -52,29 +86,32 @@ function PieChartComponent({ data, config }: ChartProps) {
   const colors = useChartColors()
   const valueKey = yAxes[0] ?? data.columns[1]?.name ?? ''
   const nameKey = config.labelColumn || xAxis
-  const isDonut = config.chartType === 'donut'
   const { showLabels, labelPosition, minShowLabelAngle } = config
 
-  const option = useMemo(() => ({
-    tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: '{b}: {c} ({d}%)' },
-    title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
-    legend: buildLegend({ title: config.title, showLegend: config.showLegend }, colors),
-    series: [{
-      type: 'pie' as const,
-      radius: isDonut ? ['40%', '70%'] as [string, string] : ['0%', '70%'] as [string, string],
-      center: config.showLegend !== false ? ['40%', config.title ? '58%' : '50%'] as [string, string] : ['50%', '50%'] as [string, string],
-      data: chartData.map((d, i) => ({
-        name: d[nameKey],
-        value: d[valueKey],
-        itemStyle: { color: config.seriesColors?.[String(d[nameKey])] ?? CHART_COLORS[i % CHART_COLORS.length] },
-      })),
-      ...buildPieSeriesLabelConfig({ showLabels, labelPosition, minShowLabelAngle }, colors.text),
-      emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.2)' } },
-      roseType: config.roseType || false,
-      startAngle: config.startAngle ?? 90,
-      padAngle: config.padAngle ?? 0,
-    }],
-  }), [chartData, nameKey, valueKey, isDonut, config.title, config.seriesColors, config.showLegend, showLabels, labelPosition, minShowLabelAngle, config.roseType, config.startAngle, config.padAngle, colors])
+  const option = useMemo(() => {
+    const sliceNames = chartData.map(d => String(d[nameKey] ?? ''))
+    const geometry = buildPieGeometry(config)
+    return {
+      tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: '{b}: {c} ({d}%)' },
+      title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
+      legend: buildLegend({ title: config.title, showLegend: config.showLegend }, colors, { seriesNames: sliceNames, reserveTopRight: true }),
+      series: [{
+        type: 'pie' as const,
+        radius: geometry.radius,
+        center: geometry.center,
+        data: chartData.map((d, i) => ({
+          name: d[nameKey],
+          value: d[valueKey],
+          itemStyle: { color: config.seriesColors?.[String(d[nameKey])] ?? CHART_COLORS[i % CHART_COLORS.length] },
+        })),
+        ...buildPieSeriesLabelConfig({ showLabels, labelPosition, minShowLabelAngle }, colors.text, { hasTitle: !!config.title }),
+        emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.2)' } },
+        roseType: config.roseType || false,
+        startAngle: config.startAngle ?? 90,
+        padAngle: config.padAngle ?? 0,
+      }],
+    }
+  }, [chartData, nameKey, valueKey, config.chartType, config.title, config.seriesColors, config.showLegend, showLabels, labelPosition, minShowLabelAngle, config.roseType, config.startAngle, config.padAngle, colors])
 
   return <EChartsContainer option={option} showReset />
 }

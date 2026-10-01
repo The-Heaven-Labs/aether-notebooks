@@ -122,9 +122,14 @@ export interface ConfigPanelProps {
  *
  *   grid: {
  *     top: config.title ? 56 : 8,
- *     right: config.showLegend !== false ? <LEGEND_COLUMN_WIDTH> : 16,   // legend column
+ *     right: legendColumnReserve(config.showLegend, seriesNames),  // measured legend column
  *     bottom: config.dataZoom ? 32 : 8, left: 16, containLabel: true,
  *   }
+ *
+ * Pass the real series names to buildLegend (and the same names to
+ * legendColumnReserve) so long grouped names are measured and truncated to the
+ * reserved column instead of growing over the plot. Chart modules that render
+ * the `↺ Reset` button pass `reserveTopRight: true`.
  *
  * Grid-less charts (pie/donut) keep the legend right-docked and shift
  * center/position instead; legends never sit above the plot.

@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, useAxisColumns, useGroupBySeries, detectAxisColumns, buildMarkLineSeries, buildLegend, LEGEND_COLUMN_WIDTH } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, useAxisColumns, useGroupBySeries, detectAxisColumns, buildMarkLineSeries, buildLegend, legendColumnReserve } from './common'
 import { AxisConfigPanel } from './AxisConfigPanel'
 
 function AreaChartComponent({ data, config }: ChartProps) {
@@ -52,6 +52,8 @@ function AreaChartComponent({ data, config }: ChartProps) {
 
     const baseXAxis = { type: 'category' as const, data: effectiveXData, boundaryGap: false, ...getAxisStyle(config.showGrid) }
 
+    const seriesNames = series.map((s: any) => String(s.name ?? ''))
+
     return {
       tooltip: {
         trigger: 'axis' as const,
@@ -60,8 +62,8 @@ function AreaChartComponent({ data, config }: ChartProps) {
         ...(isStacked ? { valueFormatter: (v: unknown) => v ?? 0 } : {}),
       },
       title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
-      legend: buildLegend({ title: config.title, showLegend: config.showLegend }, colors),
-      grid: { top: config.title ? 56 : 8, right: config.showLegend !== false ? LEGEND_COLUMN_WIDTH : 16, bottom: config.dataZoom ? 32 : 8, left: 16, containLabel: true },
+      legend: buildLegend({ title: config.title, showLegend: config.showLegend }, colors, { seriesNames, reserveTopRight: true }),
+      grid: { top: config.title ? 56 : 8, right: legendColumnReserve(config.showLegend, seriesNames), bottom: config.dataZoom ? 32 : 8, left: 16, containLabel: true },
       dataZoom: config.dataZoom ? [
         { type: 'inside' as const, start: 0, end: 100 },
         { type: 'slider' as const, start: 0, end: 100, bottom: 8, height: 20, borderColor: colors.border, textStyle: { fontSize: 10, color: colors.textMuted } },
