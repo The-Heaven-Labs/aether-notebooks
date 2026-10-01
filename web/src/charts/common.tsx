@@ -8,6 +8,7 @@ import {
   VisualMapComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
+import { LabelLayout } from 'echarts/features'
 import type { ResultSet } from '../types'
 import type { ChartConfig, MarkLineConfig } from './types'
 
@@ -17,6 +18,9 @@ echarts.use([
   GridComponent, TooltipComponent, LegendComponent, TitleComponent,
   DataZoomComponent, ToolboxComponent, GeoComponent,
   VisualMapComponent,
+  // Required for series `labelLayout` (pie title-band clamp, timeline
+  // hideOverlap): without it ECharts ignores the option entirely.
+  LabelLayout,
   CanvasRenderer,
 ])
 
@@ -36,6 +40,9 @@ function getCurrentPalette(): string[] {
 
 export const CHART_COLORS = new Proxy(LIGHT_CHART_COLORS, {
   get(_target, prop) {
+    // Symbol reads (e.g. Symbol.toStringTag by React Refresh / DevTools) must
+    // not fall into the numeric index conversion below.
+    if (typeof prop === 'symbol') return (Reflect as any).get(_target, prop, _target)
     const palette = getCurrentPalette()
     if (prop === 'length') return palette.length
     const idx = Number(prop)
@@ -43,6 +50,7 @@ export const CHART_COLORS = new Proxy(LIGHT_CHART_COLORS, {
     return (Reflect as any).get(palette, prop, palette)
   },
   has(_target, prop) {
+    if (typeof prop === 'symbol') return (Reflect as any).has(_target, prop)
     return prop in getCurrentPalette()
   },
 }) as string[]
@@ -500,29 +508,96 @@ export function getAxisStyle(showGrid?: boolean) {
   }
 }
 
-// Right-hand plot inset reserved for the docked legend column. Must cover the
-// legend's own `right: 10` offset plus its measured item/page content (~150px).
-export const LEGEND_COLUMN_WIDTH = 160
+// Right-hand plot inset reserved for the docked legend column. The width is
+// measured from the series names so long grouped names cannot grow the
+// right-anchored legend leftward over the plot; clamping keeps the reserve
+// sane for both short and pathological names.
+export const LEGEND_COLUMN_MIN = 160
+export const LEGEND_COLUMN_MAX = 280
+
+// Fallback average glyph width at fontSize 11 (≈6.2px/char) used when a real
+// canvas is unavailable (jsdom/SSR) or yields no measurement.
+const CHAR_WIDTH_PER_FONT_PX = 6.2 / 11
+
+let measureContext: CanvasRenderingContext2D | null | undefined
+
+function getMeasureContext(): CanvasRenderingContext2D | null {
+  if (measureContext === undefined) {
+    try {
+      measureContext = typeof document !== 'undefined'
+        ? document.createElement('canvas').getContext('2d')
+        : null
+    } catch {
+      measureContext = null
+    }
+  }
+  return measureContext
+}
+
+function measureTextWidth(text: string, fontSize: number): number {
+  const ctx = getMeasureContext()
+  if (ctx) {
+    ctx.font = `${fontSize}px sans-serif`
+    const width = ctx.measureText(text).width
+    if (width > 0) return width
+  }
+  return text.length * fontSize * CHAR_WIDTH_PER_FONT_PX
+}
+
+// Width of the docked legend column needed for `names`: the widest item text
+// at the legend's fontSize (measured, canvas fallback 6.2px/char) + swatch 14
+// + gap 6 + `right: 10` offset + pager reserve. Clamped to [MIN, MAX].
+export function estimateLegendColumnWidth(names: string[]): number {
+  const widest = names.reduce((max, n) => Math.max(max, measureTextWidth(String(n), 11)), 0)
+  return Math.min(LEGEND_COLUMN_MAX, Math.max(LEGEND_COLUMN_MIN, widest + 40))
+}
+
+// Right-hand plot inset for grid-based charts: the measured legend column
+// when the legend is shown, the default plot padding otherwise.
+export function legendColumnReserve(showLegend: boolean | undefined, seriesNames: string[]): number {
+  return showLegend !== false ? estimateLegendColumnWidth(seriesNames) : 16
+}
+
+export interface BuildLegendOptions {
+  // Series/slice names rendered as legend items; measured to size the column
+  // and truncated to keep the right-anchored box inside it.
+  seriesNames?: string[]
+  // Chart modules that render the absolute `↺ Reset` button keep the legend
+  // box below the top-right corner so the two cannot collide.
+  reserveTopRight?: boolean
+}
 
 // Explicit height is required for scroll paging: without it ECharts derives an
 // auto height and the pager renders but pages to an empty view. The percentages
 // keep the legend box on-canvas even for the smallest dashboard widgets
-// (title case: 30 + 0.50H <= H for the ~69px chart area of a 4-row widget).
+// (reserveTopRight case: top + 0.44H <= H for the ~69px chart area of a 4-row
+// widget with a title; the no-title box uses top 34 + 0.50H <= H).
 export function buildLegend(
   config: Pick<ChartConfig, 'title' | 'showLegend'>,
   colors: ReturnType<typeof getChartColors>,
+  opts?: BuildLegendOptions,
 ): Record<string, unknown> {
   if (config.showLegend === false) return { show: false }
+  const width = estimateLegendColumnWidth(opts?.seriesNames ?? [])
+  const maxChars = Math.max(12, Math.floor((width - 40) / 6.2))
+  const reserveTopRight = opts?.reserveTopRight === true
   return {
     type: 'scroll',
     orient: 'vertical' as const,
     right: 10,
-    top: config.title ? 30 : 8,
-    height: config.title ? '50%' : '85%',
+    top: reserveTopRight ? (config.title ? 36 : 34) : (config.title ? 30 : 8),
+    height: reserveTopRight ? (config.title ? '44%' : '50%') : (config.title ? '50%' : '85%'),
     align: 'auto',
     itemWidth: 14,
     itemHeight: 10,
     textStyle: { fontSize: 11, color: colors.textMuted },
+    // Keep the box inside the reserved column: truncate to the measured
+    // budget; the legend tooltip exposes the full name on hover.
+    formatter: (name: string) => {
+      const s = String(name)
+      return s.length > maxChars ? s.slice(0, maxChars - 1) + '…' : s
+    },
+    tooltip: { show: true },
     pageIconSize: 10,
     pageIconColor: colors.textMuted,
     pageIconInactiveColor: colors.border,

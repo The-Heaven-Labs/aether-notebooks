@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useCallback } from 'react'
 import * as echarts from 'echarts/core'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, ChartTypeSelect, buildLegend } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, ChartTypeSelect, buildLegend, estimateLegendColumnWidth } from './common'
 import { ConfigHint } from './ConfigHint'
 import { useGroupValues } from './AxisConfigPanel'
 
@@ -200,7 +200,7 @@ function MapChartComponent({ data, config }: ChartProps) {
       roam: true,
       zoom: 1.2,
       center: [10, 20] as [number, number],
-      ...(legendShown ? { left: 0 } : {}),
+      ...(legendShown ? { left: 0, right: estimateLegendColumnWidth(groupList) } : {}),
       itemStyle: {
         areaColor: dark ? '#3d3d3d' : '#f0f0f0',
         borderColor: dark ? '#555' : '#d0d0d0',
@@ -301,7 +301,7 @@ function MapChartComponent({ data, config }: ChartProps) {
       tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: tooltipFmt },
       title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
       color: seriesColors,
-      legend: legendShown ? buildLegend({ title: config.title, showLegend: config.showLegend }, colors) : { show: false },
+      legend: legendShown ? buildLegend({ title: config.title, showLegend: config.showLegend }, colors, { seriesNames: groupList, reserveTopRight: true }) : { show: false },
       geo,
       series: builtSeries,
     }

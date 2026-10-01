@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, getTooltipStyle, getContrastTextColor, useChartColors, useRowsAsObjects, ChartTypeSelect, CHART_COLORS, buildLegend, LEGEND_COLUMN_WIDTH } from './common'
+import { EChartsContainer, getTooltipStyle, getContrastTextColor, useChartColors, useRowsAsObjects, ChartTypeSelect, CHART_COLORS, buildLegend, estimateLegendColumnWidth } from './common'
 import { ConfigHint } from './ConfigHint'
 
 function FunnelChartComponent({ data, config }: ChartProps) {
@@ -24,6 +24,8 @@ function FunnelChartComponent({ data, config }: ChartProps) {
       })
       .filter(d => d.value > 0 || !config.skipEmpty)
 
+    const seriesNames = funnelData.map(d => d.name)
+
     return {
       tooltip: {
         trigger: 'item' as const,
@@ -34,13 +36,13 @@ function FunnelChartComponent({ data, config }: ChartProps) {
         text: config.title, left: 'center', top: 8,
         textStyle: { fontSize: 14, color: colors.text },
       } : undefined,
-      legend: buildLegend({ title: config.title, showLegend: config.showLegend }, colors),
+      legend: buildLegend({ title: config.title, showLegend: config.showLegend }, colors, { seriesNames }),
       series: [{
         type: 'funnel' as const,
         top: config.title ? 48 : 8,
         bottom: 8,
         left: '10%',
-        right: legendShown ? LEGEND_COLUMN_WIDTH : '10%',
+        right: legendShown ? estimateLegendColumnWidth(seriesNames) : '10%',
         minSize: '15%',
         maxSize: '100%',
         gap: 2,
