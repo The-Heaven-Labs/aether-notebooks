@@ -32,12 +32,17 @@ func adminModeFromContext(ctx context.Context) bool {
 }
 
 // AuthMiddleware validates JWT tokens and sets user claims in the request context.
-// publicURL is the externally visible base URL (AETHER_PUBLIC_URL); it is used
-// only to resolve the request host when a proxy has rewritten Host to an
-// in-cluster service name (see requestSchemeAndHost).
-func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte, publicURL string) func(http.Handler) http.Handler {
+// publicURLFn returns the externally visible base URL (AETHER_PUBLIC_URL); it is
+// used only to resolve the request host when a proxy has rewritten Host to an
+// in-cluster service name (see requestSchemeAndHost). It is called per request
+// because routes are registered before SetPublicURL configures the value.
+func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte, publicURLFn func() string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			publicURL := ""
+			if publicURLFn != nil {
+				publicURL = publicURLFn()
+			}
 			token := ""
 			fromQuery := false
 
