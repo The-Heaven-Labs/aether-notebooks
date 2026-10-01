@@ -9,6 +9,12 @@ import { registerAndOnboard, login } from './helpers'
 // the inherited discovery surface. The suite drives two browser contexts
 // (owner + recipient) and a fake OpenAI-compatible model endpoint so turns
 // complete deterministically without live LLM tokens.
+//
+// Requirements: the target API server must have register/login rate limits
+// raised (each test registers at least one account): docker-compose.dev.yml
+// sets AETHER_RATE_LIMIT_REGISTER/LOGIN=500/min, while the server defaults are
+// 5/min register and 10/min login. Target any stack via E2E_BASE_URL
+// (default http://localhost:5173).
 
 const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:5173'
 const PASSWORD = 'testpass123'
@@ -180,8 +186,9 @@ async function provisionSession(
 }
 
 // sendWsMessage drives one owner turn over the agent WebSocket. It resolves on
-// done (fake LLM success) or error, so callers can rely on the transcript
-// having been persisted before they assert.
+// done (fake LLM success) and rejects on error frames or socket failures, so a
+// failed turn surfaces instead of silently passing on a persisted-but-
+// unanswered user message. All call sites expect the turn to complete.
 async function sendWsMessage(sessionId: string, token: string, content: string): Promise<void> {
   const url = `${BASE_URL.replace(/^http/, 'ws')}/api/v1/ws/agents/${sessionId}?token=${encodeURIComponent(token)}`
   await new Promise<void>((resolve, reject) => {
@@ -190,20 +197,19 @@ async function sendWsMessage(sessionId: string, token: string, content: string):
       try { ws.close() } catch { /* already closed */ }
       reject(new Error(`timed out waiting for the agent turn on ${sessionId}`))
     }, 30_000)
-    const finish = () => {
+    const settle = (err?: Error) => {
       clearTimeout(timer)
       try { ws.close() } catch { /* already closed */ }
-      resolve()
+      if (err) reject(err)
+      else resolve()
     }
     ws.onopen = () => ws.send(JSON.stringify({ type: 'message', content }))
     ws.onmessage = (event) => {
-      const msg = JSON.parse(typeof event.data === 'string' ? event.data : String(event.data)) as { type?: string }
-      if (msg.type === 'done' || msg.type === 'error') finish()
+      const msg = JSON.parse(typeof event.data === 'string' ? event.data : String(event.data)) as { type?: string; message?: string }
+      if (msg.type === 'done') settle()
+      else if (msg.type === 'error') settle(new Error(`agent turn failed on ${sessionId}: ${msg.message ?? 'unknown error'}`))
     }
-    ws.onerror = () => {
-      clearTimeout(timer)
-      reject(new Error(`agent websocket failed on ${sessionId}`))
-    }
+    ws.onerror = () => settle(new Error(`agent websocket failed on ${sessionId}`))
   })
 }
 
