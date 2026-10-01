@@ -4,21 +4,24 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 type SessionStore struct {
 	pool       *pgxpool.Pool
+	rdb        *redis.Client
 	adminModes sync.Map // sessionID -> bool
 }
 
-func NewSessionStore(pool *pgxpool.Pool) *SessionStore {
-	return &SessionStore{pool: pool}
+func NewSessionStore(pool *pgxpool.Pool, rdb *redis.Client) *SessionStore {
+	return &SessionStore{pool: pool, rdb: rdb}
 }
 
 func (s *SessionStore) CreateSession(ctx context.Context, agentID, notebookID, userID string, maxTurns int, title *string, adminMode, autoApproveTools, autoAnswerQuestions bool) (*models.AgentSession, error) {
@@ -258,8 +261,40 @@ func (s *SessionStore) GetMessagesWithLimit(ctx context.Context, sessionID strin
 }
 
 func (s *SessionStore) DeleteSession(ctx context.Context, sessionID string) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM agent_sessions WHERE id = $1`, sessionID)
-	return err
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete session: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := DeleteAgentSessionACLs(ctx, tx, `id = $1`, sessionID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM agent_sessions WHERE id = $1`, sessionID); err != nil {
+		return fmt.Errorf("delete session: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit delete session: %w", err)
+	}
+
+	s.clearStreamState(ctx, sessionID)
+	return nil
+}
+
+// clearStreamState best-effort removes the session's Redis stream keys (the
+// non-expiring seq counter and the replay buffer) so deleting a session
+// reclaims them instead of leaving them for the Redis lifetime. A failure only
+// leaves the keys behind; it does not fail the delete.
+func (s *SessionStore) clearStreamState(ctx context.Context, sessionID string) {
+	if s.rdb == nil {
+		return
+	}
+	delCtx, cancel := context.WithTimeout(ctx, sessionStreamRedisTimeout)
+	defer cancel()
+	if err := s.rdb.Del(delCtx, sessionStreamSeqKey(sessionID), sessionStreamBufferKey(sessionID)).Err(); err != nil {
+		slog.Warn("agent session: failed to clear redis stream state",
+			"session_id", sessionID, "error", err)
+	}
 }
 
 func (s *SessionStore) UpdateTitle(ctx context.Context, sessionID string, title *string) error {

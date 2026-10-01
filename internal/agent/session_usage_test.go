@@ -21,7 +21,7 @@ func TestSessionUsageAccumulates(t *testing.T) {
 	nbID := createTestNotebook(t, db.Pool, orgID, userID)
 	agentID := createSessionTestAgent(t, db.Pool, orgID, userID)
 
-	store := agent.NewSessionStore(db.Pool)
+	store := agent.NewSessionStore(db.Pool, nil)
 	ctx := context.Background()
 	session, err := store.CreateSession(ctx, agentID, nbID, userID, 10, nil, false, false, false)
 	require.NoError(t, err)
@@ -83,7 +83,7 @@ func setupUsageTestEnv(t *testing.T, baseURL, defaultParams string, contextWindo
 	_, err = db.Pool.Exec(ctx, `UPDATE agents SET model_config_id = $1 WHERE id = $2`, mcID, agentID)
 	require.NoError(t, err)
 
-	store := agent.NewSessionStore(db.Pool)
+	store := agent.NewSessionStore(db.Pool, nil)
 	session, err := store.CreateSession(ctx, agentID, nbID, userID, 10, nil, false, false, false)
 	require.NoError(t, err)
 

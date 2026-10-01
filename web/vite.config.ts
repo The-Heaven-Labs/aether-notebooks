@@ -13,7 +13,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api': { target: 'http://localhost:8088', changeOrigin: true },
+      '/api': { target: 'http://localhost:8088', changeOrigin: true, ws: true },
       '/internal': { target: 'http://localhost:8088', changeOrigin: true },
       '/docs': { target: 'http://localhost:8088', changeOrigin: true },
       '/swagger.json': { target: 'http://localhost:8088', changeOrigin: true },

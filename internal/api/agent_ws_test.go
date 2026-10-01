@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/api"
 )
 
@@ -660,6 +662,30 @@ func (c *wsCollector) count(typ string) int {
 	return n
 }
 
+func (c *wsCollector) messagesOfType(typ string) []map[string]any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []map[string]any
+	for _, m := range c.msgs {
+		if m["type"] == typ {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func (c *wsCollector) waitForCount(typ string, want int) {
+	c.t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if c.count(typ) >= want {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	c.t.Fatalf("timed out waiting for %d %q messages (got %d)", want, typ, c.count(typ))
+}
+
 // A message sent while a turn is blocked must be steered into the running
 // turn (steering_accepted + steering event, folded into the next LLM call) —
 // never silently dropped, and never run as a second concurrent turn.
@@ -762,4 +788,161 @@ func TestAgentWSSteeringAcceptedWhileBusy(t *testing.T) {
 	if err != nil || count != 1 {
 		t.Fatalf("steered message persisted != once: count=%d err=%v", count, err)
 	}
+}
+
+// TestAgentWSSessionViewEditSplit pins the WS view/edit split: a shared viewer
+// connects and receives live engine events, but every mutating frame is
+// answered with a `read-only session` error while the socket stays open. The
+// owner and an admin-mode org admin keep full control, and members without a
+// session share cannot connect at all.
+func TestAgentWSSessionViewEditSplit(t *testing.T) {
+	f := setupSessionSharingFixture(t)
+	ts := httptest.NewServer(f.srv)
+	defer ts.Close()
+
+	finalBody := `{"id":"x","model":"gpt-4","choices":[{"message":{"content":"viewer sees this"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`
+	var captured []map[string]any
+	llm := mockLLMWithCapture(t, []string{finalBody}, &captured)
+	defer llm.Close()
+
+	notebookID := createNotebook(t, f.srv, f.aliceToken, "WS View Edit NB")
+	mcID := createModelConfigWithURL(t, f.srv, f.aliceToken, llm.URL)
+	agentID := createAgent(t, f.srv, f.aliceToken, mcID)
+
+	// Fresh sessions per subtest keep each stream buffer free of events from
+	// the previous subtest.
+	createSharedSession := func(t *testing.T) string {
+		t.Helper()
+		code, resp := postCreateSession(t, f.srv, f.aliceToken, agentID, map[string]any{
+			"notebook_id": notebookID,
+			"shares": []map[string]any{
+				{"subject_type": "user", "subject_id": f.bobID, "actions": []string{"view"}},
+			},
+		})
+		require.Equal(t, http.StatusCreated, code, "%v", resp)
+		id, _ := resp["session_id"].(string)
+		require.NotEmpty(t, id)
+		return id
+	}
+
+	dial := func(t *testing.T, sessionID, token string, adminMode bool) *websocket.Conn {
+		t.Helper()
+		url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/ws/agents/" + sessionID + "?token=" + token
+		if adminMode {
+			url += "&admin_mode=true"
+		}
+		conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { conn.Close() })
+		return conn
+	}
+
+	t.Run("shared viewer receives live engine events", func(t *testing.T) {
+		sessionID := createSharedSession(t)
+		viewerCol := collectWS(t, dial(t, sessionID, f.bobToken, false))
+		owner := dial(t, sessionID, f.aliceToken, false)
+		ownerCol := collectWS(t, owner)
+
+		require.NoError(t, owner.WriteJSON(map[string]string{"type": "message", "content": "hi"}))
+		ownerCol.waitFor("done")
+
+		done := viewerCol.waitFor("done")
+		data, _ := done["data"].(map[string]any)
+		require.Equal(t, "viewer sees this", data["content"])
+		seq, ok := done["seq"].(float64)
+		require.True(t, ok, "viewer events must carry a numeric shared seq: %v", done)
+		require.Greater(t, seq, float64(0), "viewer events must carry a positive shared seq")
+	})
+
+	t.Run("viewer mutating frames are rejected and the socket stays open", func(t *testing.T) {
+		sessionID := createSharedSession(t)
+		conn := dial(t, sessionID, f.bobToken, false)
+		col := collectWS(t, conn)
+
+		frames := []map[string]any{
+			{"type": "message", "content": "let me in"},
+			{"type": "cancel"},
+			{"type": "slash_command", "command": "/help"},
+			{"type": "tool_confirm", "approved": true},
+			{"type": "question_answer", "answer": "yes"},
+			{"type": "set_reasoning_effort", "reasoning_effort": "high"},
+			{"type": "set_model_config", "model_config_id": mcID},
+			{"type": "set_page_context", "page_context": map[string]any{"type": "notebook", "id": notebookID}},
+			{"type": "set_admin_mode", "admin_mode": true},
+		}
+		for i, frame := range frames {
+			require.NoError(t, conn.WriteJSON(frame))
+			col.waitForCount("error", i+1)
+			errs := col.messagesOfType("error")
+			require.Len(t, errs, i+1, "frame %d (%v): exactly one rejection per frame", i, frame)
+			require.Equal(t, "read-only session", errs[i]["message"], "frame %d (%v) must be rejected as read-only", i, frame)
+		}
+		require.Zero(t, col.count("done"), "a rejected message must not start a turn")
+
+		// `reconnect` stays available to viewers, and its answer proves the
+		// rejected frames did not close the socket.
+		require.NoError(t, conn.WriteJSON(map[string]string{"type": "reconnect", "last_message_id": ""}))
+		sync := col.waitFor("reconnect_sync")
+		running, ok := sync["running"].(bool)
+		require.True(t, ok, "reconnect_sync must report a boolean running flag: %v", sync)
+		require.False(t, running, "no turn may be running for the viewer")
+	})
+
+	t.Run("owner can still send and change settings", func(t *testing.T) {
+		sessionID := createSharedSession(t)
+		conn := dial(t, sessionID, f.aliceToken, false)
+		col := collectWS(t, conn)
+
+		start := len(captured)
+		require.NoError(t, conn.WriteJSON(map[string]string{"type": "set_reasoning_effort", "reasoning_effort": "high"}))
+		require.NoError(t, conn.WriteJSON(map[string]string{"type": "message", "content": "owner turn"}))
+		done := col.waitFor("done")
+		data, _ := done["data"].(map[string]any)
+		require.Equal(t, "viewer sees this", data["content"])
+		require.Zero(t, col.count("error"), "owner frames must be accepted")
+		require.Len(t, captured, start+1, "the owner turn must reach the LLM exactly once")
+		require.Equal(t, "high", captured[start]["reasoning_effort"],
+			"the owner's requested reasoning effort must reach the LLM request")
+	})
+
+	t.Run("admin-mode org admin can mutate", func(t *testing.T) {
+		sessionID := createSharedSession(t)
+		_, err := f.srv.DB().Pool.Exec(context.Background(),
+			`UPDATE org_members SET role = 'admin' WHERE org_id = $1 AND user_id = $2`,
+			f.orgID, f.carolID)
+		require.NoError(t, err)
+		adminToken := issueToken(t, f.carolID, f.orgID, "admin")
+
+		conn := dial(t, sessionID, adminToken, true)
+		col := collectWS(t, conn)
+
+		start := len(captured)
+		require.NoError(t, conn.WriteJSON(map[string]string{"type": "set_reasoning_effort", "reasoning_effort": "low"}))
+		require.NoError(t, conn.WriteJSON(map[string]string{"type": "message", "content": "admin turn"}))
+		done := col.waitFor("done")
+		data, _ := done["data"].(map[string]any)
+		require.Equal(t, "viewer sees this", data["content"])
+		require.Zero(t, col.count("error"), "an admin-mode org admin must not be read-only")
+		require.Len(t, captured, start+1, "the admin turn must reach the LLM exactly once")
+		require.Equal(t, "low", captured[start]["reasoning_effort"],
+			"the admin's requested reasoning effort must reach the LLM request")
+	})
+
+	t.Run("member without a share cannot connect", func(t *testing.T) {
+		sessionID := createSharedSession(t)
+		_, outsiderToken := addFixtureMember(t, f, "ws-view-edit-outsider")
+		url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/ws/agents/" + sessionID + "?token=" + outsiderToken
+		_, resp, err := websocket.DefaultDialer.Dial(url, nil)
+		require.Error(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, http.StatusForbidden, resp.StatusCode)
+	})
+
+	t.Run("missing session is 404", func(t *testing.T) {
+		url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/v1/ws/agents/" + uuid.NewString() + "?token=" + f.aliceToken
+		_, resp, err := websocket.DefaultDialer.Dial(url, nil)
+		require.Error(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
 }

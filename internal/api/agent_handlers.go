@@ -570,13 +570,31 @@ func (h *agentHandlers) handleDeleteAgent(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	result, err := h.server.db.Pool.Exec(r.Context(), `DELETE FROM agents WHERE id = $1 AND org_id = $2`, agentID, claims.OrgID)
+	tx, err := h.server.db.Pool.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	// The ACL rows have no FK to agent_sessions, so clear them in the same
+	// transaction before the agents delete cascades the sessions away.
+	if err := agent.DeleteAgentSessionACLs(r.Context(), tx, `agent_id = $1`, agentID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	result, err := tx.Exec(r.Context(), `DELETE FROM agents WHERE id = $1 AND org_id = $2`, agentID, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if result.RowsAffected() == 0 {
 		writeError(w, http.StatusNotFound, "agent not found")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -588,13 +606,24 @@ func (h *agentHandlers) handleDeleteAgent(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusNoContent, nil)
 }
 
+// createSessionRequest is the POST /agents/{id}/session request body.
+type createSessionRequest struct {
+	NotebookID               string          `json:"notebook_id"`
+	MaxTurns                 int             `json:"max_turns"`
+	Title                    *string         `json:"title"`
+	AutoApproveTools         bool            `json:"auto_approve_tools"`
+	AutoAnswerQuestions      bool            `json:"auto_answer_questions"`
+	Shares                   []aclEntryInput `json:"shares"`
+	ShareWithNotebookViewers bool            `json:"share_with_notebook_viewers"`
+}
+
 // @Summary Create an agent session
 // @Description Create a new chat session with an agent
 // @Tags agents
 // @Accept json
 // @Produce json
 // @Param id path string true "Agent ID"
-// @Param request body object true "Session details"
+// @Param request body createSessionRequest true "Session details"
 // @Success 201 {object} map[string]any
 // @Failure 400 {object} map[string]string
 // @Security BearerAuth
@@ -602,20 +631,15 @@ func (h *agentHandlers) handleDeleteAgent(w http.ResponseWriter, r *http.Request
 func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
+	ctx := r.Context()
 
-	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "view")
+	allowed, err := h.server.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "view")
 	if err != nil || !allowed {
 		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
 	}
 
-	var req struct {
-		NotebookID          string  `json:"notebook_id"`
-		MaxTurns            int     `json:"max_turns"`
-		Title               *string `json:"title"`
-		AutoApproveTools    bool    `json:"auto_approve_tools"`
-		AutoAnswerQuestions bool    `json:"auto_answer_questions"`
-	}
+	var req createSessionRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
@@ -630,14 +654,21 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 		req.MaxTurns = 100
 	}
 
-	// Clean up any empty sessions for this user+agent before creating a new one
-	_, err = h.server.db.Pool.Exec(r.Context(), `
-		DELETE FROM agent_sessions
-		WHERE agent_id = $1 AND user_id = $2
-			AND id NOT IN (SELECT DISTINCT session_id FROM agent_messages)
-	`, agentID, claims.UserID)
+	if req.NotebookID != "" {
+		allowed, err = h.server.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", req.NotebookID, "view")
+		if err != nil || !allowed {
+			writeError(w, http.StatusForbidden, "insufficient permissions")
+			return
+		}
+	}
+	if req.ShareWithNotebookViewers && req.NotebookID == "" {
+		writeError(w, http.StatusBadRequest, "share_with_notebook_viewers requires a notebook")
+		return
+	}
+
+	shares, err := h.server.normalizeSessionShareEntries(ctx, h.server.db.Pool, claims.UserID, claims.OrgID, req.Shares)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeSessionShareError(w, err)
 		return
 	}
 
@@ -646,21 +677,29 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 	if req.NotebookID != "" {
 		notebookID = &req.NotebookID
 	}
-	_, err = h.server.db.Pool.Exec(r.Context(), `
-		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, title, created_at, auto_approve_tools, auto_answer_questions)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8)
-	`, sessionID, agentID, notebookID, claims.UserID, req.MaxTurns, req.Title, req.AutoApproveTools, req.AutoAnswerQuestions)
-	if err != nil {
+
+	if err := h.createSessionWithSharing(ctx, sessionID, createSessionParams{
+		AgentID:                  agentID,
+		NotebookID:               notebookID,
+		UserID:                   claims.UserID,
+		OrgID:                    claims.OrgID,
+		MaxTurns:                 req.MaxTurns,
+		Title:                    req.Title,
+		AutoApproveTools:         req.AutoApproveTools,
+		AutoAnswerQuestions:      req.AutoAnswerQuestions,
+		ShareWithNotebookViewers: req.ShareWithNotebookViewers,
+		Shares:                   shares,
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if h.server.agentEngine != nil {
-		h.server.agentEngine.SessionStore().SetAdminMode(sessionID, adminModeFromContext(r.Context()))
+		h.server.agentEngine.SessionStore().SetAdminMode(sessionID, adminModeFromContext(ctx))
 	}
 
 	// Look up the model's context window for display purposes
 	var contextWindow int
-	h.server.db.Pool.QueryRow(r.Context(), `
+	h.server.db.Pool.QueryRow(ctx, `
 		SELECT COALESCE(mc.context_window, 128000)
 		FROM agents a
 		JOIN model_configs mc ON mc.id = a.model_config_id
@@ -670,10 +709,21 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 		contextWindow = 128000
 	}
 
-	h.server.audit.Log(r.Context(), audit.Entry{
+	h.server.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "agent_session.create", ResourceType: "agent_session", ResourceID: sessionID,
 	})
+	for _, share := range shares {
+		h.server.audit.Log(ctx, audit.Entry{
+			OrgID: claims.OrgID, UserID: claims.UserID,
+			Action: "acl.granted", ResourceType: "agent_session", ResourceID: sessionID,
+			Metadata: map[string]any{
+				"subject_type": share.SubjectType,
+				"subject_id":   share.SubjectID,
+				"actions":      share.Actions,
+			},
+		})
+	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"session_id":            sessionID,
@@ -681,6 +731,93 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 		"auto_approve_tools":    req.AutoApproveTools,
 		"auto_answer_questions": req.AutoAnswerQuestions,
 	})
+}
+
+// createSessionParams carries the validated create-session inputs into the
+// single transaction that persists the session and its ACL entries.
+type createSessionParams struct {
+	AgentID                  string
+	NotebookID               *string
+	UserID                   string
+	OrgID                    string
+	MaxTurns                 int
+	Title                    *string
+	AutoApproveTools         bool
+	AutoAnswerQuestions      bool
+	ShareWithNotebookViewers bool
+	Shares                   []aclEntryInput
+}
+
+// createSessionWithSharing persists the session, its owner ACL entry, and the
+// share entries in one transaction. The caller's empty sessions for the same
+// agent and notebook — and their agent_session ACL rows — are swept first, so
+// deleting sessions never leaves orphaned ACLs behind. agent_sessions is
+// locked before acl_entries to match the V124 migration's lock order.
+func (h *agentHandlers) createSessionWithSharing(ctx context.Context, sessionID string, p createSessionParams) error {
+	tx, err := h.server.db.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin session transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	sweptRows, err := tx.Query(ctx, `
+		DELETE FROM agent_sessions
+		WHERE agent_id = $1 AND user_id = $2
+			AND notebook_id IS NOT DISTINCT FROM $3::uuid
+			AND id NOT IN (SELECT DISTINCT session_id FROM agent_messages)
+		RETURNING id
+	`, p.AgentID, p.UserID, p.NotebookID)
+	if err != nil {
+		return fmt.Errorf("sweep empty sessions: %w", err)
+	}
+	var sweptIDs []string
+	for sweptRows.Next() {
+		var id string
+		if err := sweptRows.Scan(&id); err != nil {
+			sweptRows.Close()
+			return fmt.Errorf("scan swept session: %w", err)
+		}
+		sweptIDs = append(sweptIDs, id)
+	}
+	if err := sweptRows.Err(); err != nil {
+		sweptRows.Close()
+		return fmt.Errorf("sweep empty sessions: %w", err)
+	}
+	sweptRows.Close()
+
+	if len(sweptIDs) > 0 {
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM acl_entries WHERE resource_type = 'agent_session' AND resource_id = ANY($1)`,
+			sweptIDs); err != nil {
+			return fmt.Errorf("delete swept session ACLs: %w", err)
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO agent_sessions (id, agent_id, notebook_id, user_id, max_turns, title, created_at, auto_approve_tools, auto_answer_questions, share_with_notebook_viewers)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9)
+	`, sessionID, p.AgentID, p.NotebookID, p.UserID, p.MaxTurns, p.Title, p.AutoApproveTools, p.AutoAnswerQuestions, p.ShareWithNotebookViewers); err != nil {
+		return fmt.Errorf("create session: %w", err)
+	}
+
+	// The owner entry is written before the shares so an owner-named share
+	// entry cannot downgrade it: DO NOTHING keeps the full-access row.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		VALUES ($1, 'agent_session', $2::uuid, 'user', $3, $4)
+		ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING
+	`, p.OrgID, sessionID, p.UserID, sessionOwnerActions); err != nil {
+		return fmt.Errorf("seed session owner ACL: %w", err)
+	}
+
+	if err := insertSessionACLEntries(ctx, tx, p.OrgID, sessionID, p.Shares); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit session: %w", err)
+	}
+	return nil
 }
 
 // @Summary List agent sessions
@@ -702,61 +839,33 @@ func (h *agentHandlers) handleListSessions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT s.id, s.agent_id, s.notebook_id, s.user_id, s.max_turns, s.ended_at, s.title, s.created_at,
-			COALESCE(
-				(SELECT content FROM agent_messages WHERE session_id = s.id AND role = 'user' ORDER BY created_at ASC LIMIT 1),
-				''
-			) as first_message,
-			COALESCE(
-				(SELECT COUNT(*) FROM agent_messages WHERE session_id = s.id),
-				0
-			) as message_count
-		FROM agent_sessions s
+	rows, err := h.server.db.Pool.Query(r.Context(), sessionListSelect+`
 		WHERE s.agent_id = $1
 			AND s.id IN (SELECT DISTINCT session_id FROM agent_messages)
-		ORDER BY s.created_at DESC LIMIT 50
-	`, agentID)
+		ORDER BY s.created_at DESC LIMIT $2
+	`, agentID, agentSessionListLimit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "failed to list sessions")
 		return
 	}
-	defer rows.Close()
-
-	var sessions []map[string]any
-	for rows.Next() {
-		var s models.AgentSession
-		var firstMsg string
-		var msgCount int
-		var endedAt *time.Time
-		var title *string
-		var notebookID *string
-		if err := rows.Scan(&s.ID, &s.AgentID, &notebookID, &s.UserID, &s.MaxTurns, &endedAt, &title, &s.CreatedAt, &firstMsg, &msgCount); err != nil {
-			continue
-		}
-		if notebookID != nil {
-			s.NotebookID = *notebookID
-		}
-		sessions = append(sessions, map[string]any{
-			"id":            s.ID,
-			"agent_id":      s.AgentID,
-			"notebook_id":   s.NotebookID,
-			"user_id":       s.UserID,
-			"max_turns":     s.MaxTurns,
-			"ended_at":      endedAt,
-			"title":         title,
-			"created_at":    s.CreatedAt,
-			"first_message": firstMsg,
-			"message_count": msgCount,
-		})
-	}
-
-	if err := rows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	candidates, err := scanListSessionRows(rows)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list sessions")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, sessions)
+	groupIDs, err := h.server.callerGroupIDs(r.Context(), claims.UserID, claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list sessions")
+		return
+	}
+	visible, err := h.server.filterVisibleSessions(r.Context(), claims.UserID, claims.OrgID, claims.Role, groupIDs, candidates)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list sessions")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, sessionListResponse(visible, claims.UserID))
 }
 
 // @Summary Get a session
@@ -777,9 +886,13 @@ func (h *agentHandlers) handleGetSession(w http.ResponseWriter, r *http.Request)
 	var title *string
 	var notebookID *string
 	err := h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT id, agent_id, notebook_id, user_id, max_turns, ended_at, title, created_at
-		FROM agent_sessions WHERE id = $1
-	`, sessionID).Scan(&s.ID, &s.AgentID, &notebookID, &s.UserID, &s.MaxTurns, &endedAt, &title, &s.CreatedAt)
+		SELECT s.id, s.agent_id, s.notebook_id, s.user_id, u.email, s.max_turns, s.ended_at, s.title, s.created_at,
+			s.share_with_notebook_viewers
+		FROM agent_sessions s
+		JOIN users u ON u.id = s.user_id
+		WHERE s.id = $1
+	`, sessionID).Scan(&s.ID, &s.AgentID, &notebookID, &s.UserID, &s.OwnerEmail,
+		&s.MaxTurns, &endedAt, &title, &s.CreatedAt, &s.ShareWithNotebookViewers)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
@@ -792,11 +905,20 @@ func (h *agentHandlers) handleGetSession(w http.ResponseWriter, r *http.Request)
 	}
 	s.Title = title
 
-	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", s.AgentID, "view")
+	allowed, err := h.server.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "view")
 	if err != nil || !allowed {
 		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
 	}
+
+	canEdit, err := h.server.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "edit")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+
+	s.Shared = s.UserID != claims.UserID
+	s.CanEdit = canEdit
 
 	writeJSON(w, http.StatusOK, s)
 }
@@ -814,15 +936,14 @@ func (h *agentHandlers) handleGetSessionMessages(w http.ResponseWriter, r *http.
 	sessionID := r.PathValue("session_id")
 	claims := ClaimsFromContext(r.Context())
 
-	var agentID string
-	err := h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT agent_id FROM agent_sessions WHERE id = $1
-	`, sessionID).Scan(&agentID)
-	if err != nil {
+	var exists bool
+	if err := h.server.db.Pool.QueryRow(r.Context(), `
+		SELECT EXISTS (SELECT 1 FROM agent_sessions WHERE id = $1)
+	`, sessionID).Scan(&exists); err != nil || !exists {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "view")
+	allowed, err := h.server.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "view")
 	if err != nil || !allowed {
 		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
@@ -912,16 +1033,15 @@ func (h *agentHandlers) handleGetSessionUsage(w http.ResponseWriter, r *http.Req
 	sessionID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
 
-	var agentID string
-	err := h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT agent_id FROM agent_sessions WHERE id = $1
-	`, sessionID).Scan(&agentID)
-	if err != nil {
+	var exists bool
+	if err := h.server.db.Pool.QueryRow(r.Context(), `
+		SELECT EXISTS (SELECT 1 FROM agent_sessions WHERE id = $1)
+	`, sessionID).Scan(&exists); err != nil || !exists {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
 
-	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "view")
+	allowed, err := h.server.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "view")
 	if err != nil || !allowed {
 		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
@@ -951,16 +1071,15 @@ func (h *agentHandlers) handleUpdateSessionTitle(w http.ResponseWriter, r *http.
 	sessionID := r.PathValue("session_id")
 	claims := ClaimsFromContext(r.Context())
 
-	var agentID string
-	err := h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT agent_id FROM agent_sessions WHERE id = $1
-	`, sessionID).Scan(&agentID)
-	if err != nil {
+	var exists bool
+	if err := h.server.db.Pool.QueryRow(r.Context(), `
+		SELECT EXISTS (SELECT 1 FROM agent_sessions WHERE id = $1)
+	`, sessionID).Scan(&exists); err != nil || !exists {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
 
-	allowed, err := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "edit")
+	allowed, err := h.server.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "edit")
 	if err != nil || !allowed {
 		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
@@ -1183,15 +1302,23 @@ func (h *agentHandlers) handleGetSubagentMessages(w http.ResponseWriter, r *http
 	taskID := r.PathValue("task_id")
 	claims := ClaimsFromContext(r.Context())
 
-	var orgID string
+	// Keep the org scope in the lookup so a cross-org caller still gets 404
+	// (as before) instead of learning that the task exists.
+	var parentSessionID string
 	err := h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT a.org_id FROM subagent_tasks st
+		SELECT st.parent_session_id FROM subagent_tasks st
 		JOIN agent_sessions s ON s.id = st.parent_session_id
 		JOIN agents a ON a.id = s.agent_id
-		WHERE st.id = $1
-	`, taskID).Scan(&orgID)
-	if err != nil || orgID != claims.OrgID {
+		WHERE st.id = $1 AND a.org_id = $2
+	`, taskID, claims.OrgID).Scan(&parentSessionID)
+	if err != nil {
 		writeError(w, http.StatusNotFound, "subagent task not found")
+		return
+	}
+
+	allowed, err := h.server.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, parentSessionID, "view")
+	if err != nil || !allowed {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
 	}
 

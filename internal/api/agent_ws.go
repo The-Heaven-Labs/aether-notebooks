@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/the-heaven-labs/aether/internal/agent"
+	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
@@ -56,7 +57,18 @@ const (
 	wsPingPeriod = 25 * time.Second
 	wsPongWait   = 60 * time.Second
 	wsWriteWait  = 10 * time.Second
+
+	// agentWSPermissionCheckTimeout bounds each post-connect view re-check so a
+	// slow database cannot pile up permission queries on a connection.
+	agentWSPermissionCheckTimeout = 5 * time.Second
 )
+
+// agentWSViewRevalidateInterval is how often an established agent WebSocket
+// re-validates the caller's session `view` permission. Revocation (share
+// deletion, group removal, notebook unshare, inherit flag off, session
+// deletion) closes the socket within this interval. A package var, not a
+// const, so tests can shrink it without racing production behavior.
+var agentWSViewRevalidateInterval = 60 * time.Second
 
 // @Summary Agent WebSocket
 // @Description WebSocket endpoint for real-time agent chat
@@ -77,22 +89,53 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, err := s.agentEngine.SessionStore().GetSession(r.Context(), sessionID)
-	if err != nil {
+	if _, err := s.agentEngine.SessionStore().GetSession(r.Context(), sessionID); err != nil {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
 
-	allowed, _ := s.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "agent", sess.AgentID, "view")
+	allowed, err := s.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "view")
+	if err != nil {
+		slog.Warn("ws: session permission check failed", "session_id", sessionID, "user_id", claims.UserID, "action", "view", "error", err)
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
 	if !allowed {
 		writeError(w, http.StatusForbidden, "access denied")
 		return
 	}
 
+	// The read-only split is decided once at connect: viewers (shared users,
+	// notebook inheritors) watch and reconnect, editors own the session.
+	//
+	// `edit` is deliberately not re-checked after connect: it is either the
+	// owner (owner fallback) or an org admin in admin mode, both stable for
+	// the connection. `view` is re-validated — on every `reconnect` frame and
+	// periodically via agentWSViewRevalidateInterval — so a viewer whose
+	// share is revoked is disconnected within the interval instead of keeping
+	// the stream until they navigate away.
+	canEdit, err := s.checkSessionPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, sessionID, "edit")
+	if err != nil {
+		slog.Warn("ws: session permission check failed", "session_id", sessionID, "user_id", claims.UserID, "action", "edit", "error", err)
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+
+	// Pin the connection's admin-mode flag at connect: re-validation rebuilds
+	// the permission context and must reproduce the connect-time evaluation
+	// rather than picking up the session's (possibly owner-toggled) transient
+	// flag.
+	connAdminMode := adminModeFromContext(r.Context())
+
 	// Capture admin mode for this session so the engine can respect per-tool ACLs
-	// unless the profile-page "admin mode" toggle is ON.
-	if s.agentEngine != nil {
-		s.agentEngine.SessionStore().SetAdminMode(sessionID, adminModeFromContext(r.Context()))
+	// unless the profile-page "admin mode" toggle is ON. Only connections that
+	// may edit the session may touch the flag: a viewer dialing
+	// ?admin_mode=true must not switch admin mode on for the owner's session,
+	// and a viewer connecting without the param must not clear it either. An
+	// org admin in admin mode has canEdit=true via the ACL bypass, so their
+	// toggle still takes effect.
+	if s.agentEngine != nil && canEdit {
+		s.agentEngine.SessionStore().SetAdminMode(sessionID, connAdminMode)
 	}
 
 	conn, err := s.upgrader.Upgrade(w, r, nil)
@@ -118,6 +161,30 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	// exceeded until the page is refreshed).
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// connDone unblocks the writer and the periodic view re-validator when the
+	// connection is torn down by any goroutine (client disconnect, revoked
+	// permission). closeOnce makes shutdown idempotent across them.
+	connDone := make(chan struct{})
+	var closeOnce sync.Once
+	shutdown := func() {
+		closeOnce.Do(func() {
+			close(connDone)
+			conn.Close()
+		})
+	}
+	defer shutdown()
+
+	// permissionCtx builds a bounded context carrying the connection's
+	// connect-time admin mode so reconnect and periodic re-checks match the
+	// connect-time evaluation.
+	permissionCtx := func() (context.Context, context.CancelFunc) {
+		chkCtx, chkCancel := context.WithTimeout(ctx, agentWSPermissionCheckTimeout)
+		if connAdminMode {
+			chkCtx = executor.WithAdminMode(chkCtx, true)
+		}
+		return chkCtx, chkCancel
+	}
 
 	writeChan := make(chan any, 256)
 	var wg sync.WaitGroup
@@ -206,6 +273,39 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 					slog.Debug("ws: ping error, writer exiting", "error", err)
 					return
 				}
+			case <-connDone:
+				return
+			}
+		}
+	}()
+
+	// Periodic view re-validation: one permission evaluation per interval per
+	// connection. A viewer whose share/group/notebook access is revoked while
+	// connected is disconnected within agentWSViewRevalidateInterval instead of
+	// keeping the stream until they navigate away. `edit` is not re-checked
+	// (owner/admin-mode are stable within a connection).
+	go func() {
+		ticker := time.NewTicker(agentWSViewRevalidateInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-connDone:
+				return
+			case <-ticker.C:
+				chkCtx, chkCancel := permissionCtx()
+				allowed, err := s.checkSessionPermission(chkCtx, claims.UserID, claims.OrgID, claims.Role, sessionID, "view")
+				chkCancel()
+				if err != nil {
+					// Transient check failure: keep the stream (never grant on
+					// error) and retry at the next interval.
+					slog.Warn("ws: periodic view re-check failed", "session_id", sessionID, "user_id", claims.UserID, "error", err)
+					continue
+				}
+				if !allowed {
+					slog.Info("ws: session view revoked; closing connection", "session_id", sessionID, "user_id", claims.UserID)
+					shutdown()
+					return
+				}
 			}
 		}
 	}()
@@ -213,6 +313,10 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		// Reader exit means the socket is gone (client disconnect or handler
+		// shutdown): wake the writer immediately instead of waiting for its
+		// next failed write.
+		defer shutdown()
 		for {
 			var msg WSMessage
 			if err := conn.ReadJSON(&msg); err != nil {
@@ -221,6 +325,15 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 			slog.Debug("ws: received message", "session_id", currentSessionID, "type", msg.Type, "content_len", len(msg.Content))
+
+			// Readers without session edit may only reconcile (`reconnect`);
+			// every mutating frame is rejected without touching the engine and
+			// without closing the socket. Steering rides the `message` frame,
+			// so this also covers it.
+			if !canEdit && msg.Type != "reconnect" {
+				safeSend(WSErrorResponse{Type: "error", Message: "read-only session"})
+				continue
+			}
 
 			if msg.Type == "cancel" {
 				// Cancel via session-level map (handles reconnected connections)
@@ -239,6 +352,26 @@ func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if msg.Type == "reconnect" {
+				// Re-validate view on every reconnect: access may have been
+				// revoked while this connection was open or while the client
+				// was disconnected. A revoked viewer is disconnected, not
+				// handed an authoritative transcript.
+				chkCtx, chkCancel := permissionCtx()
+				allowed, err := s.checkSessionPermission(chkCtx, claims.UserID, claims.OrgID, claims.Role, currentSessionID, "view")
+				chkCancel()
+				if err != nil {
+					// Transient check failure: never grant on error, but do not
+					// tear down an otherwise healthy stream; the periodic check
+					// retries.
+					slog.Warn("ws: reconnect view re-check failed", "session_id", currentSessionID, "user_id", claims.UserID, "error", err)
+					continue
+				}
+				if !allowed {
+					slog.Info("ws: session view revoked; closing connection", "session_id", currentSessionID, "user_id", claims.UserID)
+					shutdown()
+					return
+				}
+
 				// Always return all messages — reconnect_sync is the authoritative
 				// state and replaces the frontend's message list. Partial (id > $2)
 				// responses cause the frontend to lose older messages since it

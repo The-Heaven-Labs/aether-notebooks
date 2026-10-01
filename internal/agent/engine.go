@@ -251,11 +251,12 @@ func registerBuiltinTools(engine *Engine, pool *pgxpool.Pool) {
 
 func NewEngine(ctx context.Context, pool *pgxpool.Pool, rdb *redis.Client) *Engine {
 	engine := &Engine{
+		rdb:                rdb,
 		registry:           NewToolRegistry(),
-		session:            NewSessionStore(pool),
+		session:            NewSessionStore(pool, rdb),
 		pool:               pool,
 		tokenCounter:       NewTokenCounter(),
-		streams:            NewStreamManager(),
+		streams:            NewStreamManager(rdb),
 		toolTimeoutDefault: DefaultToolTimeout,
 	}
 

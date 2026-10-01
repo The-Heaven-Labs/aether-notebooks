@@ -8,7 +8,7 @@ import (
 
 // Events on a session stream carry monotonically increasing sequence numbers.
 func TestStreamSeqMonotonic(t *testing.T) {
-	sm := agent.NewStreamManager()
+	sm := agent.NewStreamManager(nil)
 	sub, unsub := sm.Subscribe("sess-1", 16, true)
 	defer unsub()
 
@@ -32,7 +32,7 @@ func TestStreamSeqMonotonic(t *testing.T) {
 
 // A reconnecting subscriber replays the buffer with original seq numbers.
 func TestStreamReplayPreservesSeq(t *testing.T) {
-	sm := agent.NewStreamManager()
+	sm := agent.NewStreamManager(nil)
 	sub1, unsub1 := sm.Subscribe("sess-1", 16, true)
 	sm.Publish("sess-1", map[string]any{"type": "token"})
 	first := <-sub1
@@ -48,7 +48,7 @@ func TestStreamReplayPreservesSeq(t *testing.T) {
 
 // skipBuffer=true disables replay (live-only subscription).
 func TestStreamSkipBuffer(t *testing.T) {
-	sm := agent.NewStreamManager()
+	sm := agent.NewStreamManager(nil)
 	sub1, unsub1 := sm.Subscribe("sess-1", 16, true)
 	sm.Publish("sess-1", map[string]any{"type": "token"})
 	<-sub1
@@ -66,7 +66,7 @@ func TestStreamSkipBuffer(t *testing.T) {
 // A slow subscriber never causes silent divergence: the drop is counted and a
 // resync marker is queued so the client reconciles via reconnect.
 func TestStreamDropEmitsResyncMarker(t *testing.T) {
-	sm := agent.NewStreamManager()
+	sm := agent.NewStreamManager(nil)
 	// Buffer of 1: first publish fills it, second triggers the drop path.
 	sub, unsub := sm.Subscribe("sess-1", 1, true)
 	defer unsub()
@@ -88,7 +88,7 @@ func TestStreamDropEmitsResyncMarker(t *testing.T) {
 
 // Publishing to an unknown session is a no-op (no stream, no panic).
 func TestStreamPublishWithoutSubscribers(t *testing.T) {
-	sm := agent.NewStreamManager()
+	sm := agent.NewStreamManager(nil)
 	sm.Publish("nope", map[string]any{"type": "token"})
 	if got := sm.LastSeq("nope"); got != 0 {
 		t.Fatalf("LastSeq = %d, want 0", got)

@@ -115,6 +115,19 @@ type AgentSession struct {
 	TotalModelCalls     int        `json:"total_model_calls"`
 	TotalSubagentInput  int64      `json:"total_subagent_input"`
 	TotalSubagentOutput int64      `json:"total_subagent_output"`
+	// OwnerEmail is the session owner's email, populated by the session GET
+	// endpoint so shared viewers can render who owns the session.
+	OwnerEmail string `json:"owner_email,omitempty"`
+	// Shared reports whether the calling user is not the session owner. It is
+	// request-relative and only set by the session GET endpoint.
+	Shared bool `json:"shared"`
+	// CanEdit reports whether the calling user may modify the session (owner
+	// or admin mode). It is request-relative and only set by the session GET
+	// endpoint.
+	CanEdit bool `json:"can_edit"`
+	// ShareWithNotebookViewers mirrors the session's inherit flag so the GET
+	// body is self-sufficient for viewers.
+	ShareWithNotebookViewers bool `json:"share_with_notebook_viewers"`
 	// AdminMode is a per-session transient flag derived from the X-AETHER-Admin-Mode
 	// header at session creation / WebSocket connection time. It is not persisted.
 	AdminMode bool `json:"admin_mode,omitempty"`

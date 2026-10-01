@@ -367,6 +367,15 @@ func (s *Server) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Clear the ACL rows of the user's sessions before the sessions go away.
+	// This runs before the user-subject acl_entries delete below so the
+	// transaction takes locks in the agent_sessions -> acl_entries order used
+	// by session create/delete, avoiding an ABBA deadlock.
+	if err := agent.DeleteAgentSessionACLs(ctx, tx, `user_id = $1`, targetID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete session ACLs")
+		return
+	}
+
 	// Capture the orgs the user belongs to before the org_members rows cascade
 	// away with the user; each org's warehouses must drop the user's identity.
 	var affectedOrgIDs []string

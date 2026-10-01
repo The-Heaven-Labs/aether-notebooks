@@ -761,6 +761,12 @@ func makeUpdatePermissionsHandler(pool *pgxpool.Pool) ToolHandler {
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
+		// Session ACLs enforce owner preservation and view-only shares in the
+		// ACL API; this raw replace path would bypass both, so agent_session is
+		// rejected outright rather than routed around those rules.
+		if req.ResourceType == "agent_session" {
+			return nil, fmt.Errorf("agent session sharing must use the ACL API: sessions are read-only when shared")
+		}
 		if err := ctx.CheckPermission(req.ResourceType, req.ResourceID, "manage"); err != nil {
 			return nil, err
 		}

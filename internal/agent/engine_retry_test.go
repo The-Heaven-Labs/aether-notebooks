@@ -38,7 +38,7 @@ func TestProcessMessage_LLMFailureRetriesAndPersists(t *testing.T) {
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
 	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
 	engine.pool = db.Pool
-	engine.session = NewSessionStore(db.Pool)
+	engine.session = NewSessionStore(db.Pool, nil)
 
 	var events []EngineEvent
 	_, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "hello", nil, nil, masterKey, nil, nil, nil, nil, nil,
@@ -120,7 +120,7 @@ func TestProcessMessage_PersistsToolCallResults(t *testing.T) {
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
 	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
 	engine.pool = db.Pool
-	engine.session = NewSessionStore(db.Pool)
+	engine.session = NewSessionStore(db.Pool, nil)
 
 	if _, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "list params", nil, nil, masterKey, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("ProcessMessage: %v", err)
@@ -195,7 +195,7 @@ func TestProcessMessage_ToolTimeoutSurfaced(t *testing.T) {
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
 	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
 	engine.pool = db.Pool
-	engine.session = NewSessionStore(db.Pool)
+	engine.session = NewSessionStore(db.Pool, nil)
 
 	if _, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "run probe", nil, []*ToolDef{probe}, masterKey, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("ProcessMessage: %v", err)
@@ -294,7 +294,7 @@ func TestProcessMessage_PropagatesRunningHooks(t *testing.T) {
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
 	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
 	engine.pool = db.Pool
-	engine.session = NewSessionStore(db.Pool)
+	engine.session = NewSessionStore(db.Pool, nil)
 
 	if _, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "probe", nil, []*ToolDef{probe}, masterKey, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("ProcessMessage: %v", err)
@@ -402,7 +402,7 @@ func TestProcessMessage_SteeringFoldedAtTurnTop(t *testing.T) {
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
 	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
 	engine.pool = db.Pool
-	engine.session = NewSessionStore(db.Pool)
+	engine.session = NewSessionStore(db.Pool, nil)
 
 	var events []EngineEvent
 	done := make(chan error, 1)

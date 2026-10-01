@@ -7,7 +7,9 @@ export default defineConfig({
   retries: 0,
   timeout: 30_000,
   use: {
-    baseURL: 'http://localhost:5173',
+    // Point the suite at another stack (e.g. a worktree-local embedded build)
+    // with E2E_BASE_URL; the default stays the local Vite dev server.
+    baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:5173',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },

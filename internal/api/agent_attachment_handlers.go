@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -28,17 +29,26 @@ func (s *Server) handleUploadAgentAttachment(w http.ResponseWriter, r *http.Requ
 	sessionID := r.PathValue("session_id")
 	ctx := r.Context()
 
-	var agentID string
-	if err := s.db.Pool.QueryRow(ctx, "SELECT agent_id FROM agent_sessions WHERE id = $1", sessionID).Scan(&agentID); err != nil {
-		if err == pgx.ErrNoRows {
-			writeError(w, http.StatusNotFound, "session not found")
-			return
-		}
+	// Resolve the session's agent org: authorization (the owner fallback in
+	// checkSessionPermission) is org-agnostic, but the stored row must be
+	// keyed to the org that owns the agent, not the caller's token org.
+	var sessionOrgID string
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT a.org_id
+		FROM agent_sessions s
+		JOIN agents a ON a.id = s.agent_id
+		WHERE s.id = $1
+	`, sessionID).Scan(&sessionOrgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
 
-	allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "agent", agentID, "edit")
+	allowed, _ := s.checkSessionPermission(ctx, claims.UserID, claims.OrgID, claims.Role, sessionID, "edit")
 	if !allowed {
 		writeError(w, http.StatusForbidden, "access denied")
 		return
@@ -80,7 +90,7 @@ func (s *Server) handleUploadAgentAttachment(w http.ResponseWriter, r *http.Requ
 	_, err = s.db.Pool.Exec(ctx, `
 		INSERT INTO session_attachments (id, session_id, org_id, filename, mime_type, size_bytes, storage_path, created_by)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, attID, sessionID, claims.OrgID, header.Filename, mimeType, header.Size, attID, claims.UserID)
+	`, attID, sessionID, sessionOrgID, header.Filename, mimeType, header.Size, attID, claims.UserID)
 	if err != nil {
 		slog.Error("agent attachment db insert failed", "error", err)
 		s.store.Delete(attID)
@@ -110,20 +120,26 @@ func (s *Server) handleGetAgentAttachment(w http.ResponseWriter, r *http.Request
 	attID := r.PathValue("id")
 	ctx := r.Context()
 
-	var mimeType, filename string
+	var sessionID, mimeType, filename string
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT sa.mime_type, sa.filename
+		SELECT sa.session_id, sa.mime_type, sa.filename
 		FROM session_attachments sa
 		JOIN agent_sessions ases ON ases.id = sa.session_id
 		JOIN agents a ON a.id = ases.agent_id
 		WHERE sa.id = $1 AND a.org_id = $2
-	`, attID, claims.OrgID).Scan(&mimeType, &filename)
+	`, attID, claims.OrgID).Scan(&sessionID, &mimeType, &filename)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	allowed, _ := s.checkSessionPermission(ctx, claims.UserID, claims.OrgID, claims.Role, sessionID, "view")
+	if !allowed {
+		writeError(w, http.StatusForbidden, "access denied")
 		return
 	}
 

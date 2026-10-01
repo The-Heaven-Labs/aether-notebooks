@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -31,49 +32,143 @@ var resourceTable = map[string]string{
 	"tool":         "tools",
 }
 
-// checkPermission returns true if userID has action on resourceType/resourceID within orgID.
-func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, resourceType, resourceID, action string) (bool, error) {
-	// 1. Collect user's group memberships
+// resourceOrgID resolves the org that owns a resource for the admin-mode
+// bypass. Folders, resourceTable types, and agent_session (via its agent) are
+// supported; unknown resource types fail closed with an error, and a missing
+// resource resolves to the empty string (no bypass).
+func (s *Server) resourceOrgID(ctx context.Context, resourceType, resourceID string) (string, error) {
+	var query string
+	switch resourceType {
+	case "folder":
+		query = "SELECT org_id FROM folders WHERE id = $1"
+	case "agent_session":
+		query = `SELECT a.org_id FROM agent_sessions s JOIN agents a ON a.id = s.agent_id WHERE s.id = $1`
+	default:
+		table, ok := resourceTable[resourceType]
+		if !ok {
+			return "", fmt.Errorf("unknown resource type %q", resourceType)
+		}
+		query = fmt.Sprintf("SELECT org_id FROM %s WHERE id = $1", table)
+	}
+
+	var resourceOrg string
+	err := s.db.Pool.QueryRow(ctx, query, resourceID).Scan(&resourceOrg)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve %s org: %w", resourceType, err)
+	}
+	return resourceOrg, nil
+}
+
+// checkSessionPermission reports whether userID may perform action on the
+// agent session identified by sessionID. Resolution order:
+//
+//  1. owner fallback — the session's user_id always passes for any action;
+//  2. the agent_session ACL for the requested action, including the org-admin
+//     admin-mode bypass inside checkPermission;
+//  3. for "view" only, live notebook-viewer inheritance when the session's
+//     share_with_notebook_viewers flag is set and a notebook is attached.
+//
+// Sharing is read-only: a non-owner subject can only ever hold view, so an
+// ACL entry granting another action to a non-owner is ignored unless the
+// caller is an org admin with admin mode enabled.
+func (s *Server) checkSessionPermission(ctx context.Context, userID, orgID, orgRole, sessionID, action string) (bool, error) {
+	var (
+		ownerID    string
+		notebookID *string
+		inherit    bool
+	)
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT user_id, notebook_id, share_with_notebook_viewers
+		FROM agent_sessions WHERE id = $1
+	`, sessionID).Scan(&ownerID, &notebookID, &inherit)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("session permission query: %w", err)
+	}
+	if ownerID == userID {
+		return true, nil
+	}
+
+	if action != "view" {
+		if orgRole != "admin" || !adminModeFromContext(ctx) {
+			return false, nil
+		}
+		return s.checkPermission(ctx, userID, orgID, orgRole, "agent_session", sessionID, action)
+	}
+
+	granted, err := s.checkPermission(ctx, userID, orgID, orgRole, "agent_session", sessionID, "view")
+	if err != nil || granted {
+		return granted, err
+	}
+	if inherit && notebookID != nil {
+		return s.checkPermission(ctx, userID, orgID, orgRole, "notebook", *notebookID, "view")
+	}
+	return false, nil
+}
+
+// callerGroupIDs returns the caller's explicit group memberships followed by
+// their org's Everyone group. checkPermission and the batched session
+// visibility filter both build their subject set from this helper so group
+// resolution exists in exactly one place.
+func (s *Server) callerGroupIDs(ctx context.Context, userID, orgID string) ([]string, error) {
+	groupIDs := []string{}
 	rows, err := s.db.Pool.Query(ctx, `SELECT group_id FROM group_members WHERE user_id = $1`, userID)
 	if err != nil {
-		return false, fmt.Errorf("group query: %w", err)
+		return nil, fmt.Errorf("caller group query: %w", err)
 	}
-	var groupIDs []string
 	for rows.Next() {
 		var gid string
 		if err := rows.Scan(&gid); err != nil {
 			rows.Close()
-			return false, fmt.Errorf("scan group_id: %w", err)
+			return nil, fmt.Errorf("scan caller group: %w", err)
 		}
 		groupIDs = append(groupIDs, gid)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("caller group rows: %w", err)
+	}
 
 	// Include "Everyone" groups: any org member implicitly belongs to these.
 	everyoneRows, err := s.db.Pool.Query(ctx, `SELECT id FROM groups WHERE org_id = $1 AND name = 'Everyone'`, orgID)
 	if err != nil {
-		return false, fmt.Errorf("everyone group query: %w", err)
+		return nil, fmt.Errorf("everyone group query: %w", err)
 	}
 	for everyoneRows.Next() {
 		var gid string
 		if err := everyoneRows.Scan(&gid); err != nil {
 			everyoneRows.Close()
-			return false, fmt.Errorf("scan everyone group_id: %w", err)
+			return nil, fmt.Errorf("scan everyone group: %w", err)
 		}
 		groupIDs = append(groupIDs, gid)
 	}
 	everyoneRows.Close()
+	if err := everyoneRows.Err(); err != nil {
+		return nil, fmt.Errorf("everyone group rows: %w", err)
+	}
+	return groupIDs, nil
+}
+
+// checkPermission returns true if userID has action on resourceType/resourceID within orgID.
+func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, resourceType, resourceID, action string) (bool, error) {
+	// 1. Collect user's group memberships
+	groupIDs, err := s.callerGroupIDs(ctx, userID, orgID)
+	if err != nil {
+		return false, err
+	}
 
 	// Org admins bypass ACLs only when admin mode is enabled — scoped to their org
 	if orgRole == "admin" && adminModeFromContext(ctx) {
-		var resourceOrgID string
-		if resourceType == "folder" {
-			s.db.Pool.QueryRow(ctx, "SELECT org_id FROM folders WHERE id=$1", resourceID).Scan(&resourceOrgID)
-		} else if table, ok := resourceTable[resourceType]; ok {
-			q := fmt.Sprintf("SELECT org_id FROM %s WHERE id=$1", table)
-			s.db.Pool.QueryRow(ctx, q, resourceID).Scan(&resourceOrgID)
+		resourceOrg, err := s.resourceOrgID(ctx, resourceType, resourceID)
+		if err != nil {
+			return false, fmt.Errorf("admin bypass org resolve: %w", err)
 		}
-		if resourceOrgID == orgID {
+		if resourceOrg == orgID {
 			return true, nil
 		}
 	}
@@ -176,15 +271,7 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 			continue
 		}
 
-		grantsAction := false
-		for _, a := range c.actions {
-			if a == action || (action == "view" && isViewImpliedBy(a)) {
-				grantsAction = true
-				break
-			}
-		}
-
-		if grantsAction {
+		if grantsAction(c.actions, action) {
 			if c.subjectType == "org_role" && c.subjectID == "everyone" {
 				everyoneGrants = true
 			} else {
@@ -243,6 +330,19 @@ func isViewImpliedBy(action string) bool {
 	switch action {
 	case "use", "edit", "share", "delete", "admin":
 		return true
+	}
+	return false
+}
+
+// grantsAction reports whether actions contains action, applying the same
+// view-implication rule as checkPermission: view is implied by
+// use/edit/share/delete/admin. It is the single action-matching primitive for
+// checkPermission and the batched visibility filters.
+func grantsAction(actions []string, action string) bool {
+	for _, a := range actions {
+		if a == action || (action == "view" && isViewImpliedBy(a)) {
+			return true
+		}
 	}
 	return false
 }

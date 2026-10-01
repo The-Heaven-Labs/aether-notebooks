@@ -211,4 +211,241 @@ describe('Action sets', () => {
     await screen.findByRole('button', { name: /^Add$/i })
     expect(screen.queryByText('run')).toBeNull()
   })
+
+  test('agent_session offers only the view action', async () => {
+    server.use(
+      http.get('/api/v1/acl/agent_session/s-1', () => HttpResponse.json([]))
+    )
+    renderPanel({ resourceType: 'agent_session', resourceId: 's-1', resourceName: 'Revenue analysis' })
+    await screen.findByRole('button', { name: /^Add$/i })
+
+    expect(screen.getByText('view')).toBeInTheDocument()
+    expect(screen.getAllByRole('checkbox')).toHaveLength(1)
+    expect(screen.queryByText('edit')).toBeNull()
+    expect(screen.queryByText('share')).toBeNull()
+    expect(screen.queryByText('delete')).toBeNull()
+    expect(screen.queryByText('run')).toBeNull()
+  })
+
+  test('agent_session Save PUTs view-only entries', async () => {
+    let putPath = ''
+    let putBody: { entries: Array<{ subject_type: string; subject_id: string; actions: string[] }> } | null = null
+    server.use(
+      http.get('/api/v1/acl/agent_session/s-1', () =>
+        HttpResponse.json([
+          {
+            id: 'acl-9', org_id: 'org-1', resource_type: 'agent_session', resource_id: 's-1',
+            subject_type: 'user', subject_id: 'user-2', actions: ['view'],
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ])
+      ),
+      http.put('/api/v1/acl/agent_session/s-1', async ({ request }) => {
+        putPath = '/api/v1/acl/agent_session/s-1'
+        putBody = await request.json() as typeof putBody
+        return HttpResponse.json([])
+      })
+    )
+    renderPanel({ resourceType: 'agent_session', resourceId: 's-1', resourceName: 'Revenue analysis' })
+
+    const name = await screen.findByText('Bob Editor')
+    const entryRow = name.closest('[tabIndex="0"]')
+    expect(entryRow).not.toBeNull()
+    fireEvent.click(entryRow!)
+    const checkbox = entryRow!.querySelector<HTMLInputElement>('input[type="checkbox"]')
+    expect(checkbox).not.toBeNull()
+    // Toggle off then on so the draft retains exactly the view action.
+    fireEvent.click(checkbox!)
+    fireEvent.click(checkbox!)
+    fireEvent.click(await screen.findByRole('button', { name: /^Save$/i }))
+
+    await waitFor(() => expect(putBody).not.toBeNull())
+    expect(putPath).toBe('/api/v1/acl/agent_session/s-1')
+    expect(putBody!.entries).toHaveLength(1)
+    expect(putBody!.entries[0]).toMatchObject({
+      subject_type: 'user', subject_id: 'user-2', actions: ['view'],
+    })
+  })
+
+  test('agent_session constrains every entry to view-only actions in the PUT payload', async () => {
+    let putBody: { entries: Array<{ subject_type: string; subject_id: string; actions: string[] }> } | null = null
+    server.use(
+      http.get('/api/v1/acl/agent_session/s-1', () =>
+        HttpResponse.json([
+          {
+            id: 'acl-owner', org_id: 'org-1', resource_type: 'agent_session', resource_id: 's-1',
+            subject_type: 'user', subject_id: 'user-1',
+            actions: ['view', 'edit', 'share', 'delete', 'admin'],
+            created_at: '2026-01-01T00:00:00Z',
+          },
+          {
+            id: 'acl-bob', org_id: 'org-1', resource_type: 'agent_session', resource_id: 's-1',
+            subject_type: 'user', subject_id: 'user-2', actions: ['view'],
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ])
+      ),
+      http.put('/api/v1/acl/agent_session/s-1', async ({ request }) => {
+        putBody = await request.json() as typeof putBody
+        return HttpResponse.json([])
+      })
+    )
+    renderPanel({ resourceType: 'agent_session', resourceId: 's-1', resourceName: 'Revenue analysis' })
+
+    const name = await screen.findByText('Bob Editor')
+    const entryRow = name.closest('[tabIndex="0"]')
+    expect(entryRow).not.toBeNull()
+    fireEvent.click(entryRow!)
+    const checkbox = entryRow!.querySelector<HTMLInputElement>('input[type="checkbox"]')
+    expect(checkbox).not.toBeNull()
+    // Toggle off then on so the draft retains exactly the view action.
+    fireEvent.click(checkbox!)
+    fireEvent.click(checkbox!)
+    fireEvent.click(await screen.findByRole('button', { name: /^Save$/i }))
+
+    await waitFor(() => expect(putBody).not.toBeNull())
+    const entries = putBody!.entries
+    expect(entries).toHaveLength(2)
+    const owner = entries.find((e) => e.subject_id === 'user-1')
+    expect(owner).toBeDefined()
+    expect(owner!.actions).toEqual(['view'])
+    const share = entries.find((e) => e.subject_id === 'user-2')
+    expect(share).toBeDefined()
+    expect(share!.actions).toEqual(['view'])
+  })
+
+  test('notebook keeps all of its allowed actions in the PUT payload', async () => {
+    let putBody: { entries: Array<{ subject_type: string; subject_id: string; actions: string[] }> } | null = null
+    server.use(
+      http.put('/api/v1/acl/notebook/nb-1', async ({ request }) => {
+        putBody = await request.json() as typeof putBody
+        return HttpResponse.json([])
+      })
+    )
+    renderPanel()
+    await screen.findAllByText('Alice Admin')
+    const entryRow = screen.getAllByText('Alice Admin')[0].closest('[tabIndex="0"]')
+    expect(entryRow).not.toBeNull()
+    fireEvent.click(entryRow!)
+    const checkboxes = entryRow!.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
+    expect(checkboxes.length).toBeGreaterThan(0)
+    // Toggle off then on to create a draft without changing the action set.
+    fireEvent.click(checkboxes[0])
+    fireEvent.click(checkboxes[0])
+    fireEvent.click(await screen.findByRole('button', { name: /^Save$/i }))
+
+    await waitFor(() => expect(putBody).not.toBeNull())
+    expect(putBody!.entries).toHaveLength(1)
+    expect([...putBody!.entries[0].actions].sort()).toEqual(
+      ['delete', 'edit', 'run', 'share', 'view']
+    )
+  })
+
+  test('notebook preserves the unrendered create action on save', async () => {
+    let putBody: { entries: Array<{ subject_type: string; subject_id: string; actions: string[] }> } | null = null
+    server.use(
+      http.get('/api/v1/acl/notebook/nb-1', () =>
+        HttpResponse.json([
+          {
+            id: 'acl-owner', org_id: 'org-1', resource_type: 'notebook', resource_id: 'nb-1',
+            subject_type: 'user', subject_id: 'user-1',
+            actions: ['view', 'run', 'edit', 'share', 'delete', 'create'],
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ])
+      ),
+      http.put('/api/v1/acl/notebook/nb-1', async ({ request }) => {
+        putBody = await request.json() as typeof putBody
+        return HttpResponse.json([])
+      })
+    )
+    renderPanel()
+    const name = await screen.findByText('Alice Admin')
+    const entryRow = name.closest('[tabIndex="0"]')
+    expect(entryRow).not.toBeNull()
+    fireEvent.click(entryRow!)
+    const checkbox = entryRow!.querySelector<HTMLInputElement>('input[type="checkbox"]')
+    expect(checkbox).not.toBeNull()
+    // Toggle off then on to create a draft without changing the action set.
+    fireEvent.click(checkbox!)
+    fireEvent.click(checkbox!)
+    fireEvent.click(await screen.findByRole('button', { name: /^Save$/i }))
+
+    await waitFor(() => expect(putBody).not.toBeNull())
+    expect(putBody!.entries).toHaveLength(1)
+    expect([...putBody!.entries[0].actions].sort()).toEqual(
+      ['create', 'delete', 'edit', 'run', 'share', 'view']
+    )
+  })
+})
+
+// ── Session notebook inheritance toggle ─────────────────────────────────────
+
+describe('Session notebook inheritance', () => {
+  test('renders the owner toggle and calls onToggle with the next state', async () => {
+    const onToggle = vi.fn().mockResolvedValue(undefined)
+    server.use(
+      http.get('/api/v1/acl/agent_session/s-1', () => HttpResponse.json([]))
+    )
+    renderPanel({
+      resourceType: 'agent_session',
+      resourceId: 's-1',
+      resourceName: 'Revenue analysis',
+      sessionNotebookInheritance: { enabled: false, hasNotebook: true, onToggle },
+    })
+
+    const checkbox = await screen.findByRole('checkbox', { name: /Anyone who can view this notebook/i })
+    expect(checkbox).not.toBeChecked()
+    fireEvent.click(checkbox)
+    await waitFor(() => expect(onToggle).toHaveBeenCalledWith(true))
+  })
+
+  test('shows the checked state from the props', async () => {
+    server.use(
+      http.get('/api/v1/acl/agent_session/s-1', () => HttpResponse.json([]))
+    )
+    renderPanel({
+      resourceType: 'agent_session',
+      resourceId: 's-1',
+      resourceName: 'Revenue analysis',
+      sessionNotebookInheritance: { enabled: true, hasNotebook: true, onToggle: vi.fn().mockResolvedValue(undefined) },
+    })
+
+    const checkbox = await screen.findByRole('checkbox', { name: /Anyone who can view this notebook/i })
+    expect(checkbox).toBeChecked()
+  })
+
+  test('surfaces a failed toggle inline without closing the panel', async () => {
+    const onToggle = vi.fn().mockRejectedValue(new Error('toggle failed'))
+    server.use(
+      http.get('/api/v1/acl/agent_session/s-1', () => HttpResponse.json([]))
+    )
+    renderPanel({
+      resourceType: 'agent_session',
+      resourceId: 's-1',
+      resourceName: 'Revenue analysis',
+      sessionNotebookInheritance: { enabled: false, hasNotebook: true, onToggle },
+    })
+
+    const checkbox = await screen.findByRole('checkbox', { name: /Anyone who can view this notebook/i })
+    fireEvent.click(checkbox)
+
+    expect(await screen.findByText('toggle failed')).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  test('hides the toggle when the session has no notebook', async () => {
+    server.use(
+      http.get('/api/v1/acl/agent_session/s-1', () => HttpResponse.json([]))
+    )
+    renderPanel({
+      resourceType: 'agent_session',
+      resourceId: 's-1',
+      resourceName: 'Revenue analysis',
+      sessionNotebookInheritance: { enabled: false, hasNotebook: false, onToggle: vi.fn() },
+    })
+
+    await waitForAclLoaded()
+    expect(screen.queryByText(/Anyone who can view this notebook/i)).toBeNull()
+  })
 })

@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { groupLabel } from '../utils/groupLabel'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type ResourceType = 'folder' | 'notebook' | 'connector' | 'dashboard' | 'agent' | 'model_config' | 'skill' | 'mcp_server' | 'tool'
+type ResourceType = 'folder' | 'notebook' | 'connector' | 'dashboard' | 'agent' | 'model_config' | 'skill' | 'mcp_server' | 'tool' | 'agent_session'
 
 const ACTION_LABELS: Record<ResourceType, string[]> = {
   folder:      ['view', 'create', 'edit', 'manage', 'delete'],
@@ -17,6 +18,16 @@ const ACTION_LABELS: Record<ResourceType, string[]> = {
   skill:       ['view', 'edit', 'delete'],
   mcp_server:  ['view', 'edit', 'delete'],
   tool:        ['view', 'use', 'edit', 'delete'],
+  // Sessions are read-only for non-owners: view is the only grantable action.
+  agent_session: ['view'],
+}
+
+// Actions the API enforces for a resource type that have no checkbox in the
+// panel. The save path keeps them on existing entries so an invisible
+// permission is never silently revoked: notebook "create" gates adding and
+// duplicating cells (handleCreateCell) and is seeded on notebook creation.
+const UNRENDERED_ACTIONS: Partial<Record<ResourceType, string[]>> = {
+  notebook: ['create'],
 }
 
 const ACTION_DESCRIPTIONS: Record<ResourceType, Record<string, string>> = {
@@ -75,6 +86,9 @@ const ACTION_DESCRIPTIONS: Record<ResourceType, Record<string, string>> = {
     edit:   'Edit tool configuration',
     delete: 'Delete the tool permanently',
   },
+  agent_session: {
+    view: 'Read the session transcript and watch it live (read-only)',
+  },
 }
 
 interface AclEntry {
@@ -97,6 +111,15 @@ interface Group {
   display_name?: string | null
 }
 
+/** Owner-only notebook-viewer inheritance control for agent sessions. The
+ * parent (SessionViewer) owns the state and performs the PATCH; the panel only
+ * renders the toggle and surfaces save errors inline. */
+export interface SessionNotebookInheritance {
+  enabled: boolean
+  hasNotebook: boolean
+  onToggle: (next: boolean) => Promise<void>
+}
+
 export interface PermissionsPanelProps {
   resourceType: ResourceType
   resourceId: string
@@ -104,10 +127,23 @@ export interface PermissionsPanelProps {
   parentFolderId?: string
   canEdit?: boolean
   resourceOwnerId?: string
+  sessionNotebookInheritance?: SessionNotebookInheritance
   onClose: () => void
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Narrows an entry's actions to those valid for the resource type, using the
+ * checkbox matrix as the source of truth plus any unrendered backend-enforced
+ * actions. Saves must never PUT actions the resource's write path rejects
+ * (e.g. the owner's full-access actions on a read-only agent_session). */
+function constrainActions(resourceType: ResourceType, entryActions: string[]): string[] {
+  const allowed = new Set([
+    ...ACTION_LABELS[resourceType],
+    ...(UNRENDERED_ACTIONS[resourceType] ?? []),
+  ])
+  return entryActions.filter((action) => allowed.has(action))
+}
 
 function initials(name: string): string {
   return name
@@ -343,6 +379,7 @@ export function PermissionsPanel({
   parentFolderId,
   canEdit = true,
   resourceOwnerId,
+  sessionNotebookInheritance,
   onClose,
 }: PermissionsPanelProps) {
   const qc = useQueryClient()
@@ -361,6 +398,8 @@ export function PermissionsPanel({
   const [newActions, setNewActions] = useState<string[]>([])
   const [saveError, setSaveError] = useState<string | null>(null)
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set())
+  const [inheritSaving, setInheritSaving] = useState(false)
+  const [inheritError, setInheritError] = useState<string | null>(null)
 
   function setExpanded(idx: number, expanded: boolean) {
     setExpandedRows(prev => {
@@ -472,6 +511,19 @@ export function PermissionsPanel({
     )
   }
 
+  async function handleToggleInheritance(next: boolean) {
+    if (!sessionNotebookInheritance || inheritSaving) return
+    setInheritSaving(true)
+    setInheritError(null)
+    try {
+      await sessionNotebookInheritance.onToggle(next)
+    } catch (err: unknown) {
+      setInheritError(err instanceof Error ? err.message : 'Failed to update sharing')
+    } finally {
+      setInheritSaving(false)
+    }
+  }
+
   // ── Derived ──
 
   const allEntries = [
@@ -494,11 +546,16 @@ export function PermissionsPanel({
     model_config: '#e8fff0',
     skill: '#ffe8f0',
     mcp_server: '#fff0e8',
+    agent_session: '#e8f4ff',
   }
 
   // ── Render ──
 
-  return (
+  // Portal to the body: callers embed the panel inside positioned ancestors
+  // (e.g. the session viewer's fixed wrapper), and those ancestors' stacking
+  // contexts would otherwise cap the drawer below the top bar, making its
+  // close button unclickable.
+  return createPortal(
     <>
       {/* Backdrop */}
       <div style={styles.backdrop} onClick={onClose} />
@@ -535,6 +592,31 @@ export function PermissionsPanel({
 
         {/* Body */}
         <div style={styles.body}>
+          {sessionNotebookInheritance && sessionNotebookInheritance.hasNotebook && canEdit && (
+            <div style={styles.notebookInherit}>
+              <label style={styles.notebookInheritLabel}>
+                <input
+                  type="checkbox"
+                  checked={sessionNotebookInheritance.enabled}
+                  disabled={inheritSaving}
+                  onChange={(e) => { void handleToggleInheritance(e.target.checked) }}
+                  style={{ marginRight: 6, flexShrink: 0 }}
+                />
+                <span style={styles.notebookInheritText}>
+                  <span style={styles.notebookInheritTitle}>Anyone who can view this notebook</span>
+                  <span style={styles.notebookInheritHint}>
+                    {inheritSaving
+                      ? 'Saving…'
+                      : sessionNotebookInheritance.enabled
+                        ? 'Notebook viewers can read this session live, view only.'
+                        : 'Only people explicitly shared below can read this session.'}
+                  </span>
+                </span>
+              </label>
+              {inheritError && <div style={styles.errorText}>{inheritError}</div>}
+            </div>
+          )}
+
           {saveError && <div style={styles.errorText}>{saveError}</div>}
 
           {aclLoading ? (
@@ -646,7 +728,14 @@ export function PermissionsPanel({
                       opacity: saveAcl.isPending ? 0.6 : 1,
                     }}
                     disabled={saveAcl.isPending || aclLoading}
-                    onClick={() => saveAcl.mutate(draft.map(({ id: _id, ...rest }) => rest))}
+                    onClick={() =>
+                      saveAcl.mutate(
+                        draft.map(({ id: _id, ...rest }) => ({
+                          ...rest,
+                          actions: constrainActions(resourceType, rest.actions),
+                        }))
+                      )
+                    }
                   >
                     {saveAcl.isPending ? 'Saving…' : 'Save'}
                   </button>
@@ -702,18 +791,21 @@ export function PermissionsPanel({
           )}
         </div>
       </div>
-    </>
+    </>,
+    document.body,
   )
 }
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 const styles: Record<string, React.CSSProperties> = {
+  // The drawer covers the top bar (z-index 1550/1600), so it must sit above it:
+  // otherwise the top bar intercepts clicks on the drawer's own close button.
   backdrop: {
     position: 'fixed',
     inset: 0,
     background: 'rgba(0,0,0,0.3)',
-    zIndex: 1500,
+    zIndex: 1700,
   },
   drawer: {
     position: 'fixed',
@@ -723,7 +815,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: 480,
     background: 'var(--bg-card)',
     boxShadow: '-4px 0 24px rgba(0,0,0,0.12)',
-    zIndex: 1501,
+    zIndex: 1701,
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
@@ -968,6 +1060,35 @@ entryInfo: {
     cursor: 'pointer',
     flexShrink: 0,
     transition: 'opacity 0.15s',
+  },
+  notebookInherit: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+    padding: '10px 12px',
+    borderRadius: 6,
+    border: '1px solid var(--border)',
+    background: 'var(--bg-secondary)',
+    marginBottom: 8,
+  },
+  notebookInheritLabel: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    cursor: 'pointer',
+  },
+  notebookInheritText: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+  },
+  notebookInheritTitle: {
+    fontSize: 13,
+    fontWeight: 600,
+    color: 'var(--text-primary)',
+  },
+  notebookInheritHint: {
+    fontSize: 11,
+    color: 'var(--text-muted)',
   },
   inheritedSection: {
     marginBottom: 8,

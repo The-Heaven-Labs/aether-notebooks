@@ -370,7 +370,7 @@ func TestAgentSessionUsageEndpoint(t *testing.T) {
 	nbID := createNotebook(t, srv, token, "Usage NB")
 	sessionID := createAgentSession(t, srv, token, agentID, nbID)
 
-	store := agent.NewSessionStore(srv.DB().Pool)
+	store := agent.NewSessionStore(srv.DB().Pool, nil)
 	ctx := context.Background()
 	if err := store.AddUsage(ctx, sessionID, agent.SessionUsageDelta{Input: 100, Output: 20, ModelCalls: 1, ContextTokens: 120, ContextWindow: 128000}); err != nil {
 		t.Fatalf("add usage: %v", err)
