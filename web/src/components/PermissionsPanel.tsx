@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { groupLabel } from '../utils/groupLabel'
@@ -550,7 +551,11 @@ export function PermissionsPanel({
 
   // ── Render ──
 
-  return (
+  // Portal to the body: callers embed the panel inside positioned ancestors
+  // (e.g. the session viewer's fixed wrapper), and those ancestors' stacking
+  // contexts would otherwise cap the drawer below the top bar, making its
+  // close button unclickable.
+  return createPortal(
     <>
       {/* Backdrop */}
       <div style={styles.backdrop} onClick={onClose} />
@@ -786,18 +791,21 @@ export function PermissionsPanel({
           )}
         </div>
       </div>
-    </>
+    </>,
+    document.body,
   )
 }
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 const styles: Record<string, React.CSSProperties> = {
+  // The drawer covers the top bar (z-index 1550/1600), so it must sit above it:
+  // otherwise the top bar intercepts clicks on the drawer's own close button.
   backdrop: {
     position: 'fixed',
     inset: 0,
     background: 'rgba(0,0,0,0.3)',
-    zIndex: 1500,
+    zIndex: 1700,
   },
   drawer: {
     position: 'fixed',
@@ -807,7 +815,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: 480,
     background: 'var(--bg-card)',
     boxShadow: '-4px 0 24px rgba(0,0,0,0.12)',
-    zIndex: 1501,
+    zIndex: 1701,
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
