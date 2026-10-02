@@ -50,8 +50,21 @@ func oauthBaseURL(r *http.Request, publicURL string) string {
 // X-Forwarded-Host is present, the configured public URL is used instead.
 // Loopback and literal-IP hosts are always kept — they are externally
 // meaningful in local development and port-forward testing.
+//
+// Scheme: X-Forwarded-Proto first, then direct TLS, then the configured public
+// URL's scheme when the resolved host is the public host or one of its
+// subdomains. TLS-terminating proxies often forward Host/X-Forwarded-Host
+// without X-Forwarded-Proto; without that last fallback an https deployment
+// would advertise http:// discovery URLs and break client issuer and audience
+// checks. Unrelated external hosts keep the request-derived scheme.
 func requestSchemeAndHost(r *http.Request, publicURL string) (scheme, host string) {
-	// Scheme: proxy-observed, then direct TLS, then (below) the public URL.
+	var public *url.URL
+	if publicURL != "" {
+		if u, err := url.Parse(publicURL); err == nil && u.Host != "" {
+			public = u
+		}
+	}
+
 	if proto := firstHeaderValue(r.Header.Get("X-Forwarded-Proto")); proto != "" {
 		scheme = proto
 	} else if r.TLS != nil {
@@ -61,19 +74,37 @@ func requestSchemeAndHost(r *http.Request, publicURL string) (scheme, host strin
 	host = firstForwardedHost(r)
 	if host == "" {
 		host = r.Host
-		if publicURL != "" && isClusterInternalHost(host) {
-			if u, err := url.Parse(publicURL); err == nil && u.Host != "" {
-				host = u.Host
-				if scheme == "" {
-					scheme = u.Scheme
-				}
-			}
+		if public != nil && isClusterInternalHost(host) {
+			host = public.Host
 		}
+	}
+	if scheme == "" && public != nil && public.Scheme != "" && chHostWithinPublicDomain(host, public.Host) {
+		scheme = public.Scheme
 	}
 	if scheme == "" {
 		scheme = "http"
 	}
 	return scheme, host
+}
+
+// chHostWithinPublicDomain reports whether host (optionally with a port) is the
+// public URL's host or one of its subdomains, ignoring case and ports. The
+// public URL says nothing about unrelated external hosts, so those are not
+// rewritten.
+func chHostWithinPublicDomain(host, publicHost string) bool {
+	h, p := strings.ToLower(hostnameOnly(host)), strings.ToLower(hostnameOnly(publicHost))
+	if h == "" || p == "" {
+		return false
+	}
+	return h == p || strings.HasSuffix(h, "."+p)
+}
+
+// hostnameOnly strips a port from a host, leaving IPv6 brackets intact.
+func hostnameOnly(host string) string {
+	if hp, _, err := net.SplitHostPort(host); err == nil {
+		return hp
+	}
+	return host
 }
 
 // firstForwardedHost returns the first entry of the X-Forwarded-Host chain: a

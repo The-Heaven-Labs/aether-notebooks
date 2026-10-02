@@ -37,7 +37,7 @@ func TestRequestSchemeAndHost(t *testing.T) {
 			name:       "plain request uses request host",
 			host:       "aether.example.com",
 			publicURL:  public,
-			wantScheme: "http",
+			wantScheme: "https",
 			wantHost:   "aether.example.com",
 		},
 		{
@@ -150,8 +150,55 @@ func TestRequestSchemeAndHost(t *testing.T) {
 			host:       "aether-api.aether.svc.cluster.local",
 			headers:    map[string]string{"X-Forwarded-Host": "org2.aether.example.com"},
 			publicURL:  public,
-			wantScheme: "http",
+			wantScheme: "https",
 			wantHost:   "org2.aether.example.com",
+		},
+		{
+			// TLS terminated at a proxy that forwards the host but not the
+			// protocol: the public URL's scheme must fill the gap, otherwise
+			// https deployments advertise http:// discovery URLs.
+			name:       "missing proto with X-Forwarded-Host uses public URL scheme",
+			host:       "aether-api.aether.svc.cluster.local",
+			headers:    map[string]string{"X-Forwarded-Host": "aether.example.com"},
+			publicURL:  public,
+			wantScheme: "https",
+			wantHost:   "aether.example.com",
+		},
+		{
+			name:       "missing proto on org subdomain uses public URL scheme",
+			host:       "org1.aether.example.com",
+			publicURL:  public,
+			wantScheme: "https",
+			wantHost:   "org1.aether.example.com",
+		},
+		{
+			name:       "public URL host match ignores port",
+			host:       "aether.example.com:8443",
+			publicURL:  public,
+			wantScheme: "https",
+			wantHost:   "aether.example.com:8443",
+		},
+		{
+			name:       "unrelated forwarded host keeps http",
+			host:       "aether-api.aether.svc.cluster.local",
+			headers:    map[string]string{"X-Forwarded-Host": "other.example.org"},
+			publicURL:  public,
+			wantScheme: "http",
+			wantHost:   "other.example.org",
+		},
+		{
+			name:       "no public URL keeps request scheme",
+			host:       "aether.example.com",
+			publicURL:  "",
+			wantScheme: "http",
+			wantHost:   "aether.example.com",
+		},
+		{
+			name:       "http public URL keeps http",
+			host:       "aether.example.com",
+			publicURL:  "http://aether.example.com",
+			wantScheme: "http",
+			wantHost:   "aether.example.com",
 		},
 	}
 
