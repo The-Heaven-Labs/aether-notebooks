@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X, Play, Loader2 } from 'lucide-react'
 import { api } from '../api/client'
 import { serviceChoicesFromError, setPreference } from '../api/warehouses'
 import type { ServiceChoicePrompt } from '../api/warehouses'
+import { useEscapeToClose } from '../hooks/useEscapeToClose'
 import { ConnectorSelector } from './ConnectorSelector'
 import { SqlEditor } from './SqlEditor'
 import { OutputRenderer } from './OutputRenderer'
@@ -13,6 +15,14 @@ import { withWidgetOverride } from '../charts/widgetChartConfig'
 import type { Dashboard, Widget, WidgetQueryResult } from '../types'
 
 const styles: Record<string, React.CSSProperties> = {
+  // The drawer covers the top bar (z-index 1550/1600), so it must sit above it:
+  // otherwise the top bar hides the header and intercepts clicks on the close button.
+  backdrop: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0,0,0,0.3)',
+    zIndex: 1700,
+  },
   drawer: {
     position: 'fixed',
     top: 0,
@@ -24,7 +34,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderLeft: '1px solid var(--border)',
     display: 'flex',
     flexDirection: 'column',
-    zIndex: 250,
+    zIndex: 1701,
     boxShadow: 'var(--shadow-lg, -4px 0 16px rgba(0,0,0,0.2))',
   },
   header: {
@@ -124,15 +134,17 @@ function detectedTokens(query: string): string[] {
   return out
 }
 
-export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, onSaved, onDefineVariable }: {
+export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, onSaved, onDefineVariable, closeOnEscape = true }: {
   dashboardId: string
   dashboard: Dashboard
   widget: Widget
   onClose: () => void
   onSaved: () => void
   onDefineVariable?: (name: string) => void
+  closeOnEscape?: boolean
 }) {
   const isQuery = !!widget.connector_id && !!widget.query
+  const canRun = dashboard.can_view_with_data !== false
   const [connectorId, setConnectorId] = useState<string | null>(widget.connector_id ?? null)
   const [query, setQuery] = useState(widget.query ?? '')
   const [widgetType, setWidgetType] = useState<Widget['type']>(widget.type)
@@ -247,92 +259,105 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
     }
   }
 
-  return (
-    <div style={styles.drawer} role="dialog" aria-label="Widget configuration">
-      <div style={styles.header}>
-        <span style={styles.title}>Widget configuration</span>
-        <button type="button" style={styles.close} onClick={onClose} aria-label="Close widget configuration">
-          <X size={15} />
-        </button>
-      </div>
-      <div style={styles.body}>
-        <span style={styles.sectionLabel}>Source</span>
-        {isQuery ? (
-          <>
-            <ConnectorSelector value={connectorId} onChange={setConnectorId} />
-            <SqlEditor value={query} onChange={setQuery} connectorType={undefined} />
-            {references.length > 0 && (
-              <div style={styles.chipRow}>
-                {references.map(name => (
-                  <span key={name} style={styles.chip}>
-                    {name}
-                    {!definedVariables.has(name) && onDefineVariable && (
-                      <button
-                        type="button"
-                        style={styles.defineBtn}
-                        onClick={() => onDefineVariable(name)}
-                      >
-                        Define variable
-                      </button>
-                    )}
-                  </span>
-                ))}
-              </div>
-            )}
-            <button type="button" style={styles.runBtn} onClick={runQuery} disabled={running}>
-              {running ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={12} />}
-              {running ? 'Running…' : 'Run'}
-            </button>
-            {runError && <div style={styles.error} role="alert">{runError}</div>}
-            {runResult && (
-              <div style={styles.preview}>
-                <OutputRenderer
-                  outputs={runResult.outputs}
-                  fixedView={widgetType === 'chart' ? 'chart' : 'table'}
-                  chartConfig={normalizeChartConfig(widget.config)}
-                  onChartConfigChange={saveChartConfig}
-                />
-              </div>
-            )}
-          </>
-        ) : (
-          <>
-            <div style={styles.muted}>
-              Notebook cell widget. Convert it to a query widget to own its SQL and reference
-              dashboard variables.
-            </div>
-            <button type="button" style={styles.runBtn} onClick={convertToQuery} disabled={converting}>
-              {converting ? 'Converting…' : 'Convert to query widget'}
-            </button>
-            {convertError && <div style={styles.error} role="alert">{convertError}</div>}
-          </>
-        )}
+  // Yield Escape to the service-choice dialog when it is open (Modal closes it).
+  useEscapeToClose(onClose, closeOnEscape && !serviceChoice)
 
-        <label style={styles.sectionLabel} htmlFor="widget-type">Visualization</label>
-        <select
-          id="widget-type"
-          aria-label="Widget type"
-          style={styles.select}
-          value={widgetType}
-          onChange={(e) => { void handleTypeChange(e.target.value as Widget['type']) }}
-        >
-          <option value="table">Table</option>
-          <option value="chart">Chart</option>
-          <option value="metric">Metric</option>
-          <option value="text">Text</option>
-        </select>
+  return createPortal(
+    <>
+      <div data-testid="widget-drawer-backdrop" style={styles.backdrop} onClick={onClose} aria-hidden="true" />
+      <div style={styles.drawer} role="dialog" aria-modal="true" aria-label="Widget configuration">
+        <div style={styles.header}>
+          <span style={styles.title}>Widget configuration</span>
+          <button type="button" style={styles.close} onClick={onClose} aria-label="Close widget configuration">
+            <X size={15} />
+          </button>
+        </div>
+        <div style={styles.body}>
+          <span style={styles.sectionLabel}>Source</span>
+          {isQuery ? (
+            <>
+              <ConnectorSelector value={connectorId} onChange={setConnectorId} />
+              <SqlEditor value={query} onChange={setQuery} connectorType={undefined} />
+              {references.length > 0 && (
+                <div style={styles.chipRow}>
+                  {references.map(name => (
+                    <span key={name} style={styles.chip}>
+                      {name}
+                      {!definedVariables.has(name) && onDefineVariable && (
+                        <button
+                          type="button"
+                          style={styles.defineBtn}
+                          onClick={() => onDefineVariable(name)}
+                        >
+                          Define variable
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <button type="button" style={styles.runBtn} onClick={runQuery} disabled={running || !canRun}>
+                {running ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={12} />}
+                {running ? 'Running…' : 'Run'}
+              </button>
+              {!canRun && (
+                <div style={styles.muted} role="note">
+                  You need view_with_data access to run queries. Ask a dashboard admin to grant it
+                  in Permissions.
+                </div>
+              )}
+              {runError && <div style={styles.error} role="alert">{runError}</div>}
+              {runResult && (
+                <div style={styles.preview}>
+                  <OutputRenderer
+                    outputs={runResult.outputs}
+                    fixedView={widgetType === 'chart' ? 'chart' : 'table'}
+                    chartConfig={normalizeChartConfig(widget.config)}
+                    onChartConfigChange={saveChartConfig}
+                  />
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div style={styles.muted}>
+                Notebook cell widget. Convert it to a query widget to own its SQL and reference
+                dashboard variables.
+              </div>
+              <button type="button" style={styles.runBtn} onClick={convertToQuery} disabled={converting}>
+                {converting ? 'Converting…' : 'Convert to query widget'}
+              </button>
+              {convertError && <div style={styles.error} role="alert">{convertError}</div>}
+            </>
+          )}
 
-        {saveError && <div style={styles.error} role="alert">{saveError}</div>}
+          <label style={styles.sectionLabel} htmlFor="widget-type">Visualization</label>
+          <select
+            id="widget-type"
+            aria-label="Widget type"
+            style={styles.select}
+            value={widgetType}
+            onChange={(e) => { void handleTypeChange(e.target.value as Widget['type']) }}
+          >
+            <option value="table">Table</option>
+            <option value="chart">Chart</option>
+            <option value="metric">Metric</option>
+            <option value="text">Text</option>
+          </select>
+
+          {saveError && <div style={styles.error} role="alert">{saveError}</div>}
+        </div>
+        <ServiceChoiceDialog
+          open={!!serviceChoice}
+          services={serviceChoice?.services ?? []}
+          saving={serviceChoiceSaving}
+          error={serviceChoiceError}
+          onSelect={chooseService}
+          onCancel={() => { setServiceChoice(null); setServiceChoiceError(null) }}
+          onDismissError={() => setServiceChoiceError(null)}
+        />
       </div>
-      <ServiceChoiceDialog
-        open={!!serviceChoice}
-        services={serviceChoice?.services ?? []}
-        saving={serviceChoiceSaving}
-        error={serviceChoiceError}
-        onSelect={chooseService}
-        onCancel={() => { setServiceChoice(null); setServiceChoiceError(null) }}
-        onDismissError={() => setServiceChoiceError(null)}
-      />
-    </div>
+    </>,
+    document.body,
   )
 }

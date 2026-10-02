@@ -153,4 +153,20 @@ describe('DashboardVariablesPanel', () => {
     )
     expect((screen.getByLabelText('Variable name') as HTMLInputElement).value).toBe('who')
   })
+
+  test('closes on Escape and on backdrop click', () => {
+    const onClose = vi.fn()
+    render(
+      <DashboardVariablesPanel
+        dashboardId="d1"
+        dashboard={dashboardWith([])}
+        onClose={onClose}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByTestId('variables-backdrop'))
+    expect(onClose).toHaveBeenCalledTimes(2)
+  })
 })

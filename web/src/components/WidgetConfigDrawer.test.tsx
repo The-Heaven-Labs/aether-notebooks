@@ -64,10 +64,11 @@ afterEach(() => {
 
 describe('WidgetConfigDrawer', () => {
   test('renders the SQL source editor and connector selector', () => {
-    const { container } = render(
+    render(
       <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
     )
-    expect(container.querySelector('.cm-editor')!.textContent).toContain('SELECT 1 AS x')
+    // The drawer portals to document.body, so query it there rather than in the render container.
+    expect(document.querySelector('.cm-editor')!.textContent).toContain('SELECT 1 AS x')
     expect(screen.getByLabelText('Select connector')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Run/ })).toBeInTheDocument()
   })
@@ -172,5 +173,46 @@ describe('WidgetConfigDrawer', () => {
       () => expect(bodies).toContainEqual({ query: 'SELECT 1 AS x', connector_id: 'conn-2' }),
       { timeout: 3000 },
     )
+  })
+
+  test('closes on Escape and on backdrop click', () => {
+    const onClose = vi.fn()
+    render(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={onClose} onSaved={() => {}} />,
+    )
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByTestId('widget-drawer-backdrop'))
+    expect(onClose).toHaveBeenCalledTimes(2)
+  })
+
+  test('ignores Escape when closeOnEscape is false', () => {
+    const onClose = vi.fn()
+    render(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget()}
+        onClose={onClose}
+        onSaved={() => {}}
+        closeOnEscape={false}
+      />,
+    )
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  test('disables Run without view_with_data and explains why', () => {
+    render(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={{ ...dashboard, can_view_with_data: false }}
+        widget={queryWidget()}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    expect(screen.getByRole('button', { name: /Run/ })).toBeDisabled()
+    expect(screen.getByRole('note')).toHaveTextContent('view_with_data')
   })
 })
