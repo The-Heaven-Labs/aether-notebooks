@@ -522,6 +522,23 @@ func TestOAuthScopesCoverAllowlistExactly(t *testing.T) {
 	}
 }
 
+// A resource mismatch at consent must say what the server expected; without it
+// the rejection is not actionable (e.g. an http/https scheme mismatch).
+func TestOAuthConsentResourceMismatchEchoesExpected(t *testing.T) {
+	srv, jwt, clientID, _ := setupOAuthServer(t)
+
+	payload, _ := json.Marshal(map[string]any{
+		"client_id": clientID, "redirect_uri": oauthRedirect,
+		"scope": "mcp:query", "resource": "https://other.example.com/api/v1/mcp",
+		"state": "st-mismatch", "code_challenge": oauthChallenge(t),
+		"code_challenge_method": "S256", "approve": true,
+	})
+	rec := doJSON(t, srv, "POST", "/api/v1/oauth/consent/decision", jwt, string(payload))
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "resource does not match this MCP server")
+	require.Contains(t, rec.Body.String(), oauthResource, "the expected canonical resource must be echoed")
+}
+
 // A rejected PAT at the MCP endpoint must advertise the RFC 9728 challenge
 // just like session JWTs, or harnesses cannot discover OAuth after a stale PAT.
 func TestOAuthPATInvalidTokenGetsMCPChallenge(t *testing.T) {
