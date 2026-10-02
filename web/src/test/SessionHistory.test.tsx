@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { SessionHistory } from '../components/SessionHistory'
 import { server } from './server'
+import { renderWithProviders } from './utils'
 
 const OWN_SESSION = {
   id: 's1',
@@ -164,5 +165,43 @@ describe('SessionHistory sections', () => {
     await userEvent.click(screen.getByRole('button', { name: /Close viewer/ }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Shared agent session' })).toBeNull())
     expect(screen.getByText('Shared with me')).toBeInTheDocument()
+  })
+})
+
+describe('SessionHistory sharing', () => {
+  it('opens the permissions dialog for an owned session with the notebook link', async () => {
+    mockLists([OWN_SESSION], [])
+    server.use(
+      http.get('/api/v1/sessions/:sessionId/messages', () => HttpResponse.json([])),
+      http.get('/api/v1/sessions/s1', () =>
+        HttpResponse.json({ ...OWN_SESSION, notebook_id: 'nb1', share_with_notebook_viewers: false }),
+      ),
+      http.get('/api/v1/acl/agent_session/s1', () => HttpResponse.json([])),
+      http.get('/api/v1/members', () => HttpResponse.json([])),
+      http.get('/api/v1/groups', () => HttpResponse.json([])),
+      http.get('/api/v1/notebooks', () => HttpResponse.json([{ id: 'nb1', title: 'Notebook One' }])),
+    )
+
+    renderWithProviders(<SessionHistory agentId="a1" onBack={() => {}} onResumeSession={() => {}} />)
+    await userEvent.click(await screen.findByRole('button', { name: /revenue question/ }))
+    await userEvent.click(await screen.findByRole('button', { name: /Share/ }))
+
+    const dialog = await screen.findByRole('dialog', { name: /permissions/i })
+    expect(within(dialog).getByRole('combobox', { name: 'Notebook' })).toHaveValue('nb1')
+    expect(within(dialog).getByText('Anyone who can view this notebook')).toBeInTheDocument()
+  })
+
+  it('does not offer Share inside a session shared with me', async () => {
+    mockLists([], [SHARED_SESSION])
+    server.use(
+      http.get('/api/v1/sessions/s2', () => HttpResponse.json(SHARED_SESSION)),
+      http.get('/api/v1/sessions/s2/messages', () => HttpResponse.json([])),
+    )
+
+    render(<SessionHistory agentId="a1" onBack={() => {}} onResumeSession={() => {}} />)
+    await userEvent.click(await screen.findByRole('button', { name: /Margin review/ }))
+
+    await screen.findByRole('dialog', { name: 'Shared agent session' })
+    expect(screen.queryByRole('button', { name: /Share/ })).toBeNull()
   })
 })

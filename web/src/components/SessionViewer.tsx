@@ -52,6 +52,8 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
   // Optimistic override for share_with_notebook_viewers so the toggle reflects
   // the PATCH result without refetching the session.
   const [inheritOverride, setInheritOverride] = useState<boolean | null>(null)
+  // Optimistic override for the notebook link (attach/detach).
+  const [notebookOverride, setNotebookOverride] = useState<string | null | undefined>(undefined)
 
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectAttemptsRef = useRef(0)
@@ -70,8 +72,9 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
     if (!sessionSummary && !fetchedSession) return null
     const merged = { ...(sessionSummary ?? {}), ...(fetchedSession ?? {}) } as AgentSession
     if (inheritOverride !== null) merged.share_with_notebook_viewers = inheritOverride
+    if (notebookOverride !== undefined) merged.notebook_id = notebookOverride ?? ''
     return merged
-  }, [sessionSummary, fetchedSession, inheritOverride])
+  }, [sessionSummary, fetchedSession, inheritOverride, notebookOverride])
 
   // Session switches must not leak the previous transcript/stream state.
   useEffect(() => {
@@ -94,6 +97,7 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
     syncedRef.current = false
     setShowPermissions(false)
     setInheritOverride(null)
+    setNotebookOverride(undefined)
   }, [sessionId])
 
   // The REST fetch seeds the transcript; the WS reconnect_sync is authoritative
@@ -176,6 +180,17 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
     setInheritOverride(
       typeof res.share_with_notebook_viewers === 'boolean' ? res.share_with_notebook_viewers : next,
     )
+  }, [sessionId])
+
+  // Owner-only: attaches or detaches the session's notebook. The server clears
+  // inheritance on detach, so the same response keeps both fields in sync.
+  const handleNotebookChange = useCallback(async (next: string | null) => {
+    const res = await api.patch<{ notebook_id?: string | null; share_with_notebook_viewers?: boolean }>(
+      `/api/v1/sessions/${sessionId}`,
+      { notebook_id: next },
+    )
+    setNotebookOverride(res.notebook_id ?? null)
+    setInheritOverride(res.share_with_notebook_viewers === true)
   }, [sessionId])
 
   const connectWebSocket = useCallback(() => {
@@ -528,6 +543,10 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
           resourceName={title}
           resourceOwnerId={session.user_id}
           canEdit={canEdit}
+          sessionNotebookLink={{
+            notebookId: session.notebook_id || null,
+            onSave: handleNotebookChange,
+          }}
           sessionNotebookInheritance={{
             enabled: session.share_with_notebook_viewers === true,
             hasNotebook: !!session.notebook_id,

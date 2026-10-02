@@ -1837,6 +1837,10 @@ export function NotebookPage() {
               notebookId={id!}
               onOpenSession={openSessionViewer}
               onClose={() => setShowChats(false)}
+              onNewChat={() => {
+                setShowChats(false)
+                window.dispatchEvent(new CustomEvent('aether:new-agent-chat'))
+              }}
             />
           </div>
         </>

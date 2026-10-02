@@ -9,6 +9,8 @@ export interface NotebookChatsProps {
   onClose: () => void
   onOpenSession: (session: AgentSessionListItem) => void
   onResumeSession?: (session: AgentSessionListItem) => void
+  /** Start a fresh chat attached to this notebook (opens the agent panel). */
+  onNewChat?: () => void
 }
 
 function fmtRelative(iso: string): string {
@@ -23,7 +25,7 @@ function fmtRelative(iso: string): string {
   return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-export function NotebookChats({ notebookId, onClose, onOpenSession, onResumeSession }: NotebookChatsProps) {
+export function NotebookChats({ notebookId, onClose, onOpenSession, onResumeSession, onNewChat }: NotebookChatsProps) {
   const [sessions, setSessions] = useState<AgentSessionListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -61,6 +63,13 @@ export function NotebookChats({ notebookId, onClose, onOpenSession, onResumeSess
         style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-primary)' }}
       />
       <div style={styles.body}>
+        {onNewChat && (
+          <div style={styles.newChatRow}>
+            <button type="button" style={styles.newChatBtn} onClick={onNewChat}>
+              <MessageSquare size={14} /> New chat
+            </button>
+          </div>
+        )}
         {loading ? (
           <div style={styles.stateText}>Loading…</div>
         ) : error ? (
@@ -99,6 +108,22 @@ export function NotebookChats({ notebookId, onClose, onOpenSession, onResumeSess
 
 const styles: Record<string, React.CSSProperties> = {
   body: { flex: 1, overflowY: 'auto' },
+  newChatRow: { padding: '8px 14px', borderBottom: '1px solid var(--border-light)' },
+  newChatBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    width: '100%',
+    padding: '7px 10px',
+    background: 'var(--accent)',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 4,
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+  },
   stateText: { textAlign: 'center', padding: 20, color: 'var(--text-muted)', fontSize: 13 },
   item: {
     display: 'flex',

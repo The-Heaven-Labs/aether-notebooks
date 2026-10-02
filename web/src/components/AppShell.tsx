@@ -143,6 +143,18 @@ export function AppShell({ children, noPadding }: Props) {
     return () => document.removeEventListener('keydown', handler)
   }, [])
 
+  // The notebook Chats drawer's "New chat" action opens the panel; the panel
+  // itself listens for the same event to reset the session (and start a fresh
+  // one attached to the current notebook when an agent is selected).
+  useEffect(() => {
+    const handler = () => {
+      setShowGlobalAgent(true)
+      setGlobalAgentMinimized(false)
+    }
+    window.addEventListener('aether:new-agent-chat', handler)
+    return () => window.removeEventListener('aether:new-agent-chat', handler)
+  }, [])
+
   useEffect(() => {
     localStorage.setItem('aether:agentPanelWidth:__global__', String(globalAgentWidth))
   }, [globalAgentWidth])

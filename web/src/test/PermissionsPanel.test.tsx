@@ -37,6 +37,82 @@ async function waitForAclLoaded() {
 
 // ── T7.1 Panel renders correctly ────────────────────────────────────────────
 
+// ── Agent session notebook link ─────────────────────────────────────────────
+
+describe('Session notebook link', () => {
+  const NOTEBOOKS = [
+    { id: 'nb-1', title: 'Notebook One' },
+    { id: 'nb-2', title: 'Notebook Two' },
+  ]
+
+  function renderSessionPanel(overrides?: Partial<Parameters<typeof PermissionsPanel>[0]>) {
+    server.use(
+      http.get('/api/v1/notebooks', () => HttpResponse.json(NOTEBOOKS)),
+      http.get('/api/v1/acl/agent_session/s-1', () => HttpResponse.json([])),
+    )
+    return renderPanel({
+      resourceType: 'agent_session',
+      resourceId: 's-1',
+      resourceName: 'Revenue analysis',
+      ...overrides,
+    })
+  }
+
+  test('attaching a notebook saves the selection', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    renderSessionPanel({ sessionNotebookLink: { notebookId: null, onSave } })
+
+    const picker = await screen.findByRole('combobox', { name: 'Notebook' })
+    await screen.findByRole('option', { name: 'Notebook Two' })
+    fireEvent.change(picker, { target: { value: 'nb-2' } })
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith('nb-2'))
+  })
+
+  test('detaching a notebook saves null', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    renderSessionPanel({ sessionNotebookLink: { notebookId: 'nb-1', onSave } })
+
+    const picker = await screen.findByRole('combobox', { name: 'Notebook' })
+    await screen.findByRole('option', { name: 'Notebook One' })
+    expect(picker).toHaveValue('nb-1')
+
+    fireEvent.change(picker, { target: { value: '' } })
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(null))
+  })
+
+  test('a failed save reverts the picker and shows the error', async () => {
+    const onSave = vi.fn().mockRejectedValue(new Error('notebook update failed'))
+    renderSessionPanel({ sessionNotebookLink: { notebookId: 'nb-1', onSave } })
+
+    const picker = await screen.findByRole('combobox', { name: 'Notebook' })
+    await screen.findByRole('option', { name: 'Notebook One' })
+    fireEvent.change(picker, { target: { value: '' } })
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(null))
+    await waitFor(() => expect(picker).toHaveValue('nb-1'))
+    expect(await screen.findByText('notebook update failed')).toBeInTheDocument()
+  })
+
+  test('the inheritance toggle appears once a notebook is linked', async () => {
+    const onToggle = vi.fn()
+    renderSessionPanel({
+      sessionNotebookLink: { notebookId: null, onSave: vi.fn() },
+      sessionNotebookInheritance: { enabled: false, hasNotebook: false, onToggle },
+    })
+
+    // No notebook → no inheritance control.
+    expect(screen.queryByText('Anyone who can view this notebook')).toBeNull()
+
+    const picker = await screen.findByRole('combobox', { name: 'Notebook' })
+    await screen.findByRole('option', { name: 'Notebook One' })
+    fireEvent.change(picker, { target: { value: 'nb-1' } })
+
+    expect(await screen.findByText('Anyone who can view this notebook')).toBeInTheDocument()
+  })
+})
+
 describe('Panel renders', () => {
   test('shows resource name in header', async () => {
     renderPanel()
