@@ -1268,3 +1268,112 @@ func TestMigration124AgentSessionACL(t *testing.T) {
 		t.Fatalf("owner ACL actions = %v, want %v", actions, wantActions)
 	}
 }
+
+func TestMigration125DashboardCreatorViewWithData(t *testing.T) {
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+	}
+
+	db, err := database.Connect(context.Background(), dsn, "")
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var orgID, ownerID, viewerID, dashID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO orgs (name, slug)
+		VALUES ('V125 Dashboard Org', 'v125-dashboard-' || substr(gen_random_uuid()::text, 1, 8))
+		RETURNING id::text`).Scan(&orgID); err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO users (email, name)
+		VALUES ('v125-owner-' || substr(gen_random_uuid()::text, 1, 8) || '@test.local', 'V125 Owner')
+		RETURNING id::text`).Scan(&ownerID); err != nil {
+		t.Fatalf("seed owner: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO users (email, name)
+		VALUES ('v125-viewer-' || substr(gen_random_uuid()::text, 1, 8) || '@test.local', 'V125 Viewer')
+		RETURNING id::text`).Scan(&viewerID); err != nil {
+		t.Fatalf("seed viewer: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO dashboards (org_id, title, settings, created_by)
+		VALUES ($1, 'V125 Legacy Dashboard', '{}', $2)
+		RETURNING id::text`, orgID, ownerID).Scan(&dashID); err != nil {
+		t.Fatalf("seed dashboard: %v", err)
+	}
+
+	// Pre-V121 owner entry and a read-only viewer entry on the same dashboard.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		VALUES ($1, 'dashboard', $2::uuid, 'user', $3, ARRAY['view','edit','delete','share']),
+		       ($1, 'dashboard', $2::uuid, 'user', $4, ARRAY['view'])`, orgID, dashID, ownerID, viewerID); err != nil {
+		t.Fatalf("seed ACL entries: %v", err)
+	}
+
+	// Execute the migration's real backfill statement twice to prove it is
+	// idempotent for the creator and leaves other subjects untouched.
+	content, err := os.ReadFile("migrations/V125__dashboard_creator_view_with_data.sql")
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	const startMarker, endMarker = "-- +backfill:start", "-- +backfill:end"
+	start := strings.Index(string(content), startMarker)
+	end := strings.Index(string(content), endMarker)
+	if start < 0 || end < 0 || end < start {
+		t.Fatal("backfill markers missing from V125")
+	}
+	backfill := string(content)[start+len(startMarker) : end]
+	for i := 0; i < 2; i++ {
+		if _, err := tx.Exec(ctx, backfill); err != nil {
+			t.Fatalf("run backfill (attempt %d): %v", i+1, err)
+		}
+	}
+
+	var ownerActions, viewerActions []string
+	if err := tx.QueryRow(ctx, `
+		SELECT actions FROM acl_entries
+		WHERE resource_type = 'dashboard' AND resource_id = $1::uuid AND subject_id = $2`,
+		dashID, ownerID).Scan(&ownerActions); err != nil {
+		t.Fatalf("owner ACL lookup: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		SELECT actions FROM acl_entries
+		WHERE resource_type = 'dashboard' AND resource_id = $1::uuid AND subject_id = $2`,
+		dashID, viewerID).Scan(&viewerActions); err != nil {
+		t.Fatalf("viewer ACL lookup: %v", err)
+	}
+
+	wantOwner := []string{"view", "edit", "delete", "share", "view_with_data"}
+	if !slices.Equal(slices.Sorted(slices.Values(ownerActions)), slices.Sorted(slices.Values(wantOwner))) {
+		t.Fatalf("owner ACL actions = %v, want %v", ownerActions, wantOwner)
+	}
+	if !slices.Equal(viewerActions, []string{"view"}) {
+		t.Fatalf("viewer ACL actions = %v, want [view]", viewerActions)
+	}
+
+	var applied int
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM schema_migrations WHERE version='125_dashboard_creator_view_with_data'`).Scan(&applied); err != nil {
+		t.Fatalf("schema_migrations query: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("V125 not recorded (count=%d)", applied)
+	}
+}
