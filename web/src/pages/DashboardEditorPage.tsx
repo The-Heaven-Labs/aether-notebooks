@@ -676,6 +676,7 @@ const markSaved = useCallback(() => {
           dashboardId={id!}
           dashboard={dashboard}
           widget={editingWidget}
+          closeOnEscape={!showVariables}
           onClose={() => setEditingWidget(null)}
           onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
           onDefineVariable={(name) => {

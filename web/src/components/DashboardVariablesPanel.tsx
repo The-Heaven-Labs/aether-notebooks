@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Plus, Trash2, X } from 'lucide-react'
 import { api } from '../api/client'
+import { useEscapeToClose } from '../hooks/useEscapeToClose'
 import { ConnectorSelector } from './ConnectorSelector'
 import { SqlEditor } from './SqlEditor'
 import type { Dashboard, DashboardVariable, DashboardVariableType } from '../types'
@@ -132,10 +134,15 @@ function validate(rows: EditableVariable[]): string | null {
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  // The panel covers the top bar (z-index 1550/1600), so it must sit above it:
+  // otherwise the top bar hides the header and intercepts clicks on the close button.
+  backdrop: {
+    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)', zIndex: 1700,
+  },
   panel: {
     position: 'fixed', top: 0, right: 0, bottom: 0, width: 480, maxWidth: '100vw',
     background: 'var(--bg-card)', borderLeft: '1px solid var(--border)',
-    display: 'flex', flexDirection: 'column', zIndex: 250,
+    display: 'flex', flexDirection: 'column', zIndex: 1701,
     boxShadow: 'var(--shadow-lg, -4px 0 16px rgba(0,0,0,0.2))',
   },
   header: {
@@ -199,6 +206,8 @@ export function DashboardVariablesPanel({ dashboardId, dashboard, onClose, onSav
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
+  useEscapeToClose(onClose)
+
   const updateRow = (index: number, patch: Partial<EditableVariable>) => {
     setSaved(false)
     setRows(prev => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)))
@@ -227,208 +236,212 @@ export function DashboardVariablesPanel({ dashboardId, dashboard, onClose, onSav
     }
   }
 
-  return (
-    <div style={styles.panel} role="dialog" aria-label="Dashboard variables">
-      <div style={styles.header}>
-        <span style={styles.title}>Dashboard variables</span>
-        <button type="button" style={styles.close} onClick={onClose} aria-label="Close variables panel">
-          <X size={15} />
-        </button>
-      </div>
-      <div style={styles.body}>
-        {rows.length === 0 && (
-          <span style={styles.muted}>No variables yet. Add one and reference it in query widgets as {'{{name}}'}.</span>
-        )}
+  return createPortal(
+    <>
+      <div data-testid="variables-backdrop" style={styles.backdrop} onClick={onClose} aria-hidden="true" />
+      <div style={styles.panel} role="dialog" aria-modal="true" aria-label="Dashboard variables">
+        <div style={styles.header}>
+          <span style={styles.title}>Dashboard variables</span>
+          <button type="button" style={styles.close} onClick={onClose} aria-label="Close variables panel">
+            <X size={15} />
+          </button>
+        </div>
+        <div style={styles.body}>
+          {rows.length === 0 && (
+            <span style={styles.muted}>No variables yet. Add one and reference it in query widgets as {'{{name}}'}.</span>
+          )}
 
-        {rows.map((row, index) => {
-          const otherNames = allNames.filter(n => n !== row.name.trim())
-          return (
-            <div key={index} style={styles.row}>
-              <div style={styles.rowHeader}>
+          {rows.map((row, index) => {
+            const otherNames = allNames.filter(n => n !== row.name.trim())
+            return (
+              <div key={index} style={styles.row}>
+                <div style={styles.rowHeader}>
+                  <div style={styles.grid2}>
+                    <div>
+                      <label style={styles.label} htmlFor={`var-name-${index}`}>Name</label>
+                      <input
+                        id={`var-name-${index}`}
+                        aria-label="Variable name"
+                        style={styles.input}
+                        value={row.name}
+                        onChange={(e) => updateRow(index, { name: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label style={styles.label} htmlFor={`var-label-${index}`}>Label</label>
+                      <input
+                        id={`var-label-${index}`}
+                        aria-label="Variable label"
+                        style={styles.input}
+                        value={row.label}
+                        onChange={(e) => updateRow(index, { label: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    style={styles.removeBtn}
+                    aria-label="Remove variable"
+                    title="Remove variable"
+                    onClick={() => { setSaved(false); setRows(prev => prev.filter((_, i) => i !== index)) }}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+
                 <div style={styles.grid2}>
                   <div>
-                    <label style={styles.label} htmlFor={`var-name-${index}`}>Name</label>
-                    <input
-                      id={`var-name-${index}`}
-                      aria-label="Variable name"
+                    <label style={styles.label} htmlFor={`var-type-${index}`}>Type</label>
+                    <select
+                      id={`var-type-${index}`}
+                      aria-label="Variable type"
                       style={styles.input}
-                      value={row.name}
-                      onChange={(e) => updateRow(index, { name: e.target.value })}
-                    />
+                      value={row.type}
+                      onChange={(e) => updateRow(index, { type: e.target.value as DashboardVariableType })}
+                    >
+                      {VARIABLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
                   </div>
                   <div>
-                    <label style={styles.label} htmlFor={`var-label-${index}`}>Label</label>
-                    <input
-                      id={`var-label-${index}`}
-                      aria-label="Variable label"
-                      style={styles.input}
-                      value={row.label}
-                      onChange={(e) => updateRow(index, { label: e.target.value })}
-                    />
+                    <label style={styles.label} htmlFor={`var-default-${index}`}>Default</label>
+                    {row.type === 'boolean' ? (
+                      <input
+                        id={`var-default-${index}`}
+                        aria-label="Variable default"
+                        type="checkbox"
+                        checked={row.defaultBool}
+                        onChange={(e) => updateRow(index, { defaultBool: e.target.checked })}
+                      />
+                    ) : row.type === 'date' ? (
+                      <input
+                        id={`var-default-${index}`}
+                        aria-label="Variable default"
+                        type="date"
+                        style={styles.input}
+                        value={row.defaultText}
+                        onChange={(e) => updateRow(index, { defaultText: e.target.value })}
+                      />
+                    ) : (
+                      <input
+                        id={`var-default-${index}`}
+                        aria-label="Variable default"
+                        style={styles.input}
+                        placeholder={row.type === 'date_range' || row.type === 'multi_select' ? 'comma-separated' : ''}
+                        value={row.defaultText}
+                        onChange={(e) => updateRow(index, { defaultText: e.target.value })}
+                      />
+                    )}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  style={styles.removeBtn}
-                  aria-label="Remove variable"
-                  title="Remove variable"
-                  onClick={() => { setSaved(false); setRows(prev => prev.filter((_, i) => i !== index)) }}
-                >
-                  <Trash2 size={12} />
-                </button>
-              </div>
 
-              <div style={styles.grid2}>
-                <div>
-                  <label style={styles.label} htmlFor={`var-type-${index}`}>Type</label>
-                  <select
-                    id={`var-type-${index}`}
-                    aria-label="Variable type"
-                    style={styles.input}
-                    value={row.type}
-                    onChange={(e) => updateRow(index, { type: e.target.value as DashboardVariableType })}
-                  >
-                    {VARIABLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label style={styles.label} htmlFor={`var-default-${index}`}>Default</label>
-                  {row.type === 'boolean' ? (
-                    <input
-                      id={`var-default-${index}`}
-                      aria-label="Variable default"
-                      type="checkbox"
-                      checked={row.defaultBool}
-                      onChange={(e) => updateRow(index, { defaultBool: e.target.checked })}
-                    />
-                  ) : row.type === 'date' ? (
-                    <input
-                      id={`var-default-${index}`}
-                      aria-label="Variable default"
-                      type="date"
+                {isSelectType(row.type) && (
+                  <>
+                    <label style={styles.label} htmlFor={`var-mode-${index}`}>Options</label>
+                    <select
+                      id={`var-mode-${index}`}
+                      aria-label="Options mode"
                       style={styles.input}
-                      value={row.defaultText}
-                      onChange={(e) => updateRow(index, { defaultText: e.target.value })}
-                    />
-                  ) : (
-                    <input
-                      id={`var-default-${index}`}
-                      aria-label="Variable default"
-                      style={styles.input}
-                      placeholder={row.type === 'date_range' || row.type === 'multi_select' ? 'comma-separated' : ''}
-                      value={row.defaultText}
-                      onChange={(e) => updateRow(index, { defaultText: e.target.value })}
-                    />
-                  )}
+                      value={row.mode}
+                      onChange={(e) => updateRow(index, { mode: e.target.value as 'static' | 'query' })}
+                    >
+                      <option value="static">Static list</option>
+                      <option value="query">Query</option>
+                    </select>
+                    {row.mode === 'static' ? (
+                      <textarea
+                        aria-label="Static options"
+                        style={styles.textarea}
+                        placeholder={'EMEA\nAMER\nAPAC'}
+                        value={row.optionsText}
+                        onChange={(e) => updateRow(index, { optionsText: e.target.value })}
+                      />
+                    ) : (
+                      <>
+                        <ConnectorSelector value={row.queryConnectorId} onChange={(id) => updateRow(index, { queryConnectorId: id })} />
+                        <SqlEditor value={row.querySql} onChange={(sql) => updateRow(index, { querySql: sql })} minHeight={100} />
+                        <div style={styles.grid2}>
+                          <input
+                            aria-label="Label column"
+                            style={styles.input}
+                            placeholder="label_column"
+                            value={row.labelColumn}
+                            onChange={(e) => updateRow(index, { labelColumn: e.target.value })}
+                          />
+                          <input
+                            aria-label="Value column"
+                            style={styles.input}
+                            placeholder="value_column"
+                            value={row.valueColumn}
+                            onChange={(e) => updateRow(index, { valueColumn: e.target.value })}
+                          />
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+
+                <div style={styles.checkboxRow}>
+                  <input
+                    id={`var-required-${index}`}
+                    aria-label="Required"
+                    type="checkbox"
+                    checked={row.required}
+                    onChange={(e) => updateRow(index, { required: e.target.checked })}
+                  />
+                  <label htmlFor={`var-required-${index}`}>Required</label>
                 </div>
+
+                {otherNames.length > 0 && (
+                  <div>
+                    <label style={styles.label} htmlFor={`var-depends-${index}`}>Depends on</label>
+                    <select
+                      id={`var-depends-${index}`}
+                      aria-label="Depends on"
+                      multiple
+                      style={{ ...styles.input, height: 'auto', minHeight: 56 }}
+                      value={row.dependsOn}
+                      onChange={(e) => updateRow(index, { dependsOn: Array.from(e.target.selectedOptions).map(o => o.value) })}
+                    >
+                      {otherNames.map(name => <option key={name} value={name}>{name}</option>)}
+                    </select>
+                  </div>
+                )}
               </div>
+            )
+          })}
 
-              {isSelectType(row.type) && (
-                <>
-                  <label style={styles.label} htmlFor={`var-mode-${index}`}>Options</label>
-                  <select
-                    id={`var-mode-${index}`}
-                    aria-label="Options mode"
-                    style={styles.input}
-                    value={row.mode}
-                    onChange={(e) => updateRow(index, { mode: e.target.value as 'static' | 'query' })}
-                  >
-                    <option value="static">Static list</option>
-                    <option value="query">Query</option>
-                  </select>
-                  {row.mode === 'static' ? (
-                    <textarea
-                      aria-label="Static options"
-                      style={styles.textarea}
-                      placeholder={'EMEA\nAMER\nAPAC'}
-                      value={row.optionsText}
-                      onChange={(e) => updateRow(index, { optionsText: e.target.value })}
-                    />
-                  ) : (
-                    <>
-                      <ConnectorSelector value={row.queryConnectorId} onChange={(id) => updateRow(index, { queryConnectorId: id })} />
-                      <SqlEditor value={row.querySql} onChange={(sql) => updateRow(index, { querySql: sql })} minHeight={100} />
-                      <div style={styles.grid2}>
-                        <input
-                          aria-label="Label column"
-                          style={styles.input}
-                          placeholder="label_column"
-                          value={row.labelColumn}
-                          onChange={(e) => updateRow(index, { labelColumn: e.target.value })}
-                        />
-                        <input
-                          aria-label="Value column"
-                          style={styles.input}
-                          placeholder="value_column"
-                          value={row.valueColumn}
-                          onChange={(e) => updateRow(index, { valueColumn: e.target.value })}
-                        />
-                      </div>
-                    </>
-                  )}
-                </>
-              )}
+          <button
+            type="button"
+            style={styles.addBtn}
+            onClick={() => { setSaved(false); setRows(prev => [...prev, emptyVariable()]) }}
+          >
+            <Plus size={12} /> Add variable
+          </button>
 
-              <div style={styles.checkboxRow}>
-                <input
-                  id={`var-required-${index}`}
-                  aria-label="Required"
-                  type="checkbox"
-                  checked={row.required}
-                  onChange={(e) => updateRow(index, { required: e.target.checked })}
-                />
-                <label htmlFor={`var-required-${index}`}>Required</label>
-              </div>
+          <div style={styles.checkboxRow}>
+            <input
+              id="public-live"
+              aria-label="Public live queries"
+              type="checkbox"
+              checked={publicLive}
+              onChange={(e) => { setSaved(false); setPublicLive(e.target.checked) }}
+            />
+            <label htmlFor="public-live">Public live queries</label>
+          </div>
+          <span style={styles.muted}>
+            When enabled, public visitors run this dashboard's query widgets as you, rate-limited
+            per visitor. Disabled by default.
+          </span>
 
-              {otherNames.length > 0 && (
-                <div>
-                  <label style={styles.label} htmlFor={`var-depends-${index}`}>Depends on</label>
-                  <select
-                    id={`var-depends-${index}`}
-                    aria-label="Depends on"
-                    multiple
-                    style={{ ...styles.input, height: 'auto', minHeight: 56 }}
-                    value={row.dependsOn}
-                    onChange={(e) => updateRow(index, { dependsOn: Array.from(e.target.selectedOptions).map(o => o.value) })}
-                  >
-                    {otherNames.map(name => <option key={name} value={name}>{name}</option>)}
-                  </select>
-                </div>
-              )}
-            </div>
-          )
-        })}
+          {error && <div style={styles.error} role="alert">{error}</div>}
+          {saved && <div style={styles.saved}>Variables saved</div>}
 
-        <button
-          type="button"
-          style={styles.addBtn}
-          onClick={() => { setSaved(false); setRows(prev => [...prev, emptyVariable()]) }}
-        >
-          <Plus size={12} /> Add variable
-        </button>
-
-        <div style={styles.checkboxRow}>
-          <input
-            id="public-live"
-            aria-label="Public live queries"
-            type="checkbox"
-            checked={publicLive}
-            onChange={(e) => { setSaved(false); setPublicLive(e.target.checked) }}
-          />
-          <label htmlFor="public-live">Public live queries</label>
+          <button type="button" style={styles.saveBtn} disabled={saving} onClick={save}>
+            {saving ? 'Saving…' : 'Save variables'}
+          </button>
         </div>
-        <span style={styles.muted}>
-          When enabled, public visitors run this dashboard's query widgets as you, rate-limited
-          per visitor. Disabled by default.
-        </span>
-
-        {error && <div style={styles.error} role="alert">{error}</div>}
-        {saved && <div style={styles.saved}>Variables saved</div>}
-
-        <button type="button" style={styles.saveBtn} disabled={saving} onClick={save}>
-          {saving ? 'Saving…' : 'Save variables'}
-        </button>
       </div>
-    </div>
+    </>,
+    document.body,
   )
 }
