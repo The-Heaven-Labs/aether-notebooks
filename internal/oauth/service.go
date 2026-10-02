@@ -173,21 +173,22 @@ func (s *Service) IssueTokens(ctx context.Context, issuer *auth.JWTIssuer, clien
 	return access, refresh, nil
 }
 
-// RotateRefresh exchanges a refresh token for a new one in the same family.
-// The token is bound to the client it was issued to (RFC 6749 §6): presenting
-// it from any other client returns ErrClientMismatch. Presenting a superseded
-// or revoked token revokes the whole family (reuse detection) and returns
-// ErrReused. An unknown or expired token returns ErrNotFound. Membership is
-// re-checked so removing a user from the org kills their refresh chains.
-func (s *Service) RotateRefresh(ctx context.Context, issuer *auth.JWTIssuer, clientID, refreshToken string) (access, newRefresh string, err error) {
+// RotateRefresh exchanges a refresh token for a new one in the same family,
+// returning the new access and refresh tokens plus the granted scopes
+// (unchanged from the original grant, RFC 6749 §6).
+// The token is bound to the client it was issued to: presenting it from any
+// other client returns ErrClientMismatch. Presenting a superseded or revoked
+// token revokes the whole family (reuse detection) and returns ErrReused. An
+// unknown or expired token returns ErrNotFound. Membership is re-checked so
+// removing a user from the org kills their refresh chains.
+func (s *Service) RotateRefresh(ctx context.Context, issuer *auth.JWTIssuer, clientID, refreshToken string) (access, newRefresh string, scopes []string, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var rec TokenRecord
-	var scopes []string
 	err = tx.QueryRow(ctx,
 		`SELECT id, family_id, client_id, user_id, org_id, scopes, resource, expires_at,
 		        revoked_at IS NOT NULL, replaced_by IS NOT NULL
@@ -197,15 +198,15 @@ func (s *Service) RotateRefresh(ctx context.Context, issuer *auth.JWTIssuer, cli
 			&rec.ExpiresAt, &rec.Revoked, &rec.Replaced)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", "", ErrNotFound
+			return "", "", nil, ErrNotFound
 		}
-		return "", "", err
+		return "", "", nil, err
 	}
 
 	// Client binding is checked before the reuse branch so a wrong-client
 	// attempt cannot revoke a family it does not own (no DoS on leaked tokens).
 	if rec.ClientID != clientID {
-		return "", "", ErrClientMismatch
+		return "", "", nil, ErrClientMismatch
 	}
 
 	if rec.Revoked || rec.Replaced {
@@ -215,15 +216,15 @@ func (s *Service) RotateRefresh(ctx context.Context, issuer *auth.JWTIssuer, cli
 		if _, err := tx.Exec(ctx,
 			`UPDATE oauth_tokens SET revoked_at = NOW()
 			 WHERE family_id = $1 AND revoked_at IS NULL`, rec.FamilyID); err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
-		return "", "", ErrReused
+		return "", "", nil, ErrReused
 	}
 	if !time.Now().Before(rec.ExpiresAt) {
-		return "", "", ErrNotFound // simply expired
+		return "", "", nil, ErrNotFound // simply expired
 	}
 
 	var role string
@@ -232,9 +233,9 @@ func (s *Service) RotateRefresh(ctx context.Context, issuer *auth.JWTIssuer, cli
 		rec.OrgID, rec.UserID).Scan(&role)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", "", ErrNotFound // no longer a member
+			return "", "", nil, ErrNotFound // no longer a member
 		}
-		return "", "", err
+		return "", "", nil, err
 	}
 
 	newRefresh = randomToken(32)
@@ -246,21 +247,21 @@ func (s *Service) RotateRefresh(ctx context.Context, issuer *auth.JWTIssuer, cli
 		 RETURNING id`,
 		rec.FamilyID, hashToken(newRefresh), rec.ClientID, rec.UserID, rec.OrgID, scopes, rec.Resource, RefreshTTL.Seconds()).Scan(&newID)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	if _, err = tx.Exec(ctx,
 		`UPDATE oauth_tokens SET replaced_by = $1 WHERE id = $2`, newID, rec.ID); err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 
 	access, err = issuer.IssueMCPAccessToken(rec.UserID, rec.OrgID, role, joinScopes(scopes), rec.ClientID, rec.Resource, AccessTTL)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
-	return access, newRefresh, nil
+	return access, newRefresh, scopes, nil
 }
 
 // Cleanup deletes consumed or expired authorization codes and expired refresh

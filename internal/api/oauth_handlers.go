@@ -341,7 +341,7 @@ func (s *Server) handleOAuthTokenAuthCode(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleOAuthTokenRefresh(w http.ResponseWriter, r *http.Request, client *oauth.Client) {
-	access, newRefresh, err := s.oauth.RotateRefresh(r.Context(), s.jwt, client.ClientID, r.PostFormValue("refresh_token"))
+	access, newRefresh, scopes, err := s.oauth.RotateRefresh(r.Context(), s.jwt, client.ClientID, r.PostFormValue("refresh_token"))
 	switch {
 	case errors.Is(err, oauth.ErrReused):
 		oauthErrorResponse(w, "invalid_grant", "refresh token reuse detected; all tokens in the family were revoked")
@@ -357,6 +357,7 @@ func (s *Server) handleOAuthTokenRefresh(w http.ResponseWriter, r *http.Request,
 			"token_type":    "Bearer",
 			"expires_in":    int(oauth.AccessTTL.Seconds()),
 			"refresh_token": newRefresh,
+			"scope":         strings.Join(scopes, " "),
 		})
 	}
 }

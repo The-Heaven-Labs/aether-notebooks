@@ -249,6 +249,9 @@ func TestOAuthRefreshRotationAndReuseRevokesFamily(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &rotated))
 	newRefresh := rotated["refresh_token"].(string)
 	require.NotEqual(t, refresh, newRefresh)
+	// RFC 6749 §6: clients that diff scopes across refreshes handle an
+	// explicit scope more gracefully.
+	require.Equal(t, "mcp:query", rotated["scope"])
 
 	// Replaying the OLD token revokes the family...
 	rec = oauthRefresh(t, srv, clientID, refresh)
