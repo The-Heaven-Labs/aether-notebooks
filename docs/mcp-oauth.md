@@ -59,10 +59,16 @@ The browser flow, all on the org's host:
    and refreshes silently thereafter.
 
 Discovery documents are derived from the request `Host`, so each org subdomain
-advertises its own canonical resource. Behind a reverse proxy, forward `Host`
-and — when the proxy terminates TLS — `X-Forwarded-Proto`. If the proto is not
-forwarded, the scheme falls back to `AETHER_PUBLIC_URL` for hosts that match it
-(including org subdomains), so an https deployment still advertises https URLs.
+advertises its own canonical resource. Behind a reverse proxy, forward `Host`;
+if the proxy rewrites `Host` to a cluster-internal name, forward
+`X-Forwarded-Host` as well (it is only consulted in that case, so a
+client-supplied value cannot steer discovery metadata). The scheme is resolved
+per host: loopback and literal-IP hosts keep the request-derived scheme
+(`X-Forwarded-Proto`, then direct TLS), while any host within the
+`AETHER_PUBLIC_URL` domain uses that URL's scheme unconditionally — an
+`https://` public URL is authoritative even when an inner proxy hop forwards
+`X-Forwarded-Proto: http`. All other hosts use `X-Forwarded-Proto` when
+present, then direct TLS, then `http`.
 
 ## 2. Configuration
 
