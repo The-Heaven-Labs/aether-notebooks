@@ -330,17 +330,28 @@ func TestOAuthBaseURLFallsBackToPublicURL(t *testing.T) {
 
 func TestMCPUnauthorizedAdvertisesPublicURL(t *testing.T) {
 	r := newOAuthURLRequest("aether-api.aether.svc.cluster.local", nil, false)
-	rec := httptest.NewRecorder()
 
-	writeMCPUnauthorized(rec, r, "https://aether.example.com", "missing token")
+	t.Run("oauth enabled advertises resource metadata", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		writeMCPUnauthorized(rec, r, "https://aether.example.com", true, "missing token")
 
-	want := `Bearer realm="aether", resource_metadata="https://aether.example.com/.well-known/oauth-protected-resource"`
-	if got := rec.Header().Get("WWW-Authenticate"); got != want {
-		t.Fatalf("WWW-Authenticate = %q, want %q", got, want)
-	}
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
-	}
+		want := `Bearer realm="aether", resource_metadata="https://aether.example.com/.well-known/oauth-protected-resource"`
+		if got := rec.Header().Get("WWW-Authenticate"); got != want {
+			t.Fatalf("WWW-Authenticate = %q, want %q", got, want)
+		}
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("oauth disabled emits plain challenge", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		writeMCPUnauthorized(rec, r, "https://aether.example.com", false, "missing token")
+
+		if got, want := rec.Header().Get("WWW-Authenticate"), `Bearer realm="aether"`; got != want {
+			t.Fatalf("WWW-Authenticate = %q, want %q", got, want)
+		}
+	})
 }
 
 func TestIsLoopbackOrIPHost(t *testing.T) {

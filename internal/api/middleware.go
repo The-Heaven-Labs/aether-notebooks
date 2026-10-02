@@ -34,15 +34,19 @@ func adminModeFromContext(ctx context.Context) bool {
 // AuthMiddleware validates JWT tokens and sets user claims in the request context.
 // publicURLFn returns the externally visible base URL (AETHER_PUBLIC_URL); it is
 // used only to resolve the request host when a proxy has rewritten Host to an
-// in-cluster service name (see requestSchemeAndHost). It is called per request
-// because routes are registered before SetPublicURL configures the value.
-func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte, publicURLFn func() string) func(http.Handler) http.Handler {
+// in-cluster service name (see requestSchemeAndHost). mcpOAuthEnabledFn reports
+// whether the OAuth authorization-server endpoints are served; the MCP 401
+// challenge advertises resource_metadata only when they are. Both are called
+// per request because routes are registered before SetPublicURL /
+// SetMCPOAuthEnabled configure the values.
+func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte, publicURLFn func() string, mcpOAuthEnabledFn func() bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			publicURL := ""
 			if publicURLFn != nil {
 				publicURL = publicURLFn()
 			}
+			mcpOAuthEnabled := mcpOAuthEnabledFn != nil && mcpOAuthEnabledFn()
 			token := ""
 			fromQuery := false
 
@@ -56,7 +60,7 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte
 
 			if token == "" {
 				if r.URL.Path == "/api/v1/mcp" {
-					writeMCPUnauthorized(w, r, publicURL, "missing or invalid authorization")
+					writeMCPUnauthorized(w, r, publicURL, mcpOAuthEnabled, "missing or invalid authorization")
 					return
 				}
 				writeError(w, http.StatusUnauthorized, "missing or invalid authorization header")
@@ -65,14 +69,14 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte
 
 			// Check if this is a personal access token (starts with aether_tok_)
 			if strings.HasPrefix(token, "aether_tok_") {
-				validateAPIToken(w, r, next, pool, masterKey, token, publicURL)
+				validateAPIToken(w, r, next, pool, masterKey, token, publicURL, mcpOAuthEnabled)
 				return
 			}
 
 			claims, err := issuer.Validate(token)
 			if err != nil {
 				if r.URL.Path == "/api/v1/mcp" {
-					writeMCPUnauthorized(w, r, publicURL, "invalid token")
+					writeMCPUnauthorized(w, r, publicURL, mcpOAuthEnabled, "invalid token")
 					return
 				}
 				writeError(w, http.StatusUnauthorized, "invalid token")
@@ -93,11 +97,11 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte
 				// OAuth access tokens must never authenticate. The MCP endpoint
 				// is POST-only, so query tokens have no legitimate use there.
 				if fromQuery {
-					writeMCPUnauthorized(w, r, publicURL, "oauth access tokens must use the Authorization header")
+					writeMCPUnauthorized(w, r, publicURL, mcpOAuthEnabled, "oauth access tokens must use the Authorization header")
 					return
 				}
 				if !slices.Contains(claims.Audience, canonicalResourceURI(r, publicURL)) {
-					writeMCPUnauthorized(w, r, publicURL, "token audience does not match this resource")
+					writeMCPUnauthorized(w, r, publicURL, mcpOAuthEnabled, "token audience does not match this resource")
 					return
 				}
 			}
@@ -131,9 +135,9 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte
 // writeAuthFailure emits a 401, using the MCP challenge (resource_metadata)
 // when the request targets the MCP endpoint so OAuth discovery works for any
 // rejected credential type.
-func writeAuthFailure(w http.ResponseWriter, r *http.Request, publicURL, msg string) {
+func writeAuthFailure(w http.ResponseWriter, r *http.Request, publicURL string, mcpOAuthEnabled bool, msg string) {
 	if r.URL.Path == "/api/v1/mcp" {
-		writeMCPUnauthorized(w, r, publicURL, msg)
+		writeMCPUnauthorized(w, r, publicURL, mcpOAuthEnabled, msg)
 		return
 	}
 	writeError(w, http.StatusUnauthorized, msg)
@@ -143,7 +147,7 @@ func writeAuthFailure(w http.ResponseWriter, r *http.Request, publicURL, msg str
 // Tokens created after the lookup-hash migration are found with a single indexed
 // query; older rows fall back to a bcrypt scan over un-backfilled rows and are
 // backfilled on first successful match.
-func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler, pool *pgxpool.Pool, masterKey []byte, token, publicURL string) {
+func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler, pool *pgxpool.Pool, masterKey []byte, token, publicURL string, mcpOAuthEnabled bool) {
 	subdomainOrg := OrgIDFromContext(r.Context())
 	lookupHash := crypto.TokenLookupHash(masterKey, token)
 
@@ -158,7 +162,7 @@ func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler,
 	var expiresAt *time.Time
 	err := pool.QueryRow(r.Context(), query, args...).Scan(&id, &userID, &orgID, &expiresAt)
 	if err == nil {
-		completeAPITokenAuth(w, r, next, pool, id, userID, orgID, expiresAt, publicURL)
+		completeAPITokenAuth(w, r, next, pool, id, userID, orgID, expiresAt, publicURL, mcpOAuthEnabled)
 		return
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -166,7 +170,7 @@ func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler,
 		return
 	}
 
-	validateLegacyAPIToken(w, r, next, pool, token, lookupHash, subdomainOrg, publicURL)
+	validateLegacyAPIToken(w, r, next, pool, token, lookupHash, subdomainOrg, publicURL, mcpOAuthEnabled)
 }
 
 // validateLegacyAPIToken bcrypt-verifies tokens that have no lookup hash yet
@@ -174,7 +178,7 @@ func validateAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler,
 // requests take the fast path. Rows are matched by lookup hash as well as NULL
 // so a concurrent first use that backfilled the row after the fast path missed
 // it still authenticates.
-func validateLegacyAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler, pool *pgxpool.Pool, token, lookupHash, subdomainOrg, publicURL string) {
+func validateLegacyAPIToken(w http.ResponseWriter, r *http.Request, next http.Handler, pool *pgxpool.Pool, token, lookupHash, subdomainOrg, publicURL string, mcpOAuthEnabled bool) {
 	query := `SELECT id, user_id, org_id, token_hash, expires_at FROM api_tokens WHERE (token_lookup_hash = $1 OR token_lookup_hash IS NULL)`
 	args := []any{lookupHash}
 	if subdomainOrg != "" {
@@ -209,7 +213,7 @@ func validateLegacyAPIToken(w http.ResponseWriter, r *http.Request, next http.Ha
 		return
 	}
 	if !matched {
-		writeAuthFailure(w, r, publicURL, "invalid or expired API token")
+		writeAuthFailure(w, r, publicURL, mcpOAuthEnabled, "invalid or expired API token")
 		return
 	}
 
@@ -218,14 +222,14 @@ func validateLegacyAPIToken(w http.ResponseWriter, r *http.Request, next http.Ha
 		lookupHash, id); err != nil {
 		slog.Debug("PAT lookup hash backfill failed", "token_id", id, "error", err)
 	}
-	completeAPITokenAuth(w, r, next, pool, id, userID, orgID, expiresAt, publicURL)
+	completeAPITokenAuth(w, r, next, pool, id, userID, orgID, expiresAt, publicURL, mcpOAuthEnabled)
 }
 
 // completeAPITokenAuth finishes a successful token match: expiry check, role
 // lookup, claims context, and last-used bookkeeping.
-func completeAPITokenAuth(w http.ResponseWriter, r *http.Request, next http.Handler, pool *pgxpool.Pool, id, userID, orgID string, expiresAt *time.Time, publicURL string) {
+func completeAPITokenAuth(w http.ResponseWriter, r *http.Request, next http.Handler, pool *pgxpool.Pool, id, userID, orgID string, expiresAt *time.Time, publicURL string, mcpOAuthEnabled bool) {
 	if expiresAt != nil && expiresAt.Before(time.Now()) {
-		writeAuthFailure(w, r, publicURL, "invalid or expired API token")
+		writeAuthFailure(w, r, publicURL, mcpOAuthEnabled, "invalid or expired API token")
 		return
 	}
 

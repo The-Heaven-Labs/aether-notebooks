@@ -39,8 +39,11 @@ The `401` challenge from the MCP endpoint is
 `WWW-Authenticate: Bearer realm="aether",
 resource_metadata="http://{host}/.well-known/oauth-protected-resource"`, so
 harnesses can discover the metadata document directly from the challenge (they
-may also probe the standard well-known paths at the host root). Other API
-endpoints emit `WWW-Authenticate: Bearer realm="aether"` only.
+may also probe the standard well-known paths at the host root). With
+`AETHER_MCP_OAUTH_ENABLED=false` the MCP endpoint emits the plain
+`WWW-Authenticate: Bearer realm="aether"` challenge instead, since the
+well-known endpoints return `404` and advertising them would be a dead end.
+Other API endpoints always emit the plain challenge.
 
 The browser flow, all on the org's host:
 

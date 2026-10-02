@@ -82,8 +82,9 @@ func TestMCPExpiredPATRejected(t *testing.T) {
 
 	code, _, header := doMCPRequest(t, srv, pat, "tools/list", nil)
 	require.Equal(t, http.StatusUnauthorized, code, "expired PAT must be rejected")
-	require.Contains(t, header.Get("WWW-Authenticate"), "resource_metadata=",
-		"expired PAT must advertise the OAuth challenge")
+	require.Contains(t, header.Get("WWW-Authenticate"), `Bearer realm="aether"`)
+	require.NotContains(t, header.Get("WWW-Authenticate"), "resource_metadata",
+		"OAuth is disabled on this server; the challenge must not advertise its well-known endpoints")
 }
 
 // A PAT scoped to org A used against org B's subdomain is rejected by the

@@ -162,11 +162,16 @@ func isLoopbackOrIPHost(host string) bool {
 	return strings.EqualFold(h, "localhost") || net.ParseIP(h) != nil
 }
 
-// writeMCPUnauthorized writes the MCP 401 challenge with the RFC 9728
-// resource_metadata parameter so harnesses can discover the OAuth server.
-func writeMCPUnauthorized(w http.ResponseWriter, r *http.Request, publicURL, msg string) {
-	w.Header().Set("WWW-Authenticate",
-		`Bearer realm="aether", resource_metadata="`+oauthBaseURL(r, publicURL)+`/.well-known/oauth-protected-resource"`)
+// writeMCPUnauthorized writes the MCP 401 challenge. When the OAuth
+// authorization server is served, the RFC 9728 resource_metadata parameter is
+// included so harnesses can discover it; when it is disabled the plain Bearer
+// challenge is emitted instead, since the well-known endpoints return 404.
+func writeMCPUnauthorized(w http.ResponseWriter, r *http.Request, publicURL string, oauthEnabled bool, msg string) {
+	challenge := `Bearer realm="aether"`
+	if oauthEnabled {
+		challenge += `, resource_metadata="` + oauthBaseURL(r, publicURL) + `/.well-known/oauth-protected-resource"`
+	}
+	w.Header().Set("WWW-Authenticate", challenge)
 	writeError(w, http.StatusUnauthorized, msg)
 }
 
