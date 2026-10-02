@@ -249,6 +249,9 @@ func TestOAuthRefreshRotationAndReuseRevokesFamily(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &rotated))
 	newRefresh := rotated["refresh_token"].(string)
 	require.NotEqual(t, refresh, newRefresh)
+	// RFC 6749 §6: clients that diff scopes across refreshes handle an
+	// explicit scope more gracefully.
+	require.Equal(t, "mcp:query", rotated["scope"])
 
 	// Replaying the OLD token revokes the family...
 	rec = oauthRefresh(t, srv, clientID, refresh)
@@ -463,7 +466,7 @@ func TestMCPToolsForTokenFailClosed(t *testing.T) {
 }
 
 func TestMCPUnauthenticatedChallengeAdvertisesResourceMetadata(t *testing.T) {
-	srv := setupTestServer(t)
+	srv, _, _, _ := setupOAuthServer(t)
 
 	rec := doJSON(t, srv, "POST", "/api/v1/mcp", "", "")
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
@@ -474,7 +477,7 @@ func TestMCPUnauthenticatedChallengeAdvertisesResourceMetadata(t *testing.T) {
 }
 
 func TestMCPInvalidTokenChallengeAdvertisesResourceMetadata(t *testing.T) {
-	srv := setupTestServer(t)
+	srv, _, _, _ := setupOAuthServer(t)
 
 	rec := doJSON(t, srv, "POST", "/api/v1/mcp", "bogus", "")
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
@@ -482,6 +485,19 @@ func TestMCPInvalidTokenChallengeAdvertisesResourceMetadata(t *testing.T) {
 	require.Contains(t, challenge, `Bearer realm="aether"`)
 	require.Contains(t, challenge, `resource_metadata="http://example.com/.well-known/oauth-protected-resource"`)
 	require.Contains(t, rec.Body.String(), "invalid token")
+}
+
+// With the OAuth authorization server disabled its well-known endpoints return
+// 404, so the MCP challenge must not advertise resource_metadata: clients that
+// follow it would hit a dead end.
+func TestMCPUnauthenticatedChallengePlainWhenOAuthDisabled(t *testing.T) {
+	srv := setupTestServer(t) // flag off by default
+
+	rec := doJSON(t, srv, "POST", "/api/v1/mcp", "", "")
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	challenge := rec.Header().Get("WWW-Authenticate")
+	require.Contains(t, challenge, `Bearer realm="aether"`)
+	require.NotContains(t, challenge, "resource_metadata")
 }
 
 func TestNonMCPUnauthorizedChallengeOmitsResourceMetadata(t *testing.T) {
@@ -509,10 +525,27 @@ func TestOAuthScopesCoverAllowlistExactly(t *testing.T) {
 	}
 }
 
+// A resource mismatch at consent must say what the server expected; without it
+// the rejection is not actionable (e.g. an http/https scheme mismatch).
+func TestOAuthConsentResourceMismatchEchoesExpected(t *testing.T) {
+	srv, jwt, clientID, _ := setupOAuthServer(t)
+
+	payload, _ := json.Marshal(map[string]any{
+		"client_id": clientID, "redirect_uri": oauthRedirect,
+		"scope": "mcp:query", "resource": "https://other.example.com/api/v1/mcp",
+		"state": "st-mismatch", "code_challenge": oauthChallenge(t),
+		"code_challenge_method": "S256", "approve": true,
+	})
+	rec := doJSON(t, srv, "POST", "/api/v1/oauth/consent/decision", jwt, string(payload))
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "resource does not match this MCP server")
+	require.Contains(t, rec.Body.String(), oauthResource, "the expected canonical resource must be echoed")
+}
+
 // A rejected PAT at the MCP endpoint must advertise the RFC 9728 challenge
 // just like session JWTs, or harnesses cannot discover OAuth after a stale PAT.
 func TestOAuthPATInvalidTokenGetsMCPChallenge(t *testing.T) {
-	srv := setupTestServer(t)
+	srv, _, _, _ := setupOAuthServer(t)
 
 	rec := doJSON(t, srv, "POST", "/api/v1/mcp", "aether_tok_bogus",
 		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)

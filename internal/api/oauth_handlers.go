@@ -43,20 +43,23 @@ func oauthBaseURL(r *http.Request, publicURL string) string {
 
 // requestSchemeAndHost resolves the externally visible scheme and host for r.
 //
-// The request-derived host is the default: it keeps subdomain org binding
-// working (each org subdomain advertises and validates its own resource).
-// Proxies that preserve the client-facing host in X-Forwarded-Host take
-// precedence; when Host has been rewritten to an in-cluster name and no
-// X-Forwarded-Host is present, the configured public URL is used instead.
-// Loopback and literal-IP hosts are always kept — they are externally
-// meaningful in local development and port-forward testing.
+// Host: the request Host is authoritative whenever it is externally meaningful
+// — it keeps subdomain org binding working (each org subdomain advertises and
+// validates its own resource) and a client-supplied X-Forwarded-Host cannot
+// steer it. X-Forwarded-Host is consulted only when Host has been rewritten to
+// an in-cluster name; the configured public URL host, then the internal Host,
+// are the remaining fallbacks. Loopback and literal-IP hosts are always kept —
+// they are externally meaningful in local development and port-forward testing.
 //
-// Scheme: X-Forwarded-Proto first, then direct TLS, then the configured public
-// URL's scheme when the resolved host is the public host or one of its
-// subdomains. TLS-terminating proxies often forward Host/X-Forwarded-Host
-// without X-Forwarded-Proto; without that last fallback an https deployment
-// would advertise http:// discovery URLs and break client issuer and audience
-// checks. Unrelated external hosts keep the request-derived scheme.
+// Scheme: loopback and literal-IP hosts keep the request-derived scheme
+// (X-Forwarded-Proto first, then direct TLS, then http) so local development
+// and port-forward testing are unaffected. When the resolved host is the
+// public URL's host or one of its subdomains, the public URL's scheme wins
+// unconditionally: the operator declared the client-facing scheme for that
+// domain, and an https public URL is served over TLS at every supported front
+// door even when an inner proxy hop reflects X-Forwarded-Proto: http (OAuth
+// 2.1 forbids plain-http public front doors). All other hosts use the
+// request-derived scheme.
 func requestSchemeAndHost(r *http.Request, publicURL string) (scheme, host string) {
 	var public *url.URL
 	if publicURL != "" {
@@ -65,21 +68,21 @@ func requestSchemeAndHost(r *http.Request, publicURL string) (scheme, host strin
 		}
 	}
 
-	if proto := firstHeaderValue(r.Header.Get("X-Forwarded-Proto")); proto != "" {
-		scheme = proto
-	} else if r.TLS != nil {
-		scheme = "https"
-	}
-
-	host = firstForwardedHost(r)
-	if host == "" {
-		host = r.Host
-		if public != nil && isClusterInternalHost(host) {
+	host = r.Host
+	if isClusterInternalHost(host) {
+		if forwarded := firstForwardedHost(r); forwarded != "" {
+			host = forwarded
+		} else if public != nil {
 			host = public.Host
 		}
 	}
-	if scheme == "" && public != nil && public.Scheme != "" && chHostWithinPublicDomain(host, public.Host) {
+
+	if !isLoopbackOrIPHost(host) && public != nil && public.Scheme != "" && chHostWithinPublicDomain(host, public.Host) {
 		scheme = public.Scheme
+	} else if proto := firstHeaderValue(r.Header.Get("X-Forwarded-Proto")); proto != "" {
+		scheme = proto
+	} else if r.TLS != nil {
+		scheme = "https"
 	}
 	if scheme == "" {
 		scheme = "http"
@@ -114,9 +117,10 @@ func firstForwardedHost(r *http.Request) string {
 }
 
 // firstHeaderValue returns the first comma-separated value of a forwarded
-// header, trimmed. Trust model matches the existing X-Forwarded-Proto handling:
-// values are trusted from the edge, so deployments must strip client-supplied
-// X-Forwarded-* at the boundary.
+// header, trimmed. Values are trusted from the edge, so deployments should
+// still strip client-supplied X-Forwarded-* at the boundary; X-Forwarded-Host
+// is additionally gated on a cluster-internal Host (see requestSchemeAndHost),
+// so a forged value cannot steer discovery for externally-addressed requests.
 func firstHeaderValue(v string) string {
 	if v == "" {
 		return ""
@@ -146,11 +150,28 @@ func isClusterInternalHost(host string) bool {
 	return strings.HasSuffix(strings.ToLower(h), ".cluster.local")
 }
 
-// writeMCPUnauthorized writes the MCP 401 challenge with the RFC 9728
-// resource_metadata parameter so harnesses can discover the OAuth server.
-func writeMCPUnauthorized(w http.ResponseWriter, r *http.Request, publicURL, msg string) {
-	w.Header().Set("WWW-Authenticate",
-		`Bearer realm="aether", resource_metadata="`+oauthBaseURL(r, publicURL)+`/.well-known/oauth-protected-resource"`)
+// isLoopbackOrIPHost reports whether host (optionally with a port) is loopback
+// or a literal IP address. These hosts are only externally meaningful in local
+// development and port-forward testing, so the public URL's scheme does not
+// override their request-derived scheme.
+func isLoopbackOrIPHost(host string) bool {
+	h := strings.Trim(hostnameOnly(host), "[]")
+	if h == "" {
+		return false
+	}
+	return strings.EqualFold(h, "localhost") || net.ParseIP(h) != nil
+}
+
+// writeMCPUnauthorized writes the MCP 401 challenge. When the OAuth
+// authorization server is served, the RFC 9728 resource_metadata parameter is
+// included so harnesses can discover it; when it is disabled the plain Bearer
+// challenge is emitted instead, since the well-known endpoints return 404.
+func writeMCPUnauthorized(w http.ResponseWriter, r *http.Request, publicURL string, oauthEnabled bool, msg string) {
+	challenge := `Bearer realm="aether"`
+	if oauthEnabled {
+		challenge += `, resource_metadata="` + oauthBaseURL(r, publicURL) + `/.well-known/oauth-protected-resource"`
+	}
+	w.Header().Set("WWW-Authenticate", challenge)
 	writeError(w, http.StatusUnauthorized, msg)
 }
 
@@ -320,7 +341,7 @@ func (s *Server) handleOAuthTokenAuthCode(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleOAuthTokenRefresh(w http.ResponseWriter, r *http.Request, client *oauth.Client) {
-	access, newRefresh, err := s.oauth.RotateRefresh(r.Context(), s.jwt, client.ClientID, r.PostFormValue("refresh_token"))
+	access, newRefresh, scopes, err := s.oauth.RotateRefresh(r.Context(), s.jwt, client.ClientID, r.PostFormValue("refresh_token"))
 	switch {
 	case errors.Is(err, oauth.ErrReused):
 		oauthErrorResponse(w, "invalid_grant", "refresh token reuse detected; all tokens in the family were revoked")
@@ -336,6 +357,7 @@ func (s *Server) handleOAuthTokenRefresh(w http.ResponseWriter, r *http.Request,
 			"token_type":    "Bearer",
 			"expires_in":    int(oauth.AccessTTL.Seconds()),
 			"refresh_token": newRefresh,
+			"scope":         strings.Join(scopes, " "),
 		})
 	}
 }

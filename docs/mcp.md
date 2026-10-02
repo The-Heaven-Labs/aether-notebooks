@@ -134,11 +134,13 @@ Interactive and agent-session tools (`ask_question`, `spawn_subagents`,
   prompt; approval is the harness's responsibility.
 - Tool execution failures return `result.isError = true` with a text message.
 - Unknown tools return JSON-RPC `-32602`.
-- Missing/expired/revoked tokens return HTTP `401`. The MCP endpoint advertises
+- Missing/expired/revoked tokens return HTTP `401`. While
+  `AETHER_MCP_OAUTH_ENABLED=true` the MCP endpoint advertises
   `WWW-Authenticate: Bearer realm="aether",
   resource_metadata="…/.well-known/oauth-protected-resource"` so OAuth-capable
-  clients can discover the authorization server; other API endpoints emit the
-  `realm` parameter only.
+  clients can discover the authorization server; with the flag off it emits the
+  plain `realm` challenge (the well-known endpoints are not served), as do all
+  other API endpoints.
 - `GET`/`DELETE` return `405` (no SSE, no sessions).
 
 ## Known limitations

@@ -15,7 +15,7 @@ import (
 
 func TestAuthMiddleware(t *testing.T) {
 	issuer := auth.NewJWTIssuer("test-secret", 15*time.Minute)
-	mw := api.AuthMiddleware(issuer, nil, nil, nil)
+	mw := api.AuthMiddleware(issuer, nil, nil, nil, nil)
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims := api.ClaimsFromContext(r.Context())
@@ -39,7 +39,7 @@ func TestAuthMiddleware(t *testing.T) {
 
 func TestAuthMiddlewareNoToken(t *testing.T) {
 	issuer := auth.NewJWTIssuer("test-secret", 15*time.Minute)
-	mw := api.AuthMiddleware(issuer, nil, nil, nil)
+	mw := api.AuthMiddleware(issuer, nil, nil, nil, nil)
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("should not reach handler")
@@ -59,7 +59,9 @@ func TestAuthMiddlewareNoToken(t *testing.T) {
 func TestAuthMiddlewareMCPChallengeUsesPublicURL(t *testing.T) {
 	issuer := auth.NewJWTIssuer("test-secret", 15*time.Minute)
 	publicURL := ""
-	mw := api.AuthMiddleware(issuer, nil, nil, func() string { return publicURL })
+	mw := api.AuthMiddleware(issuer, nil, nil,
+		func() string { return publicURL },
+		func() bool { return true })
 	publicURL = "https://aether.example.com"
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -77,6 +79,30 @@ func TestAuthMiddlewareMCPChallengeUsesPublicURL(t *testing.T) {
 	want := `resource_metadata="https://aether.example.com/.well-known/oauth-protected-resource"`
 	if got := rec.Header().Get("WWW-Authenticate"); !strings.Contains(got, want) {
 		t.Fatalf("WWW-Authenticate = %q, want it to contain %q", got, want)
+	}
+}
+
+// When the OAuth server is disabled the MCP challenge must not point at
+// well-known endpoints that return 404.
+func TestAuthMiddlewareMCPChallengePlainWhenOAuthDisabled(t *testing.T) {
+	issuer := auth.NewJWTIssuer("test-secret", 15*time.Minute)
+	mw := api.AuthMiddleware(issuer, nil, nil,
+		func() string { return "https://aether.example.com" },
+		func() bool { return false })
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("should not reach handler")
+	}))
+
+	req := httptest.NewRequest("POST", "/api/v1/mcp", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("WWW-Authenticate"); got != `Bearer realm="aether"` {
+		t.Fatalf("WWW-Authenticate = %q, want plain Bearer challenge", got)
 	}
 }
 

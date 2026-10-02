@@ -103,12 +103,104 @@ func TestRequestSchemeAndHost(t *testing.T) {
 			wantHost:   "aether.example.com",
 		},
 		{
-			name:       "X-Forwarded-Proto wins over public URL scheme",
+			// An edge that terminates TLS can hand off to an inner hop that
+			// forwards plaintext (X-Forwarded-Proto: http). The operator's
+			// https public URL is authoritative for its own domain, so
+			// discovery must not be downgraded (the v0.59.0 regression).
+			name:       "public URL scheme wins over X-Forwarded-Proto http",
 			host:       "aether-api.aether.svc.cluster.local",
 			headers:    map[string]string{"X-Forwarded-Proto": "http"},
 			publicURL:  public,
+			wantScheme: "https",
+			wantHost:   "aether.example.com",
+		},
+		{
+			name:       "public host with X-Forwarded-Proto http uses public URL scheme",
+			host:       "aether.example.com",
+			headers:    map[string]string{"X-Forwarded-Proto": "http"},
+			publicURL:  public,
+			wantScheme: "https",
+			wantHost:   "aether.example.com",
+		},
+		{
+			name:       "org subdomain with X-Forwarded-Proto http uses public URL scheme",
+			host:       "org1.aether.example.com",
+			headers:    map[string]string{"X-Forwarded-Proto": "http"},
+			publicURL:  public,
+			wantScheme: "https",
+			wantHost:   "org1.aether.example.com",
+		},
+		{
+			// Rewriting proxy: the internal Host is replaced by the forwarded
+			// host, while the scheme still comes from the public URL instead of
+			// the inner plaintext hop.
+			name: "rewritten host with X-Forwarded-Host and X-Forwarded-Proto http",
+			host: "aether-api.aether.svc.cluster.local",
+			headers: map[string]string{
+				"X-Forwarded-Host":  "org1.aether.example.com",
+				"X-Forwarded-Proto": "http",
+			},
+			publicURL:  public,
+			wantScheme: "https",
+			wantHost:   "org1.aether.example.com",
+		},
+		{
+			// Host-preserving proxy: a client-supplied X-Forwarded-Host must
+			// not steer discovery metadata (phishing / audience poisoning).
+			name:       "client-forged X-Forwarded-Host is ignored on external host",
+			host:       "aether.example.com",
+			headers:    map[string]string{"X-Forwarded-Host": "evil.example"},
+			publicURL:  public,
+			wantScheme: "https",
+			wantHost:   "aether.example.com",
+		},
+		{
+			name:       "client-forged X-Forwarded-Host is ignored without public URL",
+			host:       "aether.example.com",
+			headers:    map[string]string{"X-Forwarded-Host": "evil.example"},
+			publicURL:  "",
 			wantScheme: "http",
 			wantHost:   "aether.example.com",
+		},
+		{
+			name:       "public URL scheme wins over direct TLS",
+			host:       "aether.example.com",
+			tlsOn:      true,
+			publicURL:  "http://aether.example.com",
+			wantScheme: "http",
+			wantHost:   "aether.example.com",
+		},
+		{
+			name:       "X-Forwarded-Proto chain uses first value without public URL",
+			host:       "aether.example.com",
+			headers:    map[string]string{"X-Forwarded-Proto": "https, http"},
+			publicURL:  "",
+			wantScheme: "https",
+			wantHost:   "aether.example.com",
+		},
+		{
+			// Loopback / port-forward carve-out: a matching public URL must not
+			// rewrite the host or override the request-derived scheme.
+			name:       "loopback host with matching public URL keeps request scheme",
+			host:       "localhost:8088",
+			publicURL:  "https://localhost:8443",
+			wantScheme: "http",
+			wantHost:   "localhost:8088",
+		},
+		{
+			name:       "loopback host with forwarded https keeps forwarded scheme",
+			host:       "localhost:8088",
+			headers:    map[string]string{"X-Forwarded-Proto": "https"},
+			publicURL:  "https://localhost",
+			wantScheme: "https",
+			wantHost:   "localhost:8088",
+		},
+		{
+			name:       "IP literal host with matching public URL keeps request scheme",
+			host:       "10.0.0.5:8088",
+			publicURL:  "https://10.0.0.5",
+			wantScheme: "http",
+			wantHost:   "10.0.0.5:8088",
 		},
 		{
 			name:       "internal host with empty public URL stays derived",
@@ -238,16 +330,53 @@ func TestOAuthBaseURLFallsBackToPublicURL(t *testing.T) {
 
 func TestMCPUnauthorizedAdvertisesPublicURL(t *testing.T) {
 	r := newOAuthURLRequest("aether-api.aether.svc.cluster.local", nil, false)
-	rec := httptest.NewRecorder()
 
-	writeMCPUnauthorized(rec, r, "https://aether.example.com", "missing token")
+	t.Run("oauth enabled advertises resource metadata", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		writeMCPUnauthorized(rec, r, "https://aether.example.com", true, "missing token")
 
-	want := `Bearer realm="aether", resource_metadata="https://aether.example.com/.well-known/oauth-protected-resource"`
-	if got := rec.Header().Get("WWW-Authenticate"); got != want {
-		t.Fatalf("WWW-Authenticate = %q, want %q", got, want)
+		want := `Bearer realm="aether", resource_metadata="https://aether.example.com/.well-known/oauth-protected-resource"`
+		if got := rec.Header().Get("WWW-Authenticate"); got != want {
+			t.Fatalf("WWW-Authenticate = %q, want %q", got, want)
+		}
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("oauth disabled emits plain challenge", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		writeMCPUnauthorized(rec, r, "https://aether.example.com", false, "missing token")
+
+		if got, want := rec.Header().Get("WWW-Authenticate"), `Bearer realm="aether"`; got != want {
+			t.Fatalf("WWW-Authenticate = %q, want %q", got, want)
+		}
+	})
+}
+
+func TestIsLoopbackOrIPHost(t *testing.T) {
+	tests := []struct {
+		host string
+		want bool
+	}{
+		{"localhost", true},
+		{"LOCALHOST", true},
+		{"localhost:8080", true},
+		{"127.0.0.1", true},
+		{"127.0.0.1:8080", true},
+		{"[::1]", true},
+		{"[::1]:8080", true},
+		{"::1", true},
+		{"10.0.0.5", true},
+		{"10.0.0.5:443", true},
+		{"aether.example.com", false},
+		{"aether-api", false},
+		{"", false},
 	}
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	for _, tt := range tests {
+		if got := isLoopbackOrIPHost(tt.host); got != tt.want {
+			t.Errorf("isLoopbackOrIPHost(%q) = %v, want %v", tt.host, got, tt.want)
+		}
 	}
 }
 
