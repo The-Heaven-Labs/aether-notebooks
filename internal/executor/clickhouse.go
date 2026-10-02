@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/shopspring/decimal"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
@@ -119,13 +121,86 @@ func chBaseType(t string) (base string, inner string, nullable bool) {
 	return t, inner, nullable
 }
 
+// chTupleIsNamed reports whether a Tuple(...)/Nested(...) type string has named
+// elements. ClickHouse requires names on either all tuple elements or none;
+// within an element only a named type contains a space after some non-space
+// text (e.g. "a Int64"), while unnamed element types keep their spaces inside
+// parentheses (e.g. "Decimal(10, 2)") and separator spaces follow commas.
+func chTupleIsNamed(t string) bool {
+	inner := t
+	if i := strings.IndexByte(inner, '('); i >= 0 {
+		inner = inner[i+1:]
+	}
+	inner = strings.TrimSuffix(inner, ")")
+	depth := 0
+	elementSpaced := false
+	elementHasText := false
+	named := false
+	for i := 0; i < len(inner); i++ {
+		switch c := inner[i]; {
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+		case c == ',' && depth == 0:
+			if elementSpaced && elementHasText {
+				named = true
+			}
+			elementSpaced, elementHasText = false, false
+		case c == ' ' && depth == 0:
+			if elementHasText {
+				elementSpaced = true
+			}
+		default:
+			if depth == 0 {
+				elementHasText = true
+			}
+		}
+	}
+	return named || (elementSpaced && elementHasText)
+}
+
+// chArrayObjectDest returns a scan destination for an Array whose element is an
+// object (Tuple/Nested), or nil for every other element type.
+//
+// ClickHouse serializes named tuples as JSON objects and unnamed tuples as
+// positional arrays, and clickhouse-go mirrors that: a []map[string]any
+// destination yields objects, a [][]any destination yields positional arrays.
+// Scanning an object array into []any instead makes the driver build
+// []map[string]any and panic on reflect.Set (clickhouse-go v2.47.0
+// lib/column/array.go:269) — the production crash this function avoids.
+// Each extra Array dimension adds a slice level
+// (Array(Array(Tuple(...))) -> [][]map[string]any), preserving nesting
+// instead of flattening it.
+//
+// Driver limitation (not fixable by destination choice): an unnamed tuple
+// nested inside a named tuple is still scanned through the named tuple's map
+// path, which drops its fields ([]map[string]any gives [{"": ...}]). The
+// workaround is toJSONString() on the column.
+func chArrayObjectDest(inner string) interface{} {
+	switch {
+	case strings.HasPrefix(inner, "Tuple(") || strings.HasPrefix(inner, "Nested("):
+		if chTupleIsNamed(inner) {
+			return new([]map[string]any)
+		}
+		return new([][]any)
+	case strings.HasPrefix(inner, "Array(") && strings.HasSuffix(inner, ")"):
+		sub := chArrayObjectDest(inner[len("Array(") : len(inner)-1])
+		if sub == nil {
+			return nil
+		}
+		return reflect.New(reflect.SliceOf(reflect.TypeOf(sub).Elem())).Interface()
+	default:
+		return nil
+	}
+}
+
 // chAllocDest returns a pointer suitable for scanning a ClickHouse column.
 // The driver requires exact-width types for each integer size; wider types
 // (Int128/Int256/UInt128/UInt256) use *big.Int.
 // Nullable columns require a pointer-to-pointer so the driver can set nil.
 func chAllocDest(typeName string) interface{} {
 	base, inner, nullable := chBaseType(typeName)
-	_ = inner // available for future typed allocation
 	if nullable {
 		switch base {
 		case "String", "FixedString", "UUID", "Enum8", "Enum16":
@@ -177,6 +252,11 @@ func chAllocDest(typeName string) interface{} {
 			var v *decimal.Decimal
 			return &v
 		case "Array":
+			if dest := chArrayObjectDest(inner); dest != nil {
+				// Nullable(Array(...)) is not valid ClickHouse DDL; the
+				// pointer-to-pointer shape matches the other nullable cases.
+				return reflect.New(reflect.PtrTo(reflect.TypeOf(dest).Elem())).Interface()
+			}
 			var v *[]any
 			return &v
 		case "Map":
@@ -230,6 +310,9 @@ func chAllocDest(typeName string) interface{} {
 	case "Decimal":
 		return new(decimal.Decimal)
 	case "Array":
+		if dest := chArrayObjectDest(inner); dest != nil {
+			return dest
+		}
 		return new([]any)
 	case "Map":
 		return new(map[string]any)
@@ -387,8 +470,47 @@ func chExtractValue(dest interface{}) interface{} {
 		}
 		return **v
 	default:
-		return fmt.Sprintf("%v", dest)
+		// Nested object arrays scan into reflect-built slice types
+		// ([]map[string]any, [][]any, ...) with no static case above;
+		// dereference any pointer levels and return the value as-is.
+		rv := reflect.ValueOf(dest)
+		for rv.Kind() == reflect.Ptr {
+			if rv.IsNil() {
+				return nil
+			}
+			rv = rv.Elem()
+		}
+		if rv.IsValid() {
+			return rv.Interface()
+		}
+		return dest
 	}
+}
+
+// chColumnList renders a query's columns for scan-error messages.
+func chColumnList(columns []Column) string {
+	parts := make([]string, len(columns))
+	for i, c := range columns {
+		parts[i] = c.Name + " " + c.Type
+	}
+	return strings.Join(parts, ", ")
+}
+
+// chScanRow scans the current row into dests, converting a driver panic into
+// an error. clickhouse-go can panic, rather than return an error, when a
+// destination's Go type cannot be reconciled with the column's ClickHouse type
+// (e.g. reflect.Set of []map[string]any into []any for an Array(Tuple)
+// column). The driver scans a whole row in one call, so the failing column
+// index is not observable here; the error lists the columns and their types.
+// Without this guard a driver type mismatch escapes as an HTTP 500 panic log
+// instead of a normal cell error.
+func chScanRow(rows driver.Rows, dests []interface{}, columns []Column) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("driver panic (query columns: %s): %v", chColumnList(columns), r)
+		}
+	}()
+	return rows.Scan(dests...)
 }
 
 func (c *ClickHouseExecutor) Execute(ctx context.Context, query string, params map[string]string, limits OutputLimits) (*ResultSet, error) {
@@ -453,7 +575,7 @@ func (c *ClickHouseExecutor) Execute(ctx context.Context, query string, params m
 		for i, ct := range columnTypes {
 			dests[i] = chAllocDest(ct.DatabaseTypeName())
 		}
-		if err := rows.Scan(dests...); err != nil {
+		if err := chScanRow(rows, dests, columns); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		row := make([]interface{}, len(columns))

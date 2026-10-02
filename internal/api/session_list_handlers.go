@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -398,14 +400,38 @@ func (h *agentHandlers) querySessionRows(ctx context.Context, query string, args
 	return scanListSessionRows(rows)
 }
 
+// optionalNullableString distinguishes an absent JSON field from an explicit
+// null: absent (Set == false) leaves the stored value unchanged, null detaches.
+// The empty string is treated as null by the handler.
+type optionalNullableString struct {
+	Set   bool
+	Value *string
+}
+
+func (o *optionalNullableString) UnmarshalJSON(data []byte) error {
+	o.Set = true
+	if string(bytes.TrimSpace(data)) == "null" {
+		o.Value = nil
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	o.Value = &s
+	return nil
+}
+
 // updateSessionRequest is the PATCH /sessions/{session_id} request body.
 type updateSessionRequest struct {
 	Title                    *string `json:"title"`
 	ShareWithNotebookViewers *bool   `json:"share_with_notebook_viewers"`
+	// NotebookID attaches the session to a notebook; null or "" detaches.
+	NotebookID optionalNullableString `json:"notebook_id" swaggertype:"string"`
 }
 
 // @Summary Update a session
-// @Description Update a session's title (owner/edit) or notebook-viewer inheritance flag (owner/share)
+// @Description Update a session's title (edit), notebook link (share + notebook view) or notebook-viewer inheritance flag (share + notebook)
 // @Tags agents
 // @Accept json
 // @Produce json
@@ -429,7 +455,7 @@ func (h *agentHandlers) handleUpdateSession(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	if req.Title == nil && req.ShareWithNotebookViewers == nil {
+	if req.Title == nil && req.ShareWithNotebookViewers == nil && !req.NotebookID.Set {
 		writeError(w, http.StatusBadRequest, "no fields to update")
 		return
 	}
@@ -485,6 +511,20 @@ func (h *agentHandlers) handleUpdateSession(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	// The effective notebook link after this request: an explicit notebook_id
+	// wins (null/empty detaches), otherwise the session's current link. The
+	// inheritance flag is validated against the effective link, so an attach
+	// and the flag can be set in one request and a detach can never leave the
+	// flag dangling.
+	targetNotebookID := notebookID
+	if req.NotebookID.Set {
+		if req.NotebookID.Value == nil || *req.NotebookID.Value == "" {
+			targetNotebookID = nil
+		} else {
+			targetNotebookID = req.NotebookID.Value
+		}
+	}
+
 	if req.ShareWithNotebookViewers != nil {
 		allowed, err := h.server.checkSessionPermission(ctx, claims.UserID, claims.OrgID, claims.Role, sessionID, "share")
 		if err != nil {
@@ -495,9 +535,30 @@ func (h *agentHandlers) handleUpdateSession(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusForbidden, "insufficient permissions")
 			return
 		}
-		if *req.ShareWithNotebookViewers && notebookID == nil {
+		if *req.ShareWithNotebookViewers && targetNotebookID == nil {
 			writeError(w, http.StatusBadRequest, "share_with_notebook_viewers requires a notebook")
 			return
+		}
+	}
+
+	if req.NotebookID.Set {
+		allowed, err := h.server.checkSessionPermission(ctx, claims.UserID, claims.OrgID, claims.Role, sessionID, "share")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "permission check failed")
+			return
+		}
+		if !allowed {
+			writeError(w, http.StatusForbidden, "insufficient permissions")
+			return
+		}
+		// Attaching makes the session discoverable from the notebook, so the
+		// caller needs notebook view, mirroring session creation.
+		if targetNotebookID != nil {
+			allowed, err = h.server.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", *targetNotebookID, "view")
+			if err != nil || !allowed {
+				writeError(w, http.StatusForbidden, "insufficient permissions")
+				return
+			}
 		}
 	}
 
@@ -509,6 +570,27 @@ func (h *agentHandlers) handleUpdateSession(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	defer tx.Rollback(ctx)
+
+	if req.NotebookID.Set {
+		if targetNotebookID == nil {
+			// Detaching drops inheritance: it is meaningless without a notebook.
+			if _, err := tx.Exec(ctx,
+				`UPDATE agent_sessions SET notebook_id = NULL, share_with_notebook_viewers = FALSE WHERE id = $1`,
+				sessionID); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to update session")
+				return
+			}
+			notebookID, inherit = nil, false
+		} else {
+			if _, err := tx.Exec(ctx,
+				`UPDATE agent_sessions SET notebook_id = $1 WHERE id = $2`,
+				*targetNotebookID, sessionID); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to update session")
+				return
+			}
+			notebookID = targetNotebookID
+		}
+	}
 
 	if req.Title != nil {
 		if _, err := tx.Exec(ctx,
@@ -542,6 +624,18 @@ func (h *agentHandlers) handleUpdateSession(w http.ResponseWriter, r *http.Reque
 		})
 	}
 
+	if req.NotebookID.Set {
+		var linkedNotebook any
+		if notebookID != nil {
+			linkedNotebook = *notebookID
+		}
+		h.server.audit.Log(ctx, audit.Entry{
+			OrgID: claims.OrgID, UserID: claims.UserID,
+			Action: "agent_session.update_notebook", ResourceType: "agent_session", ResourceID: sessionID,
+			Metadata: map[string]any{"notebook_id": linkedNotebook},
+		})
+	}
+
 	if req.ShareWithNotebookViewers != nil {
 		h.server.audit.Log(ctx, audit.Entry{
 			OrgID: claims.OrgID, UserID: claims.UserID,
@@ -553,5 +647,6 @@ func (h *agentHandlers) handleUpdateSession(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]any{
 		"title":                       title,
 		"share_with_notebook_viewers": inherit,
+		"notebook_id":                 notebookID,
 	})
 }

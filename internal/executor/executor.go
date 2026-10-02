@@ -4,6 +4,8 @@ package executor
 
 import (
 	"context"
+	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -126,6 +128,23 @@ func estimateValueSize(v interface{}) int64 {
 		}
 		return n
 	default:
+		// Object arrays scan into typed nested slices/maps ([]map[string]any,
+		// [][]any, ...); walk them so the byte cap accounts for their content.
+		rv := reflect.ValueOf(v)
+		switch rv.Kind() {
+		case reflect.Slice, reflect.Array:
+			var n int64
+			for i := 0; i < rv.Len(); i++ {
+				n += estimateValueSize(rv.Index(i).Interface())
+			}
+			return n
+		case reflect.Map:
+			var n int64
+			for _, k := range rv.MapKeys() {
+				n += int64(len(fmt.Sprint(k.Interface()))) + estimateValueSize(rv.MapIndex(k).Interface())
+			}
+			return n
+		}
 		// Numbers, timestamps and driver-native types serialize to a bounded
 		// number of bytes; a fixed estimate keeps the per-row cost O(values).
 		return 16

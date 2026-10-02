@@ -120,6 +120,14 @@ export interface SessionNotebookInheritance {
   onToggle: (next: boolean) => Promise<void>
 }
 
+/** Owner-only notebook link control for agent sessions. The parent owns the
+ * state and performs the PATCH; the panel renders the picker and surfaces save
+ * errors inline. Detaching clears inheritance server-side. */
+export interface SessionNotebookLink {
+  notebookId: string | null
+  onSave: (notebookId: string | null) => Promise<void>
+}
+
 export interface PermissionsPanelProps {
   resourceType: ResourceType
   resourceId: string
@@ -128,6 +136,7 @@ export interface PermissionsPanelProps {
   canEdit?: boolean
   resourceOwnerId?: string
   sessionNotebookInheritance?: SessionNotebookInheritance
+  sessionNotebookLink?: SessionNotebookLink
   onClose: () => void
 }
 
@@ -380,6 +389,7 @@ export function PermissionsPanel({
   canEdit = true,
   resourceOwnerId,
   sessionNotebookInheritance,
+  sessionNotebookLink,
   onClose,
 }: PermissionsPanelProps) {
   const qc = useQueryClient()
@@ -400,6 +410,14 @@ export function PermissionsPanel({
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set())
   const [inheritSaving, setInheritSaving] = useState(false)
   const [inheritError, setInheritError] = useState<string | null>(null)
+  const [notebookValue, setNotebookValue] = useState<string>(sessionNotebookLink?.notebookId ?? '')
+  const [notebookSaving, setNotebookSaving] = useState(false)
+  const [notebookError, setNotebookError] = useState<string | null>(null)
+
+  // The parent's saved value is authoritative after each PATCH.
+  useEffect(() => {
+    setNotebookValue(sessionNotebookLink?.notebookId ?? '')
+  }, [resourceId, sessionNotebookLink?.notebookId])
 
   function setExpanded(idx: number, expanded: boolean) {
     setExpandedRows(prev => {
@@ -439,6 +457,12 @@ export function PermissionsPanel({
     queryKey: ['folder', parentFolderId],
     queryFn: () => api.get<{ id: string; name: string }>(`/api/v1/folders/${parentFolderId}`),
     enabled: !!parentFolderId,
+  })
+
+  const { data: linkableNotebooks = [] } = useQuery<Array<{ id: string; title: string }>>({
+    queryKey: ['notebooks'],
+    queryFn: () => api.get<Array<{ id: string; title: string }>>('/api/v1/notebooks'),
+    enabled: !!sessionNotebookLink,
   })
 
   // ── Mutation ──
@@ -524,6 +548,22 @@ export function PermissionsPanel({
     }
   }
 
+  async function handleNotebookChange(next: string) {
+    if (!sessionNotebookLink || notebookSaving || next === notebookValue) return
+    const previous = notebookValue
+    setNotebookValue(next)
+    setNotebookSaving(true)
+    setNotebookError(null)
+    try {
+      await sessionNotebookLink.onSave(next === '' ? null : next)
+    } catch (err: unknown) {
+      setNotebookValue(previous)
+      setNotebookError(err instanceof Error ? err.message : 'Failed to update notebook')
+    } finally {
+      setNotebookSaving(false)
+    }
+  }
+
   // ── Derived ──
 
   const allEntries = [
@@ -592,7 +632,31 @@ export function PermissionsPanel({
 
         {/* Body */}
         <div style={styles.body}>
-          {sessionNotebookInheritance && sessionNotebookInheritance.hasNotebook && canEdit && (
+          {sessionNotebookLink && canEdit && (
+            <div style={styles.notebookInherit}>
+              <span style={styles.notebookInheritText}>
+                <span style={styles.notebookInheritTitle}>Notebook</span>
+                <span style={styles.notebookInheritHint}>
+                  Linked sessions appear in the notebook's Chats drawer.
+                </span>
+              </span>
+              <select
+                aria-label="Notebook"
+                style={styles.notebookSelect}
+                value={notebookValue}
+                disabled={notebookSaving}
+                onChange={(e) => { void handleNotebookChange(e.target.value) }}
+              >
+                <option value="">No notebook</option>
+                {linkableNotebooks.map((nb) => (
+                  <option key={nb.id} value={nb.id}>{nb.title}</option>
+                ))}
+              </select>
+              {notebookError && <div style={styles.errorText}>{notebookError}</div>}
+            </div>
+          )}
+
+          {sessionNotebookInheritance && (sessionNotebookLink ? notebookValue !== '' : sessionNotebookInheritance.hasNotebook) && canEdit && (
             <div style={styles.notebookInherit}>
               <label style={styles.notebookInheritLabel}>
                 <input
@@ -1070,6 +1134,16 @@ entryInfo: {
     border: '1px solid var(--border)',
     background: 'var(--bg-secondary)',
     marginBottom: 8,
+  },
+  notebookSelect: {
+    width: '100%',
+    fontSize: 12,
+    padding: '4px 6px',
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border)',
+    borderRadius: 3,
+    boxSizing: 'border-box' as const,
   },
   notebookInheritLabel: {
     display: 'flex',

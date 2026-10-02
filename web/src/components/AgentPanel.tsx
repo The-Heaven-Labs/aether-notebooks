@@ -1,5 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
-import { Send, Loader2, History, Copy, Check, Square, X } from 'lucide-react'
+import { Send, Loader2, History, Copy, Check, Square, X, Share2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
@@ -10,9 +10,11 @@ import { mapServerMessagesToChat, applyToolResult, oldestPendingToolAgeMs, apply
 import { AgentChatTranscript, chatMarkdownComponents, chatStyles, fmtTime } from './AgentChatTranscript'
 import type { ChatMessage } from './AgentChatTranscript'
 import { PanelHeader } from './PanelHeader'
+import { PermissionsPanel } from './PermissionsPanel'
 import { SessionHistory } from './SessionHistory'
 import { SlashCommandPicker } from './SlashCommandPicker'
 import { TaskList } from './TaskList'
+import { useSessionSharing } from '../hooks/useSessionSharing'
 
 export { CompactionDivider } from './AgentChatTranscript'
 
@@ -312,6 +314,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   const chatStateKey = CHAT_STATE_KEY + '__global__'
   const [tasks, setTasks] = useState<AgentTaskItem[]>([])
   const [sessionTitle, setSessionTitle] = useState<string | null>(null)
+  const sessionSharing = useSessionSharing()
   const [input, setInput] = useState(() => { try { return localStorage.getItem(DRAFT_KEY) || '' } catch { return '' } })
   const [isStreaming, setIsStreaming] = useState(false)
   const [hasCompacted, setHasCompacted] = useState(false)
@@ -1028,6 +1031,29 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     }
   }
 
+  const startSessionRef = useRef<typeof startSession | null>(null)
+  useEffect(() => { startSessionRef.current = startSession })
+
+  // The notebook Chats drawer's "New chat" action opens this panel and asks for
+  // a fresh session; startSession links it to the current notebook. When no
+  // agent is selected yet the next picker selection starts the new session.
+  useEffect(() => {
+    const handler = () => {
+      chatClearedRef.current = true
+      clearChatState()
+      setMessages([])
+      setTasks([])
+      closeWS()
+      setSessionId(null)
+      setSessionTitle(null)
+      const agent = selectedAgentRef.current
+      if (agent) void startSessionRef.current?.(agent)
+    }
+    window.addEventListener('aether:new-agent-chat', handler)
+    return () => window.removeEventListener('aether:new-agent-chat', handler)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const connectToSession = (sessionID: string) => {
     setSessionId(sessionID)
     setSessionTitle(null)
@@ -1524,6 +1550,15 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
             >
               Change
             </button>
+            {_sessionId && (
+              <button
+                style={styles.historyBtn}
+                onClick={() => { if (_sessionId) void sessionSharing.open(_sessionId) }}
+                title="Share this session"
+              >
+                <Share2 size={14} />
+              </button>
+            )}
             <button
               style={styles.historyBtn}
               onClick={() => setShowHistory(true)}
@@ -1721,6 +1756,25 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       )}
 
       {pendingQuestion && <QuestionDialog question={pendingQuestion} wsRef={wsRef} setMessages={setMessages} ts={ts} onClose={() => { setPendingQuestion(null); setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50) }} />}
+
+      {selectedAgent && sessionSharing.sessionId && sessionSharing.state && (
+        <PermissionsPanel
+          resourceType="agent_session"
+          resourceId={sessionSharing.sessionId}
+          resourceName={sessionTitle || `${selectedAgent.name} session`}
+          canEdit
+          sessionNotebookLink={{
+            notebookId: sessionSharing.state.notebookId,
+            onSave: sessionSharing.setNotebook,
+          }}
+          sessionNotebookInheritance={{
+            enabled: sessionSharing.state.inheritEnabled,
+            hasNotebook: sessionSharing.state.hasNotebook,
+            onToggle: sessionSharing.setInherit,
+          }}
+          onClose={sessionSharing.close}
+        />
+      )}
 
       <style>{`
         @keyframes spin {

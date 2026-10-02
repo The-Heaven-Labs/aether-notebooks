@@ -1133,6 +1133,7 @@ func TestUpdateSession(t *testing.T) {
 	ctx := context.Background()
 
 	withNotebook := f.createSession(t, map[string]any{"notebook_id": notebookID})
+	seedSessionMessage(t, f.srv, withNotebook, "update seed")
 	withoutNotebook := f.createSession(t, map[string]any{})
 	grantACL(t, f.srv, f.orgID, "agent_session", withNotebook, "user", f.bobID, "view")
 
@@ -1270,6 +1271,93 @@ func TestUpdateSession(t *testing.T) {
 			require.Equal(t, http.StatusBadRequest, code, "%v", body)
 			require.NotContains(t, body, currentTitle)
 		})
+	})
+
+	// --- notebook link ---
+
+	t.Run("owner attaches an unattached session to a notebook", func(t *testing.T) {
+		unattached := f.createSession(t, map[string]any{})
+		code, resp := doRequest(t, f.srv, f.aliceToken, "PATCH",
+			"/api/v1/sessions/"+unattached, map[string]any{"notebook_id": notebookID})
+		require.Equal(t, http.StatusOK, code, "%v", resp)
+		require.Equal(t, notebookID, resp["notebook_id"])
+
+		var stored *string
+		require.NoError(t, f.srv.DB().Pool.QueryRow(ctx,
+			`SELECT notebook_id FROM agent_sessions WHERE id = $1`, unattached).Scan(&stored))
+		require.NotNil(t, stored)
+		require.Equal(t, notebookID, *stored)
+	})
+
+	t.Run("attach and enable inheritance in one request", func(t *testing.T) {
+		session := f.createSession(t, map[string]any{})
+		code, resp := doRequest(t, f.srv, f.aliceToken, "PATCH",
+			"/api/v1/sessions/"+session, map[string]any{
+				"notebook_id":                 notebookID,
+				"share_with_notebook_viewers": true,
+			})
+		require.Equal(t, http.StatusOK, code, "%v", resp)
+		require.Equal(t, notebookID, resp["notebook_id"])
+		require.Equal(t, true, resp["share_with_notebook_viewers"])
+	})
+
+	t.Run("detach clears inheritance", func(t *testing.T) {
+		session := f.createSession(t, map[string]any{"notebook_id": notebookID})
+		code, resp := doRequest(t, f.srv, f.aliceToken, "PATCH",
+			"/api/v1/sessions/"+session, map[string]any{"share_with_notebook_viewers": true})
+		require.Equal(t, http.StatusOK, code, "%v", resp)
+
+		code, resp = doRequest(t, f.srv, f.aliceToken, "PATCH",
+			"/api/v1/sessions/"+session, map[string]any{"notebook_id": nil})
+		require.Equal(t, http.StatusOK, code, "%v", resp)
+		require.Nil(t, resp["notebook_id"])
+		require.Equal(t, false, resp["share_with_notebook_viewers"])
+
+		var stored *string
+		var flag bool
+		require.NoError(t, f.srv.DB().Pool.QueryRow(ctx,
+			`SELECT notebook_id, share_with_notebook_viewers FROM agent_sessions WHERE id = $1`,
+			session).Scan(&stored, &flag))
+		require.Nil(t, stored)
+		require.False(t, flag)
+	})
+
+	t.Run("detach combined with enabling inheritance is rejected", func(t *testing.T) {
+		session := f.createSession(t, map[string]any{"notebook_id": notebookID})
+		code, resp := doRequest(t, f.srv, f.aliceToken, "PATCH",
+			"/api/v1/sessions/"+session, map[string]any{
+				"notebook_id":                 nil,
+				"share_with_notebook_viewers": true,
+			})
+		require.Equal(t, http.StatusBadRequest, code, "%v", resp)
+
+		var stored *string
+		require.NoError(t, f.srv.DB().Pool.QueryRow(ctx,
+			`SELECT notebook_id FROM agent_sessions WHERE id = $1`, session).Scan(&stored))
+		require.NotNil(t, stored, "a rejected detach must not change the link")
+	})
+
+	t.Run("attach to a notebook the caller cannot view is rejected", func(t *testing.T) {
+		foreignToken := registerAndGetToken(t, f.srv,
+			fmt.Sprintf("session-share-attach-foreign-%d@example.com", time.Now().UnixNano()),
+			"Session Attach Foreign Org")
+		foreignNotebook := createNotebook(t, f.srv, foreignToken, "Foreign NB "+uuid.NewString()[:8])
+
+		session := f.createSession(t, map[string]any{})
+		code, resp := doRequest(t, f.srv, f.aliceToken, "PATCH",
+			"/api/v1/sessions/"+session, map[string]any{"notebook_id": foreignNotebook})
+		require.Equal(t, http.StatusForbidden, code, "%v", resp)
+
+		var stored *string
+		require.NoError(t, f.srv.DB().Pool.QueryRow(ctx,
+			`SELECT notebook_id FROM agent_sessions WHERE id = $1`, session).Scan(&stored))
+		require.Nil(t, stored)
+	})
+
+	t.Run("shared viewer cannot change the notebook link", func(t *testing.T) {
+		code, resp := doRequest(t, f.srv, f.bobToken, "PATCH",
+			"/api/v1/sessions/"+withNotebook, map[string]any{"notebook_id": notebookID})
+		require.Equal(t, http.StatusForbidden, code, "%v", resp)
 	})
 }
 

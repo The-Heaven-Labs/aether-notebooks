@@ -60,7 +60,9 @@ The browser flow, all on the org's host:
 
 Discovery documents are derived from the request `Host`, so each org subdomain
 advertises its own canonical resource. Behind a reverse proxy, forward `Host`
-and `X-Forwarded-Proto` so the advertised resource matches the URL clients use.
+and — when the proxy terminates TLS — `X-Forwarded-Proto`. If the proto is not
+forwarded, the scheme falls back to `AETHER_PUBLIC_URL` for hosts that match it
+(including org subdomains), so an https deployment still advertises https URLs.
 
 ## 2. Configuration
 

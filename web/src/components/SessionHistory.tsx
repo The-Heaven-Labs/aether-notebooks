@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { ArrowLeft, MessageSquare, Play, Edit2 } from 'lucide-react'
+import { ArrowLeft, MessageSquare, Play, Edit2, Share2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
@@ -7,7 +7,9 @@ import { api } from '../api/client'
 import type { AgentSessionListItem } from '../types/agent'
 import { chatMarkdownComponents } from './AgentChatTranscript'
 import { AgentMessageImages } from './AgentMessageImages'
+import { PermissionsPanel } from './PermissionsPanel'
 import { SessionViewer } from './SessionViewer'
+import { useSessionSharing } from '../hooks/useSessionSharing'
 
 type SessionSummary = AgentSessionListItem
 
@@ -43,6 +45,7 @@ export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHist
   const [error, setError] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
+  const sharing = useSessionSharing()
 
   useEffect(() => {
     let cancelled = false
@@ -108,6 +111,15 @@ export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHist
           <button onClick={() => onResumeSession(selectedSession)} style={styles.resumeBtn}>
             <Play size={12} /> Resume
           </button>
+          {(selectedSession.can_edit === true || selectedSession.shared === false) && (
+            <button
+              onClick={() => void sharing.open(selectedSession.id)}
+              style={styles.shareBtn}
+              title="Share this session"
+            >
+              <Share2 size={12} /> Share
+            </button>
+          )}
           <span style={styles.sessionDate}>
             {new Date(selectedSession.created_at).toLocaleDateString()}
           </span>
@@ -136,6 +148,24 @@ export function SessionHistory({ agentId, onBack, onResumeSession }: SessionHist
             ))
           )}
         </div>
+        {sharing.sessionId && sharing.state && (
+          <PermissionsPanel
+            resourceType="agent_session"
+            resourceId={sharing.sessionId}
+            resourceName={selectedSession.title || selectedSession.first_message || 'Agent session'}
+            canEdit
+            sessionNotebookLink={{
+              notebookId: sharing.state.notebookId,
+              onSave: sharing.setNotebook,
+            }}
+            sessionNotebookInheritance={{
+              enabled: sharing.state.inheritEnabled,
+              hasNotebook: sharing.state.hasNotebook,
+              onToggle: sharing.setInherit,
+            }}
+            onClose={sharing.close}
+          />
+        )}
       </>
     )
   }
@@ -258,6 +288,18 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     color: 'white',
     fontWeight: 500,
+  },
+  shareBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    fontSize: 12,
+    padding: '4px 8px',
+    background: 'none',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    cursor: 'pointer',
+    color: 'var(--text-secondary)',
   },
   headerTitle: { fontSize: 12, fontWeight: 500, color: 'var(--text-muted)' },
   sessionDate: { fontSize: 12, color: 'var(--text-muted)', marginLeft: 'auto' },

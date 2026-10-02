@@ -7569,7 +7569,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Update a session's title (owner/edit) or notebook-viewer inheritance flag (owner/share)",
+                "description": "Update a session's title (edit), notebook link (share + notebook view) or notebook-viewer inheritance flag (share + notebook)",
                 "consumes": [
                     "application/json"
                 ],
@@ -10145,6 +10145,10 @@ const docTemplate = `{
         "api.updateSessionRequest": {
             "type": "object",
             "properties": {
+                "notebook_id": {
+                    "description": "NotebookID attaches the session to a notebook; null or \"\" detaches.",
+                    "type": "string"
+                },
                 "share_with_notebook_viewers": {
                     "type": "boolean"
                 },

@@ -154,4 +154,30 @@ describe('NotebookChats', () => {
 
     expect(await screen.findByText('Failed to load chats')).toBeInTheDocument()
   })
+
+  it('offers a New chat action that starts a fresh notebook chat', async () => {
+    mockSessions([])
+    const onNewChat = vi.fn()
+
+    render(
+      <NotebookChats
+        notebookId="nb-1"
+        onClose={vi.fn()}
+        onOpenSession={vi.fn()}
+        onNewChat={onNewChat}
+      />,
+    )
+    await userEvent.click(await screen.findByRole('button', { name: /New chat/ }))
+
+    expect(onNewChat).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides the New chat action when the caller does not wire it', async () => {
+    mockSessions([])
+
+    render(<NotebookChats notebookId="nb-1" onClose={vi.fn()} onOpenSession={vi.fn()} />)
+
+    expect(await screen.findByText('No chats in this notebook yet')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /New chat/ })).toBeNull()
+  })
 })

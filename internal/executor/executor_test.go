@@ -18,6 +18,8 @@ func TestEstimateValueSize(t *testing.T) {
 		{"empty array", []interface{}{}, 0},
 		{"array of strings", []interface{}{"a", "bb"}, 3},
 		{"map", map[string]interface{}{"k": "value"}, 1 + 5},
+		{"nested arrays", [][]interface{}{{"a", "bb"}, {"ccc"}}, 1 + 2 + 3},
+		{"slice of maps", []map[string]interface{}{{"k": "value"}}, 1 + 5},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
