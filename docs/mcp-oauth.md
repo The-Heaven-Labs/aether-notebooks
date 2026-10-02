@@ -37,7 +37,7 @@ primitives:
 
 The `401` challenge from the MCP endpoint is
 `WWW-Authenticate: Bearer realm="aether",
-resource_metadata="http://{host}/.well-known/oauth-protected-resource"`, so
+resource_metadata="{scheme}://{host}/.well-known/oauth-protected-resource"`, so
 harnesses can discover the metadata document directly from the challenge (they
 may also probe the standard well-known paths at the host root). With
 `AETHER_MCP_OAUTH_ENABLED=false` the MCP endpoint emits the plain
@@ -63,9 +63,10 @@ The browser flow, all on the org's host:
 
 Discovery documents are derived from the request `Host`, so each org subdomain
 advertises its own canonical resource. Behind a reverse proxy, forward `Host`;
-if the proxy rewrites `Host` to a cluster-internal name, forward
-`X-Forwarded-Host` as well (it is only consulted in that case, so a
-client-supplied value cannot steer discovery metadata). The scheme is resolved
+if the proxy rewrites `Host` to a cluster-internal name (a bare service name or
+a `*.cluster.local` host), forward `X-Forwarded-Host` as well (it is only
+consulted in that case, so a client-supplied value cannot steer discovery
+metadata). The scheme is resolved
 per host: loopback and literal-IP hosts keep the request-derived scheme
 (`X-Forwarded-Proto`, then direct TLS), while any host within the
 `AETHER_PUBLIC_URL` domain uses that URL's scheme unconditionally — an

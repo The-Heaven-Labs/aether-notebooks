@@ -32,13 +32,13 @@ func adminModeFromContext(ctx context.Context) bool {
 }
 
 // AuthMiddleware validates JWT tokens and sets user claims in the request context.
-// publicURLFn returns the externally visible base URL (AETHER_PUBLIC_URL); it is
-// used only to resolve the request host when a proxy has rewritten Host to an
-// in-cluster service name (see requestSchemeAndHost). mcpOAuthEnabledFn reports
-// whether the OAuth authorization-server endpoints are served; the MCP 401
-// challenge advertises resource_metadata only when they are. Both are called
-// per request because routes are registered before SetPublicURL /
-// SetMCPOAuthEnabled configure the values.
+// publicURLFn returns the externally visible base URL (AETHER_PUBLIC_URL); it
+// supplies the host fallback for rewritten in-cluster Hosts and the
+// authoritative scheme for hosts within its domain (see requestSchemeAndHost).
+// mcpOAuthEnabledFn reports whether the OAuth authorization-server endpoints
+// are served; the MCP 401 challenge advertises resource_metadata only when they
+// are. Both are called per request because routes are registered before
+// SetPublicURL / SetMCPOAuthEnabled configure the values.
 func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte, publicURLFn func() string, mcpOAuthEnabledFn func() bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -132,9 +132,10 @@ func AuthMiddleware(issuer *auth.JWTIssuer, pool *pgxpool.Pool, masterKey []byte
 	}
 }
 
-// writeAuthFailure emits a 401, using the MCP challenge (resource_metadata)
-// when the request targets the MCP endpoint so OAuth discovery works for any
-// rejected credential type.
+// writeAuthFailure emits a 401, using the MCP challenge when the request
+// targets the MCP endpoint so OAuth discovery works for any rejected
+// credential type. resource_metadata is included only when the OAuth server is
+// served (see writeMCPUnauthorized).
 func writeAuthFailure(w http.ResponseWriter, r *http.Request, publicURL string, mcpOAuthEnabled bool, msg string) {
 	if r.URL.Path == "/api/v1/mcp" {
 		writeMCPUnauthorized(w, r, publicURL, mcpOAuthEnabled, msg)
