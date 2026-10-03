@@ -1,13 +1,16 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type Connector struct {
 	ID             string          `json:"id"`
 	OrgID          string          `json:"org_id"`
 	Name           string          `json:"name"`
 	Type           ConnectorType   `json:"type"`
-	Config         ConnectorConfig `json:"config"`
+	Config         json.RawMessage `json:"config"`
 	MaxRows        int             `json:"max_rows"`
 	TimeoutSeconds int             `json:"timeout_seconds"`
 	IsDefault      bool            `json:"is_default"`
