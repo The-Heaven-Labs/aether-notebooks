@@ -349,4 +349,26 @@ func TestTestConnectorConfigRejectsNonObject(t *testing.T) {
 	if resp["error"] != "config must be a JSON object" {
 		t.Fatalf("expected object-validation error, got %v", resp)
 	}
+
+	// An absent config must default to {} and reach the driver, which then
+	// reports its own missing-field error (proving the config wasn't rejected
+	// or passed as nil).
+	emptyBody, _ := json.Marshal(map[string]interface{}{"type": "opensearch"})
+	req = httptest.NewRequest("POST", "/api/v1/connectors/test", bytes.NewReader(emptyBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("absent config: expected 200, got %d", rec.Code)
+	}
+	var emptyResp map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&emptyResp)
+	if emptyResp["ok"] != false {
+		t.Fatalf("expected ok=false for empty config, got %v", emptyResp)
+	}
+	errStr, _ := emptyResp["error"].(string)
+	if !strings.Contains(errStr, "host") {
+		t.Fatalf("expected driver missing-host error for {}, got %q", errStr)
+	}
 }
