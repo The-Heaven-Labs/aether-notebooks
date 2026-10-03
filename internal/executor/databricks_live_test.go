@@ -19,9 +19,13 @@ func liveDatabricksConfig(t *testing.T) databricksConfig {
 	if host == "" {
 		t.Skip("AETHER_TEST_DATABRICKS_HOST not set; skipping live Databricks tests")
 	}
+	httpPath := os.Getenv("AETHER_TEST_DATABRICKS_HTTP_PATH")
+	if httpPath == "" {
+		t.Fatal("AETHER_TEST_DATABRICKS_HOST is set but AETHER_TEST_DATABRICKS_HTTP_PATH is missing")
+	}
 	cfg := databricksConfig{
 		Host:     host,
-		HTTPPath: os.Getenv("AETHER_TEST_DATABRICKS_HTTP_PATH"),
+		HTTPPath: httpPath,
 		AuthType: "pat",
 		Token:    os.Getenv("AETHER_TEST_DATABRICKS_TOKEN"),
 		Catalog:  os.Getenv("AETHER_TEST_DATABRICKS_CATALOG"),
@@ -31,9 +35,6 @@ func liveDatabricksConfig(t *testing.T) databricksConfig {
 		cfg.AuthType = "oauth_m2m"
 		cfg.ClientID = id
 		cfg.ClientSecret = os.Getenv("AETHER_TEST_DATABRICKS_CLIENT_SECRET")
-	}
-	if cfg.HTTPPath == "" {
-		t.Skip("AETHER_TEST_DATABRICKS_HTTP_PATH not set; skipping live Databricks tests")
 	}
 	return cfg
 }
@@ -82,15 +83,19 @@ func TestDatabricksLiveExecuteTypes(t *testing.T) {
 	if !ok || !strings.HasPrefix(ts, "2026-01-02T03:04:05") {
 		t.Fatalf("timestamp must normalize to an RFC3339 string, got %#v", rs.Rows[0][1])
 	}
-	if fmt.Sprint(rs.Rows[0][2]) != "12.34" {
+	dec, ok := rs.Rows[0][2].(string)
+	if !ok || dec != "12.34" {
 		t.Fatalf("decimal must be the exact string 12.34, got %#v", rs.Rows[0][2])
 	}
-	if arr, ok := rs.Rows[0][3].(string); !ok || !strings.Contains(arr, "1") || !strings.Contains(arr, "3") {
-		t.Fatalf("array must arrive as a JSON string, got %#v", rs.Rows[0][3])
+	if arr, ok := rs.Rows[0][3].(string); !ok || arr != "[1,2,3]" {
+		t.Fatalf("array must arrive as the JSON string [1,2,3], got %#v", rs.Rows[0][3])
 	}
-	for i, c := range rs.Columns {
-		if c.Type == "" || c.Type == "unknown" {
-			t.Fatalf("column %d (%s) has no driver-reported type", i, c.Name)
+	wantTypes := map[string]string{
+		"one": "INT", "ts": "TIMESTAMP", "dec": "DECIMAL", "arr": "ARRAY",
+	}
+	for _, c := range rs.Columns {
+		if want, ok := wantTypes[c.Name]; ok && c.Type != want {
+			t.Fatalf("column %s type = %q, want %q", c.Name, c.Type, want)
 		}
 	}
 	t.Logf("row: %#v", rs.Rows[0])
@@ -110,6 +115,13 @@ func TestDatabricksLiveCommandPath(t *testing.T) {
 	if cfg.Catalog != "" && cfg.Schema != "" {
 		table = cfg.Catalog + "." + cfg.Schema + "." + table
 	}
+	t.Cleanup(func() {
+		dropCtx, dropCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer dropCancel()
+		if _, err := exec.Execute(dropCtx, "DROP TABLE IF EXISTS "+table, nil, OutputLimits{}); err != nil {
+			t.Logf("cleanup drop failed: %v", err)
+		}
+	})
 	for _, stmt := range []string{
 		fmt.Sprintf("CREATE TABLE %s (id INT, note STRING)", table),
 		fmt.Sprintf("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", table),
@@ -118,13 +130,6 @@ func TestDatabricksLiveCommandPath(t *testing.T) {
 			t.Fatalf("command %q: %v", stmt, err)
 		}
 	}
-	t.Cleanup(func() {
-		dropCtx, dropCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer dropCancel()
-		if _, err := exec.Execute(dropCtx, "DROP TABLE IF EXISTS "+table, nil, OutputLimits{}); err != nil {
-			t.Logf("cleanup drop failed: %v", err)
-		}
-	})
 
 	rs, err := exec.Execute(ctx, "SELECT COUNT(*) FROM "+table, nil, OutputLimits{})
 	if err != nil {
@@ -144,7 +149,7 @@ func TestDatabricksLiveLargeResult(t *testing.T) {
 	exec := openLiveDatabricks(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	rs, err := exec.Execute(ctx, "SELECT id FROM range(150000)", nil, OutputLimits{})
+	rs, err := exec.Execute(ctx, "SELECT id FROM range(150000) ORDER BY id", nil, OutputLimits{})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
