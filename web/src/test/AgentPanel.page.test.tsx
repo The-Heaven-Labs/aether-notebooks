@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { http, HttpResponse } from 'msw'
 import { AgentPanel } from '../components/AgentPanel'
@@ -115,5 +115,25 @@ describe('AgentPanel page mode', () => {
     expect(screen.queryByTitle('Dock to right side')).toBeNull()
     expect(screen.queryByTitle('Undock panel')).toBeNull()
     expect(screen.getByTitle('Back')).toBeInTheDocument()
+  })
+
+  it('reports a newly started session so the page can update the URL', async () => {
+    const onSessionChange = vi.fn()
+    server.use(
+      http.post('/api/v1/agents/:id/session', () => HttpResponse.json({ session_id: 's-new' })),
+    )
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <AgentPanel variant="page" initialSessionId="s1" onClose={() => {}} onSessionChange={onSessionChange} />
+      </QueryClientProvider>,
+    )
+    await screen.findByText('hello from owner')
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('aether:new-agent-chat'))
+    })
+
+    await waitFor(() => expect(onSessionChange).toHaveBeenCalledWith('s-new'))
   })
 })

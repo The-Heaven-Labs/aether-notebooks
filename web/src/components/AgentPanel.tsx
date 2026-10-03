@@ -32,6 +32,9 @@ interface AgentPanelProps {
   /** When set, the panel opens this session instead of restoring the
    * localStorage session (used by the /chats/:id page). */
   initialSessionId?: string
+  /** Called whenever the active session changes, so /chats/:id can keep the
+   * address bar pointing at the open chat. */
+  onSessionChange?: (sessionId: string) => void
 }
 
 import { getWsUrl } from '../config'
@@ -306,7 +309,7 @@ interface AgentChatState {
   modelConfigId?: string
 }
 
-export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, onMinimize, onDock, docked, variant = 'panel', initialSessionId }: AgentPanelProps) {
+export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, onMinimize, onDock, docked, variant = 'panel', initialSessionId, onSessionChange }: AgentPanelProps) {
   const pageMode = variant === 'page'
   const [agents, setAgents] = useState<Agent[]>([])
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
@@ -1060,6 +1063,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       resetMeterState()
       setContextWindow(res.context_window ?? 0)
       connectWebSocket(res.session_id, { seedUsage: false })
+      onSessionChange?.(res.session_id)
     } catch {
       if (reqId !== sessionReqIdRef.current) return
       setError('Failed to start session')
@@ -1109,6 +1113,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     }
     setIsStreaming(false)
     connectWebSocket(sid)
+    onSessionChange?.(sid)
   }
 
   const connectToSession = (sessionID: string) => {
@@ -1120,6 +1125,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     // The fork starts with an empty summary-only context; its first
     // token_update carries the server usage, so skip the REST seed.
     connectWebSocket(sessionID, { seedUsage: false })
+    onSessionChange?.(sessionID)
   }
 
   const closeWS = () => {
