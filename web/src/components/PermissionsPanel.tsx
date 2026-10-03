@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { groupLabel } from '../utils/groupLabel'
+import { chatLinkUrl } from '../utils/chatLink'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -413,6 +414,7 @@ export function PermissionsPanel({
   const [notebookValue, setNotebookValue] = useState<string>(sessionNotebookLink?.notebookId ?? '')
   const [notebookSaving, setNotebookSaving] = useState(false)
   const [notebookError, setNotebookError] = useState<string | null>(null)
+  const [linkCopied, setLinkCopied] = useState(false)
 
   // The parent's saved value is authoritative after each PATCH.
   useEffect(() => {
@@ -564,6 +566,17 @@ export function PermissionsPanel({
     }
   }
 
+  async function handleCopyChatLink() {
+    try {
+      await navigator.clipboard.writeText(chatLinkUrl(resourceId))
+    } catch {
+      // Clipboard access can be denied (e.g. non-secure context); the input
+      // stays selectable as a fallback.
+    }
+    setLinkCopied(true)
+    setTimeout(() => setLinkCopied(false), 1500)
+  }
+
   // ── Derived ──
 
   const allEntries = [
@@ -632,6 +645,34 @@ export function PermissionsPanel({
 
         {/* Body */}
         <div style={styles.body}>
+          {resourceType === 'agent_session' && (
+            <div style={styles.notebookInherit}>
+              <span style={styles.notebookInheritText}>
+                <span style={styles.notebookInheritTitle}>Chat link</span>
+                <span style={styles.notebookInheritHint}>
+                  Anyone with access can open this chat directly.
+                </span>
+              </span>
+              <div style={styles.chatLinkRow}>
+                <input
+                  aria-label="Chat link"
+                  readOnly
+                  value={chatLinkUrl(resourceId)}
+                  onFocus={(e) => e.currentTarget.select()}
+                  style={styles.chatLinkInput}
+                />
+                <button
+                  type="button"
+                  aria-label="Copy chat link"
+                  onClick={() => { void handleCopyChatLink() }}
+                  style={styles.chatLinkCopy}
+                >
+                  {linkCopied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            </div>
+          )}
+
           {sessionNotebookLink && canEdit && (
             <div style={styles.notebookInherit}>
               <span style={styles.notebookInheritText}>
@@ -1134,6 +1175,33 @@ entryInfo: {
     border: '1px solid var(--border)',
     background: 'var(--bg-secondary)',
     marginBottom: 8,
+  },
+  chatLinkRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 6,
+  },
+  chatLinkInput: {
+    flex: 1,
+    minWidth: 0,
+    padding: '6px 8px',
+    background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    color: 'var(--text-secondary)',
+    fontSize: 12,
+  },
+  chatLinkCopy: {
+    flexShrink: 0,
+    padding: '6px 10px',
+    background: 'var(--accent)',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 4,
+    cursor: 'pointer',
+    fontSize: 12,
+    fontWeight: 500,
   },
   notebookSelect: {
     width: '100%',
