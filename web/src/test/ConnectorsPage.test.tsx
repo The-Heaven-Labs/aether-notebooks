@@ -168,4 +168,73 @@ describe('ConnectorsPage', () => {
     // Focus returns to the control that opened the dialog.
     expect(linkButton).toHaveFocus()
   })
+
+  test('creates a Databricks connector with PAT config (T-DBX)', async () => {
+    let postBody: { config?: Record<string, unknown> } | null = null
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json([])),
+      http.post('/api/v1/connectors', async ({ request }) => {
+        postBody = (await request.json()) as { config?: Record<string, unknown> }
+        return HttpResponse.json(
+          { id: 'c-dbx', name: 'DBX', type: 'databricks', config: {}, created_at: '2026-01-01T00:00:00Z' },
+          { status: 201 },
+        )
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    fireEvent.click(await screen.findByText('+ New Connector'))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'DBX' } })
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'databricks' } })
+    fireEvent.change(screen.getByLabelText('Host'), { target: { value: 'dbc-x.cloud.databricks.com' } })
+    fireEvent.change(screen.getByLabelText('HTTP Path'), { target: { value: '/sql/1.0/warehouses/abc' } })
+    fireEvent.change(screen.getByLabelText('Token'), { target: { value: 'dapi-123' } })
+    fireEvent.click(screen.getByText('Create'))
+
+    await waitFor(() =>
+      expect(postBody?.config).toEqual({
+        host: 'dbc-x.cloud.databricks.com',
+        http_path: '/sql/1.0/warehouses/abc',
+        auth_type: 'pat',
+        catalog: '',
+        schema: '',
+        token: 'dapi-123',
+      }),
+    )
+  })
+
+  test('creates a Databricks connector with OAuth M2M config (T-DBX-2)', async () => {
+    let postBody: { config?: Record<string, unknown> } | null = null
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json([])),
+      http.post('/api/v1/connectors', async ({ request }) => {
+        postBody = (await request.json()) as { config?: Record<string, unknown> }
+        return HttpResponse.json(
+          { id: 'c-dbx2', name: 'DBX M2M', type: 'databricks', config: {}, created_at: '2026-01-01T00:00:00Z' },
+          { status: 201 },
+        )
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    fireEvent.click(await screen.findByText('+ New Connector'))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'DBX M2M' } })
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'databricks' } })
+    fireEvent.change(screen.getByLabelText('Host'), { target: { value: 'dbc-x.cloud.databricks.com' } })
+    fireEvent.change(screen.getByLabelText('HTTP Path'), { target: { value: '/sql/1.0/warehouses/abc' } })
+    fireEvent.change(screen.getByLabelText('Auth Type'), { target: { value: 'oauth_m2m' } })
+    fireEvent.change(screen.getByLabelText('Client ID'), { target: { value: 'sp-123' } })
+    fireEvent.change(screen.getByLabelText('Client Secret'), { target: { value: 'secret-456' } })
+    fireEvent.click(screen.getByText('Create'))
+
+    await waitFor(() =>
+      expect(postBody?.config).toEqual({
+        host: 'dbc-x.cloud.databricks.com',
+        http_path: '/sql/1.0/warehouses/abc',
+        auth_type: 'oauth_m2m',
+        catalog: '',
+        schema: '',
+        client_id: 'sp-123',
+        client_secret: 'secret-456',
+      }),
+    )
+  })
 })

@@ -176,6 +176,13 @@ export interface Connector {
     user?: string
     ssl_mode?: string
     use_tls?: boolean
+    http_path?: string
+    auth_type?: 'pat' | 'oauth_m2m'
+    token?: string
+    client_id?: string
+    client_secret?: string
+    catalog?: string
+    schema?: string
   }
 }
 
