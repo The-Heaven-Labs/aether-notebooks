@@ -127,6 +127,7 @@ export async function provisionSession(
   headers: Record<string, string>,
   opts: { withNotebook: boolean; shareWithNotebookViewers?: boolean },
 ): Promise<SessionFixture> {
+  if (!fakeLlm) throw new Error('startFakeLlm() must be called before provisionSession()')
   const suffix = uniqueSuffix()
 
   const cfgResp = await request.post('/api/v1/model-configs', {

@@ -3,6 +3,7 @@ import { registerAndOnboard, login } from './helpers'
 import {
   BASE_URL,
   PASSWORD,
+  authHeaders,
   joinViaInvite,
   listMembers,
   provisionSession,
@@ -18,6 +19,14 @@ import {
 // End-to-end coverage for /chats/:id deep links: ACL-gated shareable links for
 // standalone and notebook-attached agent chats. Owners get the full-page
 // interactive chat; recipients get the read-only live viewer.
+//
+// Requirements: the target API server must have register/login rate limits
+// raised (each test registers at least one account): docker-compose.dev.yml
+// sets AETHER_RATE_LIMIT_REGISTER/LOGIN=500/min, while the server defaults are
+// 5/min register and 10/min login. The API must also be able to reach this
+// test runner's 127.0.0.1 for the fake LLM endpoint, so run the API on the
+// host (e.g. `task dev`); a containerized API cannot reach the runner's
+// loopback. Target any stack via E2E_BASE_URL (default http://localhost:5173).
 
 let fakeLlm: FakeLlm
 
@@ -26,7 +35,7 @@ test.beforeAll(async () => {
 })
 
 test.afterAll(async () => {
-  await fakeLlm.close()
+  await fakeLlm?.close()
 })
 
 async function ownerWithSession(
@@ -37,7 +46,7 @@ async function ownerWithSession(
   const suffix = uniqueSuffix()
   await registerAndOnboard(page, suffix)
   const token = await tokenFrom(page)
-  const headers = { Authorization: `Bearer ${token}` }
+  const headers = authHeaders(token)
   const fixture = await provisionSession(request, headers, { withNotebook: opts.withNotebook ?? false })
   return { token, headers, ...fixture }
 }
@@ -71,6 +80,10 @@ async function loginKeepingRedirect(page: Page, email: string, password: string,
 }
 
 test.describe('chat links', () => {
+  test.beforeEach(() => {
+    test.setTimeout(120_000)
+  })
+
   test('owner opens their standalone chat link in an interactive full-page chat', async ({ page, request }) => {
     const { sessionId } = await ownerWithSession(request, page)
 
@@ -84,49 +97,60 @@ test.describe('chat links', () => {
 
   test('a shared recipient opens the link read-only and sees live updates', async ({ browser, request }) => {
     const ownerPage = await browser.newPage()
-    const { token, headers, sessionId } = await ownerWithSession(request, ownerPage)
-    await sendWsMessage(sessionId, token, 'first message')
-    const recipient = await shareWithNewRecipient(request, headers, sessionId)
+    try {
+      const { token, headers, sessionId } = await ownerWithSession(request, ownerPage)
+      await sendWsMessage(sessionId, token, 'first message')
+      const recipient = await shareWithNewRecipient(request, headers, sessionId)
 
-    const recipientPage = await browser.newPage()
-    await login(recipientPage, recipient.email, PASSWORD)
-    await recipientPage.goto(`/chats/${sessionId}`)
+      const recipientPage = await browser.newPage()
+      try {
+        await login(recipientPage, recipient.email, PASSWORD)
+        await recipientPage.goto(`/chats/${sessionId}`)
 
-    await expect(recipientPage.getByText('Shared · Read-only')).toBeVisible({ timeout: 20_000 })
-    await expect(recipientPage.getByText('first message', { exact: true })).toBeVisible()
-    await expect(recipientPage.getByPlaceholder(/Message agent/)).toHaveCount(0)
+        await expect(recipientPage.getByText('Shared · Read-only')).toBeVisible({ timeout: 20_000 })
+        await expect(recipientPage.getByText('first message', { exact: true })).toBeVisible({ timeout: 15_000 })
+        await expect(recipientPage.getByPlaceholder(/Message agent/)).toHaveCount(0)
 
-    await sendWsMessage(sessionId, token, 'live update')
-    await expect(recipientPage.getByText('Echo: live update')).toBeVisible({ timeout: 20_000 })
-
-    await ownerPage.close()
-    await recipientPage.close()
+        await sendWsMessage(sessionId, token, 'live update')
+        await expect(recipientPage.getByText('Echo: live update')).toBeVisible({ timeout: 20_000 })
+      } finally {
+        await recipientPage.close()
+      }
+    } finally {
+      await ownerPage.close()
+    }
   })
 
   test('a logged-out visitor returns to the chat link after login', async ({ browser, page, request }) => {
     const ownerPage = await browser.newPage()
-    const { headers, sessionId } = await ownerWithSession(request, ownerPage)
-    const recipient = await shareWithNewRecipient(request, headers, sessionId)
+    try {
+      const { headers, sessionId } = await ownerWithSession(request, ownerPage)
+      const recipient = await shareWithNewRecipient(request, headers, sessionId)
 
-    await page.goto(`/chats/${sessionId}`)
-    await expect(page).toHaveURL(/\/login/)
-    await loginKeepingRedirect(page, recipient.email, PASSWORD, `/chats/${sessionId}`)
+      await page.goto(`/chats/${sessionId}`)
+      await expect(page).toHaveURL(/\/login/)
+      await loginKeepingRedirect(page, recipient.email, PASSWORD, `/chats/${sessionId}`)
 
-    await expect(page.getByText('Shared · Read-only')).toBeVisible({ timeout: 20_000 })
-    await ownerPage.close()
+      await expect(page.getByText('Shared · Read-only')).toBeVisible({ timeout: 20_000 })
+    } finally {
+      await ownerPage.close()
+    }
   })
 
   test('an unauthorized user sees no-access, and a bad id shows not-found', async ({ browser, page, request }) => {
     const ownerPage = await browser.newPage()
-    const { sessionId } = await ownerWithSession(request, ownerPage)
+    try {
+      const { sessionId } = await ownerWithSession(request, ownerPage)
 
-    await registerAndOnboard(page, uniqueSuffix()) // a separate user in their own org
-    await page.goto(`/chats/${sessionId}`)
-    await expect(page.getByText(/don't have access to this chat/i)).toBeVisible({ timeout: 20_000 })
+      await registerAndOnboard(page, uniqueSuffix()) // a separate user in their own org
+      await page.goto(`/chats/${sessionId}`)
+      await expect(page.getByText(/don't have access to this chat/i)).toBeVisible({ timeout: 20_000 })
 
-    await page.goto('/chats/00000000-0000-0000-0000-000000000000')
-    await expect(page.getByText(/Chat not found or has been deleted/i)).toBeVisible({ timeout: 20_000 })
-    await ownerPage.close()
+      await page.goto('/chats/00000000-0000-0000-0000-000000000000')
+      await expect(page.getByText(/Chat not found or has been deleted/i)).toBeVisible({ timeout: 20_000 })
+    } finally {
+      await ownerPage.close()
+    }
   })
 
   test('the permissions panel exposes the exact chat link', async ({ page, request }) => {
