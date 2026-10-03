@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -175,5 +176,56 @@ func TestCreateConnectorPreservesDriverSpecificConfig(t *testing.T) {
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("non-object config: expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A case-variant key ("Password") is consumed by the driver's case-insensitive
+// JSON decode, so it must be masked exactly like the canonical key.
+func TestConnectorSecretMaskingIsCaseInsensitive(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	token := registerAndGetToken(t, srv, fmt.Sprintf("case-mask-%d@example.com", ts), "Case Mask Org")
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name": "Case Keys", "type": "postgres",
+		"config": map[string]interface{}{
+			"host": "localhost", "port": 5432, "user": "u",
+			"Password": "sekret-case", "database": "d",
+		},
+	})
+	req := httptest.NewRequest("POST", "/api/v1/connectors", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "sekret-case") {
+		t.Fatalf("case-variant secret leaked: %s", rec.Body.String())
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&resp)
+	cfg := resp["config"].(map[string]interface{})
+	if cfg["Password"] != "***" {
+		t.Fatalf("expected Password masked, got %v", cfg["Password"])
+	}
+}
+
+// The CLI sends "config": null when --config is omitted; that must behave like
+// an absent config, not a 400.
+func TestCreateConnectorNullConfigDefaultsToEmpty(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	token := registerAndGetToken(t, srv, fmt.Sprintf("null-cfg-%d@example.com", ts), "Null Cfg Org")
+
+	body, _ := json.Marshal(map[string]interface{}{"name": "Null Cfg", "type": "postgres", "config": nil})
+	req := httptest.NewRequest("POST", "/api/v1/connectors", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("null config: expected 201, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
