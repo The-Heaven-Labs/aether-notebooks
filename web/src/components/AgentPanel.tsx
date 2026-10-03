@@ -1059,14 +1059,14 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
         reconnectTimerRef.current = setTimeout(() => { reconnectTimerRef.current = null; connectWebSocket(sid) }, delay)
       } else {
         reconnectAttemptsRef.current = 0
-        clearChatState()
         if (pageMode) {
-          // Keep the deep link: a sustained outage must not silently replace
-          // the shared chat with a brand-new session.
+          // Keep the deep link and the cached transcript: a sustained outage
+          // must not silently replace the shared chat with a new session.
           setError('Connection lost. Reload the page to reconnect.')
           setIsStreaming(false)
-        } else if (selectedAgentRef.current) {
-          startSession(selectedAgentRef.current)
+        } else {
+          clearChatState()
+          if (selectedAgentRef.current) startSession(selectedAgentRef.current)
         }
       }
     }
