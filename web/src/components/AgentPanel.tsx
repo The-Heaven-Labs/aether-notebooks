@@ -306,7 +306,8 @@ interface AgentChatState {
   modelConfigId?: string
 }
 
-export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, onMinimize, onDock, docked, initialSessionId }: AgentPanelProps) {
+export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, onMinimize, onDock, docked, variant = 'panel', initialSessionId }: AgentPanelProps) {
+  const pageMode = variant === 'page'
   const [agents, setAgents] = useState<Agent[]>([])
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
   const [_sessionId, _setSessionId] = useState<string | null>(null)
@@ -1416,7 +1417,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
 
   return (
-    <div ref={panelRef} style={{ ...styles.panel, width }}>
+    <div ref={panelRef} style={{ ...styles.panel, ...(pageMode ? styles.pagePanel : { width }) }}>
       {subagentView ? (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
@@ -1469,17 +1470,20 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           </div>
         </div>
       ) : (<>
-      <div
-        ref={resizeRef}
-        style={styles.resizeHandle}
-      />
+      {!pageMode && (
+        <div
+          ref={resizeRef}
+          style={styles.resizeHandle}
+        />
+      )}
       <PanelHeader
         title={sessionTitle || (selectedAgent ? selectedAgent.name : 'AI Agent')}
         onClose={onClose}
-        onMinimize={onMinimize}
-        onDock={onDock}
+        onMinimize={pageMode ? undefined : onMinimize}
+        onDock={pageMode ? undefined : onDock}
         docked={docked}
-        closeTitle="Close agent panel"
+        back={pageMode}
+        closeTitle={pageMode ? 'Back' : 'Close agent panel'}
         style={{ borderBottom: '1px solid var(--border)', flexShrink: 0 }}
       />
 
@@ -2033,6 +2037,11 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: 0,
     position: 'relative',
     overflow: 'hidden',
+  },
+  pagePanel: {
+    width: '100%',
+    flex: 1,
+    borderLeft: 'none',
   },
   resizeHandle: {
     position: 'absolute',

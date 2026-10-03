@@ -1,5 +1,5 @@
 import type React from 'react'
-import { X, ChevronDown, PanelRightOpen, PanelRightClose } from 'lucide-react'
+import { X, ChevronDown, PanelRightOpen, PanelRightClose, ArrowLeft } from 'lucide-react'
 
 interface Props {
   title: string
@@ -7,11 +7,12 @@ interface Props {
   onMinimize?: () => void
   onDock?: () => void
   docked?: boolean
+  back?: boolean
   closeTitle?: string
   style?: React.CSSProperties
 }
 
-export function PanelHeader({ title, onClose, onMinimize, onDock, docked, closeTitle = 'Close', style }: Props) {
+export function PanelHeader({ title, onClose, onMinimize, onDock, docked, back, closeTitle = 'Close', style }: Props) {
   return (
     <div style={{ ...styles.header, ...style }}>
       <span style={styles.title}>{title}</span>
@@ -40,7 +41,7 @@ export function PanelHeader({ title, onClose, onMinimize, onDock, docked, closeT
             onClick={onClose}
             title={closeTitle}
           >
-            <X size={13} />
+            {back ? <ArrowLeft size={14} /> : <X size={13} />}
           </button>
         )}
       </div>

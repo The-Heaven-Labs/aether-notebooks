@@ -1,3 +1,4 @@
+import type { ComponentProps } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -57,11 +58,11 @@ class MockWebSocket {
 
 const realWebSocket = globalThis.WebSocket
 
-function renderPagePanel() {
+function renderPagePanel(extra: Partial<ComponentProps<typeof AgentPanel>> = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <AgentPanel variant="page" initialSessionId="s1" onClose={() => {}} />
+      <AgentPanel variant="page" initialSessionId="s1" onClose={() => {}} {...extra} />
     </QueryClientProvider>,
   )
 }
@@ -104,5 +105,15 @@ describe('AgentPanel page mode', () => {
     renderPagePanel()
 
     expect(await screen.findByText('Failed to open session')).toBeInTheDocument()
+  })
+
+  it('renders full-page chrome: no resize/dock/minimize, a Back affordance', async () => {
+    renderPagePanel({ onMinimize: vi.fn(), onDock: vi.fn() })
+    await screen.findByText('hello from owner')
+
+    expect(screen.queryByTitle('Minimize')).toBeNull()
+    expect(screen.queryByTitle('Dock to right side')).toBeNull()
+    expect(screen.queryByTitle('Undock panel')).toBeNull()
+    expect(screen.getByTitle('Back')).toBeInTheDocument()
   })
 })
