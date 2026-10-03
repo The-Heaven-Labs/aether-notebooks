@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, getToken } from '../api/client'
-import type { Agent, AgentTaskItem, ModelConfig, SessionUsage, TokenBreakdown, WSMessage } from '../types/agent'
+import type { Agent, AgentSession, AgentTaskItem, ModelConfig, SessionUsage, TokenBreakdown, WSMessage } from '../types/agent'
 import { mapServerMessagesToChat, applyToolResult, oldestPendingToolAgeMs, applySteeringMessage } from '../utils/agentTranscript'
 import { AgentChatTranscript, chatMarkdownComponents, chatStyles, fmtTime } from './AgentChatTranscript'
 import type { ChatMessage } from './AgentChatTranscript'
@@ -21,12 +21,17 @@ export { CompactionDivider } from './AgentChatTranscript'
 interface AgentPanelProps {
   notebookId?: string
   pageContext?: { type: 'notebook' | 'dashboard' | 'files'; id?: string; title?: string }
-  width: number
-  onResize: (width: number) => void
-  onClose: () => void
+  width?: number
+  onResize?: (width: number) => void
+  onClose?: () => void
   onMinimize?: () => void
   onDock?: () => void
   docked?: boolean
+  /** 'page' renders a full-page chat: no resize/dock/minimize chrome. */
+  variant?: 'panel' | 'page'
+  /** When set, the panel opens this session instead of restoring the
+   * localStorage session (used by the /chats/:id page). */
+  initialSessionId?: string
 }
 
 import { getWsUrl } from '../config'
@@ -301,7 +306,7 @@ interface AgentChatState {
   modelConfigId?: string
 }
 
-export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, onMinimize, onDock, docked }: AgentPanelProps) {
+export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, onMinimize, onDock, docked, initialSessionId }: AgentPanelProps) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
   const [_sessionId, _setSessionId] = useState<string | null>(null)
@@ -643,7 +648,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   }, [pageContext])
 
   useEffect(() => {
-    if (!selectedAgent && agents.length > 0 && !isLoadingAgents) {
+    if (!selectedAgent && agents.length > 0 && !isLoadingAgents && !initialSessionId) {
       const savedState = loadChatState()
       const lastSessionId = localStorage.getItem(LAST_SESSION_KEY)
 
@@ -699,6 +704,30 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents, isLoadingAgents])
+
+  // Page mode: the route owns the session id. Open it instead of the
+  // localStorage restore path. ChatPage keeps the URL in sync afterwards, and
+  // the sessionIdRef guard skips the refetch/reconnect when the URL already
+  // points at the session this panel just opened.
+  useEffect(() => {
+    if (!initialSessionId || isLoadingAgents || agents.length === 0) return
+    if (sessionIdRef.current === initialSessionId) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const sess = await api.get<AgentSession>(`/api/v1/sessions/${initialSessionId}`)
+        if (cancelled) return
+        const agent = agents.find((a) => a.id === sess.agent_id)
+        if (agent) setSelectedAgent(agent)
+        localStorage.setItem(LAST_AGENT_KEY, sess.agent_id)
+        await resumeSession(initialSessionId, agent?.id ?? sess.agent_id)
+      } catch {
+        if (!cancelled) setError('Failed to open session')
+      }
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSessionId, agents, isLoadingAgents])
 
   const loadChatState = (): AgentChatState | null => {
     try {
@@ -1054,6 +1083,27 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // resumeSession opens an existing session by id: seed the transcript from
+  // REST, then let the WS reconnect_sync take over. Shared by the history
+  // resume action and the /chats/:id page.
+  const resumeSession = async (sid: string, agentIdForSave?: string) => {
+    closeWS()
+    setSessionId(sid)
+    resetMeterState()
+    try {
+      const msgs = await api.get<Array<{ id: string; role: string; content: string; reasoning_content?: string; image_ids?: string[]; duration_ms?: number; tokens_direct?: number; tokens_after?: number; created_at?: string }>>(`/api/v1/sessions/${sid}/messages`)
+      const formatted = mapServerMessagesToChat(msgs)
+      setMessages(formatted)
+      if (formatted.some((m) => m.role === 'compaction')) setHasCompacted(true)
+      const aid = agentIdForSave ?? selectedAgentRef.current?.id
+      if (aid) saveChatState(aid, sid, formatted, undefined)
+    } catch {
+      setMessages([])
+    }
+    setIsStreaming(false)
+    connectWebSocket(sid)
+  }
+
   const connectToSession = (sessionID: string) => {
     setSessionId(sessionID)
     setSessionTitle(null)
@@ -1325,7 +1375,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
   useEffect(() => {
     const handle = resizeRef.current
-    if (!handle) return
+    if (!handle || !onResize) return
 
     let startX = 0
     let startWidth = 0
@@ -1333,7 +1383,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     const onMouseDown = (e: MouseEvent) => {
       e.preventDefault()
       startX = e.clientX
-      startWidth = width
+      startWidth = width ?? 460
       document.body.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
 
@@ -1432,23 +1482,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           agentId={selectedAgent.id}
           onBack={() => setShowHistory(false)}
           onResumeSession={async (session) => {
-            closeWS()
-            setSessionId(session.id)
             setShowHistory(false)
-            resetMeterState()
-            try {
-              const msgs = await api.get<Array<{ id: string; role: string; content: string; reasoning_content?: string; image_ids?: string[]; duration_ms?: number; tokens_direct?: number; tokens_after?: number; created_at?: string }>>(`/api/v1/sessions/${session.id}/messages`)
-              const formatted = mapServerMessagesToChat(msgs)
-              setMessages(formatted)
-              if (formatted.some((m) => m.role === 'compaction')) setHasCompacted(true)
-              if (selectedAgent) {
-                saveChatState(selectedAgent.id, session.id, formatted, undefined)
-              }
-            } catch {
-              setMessages([])
-            }
-            setIsStreaming(false)
-            connectWebSocket(session.id)
+            await resumeSession(session.id)
           }}
         />
       ) : !selectedAgent ? (
