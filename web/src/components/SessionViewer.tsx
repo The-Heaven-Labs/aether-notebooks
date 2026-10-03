@@ -19,6 +19,8 @@ export interface SessionViewerProps {
    * listing endpoint; the GET /sessions body does not always carry them. */
   session?: AgentSession | null
   onClose?: () => void
+  /** Full-page presentation: region semantics and a Back affordance. */
+  page?: boolean
   /** Owner-only share override; when absent the Share button opens the
    * built-in PermissionsPanel for the session. */
   onShare?: () => void
@@ -33,7 +35,7 @@ interface RetryNotice {
 // SessionViewer renders a shared agent session read-only: the same transcript
 // as AgentPanel (via the shared reducers), live WS events, and no controls.
 // It never sends mutating frames; tool confirmations and questions are ignored.
-export function SessionViewer({ sessionId, session: sessionSummary, onClose, onShare }: SessionViewerProps) {
+export function SessionViewer({ sessionId, session: sessionSummary, onClose, page, onShare }: SessionViewerProps) {
   const [fetchedSession, setFetchedSession] = useState<AgentSession | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [loading, setLoading] = useState(true)
@@ -450,7 +452,7 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
   const canEdit = session?.can_edit === true
 
   return (
-    <div style={styles.panel} role="dialog" aria-label="Shared agent session">
+    <div style={styles.panel} role={page ? 'region' : 'dialog'} aria-label={page ? 'Agent chat' : 'Shared agent session'}>
       <div style={styles.header}>
         <div style={styles.headerText}>
           <div style={styles.title} title={title}>{title}</div>
@@ -476,8 +478,8 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, onS
           </button>
         )}
         {onClose && (
-          <button type="button" style={styles.closeBtn} onClick={onClose} title="Close viewer" aria-label="Close viewer">
-            <X size={14} />
+          <button type="button" style={styles.closeBtn} onClick={onClose} title={page ? 'Back' : 'Close viewer'} aria-label={page ? 'Back' : 'Close viewer'}>
+            {page ? <ArrowLeft size={14} /> : <X size={14} />}
           </button>
         )}
       </div>
