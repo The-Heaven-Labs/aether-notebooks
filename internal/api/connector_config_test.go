@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/the-heaven-labs/aether/internal/crypto"
@@ -36,6 +37,25 @@ func TestMergeConnectorConfig(t *testing.T) {
 	got = mergeConnectorConfig(existing, map[string]any{"Password": ""}, secrets)
 	if got["Password"] == "" {
 		t.Fatal("case-variant empty secret must not be stored")
+	}
+	if got["password"] != "old" {
+		t.Fatalf("canonical stored secret must be preserved, got %v", got["password"])
+	}
+
+	// A case-variant real secret replaces the stored key instead of coexisting;
+	// Go's JSON decoding is case-insensitive and would otherwise read the stale key.
+	got = mergeConnectorConfig(existing, map[string]any{"Password": "new"}, secrets)
+	variants := 0
+	for k, v := range got {
+		if strings.EqualFold(k, "password") {
+			variants++
+			if v != "new" {
+				t.Fatalf("case-variant password must be replaced, got %v", v)
+			}
+		}
+	}
+	if variants != 1 {
+		t.Fatalf("expected exactly one password key, got %d: %v", variants, got)
 	}
 
 	// A real new secret wins.

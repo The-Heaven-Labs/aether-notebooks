@@ -311,6 +311,10 @@ func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(req.Config) > 0 {
+		if !isJSONObject(req.Config) {
+			writeError(w, http.StatusBadRequest, "config must be a JSON object")
+			return
+		}
 		var existingEnc []byte
 		if err := s.db.Pool.QueryRow(ctx,
 			`SELECT config_encrypted FROM connectors WHERE id=$1 AND org_id=$2`,
@@ -327,10 +331,6 @@ func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
 		var existing map[string]any
 		if err := json.Unmarshal(plain, &existing); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to parse config")
-			return
-		}
-		if !isJSONObject(req.Config) {
-			writeError(w, http.StatusBadRequest, "config must be a JSON object")
 			return
 		}
 		var incoming map[string]any
@@ -1005,6 +1005,13 @@ func mergeConnectorConfig(existing, incoming map[string]any, secrets map[string]
 		if secrets[strings.ToLower(k)] {
 			if s, ok := v.(string); ok && (s == "" || s == "***") {
 				continue
+			}
+		}
+		// Drop any case-variant of the same key: JSON decoding is
+		// case-insensitive, so coexisting keys would let a stale value win.
+		for existingKey := range merged {
+			if existingKey != k && strings.EqualFold(existingKey, k) {
+				delete(merged, existingKey)
 			}
 		}
 		merged[k] = v

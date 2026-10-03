@@ -286,3 +286,43 @@ func TestConnectorRawConfigRoundTrip(t *testing.T) {
 		t.Fatalf("update must keep host, got %v", cfg["host"])
 	}
 }
+
+// The Task 2 review required an end-to-end pin: PUTs echoing the masked ("***")
+// or an empty password must not clobber the stored secret. The saved-connector
+// test endpoint authenticates with the stored credential, so ok=true proves it
+// survived.
+func TestUpdateConnectorKeepsStoredSecret(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("keep-secret-%d@example.com", ts)
+	token := registerAndGetToken(t, srv, email, "Keep Secret Org")
+	connID := createConnector(t, srv, token)
+
+	for _, payload := range []map[string]interface{}{
+		{"config": map[string]interface{}{"password": ""}},
+		{"config": map[string]interface{}{"password": "***"}},
+	} {
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest("PUT", "/api/v1/connectors/"+connID, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+
+	req := httptest.NewRequest("POST", "/api/v1/connectors/"+connID+"/test", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("test endpoint: %d %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if resp["ok"] != true {
+		t.Fatalf("stored password was clobbered; connection test: %v", resp)
+	}
+}
