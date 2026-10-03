@@ -1,9 +1,13 @@
-import { describe, it, expect } from 'vitest'
-import { screen } from '@testing-library/react'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { fireEvent, screen } from '@testing-library/react'
 import { AppShell } from '../components/AppShell'
 import { renderWithProviders } from './utils'
 
 describe('AppShell', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
   it('renders a skip-to-content link as the first focusable element', () => {
     renderWithProviders(<AppShell><div>Page content</div></AppShell>)
     const skipLink = screen.getByText('Skip to content')
@@ -22,5 +26,27 @@ describe('AppShell', () => {
     renderWithProviders(<AppShell><div>Page content</div></AppShell>)
     const skipLink = screen.getByText('Skip to content')
     expect(skipLink.className).toBe('skip-link')
+  })
+
+  it('hides the global agent panel and FAB on chat pages', () => {
+    renderWithProviders(<AppShell><div>Page content</div></AppShell>, { initialPath: '/chats/s-1' })
+    expect(screen.queryByTitle('Open AI Agent (Ctrl+K)')).toBeNull()
+  })
+
+  it('shows the agent FAB away from chat pages', () => {
+    renderWithProviders(<AppShell><div>Page content</div></AppShell>, { initialPath: '/' })
+    expect(screen.getByTitle('Open AI Agent (Ctrl+K)')).toBeInTheDocument()
+  })
+
+  it('hides the global agent panel on chat pages even when it was open', () => {
+    localStorage.setItem('aether:agentDocked:__global__', 'true')
+    renderWithProviders(<AppShell><div>Page content</div></AppShell>, { initialPath: '/chats/s-1' })
+    expect(screen.queryByTitle('Close agent panel')).toBeNull()
+  })
+
+  it('ignores Ctrl+K on chat pages', () => {
+    renderWithProviders(<AppShell><div>Page content</div></AppShell>, { initialPath: '/chats/s-1' })
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
+    expect(screen.queryByTitle('Close agent panel')).toBeNull()
   })
 })

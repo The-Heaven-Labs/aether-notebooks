@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import { useQueryClient } from '@tanstack/react-query'
 import { api, getToken } from '../api/client'
-import type { Agent, AgentTaskItem, ModelConfig, SessionUsage, TokenBreakdown, WSMessage } from '../types/agent'
+import type { Agent, AgentSession, AgentTaskItem, ModelConfig, SessionUsage, TokenBreakdown, WSMessage } from '../types/agent'
 import { mapServerMessagesToChat, applyToolResult, oldestPendingToolAgeMs, applySteeringMessage } from '../utils/agentTranscript'
 import { AgentChatTranscript, chatMarkdownComponents, chatStyles, fmtTime } from './AgentChatTranscript'
 import type { ChatMessage } from './AgentChatTranscript'
@@ -21,12 +21,20 @@ export { CompactionDivider } from './AgentChatTranscript'
 interface AgentPanelProps {
   notebookId?: string
   pageContext?: { type: 'notebook' | 'dashboard' | 'files'; id?: string; title?: string }
-  width: number
-  onResize: (width: number) => void
-  onClose: () => void
+  width?: number
+  onResize?: (width: number) => void
+  onClose?: () => void
   onMinimize?: () => void
   onDock?: () => void
   docked?: boolean
+  /** 'page' renders a full-page chat: no resize/dock/minimize chrome. */
+  variant?: 'panel' | 'page'
+  /** When set, the panel opens this session instead of restoring the
+   * localStorage session (used by the /chats/:id page). */
+  initialSessionId?: string
+  /** Called whenever the active session changes, so /chats/:id can keep the
+   * address bar pointing at the open chat. */
+  onSessionChange?: (sessionId: string) => void
 }
 
 import { getWsUrl } from '../config'
@@ -35,6 +43,14 @@ const LAST_AGENT_KEY = 'aether:lastAgentId'
 const LAST_SESSION_KEY = 'aether:lastSessionId'
 const CHAT_STATE_KEY = 'aether:agentChat:'
 const DRAFT_KEY = 'aether:agentChatDraft:__global__'
+
+// Intentionally closed sockets must not trigger the reconnect loop. The flag
+// lives on the socket itself so a socket opened later still reconnects after a
+// drop (a shared sentinel used to suppress the new socket's onclose too).
+type ReconnectSuppressibleSocket = WebSocket & { __suppressReconnect?: boolean }
+function suppressSocketReconnect(ws: WebSocket | null) {
+  if (ws) (ws as ReconnectSuppressibleSocket).__suppressReconnect = true
+}
 
 // mergeTokenBreakdown applies a server token breakdown (token_update / done)
 // over the previous state with replace semantics: fields carried by the event
@@ -301,7 +317,8 @@ interface AgentChatState {
   modelConfigId?: string
 }
 
-export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, onMinimize, onDock, docked }: AgentPanelProps) {
+export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, onMinimize, onDock, docked, variant = 'panel', initialSessionId, onSessionChange }: AgentPanelProps) {
+  const pageMode = variant === 'page'
   const [agents, setAgents] = useState<Agent[]>([])
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
   const [_sessionId, _setSessionId] = useState<string | null>(null)
@@ -621,8 +638,12 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
   useEffect(() => {
     return () => {
-      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
       if (wsRef.current) {
+        suppressSocketReconnect(wsRef.current)
         wsRef.current.onclose = null
         wsRef.current.onerror = null
         wsRef.current.onmessage = null
@@ -643,6 +664,10 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   }, [pageContext])
 
   useEffect(() => {
+    // Page mode owns its connection lifecycle via the initialSessionId effect;
+    // registering this cleanup would close the page's WebSocket on any agents
+    // reload with nothing to reconnect it.
+    if (initialSessionId) return
     if (!selectedAgent && agents.length > 0 && !isLoadingAgents) {
       const savedState = loadChatState()
       const lastSessionId = localStorage.getItem(LAST_SESSION_KEY)
@@ -691,14 +716,40 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     }
     return () => {
       sessionReqIdRef.current++ // invalidate any in-flight startSession
-      if (wsRef.current) {
-        reconnectTimerRef.current = setTimeout(() => {}, 0)
-        try { wsRef.current.close() } catch {}
-        wsRef.current = null
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
       }
+      suppressSocketReconnect(wsRef.current)
+      try { wsRef.current?.close() } catch {}
+      wsRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agents, isLoadingAgents])
+  }, [agents, isLoadingAgents, initialSessionId])
+
+  // Page mode: the route owns the session id. Open it instead of the
+  // localStorage restore path. ChatPage keeps the URL in sync afterwards, and
+  // the sessionIdRef guard skips the refetch/reconnect when the URL already
+  // points at the session this panel just opened.
+  useEffect(() => {
+    if (!initialSessionId || isLoadingAgents || agents.length === 0) return
+    if (sessionIdRef.current === initialSessionId) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const sess = await api.get<AgentSession>(`/api/v1/sessions/${initialSessionId}`)
+        if (cancelled) return
+        const agent = agents.find((a) => a.id === sess.agent_id)
+        if (agent) setSelectedAgent(agent)
+        localStorage.setItem(LAST_AGENT_KEY, sess.agent_id)
+        await resumeSession(initialSessionId, agent?.id ?? sess.agent_id, () => !cancelled)
+      } catch {
+        if (!cancelled) setError('Failed to open session')
+      }
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSessionId, agents, isLoadingAgents])
 
   const loadChatState = (): AgentChatState | null => {
     try {
@@ -759,9 +810,14 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   }, [applyServerUsage])
 
   const connectWebSocket = useCallback((sid: string, opts?: { seedUsage?: boolean }) => {
-    // Close any existing connection, suppressing its reconnect logic
+    // A pending reconnect for a previous socket must not fire after this one.
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
+    // Close any existing connection, suppressing its reconnect logic.
     if (wsRef.current) {
-      reconnectTimerRef.current = setTimeout(() => {}, 0)
+      suppressSocketReconnect(wsRef.current)
       try { wsRef.current.close() } catch {}
       wsRef.current = null
     }
@@ -769,7 +825,6 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     const adminParam = localStorage.getItem('aether_admin_mode') === 'true' ? '&admin_mode=true' : ''
     const ws = new WebSocket(WS_URL + sid + '?token=' + token + adminParam)
     wsRef.current = ws
-    reconnectAttemptsRef.current = 0
     lastSeqRef.current = 0
     setRetryNotice(null)
     // Brand-new sessions start empty (their first token_update carries usage),
@@ -777,6 +832,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     if (opts?.seedUsage !== false) loadSessionUsage(sid)
 
     ws.onopen = () => {
+        reconnectAttemptsRef.current = 0
         setWsConnected(true)
         const e = reasoningEffortRef.current
         if (e) { ws.send(JSON.stringify({ type: 'set_reasoning_effort', reasoning_effort: e })) }
@@ -992,6 +1048,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       }
 
     ws.onclose = () => {
+      if ((ws as ReconnectSuppressibleSocket).__suppressReconnect) return
+      if (wsRef.current !== ws) return
       setWsConnected(false)
       if (reconnectTimerRef.current) return
       wsRef.current = null
@@ -1000,13 +1058,26 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
         reconnectAttemptsRef.current += 1
         reconnectTimerRef.current = setTimeout(() => { reconnectTimerRef.current = null; connectWebSocket(sid) }, delay)
       } else {
-        clearChatState()
-        if (selectedAgentRef.current) startSession(selectedAgentRef.current)
+        reconnectAttemptsRef.current = 0
+        if (pageMode) {
+          // Keep the deep link and the cached transcript: a sustained outage
+          // must not silently replace the shared chat with a new session.
+          setError('Connection lost. Reload the page to reconnect.')
+          setIsStreaming(false)
+        } else {
+          clearChatState()
+          if (selectedAgentRef.current) startSession(selectedAgentRef.current)
+        }
       }
     }
 
-    ws.onerror = () => { setError('WebSocket connection failed'); setIsStreaming(false) }
-  }, [notebookId, queryClient, scrollToCell, loadSessionUsage])
+    ws.onerror = () => {
+      if ((ws as ReconnectSuppressibleSocket).__suppressReconnect) return
+      if (wsRef.current !== ws) return
+      setError('WebSocket connection failed')
+      setIsStreaming(false)
+    }
+  }, [notebookId, queryClient, scrollToCell, loadSessionUsage, pageMode])
 
   const startSession = async (agent: Agent) => {
     const reqId = ++sessionReqIdRef.current
@@ -1021,10 +1092,12 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       setSelectedAgent(agent)
       localStorage.setItem(LAST_AGENT_KEY, agent.id)
       setMessages([])
+      setError(null)
       setTasks([])
       resetMeterState()
       setContextWindow(res.context_window ?? 0)
       connectWebSocket(res.session_id, { seedUsage: false })
+      onSessionChange?.(res.session_id)
     } catch {
       if (reqId !== sessionReqIdRef.current) return
       setError('Failed to start session')
@@ -1054,6 +1127,32 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // resumeSession opens an existing session by id: seed the transcript from
+  // REST, then let the WS reconnect_sync take over. Shared by the history
+  // resume action and the /chats/:id page.
+  const resumeSession = async (sid: string, agentIdForSave?: string, isActive?: () => boolean) => {
+    closeWS()
+    setSessionId(sid)
+    resetMeterState()
+    try {
+      const msgs = await api.get<Array<{ id: string; role: string; content: string; reasoning_content?: string; image_ids?: string[]; duration_ms?: number; tokens_direct?: number; tokens_after?: number; created_at?: string }>>(`/api/v1/sessions/${sid}/messages`)
+      const formatted = mapServerMessagesToChat(msgs)
+      setMessages(formatted)
+      setError(null)
+      if (formatted.some((m) => m.role === 'compaction')) setHasCompacted(true)
+      const aid = agentIdForSave ?? selectedAgentRef.current?.id
+      if (aid) saveChatState(aid, sid, formatted, undefined)
+    } catch {
+      setMessages([])
+    }
+    // A superseded resume (route changed or panel unmounted) must not connect
+    // a WebSocket or fire onSessionChange — that would hijack navigation.
+    if (isActive && !isActive()) return
+    setIsStreaming(false)
+    connectWebSocket(sid)
+    onSessionChange?.(sid)
+  }
+
   const connectToSession = (sessionID: string) => {
     setSessionId(sessionID)
     setSessionTitle(null)
@@ -1063,12 +1162,16 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     // The fork starts with an empty summary-only context; its first
     // token_update carries the server usage, so skip the REST seed.
     connectWebSocket(sessionID, { seedUsage: false })
+    onSessionChange?.(sessionID)
   }
 
   const closeWS = () => {
-    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
-    reconnectTimerRef.current = setTimeout(() => {}, 0) // non-null sentinel to suppress reconnect
-    wsRef.current?.close()
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
+    suppressSocketReconnect(wsRef.current)
+    try { wsRef.current?.close() } catch { /* already closed */ }
     wsRef.current = null
   }
 
@@ -1325,7 +1428,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
   useEffect(() => {
     const handle = resizeRef.current
-    if (!handle) return
+    if (!handle || !onResize) return
 
     let startX = 0
     let startWidth = 0
@@ -1333,7 +1436,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     const onMouseDown = (e: MouseEvent) => {
       e.preventDefault()
       startX = e.clientX
-      startWidth = width
+      startWidth = width ?? 460
       document.body.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
 
@@ -1360,7 +1463,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
 
   return (
-    <div ref={panelRef} style={{ ...styles.panel, width }}>
+    <div ref={panelRef} style={{ ...styles.panel, ...(pageMode ? styles.pagePanel : { width }) }}>
       {subagentView ? (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
@@ -1413,17 +1516,20 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           </div>
         </div>
       ) : (<>
-      <div
-        ref={resizeRef}
-        style={styles.resizeHandle}
-      />
+      {!pageMode && (
+        <div
+          ref={resizeRef}
+          style={styles.resizeHandle}
+        />
+      )}
       <PanelHeader
         title={sessionTitle || (selectedAgent ? selectedAgent.name : 'AI Agent')}
         onClose={onClose}
-        onMinimize={onMinimize}
-        onDock={onDock}
+        onMinimize={pageMode ? undefined : onMinimize}
+        onDock={pageMode ? undefined : onDock}
         docked={docked}
-        closeTitle="Close agent panel"
+        back={pageMode}
+        closeTitle={pageMode ? 'Back' : 'Close agent panel'}
         style={{ borderBottom: '1px solid var(--border)', flexShrink: 0 }}
       />
 
@@ -1432,27 +1538,13 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
           agentId={selectedAgent.id}
           onBack={() => setShowHistory(false)}
           onResumeSession={async (session) => {
-            closeWS()
-            setSessionId(session.id)
             setShowHistory(false)
-            resetMeterState()
-            try {
-              const msgs = await api.get<Array<{ id: string; role: string; content: string; reasoning_content?: string; image_ids?: string[]; duration_ms?: number; tokens_direct?: number; tokens_after?: number; created_at?: string }>>(`/api/v1/sessions/${session.id}/messages`)
-              const formatted = mapServerMessagesToChat(msgs)
-              setMessages(formatted)
-              if (formatted.some((m) => m.role === 'compaction')) setHasCompacted(true)
-              if (selectedAgent) {
-                saveChatState(selectedAgent.id, session.id, formatted, undefined)
-              }
-            } catch {
-              setMessages([])
-            }
-            setIsStreaming(false)
-            connectWebSocket(session.id)
+            await resumeSession(session.id)
           }}
         />
       ) : !selectedAgent ? (
         <div style={styles.agentSelect}>
+          {error && <div style={styles.empty}>{error}</div>}
           {isLoadingAgents ? (
             <div style={styles.loading}>
               <Loader2 size={20} style={{ animation: 'spin 1s linear infinite' }} />
@@ -1991,6 +2083,11 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: 0,
     position: 'relative',
     overflow: 'hidden',
+  },
+  pagePanel: {
+    width: '100%',
+    flex: 1,
+    borderLeft: 'none',
   },
   resizeHandle: {
     position: 'absolute',

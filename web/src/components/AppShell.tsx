@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, createContext, useContext } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, matchPath } from 'react-router-dom'
 import { Bot } from 'lucide-react'
 import { TopBar } from './TopBar'
 import { Sidebar } from './Sidebar'
@@ -93,6 +93,10 @@ export function AppShell({ children, noPadding }: Props) {
 
   const location = useLocation()
 
+  // The chat page renders its own full-page chat; a second (global) panel would
+  // fight it over singleton storage keys and the session WebSocket.
+  const isChatPage = matchPath('/chats/:id', location.pathname) !== null
+
   const currentPageContext = useMemo(() => {
     const path = location.pathname
     // /notebooks/:id — notebook page
@@ -131,6 +135,7 @@ export function AppShell({ children, noPadding }: Props) {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (isChatPage) return
       const tag = (e.target as HTMLElement).tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement).isContentEditable) return
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
@@ -141,19 +146,20 @@ export function AppShell({ children, noPadding }: Props) {
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [])
+  }, [isChatPage])
 
   // The notebook Chats drawer's "New chat" action opens the panel; the panel
   // itself listens for the same event to reset the session (and start a fresh
   // one attached to the current notebook when an agent is selected).
   useEffect(() => {
     const handler = () => {
+      if (isChatPage) return
       setShowGlobalAgent(true)
       setGlobalAgentMinimized(false)
     }
     window.addEventListener('aether:new-agent-chat', handler)
     return () => window.removeEventListener('aether:new-agent-chat', handler)
-  }, [])
+  }, [isChatPage])
 
   useEffect(() => {
     localStorage.setItem('aether:agentPanelWidth:__global__', String(globalAgentWidth))
@@ -170,7 +176,7 @@ export function AppShell({ children, noPadding }: Props) {
       <TopBar onShowShortcuts={() => setShowShortcuts(true)} />
       <div style={{
         ...styles.body,
-        ...(showGlobalAgent && !globalAgentMinimized && globalAgentDocked ? { paddingRight: globalAgentWidth } : {}),
+        ...(showGlobalAgent && !globalAgentMinimized && globalAgentDocked && !isChatPage ? { paddingRight: globalAgentWidth } : {}),
       }}>
         <Sidebar />
         <main id="main-content" style={{ ...styles.main, background: 'var(--bg-primary)', ...(noPadding ? { padding: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' } : {}) }}>
@@ -189,7 +195,7 @@ export function AppShell({ children, noPadding }: Props) {
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
 
       {/* Global Agent FAB (floating action button) */}
-      {!showGlobalAgent && (
+      {!isChatPage && !showGlobalAgent && (
         <button
           style={fabStyles.fab}
           onClick={() => { setShowGlobalAgent(true); setGlobalAgentMinimized(false) }}
@@ -200,7 +206,7 @@ export function AppShell({ children, noPadding }: Props) {
       )}
 
       {/* Single AgentPanel instance — never unmounts across dock/undock */}
-      {showGlobalAgent && !globalAgentMinimized && (
+      {!isChatPage && showGlobalAgent && !globalAgentMinimized && (
         <div style={globalAgentStyles.floatingWrapper}>
           <div style={{
             ...(globalAgentDocked ? globalAgentStyles.docked : globalAgentStyles.modal),
@@ -248,7 +254,7 @@ export function AppShell({ children, noPadding }: Props) {
       )}
 
       {/* Minimized agent bar */}
-      {showGlobalAgent && globalAgentMinimized && (
+      {!isChatPage && showGlobalAgent && globalAgentMinimized && (
         <div style={globalAgentStyles.minimizedBar} onClick={() => setGlobalAgentMinimized(false)}>
           <Bot size={16} />
           <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>AI Agent (minimized)</span>

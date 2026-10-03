@@ -525,3 +525,47 @@ describe('Session notebook inheritance', () => {
     expect(screen.queryByText(/Anyone who can view this notebook/i)).toBeNull()
   })
 })
+
+// ── Session chat link ───────────────────────────────────────────────────────
+
+describe('Session chat link', () => {
+  function renderSessionLinkPanel() {
+    server.use(
+      http.get('/api/v1/acl/agent_session/s-1', () => HttpResponse.json([])),
+    )
+    return renderPanel({
+      resourceType: 'agent_session',
+      resourceId: 's-1',
+      resourceName: 'Revenue analysis',
+    })
+  }
+
+  test('shows the absolute chat link', async () => {
+    renderSessionLinkPanel()
+    const input = await screen.findByLabelText('Chat link')
+    expect(input).toHaveValue(`${window.location.origin}/chats/s-1`)
+  })
+
+  test('copies the chat link to the clipboard', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+    renderSessionLinkPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: /copy chat link/i }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/chats/s-1`))
+    expect(await screen.findByText('Copied')).toBeInTheDocument()
+  })
+
+  test('selects the input instead of claiming success when the clipboard write fails', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'))
+    Object.assign(navigator, { clipboard: { writeText } })
+    renderSessionLinkPanel()
+
+    const input = (await screen.findByLabelText('Chat link')) as HTMLInputElement
+    fireEvent.click(await screen.findByRole('button', { name: /copy chat link/i }))
+    await waitFor(() => expect(writeText).toHaveBeenCalled())
+    expect(screen.queryByText('Copied')).toBeNull()
+    expect(input.selectionStart).toBe(0)
+    expect(input.selectionEnd).toBe(input.value.length)
+  })
+})

@@ -415,4 +415,17 @@ describe('SessionViewer', () => {
     expect(screen.getByText('fresh answer')).toBeInTheDocument()
     expect(screen.queryByText('stale answer')).toBeNull()
   })
+
+  it('renders as a page region with a Back affordance when page is set', async () => {
+    const onClose = vi.fn()
+    renderWithProviders(<SessionViewer sessionId="s1" page onClose={onClose} />)
+    await waitFor(() => expect(MockWebSocket.instances.length).toBeGreaterThan(0))
+    await screen.findByText('hello from owner')
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByRole('region', { name: 'Revenue analysis' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'Revenue analysis' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    expect(onClose).toHaveBeenCalled()
+  })
 })
