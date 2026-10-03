@@ -5,6 +5,7 @@ import { useAuth, useAuthProvider, AuthContext } from './hooks/useAuth'
 import { LoginPage } from './pages/LoginPage'
 import { OAuthConsentPage } from './pages/OAuthConsentPage'
 import { HomePage } from './pages/HomePage'
+import { ChatPage } from './pages/ChatPage'
 import { NotebookPage } from './pages/NotebookPage'
 import { ConnectorsPage } from './pages/ConnectorsPage'
 import { WarehouseSettingsPage } from './pages/WarehouseSettingsPage'
@@ -61,6 +62,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <NotebookPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/chats/:id"
+        element={
+          <ProtectedRoute>
+            <ChatPage />
           </ProtectedRoute>
         }
       />
