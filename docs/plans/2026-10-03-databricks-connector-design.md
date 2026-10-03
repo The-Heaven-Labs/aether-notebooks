@@ -109,7 +109,8 @@ Aether stores only the client ID/secret (AES-encrypted like a password).
 `internal/executor/databricks.go`:
 
 - **Construction:** validate conditional auth; normalize host; `sql.OpenDB`; bound `PingContext`
-  at 10 s (mirrors `postgresConnectTimeout`). Failure closes the handle.
+  at 10 s (mirrors `postgresConnectTimeout`). Failure closes the handle. The session timezone
+  is pinned to UTC so DATE/TIMESTAMP parsing is deterministic across warehouses.
 - **Execute:** identical shape to the other executors:
   1. `ResolveParams` (`{{param}}` substitution).
   2. Prepend `/* aether_user:<email> */` when `CtxUserEmail` is set (as Postgres/ClickHouse do).
@@ -174,7 +175,7 @@ postgres/clickhouse/opensearch round-trips.
   is unambiguous for the schema browser, allow/deny lists, and agents.
 - Catalog identifiers come from `SHOW CATALOGS` and are validated (`^[A-Za-z0-9_]+$`) before
   interpolation (identifiers cannot be parameterized).
-- Inaccessible catalogs are skipped; if every catalog fails, the last error surfaces.
+- Inaccessible catalogs are skipped; if every catalog fails, the first error surfaces.
 - Legacy non-`information_schema` workspaces are out of scope for v1: a `SHOW`/`DESCRIBE`
   fallback would be N+1 and column-poor; add later only if a real legacy workspace appears.
 

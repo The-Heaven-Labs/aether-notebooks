@@ -773,6 +773,7 @@ func TestValidateDatabricksConfig(t *testing.T) {
 func TestValidateDatabricksConfigDefaultsAndNormalization(t *testing.T) {
 	got, err := validateDatabricksConfig(databricksConfig{
 		Host: "https://dbc-abc.cloud.databricks.com/", HTTPPath: "/sql/1.0/warehouses/x",
+		Token: "t",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1421,6 +1422,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -1494,10 +1496,84 @@ func TestDatabricksLiveExecuteTypes(t *testing.T) {
 	if fmt.Sprint(rs.Rows[0][0]) != "1" {
 		t.Fatalf("SELECT 1 returned %v", rs.Rows[0][0])
 	}
-	if _, ok := rs.Rows[0][1].(string); !ok {
-		t.Fatalf("timestamp must normalize to a string, got %T", rs.Rows[0][1])
+	ts, ok := rs.Rows[0][1].(string)
+	if !ok || !strings.HasPrefix(ts, "2026-01-02T03:04:05") {
+		t.Fatalf("timestamp must normalize to an RFC3339 string, got %#v", rs.Rows[0][1])
+	}
+	if fmt.Sprint(rs.Rows[0][2]) != "12.34" {
+		t.Fatalf("decimal must be the exact string 12.34, got %#v", rs.Rows[0][2])
+	}
+	if arr, ok := rs.Rows[0][3].(string); !ok || !strings.Contains(arr, "1") || !strings.Contains(arr, "3") {
+		t.Fatalf("array must arrive as a JSON string, got %#v", rs.Rows[0][3])
+	}
+	for i, c := range rs.Columns {
+		if c.Type == "" || c.Type == "unknown" {
+			t.Fatalf("column %d (%s) has no driver-reported type", i, c.Name)
+		}
 	}
 	t.Logf("row: %#v", rs.Rows[0])
+}
+
+// Requires CREATE privileges in the configured catalog/schema.
+func TestDatabricksLiveCommandPath(t *testing.T) {
+	cfg, err := validateDatabricksConfig(liveDatabricksConfig(t))
+	if err != nil {
+		t.Fatalf("invalid live config: %v", err)
+	}
+	exec := openLiveDatabricks(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	table := fmt.Sprintf("aether_live_test_%d", time.Now().UnixNano())
+	if cfg.Catalog != "" && cfg.Schema != "" {
+		table = cfg.Catalog + "." + cfg.Schema + "." + table
+	}
+	for _, stmt := range []string{
+		fmt.Sprintf("CREATE TABLE %s (id INT, note STRING)", table),
+		fmt.Sprintf("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", table),
+	} {
+		if _, err := exec.Execute(ctx, stmt, nil, OutputLimits{}); err != nil {
+			t.Fatalf("command %q: %v", stmt, err)
+		}
+	}
+	t.Cleanup(func() {
+		dropCtx, dropCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer dropCancel()
+		if _, err := exec.Execute(dropCtx, "DROP TABLE IF EXISTS "+table, nil, OutputLimits{}); err != nil {
+			t.Logf("cleanup drop failed: %v", err)
+		}
+	})
+
+	rs, err := exec.Execute(ctx, "SELECT COUNT(*) FROM "+table, nil, OutputLimits{})
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if len(rs.Rows) != 1 || fmt.Sprint(rs.Rows[0][0]) != "2" {
+		t.Fatalf("expected 2 rows, got %#v", rs.Rows)
+	}
+}
+
+// Exercises multi-batch/CloudFetch retrieval across the driver's 100k-row fetch
+// boundary. Opt-in because it is slow.
+func TestDatabricksLiveLargeResult(t *testing.T) {
+	if os.Getenv("AETHER_TEST_DATABRICKS_BIG") == "" {
+		t.Skip("set AETHER_TEST_DATABRICKS_BIG=1 to run the large-result test")
+	}
+	exec := openLiveDatabricks(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	rs, err := exec.Execute(ctx, "SELECT id FROM range(150000)", nil, OutputLimits{})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if len(rs.Rows) != 150000 {
+		t.Fatalf("expected 150000 rows across fetch batches, got %d", len(rs.Rows))
+	}
+	first := fmt.Sprint(rs.Rows[0][0])
+	last := fmt.Sprint(rs.Rows[len(rs.Rows)-1][0])
+	if first != "0" || last != "149999" {
+		t.Fatalf("unexpected page-boundary values: first=%s last=%s", first, last)
+	}
 }
 
 func TestDatabricksLiveSchemaAndDatabases(t *testing.T) {
@@ -1541,6 +1617,7 @@ export AETHER_TEST_DATABRICKS_HTTP_PATH="/sql/1.0/warehouses/xxxxxxxx"
 export AETHER_TEST_DATABRICKS_TOKEN="dapi..."
 export AETHER_TEST_DATABRICKS_CATALOG="main"        # optional
 export AETHER_TEST_DATABRICKS_SCHEMA="default"      # optional
+export AETHER_TEST_DATABRICKS_BIG="1"               # optional: 150k-row pagination test
 go test ./internal/executor -run TestDatabricksLive -count=1 -timeout 3m -v
 ```
 
