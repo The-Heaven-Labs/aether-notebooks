@@ -555,4 +555,17 @@ describe('Session chat link', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/chats/s-1`))
     expect(await screen.findByText('Copied')).toBeInTheDocument()
   })
+
+  test('selects the input instead of claiming success when the clipboard write fails', async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'))
+    Object.assign(navigator, { clipboard: { writeText } })
+    renderSessionLinkPanel()
+
+    const input = (await screen.findByLabelText('Chat link')) as HTMLInputElement
+    fireEvent.click(await screen.findByRole('button', { name: /copy chat link/i }))
+    await waitFor(() => expect(writeText).toHaveBeenCalled())
+    expect(screen.queryByText('Copied')).toBeNull()
+    expect(input.selectionStart).toBe(0)
+    expect(input.selectionEnd).toBe(input.value.length)
+  })
 })

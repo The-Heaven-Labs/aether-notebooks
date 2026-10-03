@@ -399,9 +399,15 @@ export function PermissionsPanel({
   // Draft state for unsaved ACL changes
   const [draft, setDraft] = useState<AclEntry[] | null>(null)
 
+  // Transient "Copied" state for the session chat link.
+  const [linkCopied, setLinkCopied] = useState(false)
+  const chatLinkInputRef = useRef<HTMLInputElement | null>(null)
+  const linkCopiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   // Reset draft when resource changes
   useEffect(() => {
     setDraft(null)
+    setLinkCopied(false)
   }, [resourceId])
 
   // Local draft for new entry
@@ -414,7 +420,11 @@ export function PermissionsPanel({
   const [notebookValue, setNotebookValue] = useState<string>(sessionNotebookLink?.notebookId ?? '')
   const [notebookSaving, setNotebookSaving] = useState(false)
   const [notebookError, setNotebookError] = useState<string | null>(null)
-  const [linkCopied, setLinkCopied] = useState(false)
+
+  // Clear a pending "Copied" reset timer on unmount.
+  useEffect(() => () => {
+    if (linkCopiedTimerRef.current) clearTimeout(linkCopiedTimerRef.current)
+  }, [])
 
   // The parent's saved value is authoritative after each PATCH.
   useEffect(() => {
@@ -569,12 +579,15 @@ export function PermissionsPanel({
   async function handleCopyChatLink() {
     try {
       await navigator.clipboard.writeText(chatLinkUrl(resourceId))
+      setLinkCopied(true)
+      if (linkCopiedTimerRef.current) clearTimeout(linkCopiedTimerRef.current)
+      linkCopiedTimerRef.current = setTimeout(() => setLinkCopied(false), 1500)
     } catch {
-      // Clipboard access can be denied (e.g. non-secure context); the input
-      // stays selectable as a fallback.
+      // Clipboard API unavailable or denied (e.g. non-secure context): select
+      // the input so the user can press Ctrl/Cmd+C.
+      chatLinkInputRef.current?.focus()
+      chatLinkInputRef.current?.select()
     }
-    setLinkCopied(true)
-    setTimeout(() => setLinkCopied(false), 1500)
   }
 
   // ── Derived ──
@@ -657,6 +670,7 @@ export function PermissionsPanel({
                 <input
                   aria-label="Chat link"
                   readOnly
+                  ref={chatLinkInputRef}
                   value={chatLinkUrl(resourceId)}
                   onFocus={(e) => e.currentTarget.select()}
                   style={styles.chatLinkInput}
