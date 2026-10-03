@@ -44,6 +44,14 @@ const LAST_SESSION_KEY = 'aether:lastSessionId'
 const CHAT_STATE_KEY = 'aether:agentChat:'
 const DRAFT_KEY = 'aether:agentChatDraft:__global__'
 
+// Intentionally closed sockets must not trigger the reconnect loop. The flag
+// lives on the socket itself so a socket opened later still reconnects after a
+// drop (a shared sentinel used to suppress the new socket's onclose too).
+type ReconnectSuppressibleSocket = WebSocket & { __suppressReconnect?: boolean }
+function suppressSocketReconnect(ws: WebSocket | null) {
+  if (ws) (ws as ReconnectSuppressibleSocket).__suppressReconnect = true
+}
+
 // mergeTokenBreakdown applies a server token breakdown (token_update / done)
 // over the previous state with replace semantics: fields carried by the event
 // win, absent fields keep their previous value. `done` therefore never adds the
@@ -630,8 +638,12 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
   useEffect(() => {
     return () => {
-      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
       if (wsRef.current) {
+        suppressSocketReconnect(wsRef.current)
         wsRef.current.onclose = null
         wsRef.current.onerror = null
         wsRef.current.onmessage = null
@@ -704,11 +716,13 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     }
     return () => {
       sessionReqIdRef.current++ // invalidate any in-flight startSession
-      if (wsRef.current) {
-        reconnectTimerRef.current = setTimeout(() => {}, 0)
-        try { wsRef.current.close() } catch {}
-        wsRef.current = null
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
       }
+      suppressSocketReconnect(wsRef.current)
+      try { wsRef.current?.close() } catch {}
+      wsRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agents, isLoadingAgents, initialSessionId])
@@ -796,9 +810,14 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   }, [applyServerUsage])
 
   const connectWebSocket = useCallback((sid: string, opts?: { seedUsage?: boolean }) => {
-    // Close any existing connection, suppressing its reconnect logic
+    // A pending reconnect for a previous socket must not fire after this one.
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
+    // Close any existing connection, suppressing its reconnect logic.
     if (wsRef.current) {
-      reconnectTimerRef.current = setTimeout(() => {}, 0)
+      suppressSocketReconnect(wsRef.current)
       try { wsRef.current.close() } catch {}
       wsRef.current = null
     }
@@ -1030,6 +1049,8 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
 
     ws.onclose = () => {
       setWsConnected(false)
+      if ((ws as ReconnectSuppressibleSocket).__suppressReconnect) return
+      if (wsRef.current !== ws) return
       if (reconnectTimerRef.current) return
       wsRef.current = null
       if (reconnectAttemptsRef.current < 5) {
@@ -1132,9 +1153,12 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   }
 
   const closeWS = () => {
-    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
-    reconnectTimerRef.current = setTimeout(() => {}, 0) // non-null sentinel to suppress reconnect
-    wsRef.current?.close()
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
+    suppressSocketReconnect(wsRef.current)
+    try { wsRef.current?.close() } catch {}
     wsRef.current = null
   }
 

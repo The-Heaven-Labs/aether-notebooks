@@ -49,7 +49,13 @@ export async function startFakeLlm(): Promise<FakeLlm> {
   const { port } = server.address() as AddressInfo
   fakeLlm = {
     baseUrl: `http://127.0.0.1:${port}/v1`,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: () => new Promise<void>((resolve) => {
+      server.close(() => resolve())
+      // close() waits on keep-alive connections that never completed a request
+      // (the agent's idle pool can hold one); force them closed so afterAll
+      // does not hang.
+      server.closeAllConnections()
+    }),
   }
   return fakeLlm
 }

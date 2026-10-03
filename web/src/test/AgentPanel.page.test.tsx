@@ -180,4 +180,18 @@ describe('AgentPanel page mode', () => {
     expect(onSessionChange).not.toHaveBeenCalled()
     expect(MockWebSocket.instances).toHaveLength(0)
   })
+
+  it('reconnects after the resumed session WebSocket drops', async () => {
+    renderPagePanel()
+    await screen.findByText('hello from owner')
+    await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1))
+
+    const first = MockWebSocket.instances[0]
+    act(() => { first.onclose?.() })
+
+    // The first retry is scheduled after ~1s. Before the per-socket suppression
+    // fix, the shared sentinel suppressed this reconnect entirely.
+    await waitFor(() => expect(MockWebSocket.instances).toHaveLength(2), { timeout: 3000 })
+    expect(MockWebSocket.instances[1].url).toContain('/api/v1/ws/agents/s1')
+  })
 })
