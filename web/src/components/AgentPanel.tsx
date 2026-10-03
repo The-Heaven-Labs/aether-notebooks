@@ -825,7 +825,6 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     const adminParam = localStorage.getItem('aether_admin_mode') === 'true' ? '&admin_mode=true' : ''
     const ws = new WebSocket(WS_URL + sid + '?token=' + token + adminParam)
     wsRef.current = ws
-    reconnectAttemptsRef.current = 0
     lastSeqRef.current = 0
     setRetryNotice(null)
     // Brand-new sessions start empty (their first token_update carries usage),
@@ -833,6 +832,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     if (opts?.seedUsage !== false) loadSessionUsage(sid)
 
     ws.onopen = () => {
+        reconnectAttemptsRef.current = 0
         setWsConnected(true)
         const e = reasoningEffortRef.current
         if (e) { ws.send(JSON.stringify({ type: 'set_reasoning_effort', reasoning_effort: e })) }
@@ -1048,9 +1048,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       }
 
     ws.onclose = () => {
-      setWsConnected(false)
       if ((ws as ReconnectSuppressibleSocket).__suppressReconnect) return
       if (wsRef.current !== ws) return
+      setWsConnected(false)
       if (reconnectTimerRef.current) return
       wsRef.current = null
       if (reconnectAttemptsRef.current < 5) {
@@ -1058,6 +1058,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
         reconnectAttemptsRef.current += 1
         reconnectTimerRef.current = setTimeout(() => { reconnectTimerRef.current = null; connectWebSocket(sid) }, delay)
       } else {
+        reconnectAttemptsRef.current = 0
         clearChatState()
         if (selectedAgentRef.current) startSession(selectedAgentRef.current)
       }
@@ -1158,7 +1159,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       reconnectTimerRef.current = null
     }
     suppressSocketReconnect(wsRef.current)
-    try { wsRef.current?.close() } catch {}
+    try { wsRef.current?.close() } catch { /* already closed */ }
     wsRef.current = null
   }
 
