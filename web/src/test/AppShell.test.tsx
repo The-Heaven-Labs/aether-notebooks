@@ -23,4 +23,14 @@ describe('AppShell', () => {
     const skipLink = screen.getByText('Skip to content')
     expect(skipLink.className).toBe('skip-link')
   })
+
+  it('hides the global agent panel and FAB on chat pages', () => {
+    renderWithProviders(<AppShell><div>Page content</div></AppShell>, { initialPath: '/chats/s-1' })
+    expect(screen.queryByTitle('Open AI Agent (Ctrl+K)')).toBeNull()
+  })
+
+  it('shows the agent FAB away from chat pages', () => {
+    renderWithProviders(<AppShell><div>Page content</div></AppShell>, { initialPath: '/' })
+    expect(screen.getByTitle('Open AI Agent (Ctrl+K)')).toBeInTheDocument()
+  })
 })
