@@ -35,7 +35,7 @@ func (d *PostgresDriver) ConfigSchema() ConfigSchema {
 			{Name: "host", Type: "string", Required: true, Description: "Database host"},
 			{Name: "port", Type: "int", Required: true, Default: 5432, Description: "Database port"},
 			{Name: "user", Type: "string", Required: true, Description: "Database user"},
-			{Name: "password", Type: "string", Required: true, Description: "Database password"},
+			{Name: "password", Type: "string", Required: true, Secret: true, Description: "Postgres password"},
 			{Name: "database", Type: "string", Required: true, Description: "Database name"},
 			{Name: "ssl_mode", Type: "string", Required: false, Default: "disable", Description: "SSL mode (disable, require, verify-full)"},
 		},

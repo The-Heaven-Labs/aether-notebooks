@@ -25,7 +25,7 @@ func (d *OpenSearchDriver) ConfigSchema() ConfigSchema {
 			{Name: "host", Type: "string", Required: true, Description: "OpenSearch host"},
 			{Name: "port", Type: "int", Required: false, Default: 9200, Description: "OpenSearch port"},
 			{Name: "user", Type: "string", Required: false, Description: "Username (empty for unauthenticated)"},
-			{Name: "password", Type: "string", Required: false, Description: "Password (empty for unauthenticated)"},
+			{Name: "password", Type: "string", Required: false, Secret: true, Description: "Password (empty for unauthenticated)"},
 			{Name: "use_tls", Type: "bool", Required: false, Default: false, Description: "Use HTTPS"},
 		},
 	}

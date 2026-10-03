@@ -36,6 +36,8 @@ type ConfigField struct {
 	Required    bool
 	Default     interface{}
 	Description string
+	// Secret marks credential fields that must be masked in API responses.
+	Secret bool
 }
 
 var (
