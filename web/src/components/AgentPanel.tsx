@@ -648,7 +648,11 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   }, [pageContext])
 
   useEffect(() => {
-    if (!selectedAgent && agents.length > 0 && !isLoadingAgents && !initialSessionId) {
+    // Page mode owns its connection lifecycle via the initialSessionId effect;
+    // registering this cleanup would close the page's WebSocket on any agents
+    // reload with nothing to reconnect it.
+    if (initialSessionId) return
+    if (!selectedAgent && agents.length > 0 && !isLoadingAgents) {
       const savedState = loadChatState()
       const lastSessionId = localStorage.getItem(LAST_SESSION_KEY)
 
@@ -703,7 +707,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agents, isLoadingAgents])
+  }, [agents, isLoadingAgents, initialSessionId])
 
   // Page mode: the route owns the session id. Open it instead of the
   // localStorage restore path. ChatPage keeps the URL in sync afterwards, and
@@ -1050,6 +1054,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       setSelectedAgent(agent)
       localStorage.setItem(LAST_AGENT_KEY, agent.id)
       setMessages([])
+      setError(null)
       setTasks([])
       resetMeterState()
       setContextWindow(res.context_window ?? 0)
@@ -1094,6 +1099,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       const msgs = await api.get<Array<{ id: string; role: string; content: string; reasoning_content?: string; image_ids?: string[]; duration_ms?: number; tokens_direct?: number; tokens_after?: number; created_at?: string }>>(`/api/v1/sessions/${sid}/messages`)
       const formatted = mapServerMessagesToChat(msgs)
       setMessages(formatted)
+      setError(null)
       if (formatted.some((m) => m.role === 'compaction')) setHasCompacted(true)
       const aid = agentIdForSave ?? selectedAgentRef.current?.id
       if (aid) saveChatState(aid, sid, formatted, undefined)
@@ -1488,6 +1494,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
         />
       ) : !selectedAgent ? (
         <div style={styles.agentSelect}>
+          {error && <div style={styles.empty}>{error}</div>}
           {isLoadingAgents ? (
             <div style={styles.loading}>
               <Loader2 size={20} style={{ animation: 'spin 1s linear infinite' }} />

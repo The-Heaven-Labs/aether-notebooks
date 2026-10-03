@@ -91,10 +91,18 @@ describe('AgentPanel page mode', () => {
     renderPagePanel()
 
     expect(await screen.findByText('hello from owner')).toBeInTheDocument()
-    await waitFor(() => expect(MockWebSocket.instances.length).toBeGreaterThan(0))
-    const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1]
-    expect(ws.url).toContain('/api/v1/ws/agents/s1')
-    expect(ws.url).not.toContain('s-other')
+    await waitFor(() => expect(MockWebSocket.instances.length).toBe(1))
+    expect(MockWebSocket.instances[0].url).toContain('/api/v1/ws/agents/s1')
+    expect(MockWebSocket.instances.some((i) => i.url.includes('s-other'))).toBe(false)
     expect(localStorage.getItem('aether:lastSessionId')).toBe('s1')
+  })
+
+  it('shows the failure when the route session cannot be opened', async () => {
+    server.use(
+      http.get('/api/v1/sessions/s1', () => new HttpResponse(null, { status: 403 })),
+    )
+    renderPagePanel()
+
+    expect(await screen.findByText('Failed to open session')).toBeInTheDocument()
   })
 })
