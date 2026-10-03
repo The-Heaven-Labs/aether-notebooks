@@ -10374,7 +10374,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "config": {
-                    "$ref": "#/definitions/models.ConnectorConfig"
+                    "type": "object"
                 },
                 "created_at": {
                     "type": "string"
@@ -10426,40 +10426,19 @@ const docTemplate = `{
                 }
             }
         },
-        "models.ConnectorConfig": {
-            "type": "object",
-            "properties": {
-                "database": {
-                    "type": "string"
-                },
-                "host": {
-                    "type": "string"
-                },
-                "password": {
-                    "type": "string"
-                },
-                "port": {
-                    "type": "integer"
-                },
-                "ssl_mode": {
-                    "type": "string"
-                },
-                "user": {
-                    "type": "string"
-                }
-            }
-        },
         "models.ConnectorType": {
             "type": "string",
             "enum": [
                 "postgres",
                 "clickhouse",
-                "opensearch"
+                "opensearch",
+                "databricks"
             ],
             "x-enum-varnames": [
                 "ConnectorPostgres",
                 "ConnectorClickHouse",
-                "ConnectorOpenSearch"
+                "ConnectorOpenSearch",
+                "ConnectorDatabricks"
             ]
         },
         "models.Dashboard": {

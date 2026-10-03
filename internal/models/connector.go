@@ -10,7 +10,7 @@ type Connector struct {
 	OrgID          string          `json:"org_id"`
 	Name           string          `json:"name"`
 	Type           ConnectorType   `json:"type"`
-	Config         json.RawMessage `json:"config"`
+	Config         json.RawMessage `json:"config" swaggertype:"object"`
 	MaxRows        int             `json:"max_rows"`
 	TimeoutSeconds int             `json:"timeout_seconds"`
 	IsDefault      bool            `json:"is_default"`
