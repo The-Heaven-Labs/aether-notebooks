@@ -229,3 +229,60 @@ func TestCreateConnectorNullConfigDefaultsToEmpty(t *testing.T) {
 		t.Fatalf("null config: expected 201, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// The OpenSearch use_tls fix must survive get and update round-trips.
+func TestConnectorRawConfigRoundTrip(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("config-roundtrip-%d@example.com", ts)
+	token := registerAndGetToken(t, srv, email, "Roundtrip Org")
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name": "TLS OS", "type": "opensearch",
+		"config": map[string]interface{}{"host": "localhost", "use_tls": true},
+	})
+	req := httptest.NewRequest("POST", "/api/v1/connectors", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	var created map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&created)
+	connID := created["id"].(string)
+
+	// GET returns the driver-specific field.
+	req = httptest.NewRequest("GET", "/api/v1/connectors/"+connID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	var fetched map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&fetched)
+	if fetched["config"].(map[string]interface{})["use_tls"] != true {
+		t.Fatal("GET must return use_tls=true")
+	}
+
+	// Update toggles it off and preserves unknown behavior via key merge.
+	upd, _ := json.Marshal(map[string]interface{}{
+		"config": map[string]interface{}{"use_tls": false},
+	})
+	req = httptest.NewRequest("PUT", "/api/v1/connectors/"+connID, bytes.NewReader(upd))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
+	}
+	var updated map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&updated)
+	cfg := updated["config"].(map[string]interface{})
+	if cfg["use_tls"] != false {
+		t.Fatalf("update must set use_tls=false, got %v", cfg["use_tls"])
+	}
+	if cfg["host"] != "localhost" {
+		t.Fatalf("update must keep host, got %v", cfg["host"])
+	}
+}

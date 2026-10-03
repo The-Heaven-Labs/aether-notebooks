@@ -283,7 +283,8 @@ func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var orgID string
-	err := s.db.Pool.QueryRow(ctx, `SELECT org_id FROM connectors WHERE id=$1`, id).Scan(&orgID)
+	var connType models.ConnectorType
+	err := s.db.Pool.QueryRow(ctx, `SELECT org_id, type FROM connectors WHERE id=$1`, id).Scan(&orgID, &connType)
 	if err != nil || orgID != claims.OrgID {
 		writeError(w, http.StatusNotFound, "connector not found")
 		return
@@ -328,15 +329,17 @@ func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to parse config")
 			return
 		}
+		if !isJSONObject(req.Config) {
+			writeError(w, http.StatusBadRequest, "config must be a JSON object")
+			return
+		}
 		var incoming map[string]any
 		if err := json.Unmarshal(req.Config, &incoming); err != nil {
 			writeError(w, http.StatusBadRequest, "config must be a JSON object")
 			return
 		}
-		for k, v := range incoming {
-			existing[k] = v
-		}
-		configJSON, err := json.Marshal(existing)
+		merged := mergeConnectorConfig(existing, incoming, secretFieldSet(connType))
+		configJSON, err := json.Marshal(merged)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid config")
 			return
@@ -986,8 +989,31 @@ func secretFieldSet(connType models.ConnectorType) map[string]bool {
 	return keys
 }
 
-// maskedConnectorConfig decrypts a stored config and masks every field the
-// driver declares secret, returning a JSON object safe for API responses.
+// mergeConnectorConfig overlays incoming onto existing. Keys declared secret
+// (case-insensitively) whose incoming value is null, empty, or the API mask
+// "***" are skipped, so a secret can never be replaced by a placeholder; null
+// values never clear a field.
+func mergeConnectorConfig(existing, incoming map[string]any, secrets map[string]bool) map[string]any {
+	merged := make(map[string]any, len(existing))
+	for k, v := range existing {
+		merged[k] = v
+	}
+	for k, v := range incoming {
+		if v == nil {
+			continue
+		}
+		if secrets[strings.ToLower(k)] {
+			if s, ok := v.(string); ok && (s == "" || s == "***") {
+				continue
+			}
+		}
+		merged[k] = v
+	}
+	return merged
+}
+
+// maskedConnectorConfig decrypts a stored config and masks every secret key
+// (case-insensitively), returning a JSON object safe for API responses.
 func (s *Server) maskedConnectorConfig(connType models.ConnectorType, encrypted []byte) json.RawMessage {
 	plain, err := crypto.Decrypt(encrypted, s.masterKey)
 	if err != nil {
