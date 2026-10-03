@@ -452,10 +452,19 @@ export function SessionViewer({ sessionId, session: sessionSummary, onClose, pag
   const canEdit = session?.can_edit === true
 
   return (
-    <div style={styles.panel} role={page ? 'region' : 'dialog'} aria-label={page ? 'Agent chat' : 'Shared agent session'}>
+    <div
+      style={styles.panel}
+      role={page ? 'region' : 'dialog'}
+      aria-labelledby={page ? 'session-viewer-title' : undefined}
+      aria-label={page ? undefined : 'Shared agent session'}
+    >
       <div style={styles.header}>
         <div style={styles.headerText}>
-          <div style={styles.title} title={title}>{title}</div>
+          {page ? (
+            <h1 id="session-viewer-title" style={{ ...styles.title, margin: 0 }} title={title}>{title}</h1>
+          ) : (
+            <div style={styles.title} title={title}>{title}</div>
+          )}
           {ownerEmail && <div style={styles.owner} title={ownerEmail}>{ownerEmail}</div>}
         </div>
         {connected ? (

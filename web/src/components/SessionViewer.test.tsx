@@ -423,8 +423,9 @@ describe('SessionViewer', () => {
     await screen.findByText('hello from owner')
 
     expect(screen.queryByRole('dialog')).toBeNull()
-    expect(screen.getByRole('region', { name: 'Agent chat' })).toBeInTheDocument()
-    fireEvent.click(screen.getByTitle('Back'))
+    expect(screen.getByRole('region', { name: 'Revenue analysis' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'Revenue analysis' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
     expect(onClose).toHaveBeenCalled()
   })
 })
