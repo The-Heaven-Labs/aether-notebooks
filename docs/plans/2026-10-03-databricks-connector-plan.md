@@ -408,6 +408,32 @@ func TestMergeConnectorConfig(t *testing.T) {
 		t.Fatalf("masked secret must keep stored value, got %v", got["password"])
 	}
 
+	// A case-variant secret key is matched case-insensitively; an empty variant
+	// must not delete or shadow the canonical stored key.
+	got = mergeConnectorConfig(existing, map[string]any{"Password": ""}, secrets)
+	if got["Password"] == "" {
+		t.Fatal("case-variant empty secret must not be stored")
+	}
+	if got["password"] != "old" {
+		t.Fatalf("canonical stored secret must be preserved, got %v", got["password"])
+	}
+
+	// A case-variant real secret replaces the stored key instead of coexisting;
+	// Go's JSON decoding is case-insensitive and would otherwise read the stale key.
+	got = mergeConnectorConfig(existing, map[string]any{"Password": "new"}, secrets)
+	variants := 0
+	for k, v := range got {
+		if strings.EqualFold(k, "password") {
+			variants++
+			if v != "new" {
+				t.Fatalf("case-variant password must be replaced, got %v", v)
+			}
+		}
+	}
+	if variants != 1 {
+		t.Fatalf("expected exactly one password key, got %d: %v", variants, got)
+	}
+
 	// A real new secret wins.
 	got = mergeConnectorConfig(existing, map[string]any{"password": "new"}, secrets)
 	if got["password"] != "new" {
@@ -423,7 +449,7 @@ func TestMaskedConnectorConfig(t *testing.T) {
 	}
 	out := s.maskedConnectorConfig(models.ConnectorPostgres, enc)
 	var cfg map[string]any
-	if err := jsonUnmarshal(out, &cfg); err != nil {
+	if err := json.Unmarshal(out, &cfg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if cfg["password"] != "***" {
@@ -451,7 +477,7 @@ func TestSecretFieldSetIncludesFallbackAlongsideDeclared(t *testing.T) {
 }
 ```
 
-Add `jsonUnmarshal` — actually just use `encoding/json` directly; replace `jsonUnmarshal(out, &cfg)` with `json.Unmarshal(out, &cfg)` and import `"encoding/json"`.
+Use `encoding/json` directly (`json.Unmarshal(out, &cfg)`); the file imports `"encoding/json"` and `"strings"` (the latter for the case-variant assertions).
 
 Add to `internal/api/connector_handlers_test.go`:
 
@@ -514,6 +540,9 @@ func TestConnectorRawConfigRoundTrip(t *testing.T) {
 }
 ```
 
+Also add `TestUpdateConnectorKeepsStoredSecret` (review hardening): create a postgres connector via the `createConnector` helper, PUT `{"config":{"password":""}}` then `{"config":{"password":"***"}}`, and require `POST /connectors/{id}/test` to return `ok: true` — the saved-connector test authenticates with the stored credential, so it fails if the secret was clobbered.
+```
+
 **Step 2: Run tests to verify they fail**
 
 Run: `go test ./internal/api -run 'TestMergeConnectorConfig|TestMaskedConnectorConfig|TestSecretFieldSetFallsBackForUnknownDriver|TestConnectorRawConfigRoundTrip' -count=1 -timeout 3m -v`
@@ -539,6 +568,13 @@ func mergeConnectorConfig(existing, incoming map[string]any, secrets map[string]
 		if secrets[strings.ToLower(k)] {
 			if s, ok := v.(string); ok && (s == "" || s == "***") {
 				continue
+			}
+		}
+		// Drop any case-variant of the same key: JSON decoding is
+		// case-insensitive, so coexisting keys would let a stale value win.
+		for existingKey := range merged {
+			if existingKey != k && strings.EqualFold(existingKey, k) {
+				delete(merged, existingKey)
 			}
 		}
 		merged[k] = v
