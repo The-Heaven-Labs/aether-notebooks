@@ -70,8 +70,10 @@ export function ChatPage() {
         onClose={goBack}
       />
     )
-  } else {
+  } else if (session.id === id) {
     body = <SessionViewer sessionId={id!} session={session} page onClose={goBack} />
+  } else {
+    body = <div style={styles.state}><div style={styles.stateText}>Loading chat…</div></div>
   }
 
   return (

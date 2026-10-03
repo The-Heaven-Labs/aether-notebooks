@@ -194,4 +194,33 @@ describe('AgentPanel page mode', () => {
     await waitFor(() => expect(MockWebSocket.instances).toHaveLength(2), { timeout: 3000 })
     expect(MockWebSocket.instances[1].url).toContain('/api/v1/ws/agents/s1')
   })
+
+  it('keeps the deep link instead of starting a new chat when reconnects are exhausted', async () => {
+    const onSessionChange = vi.fn()
+    renderPagePanel({ onSessionChange })
+    await screen.findByText('hello from owner')
+    await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1))
+    expect(onSessionChange).toHaveBeenCalledTimes(1)
+    expect(onSessionChange).toHaveBeenLastCalledWith('s1')
+
+    vi.useFakeTimers()
+    try {
+      // Drop each retry socket and let its scheduled backoff fire: 1s, 2s,
+      // 4s, 8s, 15s. The sixth close exhausts the 5-attempt budget.
+      for (const delay of [1000, 2000, 4000, 8000, 15000]) {
+        const current = MockWebSocket.instances[MockWebSocket.instances.length - 1]
+        act(() => { current.onclose?.() })
+        await act(async () => { await vi.advanceTimersByTimeAsync(delay) })
+      }
+      const last = MockWebSocket.instances[MockWebSocket.instances.length - 1]
+      act(() => { last.onclose?.() })
+
+      expect(MockWebSocket.instances).toHaveLength(6)
+      expect(screen.getByText('Connection lost. Reload the page to reconnect.')).toBeInTheDocument()
+      // Page mode must not replace the deep-linked chat with a fresh session.
+      expect(onSessionChange).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

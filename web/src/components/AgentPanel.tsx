@@ -1060,12 +1060,24 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
       } else {
         reconnectAttemptsRef.current = 0
         clearChatState()
-        if (selectedAgentRef.current) startSession(selectedAgentRef.current)
+        if (pageMode) {
+          // Keep the deep link: a sustained outage must not silently replace
+          // the shared chat with a brand-new session.
+          setError('Connection lost. Reload the page to reconnect.')
+          setIsStreaming(false)
+        } else if (selectedAgentRef.current) {
+          startSession(selectedAgentRef.current)
+        }
       }
     }
 
-    ws.onerror = () => { setError('WebSocket connection failed'); setIsStreaming(false) }
-  }, [notebookId, queryClient, scrollToCell, loadSessionUsage])
+    ws.onerror = () => {
+      if ((ws as ReconnectSuppressibleSocket).__suppressReconnect) return
+      if (wsRef.current !== ws) return
+      setError('WebSocket connection failed')
+      setIsStreaming(false)
+    }
+  }, [notebookId, queryClient, scrollToCell, loadSessionUsage, pageMode])
 
   const startSession = async (agent: Agent) => {
     const reqId = ++sessionReqIdRef.current
