@@ -206,7 +206,7 @@ Add `"bytes"` to the imports. In `handleCreateConnector`, after the driver looku
 
 ```go
 	configJSON := req.Config
-	if len(configJSON) == 0 {
+	if len(configJSON) == 0 || bytes.Equal(bytes.TrimSpace(configJSON), []byte("null")) {
 		configJSON = json.RawMessage(`{}`)
 	}
 	if !isJSONObject(configJSON) {
@@ -246,28 +246,26 @@ func isJSONObject(raw json.RawMessage) bool {
 	return json.Unmarshal(trimmed, &obj) == nil
 }
 
-// secretFieldSet returns the config keys the driver's ConfigSchema declares as
-// secrets, falling back to a conservative default key list when the driver is
-// unknown or declares none.
+// secretFieldSet returns the lowercased config keys to mask: the union of the
+// driver's ConfigSchema secrets and a conservative default key list. The union
+// is always applied so a driver that declares one secret cannot leave another
+// credential-looking key unmasked, and keys are lowercased because Go's JSON
+// decoder matches struct fields case-insensitively (a "Password" key is consumed
+// by the driver even though its tag is "password").
 func secretFieldSet(connType models.ConnectorType) map[string]bool {
-	keys := map[string]bool{}
+	keys := map[string]bool{"password": true, "token": true, "client_secret": true}
 	if d, ok := executor.GetDriver(connType); ok {
 		for _, f := range d.ConfigSchema().Fields {
 			if f.Secret {
-				keys[f.Name] = true
+				keys[strings.ToLower(f.Name)] = true
 			}
-		}
-	}
-	if len(keys) == 0 {
-		for _, k := range []string{"password", "token", "client_secret"} {
-			keys[k] = true
 		}
 	}
 	return keys
 }
 
-// maskedConnectorConfig decrypts a stored config and masks every field the
-// driver declares secret, returning a JSON object safe for API responses.
+// maskedConnectorConfig decrypts a stored config and masks every secret key
+// (case-insensitively), returning a JSON object safe for API responses.
 func (s *Server) maskedConnectorConfig(connType models.ConnectorType, encrypted []byte) json.RawMessage {
 	plain, err := crypto.Decrypt(encrypted, s.masterKey)
 	if err != nil {
@@ -277,8 +275,9 @@ func (s *Server) maskedConnectorConfig(connType models.ConnectorType, encrypted 
 	if err := json.Unmarshal(plain, &cfg); err != nil {
 		return json.RawMessage(`{}`)
 	}
-	for k := range secretFieldSet(connType) {
-		if _, ok := cfg[k]; ok {
+	secrets := secretFieldSet(connType)
+	for k := range cfg {
+		if secrets[strings.ToLower(k)] {
 			cfg[k] = "***"
 		}
 	}
@@ -443,6 +442,13 @@ func TestSecretFieldSetFallsBackForUnknownDriver(t *testing.T) {
 		}
 	}
 }
+
+func TestSecretFieldSetIncludesFallbackAlongsideDeclared(t *testing.T) {
+	keys := secretFieldSet(models.ConnectorPostgres)
+	if !keys["password"] || !keys["token"] || !keys["client_secret"] {
+		t.Fatalf("expected union of declared and fallback secrets, got %v", keys)
+	}
+}
 ```
 
 Add `jsonUnmarshal` — actually just use `encoding/json` directly; replace `jsonUnmarshal(out, &cfg)` with `json.Unmarshal(out, &cfg)` and import `"encoding/json"`.
@@ -530,7 +536,7 @@ func mergeConnectorConfig(existing, incoming map[string]any, secrets map[string]
 		if v == nil {
 			continue
 		}
-		if secrets[k] {
+		if secrets[strings.ToLower(k)] {
 			if s, ok := v.(string); ok && (s == "" || s == "***") {
 				continue
 			}
