@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { Routes, Route } from 'react-router-dom'
 import { http, HttpResponse } from 'msw'
 import { ChatPage } from '../pages/ChatPage'
@@ -49,6 +49,7 @@ function renderChatPage(path = '/chats/s1') {
   return renderWithProviders(
     <Routes>
       <Route path="/chats/:id" element={<ChatPage />} />
+      <Route path="/" element={<div>Home page marker</div>} />
     </Routes>,
     { initialPath: path },
   )
@@ -114,5 +115,87 @@ describe('ChatPage', () => {
     renderChatPage()
 
     expect(await screen.findByText(/Chat not found or has been deleted/i)).toBeInTheDocument()
+  })
+
+  it('sends a fresh-tab Back to home instead of doing nothing', async () => {
+    server.use(
+      http.get('/api/v1/sessions/s1', () => HttpResponse.json(SESSION)),
+      http.get('/api/v1/sessions/s1/messages', () => HttpResponse.json(MESSAGES)),
+    )
+    renderChatPage()
+    await screen.findByText('hello from owner')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    expect(await screen.findByText('Home page marker')).toBeInTheDocument()
+  })
+
+  it('sets the document title from the session title', async () => {
+    server.use(
+      http.get('/api/v1/sessions/s1', () => HttpResponse.json(SESSION)),
+      http.get('/api/v1/sessions/s1/messages', () => HttpResponse.json(MESSAGES)),
+    )
+    renderChatPage()
+    await screen.findByText('hello from owner')
+
+    await waitFor(() => expect(document.title).toBe('Revenue analysis · Aether'))
+  })
+
+  it('shows a generic error state on 500', async () => {
+    server.use(
+      http.get('/api/v1/sessions/s1', () => new HttpResponse(null, { status: 500 })),
+    )
+    renderChatPage()
+
+    expect(await screen.findByText('Could not load this chat.')).toBeInTheDocument()
+  })
+
+  it('keeps the panel mounted while a newly started session resolves', async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let postCalled = false
+    let newSessionRequested = false
+    server.use(
+      http.get('/api/v1/sessions/s1', () => HttpResponse.json({ ...SESSION, can_edit: true })),
+      http.get('/api/v1/sessions/s1/messages', () => HttpResponse.json(MESSAGES)),
+      http.get('/api/v1/agents', () => HttpResponse.json([{
+        id: 'a1', org_id: 'org-1', name: 'Test Agent', skill_ids: [], tool_ids: [],
+        mcp_server_ids: [], mcp_servers: [], created_by: 'u1',
+        created_at: '2026-09-01T00:00:00Z', updated_at: '2026-09-01T00:00:00Z',
+      }])),
+      http.get('/api/v1/model-configs', () => HttpResponse.json([])),
+      http.get('/api/v1/agents/sessions/s1/usage', () => new HttpResponse(null, { status: 404 })),
+      http.post('/api/v1/agents/:id/session', () => {
+        postCalled = true
+        return HttpResponse.json({ session_id: 's-new' })
+      }),
+      http.get('/api/v1/sessions/s-new', async () => {
+        newSessionRequested = true
+        await gate
+        return HttpResponse.json({ ...SESSION, id: 's-new', can_edit: true })
+      }),
+      http.get('/api/v1/sessions/s-new/messages', () => HttpResponse.json([])),
+    )
+    renderChatPage()
+    await screen.findByPlaceholderText(/Message agent/)
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('aether:new-agent-chat'))
+    })
+    await waitFor(() => expect(postCalled).toBe(true))
+    await waitFor(() => expect(newSessionRequested).toBe(true))
+
+    // Flush pending state updates before asserting: if ChatPage cleared the
+    // session on route change, the loading state would commit by now.
+    await act(async () => {})
+
+    // The new session GET is still gated: the panel must not have been replaced
+    // by the loading state. Scope to the page region because AppShell's global
+    // panel (suppressed on chat routes in a later task) also renders an input.
+    expect(screen.queryByText('Loading chat…')).toBeNull()
+    const main = document.getElementById('main-content')
+    expect(main).not.toBeNull()
+    expect(within(main as HTMLElement).getByPlaceholderText(/Message agent/)).toBeInTheDocument()
+
+    act(() => { release() })
   })
 })

@@ -22,7 +22,6 @@ export function ChatPage() {
   useEffect(() => {
     if (!id) return
     let cancelled = false
-    setSession(null)
     setLoadError(null)
     api.get<AgentSession>(`/api/v1/sessions/${id}`)
       .then((s) => { if (!cancelled) setSession(s) })
@@ -38,6 +37,14 @@ export function ChatPage() {
   useEffect(() => {
     document.title = session?.title ? `${session.title} · Aether` : 'Chat · Aether'
   }, [session?.title])
+
+  // A deep link opened in a fresh tab has no history entry to return to;
+  // fall back to Home so the Back affordance is never a dead control.
+  const goBack = () => {
+    const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0
+    if (idx > 0) navigate(-1)
+    else navigate('/')
+  }
 
   let body: ReactNode
   if (loadError) {
@@ -60,11 +67,11 @@ export function ChatPage() {
         variant="page"
         initialSessionId={id}
         onSessionChange={(sid) => navigate(`/chats/${sid}`, { replace: true })}
-        onClose={() => navigate(-1)}
+        onClose={goBack}
       />
     )
   } else {
-    body = <SessionViewer sessionId={id!} session={session} page onClose={() => navigate(-1)} />
+    body = <SessionViewer sessionId={id!} session={session} page onClose={goBack} />
   }
 
   return (
