@@ -372,3 +372,61 @@ func TestTestConnectorConfigRejectsNonObject(t *testing.T) {
 		t.Fatalf("expected driver missing-host error for {}, got %q", errStr)
 	}
 }
+
+func TestDatabricksConnectorCRUDMasksSecrets(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("databricks-conn-%d@example.com", ts)
+	token := registerAndGetToken(t, srv, email, "Databricks Org")
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name": "DBX Prod", "type": "databricks",
+		"config": map[string]interface{}{
+			"host": "dbc-abc.cloud.databricks.com", "http_path": "/sql/1.0/warehouses/abc",
+			"auth_type": "pat", "token": "dapi-secret", "catalog": "main", "schema": "sales",
+		},
+	})
+	req := httptest.NewRequest("POST", "/api/v1/connectors", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	var created map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&created)
+	connID := created["id"].(string)
+	cfg := created["config"].(map[string]interface{})
+	if cfg["token"] != "***" {
+		t.Fatalf("expected masked token, got %v", cfg["token"])
+	}
+	if cfg["http_path"] != "/sql/1.0/warehouses/abc" || cfg["catalog"] != "main" {
+		t.Fatalf("expected non-secret fields preserved, got %v", cfg)
+	}
+	if _, leaked := cfg["client_secret"]; leaked {
+		t.Fatal("client_secret must not appear when unset")
+	}
+
+	// Update without credentials: empty token keeps the stored secret.
+	upd, _ := json.Marshal(map[string]interface{}{
+		"config": map[string]interface{}{"catalog": "analytics", "token": ""},
+	})
+	req = httptest.NewRequest("PUT", "/api/v1/connectors/"+connID, bytes.NewReader(upd))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
+	}
+	var updated map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&updated)
+	ucfg := updated["config"].(map[string]interface{})
+	if ucfg["catalog"] != "analytics" {
+		t.Fatalf("catalog not updated: %v", ucfg["catalog"])
+	}
+	if ucfg["token"] != "***" {
+		t.Fatalf("token must stay masked: %v", ucfg["token"])
+	}
+}
