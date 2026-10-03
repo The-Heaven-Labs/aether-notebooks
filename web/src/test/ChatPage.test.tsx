@@ -189,8 +189,8 @@ describe('ChatPage', () => {
     await act(async () => {})
 
     // The new session GET is still gated: the panel must not have been replaced
-    // by the loading state. Scope to the page region because AppShell's global
-    // panel (suppressed on chat routes in a later task) also renders an input.
+    // by the loading state. Scope to the page region defensively: AppShell now
+    // suppresses its global panel on chat routes, but the page owns this chat.
     expect(screen.queryByText('Loading chat…')).toBeNull()
     const main = document.getElementById('main-content')
     expect(main).not.toBeNull()

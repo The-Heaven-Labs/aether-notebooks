@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, createContext, useContext } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, matchPath } from 'react-router-dom'
 import { Bot } from 'lucide-react'
 import { TopBar } from './TopBar'
 import { Sidebar } from './Sidebar'
@@ -95,7 +95,7 @@ export function AppShell({ children, noPadding }: Props) {
 
   // The chat page renders its own full-page chat; a second (global) panel would
   // fight it over singleton storage keys and the session WebSocket.
-  const isChatPage = location.pathname.startsWith('/chats/')
+  const isChatPage = matchPath('/chats/:id', location.pathname) !== null
 
   const currentPageContext = useMemo(() => {
     const path = location.pathname
