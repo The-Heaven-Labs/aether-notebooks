@@ -237,4 +237,76 @@ describe('ConnectorsPage', () => {
       }),
     )
   })
+
+  test('editing a Databricks connector omits blank secrets on save (T-DBX-3)', async () => {
+    let putBody: { config?: Record<string, unknown> } | null = null
+    const stored = {
+      id: 'c-dbx-edit', name: 'DBX Edit', type: 'databricks', is_default: false,
+      config: {
+        host: 'dbc-x.cloud.databricks.com', http_path: '/sql/1.0/warehouses/abc',
+        auth_type: 'pat', token: '***', catalog: 'main', schema: 'sales',
+      },
+      created_at: '2026-01-01T00:00:00Z',
+    }
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json([stored])),
+      http.post('/api/v1/connectors/:id/test', () => HttpResponse.json({ ok: true })),
+      http.put('/api/v1/connectors/c-dbx-edit', async ({ request }) => {
+        putBody = (await request.json()) as { config?: Record<string, unknown> }
+        return HttpResponse.json({ ...stored, config: { ...stored.config, catalog: 'analytics' } })
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    fireEvent.click(await screen.findByText('Edit'))
+    // Blank secret is allowed while the auth type is unchanged.
+    expect(screen.getByText('Save')).not.toBeDisabled()
+    fireEvent.change(screen.getByLabelText('Catalog'), { target: { value: 'analytics' } })
+    fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() =>
+      expect(putBody?.config).toEqual({
+        host: 'dbc-x.cloud.databricks.com',
+        http_path: '/sql/1.0/warehouses/abc',
+        auth_type: 'pat',
+        catalog: 'analytics',
+        schema: 'sales',
+      }),
+    )
+  })
+
+  test('create Databricks connector stays disabled until required fields are set (T-DBX-4)', async () => {
+    server.use(http.get('/api/v1/connectors', () => HttpResponse.json([])))
+    renderWithProviders(<ConnectorsPage />)
+    fireEvent.click(await screen.findByText('+ New Connector'))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'DBX' } })
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'databricks' } })
+    expect(screen.getByText('Create')).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('Host'), { target: { value: 'dbc-x.cloud.databricks.com' } })
+    fireEvent.change(screen.getByLabelText('HTTP Path'), { target: { value: '/sql/1.0/warehouses/abc' } })
+    expect(screen.getByText('Create')).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('Token'), { target: { value: 'dapi-123' } })
+    expect(screen.getByText('Create')).not.toBeDisabled()
+  })
+
+  test('switching auth type on edit requires the new secret (T-DBX-5)', async () => {
+    const storedM2M = {
+      id: 'c-dbx-m2m', name: 'DBX M2M', type: 'databricks', is_default: false,
+      config: {
+        host: 'dbc-x.cloud.databricks.com', http_path: '/sql/1.0/warehouses/abc',
+        auth_type: 'oauth_m2m', client_id: 'sp-1', client_secret: '***', catalog: '', schema: '',
+      },
+      created_at: '2026-01-01T00:00:00Z',
+    }
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json([storedM2M])),
+      http.post('/api/v1/connectors/:id/test', () => HttpResponse.json({ ok: true })),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    fireEvent.click(await screen.findByText('Edit'))
+    expect(screen.getByText('Save')).not.toBeDisabled()
+    fireEvent.change(screen.getByLabelText('Auth Type'), { target: { value: 'pat' } })
+    expect(screen.getByText('Save')).toBeDisabled()
+    fireEvent.change(screen.getByLabelText(/^Token/), { target: { value: 'dapi-new' } })
+    expect(screen.getByText('Save')).not.toBeDisabled()
+  })
 })

@@ -37,6 +37,9 @@ interface ConnectorForm {
   client_secret: string
   catalog: string
   schema: string
+  /** Auth type loaded from the stored connector; '' when creating. Used to
+   * allow blank secrets only when the auth type is unchanged. */
+  stored_auth_type: DatabricksAuthType | ''
   is_default: boolean
   timeout_seconds: string
   table_allowlist: string
@@ -47,7 +50,7 @@ const defaultForm = (): ConnectorForm => ({
   name: '', type: 'postgres', host: 'localhost', port: '5432',
   database: '', user: '', password: '', ssl_mode: 'disable',
   use_tls: false, http_path: '', auth_type: 'pat', token: '',
-  client_id: '', client_secret: '', catalog: '', schema: '',
+  client_id: '', client_secret: '', catalog: '', schema: '', stored_auth_type: '',
   is_default: false, timeout_seconds: '0',
   table_allowlist: '', table_denylist: '',
 })
@@ -90,8 +93,11 @@ function connectorConfigComplete(f: ConnectorForm, forUpdate: boolean): boolean 
   if (f.type === 'postgres' && !f.database) return false
   if (f.type === 'databricks') {
     if (!f.http_path) return false
-    if (f.auth_type === 'pat') return forUpdate || f.token !== ''
-    return f.client_id !== '' && (forUpdate || f.client_secret !== '')
+    // A blank secret is only acceptable when the auth type is unchanged from
+    // the stored connector (the server keeps the stored secret in that case).
+    const sameStoredAuth = forUpdate && f.stored_auth_type === f.auth_type
+    if (f.auth_type === 'pat') return f.token !== '' || sameStoredAuth
+    return f.client_id !== '' && (f.client_secret !== '' || sameStoredAuth)
   }
   return true
 }
@@ -231,7 +237,10 @@ export function ConnectorsPage() {
           ssl_mode: c.config?.ssl_mode ?? 'disable',
           use_tls: c.config?.use_tls ?? false,
           http_path: c.config?.http_path ?? '',
-          auth_type: (c.config?.auth_type as DatabricksAuthType) ?? 'pat',
+          auth_type: c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat',
+          stored_auth_type: c.type === 'databricks'
+            ? (c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat')
+            : '',
           token: '',
           client_id: c.config?.client_id ?? '',
           client_secret: '',
@@ -666,7 +675,10 @@ export function ConnectorsPage() {
                         ssl_mode: c.config?.ssl_mode ?? 'disable',
                         use_tls: c.config?.use_tls ?? false,
                         http_path: c.config?.http_path ?? '',
-                        auth_type: (c.config?.auth_type as DatabricksAuthType) ?? 'pat',
+                        auth_type: c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat',
+                        stored_auth_type: c.type === 'databricks'
+                          ? (c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat')
+                          : '',
                         token: '',
                         client_id: c.config?.client_id ?? '',
                         client_secret: '',
