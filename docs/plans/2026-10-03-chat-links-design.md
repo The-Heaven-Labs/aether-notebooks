@@ -1,7 +1,7 @@
 # Chat Links — Shareable Standalone & Notebook Agent Chats — Design
 
 **Date:** 2026-10-03
-**Status:** Approved (schematics confirmed in brainstorming; ready for planning)
+**Status:** Implemented on `feat/chat-links` (approved; schematics confirmed in brainstorming)
 **Builds on:** `2026-09-11-agent-session-sharing-design.md` (session ACLs, notebook
 inheritance, read-only live viewer)
 
