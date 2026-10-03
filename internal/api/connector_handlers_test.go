@@ -326,3 +326,27 @@ func TestUpdateConnectorKeepsStoredSecret(t *testing.T) {
 		t.Fatalf("stored password was clobbered; connection test: %v", resp)
 	}
 }
+
+func TestTestConnectorConfigRejectsNonObject(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	token := registerAndGetToken(t, srv, fmt.Sprintf("test-cfg-%d@example.com", ts), "Test Cfg Org")
+
+	body, _ := json.Marshal(map[string]interface{}{"type": "opensearch", "config": "not-an-object"})
+	req := httptest.NewRequest("POST", "/api/v1/connectors/test", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 with ok=false, got %d", rec.Code)
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if resp["ok"] != false {
+		t.Fatalf("expected ok=false, got %v", resp)
+	}
+	if resp["error"] != "config must be a JSON object" {
+		t.Fatalf("expected object-validation error, got %v", resp)
+	}
+}

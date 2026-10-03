@@ -652,9 +652,12 @@ func (s *Server) handleTestConnectorConfig(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "unsupported connector type"})
 		return
 	}
-	configJSON, err := json.Marshal(req.Config)
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "invalid config"})
+	configJSON := req.Config
+	if len(configJSON) == 0 {
+		configJSON = json.RawMessage(`{}`)
+	}
+	if !isJSONObject(configJSON) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "config must be a JSON object"})
 		return
 	}
 	if err := driver.TestConfig(r.Context(), configJSON); err != nil {
