@@ -728,7 +728,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
         const agent = agents.find((a) => a.id === sess.agent_id)
         if (agent) setSelectedAgent(agent)
         localStorage.setItem(LAST_AGENT_KEY, sess.agent_id)
-        await resumeSession(initialSessionId, agent?.id ?? sess.agent_id)
+        await resumeSession(initialSessionId, agent?.id ?? sess.agent_id, () => !cancelled)
       } catch {
         if (!cancelled) setError('Failed to open session')
       }
@@ -1096,7 +1096,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
   // resumeSession opens an existing session by id: seed the transcript from
   // REST, then let the WS reconnect_sync take over. Shared by the history
   // resume action and the /chats/:id page.
-  const resumeSession = async (sid: string, agentIdForSave?: string) => {
+  const resumeSession = async (sid: string, agentIdForSave?: string, isActive?: () => boolean) => {
     closeWS()
     setSessionId(sid)
     resetMeterState()
@@ -1111,6 +1111,9 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
     } catch {
       setMessages([])
     }
+    // A superseded resume (route changed or panel unmounted) must not connect
+    // a WebSocket or fire onSessionChange — that would hijack navigation.
+    if (isActive && !isActive()) return
     setIsStreaming(false)
     connectWebSocket(sid)
     onSessionChange?.(sid)

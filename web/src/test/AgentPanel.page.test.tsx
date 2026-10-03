@@ -130,10 +130,54 @@ describe('AgentPanel page mode', () => {
     )
     await screen.findByText('hello from owner')
 
+    expect(onSessionChange).toHaveBeenNthCalledWith(1, 's1')
+
     act(() => {
       window.dispatchEvent(new CustomEvent('aether:new-agent-chat'))
     })
 
-    await waitFor(() => expect(onSessionChange).toHaveBeenCalledWith('s-new'))
+    await waitFor(() => expect(onSessionChange).toHaveBeenLastCalledWith('s-new'))
+  })
+
+  it('reports the forked session from a summarize slash result', async () => {
+    const onSessionChange = vi.fn()
+    renderPagePanel({ onSessionChange })
+    await screen.findByText('hello from owner')
+
+    const ws = MockWebSocket.instances[MockWebSocket.instances.length - 1]
+    act(() => {
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: 'slash_result',
+          command: 'summarize',
+          data: { session_id: 's-fork', summary: 'sum' },
+        }),
+      })
+    })
+
+    await waitFor(() => expect(onSessionChange).toHaveBeenCalledWith('s-fork'))
+  })
+
+  it('does not connect or navigate after unmount while the transcript is loading', async () => {
+    const onSessionChange = vi.fn()
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    let messagesRequested = false
+    server.use(
+      http.get('/api/v1/sessions/s1/messages', async () => {
+        messagesRequested = true
+        await gate
+        return HttpResponse.json(MESSAGES)
+      }),
+    )
+    const { unmount } = renderPagePanel({ onSessionChange })
+    await waitFor(() => expect(messagesRequested).toBe(true))
+
+    unmount()
+    release()
+    await new Promise((resolve) => setTimeout(resolve, 25))
+
+    expect(onSessionChange).not.toHaveBeenCalled()
+    expect(MockWebSocket.instances).toHaveLength(0)
   })
 })
