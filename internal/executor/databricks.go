@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -56,9 +58,11 @@ func validateDatabricksConfig(cfg databricksConfig) (databricksConfig, error) {
 	if cfg.Host == "" {
 		return cfg, fmt.Errorf("databricks host is required")
 	}
-	if strings.TrimSpace(cfg.HTTPPath) == "" {
+	cfg.HTTPPath = strings.TrimSpace(cfg.HTTPPath)
+	if cfg.HTTPPath == "" {
 		return cfg, fmt.Errorf("databricks http_path is required")
 	}
+	cfg.AuthType = strings.TrimSpace(cfg.AuthType)
 	if cfg.AuthType == "" {
 		cfg.AuthType = "pat"
 	}
@@ -88,6 +92,9 @@ func NewDatabricksExecutor(cfg databricksConfig) (*DatabricksExecutor, error) {
 		dbsql.WithServerHostname(cfg.Host),
 		dbsql.WithPort(cfg.Port),
 		dbsql.WithHTTPPath(cfg.HTTPPath),
+		// Pin the session timezone so DATE/TIMESTAMP values parse
+		// deterministically regardless of the warehouse's default.
+		dbsql.WithSessionParams(map[string]string{"timezone": "UTC"}),
 	}
 	if cfg.AuthType == "oauth_m2m" {
 		opts = append(opts, dbsql.WithClientCredentials(cfg.ClientID, cfg.ClientSecret))
@@ -235,7 +242,7 @@ func (d *DatabricksExecutor) schemaForCatalog(ctx context.Context, catalog strin
 		var schema, table, column, dtype string
 		var colComment, tableComment sql.NullString
 		if err := rows.Scan(&schema, &table, &column, &dtype, &colComment, &tableComment); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan: %w", err)
 		}
 		key := schema + "." + table
 		if _, ok := tableMap[key]; !ok {
@@ -268,6 +275,7 @@ func (d *DatabricksExecutor) Schema(ctx context.Context) (*SchemaInfo, error) {
 	var firstErr error
 	for _, catalog := range catalogs {
 		if !validDatabricksCatalogName(catalog) {
+			slog.Warn("skipping catalog with unsupported identifier characters", "catalog", catalog)
 			continue
 		}
 		catTables, err := d.schemaForCatalog(ctx, catalog)
@@ -307,6 +315,8 @@ func scanFirstColumnStrings(rows *sql.Rows) ([]string, error) {
 			continue
 		}
 		switch v := values[0].(type) {
+		case nil:
+			continue
 		case string:
 			out = append(out, v)
 		case []byte:
@@ -337,6 +347,7 @@ func (d *DatabricksExecutor) Databases(ctx context.Context) ([]string, error) {
 		}
 		dbs = append(dbs, name)
 	}
+	sort.Strings(dbs)
 	return dbs, nil
 }
 

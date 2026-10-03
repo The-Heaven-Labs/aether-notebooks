@@ -45,3 +45,17 @@ func TestValidDatabricksCatalogName(t *testing.T) {
 		t.Fatal("expected backticks and empty names to be rejected")
 	}
 }
+
+func TestNormalizeDatabricksHost(t *testing.T) {
+	cases := map[string]string{
+		"https://dbc-abc.cloud.databricks.com/": "dbc-abc.cloud.databricks.com",
+		"http://dbc-abc.cloud.databricks.com":   "dbc-abc.cloud.databricks.com",
+		"  dbc-abc.cloud.databricks.com  ":      "dbc-abc.cloud.databricks.com",
+		"dbc-abc.cloud.databricks.com":          "dbc-abc.cloud.databricks.com",
+	}
+	for in, want := range cases {
+		if got := normalizeDatabricksHost(in); got != want {
+			t.Errorf("normalizeDatabricksHost(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -73,3 +73,28 @@ func TestDatabricksDriver_NewExecutor_InvalidConfig(t *testing.T) {
 		t.Fatal("expected error for empty config")
 	}
 }
+
+func TestValidateDatabricksConfigM2MValid(t *testing.T) {
+	got, err := validateDatabricksConfig(databricksConfig{
+		Host: "h", HTTPPath: "/p", AuthType: "oauth_m2m",
+		ClientID: "id", ClientSecret: "secret",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.AuthType != "oauth_m2m" || got.Port != 443 {
+		t.Fatalf("unexpected normalized config: %+v", got)
+	}
+}
+
+func TestValidateDatabricksConfigTrimsWhitespace(t *testing.T) {
+	got, err := validateDatabricksConfig(databricksConfig{
+		Host: "h", HTTPPath: "  /sql/1.0/warehouses/x  ", AuthType: " pat ", Token: "t",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.HTTPPath != "/sql/1.0/warehouses/x" || got.AuthType != "pat" {
+		t.Fatalf("expected trimmed values, got %q / %q", got.HTTPPath, got.AuthType)
+	}
+}
