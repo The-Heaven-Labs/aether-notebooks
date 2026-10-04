@@ -1,0 +1,335 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-04T04:13:33.000Z",
+  "title": "Design System: Aether Notebooks",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Dusty Amethyst",
+        "canonical": "#7c6faa",
+        "dark": "#9b8fc4",
+        "tonalRamp": ["#0c071b", "#271f3f", "#443966", "#64578d", "#8578b3", "#a79cd3", "#cbc2f2", "#efe9ff"]
+      },
+      "accent-strong": {
+        "role": "primary",
+        "displayName": "Deep Amethyst",
+        "canonical": "#6a5e96",
+        "dark": "#b8a9d8",
+        "tonalRamp": ["#0c071b", "#271e40", "#443967", "#63578e", "#8479b0", "#a69dcd", "#cac4e9", "#efebff"]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Canvas",
+        "canonical": "#f5f5f5",
+        "dark": "#141414",
+        "tonalRamp": ["#0b0b0b", "#252525", "#424242", "#616161", "#828282", "#a5a5a5", "#c9c9c9", "#eeeeee"]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Panel",
+        "canonical": "#f9f9f9",
+        "dark": "#1c1c1c",
+        "tonalRamp": ["#0b0b0b", "#252525", "#424242", "#616161", "#828282", "#a5a5a5", "#c9c9c9", "#eeeeee"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Surface",
+        "canonical": "#ffffff",
+        "dark": "#1c1c1c",
+        "tonalRamp": ["#0b0b0b", "#252525", "#424242", "#616161", "#828282", "#a5a5a5", "#c9c9c9", "#eeeeee"]
+      },
+      "cell-code": {
+        "role": "neutral",
+        "displayName": "Code Tint",
+        "canonical": "#f7f7f7",
+        "dark": "#1e1e1e",
+        "tonalRamp": ["#0b0b0b", "#252525", "#424242", "#616161", "#828282", "#a5a5a5", "#c9c9c9", "#eeeeee"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#111111",
+        "dark": "#e8e8e8",
+        "tonalRamp": ["#0b0b0b", "#252525", "#424242", "#616161", "#828282", "#a5a5a5", "#c9c9c9", "#eeeeee"]
+      },
+      "ink-secondary": {
+        "role": "neutral",
+        "displayName": "Ink Secondary",
+        "canonical": "#555555",
+        "dark": "#aaaaaa",
+        "tonalRamp": ["#0b0b0b", "#252525", "#424242", "#616161", "#828282", "#a5a5a5", "#c9c9c9", "#eeeeee"]
+      },
+      "ink-muted": {
+        "role": "neutral",
+        "displayName": "Ink Muted",
+        "canonical": "#6e6e6e",
+        "dark": "#888888",
+        "tonalRamp": ["#0b0b0b", "#252525", "#424242", "#616161", "#828282", "#a5a5a5", "#c9c9c9", "#eeeeee"]
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#e8e8e8",
+        "dark": "#2e2e2e",
+        "tonalRamp": ["#0b0b0b", "#252525", "#424242", "#616161", "#828282", "#a5a5a5", "#c9c9c9", "#eeeeee"]
+      },
+      "hairline-light": {
+        "role": "neutral",
+        "displayName": "Hairline Light",
+        "canonical": "#efefef",
+        "dark": "#242424",
+        "tonalRamp": ["#0b0b0b", "#252525", "#424242", "#616161", "#828282", "#a5a5a5", "#c9c9c9", "#eeeeee"]
+      },
+      "chrome": {
+        "role": "neutral",
+        "displayName": "Chrome Black",
+        "canonical": "#1a1814",
+        "dark": "#0a0a0a",
+        "tonalRamp": ["#0d0b07", "#272521", "#44423d", "#63615d", "#84827e", "#a6a5a2", "#cac9c7", "#efeeed"]
+      },
+      "chrome-text": {
+        "role": "neutral",
+        "displayName": "Chrome Text",
+        "canonical": "#e8e4dc",
+        "dark": "#f0ece4",
+        "tonalRamp": ["#0c0b09", "#262522", "#44423e", "#63615c", "#85827c", "#a8a59e", "#ccc9c1", "#f2eee6"]
+      },
+      "chrome-muted": {
+        "role": "neutral",
+        "displayName": "Chrome Muted",
+        "canonical": "#9e9690",
+        "dark": "#9e9690",
+        "tonalRamp": ["#0d0b09", "#282421", "#46413d", "#66605b", "#88817b", "#aba39d", "#cfc7c2", "#f4ede8"]
+      },
+      "chrome-border": {
+        "role": "neutral",
+        "displayName": "Chrome Border",
+        "canonical": "#2e2a24",
+        "dark": "#1a1a1a",
+        "tonalRamp": ["#0e0b06", "#28241f", "#45413b", "#65615b", "#85827c", "#a7a4a0", "#cbc9c5", "#efeeec"]
+      },
+      "success": {
+        "role": "semantic",
+        "displayName": "Success Green",
+        "canonical": "#2e7d32",
+        "dark": "#4caf74",
+        "tonalRamp": ["#001100", "#003000", "#065110", "#25742a", "#4d964e", "#7ab779", "#a9d8a8", "#dbf8da"]
+      },
+      "danger": {
+        "role": "semantic",
+        "displayName": "Danger Red",
+        "canonical": "#b85c5c",
+        "dark": "#c97070",
+        "tonalRamp": ["#1d0103", "#441113", "#6d282a", "#974344", "#bf6362", "#e18987", "#ffb2af", "#ffddda"]
+      },
+      "danger-strong": {
+        "role": "semantic",
+        "displayName": "Danger Strong",
+        "canonical": "#c0392b",
+        "dark": "#ef5350",
+        "tonalRamp": ["#240000", "#510000", "#7f0903", "#ad291d", "#d45141", "#f37e6d", "#ffac9d", "#ffdcd0"]
+      },
+      "warning": {
+        "role": "semantic",
+        "displayName": "Warning Amber",
+        "canonical": "#b89a4a",
+        "dark": "#d4a84b",
+        "tonalRamp": ["#120900", "#312300", "#533f00", "#765e16", "#9b7f31", "#c0a252", "#e3c67d", "#ffecac"]
+      },
+      "logo-navy": {
+        "role": "brand",
+        "displayName": "Logo Navy",
+        "canonical": "#0b0f1a",
+        "tonalRamp": ["#070b15", "#202531", "#3d424e", "#5d616c", "#7e828c", "#a1a5ad", "#c6c9cf", "#edeef2"]
+      },
+      "chart-indigo": {
+        "role": "tertiary",
+        "displayName": "Series Indigo",
+        "canonical": "#6366f1",
+        "dark": "#818cf8",
+        "tonalRamp": ["#070031", "#1b1263", "#322d98", "#4c4bcb", "#696df8", "#8a95ff", "#b0beff", "#dae7ff"]
+      },
+      "chart-cyan": {
+        "role": "tertiary",
+        "displayName": "Series Cyan",
+        "canonical": "#06b6d4",
+        "dark": "#22d3ee",
+        "tonalRamp": ["#000f18", "#002d3b", "#004d60", "#006f87", "#0093af", "#10b8d6", "#5ddcf9", "#95ffff"]
+      },
+      "chart-emerald": {
+        "role": "tertiary",
+        "displayName": "Series Emerald",
+        "canonical": "#10b981",
+        "dark": "#34d399",
+        "tonalRamp": ["#001204", "#003118", "#005330", "#00774a", "#009c68", "#27c189", "#67e5ae", "#9effd6"]
+      },
+      "chart-amber": {
+        "role": "tertiary",
+        "displayName": "Series Amber",
+        "canonical": "#f59e0b",
+        "dark": "#fbbf24",
+        "tonalRamp": ["#1b0400", "#3f1900", "#673300", "#904f00", "#ba6e00", "#e48f00", "#ffb43d", "#ffdc77"]
+      },
+      "chart-rose": {
+        "role": "tertiary",
+        "displayName": "Series Rose",
+        "canonical": "#f43f5e",
+        "dark": "#fb7185",
+        "tonalRamp": ["#260001", "#54000c", "#840020", "#b50638", "#e53154", "#ff6076", "#ff909e", "#ffc1ca"]
+      },
+      "chart-violet": {
+        "role": "tertiary",
+        "displayName": "Series Violet",
+        "canonical": "#8b5cf6",
+        "dark": "#a78bfa",
+        "tonalRamp": ["#10002f", "#2c0561", "#4a1e94", "#6a3bc8", "#8b5df7", "#ac86ff", "#ceb1ff", "#f1ddff"]
+      },
+      "chart-sky": {
+        "role": "tertiary",
+        "displayName": "Series Sky",
+        "canonical": "#0ea5e9",
+        "dark": "#38bdf8",
+        "tonalRamp": ["#000d21", "#002949", "#004874", "#0069a1", "#008ccd", "#2cb1f5", "#68d6ff", "#9ffbff"]
+      },
+      "chart-lime": {
+        "role": "tertiary",
+        "displayName": "Series Lime",
+        "canonical": "#84cc16",
+        "dark": "#a3e635",
+        "tonalRamp": ["#011000", "#0f2e00", "#244f00", "#3d7200", "#589700", "#76bc00", "#9ae242", "#c3ff7b"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Login brand title only; the one place type is allowed to be large." },
+      "headline": { "displayName": "Headline", "purpose": "Page titles in headers and list views." },
+      "title": { "displayName": "Title", "purpose": "Section headings, modal titles, empty-state titles; card titles step down to 15px/600-700." },
+      "body": { "displayName": "Body", "purpose": "Interface copy and form text; secondary copy 13px, metadata 12px." },
+      "label": { "displayName": "Instrument Label", "purpose": "Uppercase tracked mono for badges, counts, column types, sidebar section headers." },
+      "code": { "displayName": "Code / Data", "purpose": "Cell code, result tables, connectors, identifiers, measurement footers." }
+    },
+    "shadows": [
+      { "name": "floating-mid", "value": "0 2px 16px rgba(0,0,0,0.10)", "purpose": "Dropdown menus, modals, profile menu. Dark mode: 0 2px 16px rgba(0,0,0,0.4)." },
+      { "name": "floating-large", "value": "0 8px 32px rgba(0,0,0,0.18)", "purpose": "Large overlays and drawers. Dark mode: 0 8px 32px rgba(0,0,0,0.5)." },
+      { "name": "scrim", "value": "rgba(0,0,0,0.35)", "purpose": "Modal overlay dim. Dark mode: rgba(0,0,0,0.6); drawers use rgba(0,0,0,0.3). No backdrop blur." }
+    ],
+    "motion": [
+      { "name": "state-change", "value": "0.15s ease", "purpose": "Hover/active shifts on buttons, icons, cards, nav items; hover is an opacity or background change, never scale." },
+      { "name": "layout-change", "value": "0.2s ease", "purpose": "Sidebar width collapse/expand and theme background fades." },
+      { "name": "cell-flash", "value": "1.5s ease-out", "purpose": "One-shot pulse highlighting a cell that the agent or a collaborator updated." }
+    ],
+    "breakpoints": [
+      { "name": "mobile", "value": "767px" },
+      { "name": "compact", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single saturated action on a surface; fills with Deep Amethyst (inverts to pale lavender in dark mode).",
+      "html": "<button class=\"ds-btn-primary\">New Notebook</button>",
+      "css": ".ds-btn-primary { background: var(--button-primary-bg, #6a5e96); color: var(--button-primary-text, #ffffff); border: none; border-radius: 6px; padding: 8px 18px; font-family: 'DM Sans', -apple-system, sans-serif; font-size: 13px; font-weight: 600; letter-spacing: 0.01em; cursor: pointer; transition: opacity 0.15s ease; } .ds-btn-primary:hover { opacity: 0.9; } .ds-btn-primary:active { opacity: 0.8; } .ds-btn-primary:focus-visible { outline: 2px solid var(--accent, #7c6faa); outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Hairline-bordered, transparent action for cancel/utility; hover fills with the panel tone.",
+      "html": "<button class=\"ds-btn-secondary\">Cancel</button>",
+      "css": ".ds-btn-secondary { background: transparent; color: var(--text-secondary, #555555); border: 1px solid var(--border, #e8e8e8); border-radius: 6px; padding: 8px 16px; font-family: 'DM Sans', -apple-system, sans-serif; font-size: 13px; cursor: pointer; transition: background 0.15s ease, color 0.15s ease; } .ds-btn-secondary:hover { background: var(--bg-secondary, #f9f9f9); color: var(--text-primary, #111111); } .ds-btn-secondary:focus-visible { outline: 2px solid var(--accent, #7c6faa); outline-offset: 2px; }"
+    },
+    {
+      "name": "Icon Button",
+      "kind": "button",
+      "refersTo": "button-icon",
+      "description": "Compact 4px-radius toolbar control used across cell meta bars and panels.",
+      "html": "<button class=\"ds-btn-icon\" aria-label=\"Duplicate cell\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"14\" height=\"14\" x=\"8\" y=\"8\" rx=\"2\" ry=\"2\"/><path d=\"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2\"/></svg></button>",
+      "css": ".ds-btn-icon { display: inline-flex; align-items: center; justify-content: center; padding: 3px 7px; background: transparent; color: var(--text-secondary, #555555); border: 1px solid var(--border, #e8e8e8); border-radius: 4px; cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease; } .ds-btn-icon:hover { background: var(--bg-secondary, #f9f9f9); } .ds-btn-icon:focus-visible { outline: 2px solid var(--accent, #7c6faa); outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "Hairline-bordered text input; focus is the global 2px amethyst outline, never a glow.",
+      "html": "<input class=\"ds-field\" type=\"text\" placeholder=\"Search by name...\" />",
+      "css": ".ds-field { padding: 8px 12px; background: var(--bg-primary, #f5f5f5); color: var(--text-primary, #111111); border: 1px solid var(--border, #e8e8e8); border-radius: 6px; font-family: 'DM Sans', -apple-system, sans-serif; font-size: 14px; outline: none; } .ds-field::placeholder { color: var(--text-secondary, #555555); } .ds-field:focus-visible { outline: 2px solid var(--accent, #7c6faa); outline-offset: 2px; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Flat white surface, 1px hairline, 4px radius, no resting shadow.",
+      "html": "<div class=\"ds-card\"><p class=\"ds-card-title\">Analytics Demo</p><p class=\"ds-card-meta\">Admin &middot; 28 Jun 2026, 23:04</p></div>",
+      "css": ".ds-card { background: var(--bg-card, #ffffff); border: 1px solid var(--border, #e8e8e8); border-radius: 4px; padding: 24px; font-family: 'DM Sans', -apple-system, sans-serif; } .ds-card-title { margin: 0 0 6px; font-size: 15px; font-weight: 700; color: var(--text-primary, #111111); } .ds-card-meta { margin: 0; font-size: 12px; color: var(--text-muted, #6e6e6e); }"
+    },
+    {
+      "name": "Type Badge",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Instrument-label chip marking cell and column types; 10px uppercase mono on a canvas fill.",
+      "html": "<span class=\"ds-chip\">SQL</span>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; padding: 1px 5px; background: var(--bg-primary, #f5f5f5); color: var(--text-secondary, #555555); border: 1px solid var(--border-light, #efefef); border-radius: 4px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }"
+    },
+    {
+      "name": "Sidebar Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "The darkest surface in the system; active item marked with a canvas-tinted background and amethyst text.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-item ds-nav-item-active\" href=\"#\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 7v14\"/><path d=\"M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z\"/></svg>Files</a><a class=\"ds-nav-item\" href=\"#\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"7\" height=\"9\" x=\"3\" y=\"3\" rx=\"1\"/><rect width=\"7\" height=\"5\" x=\"14\" y=\"3\" rx=\"1\"/><rect width=\"7\" height=\"9\" x=\"14\" y=\"12\" rx=\"1\"/><rect width=\"7\" height=\"5\" x=\"3\" y=\"16\" rx=\"1\"/></svg>Dashboards</a></nav>",
+      "css": ".ds-nav { display: flex; flex-direction: column; gap: 2px; width: 200px; padding: 8px; background: var(--nav-bg, #1a1814); border-radius: 4px; font-family: 'DM Sans', -apple-system, sans-serif; } .ds-nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 6px; color: var(--nav-text-muted, #9e9690); font-size: 13px; font-weight: 500; text-decoration: none; transition: background 0.15s ease, color 0.15s ease; } .ds-nav-item:hover { background: rgba(255, 255, 255, 0.05); color: var(--nav-text, #e8e4dc); } .ds-nav-item-active { background: var(--accent-light, #f5f5f5); color: var(--accent, #7c6faa); } .ds-nav-item svg { width: 18px; height: 18px; flex-shrink: 0; }"
+    },
+    {
+      "name": "Modal",
+      "kind": "custom",
+      "refersTo": "card",
+      "description": "Floating dialog: 4px radius, hairline border, and the only surfaces allowed a shadow.",
+      "html": "<div class=\"ds-modal\"><div class=\"ds-modal-header\"><span class=\"ds-modal-title\">Permissions</span></div><div class=\"ds-modal-body\">Manage who can view, run, and edit this notebook.</div></div>",
+      "css": ".ds-modal { width: 400px; background: var(--bg-card, #ffffff); border: 1px solid var(--border, #e8e8e8); border-radius: 4px; box-shadow: 0 2px 16px rgba(0, 0, 0, 0.10); overflow: hidden; font-family: 'DM Sans', -apple-system, sans-serif; } .ds-modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border, #e8e8e8); } .ds-modal-title { font-size: 15px; font-weight: 700; color: var(--text-primary, #111111); } .ds-modal-body { padding: 16px 20px; font-size: 13px; color: var(--text-secondary, #555555); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Observatory",
+    "overview": "Aether is a place from which people watch data move. The frame is a warm near-black — the 52px top bar and the left rail (#1a1814) — like the sky before the instruments come online. Inside it, the working surface glows like an illuminated desk: a near-white canvas (#f5f5f5), white cells, hairline rules, and data written in mono. The metaphor does real work: because the chrome is the darkest thing on screen, surfaces never need shadows to feel separated from it.\n\nThe mood is calm precision. One muted amethyst voice (#7c6faa) speaks for interactivity against an otherwise neutral system; data gets the only other chromatic outlets — status colors and the eight-series chart palette. Structure is drawn with 1px hairlines (#e8e8e8, #efefef) and small background tone shifts, not gradients or glass. State changes are brief and quiet (0.15s opacity and background shifts); nothing bounces, glows, or scales. Density is deliberate: data surfaces are tight (13px mono, 32px meta bars, 7px row padding), while the outer frame is generous (32px canvas padding), so the instrument reads as uncluttered even when a notebook does not.\n\nThe confirmed anti-reference is the generic gradient SaaS look: glassy panels, neon gradients, floating blobs, and decorative glow. Aether's restraint — flat surfaces, hairlines, one accent — is the identity, not a starting point to embellish. Dark mode does not invert the philosophy; it deepens the frame to #0a0a0a and lifts the accent to a pale amethyst (#9b8fc4) so the same calm survives on black.",
+    "keyCharacteristics": [
+      "Dark warm frame (top bar + rail) against a light canvas — the signature contrast; near-black on near-black in dark mode.",
+      "A single Dusty Amethyst accent; everything non-interactive stays neutral.",
+      "Flat surfaces at rest, 1px hairlines for structure, shadows only on floating layers.",
+      "DM Sans for humans; JetBrains Mono for data, identifiers, counts, and micro-labels.",
+      "Instrument-label typography: 10–11px uppercase tracked mono for badges and metadata.",
+      "Electric indigo (#6366f1) confined to the logo mark and the chart series.",
+      "Compact, monospace-led data surfaces inside a roomy 32px canvas."
+    ],
+    "rules": [
+      { "name": "The One Voice Rule", "body": "The Dusty Amethyst accent covers at most ~10% of any screen. Its rarity is what makes it read as \"interactive\"; when everything is purple, nothing is.", "section": "colors" },
+      { "name": "The Dark Frame Rule", "body": "The navigation chrome is always the darkest surface in view — #1a1814 in light mode, #0a0a0a in dark. The workspace is never darker than its frame.", "section": "colors" },
+      { "name": "The Electric-Indigo Rule", "body": "#6366f1 belongs to the mark and the chart series. It is never a button, link, or focus color; that is the amethyst family's job.", "section": "colors" },
+      { "name": "The Two Scripts Rule", "body": "If a human reads it as language, it is DM Sans. If it is code, data, an identifier, a count, or an instrument marking, it is JetBrains Mono. Never mix: no mono body copy, no sans code.", "section": "typography" },
+      { "name": "The Instrument Label Rule", "body": "Micro-labels are engraved, not spoken: 10–11px, uppercase, letter-spaced mono. They label instruments (badges, counts, types) and never form sentences.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "Surfaces are flat at rest. A shadow appears only when an element genuinely floats above the page — menu, modal, drawer. If it is inline, it gets a hairline, never a shadow.", "section": "elevation" },
+      { "name": "The Three-Radius Rule", "body": "Contained surfaces 4px, controls 6px, floating layers 8px. 3px is for micro elements and 10px for pills; anything else is drift, not a decision.", "section": "shapes" },
+      { "name": "The Hairline Rule", "body": "Adjacent surfaces are separated by a 1px hairline in --border / --border-light. Never replace a hairline with a shadow, and never stack border + shadow on the same resting edge.", "section": "shapes" }
+    ],
+    "dos": [
+      "Do keep the frame dark and the workspace light: chrome stays on #1a1814 (light) / #0a0a0a (dark) while content surfaces stay #ffffff / #f5f5f5 (dark: #1c1c1c–#141414).",
+      "Do separate surfaces with 1px --border / --border-light hairlines and background tone shifts; shadows are for menus, modals, and drawers only.",
+      "Do use the Dusty Amethyst family for every interactive element — links, active nav, primary buttons, focus rings, drag placeholders — and keep it to roughly ≤10% of a screen.",
+      "Do set data and identifiers in JetBrains Mono (13px) and instrument markings as 10–11px uppercase tracked labels; keep everything human in DM Sans.",
+      "Do stay on the radius scale: 4px contained surfaces, 6px controls, 8px floating layers, 3px micro, 10px pills, 50% avatars.",
+      "Do keep state changes to 0.15s ease (0.2s for layout) and express hover as an opacity or background shift.",
+      "Do keep focus visible everywhere: 2px amethyst outline, 2px offset, on every interactive element.",
+      "Do use the chart series palette in order for data, and semantic washes (tint + border + dark text) for status banners."
+    ],
+    "donts": [
+      "Don't introduce gradient panels, glassmorphism, neon glow, or decorative blobs — confirmed anti-reference; flat + hairline is the identity.",
+      "Don't use electric indigo #6366f1 for buttons, links, or focus states; it belongs to the mark and the chart series.",
+      "Don't add a new radius per component: no rounded-full buttons, no 10px cards \"because they look softer\". The observed 10px in panels like WarehouseTableGrants is drift, not precedent.",
+      "Don't give resting cards or cells a shadow, and don't replace a structural hairline with one.",
+      "Don't animate state changes longer than 0.2s or use scale/bounce/spring effects on hover.",
+      "Don't use off-palette colors for state feedback (the #3b82f6 blue in the cell-flash keyframe is legacy drift — use the amethyst family).",
+      "Don't mix scripts: no mono prose, no sans code, no serif in the interface.",
+      "Don't fill status badges with color; state status with colored text + icon, and reserve washes for message surfaces."
+    ]
+  }
+}
