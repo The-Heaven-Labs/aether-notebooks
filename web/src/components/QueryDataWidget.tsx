@@ -191,7 +191,8 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, refreshN
       </button>
       {fetchedAt && (
         <span style={styles.footerText}>
-          Executed {fetchedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          {/* Same date + time format as the cell widgets' "Executed at". */}
+          Executed at {fetchedAt.toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })} {fetchedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
           {data?.cached && <span> · cached</span>}
           {data?.metrics?.query_time_ms != null && <span> · {data.metrics.query_time_ms}ms</span>}
         </span>
