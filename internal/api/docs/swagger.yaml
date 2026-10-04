@@ -379,7 +379,7 @@ definitions:
   models.Connector:
     properties:
       config:
-        $ref: '#/definitions/models.ConnectorConfig'
+        type: object
       created_at:
         type: string
       deleted_at:
@@ -413,31 +413,18 @@ definitions:
       warehouse_id:
         type: string
     type: object
-  models.ConnectorConfig:
-    properties:
-      database:
-        type: string
-      host:
-        type: string
-      password:
-        type: string
-      port:
-        type: integer
-      ssl_mode:
-        type: string
-      user:
-        type: string
-    type: object
   models.ConnectorType:
     enum:
     - postgres
     - clickhouse
     - opensearch
+    - databricks
     type: string
     x-enum-varnames:
     - ConnectorPostgres
     - ConnectorClickHouse
     - ConnectorOpenSearch
+    - ConnectorDatabricks
   models.Dashboard:
     properties:
       created_at:

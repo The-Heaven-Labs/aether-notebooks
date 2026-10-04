@@ -5,7 +5,7 @@ import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock
 import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, history } from '@codemirror/commands'
-import { sql, PostgreSQL, MySQL } from '@codemirror/lang-sql'
+import { sql, PostgreSQL, MySQL, StandardSQL } from '@codemirror/lang-sql'
 import { javascript } from '@codemirror/lang-javascript'
 import { syntaxHighlighting } from '@codemirror/language'
 import { format } from 'sql-formatter'
@@ -217,6 +217,7 @@ function languageExtension(cell: APICell, connector?: Connector) {
   const connType = connector?.type
   if (connType === 'clickhouse') return sql({ dialect: MySQL })
   if (connType === 'postgres') return sql({ dialect: PostgreSQL })
+  if (connType === 'databricks') return sql({ dialect: StandardSQL })
   // Default: MySQL dialect covers a broad set of keywords including SHOW, TABLES, etc.
   return sql({ dialect: MySQL })
 }

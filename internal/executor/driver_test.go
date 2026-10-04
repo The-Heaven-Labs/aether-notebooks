@@ -49,6 +49,33 @@ func TestGetDriver_NotFound(t *testing.T) {
 	}
 }
 
+func TestSecretFieldsDeclared(t *testing.T) {
+	cases := []struct {
+		name   string
+		driver ConnectorDriver
+		secret string
+	}{
+		{"postgres", &PostgresDriver{}, "password"},
+		{"clickhouse", &ClickHouseDriver{}, "password"},
+		{"opensearch", &OpenSearchDriver{}, "password"},
+		{"databricks token", &DatabricksDriver{}, "token"},
+		{"databricks client_secret", &DatabricksDriver{}, "client_secret"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, f := range tc.driver.ConfigSchema().Fields {
+				if f.Name == tc.secret {
+					if !f.Secret {
+						t.Fatalf("%s.%s must be marked Secret", tc.name, tc.secret)
+					}
+					return
+				}
+			}
+			t.Fatalf("%s: field %q not found in schema", tc.name, tc.secret)
+		})
+	}
+}
+
 // mockDriver is a minimal implementation for testing the registry
 type mockDriver struct {
 	typ models.ConnectorType

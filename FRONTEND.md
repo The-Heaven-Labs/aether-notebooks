@@ -547,13 +547,13 @@ See also: `DashboardEditorPage.tsx` for the dedicated editor.
 **Purpose**: Manage database connections
 
 **Visual**:
-- List of connectors, each showing: Name, Type (Postgres/ClickHouse/JS), database name, status
+- List of connectors, each showing: Name, Type (Postgres/ClickHouse/OpenSearch/Databricks), database name, status
 - "New Connector" button
 - Edit/Delete actions per connector
 
 **Form**:
 - Name input
-- Type dropdown (Postgres, ClickHouse, JavaScript)
+- Type dropdown (Postgres, ClickHouse, OpenSearch, Databricks)
 - Connection details (host, port, database, credentials)
 - Test connection button
 

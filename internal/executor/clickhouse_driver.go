@@ -35,7 +35,7 @@ func (d *ClickHouseDriver) ConfigSchema() ConfigSchema {
 			{Name: "host", Type: "string", Required: true, Description: "ClickHouse host"},
 			{Name: "port", Type: "int", Required: true, Default: 9000, Description: "Native protocol port"},
 			{Name: "user", Type: "string", Required: true, Description: "ClickHouse user"},
-			{Name: "password", Type: "string", Required: true, Description: "ClickHouse password"},
+			{Name: "password", Type: "string", Required: true, Secret: true, Description: "ClickHouse password"},
 			{Name: "database", Type: "string", Required: false, Description: "Database name (leave empty to query across all databases)"},
 			{Name: "ssl_mode", Type: "string", Required: false, Default: "disable", Description: "SSL mode (disable, require, verify-full)"},
 		},

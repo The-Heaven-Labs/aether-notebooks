@@ -1,11 +1,12 @@
 import { useEffect, useRef } from 'react'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { sql, MySQL, PostgreSQL } from '@codemirror/lang-sql'
+import { sql, MySQL, PostgreSQL, StandardSQL } from '@codemirror/lang-sql'
 import { sqlHighlight, syntaxHighlighting } from './sqlHighlight'
 
 function languageExtension(connectorType?: string) {
   if (connectorType === 'postgres') return sql({ dialect: PostgreSQL })
+  if (connectorType === 'databricks') return sql({ dialect: StandardSQL })
   return sql({ dialect: MySQL })
 }
 

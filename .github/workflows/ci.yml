@@ -57,7 +57,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      - run: go mod download
+      # Warm the module cache from the build graph instead of `go mod download`.
+      # A bare `go mod download` also fetches every module listed in go.mod,
+      # including all seven databricks-sql-kernel-bindings platform archives
+      # (~133 MB compressed / ~593 MB extracted). Those modules are only imported
+      # under the `databricks_kernel` build tag, which the default pure-Go build
+      # never sets, so this fetches what vet/test actually need.
+      - run: go list -deps -test ./... > /dev/null
       - run: go vet ./...
       - run: go test -timeout 3m ./internal/api/... ./internal/agent/... ./internal/executor/... ./internal/database/... -v -count=1 -p 1
         env:

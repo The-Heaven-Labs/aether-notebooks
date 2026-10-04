@@ -1,12 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/the-heaven-labs/aether/internal/audit"
@@ -17,14 +19,14 @@ import (
 )
 
 type createConnectorRequest struct {
-	Name           string                 `json:"name"`
-	Type           models.ConnectorType   `json:"type"`
-	Config         models.ConnectorConfig `json:"config"`
-	IsDefault      bool                   `json:"is_default"`
-	TimeoutSeconds int                    `json:"timeout_seconds"`
-	FolderID       *string                `json:"folder_id,omitempty"`
-	TableAllowlist []string               `json:"table_allowlist,omitempty"`
-	TableDenylist  []string               `json:"table_denylist,omitempty"`
+	Name           string               `json:"name"`
+	Type           models.ConnectorType `json:"type"`
+	Config         json.RawMessage      `json:"config"`
+	IsDefault      bool                 `json:"is_default"`
+	TimeoutSeconds int                  `json:"timeout_seconds"`
+	FolderID       *string              `json:"folder_id,omitempty"`
+	TableAllowlist []string             `json:"table_allowlist,omitempty"`
+	TableDenylist  []string             `json:"table_denylist,omitempty"`
 }
 
 // @Summary Create a connector
@@ -58,9 +60,12 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 		req.FolderID = nil
 	}
 
-	configJSON, err := json.Marshal(req.Config)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid config")
+	configJSON := req.Config
+	if len(configJSON) == 0 || bytes.Equal(bytes.TrimSpace(configJSON), []byte("null")) {
+		configJSON = json.RawMessage(`{}`)
+	}
+	if !isJSONObject(configJSON) {
+		writeError(w, http.StatusBadRequest, "config must be a JSON object")
 		return
 	}
 
@@ -129,11 +134,10 @@ func (s *Server) handleCreateConnector(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("connector ACL seeding failed", "id", id, "error", aclErr)
 	}
 
-	// Mask password in response
-	req.Config.Password = "***"
 	conn := models.Connector{
 		ID: id, OrgID: orgID, Name: name, Type: connType,
-		Config: req.Config, MaxRows: maxRows, TimeoutSeconds: timeout, IsDefault: isDefault,
+		Config:  s.maskedConnectorConfig(connType, encrypted),
+		MaxRows: maxRows, TimeoutSeconds: timeout, IsDefault: isDefault,
 		FolderID: folderID,
 	}
 
@@ -177,10 +181,7 @@ func (s *Server) handleGetConnector(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "connector not found")
 		return
 	}
-	if plain, err := crypto.Decrypt(encryptedConfig, s.masterKey); err == nil {
-		json.Unmarshal(plain, &c.Config)
-		c.Config.Password = "***"
-	}
+	c.Config = s.maskedConnectorConfig(c.Type, encryptedConfig)
 
 	writeJSON(w, http.StatusOK, c)
 }
@@ -237,11 +238,8 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 		if isProvisioner && (!allowProvisionerExecution || !s.warehouseManagementEnabled()) {
 			canUse = false
 		}
-		// Decrypt and mask password
-		if plain, err := crypto.Decrypt(encryptedConfig, s.masterKey); err == nil {
-			json.Unmarshal(plain, &c.Config)
-			c.Config.Password = "***"
-		}
+		// Decrypt and mask secret fields
+		c.Config = s.maskedConnectorConfig(c.Type, encryptedConfig)
 		result = append(result, connectorWithPerms{Connector: c, CanUse: canUse, IsProvisioner: isProvisioner})
 	}
 
@@ -253,12 +251,12 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateConnectorRequest struct {
-	Name           *string                 `json:"name,omitempty"`
-	Config         *models.ConnectorConfig `json:"config,omitempty"`
-	IsDefault      *bool                   `json:"is_default,omitempty"`
-	TimeoutSeconds *int                    `json:"timeout_seconds,omitempty"`
-	TableAllowlist []string                `json:"table_allowlist,omitempty"`
-	TableDenylist  []string                `json:"table_denylist,omitempty"`
+	Name           *string         `json:"name,omitempty"`
+	Config         json.RawMessage `json:"config,omitempty"`
+	IsDefault      *bool           `json:"is_default,omitempty"`
+	TimeoutSeconds *int            `json:"timeout_seconds,omitempty"`
+	TableAllowlist []string        `json:"table_allowlist,omitempty"`
+	TableDenylist  []string        `json:"table_denylist,omitempty"`
 }
 
 // @Summary Update a connector
@@ -285,7 +283,8 @@ func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var orgID string
-	err := s.db.Pool.QueryRow(ctx, `SELECT org_id FROM connectors WHERE id=$1`, id).Scan(&orgID)
+	var connType models.ConnectorType
+	err := s.db.Pool.QueryRow(ctx, `SELECT org_id, type FROM connectors WHERE id=$1`, id).Scan(&orgID, &connType)
 	if err != nil || orgID != claims.OrgID {
 		writeError(w, http.StatusNotFound, "connector not found")
 		return
@@ -311,7 +310,11 @@ func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if req.Config != nil {
+	if len(req.Config) > 0 {
+		if !isJSONObject(req.Config) {
+			writeError(w, http.StatusBadRequest, "config must be a JSON object")
+			return
+		}
 		var existingEnc []byte
 		if err := s.db.Pool.QueryRow(ctx,
 			`SELECT config_encrypted FROM connectors WHERE id=$1 AND org_id=$2`,
@@ -325,30 +328,18 @@ func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to decrypt config")
 			return
 		}
-		var existing models.ConnectorConfig
+		var existing map[string]any
 		if err := json.Unmarshal(plain, &existing); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to parse config")
 			return
 		}
-		if req.Config.Host != "" {
-			existing.Host = req.Config.Host
+		var incoming map[string]any
+		if err := json.Unmarshal(req.Config, &incoming); err != nil {
+			writeError(w, http.StatusBadRequest, "config must be a JSON object")
+			return
 		}
-		if req.Config.Port != 0 {
-			existing.Port = req.Config.Port
-		}
-		if req.Config.User != "" {
-			existing.User = req.Config.User
-		}
-		if req.Config.Database != "" {
-			existing.Database = req.Config.Database
-		}
-		if req.Config.SSLMode != "" {
-			existing.SSLMode = req.Config.SSLMode
-		}
-		if req.Config.Password != "" {
-			existing.Password = req.Config.Password
-		}
-		configJSON, err := json.Marshal(existing)
+		merged := mergeConnectorConfig(existing, incoming, secretFieldSet(connType))
+		configJSON, err := json.Marshal(merged)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid config")
 			return
@@ -424,10 +415,7 @@ func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return
 	}
-	if plain, err := crypto.Decrypt(encryptedConfig, s.masterKey); err == nil {
-		json.Unmarshal(plain, &c.Config)
-		c.Config.Password = "***"
-	}
+	c.Config = s.maskedConnectorConfig(c.Type, encryptedConfig)
 
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
@@ -664,9 +652,12 @@ func (s *Server) handleTestConnectorConfig(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "unsupported connector type"})
 		return
 	}
-	configJSON, err := json.Marshal(req.Config)
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "invalid config"})
+	configJSON := req.Config
+	if len(configJSON) == 0 {
+		configJSON = json.RawMessage(`{}`)
+	}
+	if !isJSONObject(configJSON) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "config must be a JSON object"})
 		return
 	}
 	if err := driver.TestConfig(r.Context(), configJSON); err != nil {
@@ -970,4 +961,87 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 		executor.SchemaInfo
 		HiddenTables int `json:"hidden_tables,omitempty"`
 	}{SchemaInfo: *schema, HiddenTables: hiddenTables})
+}
+
+// isJSONObject reports whether raw is a JSON object (the only config shape the
+// drivers accept; arrays, strings, and null are rejected at the API boundary).
+func isJSONObject(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return false
+	}
+	var obj map[string]json.RawMessage
+	return json.Unmarshal(trimmed, &obj) == nil
+}
+
+// secretFieldSet returns the lowercased config keys to mask: the union of the
+// driver's ConfigSchema secrets and a conservative default key list. The union
+// is always applied so a driver that declares one secret cannot leave another
+// credential-looking key unmasked, and keys are lowercased because Go's JSON
+// decoder matches struct fields case-insensitively (a "Password" key is consumed
+// by the driver even though its tag is "password").
+func secretFieldSet(connType models.ConnectorType) map[string]bool {
+	keys := map[string]bool{"password": true, "token": true, "client_secret": true}
+	if d, ok := executor.GetDriver(connType); ok {
+		for _, f := range d.ConfigSchema().Fields {
+			if f.Secret {
+				keys[strings.ToLower(f.Name)] = true
+			}
+		}
+	}
+	return keys
+}
+
+// mergeConnectorConfig overlays incoming onto existing. Keys declared secret
+// (case-insensitively) whose incoming value is null, empty, or the API mask
+// "***" are skipped, so a secret can never be replaced by a placeholder; null
+// values never clear a field.
+func mergeConnectorConfig(existing, incoming map[string]any, secrets map[string]bool) map[string]any {
+	merged := make(map[string]any, len(existing))
+	for k, v := range existing {
+		merged[k] = v
+	}
+	for k, v := range incoming {
+		if v == nil {
+			continue
+		}
+		if secrets[strings.ToLower(k)] {
+			if s, ok := v.(string); ok && (s == "" || s == "***") {
+				continue
+			}
+		}
+		// Drop any case-variant of the same key: JSON decoding is
+		// case-insensitive, so coexisting keys would let a stale value win.
+		for existingKey := range merged {
+			if existingKey != k && strings.EqualFold(existingKey, k) {
+				delete(merged, existingKey)
+			}
+		}
+		merged[k] = v
+	}
+	return merged
+}
+
+// maskedConnectorConfig decrypts a stored config and masks every secret key
+// (case-insensitively), returning a JSON object safe for API responses.
+func (s *Server) maskedConnectorConfig(connType models.ConnectorType, encrypted []byte) json.RawMessage {
+	plain, err := crypto.Decrypt(encrypted, s.masterKey)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(plain, &cfg); err != nil {
+		return json.RawMessage(`{}`)
+	}
+	secrets := secretFieldSet(connType)
+	for k := range cfg {
+		if secrets[strings.ToLower(k)] {
+			cfg[k] = "***"
+		}
+	}
+	out, err := json.Marshal(cfg)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return out
 }

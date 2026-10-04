@@ -17,7 +17,8 @@ import { useAuth } from '../hooks/useAuth'
 import { useWarehouseTablePermissions } from '../hooks/useWarehouseTablePermissions'
 import { listWarehouses, setConnectorWarehouse } from '../api/warehouses'
 
-type ConnectorType = 'postgres' | 'clickhouse' | 'opensearch'
+type ConnectorType = 'postgres' | 'clickhouse' | 'opensearch' | 'databricks'
+type DatabricksAuthType = 'pat' | 'oauth_m2m'
 
 interface ConnectorForm {
   name: string
@@ -29,6 +30,16 @@ interface ConnectorForm {
   password: string
   ssl_mode: string
   use_tls: boolean
+  http_path: string
+  auth_type: DatabricksAuthType
+  token: string
+  client_id: string
+  client_secret: string
+  catalog: string
+  schema: string
+  /** Auth type loaded from the stored connector; '' when creating. Used to
+   * allow blank secrets only when the auth type is unchanged. */
+  stored_auth_type: DatabricksAuthType | ''
   is_default: boolean
   timeout_seconds: string
   table_allowlist: string
@@ -38,9 +49,118 @@ interface ConnectorForm {
 const defaultForm = (): ConnectorForm => ({
   name: '', type: 'postgres', host: 'localhost', port: '5432',
   database: '', user: '', password: '', ssl_mode: 'disable',
-  use_tls: false, is_default: false, timeout_seconds: '0',
+  use_tls: false, http_path: '', auth_type: 'pat', token: '',
+  client_id: '', client_secret: '', catalog: '', schema: '', stored_auth_type: '',
+  is_default: false, timeout_seconds: '0',
   table_allowlist: '', table_denylist: '',
 })
+
+/** Builds the per-type config object for create (forUpdate=false) and edit
+ * (forUpdate=true, secrets omitted when blank to keep the stored value). */
+function buildConnectorConfig(f: ConnectorForm, forUpdate: boolean): Record<string, unknown> {
+  if (f.type === 'databricks') {
+    const cfg: Record<string, unknown> = {
+      host: f.host,
+      http_path: f.http_path,
+      auth_type: f.auth_type,
+      catalog: f.catalog,
+      schema: f.schema,
+    }
+    if (f.auth_type === 'pat') {
+      if (!forUpdate || f.token !== '') cfg.token = f.token
+    } else {
+      cfg.client_id = f.client_id
+      if (!forUpdate || f.client_secret !== '') cfg.client_secret = f.client_secret
+    }
+    return cfg
+  }
+  const cfg: Record<string, unknown> = {
+    host: f.host,
+    port: parseInt(f.port),
+    database: f.database,
+    user: f.user,
+    ssl_mode: f.ssl_mode,
+    ...(f.type === 'opensearch' ? { use_tls: f.use_tls } : {}),
+  }
+  if (!forUpdate || f.password !== '') cfg.password = f.password
+  return cfg
+}
+
+/** Whether the type-specific config fields are filled. Credentials may stay
+ * blank on edit (the server keeps the stored secret). */
+function connectorConfigComplete(f: ConnectorForm, forUpdate: boolean): boolean {
+  if (!f.host) return false
+  if (f.type === 'postgres' && !f.database) return false
+  if (f.type === 'databricks') {
+    if (!f.http_path) return false
+    // A blank secret is only acceptable when the auth type is unchanged from
+    // the stored connector (the server keeps the stored secret in that case).
+    const sameStoredAuth = forUpdate && f.stored_auth_type === f.auth_type
+    if (f.auth_type === 'pat') return f.token !== '' || sameStoredAuth
+    return f.client_id !== '' && (f.client_secret !== '' || sameStoredAuth)
+  }
+  return true
+}
+
+function canSubmitConnector(f: ConnectorForm, forUpdate: boolean): boolean {
+  return f.name !== '' && connectorConfigComplete(f, forUpdate)
+}
+
+/** First missing required field, for the submit buttons' title attribute. */
+function connectorFormMissingField(f: ConnectorForm, forUpdate: boolean): string | undefined {
+  if (!f.host) return 'Host is required'
+  if (f.type === 'postgres' && !f.database) return 'Database is required'
+  if (f.type === 'databricks') {
+    if (!f.http_path) return 'HTTP Path is required'
+    const sameStoredAuth = forUpdate && f.stored_auth_type === f.auth_type
+    if (f.auth_type === 'pat') return f.token !== '' || sameStoredAuth ? undefined : 'Token is required'
+    if (!f.client_id) return 'Client ID is required'
+    return f.client_secret !== '' || sameStoredAuth ? undefined : 'Client Secret is required'
+  }
+  return undefined
+}
+
+function DatabricksFields({ form, setForm, isEdit }: {
+  form: ConnectorForm
+  setForm: React.Dispatch<React.SetStateAction<ConnectorForm>>
+  isEdit?: boolean
+}) {
+  const set = (field: keyof ConnectorForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    setForm((f) => ({ ...f, [field]: e.target.value }))
+  return (
+    <>
+      <label style={styles.label}>HTTP Path
+        <input style={styles.input} value={form.http_path} onChange={set('http_path')} placeholder="/sql/1.0/warehouses/…" />
+      </label>
+      <label style={styles.label}>Auth Type
+        <select style={styles.input} value={form.auth_type} onChange={set('auth_type')}>
+          <option value="pat">Personal Access Token</option>
+          <option value="oauth_m2m">OAuth (Service Principal)</option>
+        </select>
+      </label>
+      {form.auth_type === 'pat' ? (
+        <label style={styles.label}>Token{isEdit ? ' (leave blank to keep current)' : ''}
+          <input style={styles.input} type="password" value={form.token} onChange={set('token')} />
+        </label>
+      ) : (
+        <>
+          <label style={styles.label}>Client ID
+            <input style={styles.input} value={form.client_id} onChange={set('client_id')} />
+          </label>
+          <label style={styles.label}>Client Secret{isEdit ? ' (leave blank to keep current)' : ''}
+            <input style={styles.input} type="password" value={form.client_secret} onChange={set('client_secret')} />
+          </label>
+        </>
+      )}
+      <label style={styles.label}>Catalog
+        <input style={styles.input} value={form.catalog} onChange={set('catalog')} placeholder="main (optional)" />
+      </label>
+      <label style={styles.label}>Schema
+        <input style={styles.input} value={form.schema} onChange={set('schema')} placeholder="default (optional)" />
+      </label>
+    </>
+  )
+}
 
 export function ConnectorsPage() {
   useEffect(() => { document.title = "Connectors — Aether Notebooks" }, [])
@@ -117,6 +237,16 @@ export function ConnectorsPage() {
           password: '',
           ssl_mode: c.config?.ssl_mode ?? 'disable',
           use_tls: c.config?.use_tls ?? false,
+          http_path: c.config?.http_path ?? '',
+          auth_type: c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat',
+          stored_auth_type: c.type === 'databricks'
+            ? (c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat')
+            : '',
+          token: '',
+          client_id: c.config?.client_id ?? '',
+          client_secret: '',
+          catalog: c.config?.catalog ?? '',
+          schema: c.config?.schema ?? '',
           is_default: c.is_default ?? false,
           timeout_seconds: String(c.timeout_seconds ?? 0),
           table_allowlist: (c.table_allowlist ?? []).join('\n'),
@@ -144,15 +274,7 @@ export function ConnectorsPage() {
     mutationFn: (id: string) => api.put<Connector>(`/api/v1/connectors/${id}`, {
       name: editForm.name,
       timeout_seconds: parseInt(editForm.timeout_seconds) || 0,
-      config: {
-        host: editForm.host,
-        port: parseInt(editForm.port),
-        database: editForm.database,
-        user: editForm.user,
-        ...(editForm.password !== '' ? { password: editForm.password } : {}),
-        ssl_mode: editForm.ssl_mode,
-        ...(editForm.type === 'opensearch' ? { use_tls: editForm.use_tls } : {}),
-      },
+      config: buildConnectorConfig(editForm, true),
       ...(editForm.is_default ? { is_default: true } : {}),
       table_allowlist: editForm.table_allowlist.split('\n').filter(s => s.trim()),
       table_denylist: editForm.table_denylist.split('\n').filter(s => s.trim()),
@@ -172,15 +294,7 @@ export function ConnectorsPage() {
       type: form.type,
       is_default: form.is_default,
       timeout_seconds: parseInt(form.timeout_seconds) || 0,
-      config: {
-        host: form.host,
-        port: parseInt(form.port),
-        database: form.database,
-        user: form.user,
-        password: form.password,
-        ssl_mode: form.ssl_mode,
-        ...(form.type === 'opensearch' ? { use_tls: form.use_tls } : {}),
-      },
+      config: buildConnectorConfig(form, false),
     }),
     onSuccess: (connector) => {
       qc.invalidateQueries({ queryKey: ['connectors'] })
@@ -223,14 +337,7 @@ export function ConnectorsPage() {
     try {
       const result = await api.post<{ ok: boolean; error?: string }>('/api/v1/connectors/test', {
         type: form.type,
-        config: {
-          host: form.host,
-          port: parseInt(form.port),
-          database: form.database,
-          user: form.user,
-          password: form.password,
-          ssl_mode: form.ssl_mode,
-        },
+        config: buildConnectorConfig(form, false),
       })
       setFormTest(result)
     } catch {
@@ -252,7 +359,7 @@ export function ConnectorsPage() {
             <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Connector</button>
           </SectionHeader>
           <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: -16, marginBottom: 24 }}>
-            Connect to your databases (PostgreSQL, ClickHouse, OpenSearch) to query data from notebooks.
+            Connect to your databases (PostgreSQL, ClickHouse, OpenSearch, Databricks) to query data from notebooks.
           </p>
           </>
         )}
@@ -270,41 +377,47 @@ export function ConnectorsPage() {
                   <option value="postgres">PostgreSQL</option>
                   <option value="clickhouse">ClickHouse</option>
                   <option value="opensearch">OpenSearch</option>
+                  <option value="databricks">Databricks</option>
                 </select>
               </label>
               <label style={styles.label}>Host
                 <input style={styles.input} value={form.host} onChange={setField('host')} />
               </label>
-              <label style={styles.label}>Port
-                <input style={styles.input} type="text" value={form.port} onChange={setField('port')} />
-              </label>
-              {(form.type === 'postgres' || form.type === 'clickhouse') && (
-                <label style={styles.label}>Database
-                  <input style={styles.input} value={form.database} onChange={setField('database')} />
-                </label>
+              {form.type !== 'databricks' && (
+                <>
+                  <label style={styles.label}>Port
+                    <input style={styles.input} type="text" value={form.port} onChange={setField('port')} />
+                  </label>
+                  {(form.type === 'postgres' || form.type === 'clickhouse') && (
+                    <label style={styles.label}>Database
+                      <input style={styles.input} value={form.database} onChange={setField('database')} />
+                    </label>
+                  )}
+                  <label style={styles.label}>User
+                    <input style={styles.input} value={form.user} onChange={setField('user')} />
+                  </label>
+                  <label style={styles.label}>Password
+                    <input style={styles.input} type="password" value={form.password} onChange={setField('password')} />
+                  </label>
+                  {form.type === 'opensearch' && (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
+                      <input type="checkbox" checked={form.use_tls}
+                        onChange={e => setForm(f => ({ ...f, use_tls: e.target.checked }))} />
+                      Use TLS (HTTPS)
+                    </label>
+                  )}
+                  {(form.type === 'postgres' || form.type === 'clickhouse') && (
+                    <label style={styles.label}>SSL Mode
+                      <select style={styles.input} value={form.ssl_mode} onChange={setField('ssl_mode')}>
+                        <option value="disable">disable</option>
+                        <option value="require">require</option>
+                        <option value="verify-full">verify-full</option>
+                      </select>
+                    </label>
+                  )}
+                </>
               )}
-              <label style={styles.label}>User
-                <input style={styles.input} value={form.user} onChange={setField('user')} />
-              </label>
-              <label style={styles.label}>Password
-                <input style={styles.input} type="password" value={form.password} onChange={setField('password')} />
-              </label>
-              {form.type === 'opensearch' && (
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
-                  <input type="checkbox" checked={form.use_tls}
-                    onChange={e => setForm(f => ({ ...f, use_tls: e.target.checked }))} />
-                  Use TLS (HTTPS)
-                </label>
-              )}
-              {(form.type === 'postgres' || form.type === 'clickhouse') && (
-                <label style={styles.label}>SSL Mode
-                  <select style={styles.input} value={form.ssl_mode} onChange={setField('ssl_mode')}>
-                    <option value="disable">disable</option>
-                    <option value="require">require</option>
-                    <option value="verify-full">verify-full</option>
-                  </select>
-                </label>
-              )}
+              {form.type === 'databricks' && <DatabricksFields form={form} setForm={setForm} />}
               <label style={styles.label}>Query Timeout (s)
                 <input style={styles.input} type="text" value={form.timeout_seconds}
                   onChange={(e) => setForm(f => ({ ...f, timeout_seconds: e.target.value }))} placeholder="0 = unlimited" />
@@ -320,8 +433,8 @@ export function ConnectorsPage() {
                 type="button"
                 style={styles.testBtn}
                 onClick={testFormConnection}
-                disabled={!form.host || (form.type === 'postgres' && !form.database) || formTesting}
-                title={!form.host ? 'Host is required' : (form.type === 'postgres' && !form.database) ? 'Database is required' : undefined}
+                disabled={!connectorConfigComplete(form, false) || formTesting}
+                title={connectorFormMissingField(form, false)}
               >
                 {formTesting ? 'Testing…' : 'Test Connection'}
               </button>
@@ -338,8 +451,8 @@ export function ConnectorsPage() {
                 type="button"
                 style={styles.saveBtn}
                 onClick={() => createConnector.mutate()}
-                disabled={!form.name || !form.host || (form.type === 'postgres' && !form.database) || createConnector.isPending}
-                title={!form.name ? 'Name is required' : !form.host ? 'Host is required' : (form.type === 'postgres' && !form.database) ? 'Database is required' : undefined}
+                disabled={!canSubmitConnector(form, false) || createConnector.isPending}
+                title={!form.name ? 'Name is required' : connectorFormMissingField(form, false)}
               >
                 {createConnector.isPending ? 'Creating…' : 'Create'}
               </button>
@@ -362,41 +475,47 @@ export function ConnectorsPage() {
                   <option value="postgres">PostgreSQL</option>
                   <option value="clickhouse">ClickHouse</option>
                   <option value="opensearch">OpenSearch</option>
+                  <option value="databricks">Databricks</option>
                 </select>
               </label>
               <label style={styles.label}>Host
                 <input style={styles.input} value={editForm.host} onChange={(e) => setEditForm(f => ({ ...f, host: e.target.value }))} />
               </label>
-              <label style={styles.label}>Port
-                <input style={styles.input} type="text" value={editForm.port} onChange={(e) => setEditForm(f => ({ ...f, port: e.target.value }))} />
-              </label>
-              {(editForm.type === 'postgres' || editForm.type === 'clickhouse') && (
-                <label style={styles.label}>Database
-                  <input style={styles.input} value={editForm.database} onChange={(e) => setEditForm(f => ({ ...f, database: e.target.value }))} />
-                </label>
+              {editForm.type !== 'databricks' && (
+                <>
+                  <label style={styles.label}>Port
+                    <input style={styles.input} type="text" value={editForm.port} onChange={(e) => setEditForm(f => ({ ...f, port: e.target.value }))} />
+                  </label>
+                  {(editForm.type === 'postgres' || editForm.type === 'clickhouse') && (
+                    <label style={styles.label}>Database
+                      <input style={styles.input} value={editForm.database} onChange={(e) => setEditForm(f => ({ ...f, database: e.target.value }))} />
+                    </label>
+                  )}
+                  <label style={styles.label}>User
+                    <input style={styles.input} value={editForm.user} onChange={(e) => setEditForm(f => ({ ...f, user: e.target.value }))} />
+                  </label>
+                  <label style={styles.label}>Password <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(leave blank to keep current)</span>
+                    <input style={styles.input} type="password" value={editForm.password} onChange={(e) => setEditForm(f => ({ ...f, password: e.target.value }))} />
+                  </label>
+                  {editForm.type === 'opensearch' && (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
+                      <input type="checkbox" checked={editForm.use_tls}
+                        onChange={e => setEditForm(f => ({ ...f, use_tls: e.target.checked }))} />
+                      Use TLS (HTTPS)
+                    </label>
+                  )}
+                  {(editForm.type === 'postgres' || editForm.type === 'clickhouse') && (
+                    <label style={styles.label}>SSL Mode
+                      <select style={styles.input} value={editForm.ssl_mode} onChange={(e) => setEditForm(f => ({ ...f, ssl_mode: e.target.value }))}>
+                        <option value="disable">disable</option>
+                        <option value="require">require</option>
+                        <option value="verify-full">verify-full</option>
+                      </select>
+                    </label>
+                  )}
+                </>
               )}
-              <label style={styles.label}>User
-                <input style={styles.input} value={editForm.user} onChange={(e) => setEditForm(f => ({ ...f, user: e.target.value }))} />
-              </label>
-              <label style={styles.label}>Password <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(leave blank to keep current)</span>
-                <input style={styles.input} type="password" value={editForm.password} onChange={(e) => setEditForm(f => ({ ...f, password: e.target.value }))} />
-              </label>
-              {editForm.type === 'opensearch' && (
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
-                  <input type="checkbox" checked={editForm.use_tls}
-                    onChange={e => setEditForm(f => ({ ...f, use_tls: e.target.checked }))} />
-                  Use TLS (HTTPS)
-                </label>
-              )}
-              {(editForm.type === 'postgres' || editForm.type === 'clickhouse') && (
-                <label style={styles.label}>SSL Mode
-                  <select style={styles.input} value={editForm.ssl_mode} onChange={(e) => setEditForm(f => ({ ...f, ssl_mode: e.target.value }))}>
-                    <option value="disable">disable</option>
-                    <option value="require">require</option>
-                    <option value="verify-full">verify-full</option>
-                  </select>
-                </label>
-              )}
+              {editForm.type === 'databricks' && <DatabricksFields form={editForm} setForm={setEditForm} isEdit />}
               <label style={styles.label}>Query Timeout (s)
                 <input style={styles.input} type="text" value={editForm.timeout_seconds}
                   onChange={(e) => setEditForm(f => ({ ...f, timeout_seconds: e.target.value }))} placeholder="0 = unlimited" />
@@ -432,8 +551,8 @@ export function ConnectorsPage() {
                 type="button"
                 style={styles.saveBtn}
                 onClick={() => updateConnector.mutate(editing!)}
-                disabled={!editForm.name || !editForm.host || (editForm.type === 'postgres' && !editForm.database) || updateConnector.isPending}
-                title={!editForm.name ? 'Name is required' : !editForm.host ? 'Host is required' : (editForm.type === 'postgres' && !editForm.database) ? 'Database is required' : undefined}
+                disabled={!canSubmitConnector(editForm, true) || updateConnector.isPending}
+                title={!editForm.name ? 'Name is required' : connectorFormMissingField(editForm, true)}
               >
                 {updateConnector.isPending ? 'Saving…' : 'Save'}
               </button>
@@ -556,6 +675,16 @@ export function ConnectorsPage() {
                         password: '',
                         ssl_mode: c.config?.ssl_mode ?? 'disable',
                         use_tls: c.config?.use_tls ?? false,
+                        http_path: c.config?.http_path ?? '',
+                        auth_type: c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat',
+                        stored_auth_type: c.type === 'databricks'
+                          ? (c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat')
+                          : '',
+                        token: '',
+                        client_id: c.config?.client_id ?? '',
+                        client_secret: '',
+                        catalog: c.config?.catalog ?? '',
+                        schema: c.config?.schema ?? '',
                         is_default: c.is_default ?? false,
                         timeout_seconds: String(c.timeout_seconds ?? 0),
                         table_allowlist: (c.table_allowlist ?? []).join('\n'),

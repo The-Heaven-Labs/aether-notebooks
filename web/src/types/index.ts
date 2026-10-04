@@ -176,6 +176,15 @@ export interface Connector {
     user?: string
     ssl_mode?: string
     use_tls?: boolean
+    http_path?: string
+    auth_type?: 'pat' | 'oauth_m2m'
+    /** Returned as "***" once stored; never a real secret. */
+    token?: string
+    client_id?: string
+    /** Returned as "***" once stored; never a real secret. */
+    client_secret?: string
+    catalog?: string
+    schema?: string
   }
 }
 
