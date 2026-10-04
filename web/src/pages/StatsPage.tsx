@@ -186,8 +186,8 @@ export function StatsPage() {
           ))}
         </div>
 
-        <div style={styles.card}>
-          <div style={styles.cardTitle}><BarChart3 size={14} /> {chartMode === 'tokens' ? 'Tokens out per bucket' : 'Cost per bucket'}</div>
+        <div style={{ ...styles.card, padding: 22.4 }}>
+          <div style={{ ...styles.cardTitle, marginBottom: 16.8 }}><BarChart3 size={14} /> {chartMode === 'tokens' ? 'Tokens out per bucket' : 'Cost per bucket'}</div>
           {rows.length === 0 && !isLoading ? (
             <EmptyState title="No usage yet" text="Chat with an agent, then roll up to see activity here." />
           ) : (

@@ -207,8 +207,10 @@ export function buildTokenChartOption(
 
   return {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    legend: { show: series.length > 1 && series.length <= 10 },
-    grid: { top: 32, right: 16, bottom: 8, left: 16, containLabel: true },
+    // Legend sits below the plot as a single scrollable row so long agent
+    // names never wrap over the chart (accepted from live variant 2).
+    legend: { show: series.length > 1 && series.length <= 10, type: 'scroll', bottom: 0, left: 'center', itemGap: 12 },
+    grid: { top: 8, right: 16, bottom: 32, left: 16, containLabel: true },
     xAxis: { type: 'category', data: buckets.map((b) => bucketLabel(b, opts.granularity)) },
     yAxis: { type: 'value' },
     series,

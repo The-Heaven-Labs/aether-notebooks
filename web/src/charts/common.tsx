@@ -826,7 +826,8 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height,
   optionRef.current = option
   useEffect(() => {
     const el = wrapperRef.current
-    if (!el) return
+    // jsdom (tests) and very old browsers lack IntersectionObserver.
+    if (!el || typeof IntersectionObserver === 'undefined') return
     const io = new IntersectionObserver((entries) => {
       if (!entries.some((e) => e.isIntersecting)) return
       const chart = chartRef.current
