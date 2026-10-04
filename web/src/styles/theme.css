@@ -793,6 +793,30 @@ input[type="color"] {
   }
 }
 
+/* ── Dashboard grid: react-grid-layout base styles ─────────────────────── */
+/* react-grid-layout v2 ships no stylesheet. Without position: relative the
+   items' offsetParent is <body>, so drag coordinates are computed page-
+   relative while item transforms are container-relative - the dragged widget
+   drifts by the grid's page offset and the placeholder disagrees with it. */
+.react-grid-layout {
+  position: relative;
+  transition: height 200ms ease;
+}
+
+.react-grid-item {
+  transition: all 200ms ease;
+  transition-property: left, top, transform;
+}
+
+.react-grid-item.cssTransforms {
+  transition-property: transform;
+}
+
+.react-grid-item.resizing {
+  transition: none;
+  z-index: 3;
+}
+
 /* ── Dashboard editor: resize handles ───────────────────────────────────── */
 /* react-grid-layout v2 renders .react-resizable-handle elements but ships no
    stylesheet, so they were 0×0 and impossible to grab. Draw a hairline
