@@ -547,7 +547,8 @@ export function NotebookPage() {
     return () => window.removeEventListener('keydown', handler)
   }, [following])
 
-  // Escape closes the topmost drawer.
+  // Escape closes the topmost drawer. Capture phase so overlays that stop
+  // propagation (e.g. the live-mode panel) can't swallow the key first.
   useEffect(() => {
     if (!historyCell && !showHistory && !showChats && !viewerSessionId) return
     const handler = (e: KeyboardEvent) => {
@@ -557,8 +558,8 @@ export function NotebookPage() {
       else if (showHistory) setShowHistory(false)
       else setHistoryCell(null)
     }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
   }, [historyCell, showHistory, showChats, viewerSessionId, closeSessionViewer])
 
   const cellsContainerRef = useRef<HTMLDivElement>(null)
@@ -1860,7 +1861,7 @@ export function NotebookPage() {
       {showHistory && (
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 199 }} onClick={() => setShowHistory(false)} />
-          <div role="dialog" aria-modal="true" aria-label="Notebook history" style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 380, maxWidth: '100vw', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
+          <div role="dialog" aria-modal="true" aria-label="Notebook history" style={{ position: 'fixed', right: 0, top: 52, bottom: 0, width: 380, maxWidth: '100vw', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
             <NotebookHistoryPanel
               snapshots={historySnapshots}
               onCreateSnapshot={createSnapshot}
