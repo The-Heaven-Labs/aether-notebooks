@@ -4,11 +4,16 @@ interface Props {
   headers: React.ReactNode[]
   children: React.ReactNode
   thStyle?: React.CSSProperties
+  /** Optional per-column class names, parallel to `headers`; used for column-specific sizing. */
+  headerClassNames?: (string | undefined)[]
 }
 
 const tableWrapStyle: React.CSSProperties = {
   borderRadius: 4,
-  overflow: 'hidden',
+  // Scroll horizontally instead of clipping: the wrapper is the only element
+  // that sees the table's overflow, so an outer scroller would never get any.
+  overflowX: 'auto',
+  overflowY: 'hidden',
   border: '1px solid var(--border)',
 }
 
@@ -34,14 +39,14 @@ const thBase: React.CSSProperties = {
 export const rowStyle: React.CSSProperties = { borderBottom: '1px solid var(--border)' }
 export const cellStyle: React.CSSProperties = { padding: '12px 16px', fontSize: 13, color: 'var(--text-primary)' }
 
-export function StyledTable({ headers, children, thStyle }: Props) {
+export function StyledTable({ headers, children, thStyle, headerClassNames }: Props) {
   return (
     <div style={tableWrapStyle}>
       <table style={tableStyle}>
         <thead>
           <tr>
             {headers.map((h, i) => (
-              <th key={i} style={{ ...thBase, ...thStyle }}>{h}</th>
+              <th key={i} className={headerClassNames?.[i]} style={{ ...thBase, ...thStyle }}>{h}</th>
             ))}
           </tr>
         </thead>

@@ -350,9 +350,9 @@ input[type="color"] {
 }
 
 @keyframes cellFlashPulse {
-  0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); border-left-color: var(--accent); }
-  50% { box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.3); border-left-color: var(--accent); }
-  100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); border-left-color: transparent; }
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; }
 }
 
 @keyframes spin {
@@ -362,7 +362,6 @@ input[type="color"] {
 
 .cell-flash {
   animation: cellFlashPulse 1.5s ease-out;
-  border-left: 3px solid var(--accent);
 }
 
 /* ── Syntax highlighting for markdown code blocks ── */
@@ -404,3 +403,103 @@ input[type="color"] {
 
 .hljs-deletion { background: rgba(255, 0, 0, 0.15); }
 .hljs-addition { background: rgba(0, 255, 0, 0.15); }
+
+/* ── Connector row actions (ConnectorsPage) ─────────────────────────────── */
+/* Reserve room for two actions side by side: 2×26px + 3px gap + 20px cell
+   padding. Without this the column shrinks to a single 26px item and the
+   pairs collapse into one tall column on common laptop widths. */
+.connector-actions-header,
+.connector-actions-cell {
+  min-width: 75px;
+  /* Shrink-to-fit: don't soak up table width the content columns can use. */
+  width: 1%;
+}
+
+.connector-actions-cell {
+  padding: 8px 10px;
+  text-align: right;
+  vertical-align: middle;
+}
+
+.connector-actions-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+}
+
+.connector-action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.connector-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+}
+
+.connector-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.connector-action--accent {
+  color: var(--accent);
+}
+
+.connector-action--danger:hover:not(:disabled) {
+  background: var(--error-light);
+  border-color: var(--error-border);
+  color: var(--error-full);
+}
+
+/* Invisible full-width flex item that forces the next button onto a new row.
+   Together with the column min-width above, this keeps row actions in
+   right-aligned pairs. */
+.connector-actions-break {
+  flex-basis: 100%;
+  height: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.connector-action-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Touch devices get a larger target; pointer-precise desktops keep the
+   compact pairs. */
+@media (pointer: coarse) {
+  .connector-action {
+    width: 36px;
+    height: 36px;
+  }
+
+  .connector-actions-grid {
+    gap: 4px;
+  }
+
+  .connector-actions-header,
+  .connector-actions-cell {
+    /* 2×36px + 4px gap + 20px cell padding. */
+    min-width: 96px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connector-action-spin,
+  .cell-flash {
+    animation: none;
+  }
+}

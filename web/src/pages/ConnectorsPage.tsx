@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Connector } from '../types'
 import { AppShell } from '../components/AppShell'
-import { Check, X, Loader2, Star, Database } from 'lucide-react'
+import { Check, X, Loader2, Star, Database, Pencil, ShieldCheck, Link2, Unlink, Trash2, Zap } from 'lucide-react'
 import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
 import { FormCard } from '../components/FormCard'
 import { StatusBadge } from '../components/StatusBadge'
@@ -571,8 +571,10 @@ export function ConnectorsPage() {
             action={{ label: '+ New Connector', onClick: () => setCreating(true) }}
           />
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-          <StyledTable headers={['Name', 'Type', 'Host', 'Database', 'Access', 'Status', '']}>
+          <StyledTable
+            headers={['Name', 'Type', 'Host', 'Database', 'Access', 'Status', <span className="sr-only">Actions</span>]}
+            headerClassNames={[undefined, undefined, undefined, undefined, undefined, undefined, 'connector-actions-header']}
+          >
             {connectors.map((c) => {
               const test = testResults[c.id]
               return (
@@ -616,7 +618,15 @@ export function ConnectorsPage() {
                     )}
                   </td>
                   <td style={cellStyle}><code style={styles.badge}>{c.type}</code></td>
-                  <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                  <td style={{
+                    ...cellStyle,
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 12,
+                    // Hosts are unbreakable strings: allow wrapping so the table
+                    // can shrink, but keep common hostnames on one line.
+                    overflowWrap: 'anywhere',
+                    minWidth: 180,
+                  }}>
                     {c.config?.host ?? '—'}
                   </td>
                   <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
@@ -657,78 +667,71 @@ export function ConnectorsPage() {
                       </span>
                     )}
                   </td>
-                  <td style={styles.tdActions}>
-                    <button type="button" style={styles.actionBtn} onClick={() => testConnector(c.id)} disabled={testingIds[c.id]}>
-                      {testingIds[c.id] ? (
-                        <><Loader2 size={11} style={{ animation: 'spin 1s linear infinite', marginRight: 4 }} />Testing…</>
-                      ) : 'Test'}
-                    </button>
-                    <button type="button" style={styles.editBtn} onClick={() => {
-                      setEditing(c.id)
-                      setEditForm({
-                        name: c.name,
-                        type: c.type as ConnectorType,
-                        host: c.config?.host ?? '',
-                        port: String(c.config?.port ?? 5432),
-                        database: c.config?.database ?? '',
-                        user: c.config?.user ?? '',
-                        password: '',
-                        ssl_mode: c.config?.ssl_mode ?? 'disable',
-                        use_tls: c.config?.use_tls ?? false,
-                        http_path: c.config?.http_path ?? '',
-                        auth_type: c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat',
-                        stored_auth_type: c.type === 'databricks'
-                          ? (c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat')
-                          : '',
-                        token: '',
-                        client_id: c.config?.client_id ?? '',
-                        client_secret: '',
-                        catalog: c.config?.catalog ?? '',
-                        schema: c.config?.schema ?? '',
-                        is_default: c.is_default ?? false,
-                        timeout_seconds: String(c.timeout_seconds ?? 0),
-                        table_allowlist: (c.table_allowlist ?? []).join('\n'),
-                        table_denylist: (c.table_denylist ?? []).join('\n'),
-                      })
-                    }}>Edit</button>
-                    <button type="button" style={styles.actionBtn} onClick={() => setPermissionsTarget({ type: 'connector', id: c.id, name: c.name })}>Permissions</button>
-                    {isAdmin && c.type === 'clickhouse' && (
-                      c.warehouse_id ? (
-                        <button type="button" style={styles.actionBtn} onClick={() => setUnlinkTarget(c)}>
-                          Unlink
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          style={styles.editBtn}
-                          onClick={() => { setLinkTarget(c); setLinkWarehouseId(''); setLinkError(null) }}
-                        >
-                          Link to warehouse
-                        </button>
-                      )
-                    )}
-                    {!c.is_default && (
-                      <button type="button"
-                        title="Set as default connector for new notebooks"
-                        style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 4,
-                          fontSize: 12, padding: '3px 10px', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 }}
-                        onClick={() => setDefault.mutate(c.id)}>
-                        Set default
+                  <td className="connector-actions-cell">
+                    <div className="connector-actions-grid">
+                      <button type="button" className="connector-action" title="Test connection" aria-label="Test connection" onClick={() => testConnector(c.id)} disabled={testingIds[c.id]}>
+                        {testingIds[c.id] ? <Loader2 size={13} className="connector-action-spin" /> : <Zap size={13} />}
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      style={styles.deleteBtn}
-                      onClick={() => setDeleteTarget(c)}
-                    >
-                      Delete
-                    </button>
+                      <button type="button" className="connector-action connector-action--accent" title="Edit connector" aria-label="Edit connector" onClick={() => {
+                        setEditing(c.id)
+                        setEditForm({
+                          name: c.name,
+                          type: c.type as ConnectorType,
+                          host: c.config?.host ?? '',
+                          port: String(c.config?.port ?? 5432),
+                          database: c.config?.database ?? '',
+                          user: c.config?.user ?? '',
+                          password: '',
+                          ssl_mode: c.config?.ssl_mode ?? 'disable',
+                          use_tls: c.config?.use_tls ?? false,
+                          http_path: c.config?.http_path ?? '',
+                          auth_type: c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat',
+                          stored_auth_type: c.type === 'databricks'
+                            ? (c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat')
+                            : '',
+                          token: '',
+                          client_id: c.config?.client_id ?? '',
+                          client_secret: '',
+                          catalog: c.config?.catalog ?? '',
+                          schema: c.config?.schema ?? '',
+                          is_default: c.is_default ?? false,
+                          timeout_seconds: String(c.timeout_seconds ?? 0),
+                          table_allowlist: (c.table_allowlist ?? []).join('\n'),
+                          table_denylist: (c.table_denylist ?? []).join('\n'),
+                        })
+                      }}>
+                        <Pencil size={13} />
+                      </button>
+                      <span className="connector-actions-break" aria-hidden="true" />
+                      <button type="button" className="connector-action" title="Permissions" aria-label="Permissions" onClick={() => setPermissionsTarget({ type: 'connector', id: c.id, name: c.name })}>
+                        <ShieldCheck size={13} />
+                      </button>
+                      {isAdmin && c.type === 'clickhouse' && (
+                        c.warehouse_id ? (
+                          <button type="button" className="connector-action" title="Unlink from warehouse" aria-label="Unlink from warehouse" onClick={() => setUnlinkTarget(c)}>
+                            <Unlink size={13} />
+                          </button>
+                        ) : (
+                          <button type="button" className="connector-action" title="Link to warehouse" aria-label="Link to warehouse" onClick={() => { setLinkTarget(c); setLinkWarehouseId(''); setLinkError(null) }}>
+                            <Link2 size={13} />
+                          </button>
+                        )
+                      )}
+                      <span className="connector-actions-break" aria-hidden="true" />
+                      {!c.is_default && (
+                        <button type="button" className="connector-action" title="Set as default connector for new notebooks" aria-label="Set as default connector" onClick={() => setDefault.mutate(c.id)}>
+                          <Star size={13} />
+                        </button>
+                      )}
+                      <button type="button" className="connector-action connector-action--danger" title="Delete connector" aria-label="Delete connector" onClick={() => setDeleteTarget(c)}>
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               )
             })}
           </StyledTable>
-          </div>
         )}
         {permissionsTarget && (
           <PermissionsPanel
@@ -839,11 +842,7 @@ const styles: Record<string, React.CSSProperties> = {
   testBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)', fontWeight: 600 },
   cancelBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   saveBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  tdActions: { padding: '8px 16px', textAlign: 'right' as const },
   badge: { fontSize: 11, fontFamily: 'var(--font-mono)', background: 'var(--accent-light)', color: 'var(--text-secondary)', padding: '2px 7px', borderRadius: 3 },
-  actionBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 },
-  editBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--accent)', marginRight: 6 },
-  deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--error-full)' },
   managedBadge: {
     display: 'inline-block',
     fontSize: 11,

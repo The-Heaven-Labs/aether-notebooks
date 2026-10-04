@@ -122,7 +122,7 @@ describe('ConnectorsPage', () => {
     )
     renderWithProviders(<ConnectorsPage />)
 
-    fireEvent.click(await screen.findByText('Link to warehouse'))
+    fireEvent.click(await screen.findByLabelText('Link to warehouse'))
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText(/AETHER_CH_TABLE_PERMISSIONS/)).toBeInTheDocument()
     expect(within(dialog).queryByText(/Provisioning begins immediately/)).toBeNull()
@@ -154,7 +154,7 @@ describe('ConnectorsPage', () => {
     )
     renderWithProviders(<ConnectorsPage />)
 
-    const linkButton = await screen.findByText('Link to warehouse')
+    const linkButton = await screen.findByLabelText('Link to warehouse')
     linkButton.focus()
     fireEvent.click(linkButton)
     const dialog = await screen.findByRole('dialog')
@@ -257,7 +257,7 @@ describe('ConnectorsPage', () => {
       }),
     )
     renderWithProviders(<ConnectorsPage />)
-    fireEvent.click(await screen.findByText('Edit'))
+    fireEvent.click(await screen.findByLabelText('Edit connector'))
     // Blank secret is allowed while the auth type is unchanged.
     expect(screen.getByText('Save')).not.toBeDisabled()
     fireEvent.change(screen.getByLabelText('Catalog'), { target: { value: 'analytics' } })
@@ -302,7 +302,7 @@ describe('ConnectorsPage', () => {
       http.post('/api/v1/connectors/:id/test', () => HttpResponse.json({ ok: true })),
     )
     renderWithProviders(<ConnectorsPage />)
-    fireEvent.click(await screen.findByText('Edit'))
+    fireEvent.click(await screen.findByLabelText('Edit connector'))
     expect(screen.getByText('Save')).not.toBeDisabled()
     fireEvent.change(screen.getByLabelText('Auth Type'), { target: { value: 'pat' } })
     expect(screen.getByText('Save')).toBeDisabled()
