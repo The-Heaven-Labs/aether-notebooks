@@ -493,8 +493,8 @@ export function useChartColors() {
 export const CHART_FONT_SANS = 'DM Sans, -apple-system, BlinkMacSystemFont, sans-serif'
 export const CHART_FONT_MONO = 'JetBrains Mono, Fira Code, ui-monospace, monospace'
 
-export function getTooltipStyle() {
-  const c = getChartColors()
+export function getTooltipStyle(colors?: ReturnType<typeof getChartColors>) {
+  const c = colors ?? getChartColors()
   return {
     backgroundColor: c.bgCard,
     borderColor: c.border,

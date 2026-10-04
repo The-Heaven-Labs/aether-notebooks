@@ -8,7 +8,7 @@ import { EmptyState } from '../components/EmptyState'
 import { SectionHeader } from '../components/SectionHeader'
 import { StyledTable } from '../components/StyledTable'
 import { ErrorBanner } from '../components/ErrorBanner'
-import { EChartsContainer } from '../charts/common'
+import { EChartsContainer, getTooltipStyle, useChartColors } from '../charts/common'
 import {
   computeKpis,
   deriveAgents,
@@ -96,10 +96,17 @@ export function StatsPage() {
       return ((va as number) - (vb as number)) * dir
     })
   }, [rows, sortCol, sortDir])
-  const chartOption = useMemo(
-    () => buildTokenChartOption(rows, { mode: chartMode, granularity: q.granularity, singleAgent: !!agentFilter }),
-    [rows, chartMode, q.granularity, agentFilter],
-  )
+  const chartColors = useChartColors()
+  const chartOption = useMemo(() => {
+    const opt = buildTokenChartOption(rows, { mode: chartMode, granularity: q.granularity, singleAgent: !!agentFilter })
+    // The stats chart builds its own option; give its tooltip the shared
+    // theme treatment (dark card, mono text, viewport-clamped, appended to
+    // <body>) instead of ECharts' default white box.
+    return {
+      ...opt,
+      tooltip: { ...(opt.tooltip as Record<string, unknown>), ...getTooltipStyle(chartColors) },
+    }
+  }, [rows, chartMode, q.granularity, agentFilter, chartColors])
   const showUserCol = !agentFilter && users.length > 1
 
   function handleSort(col: SortCol) {
