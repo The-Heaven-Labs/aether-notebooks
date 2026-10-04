@@ -12,6 +12,7 @@ import (
 )
 
 func TestHandleListConnectorDatabases(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
 	ts := time.Now().UnixNano()
 	email := fmt.Sprintf("conn-db-test-%d@example.com", ts)
@@ -37,6 +38,7 @@ func TestHandleListConnectorDatabases(t *testing.T) {
 }
 
 func TestUpdateConnector(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
 	ts := time.Now().UnixNano()
 	email := fmt.Sprintf("update-conn-%d@example.com", ts)
@@ -79,6 +81,7 @@ func TestUpdateConnector(t *testing.T) {
 }
 
 func TestConnectorCRUD(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
 
 	ts := time.Now().UnixNano()
@@ -138,6 +141,7 @@ func TestConnectorCRUD(t *testing.T) {
 // OpenSearch use_tls used to be silently dropped because the create request
 // decoded config into models.ConnectorConfig. Raw JSON must preserve it.
 func TestCreateConnectorPreservesDriverSpecificConfig(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
 	ts := time.Now().UnixNano()
 	email := fmt.Sprintf("raw-config-%d@example.com", ts)
@@ -182,6 +186,7 @@ func TestCreateConnectorPreservesDriverSpecificConfig(t *testing.T) {
 // A case-variant key ("Password") is consumed by the driver's case-insensitive
 // JSON decode, so it must be masked exactly like the canonical key.
 func TestConnectorSecretMaskingIsCaseInsensitive(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
 	ts := time.Now().UnixNano()
 	token := registerAndGetToken(t, srv, fmt.Sprintf("case-mask-%d@example.com", ts), "Case Mask Org")
@@ -215,6 +220,7 @@ func TestConnectorSecretMaskingIsCaseInsensitive(t *testing.T) {
 // The CLI sends "config": null when --config is omitted; that must behave like
 // an absent config, not a 400.
 func TestCreateConnectorNullConfigDefaultsToEmpty(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
 	ts := time.Now().UnixNano()
 	token := registerAndGetToken(t, srv, fmt.Sprintf("null-cfg-%d@example.com", ts), "Null Cfg Org")
@@ -232,6 +238,7 @@ func TestCreateConnectorNullConfigDefaultsToEmpty(t *testing.T) {
 
 // The OpenSearch use_tls fix must survive get and update round-trips.
 func TestConnectorRawConfigRoundTrip(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
 	ts := time.Now().UnixNano()
 	email := fmt.Sprintf("config-roundtrip-%d@example.com", ts)
@@ -292,6 +299,7 @@ func TestConnectorRawConfigRoundTrip(t *testing.T) {
 // test endpoint authenticates with the stored credential, so ok=true proves it
 // survived.
 func TestUpdateConnectorKeepsStoredSecret(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
 	ts := time.Now().UnixNano()
 	email := fmt.Sprintf("keep-secret-%d@example.com", ts)
@@ -328,6 +336,7 @@ func TestUpdateConnectorKeepsStoredSecret(t *testing.T) {
 }
 
 func TestTestConnectorConfigRejectsNonObject(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
 	ts := time.Now().UnixNano()
 	token := registerAndGetToken(t, srv, fmt.Sprintf("test-cfg-%d@example.com", ts), "Test Cfg Org")
@@ -374,6 +383,7 @@ func TestTestConnectorConfigRejectsNonObject(t *testing.T) {
 }
 
 func TestDatabricksConnectorCRUDMasksSecrets(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
 	ts := time.Now().UnixNano()
 	email := fmt.Sprintf("databricks-conn-%d@example.com", ts)
@@ -408,7 +418,7 @@ func TestDatabricksConnectorCRUDMasksSecrets(t *testing.T) {
 		t.Fatal("client_secret must not appear when unset")
 	}
 
-	// Update without credentials: empty token keeps the stored secret.
+	// Update without credentials: the token stays present and masked.
 	upd, _ := json.Marshal(map[string]interface{}{
 		"config": map[string]interface{}{"catalog": "analytics", "token": ""},
 	})
