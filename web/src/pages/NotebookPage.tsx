@@ -1319,45 +1319,29 @@ export function NotebookPage() {
     <AppShell noPadding>
     <div style={styles.page}>
       {/* Notebook Header */}
-      <div style={styles.header}>
-        {/* Row 1: breadcrumb + meta */}
-        <div style={styles.headerTopRow}>
-          <Link to={backUrl} style={styles.backBtn} title="Back to Files">
+      <div className="nbh">
+        <div className="nbh-top">
+          <Link to={backUrl} className="nbh-back" title="Back to Files">
             <ChevronLeft size={14} style={{ flexShrink: 0 }} />
             <span>Files</span>
           </Link>
-          <div style={styles.metaInfo}>
-            <span style={styles.metaText}>
-              Last updated {fmtTime(new Date(notebook.updated_at))}
-            </span>
+          <div className="nbh-meta">
+            <span>Last updated {fmtTime(new Date(notebook.updated_at))}</span>
             {anyCellSaving && (
-              <span style={{ ...styles.metaText, color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} />
-                Saving…
-              </span>
+              <span className="nbh-saving"><Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} />Saving…</span>
             )}
             {!anyCellSaving && latestCellSave && (
-              <span style={{ ...styles.metaText, color: 'var(--success)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                <Check size={11} /> All changes saved
-              </span>
+              <span className="nbh-saved"><Check size={11} /> All changes saved</span>
             )}
             {!anyCellSaving && anyCellError && (
-              <span style={{ ...styles.metaText, color: 'var(--error-full)' }}>
-                Save error
-              </span>
+              <span className="nbh-save-error">Save error</span>
+            )}
+            {notebook.owner_name && (
+              <span className="nbh-owner-inline">· Created by {notebook.owner_name}{notebook.owner_email ? ` (${notebook.owner_email})` : ''}</span>
             )}
           </div>
         </div>
-        {/* Owner info */}
-        {notebook.owner_name && (
-          <div style={styles.ownerRow}>
-            <span style={styles.ownerText}>
-              Created by {notebook.owner_name}{notebook.owner_email ? ` (${notebook.owner_email})` : ''}
-            </span>
-          </div>
-        )}
-        {/* Row 2: title + description */}
-        <div style={styles.titleSection}>
+        <div className="nbh-title-section">
           {editingTitle ? (
             <input
               style={styles.titleInput}
@@ -1377,7 +1361,7 @@ export function NotebookPage() {
             />
           ) : (
             <h1
-              style={styles.notebookTitle}
+              className="nbh-title"
               onClick={() => { setTitleDraft(notebook.title); setEditingTitle(true) }}
               title="Click to rename"
             >
@@ -1402,7 +1386,7 @@ export function NotebookPage() {
             />
           ) : (
             <div
-              style={styles.descRendered}
+              className="nbh-desc"
               onClick={() => { setDescDraft(notebook.description ?? ''); setEditingDesc(true) }}
               title="Click to edit description"
             >
@@ -1411,7 +1395,7 @@ export function NotebookPage() {
                   {notebook.description}
                 </ReactMarkdown>
               ) : (
-                <span style={styles.descPlaceholder}>Add a description for this notebook…</span>
+                <span className="nbh-desc-placeholder">Add a description for this notebook…</span>
               )}
             </div>
           )}
@@ -1419,8 +1403,8 @@ export function NotebookPage() {
       </div>
 
       {/* Toolbar */}
-      <div style={styles.toolbar}>
-        <div style={styles.toolbarLeft}>
+      <div className="nbt">
+        <div className="nbt-left">
           <ConnectorSelector
             style={styles.connectorSelect}
             value={notebookConnectorId || null}
@@ -1430,23 +1414,39 @@ export function NotebookPage() {
             pinned={notebookPinned}
             onTogglePin={toggleNotebookPin}
           />
-          <CollaboratorAvatars
-            provider={collab?.provider}
-            currentUserEmail={userEmail}
-            following={following}
-            onFollow={(c) => setFollowing({ email: c.email, name: c.name })}
-            onUnfollow={() => setFollowing(null)}
-            showAgent={true}
-            onFollowAgent={() => {
-              if (following?.email === 'agent@aether') {
-                setFollowing(null)
-              } else {
-                setFollowing({ email: 'agent@aether', name: 'AI Agent' })
-              }
-            }}
-          />
+          <div className="nbt-run">
+            {/* Run All — standalone */}
+            <button type="button" style={styles.runAllBtn} onClick={runAll} disabled={runningCount > 0}>
+              <ChevronsRight size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />Run All
+            </button>
+            {/* History — standalone */}
+            <button
+              type="button"
+              style={{ ...styles.schemaBtn, ...(showHistory ? styles.schemaBtnActive : {}), display: 'flex', alignItems: 'center', gap: 4 }}
+              onClick={openSnapshotHistory}
+            >
+              <Clock size={13} /> History
+            </button>
+          </div>
+          <div className="nbt-presence">
+            <CollaboratorAvatars
+              provider={collab?.provider}
+              currentUserEmail={userEmail}
+              following={following}
+              onFollow={(c) => setFollowing({ email: c.email, name: c.name })}
+              onUnfollow={() => setFollowing(null)}
+              showAgent={true}
+              onFollowAgent={() => {
+                if (following?.email === 'agent@aether') {
+                  setFollowing(null)
+                } else {
+                  setFollowing({ email: 'agent@aether', name: 'AI Agent' })
+                }
+              }}
+            />
+          </div>
         </div>
-        <div style={styles.toolbarRight}>
+        <div className="nbt-right">
           {/* View dropdown */}
           <div style={{ position: 'relative' }}>
             <button
@@ -1514,33 +1514,6 @@ export function NotebookPage() {
               </>
             )}
           </div>
-
-          {/* Run All — standalone */}
-          <button type="button" style={styles.runAllBtn} onClick={runAll} disabled={runningCount > 0}>
-            <ChevronsRight size={13} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />Run All
-          </button>
-
-          {/* History — standalone */}
-          <button
-            type="button"
-            style={{ ...styles.schemaBtn, ...(showHistory ? styles.schemaBtnActive : {}), display: 'flex', alignItems: 'center', gap: 4 }}
-            onClick={openSnapshotHistory}
-          >
-            <Clock size={13} /> History
-          </button>
-
-          {/* Delete notebook */}
-          {notebook?.can_edit && (
-            <button
-              type="button"
-              style={{ ...styles.schemaBtn, color: 'var(--text-muted)' }}
-              onClick={() => setDeleteNotebookConfirm(true)}
-              title="Delete notebook"
-            >
-              <Trash2 size={13} /> Delete
-            </button>
-          )}
-
           {/* Share dropdown */}
           <div style={{ position: 'relative' }}>
             <button
@@ -1622,6 +1595,17 @@ export function NotebookPage() {
               </>
             )}
           </div>
+          {/* Delete notebook */}
+          {notebook?.can_edit && (
+            <button
+              type="button"
+              style={{ ...styles.schemaBtn, color: 'var(--text-muted)' }}
+              onClick={() => setDeleteNotebookConfirm(true)}
+              title="Delete notebook"
+            >
+              <Trash2 size={13} /> Delete
+            </button>
+          )}
         </div>
       </div>
 
@@ -1919,43 +1903,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
 
   // ── Header ──
-  header: {
-    padding: '12px 40px 0',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: 8,
-    borderBottom: '1px solid var(--border)',
-    background: 'var(--bg-card)',
-  },
-  headerTopRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    width: '100%',
-  },
-  backBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 4,
-    color: 'var(--text-muted)',
-    textDecoration: 'none',
-    fontSize: 13,
-    fontWeight: 500,
-    flexShrink: 0,
-  },
-  titleSection: {
-    paddingBottom: 16,
-  },
-  notebookTitle: {
-    fontSize: 28,
-    fontWeight: 700,
-    color: 'var(--text-primary)',
-    margin: '0 0 6px',
-    cursor: 'pointer',
-    lineHeight: 1.2,
-  },
   titleInput: {
-    fontSize: 28,
+    fontSize: 30,
     fontWeight: 700,
     color: 'var(--text-primary)',
     background: 'transparent',
@@ -1964,62 +1913,24 @@ const styles: Record<string, React.CSSProperties> = {
     outline: 'none',
     width: '100%',
     fontFamily: 'var(--font-sans)',
-    lineHeight: 1.2,
+    lineHeight: 1.15,
+    letterSpacing: '-0.2px',
     padding: '2px 0',
-    marginBottom: 6,
+    marginBottom: 2,
   },
   descInput: {
     width: '100%',
     border: 'none',
     outline: 'none',
-    fontSize: 14,
+    fontSize: 13,
+    lineHeight: 1.5,
+    minHeight: 22,
     color: 'var(--text-muted)',
     background: 'transparent',
     fontFamily: 'var(--font-sans)',
     padding: '1px 0',
   },
-  descRendered: {
-    fontSize: 14,
-    color: 'var(--text-muted)',
-    fontFamily: 'var(--font-sans)',
-    cursor: 'pointer',
-    lineHeight: 1.6,
-    padding: '2px 0',
-    minHeight: 24,
-  },
-  descPlaceholder: {
-    color: 'var(--text-muted)',
-    opacity: 0.6,
-    fontStyle: 'italic',
-  },
-  ownerRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-  },
-  ownerText: {
-    fontSize: 12,
-    color: 'var(--text-muted)',
-  },
-  metaInfo: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-  },
-  metaText: {
-    fontSize: 13,
-    color: 'var(--text-muted)',
-  },
-
   // ── Toolbar ──
-  toolbar: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '8px 40px',
-    borderBottom: '1px solid var(--border-light)',
-    flexShrink: 0,
-  },
   connectorSelect: {
     fontSize: 12,
     fontFamily: 'var(--font-mono)',
@@ -2030,16 +1941,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-primary)',
     cursor: 'pointer',
     minWidth: 160,
-  },
-  toolbarLeft: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-  },
-  toolbarRight: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 12,
   },
   runAllBtn: {
     padding: '6px 16px',

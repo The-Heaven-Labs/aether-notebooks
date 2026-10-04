@@ -497,6 +497,162 @@ input[type="color"] {
   }
 }
 
+/* ── Connector type chip (ConnectorsPage) ───────────────────────────────── */
+/* Per-type identity colors drawn from the chart series palette: postgres
+   sky, clickhouse amber, opensearch cyan, databricks rose. The plate mixes
+   the hue toward white so the near-black ink clears contrast in both themes. */
+.conn-type-chip {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--chip-color) 84%, #fff);
+  border: 1px solid color-mix(in srgb, var(--chip-color) 60%, #16130e);
+  color: #16130e;
+}
+
+.conn-type-chip--postgres { --chip-color: #0ea5e9; }
+.conn-type-chip--clickhouse { --chip-color: #f59e0b; }
+.conn-type-chip--opensearch { --chip-color: #06b6d4; }
+.conn-type-chip--databricks { --chip-color: #f43f5e; }
+
+/* ── Notebook header (NotebookPage) ─────────────────────────────────────── */
+/* One-line provenance cluster on the right; the title block owns the space
+   below. Baked from live variant 4 (compact density, 30px title). */
+.nbh {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 40px 0;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+}
+
+.nbh-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  gap: 16px;
+}
+
+.nbh-back {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.nbh-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 0;
+}
+
+.nbh-owner-inline {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nbh-title-section {
+  margin-top: 8px;
+  padding-bottom: 14px;
+}
+
+.nbh-title {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 2px;
+  cursor: pointer;
+  line-height: 1.15;
+  letter-spacing: -0.2px;
+}
+
+.nbh-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1.5;
+  min-height: 22px;
+}
+
+.nbh-desc-placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.nbh-saving,
+.nbh-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.nbh-saved {
+  color: var(--success);
+}
+
+.nbh-save-error {
+  color: var(--error-full);
+}
+
+/* ── Notebook toolbar (NotebookPage) ────────────────────────────────────── */
+/* The execution cluster (Run All, History) sits with the connector it runs
+   against; document actions stay right. Baked from live variant 2
+   (density 0.85, presence context). */
+.nbt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 40px;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  row-gap: 7px;
+}
+
+.nbt-left {
+  display: flex;
+  align-items: center;
+  gap: 8.5px;
+  flex: 1;
+  min-width: 0;
+}
+
+.nbt-run {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.nbt-presence {
+  display: flex;
+  align-items: center;
+}
+
+.nbt-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .connector-action-spin,
   .cell-flash {

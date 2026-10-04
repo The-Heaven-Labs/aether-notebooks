@@ -617,7 +617,9 @@ export function ConnectorsPage() {
                       </span>
                     )}
                   </td>
-                  <td style={cellStyle}><code style={styles.badge}>{c.type}</code></td>
+                  <td style={cellStyle}>
+                    <code className={'conn-type-chip conn-type-chip--' + c.type}>{c.type}</code>
+                  </td>
                   <td style={{
                     ...cellStyle,
                     fontFamily: 'var(--font-mono)',
@@ -842,7 +844,6 @@ const styles: Record<string, React.CSSProperties> = {
   testBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)', fontWeight: 600 },
   cancelBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   saveBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  badge: { fontSize: 11, fontFamily: 'var(--font-mono)', background: 'var(--accent-light)', color: 'var(--text-secondary)', padding: '2px 7px', borderRadius: 3 },
   managedBadge: {
     display: 'inline-block',
     fontSize: 11,
