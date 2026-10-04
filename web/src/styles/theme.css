@@ -793,6 +793,55 @@ input[type="color"] {
   }
 }
 
+/* ── Dashboard editor: resize handles ───────────────────────────────────── */
+/* react-grid-layout v2 renders .react-resizable-handle elements but ships no
+   stylesheet, so they were 0×0 and impossible to grab. Draw a hairline
+   corner bracket matching the system. */
+.react-grid-item > .react-resizable-handle {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  cursor: se-resize;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.react-grid-item > .react-resizable-handle::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  border-radius: 0 0 2px 0;
+}
+
+.react-grid-item:hover > .react-resizable-handle,
+.react-grid-item > .react-resizable-handle:active {
+  opacity: 1;
+}
+
+/* Touch: grow the grab area (no hover to reveal it). */
+@media (pointer: coarse) {
+  .react-grid-item > .react-resizable-handle {
+    width: 32px;
+    height: 32px;
+    opacity: 1;
+  }
+
+  .react-grid-item > .react-resizable-handle::after {
+    right: 6px;
+    bottom: 6px;
+    width: 12px;
+    height: 12px;
+  }
+}
+
 /* ── Dashboard chrome (DashboardPage) ───────────────────────────────────── */
 .dash-header {
   padding: 0 12px;
