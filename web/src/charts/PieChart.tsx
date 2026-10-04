@@ -90,8 +90,21 @@ function PieChartComponent({ data, config }: ChartProps) {
   const nameKey = config.labelColumn || xAxis
   const { showLabels, labelPosition, minShowLabelAngle } = config
 
+  // Deterministic slice order. SQL without ORDER BY (ClickHouse especially)
+  // may return rows in a different order on every run, which shuffled the
+  // palette and legend between runs. Sort by value (then name) so the same
+  // data always paints the same way; largest slice first.
+  const sliceData = useMemo(() => {
+    const rows = chartData.map(d => ({
+      name: String(d[nameKey] ?? ''),
+      value: Number(d[valueKey]) || 0,
+    }))
+    rows.sort((a, b) => b.value - a.value || a.name.localeCompare(b.name))
+    return rows
+  }, [chartData, nameKey, valueKey])
+
   const option = useMemo(() => {
-    const sliceNames = chartData.map(d => String(d[nameKey] ?? ''))
+    const sliceNames = sliceData.map(d => d.name)
     const geometry = buildPieGeometry(config)
     return {
       tooltip: {
@@ -113,19 +126,19 @@ function PieChartComponent({ data, config }: ChartProps) {
         type: 'pie' as const,
         radius: geometry.radius,
         center: geometry.center,
-        data: chartData.map((d, i) => ({
-          name: d[nameKey],
-          value: d[valueKey],
-          itemStyle: { color: config.seriesColors?.[String(d[nameKey])] ?? CHART_COLORS[i % CHART_COLORS.length] },
+        data: sliceData.map((d, i) => ({
+          name: d.name,
+          value: d.value,
+          itemStyle: { color: config.seriesColors?.[d.name] ?? CHART_COLORS[i % CHART_COLORS.length] },
         })),
-        ...buildPieSeriesLabelConfig({ showLabels, labelPosition, minShowLabelAngle }, colors.text, { hasTitle: !!config.title, dense: chartData.length > 12 }),
+        ...buildPieSeriesLabelConfig({ showLabels, labelPosition, minShowLabelAngle }, colors.text, { hasTitle: !!config.title, dense: sliceData.length > 12 }),
         emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.2)' } },
         roseType: config.roseType || false,
         startAngle: config.startAngle ?? 90,
         padAngle: config.padAngle ?? 0,
       }],
     }
-  }, [chartData, nameKey, valueKey, config.chartType, config.title, config.seriesColors, config.showLegend, showLabels, labelPosition, minShowLabelAngle, config.roseType, config.startAngle, config.padAngle, colors])
+  }, [sliceData, config.chartType, config.title, config.seriesColors, config.showLegend, showLabels, labelPosition, minShowLabelAngle, config.roseType, config.startAngle, config.padAngle, colors])
 
   // No Reset: a pie cannot zoom or pan, so restore has nothing to undo.
   return <EChartsContainer option={option} />
