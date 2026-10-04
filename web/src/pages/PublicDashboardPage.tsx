@@ -69,8 +69,10 @@ export function PublicDashboardPage() {
   )
   const cols = dashboard.settings?.grid_cols ?? 12
   const colWidth = (containerWidth - (cols - 1) * gap) / cols
+  // Widgets are never shorter than 6 rows here either: below that the chart
+  // area collapses under the widget chrome (~40px plots).
   const totalHeight = visibleWidgets.reduce((max, w) => {
-    return Math.max(max, (w.layout?.row ?? 0) + (w.layout?.height ?? 4))
+    return Math.max(max, (w.layout?.row ?? 0) + Math.max(w.layout?.height ?? 4, 6))
   }, 0) * (ROW_HEIGHT + gap)
 
   const content = (
@@ -100,7 +102,8 @@ export function PublicDashboardPage() {
               const left = l.col * (colWidth + gap)
               const top = l.row * (ROW_HEIGHT + gap)
               const width = l.width * colWidth + (l.width - 1) * gap
-              const height = l.height * ROW_HEIGHT + (l.height - 1) * gap
+              const widgetRows = Math.max(l.height, 6)
+              const height = widgetRows * ROW_HEIGHT + (widgetRows - 1) * gap
               const wrapperStyle: React.CSSProperties = {
                 position: 'absolute',
                 left, top, width, height,

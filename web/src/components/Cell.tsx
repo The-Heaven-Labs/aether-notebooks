@@ -942,10 +942,10 @@ const styles: Record<string, React.CSSProperties> = {
     marginRight: 6,
   },
   cellTypeTag: {
-    fontSize: 9,
+    fontSize: 10,
     fontFamily: 'var(--font-mono)',
     fontWeight: 700,
-    letterSpacing: '0.1em',
+    letterSpacing: '0.08em',
     color: 'var(--text-muted)',
     textTransform: 'uppercase' as const,
     flexShrink: 0,

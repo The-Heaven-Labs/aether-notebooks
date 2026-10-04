@@ -200,9 +200,11 @@ const toGridItem = (w: Widget): LayoutItem => ({
   x: w.layout.col,
   y: w.layout.row,
   w: w.layout.width,
-  h: w.layout.height,
+  // Clamp the rendered height too: minH only constrains resizing, so a
+  // 4-row widget would still render ~40px of chart under the widget chrome.
+  h: Math.max(w.layout.height, 6),
   minW: 2,
-  minH: 4,
+  minH: 6,
   maxH: 24,
 })
 

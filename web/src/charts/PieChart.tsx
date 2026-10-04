@@ -94,7 +94,19 @@ function PieChartComponent({ data, config }: ChartProps) {
     const sliceNames = chartData.map(d => String(d[nameKey] ?? ''))
     const geometry = buildPieGeometry(config)
     return {
-      tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: '{b}: {c} ({d}%)' },
+      tooltip: {
+        trigger: 'item' as const,
+        ...getTooltipStyle(),
+        // Skip the share percentage when the value already reads as one
+        // (percentage data would otherwise print "68.4 (68.4%)").
+        formatter: (params: { name?: string; value?: unknown; percent?: number }) => {
+          const value = Number(params.value)
+          const pct = Number(params.percent ?? 0)
+          const suffix = config.suffix ? ` ${config.suffix}` : ''
+          const showPct = !(isFinite(value) && Math.abs(pct - value) < 0.5)
+          return `${params.name ?? ''}: ${params.value}${suffix}${showPct ? ` (${pct}%)` : ''}`
+        },
+      },
       title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
       legend: buildLegend({ title: config.title, showLegend: config.showLegend }, colors, { seriesNames: sliceNames, reserveTopRight: true }),
       series: [{
@@ -115,7 +127,8 @@ function PieChartComponent({ data, config }: ChartProps) {
     }
   }, [chartData, nameKey, valueKey, config.chartType, config.title, config.seriesColors, config.showLegend, showLabels, labelPosition, minShowLabelAngle, config.roseType, config.startAngle, config.padAngle, colors])
 
-  return <EChartsContainer option={option} showReset />
+  // No Reset: a pie cannot zoom or pan, so restore has nothing to undo.
+  return <EChartsContainer option={option} />
 }
 
 function PieConfigPanel({ config, columns, onChange, data }: ConfigPanelProps) {
