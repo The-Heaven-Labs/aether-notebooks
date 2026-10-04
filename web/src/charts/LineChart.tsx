@@ -51,7 +51,7 @@ function LineChartComponent({ data, config }: ChartProps) {
       tooltip: { trigger: 'axis' as const, ...getTooltipStyle() },
       title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
       legend: buildLegend({ title: config.title, showLegend: config.showLegend }, colors, { seriesNames, reserveTopRight: true }),
-      media: narrowChartMedia(config.showLegend, { dataZoom: !!config.dataZoom }),
+      media: narrowChartMedia(config.showLegend),
       grid: { top: config.title ? 56 : 8, right: legendColumnReserve(config.showLegend, seriesNames), bottom: config.dataZoom ? 32 : 8, left: 16, containLabel: true },
       dataZoom: config.dataZoom ? [
         { type: 'inside' as const, start: 0, end: 100 },

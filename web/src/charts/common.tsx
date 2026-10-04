@@ -565,7 +565,7 @@ export const NARROW_CHART_WIDTH = 340
 // option so the chart itself adapts by its own width, not the viewport's.
 // Returns undefined when the legend is disabled (an override must not switch
 // a hidden legend back on).
-export function narrowChartMedia(showLegend: boolean | undefined): Record<string, unknown>[] | undefined {
+export function narrowChartMedia(showLegend: boolean | undefined): NonNullable<echarts.EChartsCoreOption['media']> | undefined {
   if (showLegend === false) return undefined
   return [{
     query: { maxWidth: NARROW_CHART_WIDTH },

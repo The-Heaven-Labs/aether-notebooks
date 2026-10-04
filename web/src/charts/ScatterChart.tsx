@@ -75,7 +75,7 @@ function ScatterChartComponent({ data, config }: ChartProps) {
       tooltip: { ...getTooltipStyle() },
       title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
       legend: legendShown ? buildLegend({ title: config.title, showLegend: config.showLegend }, colors, { seriesNames, reserveTopRight: true }) : { show: false },
-      media: narrowChartMedia(legendShown, { dataZoom: true }),
+      media: narrowChartMedia(legendShown),
       grid: { top: config.title ? 56 : 8, right: legendColumnReserve(legendShown, seriesNames), bottom: 32, left: 16, containLabel: true },
       visualMap: config.colorColumn ? {
         dimension: 2,
