@@ -111,7 +111,11 @@ const styles: Record<string, React.CSSProperties> = {
   preview: {
     border: '1px solid var(--border)',
     borderRadius: 4,
-    maxHeight: 320,
+    // A definite height as a flex column: chart views fill their flex parent,
+    // and without it the chart collapsed to 0px in this non-flex preview box.
+    height: 320,
+    display: 'flex',
+    flexDirection: 'column',
     overflow: 'auto',
     background: 'var(--bg-card)',
   },
