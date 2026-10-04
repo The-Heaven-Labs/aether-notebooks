@@ -7,6 +7,7 @@ import { api } from '../api/client'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
 import type { ChartConfig } from '../charts/types'
 import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '../charts/widgetChartConfig'
+import { formatExecutedAt } from '../utils/formatDateTime'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { OutputRenderer } from '../components/OutputRenderer'
@@ -145,7 +146,7 @@ function CellDataWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, 
       )}
       {updatedAt && (
         <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)', opacity: 0.6, whiteSpace: 'nowrap' }}>
-          Executed at {new Date(updatedAt).toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })} {new Date(updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          Executed at {formatExecutedAt(updatedAt)}
           {durationMs != null && <span> · {durationMs}ms</span>}
         </span>
       )}

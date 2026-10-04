@@ -9,6 +9,7 @@ import { OutputRenderer } from '../components/OutputRenderer'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { QueryDataWidget } from '../components/QueryDataWidget'
+import { formatExecutedAt } from '../utils/formatDateTime'
 import type { Dashboard, Widget, Output } from '../types'
 import { mergeWidgetChartConfig } from '../charts/widgetChartConfig'
 
@@ -146,7 +147,7 @@ export function PublicDashboardPage() {
                       chartConfig={chartConfig}
                       footerExtra={cellData.updated_at ? (
                         <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                          Executed at {new Date(cellData.updated_at).toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })} {new Date(cellData.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          Executed at {formatExecutedAt(cellData.updated_at)}
                         </span>
                       ) : undefined}
                     />
