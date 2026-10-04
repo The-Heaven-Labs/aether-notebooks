@@ -1,6 +1,6 @@
 import { useRef, useCallback, useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, useChartColors, useRowsAsObjects, walkTree, applyCollapsedToTree, ChartTypeSelect } from './common'
+import { EChartsContainer, CHART_COLORS, useChartColors, useRowsAsObjects, walkTree, applyCollapsedToTree, ChartTypeSelect, getTooltipStyle } from './common'
 import type { ECharts } from 'echarts/core'
 import { ConfigHint } from './ConfigHint'
 
@@ -135,6 +135,7 @@ function HierarchyTreeComponent({ data, config }: ChartProps) {
         const val = params.value
         return val ? `${name}<br/>${val}` : name
       },
+      ...getTooltipStyle(),
     },
     title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: chartColors.text } } : undefined,
     series: [{

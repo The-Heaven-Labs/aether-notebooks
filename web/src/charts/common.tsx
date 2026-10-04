@@ -500,7 +500,32 @@ export function getTooltipStyle() {
     borderColor: c.border,
     borderRadius: 4,
     textStyle: { fontSize: 12, color: c.text, fontFamily: CHART_FONT_MONO },
-    extraCssText: `box-shadow: 0 2px 16px ${c.shadow};`,
+    // Dashboard widgets clip to their card (overflow: hidden), which cut the
+    // top off tooltips near the plot's upper edge. Appending to <body> lets
+    // the tooltip float free of any container; the z-index keeps it above
+    // panels and drawers; max-height bounds pathological tooltips.
+    appendToBody: true,
+    // Keep the whole tooltip inside the viewport: prefer above-right of the
+    // cursor, flip below when there is no room, then clamp both axes. Without
+    // this ECharts can place tall tooltips at negative coordinates.
+    position: (
+      point: number[],
+      _params: unknown,
+      _dom: unknown,
+      _rect: unknown,
+      size: { contentSize: number[]; viewSize: number[] },
+    ) => {
+      const [mx, my] = point
+      const [cw, ch] = size.contentSize
+      const [vw, vh] = size.viewSize
+      let x = mx + 12
+      let y = my - ch - 12
+      if (y < 8) y = my + 16
+      x = Math.max(8, Math.min(x, vw - cw - 8))
+      y = Math.max(8, Math.min(y, vh - ch - 8))
+      return [x, y]
+    },
+    extraCssText: `box-shadow: 0 2px 16px ${c.shadow}; z-index: 3000; max-height: 60vh; overflow: auto;`,
   }
 }
 
