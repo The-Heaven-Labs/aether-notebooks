@@ -186,6 +186,8 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--nav-bg)',
     borderRight: '1px solid var(--nav-border)',
     flexShrink: 0,
+    // Intentional layout animation: the rail collapse reflows the workspace
+    // by design (documented in DESIGN.md). Not transform-friendly.
     transition: 'width 0.2s ease',
     overflow: 'hidden',
   },

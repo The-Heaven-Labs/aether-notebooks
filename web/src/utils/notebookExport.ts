@@ -386,7 +386,7 @@ function renderCell(cell: Cell, index: number): string {
   const accent = isCode ? 'var(--accent)' : 'var(--success)'
 
   if (cell.cell_collapsed) {
-    return `<div class="cell collapsed" style="border-left:3px solid ${accent}">
+    return `<div class="cell collapsed" style="border-left:1px solid ${accent}">
       <div class="cell-meta">
         <span class="cell-num">${index + 1}</span>
         <span class="cell-tag ${isCode ? 'tag-code' : 'tag-md'}">${isCode ? 'SQL' : 'MD'}</span>
@@ -405,7 +405,7 @@ function renderCell(cell: Cell, index: number): string {
   const { html } = renderOutputs(cell)
   body += html
 
-  return `<div class="cell" style="border-left:3px solid ${accent}">
+  return `<div class="cell" style="border-left:1px solid ${accent}">
     <div class="cell-meta">
       <span class="cell-num">${index + 1}</span>
       <span class="cell-tag ${isCode ? 'tag-code' : 'tag-md'}">${isCode ? 'SQL' : 'MD'}</span>
@@ -477,7 +477,7 @@ body { font-family:var(--font-sans);background:var(--bg-primary);color:var(--tex
 .markdown-body p{margin:6px 0}.markdown-body ul,.markdown-body ol{margin:6px 0;padding-left:20px}
 .markdown-body code{font-family:var(--font-mono);background:var(--bg-cell-code);padding:1px 4px;border-radius:3px;font-size:13px}
 .markdown-body pre code{display:block;padding:8px 12px;overflow-x:auto}
-.markdown-body blockquote{border-left:3px solid var(--accent);padding-left:12px;color:var(--text-secondary);margin:6px 0}
+.markdown-body blockquote{border-left:1px solid var(--accent);padding-left:12px;color:var(--text-secondary);margin:6px 0}
 .markdown-body table{border-collapse:collapse;margin:8px 0;font-size:13px}
 .markdown-body th,.markdown-body td{border:1px solid var(--border);padding:4px 8px;text-align:left}
 .markdown-body th{background:var(--bg-primary);font-weight:600}

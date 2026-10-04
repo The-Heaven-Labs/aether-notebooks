@@ -481,7 +481,7 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave, onEditS
       {uploadProgress !== null && (
         <div style={styles.mdUploadProgress}>
           <div style={styles.mdUploadProgressBar}>
-            <div style={{...styles.mdUploadProgressFill, width: `${uploadProgress}%`}} />
+            <div style={{...styles.mdUploadProgressFill, transform: `scaleX(${uploadProgress / 100})`}} />
           </div>
           <div style={styles.mdUploadProgressText}>Uploading... {uploadProgress}%</div>
         </div>
@@ -779,8 +779,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   mdUploadProgressFill: {
     height: '100%',
+    width: '100%',
     backgroundColor: 'var(--accent)',
-    transition: 'width 0.2s',
+    transformOrigin: 'left',
+    // scaleX instead of width: compositor-friendly progress animation.
+    transition: 'transform 0.2s',
   },
   mdUploadProgressText: {
     fontSize: 11,

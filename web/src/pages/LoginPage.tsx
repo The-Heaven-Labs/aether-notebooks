@@ -226,7 +226,7 @@ export function LoginPage() {
                 <div key={motd.id} style={{
                   background: 'var(--warning-light)',
                   border: '1px solid var(--warning-border)',
-                  borderLeft: '3px solid var(--accent)',
+                  borderLeft: '1px solid var(--accent)',
                   borderRadius: 4,
                   padding: '12px 16px',
                   marginBottom: loginMotds.length > 1 ? 8 : 0,
@@ -363,7 +363,7 @@ export function LoginPage() {
                     <div style={styles.strengthBarBg}>
                       <div style={{
                         ...styles.strengthBarFill,
-                        width: `${(getPasswordStrength(password).score / 5) * 100}%`,
+                        transform: `scaleX(${getPasswordStrength(password).score / 5})`,
                         background: getPasswordStrength(password).color,
                       }} />
                     </div>
@@ -636,8 +636,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   strengthBarFill: {
     height: '100%',
+    width: '100%',
     borderRadius: 2,
-    transition: 'width 0.2s, background 0.2s',
+    transformOrigin: 'left',
+    // scaleX instead of width: compositor-friendly progress animation.
+    transition: 'transform 0.2s, background 0.2s',
   },
   strengthLabel: {
     fontSize: 11,

@@ -286,6 +286,8 @@ const globalAgentStyles: Record<string, React.CSSProperties> = {
     display: 'flex', flexDirection: 'column',
     pointerEvents: 'auto',
     transformOrigin: 'bottom right',
+    // Intentional: agent panel float/dock/minimize morph. The panel's
+    // geometry genuinely changes; FLIP would need measured layout.
     transition: 'top 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), right 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), height 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), border-radius 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), box-shadow 0.7s cubic-bezier(0.05, 0.7, 0.1, 1)',
   },
   docked: {
@@ -299,6 +301,8 @@ const globalAgentStyles: Record<string, React.CSSProperties> = {
     display: 'flex', flexDirection: 'column',
     pointerEvents: 'auto',
     transformOrigin: 'bottom right',
+    // Intentional: agent panel float/dock/minimize morph. The panel's
+    // geometry genuinely changes; FLIP would need measured layout.
     transition: 'top 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), right 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), height 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), border-radius 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), box-shadow 0.7s cubic-bezier(0.05, 0.7, 0.1, 1)',
   },
   vResizeHandle: {
