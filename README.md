@@ -24,7 +24,7 @@
 
 ## Features
 
-- **SQL Notebooks** — Write and execute SQL against Postgres, ClickHouse, or JavaScript, all within the same notebook
+- **SQL Notebooks** — Write and execute SQL against Postgres, ClickHouse, OpenSearch, or Databricks, all within the same notebook
 - **Real-time Collaboration** — Multiple users edit simultaneously via Yjs CRDT, just like Google Docs for data
 - **AI Agent** — Built-in agent that can write queries, create charts, and explore your data conversationally
 - **Rich Charts** — Bar, line, area, pie, scatter, timeline, sankey, map, big number, and more — all powered by ECharts
@@ -99,7 +99,7 @@ internal/
   agent/                 → AI agent engine with tool calling
   config/                → Environment-based configuration
   database/              → pgx connection pool + SQL migrations
-  executor/              → SQL executors (Postgres, ClickHouse, JavaScript)
+  executor/              → SQL executors (Postgres, ClickHouse, OpenSearch, Databricks)
   models/                → Shared model structs
   audit/                 → ClickHouse audit logger
 migrations/              → SQL migration files (applied on startup)
