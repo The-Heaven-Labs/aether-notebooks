@@ -1860,8 +1860,8 @@ export function NotebookPage() {
 
       {showHistory && (
         <>
-          <div style={{ position: 'fixed', inset: 0, zIndex: 199 }} onClick={() => setShowHistory(false)} />
-          <div role="dialog" aria-modal="true" aria-label="Notebook history" style={{ position: 'fixed', right: 0, top: 52, bottom: 0, width: 380, maxWidth: '100vw', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
+          <div className="scrim-enter" style={{ position: 'fixed', inset: 0, zIndex: 199, background: 'var(--bg-overlay)' }} onClick={() => setShowHistory(false)} />
+          <div role="dialog" aria-modal="true" aria-label="Notebook history" className="floating-panel-enter" style={{ position: 'fixed', top: 'calc(52px + 16px)', right: 16, bottom: 16, width: 380, maxWidth: 'calc(100vw - 32px)', borderRadius: 8, border: '1px solid var(--border)', boxShadow: 'var(--shadow-md)', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
             <NotebookHistoryPanel
               snapshots={historySnapshots}
               onCreateSnapshot={createSnapshot}

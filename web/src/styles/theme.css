@@ -793,9 +793,30 @@ input[type="color"] {
   }
 }
 
+/* ── Floating panel entrance (notebook history) ─────────────────────────── */
+@keyframes floating-panel-in {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes scrim-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.floating-panel-enter {
+  animation: floating-panel-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.scrim-enter {
+  animation: scrim-in 0.15s ease-out;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .connector-action-spin,
-  .cell-flash {
+  .cell-flash,
+  .floating-panel-enter,
+  .scrim-enter {
     animation: none;
   }
 }

@@ -241,7 +241,7 @@ const diffStyles = {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  panel: { width: 380, height: '100%', borderLeft: '1px solid var(--border)', background: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', flexShrink: 0 },
+  panel: { width: 380, height: '100%', background: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', flexShrink: 0 },
   saveBar: { display: 'flex', gap: 6, padding: '8px 14px', borderBottom: '1px solid var(--border-light)', background: 'var(--bg-secondary)' },
   saveInput: { flex: 1, fontSize: 12, padding: '5px 8px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--bg-primary)', color: 'var(--text-primary)', outline: 'none' },
   saveBtn: { fontSize: 11, padding: '5px 10px', background: 'var(--button-primary-bg)', border: 'none', borderRadius: 4, cursor: 'pointer', color: 'var(--button-primary-text)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' },
