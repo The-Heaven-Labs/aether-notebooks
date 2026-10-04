@@ -880,6 +880,108 @@ input[type="color"] {
   }
 }
 
+/* ── Dashboard editor widget chrome (DashboardEditorPage) ───────────────── */
+/* Dashboard-editor widget chrome: a slim header row carries the widget kind
+   and its edit/remove controls, so the widget's own meta text (rows/columns,
+   execution time) never sits under them. */
+.dash-widget-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28.5px;
+  padding: 0 8px 0 10px;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+.dash-widget-head-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+  z-index: 2;
+}
+
+.dash-widget-drag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28.5px;
+  cursor: grab;
+  z-index: 1;
+  border-radius: 4px 4px 0 0;
+}
+
+.dash-widget-data {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.dash-widget-kind {
+  display: flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  line-height: 1;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.dash-widget-ctl {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  line-height: 1;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.dash-widget-ctl:hover {
+  color: var(--text-primary);
+}
+
+.dash-widget-ctl:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Data-first editor card: hovering lights the accent ring that marks the
+   card as the editable unit (the SQL lives behind the pencil). */
+/* Hover ring via outline, not an inset box-shadow: shadows paint under the
+   card's children, so the widget's meta bar (rows/play) cut the ring where
+   it met the card edge. Outlines paint above descendants. */
+.dash-widget-card {
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  transition: outline-color 0.15s ease;
+}
+
+.dash-widget-card:hover {
+  outline-color: var(--accent);
+}
+
+.dash-widget-card:hover .dash-widget-ctl,
+.dash-widget-card:hover .dash-widget-kind {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* ── Floating panel entrance (notebook history) ─────────────────────────── */
 @keyframes floating-panel-in {
   from { opacity: 0; transform: translateX(10px); }
